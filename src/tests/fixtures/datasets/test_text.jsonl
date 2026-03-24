@@ -1,0 +1,10 @@
+{"text": "HelixDB is an open-source graph-vector database built on Rust. It provides a unified platform combining graph database capabilities with vector search functionality. The storage engine uses LMDB for efficient memory-mapped operations."}
+{"text": "HelixQL is the query language for HelixDB. It features type-safe declarations, compile-time checking, and support for nodes, edges, and vector embeddings. The syntax is declarative and inspired by GraphQL and Cypher."}
+{"text": "Vector search in databases enables semantic similarity queries. Unlike traditional keyword search, vector search finds items based on meaning by comparing embedding vectors in high-dimensional space."}
+{"text": "Graph databases excel at representing connected data. Nodes represent entities, edges represent relationships, and traversals efficiently navigate these connections without expensive JOIN operations."}
+{"text": "LMDB (Lightning Memory-Mapped Database) is the storage backend for HelixDB. It provides ACID transactions, memory-mapped I/O for speed, and multi-reader single-writer access patterns."}
+{"text": "Fine-tuning language models on domain-specific data improves their performance for specialized tasks. QLoRA enables efficient fine-tuning by using 4-bit quantization and Low-Rank Adaptation."}
+{"text": "MLOps encompasses the practices for deploying and maintaining machine learning models in production. Key aspects include data versioning, experiment tracking, CI/CD pipelines, and model monitoring."}
+{"text": "Supervised Fine-Tuning (SFT) teaches models to follow instructions by training on input-output pairs. Chain-of-Thought (CoT) training adds reasoning traces to improve complex problem solving."}
+{"text": "The Transformer architecture revolutionized NLP with its self-attention mechanism. Models like GPT, BERT, and LLaMA build on this foundation with different pretraining objectives and architectural choices."}
+{"text": "Embedding models convert text to dense vector representations. These vectors capture semantic meaning, enabling similarity search, clustering, and retrieval-augmented generation (RAG) applications."}

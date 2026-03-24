@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1.4
+
+# ==============================================================================
+# RyotenkAI Training Runtime Image (Docker-only training)
+# ==============================================================================
+#
+# Purpose:
+#   Stable GPU runtime (CUDA + PyTorch + Python deps) for training.
+#
+# Works with:
+# - RunPod: pod image (SSH into container)
+# - single_node: host runs the container via `docker run` and mounts the run dir to /workspace
+#
+# NOTE:
+# - This image does NOT include training code. Code is delivered by the pipeline (rsync/tar) into the run workspace.
+#
+# ==============================================================================
+
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Ensure conda Python is available in PATH for non-interactive processes
+    # (RunPod SSH sessions may use a restricted PATH).
+    PATH="/opt/conda/bin:${PATH}"
+
+# Upgrade to Python 3.12 (base image has 3.11)
+RUN conda install -y python=3.12 && conda clean -afy
+
+# System deps:
+# - openssh-server: RunPod SSH access
+# - rsync: code delivery (rsync requires remote binary)
+# - git: required for `trl @ git+...`
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server \
+    rsync \
+    git \
+    curl \
+    ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# SSH setup: allow root login via injected keys
+RUN mkdir -p /var/run/sshd /root/.ssh && chmod 700 /root/.ssh \
+    && sed -i 's/^#\\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\\?PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config \
+    && sed -i 's/^#\\?PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && echo "ClientAliveInterval 60" >> /etc/ssh/sshd_config \
+    && echo "ClientAliveCountMax 3" >> /etc/ssh/sshd_config
+
+# Python deps (runtime-only)
+COPY docker/training/requirements.runtime.txt /tmp/requirements.runtime.txt
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r /tmp/requirements.runtime.txt
+
+# Make Python available in secure PATH locations.
+# Some SSH setups (sshd/PAM) sanitize PATH and may not include /opt/conda/bin.
+RUN if [ -x /opt/conda/bin/python3 ]; then ln -sf /opt/conda/bin/python3 /usr/local/bin/python3; fi \
+    && if [ -x /opt/conda/bin/python ]; then ln -sf /opt/conda/bin/python /usr/local/bin/python; fi \
+    && if [ -x /opt/conda/bin/pip3 ]; then ln -sf /opt/conda/bin/pip3 /usr/local/bin/pip3; fi \
+    && if [ -x /opt/conda/bin/pip ]; then ln -sf /opt/conda/bin/pip /usr/local/bin/pip; fi \
+    && if [ -x /opt/conda/bin/huggingface-cli ]; then ln -sf /opt/conda/bin/huggingface-cli /usr/local/bin/huggingface-cli; fi
+
+# Runtime contract check (used by control plane)
+RUN mkdir -p /opt/helix
+COPY scripts/runtime_check.py /opt/helix/runtime_check.py
+RUN chmod +x /opt/helix/runtime_check.py
+
+# Workspace contract
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+# HF cache defaults (overridable at runtime)
+ENV HF_HOME=/workspace/hf_cache \
+    HUGGINGFACE_HUB_CACHE=/workspace/hf_cache \
+    TRANSFORMERS_CACHE=/workspace/hf_cache
+
+# Entry point (starts sshd, then execs the passed command)
+COPY docker/training/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 22
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash", "-lc", "tail -f /dev/null"]
+
+LABEL maintainer="ryotenkai"
+LABEL description="RyotenkAI training runtime (CUDA+PyTorch+deps), docker-only execution"

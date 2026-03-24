@@ -1,0 +1,78 @@
+"""Constants for training module."""
+
+# MLflow
+MLFLOW_CATEGORY_TRAINING = "training"
+MLFLOW_SOURCE_TRAINING_EVENTS = "TrainingEventsCallback"
+
+# Strategy defaults fallback (when strategy not in DEFAULT_*)
+LEARNING_RATE_DEFAULT_FALLBACK = 2e-4
+EPOCHS_DEFAULT_FALLBACK = 3
+BATCH_SIZE_DEFAULT_FALLBACK = 4
+STRATEGY_VERSION_DEFAULT = "1.0.0"
+
+# Hyperparameter keys (WPS226)
+HP_MAX_LENGTH = "max_length"
+HP_MAX_COMPLETION_LENGTH = "max_completion_length"
+
+# SAPO/GRPO defaults (WPS432)
+DEFAULT_MAX_COMPLETION_LENGTH = 256
+
+# MLflow / logging (WPS226)
+CATEGORY_TRAINING = "training"
+SOURCE_RUN_TRAINING = "run_training"
+
+# HuggingFace Trainer log_history keys (WPS226)
+KEY_TRAIN_LOSS = "train_loss"
+KEY_TRAIN_RUNTIME = "train_runtime"
+KEY_LEARNING_RATE = "learning_rate"
+KEY_EVAL_LOSS = "eval_loss"
+KEY_TRAIN_SAMPLES_PER_SECOND = "train_samples_per_second"
+KEY_TRAIN_STEPS_PER_SECOND = "train_steps_per_second"
+
+# MLflow tag keys (WPS226)
+TAG_PHASE_IDX = "phase_idx"
+TAG_STRATEGY_TYPE = "strategy_type"
+
+# Default placeholder values (WPS226)
+DEFAULT_UNKNOWN = "unknown"
+
+# Dataset column names (WPS226)
+COL_PROMPT = "prompt"
+COL_INSTRUCTION = "instruction"
+COL_MESSAGES = "messages"
+COL_REFERENCE_ANSWER = "reference_answer"
+COL_SCHEMA_CONTEXT = "schema_context"
+
+# Trainer defaults (WPS432)
+DEFAULT_EVAL_SAVE_STEPS = 500
+
+# Truncation limits for logs/errors (WPS432)
+TRUNCATE_ERROR_MSG = 250
+TRUNCATE_ERROR_SHORT = 200
+TRUNCATE_ERROR_DEBUG = 50
+TRUNCATE_SHA_DISPLAY = 20
+
+# Exit codes (WPS432)
+EXIT_KEYBOARD_INTERRUPT = 130
+
+# MLflow manager (WPS226, WPS432)
+MLFLOW_EXPERIMENT_DEFAULT_ID = "0"
+MLFLOW_PORT_DEFAULT = 5002
+MLFLOW_TRUNCATE_PROMPT = 1000
+MLFLOW_TRUNCATE_RESPONSE = 2000
+MLFLOW_TRUNCATE_FEEDBACK = 500
+MLFLOW_DF_EMPTY_ATTR = "empty"
+MLFLOW_DF_TO_DICT = "to_dict"
+MLFLOW_CONTEXT_TRAINING = "training"
+MLFLOW_KEY_TAGS = "tags"
+MLFLOW_SEVERITY_START = "start"
+MLFLOW_SEVERITY_INFO = "info"
+MLFLOW_SEVERITY_WARNING = "warning"
+MLFLOW_SEVERITY_ERROR = "error"
+MLFLOW_KEY_EVENT_TYPE = "event_type"
+MLFLOW_CATEGORY_MEMORY = "memory"
+MLFLOW_SOURCE_MEMORY_MANAGER = "MemoryManager"
+MLFLOW_MD_SEPARATOR = "---"
+MLFLOW_EVENTS_DISPLAY_LIMIT = 30
+MLFLOW_OTEL_INFO = "INFO"
+HTTP_STATUS_SERVER_ERROR = 500

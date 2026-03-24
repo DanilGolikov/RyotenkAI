@@ -1,0 +1,21 @@
+"""Constants for training config."""
+
+# Training types
+TRAINING_TYPE_QLORA = "qlora"
+TRAINING_TYPE_LORA = "lora"
+TRAINING_TYPE_ADALORA = "adalora"
+
+# Hyperparams defaults
+WEIGHT_DECAY_DEFAULT = 0.01
+LOGGING_STEPS_DEFAULT = 10
+SAVE_STEPS_DEFAULT = 500
+
+# Epochs bounds
+EPOCHS_MAX = 50
+
+# LoRA
+LORA_RANK_MAX = 256
+
+ADALORA_TINIT_DEFAULT = 200
+ADALORA_TFINAL_DEFAULT = 1000
+ADALORA_BETA_DEFAULT = 0.85

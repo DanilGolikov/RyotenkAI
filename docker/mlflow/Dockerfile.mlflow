@@ -1,0 +1,12 @@
+# MLflow Server with PostgreSQL Support
+# Based on official MLflow image + psycopg2
+# Updated to MLflow 3.8.1 (2025-01-01)
+
+FROM ghcr.io/mlflow/mlflow:v3.8.1
+
+# Install PostgreSQL adapter + boto3 for S3/MinIO
+RUN pip install --no-cache-dir \
+    psycopg2-binary==2.9.9 \
+    boto3==1.35.76
+
+EXPOSE 5000

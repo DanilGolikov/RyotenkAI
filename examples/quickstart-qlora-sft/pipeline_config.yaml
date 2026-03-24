@@ -1,0 +1,251 @@
+# =============================================================================
+# RyotenkAI Quickstart — QLoRA SFT on Qwen2.5-0.5B
+# =============================================================================
+#
+# A minimal working config to train a small LLM with QLoRA on RunPod.
+# Dataset: 400 train / 49 eval samples (HelixQL NL→Query task).
+#
+# GPU: NVIDIA RTX A4000 (16 GB VRAM, ~$0.22/hr on RunPod Community Cloud).
+# Estimated training time: ~5-10 minutes for 3 epochs.
+#
+# Quick start:
+#   1. Fill in the TODO sections below
+#   2. Run:  ryotenkai config-validate --config examples/quickstart-qlora-sft/pipeline_config.yaml
+#   3. Run:  python -m src.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
+#
+# =============================================================================
+
+model:
+  name: "Qwen/Qwen2.5-0.5B-Instruct"
+  torch_dtype: float16
+  trust_remote_code: false
+
+training:
+  # TODO: Choose your provider — "runpod" (cloud GPU) or "single_node" (local machine with GPU)
+  provider: runpod
+  type: "qlora"
+
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: none
+    target_modules: "all-linear"
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
+
+  hyperparams:
+    per_device_train_batch_size: 8
+    gradient_accumulation_steps: 4     # effective batch size = 32
+    learning_rate: 2.0e-4
+    warmup_ratio: 0.05
+    epochs: 3
+    logging_steps: 10
+    save_steps: 100
+    bf16: true
+    fp16: false
+    gradient_checkpointing: true       # saves ~40% VRAM at the cost of ~20% speed
+
+  strategies:
+    - strategy_type: "sft"
+      dataset: "default"
+      hyperparams:
+        max_length: 1536
+        packing: false
+
+# =============================================================================
+# DATASETS
+# =============================================================================
+datasets:
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        # Paths are relative to the project root. Adjust if you moved the datasets.
+        train: "examples/quickstart-qlora-sft/datasets/training/train.jsonl"
+        eval: "examples/quickstart-qlora-sft/datasets/training/eval.jsonl"
+
+    validations:
+      mode: fast
+      critical_failures: 2
+      plugins:
+        - id: min_samples_train
+          plugin: min_samples
+          apply_to: ["train"]
+          thresholds: {threshold: 100}
+
+        - id: avg_length_main
+          plugin: avg_length
+          thresholds: {min: 150, max: 2048}
+
+        - id: empty_ratio_main
+          plugin: empty_ratio
+          thresholds: {max_ratio: 0.02}
+
+        - id: diversity_train
+          plugin: diversity_score
+          apply_to: ["train"]
+          thresholds: {min_score: 0.05}
+
+# =============================================================================
+# PROVIDERS
+# =============================================================================
+providers:
+  # ── Single Node (local machine with GPU) ──────────────────────────────────
+  single_node:
+    connect:
+      ssh:
+        # TODO: Create an SSH alias in ~/.ssh/config pointing to your GPU machine
+        alias: my-gpu-server
+        connect_settings:
+          max_retries: 3
+          retry_delay_seconds: 10
+          timeout_seconds: 180
+
+    cleanup:
+      cleanup_workspace: true
+      keep_on_error: true
+      on_interrupt: true
+
+    training:
+      # TODO: Set the workspace directory on your GPU machine
+      workspace_path: /home/user/workspace
+      training_start_timeout: 30
+      docker_image: "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+
+    inference:
+      serve:
+        host: "127.0.0.1"
+        port: 8000
+        # TODO: Set a directory on your GPU machine for inference artifacts
+        workspace: "/home/user/inference"
+      llm:
+        system_prompt_mlflow_name: "helixql-prompt"
+
+  # ── RunPod (cloud GPU) ────────────────────────────────────────────────────
+  runpod:
+    connect:
+      ssh:
+        # TODO: Path to your SSH key registered in RunPod (https://www.runpod.io/console/user/settings)
+        key_path: "~/.ssh/id_ed25519"
+
+    cleanup:
+      auto_delete_pod: true
+      keep_pod_on_error: false
+      on_interrupt: true
+      terminate_after_retrieval: true
+
+    training:
+      gpu_type: "NVIDIA RTX A4000"
+      cloud_type: "COMMUNITY"
+      image_name: "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+      container_disk_gb: 30
+      volume_disk_gb: 20
+      ports: "8888/http,22/tcp"
+      template_id: null
+
+    inference:
+      pod:
+        name_prefix: "ryotenkai-vllm"
+        image_name: "ryotenkai/inference-vllm:v1.0.0"
+        gpu_type_ids:
+          - "NVIDIA RTX A4000"
+          - "NVIDIA RTX A4500"
+          - "NVIDIA L4"
+          - "NVIDIA RTX A5000"
+          - "NVIDIA GeForce RTX 3090"
+        gpu_count: 1
+        ports: ["22/tcp"]
+        container_disk_gb: 50
+        volume_disk_gb: 50
+      serve:
+        port: 8000
+      llm:
+        system_prompt_mlflow_name: "helixql-prompt"
+
+# =============================================================================
+# EVALUATION (optional — runs after training + inference deployment)
+# =============================================================================
+evaluation:
+  enabled: true
+
+  dataset:
+    path: "examples/quickstart-qlora-sft/datasets/evaluation/helixql_eval.jsonl"
+
+  save_answers_md: true
+
+  evaluators:
+    plugins:
+      - id: syntax_main
+        plugin: helixql_syntax
+        enabled: true
+        save_report: true
+        params: {}
+        thresholds:
+          min_valid_ratio: 0.60
+
+      - id: judge_main
+        plugin: cerebras_judge
+        # TODO: Set to true and add EVAL_CEREBRAS_API_KEY to secrets.env to enable LLM-as-judge
+        enabled: false
+        save_report: true
+        params:
+          model: "qwen-3-32b"
+          max_samples: 20
+          temperature: 0.0
+          max_tokens: 512
+          max_retries: 3
+        thresholds:
+          min_mean_score: 0.6
+
+# =============================================================================
+# INFERENCE (deploys the trained model for evaluation)
+# =============================================================================
+inference:
+  enabled: true
+  # TODO: Must match training.provider (or use a different provider for inference)
+  provider: runpod
+  engine: vllm
+
+  engines:
+    vllm:
+      serve_image: "ryotenkai/inference-vllm:v1.0.0"
+      tensor_parallel_size: 1
+      max_model_len: 4096
+      gpu_memory_utilization: 0.90
+      quantization: null
+      enforce_eager: false
+
+  common:
+    model_source: "auto"
+    health_check:
+      enabled: true
+      timeout_seconds: 120
+      interval_seconds: 5
+      retries: 20
+    lora:
+      merge_before_deploy: true
+
+# =============================================================================
+# EXPERIMENT TRACKING
+# =============================================================================
+experiment_tracking:
+  mlflow:
+    # TODO: Set to true and configure tracking_uri to enable MLflow logging
+    enabled: false
+    # TODO: Your MLflow server URL (see docker/mlflow/ to run locally)
+    tracking_uri: "http://localhost:5002"
+    experiment_name: "quickstart-qlora-sft"
+    log_artifacts: true
+    log_model: false
+    system_metrics_sampling_interval: 1
+    system_metrics_samples_before_logging: 1
+    system_metrics_callback_enabled: false
+    system_metrics_callback_interval: 10
+  huggingface:
+    # TODO: Set to true and configure repo_id to push the trained model to HuggingFace Hub
+    enabled: false
+    # TODO: Your HuggingFace repo (e.g., "your-username/model-name")
+    repo_id: "your-username/quickstart-qlora-sft"
+    private: true

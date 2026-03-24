@@ -1,0 +1,107 @@
+# ============================================
+# Docker Build Context Exclusions
+# ============================================
+# Strategy: Exclude everything that's not needed in the image
+# Goal: Minimize context size & leverage layer caching
+# ============================================
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.virtualenv/
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+.gitmodules
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# Documentation (excluded from image, but keep inline docs)
+*.md
+!README.md
+!src/**/*.md
+
+# Tests (not needed in production image)
+src/tests/
+*_test.py
+test_*.py
+conftest.py
+
+# Data & Models (large files, will be mounted)
+data/
+models/
+output/
+logs/
+mlflow_data/
+*.log
+*.csv
+*.jsonl
+*.parquet
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Config (will be mounted at runtime)
+config/
+*.yaml
+*.yml
+!requirements.txt
+
+# Jupyter
+*.ipynb
+.jupyter/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Docker
+Dockerfile
+Dockerfile.*
+docker-compose*.yml
+.dockerignore
+
+# Build artifacts & caches
+.cache/
+*.cache
+.huggingface/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup

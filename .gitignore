@@ -1,0 +1,111 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.venv1/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Secrets and environment files
+.env
+config/.env
+config/secrets.env
+*.env
+
+# API Keys
+*apikey*
+*api_key*
+secrets*.json
+secrets*.yml
+secrets*.yaml
+
+# MLOps artifacts
+experiments/
+runs/
+/models/*.bin
+/models/*.safetensors
+/models/*.gguf
+checkpoints/
+logs/
+*.log
+
+# Generated reports (test/generated artifacts)
+generated_reports/
+
+# Data
+data/datasets/*/train.jsonl
+data/datasets/*/eval.jsonl
+data/datasets/*/test.jsonl
+data/raw/
+data/processed/
+
+# Config and data directories may live separately.
+# Do not commit a local top-level `data/` folder into this code repo.
+/data/
+
+# DVC
+.dvc/cache/
+.dvc/tmp/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.backup
+nohup.out
+
+# Coverage
+htmlcov/
+coverage.xml
+coverage.json
+.coverage
+.coverage.*
+
+# Models (binary files)
+/models/
+
+# Mutation testing
+mutants/
+
+# MLflow data
+mlflow_data/
+mlflow.db
+
+# Secrets (local, not tracked)
+secrets.env
+
+# Docker build logs
+docker/training/build_and_push.log

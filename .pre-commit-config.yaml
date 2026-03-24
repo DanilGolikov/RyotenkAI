@@ -1,0 +1,141 @@
+# Pre-commit hooks for automatic checks before commit
+# Install: pre-commit install
+# Run: pre-commit run --all-files
+
+repos:
+  # ============================================
+  # Basic file checks
+  # ============================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Fix end of files
+      - id: check-yaml
+        name: Check YAML syntax
+      - id: check-json
+        name: Check JSON syntax
+      - id: check-toml
+        name: Check TOML syntax
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      - id: check-case-conflict
+        name: Check for case conflicts
+      - id: mixed-line-ending
+        name: Check mixed line endings
+        args: ['--fix=lf']
+      - id: detect-private-key
+        name: Detect private keys
+
+  # ============================================
+  # Ruff - Ultra-fast Python linter & formatter
+  # ============================================
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.5
+    hooks:
+      # Ruff linter (replaces flake8, isort, etc.)
+      - id: ruff
+        name: Ruff linter
+        args:
+          - --fix
+          - --exit-non-zero-on-fix
+        types_or: [python, pyi]
+
+      # Ruff formatter (replaces black)
+      - id: ruff-format
+        name: Ruff formatter
+        types_or: [python, pyi]
+
+  # ============================================
+  # Wemake Python Styleguide - Minimal essential rules
+  # WPS432: magic numbers | WPS226: overused strings
+  # WPS404: complex defaults | WPS407: mutable module constants
+  # WPS515: open() without context manager
+  # ============================================
+  - repo: https://github.com/wemake-services/wemake-python-styleguide
+    rev: 1.5.0
+    hooks:
+      - id: wemake-python-styleguide
+        name: Wemake essential (WPS432,WPS404,WPS407,WPS515)
+        args:
+          - --select=WPS432,WPS404,WPS407,WPS515
+        files: ^src/(config|data|pipeline|providers|reports|training|utils)/
+
+  # ============================================
+  # MyPy - Static type checker
+  # ============================================
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.1
+    hooks:
+      - id: mypy
+        name: MyPy type checker
+        args:
+          - --config-file=pyproject.toml
+          - --show-error-codes
+          - --pretty
+        additional_dependencies:
+          - types-PyYAML
+          - types-requests
+          - pydantic>=2.10.0
+        files: ^src/
+        exclude: ^tests/
+
+  # ============================================
+  # Pyright - Fast type checker (optional second pass)
+  # ============================================
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.407
+    hooks:
+      - id: pyright
+        name: Pyright type checker
+        args:
+          - --pythonversion=3.13
+          - --project=pyrightconfig.json
+        files: ^src/
+        exclude: ^tests/
+
+  # ============================================
+  # Security checks
+  # ============================================
+  - repo: https://github.com/PyCQA/bandit
+    rev: '1.8.0'
+    hooks:
+      - id: bandit
+        name: Bandit security linter
+        args:
+          - -c
+          - pyproject.toml
+        additional_dependencies: ["bandit[toml]"]
+        files: ^src/
+
+# ============================================
+# Pre-commit configuration
+# ============================================
+default_language_version:
+  python: python3.13
+
+# Do not run pre-commit for commit types "WIP", "fixup", "squash"
+# Globally exclude artifacts/generation and tests (focus on src/ code)
+# Note: `src/tests/` is under `src/`, so a separate exclude is required.
+exclude: '^(generated_reports/|src/tests/|tests/|scripts/|\.idea/|src/docs/archive_|.*\.md$)'
+
+# Do not fail fast on merge commits
+fail_fast: false
+
+# CI settings
+ci:
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
+  autofix_prs: true
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
+  autoupdate_schedule: weekly
+  skip: []
+  submodules: false

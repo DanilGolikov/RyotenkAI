@@ -1,0 +1,45 @@
+{
+  "include": ["src"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/build",
+    "**/dist"
+  ],
+  "pythonVersion": "3.13",
+  "pythonPlatform": "All",
+  "typeCheckingMode": "basic",
+
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportUndefinedVariable": true,
+  "reportGeneralTypeIssues": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportPrivateImportUsage": false,
+  "reportUnusedVariable": true,
+  "reportUnusedImport": true,
+  "reportUnusedFunction": false,
+  "reportUnusedClass": false,
+  "reportDuplicateImport": true,
+  "reportUntypedFunctionDecorator": false,
+  "reportUntypedClassDecorator": false,
+  "reportMissingTypeArgument": false,
+
+  "venvPath": ".",
+  "venv": "venv",
+
+  "stubPath": "./typings",
+  "executionEnvironments": [
+    {
+      "root": "src",
+      "pythonVersion": "3.13",
+      "pythonPlatform": "All",
+      "extraPaths": ["."]
+    }
+  ]
+}

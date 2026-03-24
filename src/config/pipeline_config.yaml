@@ -1,0 +1,479 @@
+# Pipeline Configuration for RyotenkAI
+# This file defines all parameters for the automated training pipeline
+#
+# ============================================================================
+# v7.0 - MODULAR CONFIG + PATH HARDCODING + CENTRALIZED VALIDATION
+# ============================================================================
+# Breaking changes from v6.x:
+#   - Config modularization: src/config/ structure matches config structure
+#   - Secrets: file-first loading (secrets.env priority over os.environ)
+#   - Training: output_dir removed (hardcoded output/phase_<idx>_<strategy>)
+#   - Strategies: checkpoint_output removed (auto-generated per phase)
+#
+# Breaking changes from v5.x (v6.0):
+#   - ModelConfig: torch_dtype, trust_remote_code → REQUIRED
+#   - LoraConfig: 8 fields → REQUIRED (5 base + 3 advanced)
+#   - Hyperparameters: split into Global (5 core REQUIRED) + Phase (all optional)
+#   - Datasets: training_paths REMOVED (auto-generated)
+#   - Inference: merge_image, serve_image → REQUIRED
+#
+# Migration guide: src/docs/feature/release/config_modularization_and_simplification_v7.md
+# ============================================================================
+
+model:
+  # HuggingFace model name - AutoModel handles all architectures
+  name: Qwen/Qwen2.5-7B-Instruct
+
+  # ✅ v6.0 REQUIRED: Model loading settings (explicit precision choice)
+  torch_dtype: bfloat16          # REQUIRED: bfloat16 (A100/H100), float16 (V100/T4), float32 (CPU)
+  trust_remote_code: true        # REQUIRED: true for Qwen/Phi, false for Llama/Mistral
+
+  # Optional: Technical defaults
+  device_map: auto               # auto = optimal GPU placement
+  flash_attention: false         # Flash Attention 2 (requires flash-attn package)
+
+# ============================================================================
+# DATASETS REGISTRY
+# ============================================================================
+# Named datasets - strategies reference by name
+# "default" is REQUIRED - used when strategy doesn't specify dataset
+#
+# source_type options:
+#   - local: JSON/JSONL files (source_local.local_paths required)
+#   - huggingface: HuggingFace Hub datasets (source_hf.train_id required)
+#
+# v6.0 CHANGE: training_paths REMOVED - auto-generated as:
+#   data/{strategy_type}/{basename(local_paths.train)}
+# ============================================================================
+datasets:
+  # Local file dataset (default)
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        train: data/datasets/train.jsonl           # ✅ v6.0 REQUIRED (no default)
+        eval: data/datasets/validation.jsonl       # Optional
+
+    validations:
+      mode: fast               # fast (≤10k samples) or full (entire dataset)
+      critical_failures: 1     # Stop pipeline if N plugins fail (0 = never stop)
+      plugins:
+        - id: min_samples_main
+          plugin: min_samples
+          apply_to: [train, eval]
+          thresholds: {threshold: 100}
+        - id: avg_length_main
+          plugin: avg_length
+          apply_to: [train, eval]
+          thresholds: {min: 50, max: 8192}
+        - id: empty_ratio_main
+          plugin: empty_ratio
+          apply_to: [train, eval]
+          thresholds: {max_ratio: 0.05}
+        - id: diversity_main
+          plugin: diversity_score
+          apply_to: [train, eval]
+          # NOTE: plugin default is 0.7, but pipeline default uses 0.3 (more realistic)
+          thresholds: {min_score: 0.3}
+
+  # HuggingFace dataset example with validation
+  # alpaca:
+  #   source_type: huggingface
+  #   source_hf:
+  #     train_id: tatsu-lab/alpaca
+  #     eval_id: null
+  #   max_samples: 10000              # Limit for experiments
+  #   validations:
+  #     mode: fast
+  #     critical_failures: 1
+  #     plugins:
+  #       - id: min_samples_main
+  #         plugin: min_samples
+  #         apply_to: [train]
+  #         params: {sample_size: 5000}                  # For streaming: validate only 5k
+  #         thresholds: {threshold: 500}
+  #       - id: avg_length_main
+  #         plugin: avg_length
+  #         apply_to: [train]
+  #         params: {sample_size: 5000}
+  #         thresholds: {min: 50, max: 2048}
+  #       - id: diversity_main
+  #         plugin: diversity_score
+  #         apply_to: [train]
+  #         thresholds: {min_score: 0.8}
+
+  # Domain corpus for CPT (uncomment when needed)
+  # corpus:
+  #   source_type: local
+  #   source_local:
+  #     local_paths:
+  #       train: data/corpus/domain_text.jsonl
+  #       eval: null
+  #   validations:
+  #     mode: fast
+  #     critical_failures: 1
+  #     plugins:
+  #       - id: min_samples_main
+  #         plugin: min_samples
+  #         apply_to: [train]
+  #         thresholds: {threshold: 10000}  # CPT needs large datasets
+  #       - id: diversity_main
+  #         plugin: diversity_score
+  #         apply_to: [train]
+  #         thresholds: {min_score: 0.8}  # Higher diversity for CPT
+
+  # Preference pairs for DPO (uncomment when needed)
+  # preferences:
+  #   source_type: local
+  #   source_local:
+  #     local_paths:
+  #       train: data/preferences/pairs.jsonl
+  #       eval: null
+  #   validations:
+  #     mode: fast
+  #     critical_failures: 1
+  #     plugins:
+  #       - id: min_samples_main
+  #         plugin: min_samples
+  #         apply_to: [train]
+  #         thresholds: {threshold: 500}
+  #       - id: preference_format_main
+  #         plugin: preference_format
+  #         apply_to: [train]
+  #       - id: identical_pairs_main
+  #         plugin: identical_pairs
+  #         apply_to: [train]
+  #         thresholds: {max_identical_ratio: 0.0}  # Strict: no identical pairs allowed
+
+# ============================================================================
+# TRAINING CONFIGURATION
+# ============================================================================
+training:
+  # Which provider to use for training (from providers section below)
+  provider: runpod                  # Options: single_node, runpod
+
+  # Training type: qlora (4-bit), lora (full precision), adalora (adaptive rank)
+  type: qlora
+
+  # =========================================================================
+  # LORA CONFIGURATION (unified for both LoRA and QLoRA)
+  # =========================================================================
+  # Used when type: qlora or type: lora
+  # Difference: QLoRA loads model in 4-bit, LoRA uses full precision
+  lora:
+    # ✅ v6.0 REQUIRED: Base LoRA parameters (5 fields)
+    r: 16                           # REQUIRED: Rank (8-64 typical, higher = more capacity)
+    lora_alpha: 32                  # REQUIRED: Alpha scaling (typically 2*r)
+    lora_dropout: 0.05              # REQUIRED: Dropout for regularization
+    bias: none                      # REQUIRED: Bias type (none, all, lora_only)
+    target_modules: "all-linear"    # REQUIRED: "all-linear" = auto-detect all linear layers
+
+    # ✅ v6.0 REQUIRED: Advanced LoRA variants (3 fields)
+    use_dora: false                 # REQUIRED: DoRA (Weight-Decomposed LoRA)
+    use_rslora: false               # REQUIRED: rsLoRA (Rank-Stabilized LoRA)
+    init_lora_weights: gaussian     # REQUIRED: gaussian, eva, pissa, olora, loftq
+
+    # Optional: QLoRA quantization (best-practice defaults, rarely need changes)
+    # bnb_4bit_quant_type: nf4        # nf4 (recommended) or fp4
+    # bnb_4bit_compute_dtype: bfloat16  # bfloat16 or float16
+    # bnb_4bit_use_double_quant: true   # Nested quantization for memory efficiency
+
+  # =========================================================================
+  # ADALORA CONFIGURATION (use when type: adalora)
+  # =========================================================================
+  # AdaLoRA: Adaptive rank allocation - prunes less important singular values
+  # adalora:
+  #   # ✅ v6.0 REQUIRED: AdaLoRA core (2 fields)
+  #   init_r: 12                    # REQUIRED: Initial rank for all adapters
+  #   target_r: 8                   # REQUIRED: Target average rank (after pruning)
+  #
+  #   # ✅ v6.0 REQUIRED: Common LoRA parameters (4 fields)
+  #   lora_alpha: 32                # REQUIRED
+  #   lora_dropout: 0.05            # REQUIRED
+  #   bias: none                    # REQUIRED
+  #   target_modules: "all-linear"  # REQUIRED
+  #
+  #   # Optional: Scheduling (reasonable defaults)
+  #   # tinit: 200                    # Steps before rank pruning begins
+  #   # tfinal: 1000                  # Steps when rank pruning ends
+  #   # delta_t: 10                   # Interval between rank pruning steps
+  #   # beta1: 0.85                   # EMA coefficient for importance scores
+  #   # beta2: 0.85                   # EMA coefficient for second moment
+
+  # =========================================================================
+  # STRATEGIES (required)
+  # =========================================================================
+  strategies:
+    - strategy_type: sft
+      dataset: default
+      # Output dirs are hardcoded (no training.output_dir / checkpoint_output):
+      # - output root: {run_workspace}/output
+      # - per phase:   {run_workspace}/output/phase_<idx>_<strategy_type>
+      hyperparams:
+        # Phase-specific overrides (all optional, inherit from global)
+        epochs: 3
+        learning_rate: 2.0e-4
+        max_length: 2048
+        packing: false
+
+  # Multi-phase example (uncomment to use):
+  # strategies:
+  #   # Phase 1: Domain adaptation
+  #   - strategy_type: cpt
+  #     dataset: corpus
+  #     hyperparams:
+  #       epochs: 1
+  #       learning_rate: 1.0e-5
+  #
+  #   # Phase 2: Instruction fine-tuning
+  #   - strategy_type: sft
+  #     dataset: default
+  #     hyperparams:
+  #       epochs: 2
+  #       learning_rate: 2.0e-4
+  #
+  #   # Phase 3: Alignment (CRITICAL: LR 10-100x lower!)
+  #   - strategy_type: dpo
+  #     dataset: preferences
+  #     hyperparams:
+  #       epochs: 1
+  #       learning_rate: 5.0e-6
+  #       beta: 0.1                  # DPO specific
+  #
+  #   # Phase 4: Online RL (SAPO/GRPO)
+  #   - strategy_type: sapo
+  #     dataset: prompts
+  #     hyperparams:
+  #       epochs: 1
+  #       learning_rate: 1.0e-6
+  #       num_generations: 4         # SAPO specific
+  #       max_prompt_length: 1024    # SAPO REQUIRED
+  #       max_completion_length: 256 # SAPO REQUIRED
+
+  # HuggingFace dataset example:
+  # strategies:
+  #   - strategy_type: sft
+  #     dataset: alpaca              # Uses HuggingFace dataset
+  #     hyperparams:
+  #       epochs: 1
+  #       learning_rate: 2.0e-4
+
+  # =========================================================================
+  # GLOBAL HYPERPARAMETERS (v6.0)
+  # =========================================================================
+  # GlobalHyperparametersConfig: 5 core fields REQUIRED, advanced optional
+  # Phase overrides: strategies[].hyperparams (PhaseHyperparametersConfig - all optional)
+  # Merge priority: Phase > Global
+  hyperparams:
+    # ✅ v6.0 REQUIRED: Core training parameters (5 fields)
+    per_device_train_batch_size: 4  # REQUIRED
+    gradient_accumulation_steps: 4  # REQUIRED
+    learning_rate: 2.0e-4            # REQUIRED (strategies can override)
+    warmup_ratio: 0.05              # REQUIRED
+    epochs: 3                       # REQUIRED (strategies can override)
+
+    # Optional: Advanced parameters (defaults provided)
+    # lr_scheduler_type: cosine
+    # weight_decay: 0.01
+    # bf16: true
+    # fp16: false
+    # gradient_checkpointing: true
+    # logging_steps: 10
+    # save_steps: 500
+
+    # Optional: Strategy-specific (can set globally or per-phase)
+    # max_length: 2048               # SFT/DPO/ORPO
+    # packing: false                 # SFT only
+    # beta: 0.1                      # DPO/ORPO
+
+# ============================================================================
+# PROVIDERS - GPU server registry
+# ============================================================================
+# Named providers - training.provider references by name
+# Provider is selected by key (training.provider) matching a name in `providers:`
+# ============================================================================
+providers:
+  # ---------------------------------------------------------------------------
+  # LOCAL GPU: Linux host with NVIDIA GPU (via SSH)
+  # ---------------------------------------------------------------------------
+  # Use for: experiments, debugging, small models (up to 7B with QLoRA)
+  # Cost: $0 (only electricity)
+  # Workspace: workspace_path/run_YYYYMMDD_HHMMSS_PID/ (isolated per run)
+  # ---------------------------------------------------------------------------
+  single_node:
+    connect:
+      ssh:
+        alias: pc                      # SSH alias from ~/.ssh/config (host, port, user, key)
+
+    cleanup:
+      cleanup_workspace: false        # Delete run directory after training
+      keep_on_error: true             # Keep workspace on error for debugging
+      on_interrupt: true              # Ctrl+C (SIGINT): allow cleanup policy to run
+
+    training:
+      workspace_path: /home/user/workspace  # REQUIRED
+      training_start_timeout: 120     # Max seconds to wait for training start
+      gpu_type: "RTX 4060"            # For logging (MemoryManager auto-detects)
+
+    inference:
+      serve:
+        host: "127.0.0.1"
+        port: 8000
+        workspace: "/home/user/inference"  # Remote inference workspace
+
+  # ---------------------------------------------------------------------------
+  # RUNPOD: Cloud GPU (A40, H100, etc.)
+  # ---------------------------------------------------------------------------
+  # Use for: production training, large models, full dataset runs
+  # Cost: $0.79/hr (A40)
+  # ---------------------------------------------------------------------------
+  runpod:
+    connect:
+      ssh:
+        key_path: "~/.ssh/id_ed25519"
+    cleanup:
+      auto_delete_pod: true           # Delete pod after training
+      keep_pod_on_error: false        # Keep for debugging if error
+      on_interrupt: true              # Ctrl+C (SIGINT): terminate pod if true, keep if false
+    training:
+      gpu_type: "NVIDIA RTX 2000 Ada Generation"  # REQUIRED: explicit GPU type (no default)
+      cloud_type: ALL                 # ALL, SECURE, COMMUNITY
+      image_name: ryotenkai/ryotenkai-training-runtime:latest
+      container_disk_gb: 100
+      volume_disk_gb: 20
+      ports: "8888/http,22/tcp"
+    inference:
+      # Pods inference settings (required only when inference.provider: runpod)
+      # To use without network volume (higher GPU availability): set volume: null and configure pod.volume_disk_gb
+      volume: null
+      # pod: null  # Uncomment and fill when using runpod inference provider:
+      # pod:
+      #   name_prefix: "ryotenkai-vllm-pod"
+      #   image_name: "ryotenkai/inference-vllm:latest"
+      #   container_disk_gb: 50
+      #   volume_disk_gb: 50   # Pod Volume for /workspace (used only without network volume)
+      pod: null
+      serve:
+        port: 8000
+
+# ============================================================================
+# INTEGRATIONS (all in one place)
+# ============================================================================
+experiment_tracking:
+  # -------------------------------------------------------------------------
+  # MLflow: Production-ready tracking with PostgreSQL + MinIO
+  # Stack: ./scripts/mlflow-stack-start.sh → http://localhost:5002
+  #
+  # Architecture:
+  #   - PostgreSQL: metadata (runs, params, metrics)
+  #   - MinIO: artifacts (models, plots, logs) via S3 API
+  #   - MLflow Server: REST API with --serve-artifacts
+  #
+  # Clients need ONLY tracking_uri - server handles MinIO credentials!
+  # -------------------------------------------------------------------------
+  mlflow:
+    enabled: true
+    tracking_uri: "http://localhost:5002"
+    experiment_name: ryotenkai
+    log_artifacts: true
+    log_model: false
+
+    # System metrics (GPU/CPU/RAM) - MLflow built-in monitoring
+    system_metrics_sampling_interval: 5     # seconds (default: 10)
+    system_metrics_samples_before_logging: 1  # samples before logging (default: 1)
+
+    # SystemMetricsCallback - manual GPU/CPU tracking (via pynvml/psutil)
+    # WARNING: May cause hangs on some cloud GPU images (RunPod)
+    # Enable only if MLflow built-in system metrics are not working
+    system_metrics_callback_enabled: false  # Set true to enable manual tracking
+    system_metrics_callback_interval: 10    # Log every N steps (if enabled)
+
+    # Optional: custom description file (default: src/training/templates/experiment_description.md)
+    # run_description_file: "config/experiment_description.md"
+
+  # -------------------------------------------------------------------------
+  # HuggingFace Hub: model hosting
+  # Setup: huggingface.co → Settings → Access Tokens (write permission)
+  # Env: HF_TOKEN (required)
+  # -------------------------------------------------------------------------
+  huggingface:
+    enabled: true                    # false = disable upload to HF Hub
+    repo_id: <your-org>/ryotenkai-model
+    private: true
+
+# ============================================================================
+# INFERENCE DEPLOYMENT (Stage 7)
+# ============================================================================
+inference:
+  enabled: false                     # Enable inference deployment after training
+  provider: single_node              # single_node | runpod
+  engine: vllm                       # vllm
+
+  engines:
+    vllm:
+      # REQUIRED: Unified inference image (used for both merge and serve)
+      merge_image: "ryotenkai/inference-vllm:v1.0"
+      serve_image: "ryotenkai/inference-vllm:v1.0"
+
+      # Optional: Technical parameters (reasonable defaults)
+      # tensor_parallel_size: 1
+      # max_model_len: 4096
+      # gpu_memory_utilization: 0.90
+      # quantization: null                   # null, awq, gptq
+      # enforce_eager: false
+
+  common:
+    model_source: auto               # 'auto' or explicit model path/HF repo
+    health_check:
+      enabled: true
+      timeout_seconds: 120
+      interval_seconds: 5            # Also used for inference log polling
+    lora:
+      merge_before_deploy: true      # Merge adapter before serving
+
+# ============================================================================
+# EVALUATION (Stage: ModelEvaluator)
+# ============================================================================
+# Requires inference.enabled=true (fail-fast validation at config load time).
+# When enabled=true, InferenceDeployer activates the endpoint for evaluation,
+# then deletes it after evaluation (for runpod_pods).
+#
+# Fail-fast secrets: if a plugin is enabled and EVAL_* secret is missing —
+# pipeline stops at startup (validate_eval_plugin_secrets in orchestrator).
+#
+# Dataset: separate JSONL file, NOT the training eval split.
+#   Format: {"question": "...", "expected_answer": "...", "context": "..."}
+#   or chat format: {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
+#
+# Evaluators: flat list of plugin instances.
+#   Each item: id, plugin, enabled, save_report, params, thresholds
+# ============================================================================
+evaluation:
+  enabled: false                  # Set true to run evaluation after training
+
+  dataset:
+    path: data/eval/helixql_eval.jsonl   # Absolute or project-relative path
+
+  save_answers_md: true           # Save answers.md with model answers to runs/{run}/evaluation/
+
+  evaluators:
+    - id: syntax_main
+      plugin: helixql_syntax      # Plugin name (matches EvaluatorPlugin.name)
+      enabled: true
+      save_report: false          # Save helixql_syntax_report.md with per-sample invalidity reasons
+      params: {}                  # No params currently
+      thresholds:
+        min_valid_ratio: 0.80     # 80% of responses must be valid HelixQL
+
+    - id: judge_main
+      plugin: cerebras_judge      # Cerebras LLM-as-judge (scale 1-5, normalized to [0,1])
+      enabled: false              # Requires EVAL_CEREBRAS_API_KEY in secrets.env
+      save_report: false          # Save cerebras_judge_report.md with per-sample reasoning
+      params:
+        model: "gpt-oss-120b"     # Cerebras judge model (available: gpt-oss-120b, llama3.1-8b)
+        max_samples: 50           # Limit samples to control cost
+        temperature: 0.0          # Deterministic scoring
+        max_tokens: 512           # Enough for JSON + CoT reasoning
+        max_retries: 3            # Retry on rate limit / 5xx
+      thresholds:
+        min_mean_score: 0.6       # Normalized threshold (= score 3.4 on 1-5 scale)

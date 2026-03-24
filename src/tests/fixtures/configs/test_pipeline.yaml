@@ -1,0 +1,96 @@
+# Test Pipeline Configuration
+# Minimal config for testing without real GPU/RunPod
+
+model:
+  name: test-model/test-llm
+  torch_dtype: bfloat16
+  device_map: auto
+  trust_remote_code: false
+  flash_attention: false
+
+datasets:
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        train: tests/fixtures/datasets/test_chat.jsonl
+        eval: null
+    max_samples: null
+
+training:
+  provider: single_node
+  type: qlora
+  strategies:
+    - strategy_type: sft
+      dataset: default
+      hyperparams:
+        epochs: 1
+        learning_rate: 2.0e-4
+  lora:
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    bias: none
+    target_modules: "all-linear"
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_use_double_quant: true
+  hyperparams:
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 2
+    learning_rate: 2.0e-4
+    warmup_ratio: 0.05
+    epochs: 1
+    lr_scheduler_type: cosine
+    fp16: false
+    bf16: true
+    gradient_checkpointing: true
+    logging_steps: 1
+    save_steps: 10
+    max_length: 256
+    packing: false
+
+providers:
+  single_node:
+    connect:
+      ssh:
+        alias: test
+    cleanup:
+      cleanup_workspace: true
+      keep_on_error: false
+      on_interrupt: true
+    training:
+      workspace_path: /tmp/test_workspace
+      docker_image: test/training:latest
+      mock_mode: true
+    inference:
+      serve:
+        workspace: /tmp/test_inference
+        host: 127.0.0.1
+        port: 8000
+
+inference:
+  enabled: false
+  provider: single_node
+  engine: vllm
+  engines:
+    vllm:
+      merge_image: test/merge:latest
+      serve_image: test/vllm:latest
+  common:
+    model_source: auto
+
+experiment_tracking:
+  mlflow:
+    enabled: false
+    tracking_uri: "http://localhost:5002"
+    experiment_name: test
+    log_artifacts: false
+    log_model: false
+  huggingface:
+    enabled: false
+    repo_id: test/test-model
+    private: true
