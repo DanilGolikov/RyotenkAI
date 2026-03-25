@@ -60,12 +60,33 @@ elif [ -f "secrets.env" ]; then
     echo "[OK] secrets.env already exists"
 fi
 
+# --- MLflow stack (PostgreSQL + MinIO + MLflow UI) ---
+MLFLOW_START="docker/mlflow/start.sh"
+if command -v docker &>/dev/null && docker info &>/dev/null; then
+    if docker compose version &>/dev/null || docker-compose version &>/dev/null; then
+        if [ -f "$MLFLOW_START" ]; then
+            echo ""
+            echo "Starting MLflow stack ..."
+            if bash "$MLFLOW_START" up; then
+                echo "[OK] MLflow stack is up (see URLs below)"
+            else
+                echo "[WARN] MLflow stack did not start — fix Docker or docker/mlflow/.env.mlflow, then run:  make docker-mlflow-up"
+            fi
+        fi
+    else
+        echo "[WARN] Docker Compose plugin not found — MLflow not started. Install it, then run:  make docker-mlflow-up"
+    fi
+else
+    echo "[WARN] Docker is not running or not installed — MLflow stack skipped. When ready:  make docker-mlflow-up"
+fi
+
 echo ""
 echo "=== Setup complete ==="
 echo ""
 echo "Next steps:"
 echo "  1. Activate the venv:  source $VENV_DIR/bin/activate"
 echo "  2. Fill in secrets:    edit secrets.env with your API keys"
-echo "  3. Try the CLI:        ryotenkai --help"
-echo "  4. Run tests:          make test"
-echo "  5. Launch TUI:         ryotenkai tui"
+echo "  3. MLflow:             http://localhost:5002  (if stack started; set passwords in docker/mlflow/.env.mlflow)"
+echo "  4. Try the CLI:        ryotenkai --help"
+echo "  5. Run tests:          make test"
+echo "  6. Launch TUI:         ryotenkai tui"
