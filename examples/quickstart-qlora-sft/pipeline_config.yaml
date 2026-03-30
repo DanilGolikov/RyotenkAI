@@ -9,7 +9,7 @@
 # Estimated training time: ~5-10 minutes for 3 epochs.
 #
 # Quick start:
-#   1. Fill in the TODO sections below
+#   1. Fill in the TODO sections below (SSH keys, workspace paths, system prompt, …)
 #   2. Run:  ryotenkai config-validate --config examples/quickstart-qlora-sft/pipeline_config.yaml
 #   3. Run:  python -m src.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
 #
@@ -121,7 +121,8 @@ providers:
         # TODO: Set a directory on your GPU machine for inference artifacts
         workspace: "/home/user/inference"
       llm:
-        system_prompt_mlflow_name: "helixql-prompt"
+        # TODO: Path to your system prompt text file (relative to repo root). For MLflow Prompt Registry instead, set system_prompt_mlflow_name and remove system_prompt_path.
+        system_prompt_path: "examples/quickstart-qlora-sft/prompts/system_prompt.txt"
 
   # ── RunPod (cloud GPU) ────────────────────────────────────────────────────
   runpod:
@@ -162,7 +163,8 @@ providers:
       serve:
         port: 8000
       llm:
-        system_prompt_mlflow_name: "helixql-prompt"
+        # TODO: Path to your system prompt text file (relative to repo root). For MLflow Prompt Registry instead, set system_prompt_mlflow_name and remove system_prompt_path.
+        system_prompt_path: "examples/quickstart-qlora-sft/prompts/system_prompt.txt"
 
 # =============================================================================
 # EVALUATION (optional — runs after training + inference deployment)
