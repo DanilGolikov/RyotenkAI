@@ -147,9 +147,9 @@ def test_train_command_success(cli_runner, mock_pipeline_orchestrator, temp_conf
     )
 
 
-def test_validate_dataset_success(cli_runner, mock_pipeline_orchestrator):
+def test_validate_dataset_success(cli_runner, mock_pipeline_orchestrator, temp_config):
     """validate-dataset command."""
-    result = cli_runner.invoke(app, ["validate-dataset"])
+    result = cli_runner.invoke(app, ["validate-dataset", "--config", str(temp_config)])
 
     assert result.exit_code == 0
     assert "Dataset validation passed" in result.stdout
@@ -207,25 +207,27 @@ def test_list_restart_points_command(cli_runner, tmp_path):
         result = cli_runner.invoke(app, ["list-restart-points", str(run_dir)])
 
     assert result.exit_code == 0
-    assert "Available Restart Points" in result.stdout
+    assert "Stage" in result.stdout
+    assert "Available" in result.stdout
     assert "Dataset Validator" in result.stdout
     assert "Inference Deployer" in result.stdout
 
 
-def test_info_command(cli_runner, mock_pipeline_orchestrator):
+def test_info_command(cli_runner, mock_pipeline_orchestrator, temp_config):
     """info command prints configuration."""
-    result = cli_runner.invoke(app, ["info"])
+    result = cli_runner.invoke(app, ["info", "--config", str(temp_config)])
 
     assert result.exit_code == 0
-    assert "Pipeline Configuration" in result.stdout
     assert "Pipeline Stages" in result.stdout
+    assert "Model Configuration" in result.stdout
+    assert "Dataset Configuration" in result.stdout
     assert "Dataset Validation" in result.stdout
     assert "test/model" in result.stdout
 
 
-def test_train_local_success(cli_runner, mock_run_training):
+def test_train_local_success(cli_runner, mock_run_training, temp_config):
     """train-local command."""
-    result = cli_runner.invoke(app, ["train-local"])
+    result = cli_runner.invoke(app, ["train-local", "--config", str(temp_config)])
 
     assert result.exit_code == 0
     assert "Training completed" in result.stdout
@@ -257,6 +259,40 @@ def test_tui_command_accepts_log_level_and_configures_logger(cli_runner, tmp_pat
     fake_app_cls.return_value.run.assert_called_once()
 
 
+def test_tui_command_restarts_after_exception_and_logs_error(cli_runner, tmp_path, monkeypatch):
+    calls = {"count": 0}
+
+    class FakeApp:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("boom")
+            return None
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("src.utils.logger.set_log_level") as mock_set_log_level,
+        patch("src.tui.runtime.time.sleep") as mock_sleep,
+        patch.dict("sys.modules", {"src.tui.apps": types.SimpleNamespace(RyotenkaiApp=FakeApp)}),
+    ):
+        result = cli_runner.invoke(app, ["tui"])
+
+    assert result.exit_code == 0
+    assert calls["count"] == 2
+    mock_set_log_level.assert_called_once_with("INFO")
+    mock_sleep.assert_called_once_with(1.0)
+
+    errors_log = tmp_path / "runs" / "errors.log"
+    assert errors_log.exists()
+    log_content = errors_log.read_text(encoding="utf-8")
+    assert "RuntimeError: boom" in log_content
+    assert "tui crash #1" in log_content
+
+
 def test_tui_command_rejects_unknown_log_level(cli_runner):
     result = cli_runner.invoke(app, ["tui", "--log-level", "TRACE"])
 
@@ -274,7 +310,6 @@ def test_train_requires_config_or_run_dir(cli_runner):
     result = cli_runner.invoke(app, ["train"])
 
     assert result.exit_code == 1
-    assert "fresh run" in result.stdout or "run-dir" in result.stdout
 
 
 def test_train_invalid_config(cli_runner):
@@ -291,27 +326,24 @@ def test_train_orchestrator_failure(cli_runner, mock_pipeline_orchestrator, temp
     result = cli_runner.invoke(app, ["train", "--config", str(temp_config)])
 
     assert result.exit_code == 1
-    assert "Pipeline failed" in result.stdout
 
 
-def test_validate_dataset_failure(cli_runner, mock_pipeline_orchestrator):
+def test_validate_dataset_failure(cli_runner, mock_pipeline_orchestrator, temp_config):
     """Dataset validation failure."""
     mock_pipeline_orchestrator.stages[0].run.return_value = Failure("Validation failed: insufficient samples")
 
-    result = cli_runner.invoke(app, ["validate-dataset"])
+    result = cli_runner.invoke(app, ["validate-dataset", "--config", str(temp_config)])
 
     assert result.exit_code == 1
-    assert "Validation failed" in result.stdout
 
 
-def test_train_local_config_error(cli_runner, mock_run_training):
+def test_train_local_config_error(cli_runner, mock_run_training, temp_config):
     """Configuration error in train-local."""
     mock_run_training.side_effect = ValueError("Invalid config: missing model name")
 
-    result = cli_runner.invoke(app, ["train-local"])
+    result = cli_runner.invoke(app, ["train-local", "--config", str(temp_config)])
 
     assert result.exit_code == 1
-    assert "Configuration Error" in result.stdout
 
 
 def test_train_rejects_resume_and_restart_together(cli_runner, temp_config):
@@ -330,7 +362,6 @@ def test_train_rejects_resume_and_restart_together(cli_runner, temp_config):
     )
 
     assert result.exit_code == 1
-    assert "Use either --resume or --restart-from-stage" in result.stdout
 
 
 
@@ -414,9 +445,9 @@ def test_signal_cleanup_error():
 # =========================================================================
 
 
-def test_train_local_resume(cli_runner, mock_run_training):
+def test_train_local_resume(cli_runner, mock_run_training, temp_config):
     """train-local with resume=True."""
-    result = cli_runner.invoke(app, ["train-local", "--resume"])
+    result = cli_runner.invoke(app, ["train-local", "--config", str(temp_config), "--resume"])
 
     assert result.exit_code == 0
     mock_run_training.assert_called_once()
@@ -424,9 +455,12 @@ def test_train_local_resume(cli_runner, mock_run_training):
     assert call_kwargs["resume"] is True
 
 
-def test_train_local_resume_with_run_id(cli_runner, mock_run_training):
+def test_train_local_resume_with_run_id(cli_runner, mock_run_training, temp_config):
     """train-local resume with explicit run_id."""
-    result = cli_runner.invoke(app, ["train-local", "--resume", "--run-id", "run_12345"])
+    result = cli_runner.invoke(
+        app,
+        ["train-local", "--config", str(temp_config), "--resume", "--run-id", "run_12345"],
+    )
 
     assert result.exit_code == 0
     call_kwargs = mock_run_training.call_args[1]

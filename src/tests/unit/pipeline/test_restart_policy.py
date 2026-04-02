@@ -77,18 +77,20 @@ def test_late_stage_config_drift_allowed_only_for_late_stages(tmp_path: Path) ->
         current_output_lineage={},
     )
 
-    orchestrator._validate_config_drift(
+    drift_error = orchestrator._validate_config_drift(
         state=state,
         start_stage_name=StageNames.INFERENCE_DEPLOYER,
         config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash"},
         resume=False,
     )
+    assert drift_error is None
 
-    with pytest.raises(ValueError, match="late_stage config changed"):
-        orchestrator._validate_config_drift(
-            state=state,
-            start_stage_name=StageNames.MODEL_RETRIEVER,
-            config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash"},
-            resume=False,
-        )
+    drift_error = orchestrator._validate_config_drift(
+        state=state,
+        start_stage_name=StageNames.MODEL_RETRIEVER,
+        config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash"},
+        resume=False,
+    )
+    assert drift_error is not None
+    assert "late_stage config changed" in drift_error.message
 

@@ -32,7 +32,6 @@ pytestmark = pytest.mark.unit
 
 def _mk_cfg(
     *,
-    enabled: bool = True,
     tracking_uri: str = "http://127.0.0.1:5002",
     system_metrics_callback_enabled: bool = False,
     run_description_file: str | None = None,
@@ -42,7 +41,7 @@ def _mk_cfg(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -80,7 +79,6 @@ def _mk_cfg(
         ),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=enabled,
                 tracking_uri=tracking_uri,
                 experiment_name="test",
                 log_artifacts=log_artifacts,
@@ -374,8 +372,8 @@ class TestDescriptionAndConnectivityAndRuns:
         mgr._mlflow = SimpleNamespace(end_run=lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
         mgr.end_run(status="FAILED")
 
-    def test_start_nested_run_yields_none_when_disabled_and_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mgr = MLflowManager(_mk_cfg(enabled=False))
+    def test_start_nested_run_yields_none_when_not_setup_and_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        mgr = MLflowManager(_mk_cfg())
         with mgr.start_nested_run("x") as run:
             assert run is None
 

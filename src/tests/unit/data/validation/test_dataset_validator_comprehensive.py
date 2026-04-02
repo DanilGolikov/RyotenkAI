@@ -73,7 +73,7 @@ class TestDatasetValidatorBoundary:
         assert ctx["validation_status"] == "passed"
         assert ctx["primary.train.min_samples_main.sample_count"] == 10
 
-    def test_empty_dataset_is_critical_failure_when_enabled(self, tmp_path) -> None:
+    def test_empty_dataset_load_error_is_reported_as_failed_validation(self, tmp_path) -> None:
         dataset_file = tmp_path / "empty.jsonl"
         dataset_file.write_text("", encoding="utf-8")
 
@@ -90,8 +90,10 @@ class TestDatasetValidatorBoundary:
         ensure_validation_plugins_discovered(force=True)
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_failure()
-        assert "failed" in str(result.unwrap_err()).lower()
+        assert result.is_success()
+        ctx = result.unwrap()
+        assert ctx["validation_status"] == "failed"
+        assert any("DATASET_LOAD_ERROR" in warning for warning in ctx.get("warnings", []))
 
     def test_empty_dataset_is_non_critical_when_critical_failures_zero(self, tmp_path) -> None:
         dataset_file = tmp_path / "empty.jsonl"

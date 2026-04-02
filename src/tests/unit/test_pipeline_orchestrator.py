@@ -49,8 +49,21 @@ def mock_config() -> MagicMock:
         train_path="data/train.jsonl",
         adapter_type="chat",
     )
-    config.experiment_tracking.mlflow = None  # Disabled by default
+    config.experiment_tracking.mlflow = MagicMock(
+        tracking_uri="http://localhost:5002",
+        system_metrics_callback_enabled=False,
+    )
     return config
+
+
+@pytest.fixture(autouse=True)
+def bypass_mlflow_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preflight fail-fast behavior is covered in dedicated tests."""
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_ensure_mlflow_preflight",
+        lambda self, *, state: None,
+    )
 
 
 @pytest.fixture

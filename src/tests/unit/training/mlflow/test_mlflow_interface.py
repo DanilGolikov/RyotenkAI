@@ -34,10 +34,6 @@ class _ConcreteManager:
     """Minimal duck-type implementation that satisfies IMLflowManager."""
 
     @property
-    def is_enabled(self) -> bool:
-        return True
-
-    @property
     def is_active(self) -> bool:
         return True
 
@@ -183,10 +179,6 @@ class TestProtocolStubMethods:
 
     def _dummy(self):
         return MagicMock()
-
-    def test_is_enabled_stub(self):
-        result = IMLflowManager.is_enabled.fget(self._dummy())
-        assert result is None  # `...` evaluates to None as function return
 
     def test_is_active_stub(self):
         result = IMLflowManager.is_active.fget(self._dummy())

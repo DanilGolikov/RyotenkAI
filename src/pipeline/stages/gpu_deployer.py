@@ -241,7 +241,9 @@ class GPUDeployer(PipelineStage):
         # Step 5: Upload files
         logger.info("Uploading files...")
         upload_start = time.time()
-        upload_result = self.deployment.deploy_files(ssh_client, context)
+        upload_context = dict(context)
+        upload_context["resource_id"] = ssh_info.resource_id
+        upload_result = self.deployment.deploy_files(ssh_client, upload_context)
         upload_duration = time.time() - upload_start
 
         if upload_result.is_failure():
@@ -436,10 +438,18 @@ class GPUDeployer(PipelineStage):
         except Exception as e:
             logger.debug(f"[DEPLOYER] Failed to download logs on error: {e}")
 
+    def notify_pipeline_failure(self) -> None:
+        """Inform the deployer that the pipeline ended with an error.
+
+        Called by the orchestrator before cleanup() so that keep_pod_on_error
+        is respected when the failure happened outside this stage (e.g. Training Monitor).
+        """
+        if self._provider and isinstance(self._provider, _SupportsErrorMarking):
+            self._provider.mark_error()
+
     def cleanup(self) -> None:
         """Cleanup resources (disconnect from provider)."""
         if self._released:
-            # Already released by orchestrator after ModelRetriever — no-op.
             logger.debug("[DEPLOYER] cleanup() skipped: pod already released early.")
             return
         if self._provider:
@@ -447,7 +457,6 @@ class GPUDeployer(PipelineStage):
             if self._callbacks.on_cleanup:
                 self._callbacks.on_cleanup(self._provider_name)
 
-            # RunPod pods can be terminated here. Pull logs one last time before disconnect.
             if self._provider_name == PROVIDER_RUNPOD and self._ssh_client:
                 try:
                     self._download_remote_logs("cleanup")

@@ -13,19 +13,16 @@ class ExperimentTrackingConfig(StrictBaseModel):
     """
     All integrations in one place.
 
-    If a block is not specified, the integration is disabled.
+    MLflow is mandatory for pipeline observability and fail-fast launch checks.
     If specified, all fields are required.
     """
 
-    mlflow: MLflowConfig | None = Field(None)
+    mlflow: MLflowConfig = Field(...)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     def get_report_to(self) -> list[str]:
         """Get list of trackers for HuggingFace Trainer."""
-        trackers = []
-        if self.mlflow and self.mlflow.enabled:
-            trackers.append("mlflow")
-        return trackers if trackers else ["none"]
+        return ["mlflow"]
 
 
 __all__ = [

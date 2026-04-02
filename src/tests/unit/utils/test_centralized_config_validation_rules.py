@@ -5,11 +5,13 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
+    ExperimentTrackingConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
     LoraConfig,
+    MLflowConfig,
     ModelConfig,
     PipelineConfig,
     StrategyPhaseConfig,
@@ -74,6 +76,17 @@ def _inference_cfg_disabled() -> InferenceConfig:
     )
 
 
+def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
+    return ExperimentTrackingConfig(
+        mlflow=MLflowConfig(
+            tracking_uri="http://127.0.0.1:5002",
+            experiment_name="test-exp",
+            log_artifacts=False,
+            log_model=False,
+        )
+    )
+
+
 def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: dict[str, DatasetConfig]) -> PipelineConfig:
     return PipelineConfig(
         model=_model_cfg(),
@@ -81,6 +94,7 @@ def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: di
         providers=providers,
         datasets=datasets,
         inference=_inference_cfg_disabled(),
+        experiment_tracking=_experiment_tracking_cfg(),
     )
 
 
@@ -88,7 +102,7 @@ def test_rule_1_strategies_chain_invalid_transition_fails_fast() -> None:
     with pytest.raises(ValidationError, match="Invalid transition"):
         TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="sft"),
@@ -103,7 +117,7 @@ def test_rule_2_dataset_reference_must_exist_in_registry() -> None:
             training=TrainingOnlyConfig(
                 provider=None,
                 type="qlora",
-                lora=_lora_cfg(),
+                qlora=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="missing")],
             ),
@@ -118,7 +132,7 @@ def test_rule_3_training_provider_must_exist_in_providers_registry_if_set() -> N
             training=TrainingOnlyConfig(
                 provider="runpod",
                 type="qlora",
-                lora=_lora_cfg(),
+                qlora=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="default")],
             ),
@@ -131,8 +145,7 @@ def test_rule_4_adalora_requires_adalora_block() -> None:
     with pytest.raises(ValidationError, match=r"requires 'training\.adalora:'"):
         TrainingOnlyConfig(
             type="adalora",
-            # still required by schema today (even if not used in adalora mode)
-            lora=_lora_cfg(),
+            lora=_lora_cfg(),  # optional field, but adalora: block is missing → fails
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],
         )

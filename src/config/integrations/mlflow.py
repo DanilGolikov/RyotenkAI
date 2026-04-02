@@ -18,7 +18,6 @@ class MLflowConfig(StrictBaseModel):
         MLFLOW_TRACKING_TOKEN - for authenticated servers
     """
 
-    enabled: bool = Field(..., description="Enable MLflow tracking")
     tracking_uri: str = Field(..., description="MLflow tracking server URI")
     experiment_name: str = Field(..., description="MLflow experiment name")
     log_artifacts: bool = Field(..., description="Log artifacts to MLflow")

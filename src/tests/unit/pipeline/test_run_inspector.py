@@ -88,12 +88,17 @@ def _make_state(
                 started_at="2026-03-19T03:06:12+00:00",
                 completed_at="2026-03-19T03:10:12+00:00",
             )
+        attempt.status = (
+            StageRunState.STATUS_FAILED
+            if n == n_attempts and status == StageRunState.STATUS_FAILED
+            else StageRunState.STATUS_COMPLETED
+        )
         attempt.started_at = "2026-03-19T03:06:00+00:00"
         attempt.completed_at = "2026-03-19T05:20:03+00:00"
         state.attempts.append(attempt)
 
     state.pipeline_status = status
-    state.active_attempt_id = state.attempts[-1].attempt_id if state.attempts else None
+    state.active_attempt_id = state.attempts[-1].attempt_id if status == StageRunState.STATUS_RUNNING else None
     store.save(state)
     return store, state
 
@@ -547,14 +552,14 @@ def test_cli_run_diff_only_one_attempt(tmp_path: Path, cli_runner: CliRunner) ->
 
 
 def test_cli_config_validate_missing_file(tmp_path: Path, cli_runner: CliRunner) -> None:
-    result = cli_runner.invoke(app, ["config-validate", str(tmp_path / "nonexistent.yaml")])
+    result = cli_runner.invoke(app, ["config-validate", "--config", str(tmp_path / "nonexistent.yaml")])
     assert result.exit_code != 0
 
 
 def test_cli_config_validate_invalid_yaml(tmp_path: Path, cli_runner: CliRunner) -> None:
     bad_yaml = tmp_path / "bad.yaml"
     bad_yaml.write_text("{invalid: yaml: :", encoding="utf-8")
-    result = cli_runner.invoke(app, ["config-validate", str(bad_yaml)])
+    result = cli_runner.invoke(app, ["config-validate", "--config", str(bad_yaml)])
     assert result.exit_code != 0
     assert "❌" in result.output or "schema" in result.output.lower()
 
@@ -572,7 +577,7 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
     with patch("src.utils.config.load_config", return_value=mock_cfg):
-        result = cli_runner.invoke(app, ["config-validate", str(config_path)])
+        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
 
     assert result.exit_code == 0
     assert "ready to run" in result.output
@@ -594,7 +599,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
     with patch("src.utils.config.load_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
-        result = cli_runner.invoke(app, ["config-validate", str(config_path)])
+        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
 
     assert result.exit_code != 0
     assert "HF_TOKEN" in result.output

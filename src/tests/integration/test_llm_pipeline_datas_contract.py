@@ -244,7 +244,7 @@ training:
     learning_rate: 2.0e-4
     warmup_ratio: 0.0
     epochs: 1
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05

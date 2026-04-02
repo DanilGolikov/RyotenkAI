@@ -85,7 +85,7 @@ class ChainRunner:
         chain_str = " → ".join(s.strategy_type.upper() for s in strategies)
 
         # Log chain-level params to existing MLflow run (created by train_v2.py)
-        if self._mlflow_manager is not None and self._mlflow_manager.is_enabled:
+        if self._mlflow_manager is not None and self._mlflow_manager.is_active:
             self._mlflow_manager.log_params(
                 {
                     "chain": chain_str,

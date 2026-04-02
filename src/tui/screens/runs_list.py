@@ -279,16 +279,17 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
     # ── Data helpers ──────────────────────────────────────────────────────────
 
     def _load_rows(self, *, preserve_cursor: bool = False) -> None:
-        """Reload run list from disk, populate DataTable, re-apply active sort."""
-        from src.pipeline.run_inspector import _STATUS_ICONS, scan_runs_dir
+        """Reload run list from disk, update DataTable rows, re-apply active sort."""
 
         table = self.query_one("#runs-table", DataTable)
         current_run_id: str | None = None
         if preserve_cursor:
             current_run_dir = self._current_run_dir()
             current_run_id = current_run_dir.name if current_run_dir is not None else None
-        table.clear()
-        self._rows = _default_runs_display_order(scan_runs_dir(self._runs_dir))
+        previous_rows = self._rows
+        next_rows = self._scan_rows()
+        self._sync_table_rows(table, previous_rows, next_rows)
+        self._rows = next_rows
 
         if not self._rows:
             self.query_one("#status-bar", Label).update(
@@ -296,33 +297,61 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             )
             return
 
-        for row in self._rows:
-            status = row.get("status", "unknown")
-            icon = _STATUS_ICONS.get(status, "?")
-            style = _STATUS_STYLE.get(status, "")
-            created = row.get("created_at", "—")
-            error_suffix = " ⚠" if row.get("error") else ""
-
-            table.add_row(
-                icon,
-                f"[{style}]{row['run_id']}[/{style}]" if style else row["run_id"],
-                f"[{style}]{status}[/{style}]" if style else status,
-                row.get("config", "—"),
-                str(row.get("attempts", 0)),
-                row.get("duration", "—") or "—",
-                created + error_suffix,
-                key=row["run_id"],
-            )
-
-        # Re-apply active sort using the built-in DataTable.sort() API.
-        if self._sort_col is not None:
-            self._apply_sort(table)
+        self._apply_current_order(table)
 
         if current_run_id is not None:
             self._restore_cursor_to_run_id(current_run_id)
         self._refresh_header_labels()
         self._refresh_status_bar()
         self.refresh_bindings()
+
+    def _scan_rows(self) -> list[dict[str, Any]]:
+        from src.pipeline.run_inspector import scan_runs_dir
+
+        return _default_runs_display_order(scan_runs_dir(self._runs_dir))
+
+    def _render_row_cells(self, row: dict[str, Any]) -> tuple[str, str, str, str, str, str, str]:
+        from src.pipeline.run_inspector import _STATUS_ICONS
+
+        status = row.get("status", "unknown")
+        icon = _STATUS_ICONS.get(status, "?")
+        style = _STATUS_STYLE.get(status, "")
+        created = row.get("created_at", "—")
+        error_suffix = " ⚠" if row.get("error") else ""
+        return (
+            icon,
+            f"[{style}]{row['run_id']}[/{style}]" if style else row["run_id"],
+            f"[{style}]{status}[/{style}]" if style else status,
+            row.get("config", "—"),
+            str(row.get("attempts", 0)),
+            row.get("duration", "—") or "—",
+            created + error_suffix,
+        )
+
+    def _sync_table_rows(
+        self,
+        table: DataTable,
+        previous_rows: list[dict[str, Any]],
+        next_rows: list[dict[str, Any]],
+    ) -> None:
+        existing_run_ids = {existing["run_id"] for existing in previous_rows}
+        next_run_ids = {row["run_id"] for row in next_rows}
+
+        for run_id in existing_run_ids - next_run_ids:
+            with contextlib.suppress(Exception):
+                table.remove_row(run_id)
+
+        for row in next_rows:
+            rendered_cells = self._render_row_cells(row)
+            if row["run_id"] not in existing_run_ids:
+                table.add_row(*rendered_cells, key=row["run_id"])
+                continue
+            for column_key, value in zip(
+                ("icon", "run_id", "status", "config", "attempts", "duration", "created"),
+                rendered_cells,
+                strict=True,
+            ):
+                table.update_cell(row["run_id"], column_key, value)
 
     def _restore_cursor_to_run_id(self, run_id: str) -> None:
         table = self.query_one("#runs-table", DataTable)
@@ -333,7 +362,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         for row_index in range(table.row_count):
             cell_key = table.coordinate_to_cell_key(Coordinate(row_index, 0))
             if str(cell_key.row_key.value) == run_id:
-                table.move_cursor(row=row_index, animate=False)
+                table.move_cursor(row=row_index, animate=False, scroll=False)
                 return
 
     def _auto_refresh_rows(self) -> None:
@@ -393,6 +422,12 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             table.sort("created", key=created_timestamp_sort_key, reverse=(self._sort_dir == "desc"))
             return
         table.sort(self._sort_col, key=plain_sort_key, reverse=(self._sort_dir == "desc"))
+
+    def _apply_current_order(self, table: DataTable) -> None:
+        if self._sort_col is None:
+            table.sort("created", key=created_timestamp_sort_key, reverse=True)
+            return
+        self._apply_sort(table)
 
     # ── Events ────────────────────────────────────────────────────────────────
 

@@ -391,7 +391,7 @@ class TestTrainingConfigIntegration:
         """TrainingOnlyConfig with valid chain should work."""
         config = TrainingOnlyConfig(
             type="qlora",
-            lora=_MIN_LORA,
+            qlora=_MIN_LORA,
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sft"), _mk_phase("dpo")],
         )
@@ -406,7 +406,7 @@ class TestTrainingConfigIntegration:
         with pytest.raises(ValidationError) as exc_info:
             _ = TrainingOnlyConfig(
                 type="qlora",
-                lora=_MIN_LORA,
+                qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
                     _mk_phase("dpo"),  # Invalid start
@@ -421,7 +421,7 @@ class TestTrainingConfigIntegration:
         with pytest.raises(ValidationError) as exc_info:
             _ = TrainingOnlyConfig(
                 type="qlora",
-                lora=_MIN_LORA,
+                qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
                     _mk_phase("sft"),
@@ -436,7 +436,7 @@ class TestTrainingConfigIntegration:
         """TrainingOnlyConfig with single strategy should validate."""
         config = TrainingOnlyConfig(
             type="qlora",
-            lora=_MIN_LORA,
+            qlora=_MIN_LORA,
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sft")],
         )
@@ -449,7 +449,7 @@ class TestTrainingConfigIntegration:
         """ORPO as standalone (valid start + terminal) should work."""
         config = TrainingOnlyConfig(
             type="qlora",
-            lora=_MIN_LORA,
+            qlora=_MIN_LORA,
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("orpo")],
         )
@@ -462,7 +462,7 @@ class TestTrainingConfigIntegration:
         """SAPO as standalone should work."""
         config = TrainingOnlyConfig(
             type="qlora",
-            lora=_MIN_LORA,
+            qlora=_MIN_LORA,
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sapo")],
         )

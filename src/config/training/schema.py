@@ -20,13 +20,15 @@ class TrainingOnlyConfig(StrictBaseModel):
     Architecture:
     - type: "qlora" | "lora" | "adalora"
     - hyperparams: GlobalHyperparametersConfig (global defaults)
-    - lora: LoraConfig (unified for both LoRA and QLoRA)
-    - adalora: AdaLoraConfig (for adaptive rank allocation)
+    - lora: LoraConfig    (use when type='lora')
+    - qlora: LoraConfig   (use when type='qlora', same structure, enables 4-bit quantization)
+    - adalora: AdaLoraConfig (use when type='adalora')
     - provider: Reference to provider from providers registry
 
-    The difference between LoRA and QLoRA is in the `type` field:
-    - type: "qlora" → 4-bit quantization + LoRA (uses lora.bnb_4bit_* settings)
-    - type: "lora"  → full precision + LoRA
+    Each type has its own named config block:
+    - type: "qlora"   → qlora: ... (4-bit quantization + LoRA, uses bnb_4bit_* settings)
+    - type: "lora"    → lora: ...  (full precision + LoRA)
+    - type: "adalora" → adalora: ... (adaptive rank allocation)
 
     Example QLoRA:
         training:
@@ -35,7 +37,7 @@ class TrainingOnlyConfig(StrictBaseModel):
             epochs: 3
             learning_rate: 2e-4
             per_device_train_batch_size: 4
-          lora:
+          qlora:
             r: 16
             lora_alpha: 32
           strategies:
@@ -54,10 +56,18 @@ class TrainingOnlyConfig(StrictBaseModel):
 
     # =========================================================================
     # ADAPTER CONFIGURATIONS
+    # Each training type has its own named block:
+    #   type: lora    → lora: ...
+    #   type: qlora   → qlora: ...
+    #   type: adalora → adalora: ...
     # =========================================================================
-    lora: LoraConfig = Field(
-        ...,
-        description="LoRA/QLoRA config (unified). QLoRA uses bnb_4bit_* settings from here.",
+    lora: LoraConfig | None = Field(
+        None,
+        description="LoRA config (use when type='lora')",
+    )
+    qlora: LoraConfig | None = Field(
+        None,
+        description="QLoRA config (use when type='qlora'). Same structure as lora, uses bnb_4bit_* settings.",
     )
     adalora: AdaLoraConfig | None = Field(
         None,
@@ -116,9 +126,9 @@ class TrainingOnlyConfig(StrictBaseModel):
         - Enumerate and call pure validator functions from `src.config.validators.*`.
         """
         # Local import to avoid circular imports.
-        from ..validators.training import validate_training_adalora_requires_block
+        from ..validators.training import validate_training_adapter_requires_block
 
-        validate_training_adalora_requires_block(self)
+        validate_training_adapter_requires_block(self)
         return self
 
     def get_effective_load_in_4bit(self) -> bool:
@@ -136,14 +146,21 @@ class TrainingOnlyConfig(StrictBaseModel):
         Get the adapter config matching the training type.
 
         Returns:
-            LoraConfig for type="qlora" or type="lora"
-            AdaLoraConfig for type="adalora"
+            LoraConfig for type="lora"   (from lora: block)
+            LoraConfig for type="qlora"  (from qlora: block)
+            AdaLoraConfig for type="adalora" (from adalora: block)
         """
         if self.type == TRAINING_TYPE_ADALORA:
             if self.adalora is None:
-                raise ValueError("type='adalora' requires 'adalora:' section in config")
+                raise ValueError("type='adalora' requires 'training.adalora:' section in config")
             return self.adalora
-        # For both qlora and lora, use the unified lora config
+        if self.type == TRAINING_TYPE_QLORA:
+            if self.qlora is None:
+                raise ValueError("type='qlora' requires 'training.qlora:' section in config")
+            return self.qlora
+        # type='lora'
+        if self.lora is None:
+            raise ValueError("type='lora' requires 'training.lora:' section in config")
         return self.lora
 
     def get_strategy_chain(self) -> list[StrategyPhaseConfig]:

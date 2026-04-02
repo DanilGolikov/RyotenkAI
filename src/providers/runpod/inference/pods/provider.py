@@ -32,6 +32,8 @@ from src.providers.inference.interfaces import (
 from src.utils.logger import logger
 from src.utils.result import Err, InferenceError, Ok, Result
 
+from ...pod_control import RunPodInferencePodControl
+from ...runpodctl_client import RunPodCtlClient
 from .api_client import RunPodPodsRESTClient
 from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
@@ -89,6 +91,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         self._serve_cfg = pods_cfg.serve
 
         self._api: RunPodPodsRESTClient | None = None
+        self._pod_control: RunPodInferencePodControl | None = None
         self._endpoint_info: EndpointInfo | None = None
 
         self._network_volume_id: str | None = None
@@ -163,7 +166,12 @@ class RunPodPodInferenceProvider(IInferenceProvider):
                 )
             )
 
-        self._api = RunPodPodsRESTClient(api_key=str(api_key))
+        api_key_str = str(api_key)
+        self._api = RunPodPodsRESTClient(api_key=api_key_str)
+        self._pod_control = RunPodInferencePodControl(
+            runpodctl=RunPodCtlClient(api_key=api_key_str),
+            api=self._api,
+        )
 
         # Fail-fast: SSH key path must exist locally (used later by scripts).
         key_path = Path(str(self._provider_cfg.connect.ssh.key_path)).expanduser()
@@ -394,9 +402,9 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
     def undeploy(self) -> Result[None, InferenceError]:
         # Policy: stop instead of delete (reuse like a personal PC).
-        if not self._api or not self._pod_id:
+        if not self._pod_control or not self._pod_id:
             return Ok(None)
-        res = self._api.stop_pod(pod_id=self._pod_id)
+        res = self._pod_control.stop_pod(pod_id=self._pod_id)
         if res.is_failure():
             stop_err = res.unwrap_err()
             return Err(InferenceError(message=str(stop_err), code="RUNPOD_POD_STOP_FAILED"))
@@ -484,7 +492,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         6. Wait for /v1/models health
         7. Return live endpoint URL
         """
-        if self._api is None:
+        if self._pod_control is None:
             return Err(
                 InferenceError(
                     message="runpod_pods: activate_for_eval called before deploy() — API client not initialized",
@@ -515,7 +523,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         from src.providers.runpod.inference.pods import pod_session
 
         session_res = pod_session.activate(
-            api=self._api,
+            api=self._pod_control,
             pod_id=self._pod_id,
             **params,
         )
@@ -541,7 +549,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         provisioned (e.g. Ctrl+C between deploy() and activate_for_eval()), the
         pod is deleted directly via API to avoid ongoing GPU billing.
         """
-        if self._api is None:
+        if self._pod_control is None:
             # deploy() was never called — nothing to clean up.
             return Ok(None)
 
@@ -552,7 +560,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
                     "[CLEANUP] activate_for_eval was not called but pod %s exists — deleting to avoid billing.",
                     self._pod_id,
                 )
-                del_res = self._api.delete_pod(pod_id=self._pod_id)
+                del_res = self._pod_control.delete_pod(pod_id=self._pod_id)
                 if del_res.is_failure():
                     del_err = del_res.unwrap_err()
                     return Err(
@@ -569,7 +577,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         from src.providers.runpod.inference.pods import pod_session
 
         result = pod_session.deactivate(
-            api=self._api,
+            api=self._pod_control,
             state=self._eval_session,
             key_path=key_path,
         )
@@ -944,6 +952,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
     def _stop_pod_if_running(self, *, pod_id: str) -> Result[None, InferenceError]:
         assert self._api is not None
+        assert self._pod_control is not None
         get_res = self._api.get_pod(pod_id=pod_id)
         if get_res.is_failure():
             get_err = get_res.unwrap_err()
@@ -952,7 +961,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         status = str(pod.get("desiredStatus") or "")
         if status == "RUNNING":
             logger.info(f"🛑 Stopping RunPod Pod after provisioning: {pod_id}")
-            stop_res = self._api.stop_pod(pod_id=pod_id)
+            stop_res = self._pod_control.stop_pod(pod_id=pod_id)
             if stop_res.is_failure():
                 stop_err = stop_res.unwrap_err()
                 return Err(InferenceError(message=str(stop_err), code="RUNPOD_POD_STOP_FAILED"))

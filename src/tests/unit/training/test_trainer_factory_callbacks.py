@@ -74,25 +74,20 @@ class StubStrategyFactory:
 
 
 class FakeMLflowManager:
-    def __init__(self, *, enabled: bool = True, active: bool = True):
-        self._enabled = enabled
+    def __init__(self, *, active: bool = True):
         self._active = active
-
-    @property
-    def is_enabled(self) -> bool:
-        return self._enabled
 
     @property
     def is_active(self) -> bool:
         return self._active
 
 
-def _mk_cfg(*, mlflow_enabled: bool, callback_enabled: bool, callback_interval: int) -> PipelineConfig:
+def _mk_cfg(*, callback_enabled: bool, callback_interval: int) -> PipelineConfig:
     return PipelineConfig(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -130,7 +125,6 @@ def _mk_cfg(*, mlflow_enabled: bool, callback_enabled: bool, callback_interval: 
         ),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=mlflow_enabled,
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 log_artifacts=False,
@@ -142,7 +136,7 @@ def _mk_cfg(*, mlflow_enabled: bool, callback_enabled: bool, callback_interval: 
     )
 
 
-def test_callbacks_added_when_mlflow_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
     # Avoid exercising PEFT config construction in this unit test
@@ -150,7 +144,7 @@ def test_callbacks_added_when_mlflow_enabled(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(mlflow_enabled=True, callback_enabled=True, callback_interval=7)
+    cfg = _mk_cfg(callback_enabled=True, callback_interval=7)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -160,7 +154,7 @@ def test_callbacks_added_when_mlflow_enabled(monkeypatch: pytest.MonkeyPatch) ->
         train_dataset=MagicMock(),
         config=cfg,
         output_dir="output/phase_0_sft",
-        mlflow_manager=FakeMLflowManager(enabled=True, active=True),
+        mlflow_manager=FakeMLflowManager(active=True),
     )
 
     callbacks = trainer.kwargs.get("callbacks")
@@ -178,7 +172,7 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(mlflow_enabled=True, callback_enabled=False, callback_interval=10)
+    cfg = _mk_cfg(callback_enabled=False, callback_interval=10)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -188,7 +182,7 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
         train_dataset=MagicMock(),
         config=cfg,
         output_dir="output/phase_0_sft",
-        mlflow_manager=FakeMLflowManager(enabled=True, active=False),
+        mlflow_manager=FakeMLflowManager(active=False),
     )
 
     training_cfg = trainer.kwargs["args"]
@@ -196,14 +190,14 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
     assert training_cfg.kwargs["report_to"] == ["none"]
 
 
-def test_no_callbacks_when_mlflow_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
     import src.training.trainer_builder as trainer_builder
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(mlflow_enabled=False, callback_enabled=True, callback_interval=7)
+    cfg = _mk_cfg(callback_enabled=True, callback_interval=7)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -213,10 +207,13 @@ def test_no_callbacks_when_mlflow_disabled(monkeypatch: pytest.MonkeyPatch) -> N
         train_dataset=MagicMock(),
         config=cfg,
         output_dir="output/phase_0_sft",
-        mlflow_manager=FakeMLflowManager(enabled=True, active=True),
+        mlflow_manager=FakeMLflowManager(active=False),
     )
 
-    assert "callbacks" not in trainer.kwargs
+    callbacks = trainer.kwargs.get("callbacks")
+    assert callbacks is not None
+    assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
+    assert any(isinstance(cb, GPUMetricsCallback) for cb in callbacks)
 
 
 def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -231,7 +228,7 @@ def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: p
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(mlflow_enabled=False, callback_enabled=False, callback_interval=10)
+    cfg = _mk_cfg(callback_enabled=False, callback_interval=10)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -242,7 +239,7 @@ def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: p
         eval_dataset=MagicMock(),  # triggers evaluation kwargs block
         config=cfg,
         output_dir="output/phase_0_sft",
-        mlflow_manager=FakeMLflowManager(enabled=False, active=False),
+        mlflow_manager=FakeMLflowManager(active=False),
     )
 
     training_cfg = trainer.kwargs["args"]

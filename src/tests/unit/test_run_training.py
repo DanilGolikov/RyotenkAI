@@ -221,7 +221,7 @@ class TestRunTrainingFlow:
 
         # MLflow stub
         mlflow_mgr = MagicMock()
-        mlflow_mgr.is_enabled = True
+        mlflow_mgr.is_active = True
         mlflow_mgr._mlflow_config = MagicMock(system_metrics_callback_enabled=True)
         run_ctx = _RunCtx()
         mlflow_mgr.start_run.return_value = run_ctx
@@ -287,7 +287,7 @@ class TestRunTrainingFlow:
         cfg.training.is_multi_phase.return_value = False
 
         mlflow_mgr = MagicMock()
-        mlflow_mgr.is_enabled = True
+        mlflow_mgr.is_active = True
         mlflow_mgr._mlflow_config = MagicMock(system_metrics_callback_enabled=True)
         run_ctx = _RunCtx()
         mlflow_mgr.start_run.return_value = run_ctx
@@ -321,6 +321,54 @@ class TestRunTrainingFlow:
         # Regression: previously notify_failed was called twice (explicit failure branch + outer except)
         assert notifier.notify_failed.call_count == 1
         mlflow_mgr.end_run.assert_called_once_with(status="FAILED")
+
+    def test_run_training_continues_when_mlflow_setup_returns_none(self, monkeypatch, tmp_path):
+        import importlib
+
+        rt = importlib.import_module("src.training.run_training")
+
+        strategies = [MagicMock(strategy_type="sft")]
+        cfg = MagicMock()
+        cfg.model.name = "Qwen/Qwen2.5-0.5B-Instruct"
+        cfg.training.type = "qlora"
+        cfg.training.get_strategy_chain.return_value = strategies
+        cfg.training.get_effective_load_in_4bit.return_value = True
+        cfg.training.is_multi_phase.return_value = False
+
+        env_reporter = MagicMock()
+        env_reporter.snapshot.to_dict.return_value = {"os": "x"}
+
+        memory_manager = MagicMock()
+        memory_manager.gpu_info = None
+        memory_manager.preset = None
+        memory_manager.get_memory_stats.return_value = None
+
+        buffer = MagicMock()
+        buffer.get_phase_output_dir.return_value = str(tmp_path / "phase_last")
+        buffer.run_id = "run_1"
+        orchestrator = MagicMock()
+        orchestrator.buffer = buffer
+        orchestrator.run_chain.return_value = Ok(None)
+
+        notifier = MagicMock()
+        container = MagicMock()
+        container.completion_notifier = notifier
+        container.create_memory_manager_with_callbacks.return_value = memory_manager
+        container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
+        container.create_orchestrator.return_value = orchestrator
+
+        monkeypatch.setattr(rt, "load_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "_setup_mlflow", lambda c: None)
+        monkeypatch.setattr(rt.EnvironmentReporter, "collect", classmethod(lambda cls=None: env_reporter))
+
+        out = rt.run_training(str(tmp_path / "cfg.yaml"), resume=False, run_id="run_x", container=container)
+
+        assert out.name == "checkpoint-final"
+        container.create_memory_manager_with_callbacks.assert_called_once_with(None)
+        container.create_orchestrator.assert_called_once()
+        kwargs = container.create_orchestrator.call_args.kwargs
+        assert kwargs["mlflow_manager"] is None
+        notifier.notify_complete.assert_called_once()
 
 
 # =============================================================================

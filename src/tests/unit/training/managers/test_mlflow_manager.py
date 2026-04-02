@@ -74,12 +74,12 @@ def _inference_cfg_disabled() -> InferenceConfig:
     )
 
 
-def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True) -> PipelineConfig:
+def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002") -> PipelineConfig:
     return PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],
         ),
@@ -92,7 +92,6 @@ def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=enabled,
                 tracking_uri=tracking_uri,
                 experiment_name="test",
                 log_artifacts=False,
@@ -102,9 +101,8 @@ def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True
     )
 
 
-def test_is_enabled_and_is_active() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=True))
-    assert mgr.is_enabled is True
+def test_is_active_reflects_runtime_setup() -> None:
+    mgr = MLflowManager(_mk_cfg())
     assert mgr.is_active is False
 
     mgr._mlflow = object()
@@ -214,8 +212,8 @@ class FakeMLflow:
         return SimpleNamespace(empty=True)
 
 
-def test_start_run_disabled_yields_none() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=False))
+def test_start_run_without_setup_yields_none() -> None:
+    mgr = MLflowManager(_mk_cfg())
     with mgr.start_run(run_name="x") as run:
         assert run is None
 
@@ -362,7 +360,7 @@ def test_create_mlflow_dataset_from_pandas(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_event_logging_sets_has_errors_and_severity() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=False))
+    mgr = MLflowManager(_mk_cfg())
     ev = mgr.log_event_error("boom", category="system", source="MLflowManager", code=1)
     assert ev["event_type"] == "error"
     assert ev["severity"] == "ERROR"
@@ -376,7 +374,7 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="default")],
         ),
@@ -391,7 +389,6 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 log_artifacts=False,
@@ -427,7 +424,7 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="cpt", dataset="corpus"),
@@ -453,7 +450,6 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 log_artifacts=False,

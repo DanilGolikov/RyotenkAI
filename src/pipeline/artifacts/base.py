@@ -215,7 +215,7 @@ def save_stage_artifact(
         mlflow_mgr: Any = context.get(PipelineContextKeys.MLFLOW_MANAGER)
         run_id: Any = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
 
-        if not isinstance(mlflow_mgr, MLflowManager) or not mlflow_mgr.is_enabled:
+        if not isinstance(mlflow_mgr, MLflowManager) or not mlflow_mgr.is_active:
             logger.debug(
                 "[ARTIFACT] MLflowManager not available — skipping artifact write for %s",
                 artifact_name,

@@ -102,15 +102,7 @@ class PipelineConfig(
             LoraConfig for type="qlora" or type="lora"
             AdaLoraConfig for type="adalora"
         """
-        training_type = self.training.type.lower()
-
-        if training_type == "adalora":
-            if self.training.adalora is None:
-                raise ValueError("training.type='adalora' requires 'training.adalora:' section in config")
-            return self.training.adalora
-
-        # For both LoRA and QLoRA, use training.lora
-        return self.training.lora
+        return self.training.get_adapter_config()
 
     @model_validator(mode="after")
     def _run_model_validators(self) -> PipelineConfig:

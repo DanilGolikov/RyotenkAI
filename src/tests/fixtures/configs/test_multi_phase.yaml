@@ -52,7 +52,7 @@ training:
         epochs: 1
         learning_rate: 1.0e-4
 
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -60,6 +60,7 @@ training:
     target_modules: "all-linear"
     use_dora: false
     use_rslora: false
+    init_lora_weights: gaussian
     bnb_4bit_quant_type: nf4
     bnb_4bit_compute_dtype: bfloat16
     bnb_4bit_use_double_quant: true
@@ -95,7 +96,6 @@ providers:
 
 experiment_tracking:
   mlflow:
-    enabled: false
     tracking_uri: "http://localhost:5002"
     experiment_name: test
     log_artifacts: false

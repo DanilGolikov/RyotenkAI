@@ -63,7 +63,7 @@ class TrainingEventsCallback(TrainerCallback):
         _ = control, kwargs
         self._training_start_time = time.time()
 
-        if self._mlflow and self._mlflow.is_enabled:
+        if self._mlflow and self._mlflow.is_active:
             self._mlflow.log_event_start(
                 "Training loop started",
                 category=MLFLOW_CATEGORY_TRAINING,
@@ -84,7 +84,7 @@ class TrainingEventsCallback(TrainerCallback):
         if self._training_start_time:
             total_duration = time.time() - self._training_start_time
 
-            if self._mlflow and self._mlflow.is_enabled:
+            if self._mlflow and self._mlflow.is_active:
                 self._mlflow.log_event_complete(
                     f"Training loop completed ({total_duration:.1f}s)",
                     category=MLFLOW_CATEGORY_TRAINING,
@@ -108,7 +108,7 @@ class TrainingEventsCallback(TrainerCallback):
         epoch_num = int(epoch_raw) if epoch_raw is not None else 0
         self._current_epoch = epoch_num + 1  # 1-indexed for display
 
-        if self._mlflow and self._mlflow.is_enabled:
+        if self._mlflow and self._mlflow.is_active:
             self._mlflow.log_event_start(
                 f"Epoch {self._current_epoch}/{int(args.num_train_epochs)} started",
                 category=MLFLOW_CATEGORY_TRAINING,
@@ -130,7 +130,7 @@ class TrainingEventsCallback(TrainerCallback):
         if self._epoch_start_time:
             epoch_duration = time.time() - self._epoch_start_time
 
-        if self._mlflow and self._mlflow.is_enabled:
+        if self._mlflow and self._mlflow.is_active:
             self._mlflow.log_event_complete(
                 f"Epoch {self._current_epoch} completed ({epoch_duration:.1f}s)",
                 category=MLFLOW_CATEGORY_TRAINING,
@@ -155,7 +155,7 @@ class TrainingEventsCallback(TrainerCallback):
     ) -> None:
         """Log checkpoint saved event."""
         _ = args, control, kwargs
-        if self._mlflow and self._mlflow.is_enabled:
+        if self._mlflow and self._mlflow.is_active:
             self._mlflow.log_event_checkpoint(
                 f"Checkpoint saved at step {state.global_step}",
                 category=MLFLOW_CATEGORY_TRAINING,

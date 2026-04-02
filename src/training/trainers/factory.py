@@ -266,7 +266,7 @@ class TrainerFactory:
         mlflow_config = config.experiment_tracking.mlflow if config.experiment_tracking else None
         callbacks = trainer_kwargs.get("callbacks", []) or []
 
-        if mlflow_config and mlflow_config.enabled:
+        if mlflow_config:
             from src.training.callbacks import TrainingEventsCallback
 
             callbacks.append(TrainingEventsCallback(mlflow_manager=mlflow_manager))

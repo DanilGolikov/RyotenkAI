@@ -33,13 +33,8 @@ class IMLflowManager(Protocol):
     """
 
     @property
-    def is_enabled(self) -> bool:
-        """Check if MLflow is enabled."""
-        ...
-
-    @property
     def is_active(self) -> bool:
-        """Check if MLflow is operational (enabled AND initialized)."""
+        """Check if MLflow is operational (setup succeeded)."""
         ...
 
     @property

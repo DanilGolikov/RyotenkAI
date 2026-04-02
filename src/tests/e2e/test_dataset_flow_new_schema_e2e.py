@@ -73,7 +73,7 @@ training:
     warmup_ratio: 0.0
     epochs: 1
     eval_steps: 7
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05

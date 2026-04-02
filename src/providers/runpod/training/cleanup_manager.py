@@ -9,13 +9,16 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.providers.runpod.training.api_client import RunPodAPIClient
     from src.utils.result import ProviderError, Result
+
+
+class _PodTerminateControl(Protocol):
+    def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]: ...
 
 
 class RunPodCleanupManager:
@@ -28,7 +31,7 @@ class RunPodCleanupManager:
     - Cleanup single pod on demand
     """
 
-    def __init__(self, api_client: RunPodAPIClient):
+    def __init__(self, api_client: _PodTerminateControl):
         """
         Initialize cleanup manager.
 

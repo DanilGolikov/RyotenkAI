@@ -101,7 +101,7 @@ def test_training_output_dir_field_is_rejected() -> None:
         TrainingOnlyConfig(  # type: ignore[call-arg]
             type="qlora",
             output_dir="output/checkpoints",  # removed field
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

@@ -26,7 +26,7 @@ training:
       hyperparams:
         epochs: 1
         learning_rate: 2.0e-4
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -85,7 +85,6 @@ inference:
 
 experiment_tracking:
   mlflow:
-    enabled: false
     tracking_uri: "http://localhost:5002"
     experiment_name: test
     log_artifacts: false

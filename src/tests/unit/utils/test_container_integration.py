@@ -52,7 +52,7 @@ def full_config():
         ),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -92,7 +92,6 @@ def full_config():
         ),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://localhost:5000",
                 experiment_name="test",
                 log_artifacts=False,
@@ -207,9 +206,8 @@ class TestTrainerFactoryIntegration:
 class TestMLflowManagerIntegration:
     """Test MLflow manager integration."""
 
-    def test_mlflow_manager_lazy_init_when_enabled(self, full_config):
-        """MLflow manager should be created when tracking enabled."""
-        full_config.experiment_tracking.mlflow.enabled = True
+    def test_mlflow_manager_lazy_init(self, full_config):
+        """MLflow manager should be created lazily."""
         container = TrainingContainer(full_config)
 
         mlflow_mgr = container.mlflow_manager
@@ -219,7 +217,6 @@ class TestMLflowManagerIntegration:
 
     def test_mlflow_manager_created_only_once(self, full_config):
         """MLflow manager should be singleton per container."""
-        full_config.experiment_tracking.mlflow.enabled = True
         container = TrainingContainer(full_config)
 
         mgr1 = container.mlflow_manager
@@ -227,18 +224,16 @@ class TestMLflowManagerIntegration:
 
         assert mgr1 is mgr2
 
-    def test_mlflow_manager_none_when_disabled(self, full_config):
-        """MLflow manager should be None when tracking disabled."""
-        full_config.experiment_tracking.mlflow.enabled = False
+    def test_mlflow_manager_always_present_with_required_config(self, full_config):
+        """MLflow manager should always exist when config schema is valid."""
         container = TrainingContainer(full_config)
 
         mlflow_mgr = container.mlflow_manager
 
-        assert mlflow_mgr is None
+        assert mlflow_mgr is not None
 
     def test_mlflow_manager_config_dependency(self, full_config):
         """MLflow manager should use container's config."""
-        full_config.experiment_tracking.mlflow.enabled = True
         container = TrainingContainer(full_config)
 
         mlflow_mgr = container.mlflow_manager
@@ -307,7 +302,7 @@ training:
     learning_rate: 2.0e-4
     warmup_ratio: 0.0
     epochs: 1
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -335,7 +330,6 @@ inference:
       serve_image: test/vllm:latest
 experiment_tracking:
   mlflow:
-    enabled: false
     tracking_uri: "http://localhost:5000"
     experiment_name: "test"
     log_artifacts: false

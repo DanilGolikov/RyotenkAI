@@ -10,13 +10,63 @@ if TYPE_CHECKING:
     from ..training.strategies import StrategyPhaseConfig
 
 
-def validate_training_adalora_requires_block(cfg: TrainingOnlyConfig) -> None:
-    """Cross-field rules for TrainingOnlyConfig adapter blocks."""
+def validate_training_adapter_requires_block(cfg: TrainingOnlyConfig) -> None:
+    """Cross-field rules for TrainingOnlyConfig adapter blocks.
 
-    # If training.type == 'adalora' → require explicit training.adalora block.
-    # Fail-fast: no auto-creation of missing blocks.
+    Each training type must have its own named config block:
+    - type='lora'    → requires 'training.lora:' section
+    - type='qlora'   → requires 'training.qlora:' section
+    - type='adalora' → requires 'training.adalora:' section
+    """
+    if cfg.type == "lora" and cfg.lora is None:
+        raise ValueError("training.type='lora' requires 'training.lora:' section in config")
+    if cfg.type == "qlora" and cfg.qlora is None:
+        raise ValueError("training.type='qlora' requires 'training.qlora:' section in config")
     if cfg.type == "adalora" and cfg.adalora is None:
         raise ValueError("training.type='adalora' requires 'training.adalora:' section in config")
+
+    _validate_precision_consistency(cfg)
+
+
+def _validate_precision_consistency(cfg: TrainingOnlyConfig) -> None:
+    """Detect fp16 + adapter conflicts.
+
+    TRL's SFTTrainer creates LoRA parameters in the model's *native* dtype
+    (usually bfloat16 for modern models like Qwen, Llama 3, etc.).
+    PyTorch GradScaler (fp16 AMP) crashes on bfloat16 gradients with:
+        "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
+
+    This validator catches two cases:
+    1. QLoRA with explicit bnb_4bit_compute_dtype=bfloat16 + fp16=True
+    2. Any adapter type with fp16=True (risky; bf16=True is recommended)
+    """
+    hp = getattr(cfg, "hyperparams", None)
+    if hp is None:
+        return
+    uses_fp16 = getattr(hp, "fp16", False) or False
+    if not uses_fp16:
+        return
+
+    if cfg.type == "qlora":
+        adapter = cfg.qlora
+        if adapter is not None:
+            compute_dtype = getattr(adapter, "bnb_4bit_compute_dtype", "bfloat16")
+            if compute_dtype == "bfloat16":
+                raise ValueError(
+                    "Precision conflict: hyperparams.fp16=true with bnb_4bit_compute_dtype='bfloat16'. "
+                    "GradScaler (fp16 AMP) cannot operate on BFloat16 tensors. "
+                    "Fix: use bf16: true instead of fp16: true."
+                )
+
+    if cfg.type in ("lora", "qlora", "adalora"):
+        from src.utils.logger import logger
+
+        logger.warning(
+            "[CFG:PRECISION] fp16=true with %s adapter is risky: TRL/SFTTrainer creates "
+            "LoRA params in the model's native dtype (often bfloat16), which crashes "
+            "GradScaler. Recommended: use bf16: true instead of fp16: true.",
+            cfg.type,
+        )
 
 
 def validate_lora_config(cfg: LoraConfig) -> None:
@@ -71,5 +121,5 @@ def validate_strategy_phase_config(cfg: StrategyPhaseConfig) -> None:
 __all__ = [
     "validate_lora_config",
     "validate_strategy_phase_config",
-    "validate_training_adalora_requires_block",
+    "validate_training_adapter_requires_block",
 ]

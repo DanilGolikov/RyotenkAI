@@ -59,6 +59,17 @@ RUNPOD_PROVIDER_CFG: dict[str, Any] = {
 }
 
 
+def _mk_experiment_tracking() -> ExperimentTrackingConfig:
+    return ExperimentTrackingConfig(
+        mlflow=MLflowConfig(
+            tracking_uri="http://127.0.0.1:5002",
+            experiment_name="test-exp",
+            log_artifacts=False,
+            log_model=False,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class DummySecrets:
     """Minimal Secrets-like object for TrainingDeploymentManager."""
@@ -79,7 +90,7 @@ def base_config() -> PipelineConfig:
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -114,6 +125,7 @@ def base_config() -> PipelineConfig:
                 )
             ),
         ),
+        experiment_tracking=_mk_experiment_tracking(),
     )
 
 
@@ -134,7 +146,7 @@ def config_multi_dataset() -> PipelineConfig:
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -183,6 +195,7 @@ def config_multi_dataset() -> PipelineConfig:
                 )
             ),
         ),
+        experiment_tracking=_mk_experiment_tracking(),
     )
 
 
@@ -193,6 +206,7 @@ def manager(base_config: PipelineConfig, secrets: DummySecrets) -> TrainingDeplo
 
 def test_build_ssh_opts_alias_mode(manager: TrainingDeploymentManager):
     ssh_client = MagicMock()
+    ssh_client.ssh_base_opts = None  # no real opts → legacy path
     ssh_client._is_alias_mode = True
 
     assert manager._build_ssh_opts(ssh_client) == "-o StrictHostKeyChecking=no"
@@ -200,11 +214,24 @@ def test_build_ssh_opts_alias_mode(manager: TrainingDeploymentManager):
 
 def test_build_ssh_opts_explicit_mode(manager: TrainingDeploymentManager):
     ssh_client = MagicMock()
+    ssh_client.ssh_base_opts = None  # no real opts → legacy path
     ssh_client._is_alias_mode = False
     ssh_client.key_path = "/tmp/test_key"
     ssh_client.port = 2222
 
     assert manager._build_ssh_opts(ssh_client) == "-i /tmp/test_key -p 2222 -o StrictHostKeyChecking=no"
+
+
+def test_build_ssh_opts_reuses_base_opts_from_ssh_client(manager: TrainingDeploymentManager):
+    ssh_client = MagicMock()
+    ssh_client.ssh_base_opts = ["-o", "StrictHostKeyChecking=no", "-o", "ControlMaster=auto"]
+    ssh_client.key_path = "/tmp/key"
+    ssh_client.port = 3333
+
+    result = manager._build_ssh_opts(ssh_client)
+    assert "-i /tmp/key" in result
+    assert "-p 3333" in result
+    assert "ControlMaster=auto" in result
 
 
 def test_set_workspace_sets_workspace(manager: TrainingDeploymentManager):
@@ -251,7 +278,7 @@ def test_deploy_files_dataset_not_found_returns_err(secrets: DummySecrets):
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -288,6 +315,7 @@ def test_deploy_files_dataset_not_found_returns_err(secrets: DummySecrets):
                 )
             ),
         ),
+        experiment_tracking=_mk_experiment_tracking(),
     )
     deployment = TrainingDeploymentManager(config=config, secrets=secrets)
 
@@ -378,7 +406,7 @@ def test_deploy_files_skips_unused_datasets(secrets: DummySecrets):
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -423,6 +451,7 @@ def test_deploy_files_skips_unused_datasets(secrets: DummySecrets):
                 )
             ),
         ),
+        experiment_tracking=_mk_experiment_tracking(),
     )
 
     deployment = TrainingDeploymentManager(config=cfg, secrets=secrets)
@@ -608,6 +637,7 @@ def test_sync_source_code_success(manager: TrainingDeploymentManager):
     manager.set_workspace(workspace_path="/workspace")
 
     ssh_client = MagicMock()
+    ssh_client.ssh_base_opts = None
     ssh_client._is_alias_mode = True
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
@@ -623,17 +653,19 @@ def test_sync_source_code_success(manager: TrainingDeploymentManager):
         result = manager._sync_source_code(ssh_client)
 
     assert result.is_ok()
-    assert mock_run.call_count == len(manager.REQUIRED_MODULES)
-    # Cache clear command should be issued once after sync.
-    assert any(
-        "find /workspace/src" in str(call.kwargs.get("command", "")) for call in ssh_client.exec_command.mock_calls
-    )
+    # Single batch rsync call for all modules
+    assert mock_run.call_count == 1
+    rsync_cmd = mock_run.call_args[0][0]
+    assert "rsync" in rsync_cmd
+    for module in manager.REQUIRED_MODULES:
+        assert module in rsync_cmd
 
 
 def test_sync_source_code_rsync_failure_tar_fallback(manager: TrainingDeploymentManager):
     manager.set_workspace(workspace_path="/workspace")
 
     ssh_client = MagicMock()
+    ssh_client.ssh_base_opts = None
     ssh_client._is_alias_mode = True
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
@@ -652,6 +684,7 @@ def test_sync_source_code_rsync_failure_tar_fallback(manager: TrainingDeployment
         result = manager._sync_source_code(ssh_client)
 
     assert result.is_ok()
+    # Batch rsync fails → per-module tar fallback for each module
     assert mock_tar.call_count == len(manager.REQUIRED_MODULES)
 
 
@@ -752,7 +785,6 @@ def test_install_dependencies_cloud_verify_fail_returns_err(base_config: Pipelin
 
 def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets):
     mlflow_cfg = MLflowConfig(
-        enabled=True,
         tracking_uri="http://127.0.0.1:5002",
         experiment_name="test-exp",
         log_artifacts=True,
@@ -764,7 +796,7 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -1273,18 +1305,18 @@ def test_upload_files_individual_failure_and_warning_paths(
 
 
 # =============================================================================
-# Line 439 – NO_DATASETS_CONFIGURED
+# HF-only datasets should not fail deploy_files
 # =============================================================================
 
-def test_deploy_files_no_datasets_configured_returns_config_error(secrets: DummySecrets):
-    """deploy_files returns ConfigError NO_DATASETS_CONFIGURED when all datasets are HuggingFace (no local files)."""
+def test_deploy_files_huggingface_only_uploads_config_and_syncs_code(secrets: DummySecrets):
+    """HF-only datasets skip local file uploads but still upload config and sync source code."""
     cfg = PipelineConfig(
         model=ModelConfig(name="gpt2", torch_dtype="bfloat16", trust_remote_code=False),
         providers={"single_node": SINGLE_NODE_PROVIDER_CFG},
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -1319,16 +1351,21 @@ def test_deploy_files_no_datasets_configured_returns_config_error(secrets: Dummy
                 )
             ),
         ),
+        experiment_tracking=_mk_experiment_tracking(),
     )
     deployment = TrainingDeploymentManager(config=cfg, secrets=secrets)
 
     ssh_client = MagicMock()
-    result = deployment.deploy_files(ssh_client, {"config_path": CONFIG_FIXTURE})
+    with (
+        patch.object(deployment, "_upload_files_batch", return_value=Ok(None)) as mock_batch,
+        patch.object(deployment, "_sync_source_code", return_value=Ok(None)),
+    ):
+        result = deployment.deploy_files(ssh_client, {"config_path": CONFIG_FIXTURE})
 
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, ConfigError)
-    assert err.code == "NO_DATASETS_CONFIGURED"
+    assert result.is_ok()
+    mock_batch.assert_called_once()
+    uploaded_files = mock_batch.call_args.args[1]
+    assert uploaded_files == [(CONFIG_FIXTURE, "config/pipeline_config.yaml")]
 
 
 # =============================================================================

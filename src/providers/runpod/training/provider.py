@@ -21,6 +21,7 @@ from src.providers.training.interfaces import (
 from src.utils.result import Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
+from ..pod_control import RunPodTrainingPodControl
 from .api_client import RunPodAPIClient
 from .cleanup_manager import RunPodCleanupManager
 from .config import RunPodProviderConfig
@@ -78,11 +79,11 @@ class RunPodProvider(IGPUProvider):
             raise ValueError("secrets.runpod_api_key is required to use RunPodProvider")
         self._api_key: str = api_key
 
-        # Initialize RunPod components
-        self._api_client = RunPodAPIClient(
+        self._graphql_api_client = RunPodAPIClient(
             api_base_url=RUNPOD_API_BASE_URL,
             api_key=self._api_key,
         )
+        self._api_client = RunPodTrainingPodControl(api=self._graphql_api_client)
 
         self._cleanup_manager = RunPodCleanupManager(self._api_client)
 
@@ -160,24 +161,17 @@ class RunPodProvider(IGPUProvider):
 
             logger.info(f"✅ Pod created: {pod_id}")
 
-            # Step 2: Wait for pod to be ready
+            # Step 2: Wait for pod to be ready (returns typed PodSnapshot with ssh_endpoint).
             ready_result = self._lifecycle.wait_for_ready(pod_id)
             if ready_result.is_failure():
                 self._status = ProviderStatus.ERROR
                 self._cleanup_manager.cleanup_pod(pod_id)
                 return Err(ready_result.unwrap_err())  # type: ignore[union-attr]
 
+            snapshot = ready_result.unwrap()
             logger.info("✅ Pod is ready!")
 
-            # Step 3: Build SSH connection target.
-            #
-            # IMPORTANT (RunPod semantics):
-            # - "SSH over exposed TCP" (root@publicIp:publicPort) provides full SSH capabilities
-            #   (SCP/SFTP/rsync/command exec) and is the correct transport for automation.
-            # - "basic SSH" via ssh.runpod.io is more interactive and may not support
-            #   non-interactive command execution reliably (PTY requirements, banners, etc.).
-            #
-            # Therefore: prefer exposed TCP; fallback to ssh.runpod.io only if needed.
+            # Step 3: Build SSH connection target from the typed snapshot.
             key_path = str(Path(self._config.connect.ssh.key_path).expanduser())
             if not Path(key_path).exists():
                 self._status = ProviderStatus.ERROR
@@ -190,47 +184,18 @@ class RunPodProvider(IGPUProvider):
                     )
                 )
 
-            ssh_client: SSHClient | None = None
-            host: str | None = None
-            port: int | None = None
-            ssh_user: str | None = None
-
-            exposed = self._api_client.get_ssh_info(pod_id)
-            if exposed.is_success():
-                data = exposed.unwrap()
-                host_raw = data.get("host") if isinstance(data, dict) else None
-                port_raw = data.get("port") if isinstance(data, dict) else None
-                if isinstance(host_raw, str) and host_raw and isinstance(port_raw, int) and port_raw > 0:
-                    host = host_raw
-                    port = port_raw
-                    ssh_user = "root"
-                    ssh_client = SSHClient(host=host, port=port, username=ssh_user, key_path=key_path)
-                else:
-                    logger.warning(f"[RUNPOD:SSH] Invalid exposed TCP SSH info: {data!r}")
-            else:
-                logger.warning(f"[RUNPOD:SSH] Exposed TCP SSH info unavailable: {exposed.unwrap_err()}")  # type: ignore[union-attr]
-
-            if ssh_client is None:
-                pod_host_id = (self._pod_info or {}).get("machine")
-                if not isinstance(pod_host_id, str) or not pod_host_id.strip():
-                    self._status = ProviderStatus.ERROR
-                    self._cleanup_manager.cleanup_pod(pod_id)
-                    return Err(
-                        ProviderError(
-                            message="RunPod podHostId (machine) not available; cannot build SSH username",
-                            code="RUNPOD_SSH_HOST_UNAVAILABLE",
-                        )
+            ssh_ep = snapshot.ssh_endpoint
+            if ssh_ep is None:
+                self._status = ProviderStatus.ERROR
+                self._cleanup_manager.cleanup_pod(pod_id)
+                return Err(
+                    ProviderError(
+                        message="Pod reported ready but SSH endpoint is missing",
+                        code="RUNPOD_SSH_INFO_INVALID",
                     )
+                )
 
-                pod_host_id = pod_host_id.strip()
-                # RunPod may return podHostId already prefixed with "<pod_id>-".
-                # Examples:
-                # - podHostId="644111e7" → ssh_user="<pod_id>-644111e7"
-                # - podHostId="<pod_id>-64411ba5" → ssh_user="<pod_id>-64411ba5" (do NOT double-prefix)
-                ssh_user = pod_host_id if pod_host_id.startswith(f"{pod_id}-") else f"{pod_id}-{pod_host_id}"
-                host = "ssh.runpod.io"
-                port = 22
-                ssh_client = SSHClient(host=host, port=port, username=ssh_user, key_path=key_path)
+            ssh_client = SSHClient(host=ssh_ep.host, port=ssh_ep.port, username="root", key_path=key_path)
 
             # Step 4: Wait for SSH to be ready
             success, error = ssh_client.test_connection(max_retries=_SSH_RETRIES, retry_delay=_SSH_RETRY_DELAY)
@@ -270,14 +235,13 @@ class RunPodProvider(IGPUProvider):
                     ProviderError(message=f"Failed to create run workspace on pod: {err_run}", code="SSH_MKDIR_FAILED")
                 )
 
-            # Now that run workspace exists, build connection info.
             self._ssh_connection_info = SSHConnectionInfo(
-                host=str(ssh_client.host),
-                port=int(ssh_client.port),
-                user=str(ssh_client.username or ""),
-                key_path=ssh_client.key_path,
+                host=ssh_ep.host,
+                port=ssh_ep.port,
+                user="root",
+                key_path=key_path,
                 workspace_path=run_workspace,
-                resource_id=pod_id,  # Pod ID as resource ID
+                resource_id=pod_id,
             )
 
             self._status = ProviderStatus.CONNECTED

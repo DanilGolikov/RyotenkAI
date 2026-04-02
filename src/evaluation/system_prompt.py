@@ -112,13 +112,6 @@ class SystemPromptLoader:
                 "Add an mlflow block under experiment_tracking in pipeline_config.yaml."
             )
 
-        if not mlflow_cfg.enabled:
-            raise ValueError(
-                "inference.llm.system_prompt_mlflow_name is configured but "
-                "experiment_tracking.mlflow.enabled is false. "
-                "Set experiment_tracking.mlflow.enabled: true to use MLflow Prompt Registry."
-            )
-
         # Build a gateway from config (used by unit tests or callers without a pre-built gateway)
         from src.infrastructure.mlflow.gateway import MLflowGateway
 

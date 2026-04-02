@@ -181,9 +181,12 @@ class TestNegatives:
         with pytest.raises(ValueError, match="experiment_tracking.mlflow is not"):
             SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), None)
 
-    def test_load_mlflow_cfg_disabled_raises(self) -> None:
-        with pytest.raises(ValueError, match="mlflow.enabled is false"):
-            SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), _mlflow_cfg(enabled=False))
+    def test_load_mlflow_cfg_ignores_legacy_enabled_flag(self) -> None:
+        prompt = _mock_prompt(template="MLflow prompt.")
+        with patch("mlflow.set_tracking_uri"), patch("mlflow.genai.load_prompt", return_value=prompt):
+            result = SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), _mlflow_cfg(enabled=False))
+        assert result is not None
+        assert result.text == "MLflow prompt."
 
     def test_load_mlflow_network_error_returns_none(self) -> None:
         with (
@@ -479,10 +482,13 @@ class TestCombinatorial:
         result = SystemPromptLoader.load(_llm_cfg(path=None, mlflow_name=None), None)
         assert result is None
 
-    def test_enabled_false_mlflow_name_set_raises(self) -> None:
-        """MLflow disabled + prompt name set → ValueError (fail-fast)."""
-        with pytest.raises(ValueError, match="mlflow.enabled is false"):
-            SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), _mlflow_cfg(enabled=False))
+    def test_legacy_enabled_false_does_not_block_mlflow_prompt_loading(self) -> None:
+        """Legacy enabled flag is ignored once MLflow config is present."""
+        prompt = _mock_prompt(template="Prompt via MLflow.")
+        with patch("mlflow.set_tracking_uri"), patch("mlflow.genai.load_prompt", return_value=prompt):
+            result = SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), _mlflow_cfg(enabled=False))
+        assert result is not None
+        assert result.text == "Prompt via MLflow."
 
     def test_mlflow_cfg_none_mlflow_name_set_raises_not_returns_none(self) -> None:
         """MLflow cfg missing + name set → ValueError, not None."""

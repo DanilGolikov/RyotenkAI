@@ -28,7 +28,10 @@ def _build_mock_config() -> MagicMock:
 
     config.get_active_provider_name.return_value = "single_node"
     config.get_provider_config.return_value = {"cleanup": {"on_interrupt": True}}
-    config.experiment_tracking.mlflow = None
+    config.experiment_tracking.mlflow = MagicMock(
+        tracking_uri="http://localhost:5002",
+        system_metrics_callback_enabled=False,
+    )
 
     config.inference.enabled = False
     config.inference.model_dump.return_value = {"enabled": False}
@@ -56,7 +59,10 @@ def _build_orchestrator(config_path: Path, config: MagicMock, *, run_directory: 
         patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=(True, None)),
         patch.object(PipelineOrchestrator, "_init_stages", return_value=stages),
     ):
-        return PipelineOrchestrator(config_path, run_directory=run_directory)
+        orchestrator = PipelineOrchestrator(config_path, run_directory=run_directory)
+    orchestrator._setup_mlflow_for_attempt = MagicMock(return_value=None)
+    orchestrator._ensure_mlflow_preflight = MagicMock(return_value=None)
+    return orchestrator
 
 
 def _make_attempt(stage_states: dict[str, StageRunState], *, status: str = StageRunState.STATUS_FAILED) -> PipelineAttemptState:

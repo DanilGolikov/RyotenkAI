@@ -152,6 +152,7 @@ def _mk_provider(
     p._pod_cfg = prov_cfg.inference.pod
     p._serve_cfg = prov_cfg.inference.serve
     p._api = api
+    p._pod_control = api
     p._endpoint_info = None
     p._network_volume_id = None
     p._network_volume_meta = None

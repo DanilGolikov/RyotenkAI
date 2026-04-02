@@ -87,7 +87,7 @@ def _mk_cfg() -> PipelineConfig:
         training=TrainingOnlyConfig(
             type="qlora",
             provider="runpod",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_global_cfg(),
             strategies=[
                 StrategyPhaseConfig(
@@ -114,7 +114,6 @@ def _mk_cfg() -> PipelineConfig:
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test",
                 log_artifacts=True,
