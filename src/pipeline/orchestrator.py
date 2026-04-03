@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,6 +69,7 @@ from src.pipeline.state import (
 )
 from src.reports import ExperimentReportGenerator
 from src.training.managers.mlflow_manager import MLflowManager
+from src.config.runtime import RuntimeSettings, load_runtime_settings
 from src.utils.config import AdaLoraConfig, PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
 from src.utils.logger import console, get_run_log_dir, init_run_logging, logger
 from src.utils.result import AppError, ConfigDriftError, Err, Ok, Result
@@ -123,13 +125,21 @@ class PipelineOrchestrator:
     - Summary generation from centralized MLflow data
     """
 
-    def __init__(self, config_path: Path, run_directory: Path | None = None):
+    def __init__(
+        self,
+        config_path: Path,
+        run_directory: Path | None = None,
+        settings: RuntimeSettings | None = None,
+    ):
         """
         Initialize the orchestrator with configuration.
 
         Args:
             config_path: Path to pipeline configuration YAML file
+            run_directory: Explicit run directory (resume / restart).
+            settings: Runtime settings (env vars snapshot). Auto-loaded if not provided.
         """
+        self.settings: RuntimeSettings = settings or load_runtime_settings()
         # Single source of truth for run naming (no env fallbacks, no legacy).
         # NOTE: Do not name this attribute `run` — it would shadow PipelineOrchestrator.run().
         self.run_ctx: RunContext = RunContext.create()
@@ -746,7 +756,8 @@ class PipelineOrchestrator:
         if requested_run_dir is not None:
             resolved_run_dir = requested_run_dir.expanduser().resolve()
         else:
-            resolved_run_dir = (Path("runs") / self.run_ctx.name).resolve()
+            runs_base = self.settings.runs_base_dir
+            resolved_run_dir = (runs_base / self.run_ctx.name).resolve()
 
         self.run_directory = resolved_run_dir
         self._state_store = PipelineStateStore(resolved_run_dir)

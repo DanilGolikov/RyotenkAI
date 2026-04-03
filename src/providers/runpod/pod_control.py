@@ -26,6 +26,7 @@ _CREATE_POD_RETRY_DELAY_S = 10
 _TRANSIENT_MARKERS = (
     "no longer any instances available",
     "no instances available",
+    "does not have the resources",
     "try again",
     "rate limit",
     "timeout",

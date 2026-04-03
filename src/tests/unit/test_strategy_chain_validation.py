@@ -30,8 +30,13 @@ from src.utils.config import (
 
 
 def make_chain(*strategy_types: str) -> list[StrategyPhaseConfig]:
-    """Create a chain of StrategyPhaseConfig from strategy type strings."""
-    return [StrategyPhaseConfig(strategy_type=s, dataset="default") for s in strategy_types]
+    """Create a chain of StrategyPhaseConfig from strategy type strings.
+
+    Each strategy gets a unique dataset name to satisfy the duplicate-dataset validation.
+    """
+    if len(strategy_types) == 1:
+        return [StrategyPhaseConfig(strategy_type=strategy_types[0], dataset="default")]
+    return [StrategyPhaseConfig(strategy_type=s, dataset=f"ds_{s}") for s in strategy_types]
 
 
 # =============================================================================
@@ -192,9 +197,9 @@ class TestInvalidChainsEmptyNone:
     def test_none_in_middle(self):
         """Chain with None in middle - current behavior: fails with None error."""
         chain = [
-            StrategyPhaseConfig(strategy_type="sft"),
+            StrategyPhaseConfig(strategy_type="sft", dataset="ds_sft"),
             None,  # type: ignore
-            StrategyPhaseConfig(strategy_type="dpo"),
+            StrategyPhaseConfig(strategy_type="dpo", dataset="ds_dpo"),
         ]
         # Current implementation: filters None and validates rest as [sft, dpo]
         # OR: rejects None immediately
@@ -429,9 +434,14 @@ class TestEdgeCases:
         chain = [
             StrategyPhaseConfig(
                 strategy_type="sft",
+                dataset="ds_sft",
                 hyperparams=PhaseHyperparametersConfig(epochs=3, learning_rate=2e-4),
             ),
-            StrategyPhaseConfig(strategy_type="dpo", hyperparams=PhaseHyperparametersConfig(epochs=1, beta=0.1)),
+            StrategyPhaseConfig(
+                strategy_type="dpo",
+                dataset="ds_dpo",
+                hyperparams=PhaseHyperparametersConfig(epochs=1, beta=0.1),
+            ),
         ]
         is_valid, _error = validate_strategy_chain(chain)
         assert is_valid is True

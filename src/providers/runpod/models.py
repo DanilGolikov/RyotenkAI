@@ -177,6 +177,40 @@ def _normalize_runpodctl_ports(raw: Any, public_ip: str) -> list[dict[str, Any]]
     return ports
 
 
+@dataclass(frozen=True, slots=True)
+class PodResourceInfo:
+    """Metadata returned by the RunPod API at pod creation time."""
+
+    pod_id: str
+    machine_id: str | None
+    gpu_count: int | None
+    cost_per_hr: float | None
+    gpu_type: str | None
+
+    @classmethod
+    def from_create_response(cls, data: dict[str, Any]) -> PodResourceInfo:
+        """Parse the dict returned by ``RunPodAPIClient.create_pod``."""
+        cost_raw = data.get("cost_per_hr")
+        try:
+            cost = float(cost_raw) if cost_raw is not None else None
+        except (TypeError, ValueError):
+            cost = None
+
+        gpu_count_raw = data.get("gpu_count")
+        try:
+            gpu_count = int(gpu_count_raw) if gpu_count_raw is not None else None
+        except (TypeError, ValueError):
+            gpu_count = None
+
+        return cls(
+            pod_id=str(data.get("pod_id") or ""),
+            machine_id=data.get("machine"),
+            gpu_count=gpu_count,
+            cost_per_hr=cost,
+            gpu_type=data.get("gpu_type"),
+        )
+
+
 def read_ssh_public_key(key_path: str) -> str | None:
     """Read the sibling ``.pub`` file for a given SSH private key path.
 
@@ -192,4 +226,4 @@ def read_ssh_public_key(key_path: str) -> str | None:
     return None
 
 
-__all__ = ["PodSnapshot", "SshEndpoint", "read_ssh_public_key"]
+__all__ = ["PodResourceInfo", "PodSnapshot", "SshEndpoint", "read_ssh_public_key"]

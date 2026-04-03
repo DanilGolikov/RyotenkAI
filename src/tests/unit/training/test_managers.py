@@ -31,12 +31,12 @@ def mock_strategies():
     return [
         StrategyPhaseConfig(
             strategy_type="sft",
-            dataset="default",
+            dataset="sft_data",
             hyperparams=PhaseHyperparametersConfig(epochs=1, learning_rate=2e-4),
         ),
         StrategyPhaseConfig(
             strategy_type="dpo",
-            dataset="default",
+            dataset="pref_data",
             hyperparams=PhaseHyperparametersConfig(epochs=1, learning_rate=2e-4, beta=0.1),
         ),
     ]

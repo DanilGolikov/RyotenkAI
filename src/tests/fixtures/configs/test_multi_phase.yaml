@@ -9,14 +9,24 @@ model:
   flash_attention: false
 
 datasets:
-  default:
+  sft_data:
     source_type: local
     source_local:
       local_paths:
         train: tests/fixtures/datasets/test_instruction.jsonl
         eval: null
       training_paths:
-        train: data/shared/test_instruction.jsonl
+        train: data/sft/test_instruction.jsonl
+        eval: null
+
+  cot_data:
+    source_type: local
+    source_local:
+      local_paths:
+        train: tests/fixtures/datasets/test_instruction.jsonl
+        eval: null
+      training_paths:
+        train: data/cot/test_instruction.jsonl
         eval: null
 
   corpus:
@@ -41,13 +51,13 @@ training:
         learning_rate: 1.0e-5
     # Phase 2: Instruction fine-tuning
     - strategy_type: sft
-      dataset: default
+      dataset: sft_data
       hyperparams:
         epochs: 1
         learning_rate: 2.0e-4
     # Phase 3: Chain-of-thought
     - strategy_type: cot
-      dataset: default
+      dataset: cot_data
       hyperparams:
         epochs: 1
         learning_rate: 1.0e-4

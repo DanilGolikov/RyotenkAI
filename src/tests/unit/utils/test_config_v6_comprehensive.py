@@ -80,6 +80,7 @@ def test_adalora_config_minimal_valid():
     config = AdaLoraConfig(
         init_r=12,
         target_r=8,
+        total_step=100,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
@@ -221,6 +222,7 @@ def test_adalora_config_missing_init_r():
     with pytest.raises(ValidationError) as exc_info:
         AdaLoraConfig(
             target_r=8,
+            total_step=100,
             lora_alpha=32,
             lora_dropout=0.05,
             bias="none",
@@ -483,6 +485,7 @@ def test_adalora_init_r_vs_target_r_invariant():
     config_valid = AdaLoraConfig(
         init_r=12,
         target_r=8,
+        total_step=100,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
@@ -494,6 +497,7 @@ def test_adalora_init_r_vs_target_r_invariant():
     config_equal = AdaLoraConfig(
         init_r=8,
         target_r=8,
+        total_step=100,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
@@ -508,6 +512,7 @@ def test_adalora_tinit_tfinal_invariant():
     config = AdaLoraConfig(
         init_r=12,
         target_r=8,
+        total_step=100,
         tinit=200,
         tfinal=1000,
         lora_alpha=32,

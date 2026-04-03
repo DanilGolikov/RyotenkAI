@@ -13,10 +13,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from src.pipeline.domain import RunContext
+    from src.providers.runpod.models import PodResourceInfo
     from src.utils.result import ProviderError, Result
 
 
@@ -215,12 +216,13 @@ class IGPUProvider(Protocol):
         """
         ...
 
-    def get_resource_info(self) -> dict[str, Any] | None:
+    def get_resource_info(self) -> PodResourceInfo | None:
         """
         Return provider resource metadata if available.
 
-        Cloud providers (RunPod) return a dict with cost_per_hr, gpu_type,
-        gpu_count and other instance-level details populated after connect().
+        Cloud providers (RunPod) return a ``PodResourceInfo`` with cost_per_hr,
+        gpu_type, gpu_count and other instance-level details populated after
+        connect().
 
         Local providers (single_node) return None — no dynamic resource info.
         """

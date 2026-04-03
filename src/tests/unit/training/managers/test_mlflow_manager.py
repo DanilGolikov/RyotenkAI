@@ -428,15 +428,21 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="cpt", dataset="corpus"),
-                StrategyPhaseConfig(strategy_type="sft", dataset="default"),
-                StrategyPhaseConfig(strategy_type="cot", dataset="default"),  # Reuses default
+                StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
+                StrategyPhaseConfig(strategy_type="cot", dataset="cot_data"),
             ],
         ),
         datasets={
-            "default": DatasetConfig(
+            "sft_data": DatasetConfig(
                 source_type="local",
                 source_local=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/sft.jsonl", eval=None),
+                ),
+            ),
+            "cot_data": DatasetConfig(
+                source_type="local",
+                source_local=DatasetSourceLocal(
+                    local_paths=DatasetLocalPaths(train="data/cot.jsonl", eval=None),
                 ),
             ),
             "corpus": DatasetConfig(
@@ -475,12 +481,17 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
     assert captured["params"]["dataset.corpus.local.train_path"] == "data/corpus.jsonl"
     assert captured["params"]["dataset.corpus.max_samples"] == "10000"
 
-    # default dataset
-    assert captured["params"]["dataset.default.name"] == "sft"
-    assert captured["params"]["dataset.default.source_type"] == "local"
-    assert captured["params"]["dataset.default.local.train_path"] == "data/sft.jsonl"
+    # sft_data dataset (display_name from file stem: sft.jsonl → sft)
+    assert captured["params"]["dataset.sft_data.name"] == "sft"
+    assert captured["params"]["dataset.sft_data.source_type"] == "local"
+    assert captured["params"]["dataset.sft_data.local.train_path"] == "data/sft.jsonl"
 
-    # Check tags (sorted alphabetically: corpus, default)
+    # cot_data dataset (display_name from file stem: cot.jsonl → cot)
+    assert captured["params"]["dataset.cot_data.name"] == "cot"
+    assert captured["params"]["dataset.cot_data.source_type"] == "local"
+    assert captured["params"]["dataset.cot_data.local.train_path"] == "data/cot.jsonl"
+
+    # Check tags (sorted alphabetically: corpus, cot_data, sft_data)
     assert captured["tags"] is not None
-    assert captured["tags"]["dataset.names"] == "corpus,default"
-    assert captured["tags"]["dataset.count"] == "2"
+    assert captured["tags"]["dataset.names"] == "corpus,cot_data,sft_data"
+    assert captured["tags"]["dataset.count"] == "3"

@@ -7,19 +7,15 @@ Handles pod state transitions and health monitoring.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from src.providers.runpod.models import PodSnapshot
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
-_STUCK_WARN_THRESHOLD = 120
 _WAIT_TIMEOUT_DEFAULT = 300
+_NO_EXPOSED_TCP_GRACE_S = 30
 _POD_ID_KEY = "pod_id"
-
-if TYPE_CHECKING:
-    from src.providers.runpod.training.cleanup_manager import RunPodCleanupManager
-
 
 class _PodQueryControl(Protocol):
     def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]: ...
@@ -32,60 +28,28 @@ class PodLifecycleManager:
     of the underlying data source (GraphQL, runpodctl, etc.).
     """
 
-    def __init__(self, api_client: _PodQueryControl, cleanup_manager: RunPodCleanupManager):
+    def __init__(self, api_client: _PodQueryControl):
         self.api_client = api_client
-        self.cleanup_manager = cleanup_manager
         logger.debug("🔄 PodLifecycleManager initialized")
 
     def wait_for_ready(
         self,
         pod_id: str,
         timeout: int | None = None,
-        max_retries: int = 4,
     ) -> Result[PodSnapshot, ProviderError]:
-        """Wait for pod to reach RUNNING state with SSH endpoint available."""
+        """Wait for pod to reach RUNNING state with SSH endpoint available.
+
+        No internal retries — the caller (provider) handles pod recreation.
+        """
         effective_timeout = timeout if timeout is not None else _WAIT_TIMEOUT_DEFAULT
-        logger.info(
-            f"⏳ Waiting for pod {pod_id} to be ready (timeout: {effective_timeout}s, max retries: {max_retries})..."
-        )
-
-        for attempt in range(max_retries):
-            if attempt > 0:
-                logger.info(f"🔄 Retry attempt {attempt + 1}/{max_retries}")
-
-            result = self._wait_single_attempt(pod_id, effective_timeout)
-
-            if result.is_success():
-                return result
-
-            error = result.unwrap_err()
-
-            if attempt < max_retries - 1:
-                time.sleep(5)
-                continue
-
-            return Err(
-                ProviderError(
-                    message=f"Pod failed to reach RUNNING state after {max_retries} attempts: {error}",
-                    code="RUNPOD_POD_NOT_READY",
-                    details={_POD_ID_KEY: pod_id, "attempts": max_retries},
-                )
-            )
-
-        return Err(
-            ProviderError(
-                message=f"Pod failed after {max_retries} retries",
-                code="RUNPOD_POD_NOT_READY",
-                details={_POD_ID_KEY: pod_id, "attempts": max_retries},
-            )
-        )
+        logger.info(f"⏳ Waiting for pod {pod_id} to be ready (timeout: {effective_timeout}s)...")
+        return self._wait_single_attempt(pod_id, effective_timeout)
 
     def _wait_single_attempt(self, pod_id: str, timeout: int) -> Result[PodSnapshot, ProviderError]:
         """Single attempt to wait for pod to be ready."""
         start_time = time.time()
-        stuck_count = 0
-        last_fingerprint: tuple[str | None, int, int, bool] | None = None
         poll_interval_seconds = 10
+        ports_without_ssh_since: float | None = None
 
         while True:
             elapsed_s = int(time.time() - start_time)
@@ -113,11 +77,7 @@ class PodLifecycleManager:
                 logger.info("✅ Pod is running and ready!")
                 return Ok(snapshot)
 
-            if snapshot.status == "RUNNING" and snapshot.ssh_endpoint is None:
-                logger.info(
-                    f"⏳ Pod running but waiting for SSH over exposed TCP... (elapsed: {elapsed_s}s/{timeout}s)"
-                )
-            elif snapshot.is_terminal:
+            if snapshot.is_terminal:
                 return Err(
                     ProviderError(
                         message=f"Pod entered failed state: {snapshot.status}",
@@ -126,18 +86,33 @@ class PodLifecycleManager:
                     )
                 )
 
-            fingerprint = (snapshot.status, snapshot.uptime_seconds, snapshot.port_count, snapshot.ssh_endpoint is not None)
-            if last_fingerprint is not None and fingerprint == last_fingerprint:
-                stuck_count += 1
-                no_progress_s = stuck_count * poll_interval_seconds
-                if no_progress_s >= _STUCK_WARN_THRESHOLD and no_progress_s % 60 == 0:
+            if snapshot.status == "RUNNING" and snapshot.port_count > 0 and snapshot.ssh_endpoint is None:
+                if ports_without_ssh_since is None:
+                    ports_without_ssh_since = time.time()
                     logger.warning(
-                        f"⚠️ Pod shows no progress for ~{no_progress_s}s "
-                        f"(status={snapshot.status}, elapsed: {elapsed_s}s/{timeout}s); continuing to wait..."
+                        f"⚠️ Pod has {snapshot.port_count} port(s) but no SSH exposed TCP endpoint. "
+                        f"Waiting up to {_NO_EXPOSED_TCP_GRACE_S}s..."
                     )
-            else:
-                stuck_count = 0
-                last_fingerprint = fingerprint
+                waiting_s = int(time.time() - ports_without_ssh_since)
+                if waiting_s >= _NO_EXPOSED_TCP_GRACE_S:
+                    return Err(
+                        ProviderError(
+                            message=(
+                                f"Pod has {snapshot.port_count} port(s) but no SSH over exposed TCP "
+                                f"after {waiting_s}s. This machine likely doesn't support "
+                                f"exposed TCP ports (community cloud limitation). Pod will be recreated."
+                            ),
+                            code="RUNPOD_NO_EXPOSED_TCP",
+                            details={_POD_ID_KEY: pod_id, "port_count": snapshot.port_count},
+                        )
+                    )
+                logger.info(
+                    f"⏳ Pod running, ports present but no SSH exposed TCP... "
+                    f"(waiting: {waiting_s}s/{_NO_EXPOSED_TCP_GRACE_S}s, elapsed: {elapsed_s}s/{timeout}s)"
+                )
+            elif snapshot.status == "RUNNING" and snapshot.port_count == 0:
+                ports_without_ssh_since = None
+                logger.info(f"⏳ Pod running, waiting for ports... (elapsed: {elapsed_s}s/{timeout}s)")
 
             time.sleep(poll_interval_seconds)
 

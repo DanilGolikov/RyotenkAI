@@ -32,13 +32,13 @@ _COL_DURATION_W: Final = 8
 _TIMESTAMP_DISPLAY_LEN: Final = 19  # len("YYYY-MM-DDTHH:MM:SS")
 
 _STATUS_ICONS: Final[dict[str, str]] = {  # noqa: WPS407
-    StageRunState.STATUS_COMPLETED: "✅",
-    StageRunState.STATUS_FAILED: "❌",
-    StageRunState.STATUS_RUNNING: "⟳",
-    StageRunState.STATUS_INTERRUPTED: "⚡",
-    StageRunState.STATUS_STALE: "~",
-    StageRunState.STATUS_SKIPPED: "↩",
-    StageRunState.STATUS_PENDING: "—",
+    StageRunState.STATUS_COMPLETED: "◉",
+    StageRunState.STATUS_FAILED: "◉",
+    StageRunState.STATUS_RUNNING: "▸",
+    StageRunState.STATUS_INTERRUPTED: "◈",
+    StageRunState.STATUS_STALE: "◌",
+    StageRunState.STATUS_SKIPPED: "◇",
+    StageRunState.STATUS_PENDING: "○",
 }
 _STATUS_COLORS: Final[dict[str, str]] = {  # noqa: WPS407
     StageRunState.STATUS_COMPLETED: "green",
@@ -49,6 +49,13 @@ _STATUS_COLORS: Final[dict[str, str]] = {  # noqa: WPS407
     StageRunState.STATUS_SKIPPED: "blue",
     StageRunState.STATUS_PENDING: "dim",
 }
+
+
+def _rich_print(text: str) -> None:
+    """Print with Rich markup (lazy import to keep module lightweight)."""
+    from rich import print as rprint  # noqa: WPS433
+
+    rprint(text)
 
 
 def effective_pipeline_status(state: PipelineState) -> str:
@@ -180,10 +187,11 @@ class RunInspectionRenderer:
                     print(fmt.format("-", stage_name, "pending", "-", ""))
                     continue
 
-                icon = _STATUS_ICONS.get(sr.status, "?")
+                color = _STATUS_COLORS.get(sr.status, "")
+                icon = f"[{color}]{_STATUS_ICONS.get(sr.status, '?')}[/{color}]" if color else _STATUS_ICONS.get(sr.status, "?")
                 duration = _fmt_duration(sr.started_at, sr.completed_at)
                 mode_label = _mode_label(sr)
-                print(fmt.format(icon, sr.stage_name, sr.status, mode_label, duration))
+                _rich_print(fmt.format(icon, sr.stage_name, sr.status, mode_label, duration))
 
                 if sr.error:
                     print(f"      Error: {sr.error[:_ERROR_TRUNCATE]}")
@@ -221,6 +229,43 @@ def _mode_label(sr: StageRunState) -> str:
 # runs-list helpers
 # =============================================================================
 
+ROOT_GROUP: Final = "(root)"
+
+
+def _build_row_dict(entry: Path) -> dict[str, Any]:
+    """Build a summary row dict for a single run directory containing pipeline_state.json."""
+    stat = entry.stat()
+    created_ts = getattr(stat, "st_birthtime", None) or stat.st_ctime
+    created_at = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M")
+
+    row: dict[str, Any] = {
+        "run_id": entry.name,
+        "run_dir": entry,
+        "created_at": created_at,
+        "created_ts": created_ts,
+        "error": None,
+    }
+    try:
+        store = PipelineStateStore(entry)
+        state = store.load()
+        row["status"] = effective_pipeline_status(state)
+        row["attempts"] = len(state.attempts)
+        row["config"] = state.config_path.split("/")[-1] if state.config_path else "—"
+        row["mlflow_run_id"] = state.root_mlflow_run_id
+        first_start = state.attempts[0].started_at if state.attempts else None
+        last_end = state.attempts[-1].completed_at if state.attempts else None
+        row["duration"] = _fmt_duration(first_start, last_end)
+        row["started_at"] = first_start
+    except (PipelineStateLoadError, Exception) as exc:
+        row["status"] = "unknown"
+        row["attempts"] = 0
+        row["config"] = "—"
+        row["mlflow_run_id"] = None
+        row["duration"] = ""
+        row["started_at"] = None
+        row["error"] = str(exc)
+    return row
+
 
 def scan_runs_dir(runs_dir: Path) -> list[dict[str, Any]]:
     """
@@ -233,35 +278,54 @@ def scan_runs_dir(runs_dir: Path) -> list[dict[str, Any]]:
     for entry in sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True):
         if not entry.is_dir():
             continue
-        state_file = entry / "pipeline_state.json"
-        if not state_file.exists():
+        if not (entry / "pipeline_state.json").exists():
             continue
-        stat = entry.stat()
-        created_ts = getattr(stat, "st_birthtime", None) or stat.st_ctime
-        created_at = datetime.fromtimestamp(created_ts).strftime("%Y-%m-%d %H:%M")
-
-        row: dict[str, Any] = {"run_id": entry.name, "run_dir": entry, "created_at": created_at, "error": None}
-        try:
-            store = PipelineStateStore(entry)
-            state = store.load()
-            row["status"] = effective_pipeline_status(state)
-            row["attempts"] = len(state.attempts)
-            row["config"] = state.config_path.split("/")[-1] if state.config_path else "—"
-            row["mlflow_run_id"] = state.root_mlflow_run_id
-            first_start = state.attempts[0].started_at if state.attempts else None
-            last_end = state.attempts[-1].completed_at if state.attempts else None
-            row["duration"] = _fmt_duration(first_start, last_end)
-            row["started_at"] = first_start
-        except (PipelineStateLoadError, Exception) as exc:
-            row["status"] = "unknown"
-            row["attempts"] = 0
-            row["config"] = "—"
-            row["mlflow_run_id"] = None
-            row["duration"] = ""
-            row["started_at"] = None
-            row["error"] = str(exc)
-        rows.append(row)
+        rows.append(_build_row_dict(entry))
     return rows
+
+
+def scan_runs_dir_grouped(runs_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    """Scan runs_dir recursively for runs, grouping by relative parent path.
+
+    A directory containing ``pipeline_state.json`` is a run.  Directories
+    directly inside *runs_dir* go into ``ROOT_GROUP``.  Runs nested deeper
+    are grouped by the relative path from *runs_dir* to their parent.
+
+    Returns ``{group_name: [row_dict, ...], ...}``.
+    Each row dict includes a ``"group"`` key.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    if not runs_dir.is_dir():
+        return groups
+
+    _scan_dir_recursive(runs_dir, runs_dir, groups)
+    return groups
+
+
+def _scan_dir_recursive(
+    current: Path,
+    root: Path,
+    groups: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Walk *current* looking for run directories (contain pipeline_state.json)."""
+    try:
+        children = sorted(current.iterdir(), key=lambda p: p.name, reverse=True)
+    except OSError:
+        return
+
+    for entry in children:
+        if not entry.is_dir():
+            continue
+        if (entry / "pipeline_state.json").exists():
+            if current == root:
+                group_name = ROOT_GROUP
+            else:
+                group_name = str(current.relative_to(root))
+            row = _build_row_dict(entry)
+            row["group"] = group_name
+            groups.setdefault(group_name, []).append(row)
+        else:
+            _scan_dir_recursive(entry, root, groups)
 
 
 # =============================================================================

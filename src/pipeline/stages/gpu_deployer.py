@@ -325,10 +325,10 @@ class GPUDeployer(PipelineStage):
                     "pod_startup_seconds": connect_duration,
                     "upload_duration_seconds": upload_duration,
                     "deps_duration_seconds": deps_duration,
-                    # Pod metadata (RunPod: from API; single_node: None)
-                    "cost_per_hr": (pod_info or {}).get("cost_per_hr"),
-                    "gpu_type": (pod_info or {}).get("gpu_type"),
-                    "gpu_count": (pod_info or {}).get("gpu_count"),
+                    # Pod metadata (RunPod: PodResourceInfo; single_node: None)
+                    "cost_per_hr": getattr(pod_info, "cost_per_hr", None),
+                    "gpu_type": getattr(pod_info, "gpu_type", None),
+                    "gpu_count": getattr(pod_info, "gpu_count", None),
                 },
             )
         )

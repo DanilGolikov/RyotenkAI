@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import src.training.strategies.dpo as dpo_mod
 from src.training.strategies.dpo import DPOStrategy
 from src.training.strategies.orpo import ORPOStrategy
 from src.training.strategies.sapo import SAPOStrategy
@@ -61,30 +60,16 @@ def test_dpo_build_trainer_kwargs_uses_ref_model_when_provided() -> None:
     assert kwargs["ref_model"] is ref
 
 
-def test_dpo_post_build_config_hook_loads_reference_adapter_for_peft(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Patch PeftModel type check
-    class DummyPeft:
-        pass
-
-    monkeypatch.setattr(dpo_mod, "PeftModel", DummyPeft)
-
-    model = DummyPeft()
-    model.active_adapter = "train"
-    model.peft_config = {"train": SimpleNamespace(base_model_name_or_path="/adapter")}
-    model.load_adapter = MagicMock()
-
+def test_dpo_post_build_config_hook_is_noop() -> None:
+    """post_build_config_hook is a no-op — TRL handles PeftModel reference natively."""
     cfg = SimpleNamespace()
+    model = object()
 
     s = DPOStrategy(MagicMock())
-    # build_trainer_kwargs no longer mutates config — mutation lives in post_build_config_hook
-    kwargs = s.build_trainer_kwargs(cfg, model=model, ref_model=None)
-    assert "ref_model" not in kwargs or kwargs.get("ref_model") is None
-
     s.post_build_config_hook(cfg, model=model, ref_model=None)
 
-    assert cfg.model_adapter_name == "train"
-    assert cfg.ref_adapter_name == "reference"
-    model.load_adapter.assert_called_once_with("/adapter", adapter_name="reference")
+    assert not hasattr(cfg, "model_adapter_name")
+    assert not hasattr(cfg, "ref_adapter_name")
 
 
 def test_orpo_validate_and_prepare_dataset() -> None:

@@ -167,6 +167,7 @@ class TestTrainingOnlyConfig:
                 adalora=AdaLoraConfig(
                     init_r=16,
                     target_r=8,
+                    total_step=100,
                     lora_alpha=16,
                     lora_dropout=0.05,
                     bias="none",

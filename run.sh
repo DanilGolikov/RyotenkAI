@@ -20,7 +20,9 @@
 # Batch smoke testing:
 #   ./run.sh /path/to/configs --smoke                          — run all configs in parallel
 #   ./run.sh /path/to/configs --smoke --workers 2              — limit parallelism
-#   ./run.sh /path/to/configs --smoke --timeout 1200           — 20 min per config
+#   ./run.sh /path/to/configs --smoke --workers -1             — 1 worker per config (unlimited)
+#   ./run.sh /path/to/configs --smoke --timeout 1200           — idle timeout 20 min per config
+#   ./run.sh /path/to/configs --smoke --stagger 10             — 10s between launches (default: 5)
 #   ./run.sh /path/to/configs --smoke --dry-run                — list configs only
 #
 # ryotenkai TUI (interactive terminal UI):
@@ -61,7 +63,9 @@ ryotenkai TUI (interactive browser):
 Batch smoke testing:
   ./run.sh /path/to/configs --smoke                        — run all *.yaml configs in parallel
   ./run.sh /path/to/configs --smoke --workers 2            — limit parallelism (default: 4)
-  ./run.sh /path/to/configs --smoke --timeout 1200         — per-config timeout (default: 900s)
+  ./run.sh /path/to/configs --smoke --workers -1           — 1 worker per config (unlimited)
+  ./run.sh /path/to/configs --smoke --timeout 1200         — idle timeout per config (default: 600s)
+  ./run.sh /path/to/configs --smoke --stagger 10           — delay between launches (default: 5s)
   ./run.sh /path/to/configs --smoke --dry-run              — list configs without running
 
 Pre-flight:
@@ -93,6 +97,7 @@ TUI=false
 SMOKE=false
 SMOKE_WORKERS=""
 SMOKE_TIMEOUT=""
+SMOKE_STAGGER=""
 SMOKE_DRY_RUN=false
 SMOKE_REPORT_DIR=""
 PASSTHROUGH=()
@@ -155,6 +160,13 @@ while [[ $i -lt ${#args[@]} ]]; do
             ;;
         --timeout=*)
             SMOKE_TIMEOUT="${arg#--timeout=}"
+            ;;
+        --stagger)
+            i=$((i + 1))
+            SMOKE_STAGGER="${args[$i]}"
+            ;;
+        --stagger=*)
+            SMOKE_STAGGER="${arg#--stagger=}"
             ;;
         --dry-run)
             SMOKE_DRY_RUN=true
@@ -328,7 +340,8 @@ elif [[ "$SMOKE" == true ]]; then
     fi
     ARGS=("$SMOKE_DIR")
     [[ -n "$SMOKE_WORKERS" ]]    && ARGS+=(--workers "$SMOKE_WORKERS")
-    [[ -n "$SMOKE_TIMEOUT" ]]    && ARGS+=(--timeout "$SMOKE_TIMEOUT")
+    [[ -n "$SMOKE_TIMEOUT" ]]    && ARGS+=(--idle-timeout "$SMOKE_TIMEOUT")
+    [[ -n "$SMOKE_STAGGER" ]]    && ARGS+=(--stagger "$SMOKE_STAGGER")
     [[ -n "$SMOKE_REPORT_DIR" ]] && ARGS+=(--report-dir "$SMOKE_REPORT_DIR")
     [[ "$SMOKE_DRY_RUN" == true ]] && ARGS+=(--dry-run)
     python scripts/batch_smoke.py "${ARGS[@]}"

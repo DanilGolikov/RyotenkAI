@@ -55,12 +55,16 @@ _MIN_LORA = {
 }
 
 
-def _mk_phase(strategy_type: str) -> StrategyPhaseConfig:
+def _mk_phase(strategy_type: str, dataset: str | None = None) -> StrategyPhaseConfig:
     """
     Build StrategyPhaseConfig with required strategy-specific params.
 
     NOTE: Some strategies (e.g. SAPO) require additional hyperparams.
     """
+    extra: dict = {}
+    if dataset is not None:
+        extra["dataset"] = dataset
+
     if strategy_type == "sapo":
         return StrategyPhaseConfig(
             strategy_type=strategy_type,
@@ -69,6 +73,7 @@ def _mk_phase(strategy_type: str) -> StrategyPhaseConfig:
                 "max_completion_length": 512,
             },
             params={"reward_plugin": "helixql_compiler_semantic"},
+            **extra,
         )
     if strategy_type == "grpo":
         return StrategyPhaseConfig(
@@ -78,8 +83,9 @@ def _mk_phase(strategy_type: str) -> StrategyPhaseConfig:
                 "max_completion_length": 512,
             },
             params={"reward_plugin": "helixql_compiler_semantic"},
+            **extra,
         )
-    return StrategyPhaseConfig(strategy_type=strategy_type)
+    return StrategyPhaseConfig(strategy_type=strategy_type, **extra)
 
 
 # =============================================================================
@@ -194,7 +200,7 @@ class TestValidTwoPhaseChains:
     )
     def test_two_phase_valid(self, chain):
         """Valid two-phase chains should pass."""
-        strategies = [_mk_phase(t) for t in chain]
+        strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
 
@@ -222,7 +228,7 @@ class TestValidThreePhaseChains:
     )
     def test_three_phase_valid(self, chain):
         """Valid three-phase chains should pass."""
-        strategies = [_mk_phase(t) for t in chain]
+        strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
 
@@ -243,7 +249,7 @@ class TestValidFourPhaseChains:
     )
     def test_four_phase_valid(self, chain):
         """Maximum length chains should pass."""
-        strategies = [_mk_phase(t) for t in chain]
+        strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
 
@@ -280,9 +286,9 @@ class TestInvalidChains:
     def test_none_in_middle_of_chain(self):
         """None in middle of chain should fail."""
         strategies = [
-            _mk_phase("sft"),
+            _mk_phase("sft", dataset="ds_sft"),
             None,  # type: ignore
-            _mk_phase("dpo"),
+            _mk_phase("dpo", dataset="ds_dpo"),
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -333,7 +339,7 @@ class TestInvalidTransitions:
     )
     def test_invalid_transition(self, chain, error_contains):
         """Invalid transitions should fail with correct error."""
-        strategies = [_mk_phase(t) for t in chain]
+        strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
 
@@ -343,9 +349,9 @@ class TestInvalidTransitions:
     def test_dpo_is_terminal_no_next(self):
         """DPO cannot transition to anything."""
         strategies = [
-            _mk_phase("sft"),
-            _mk_phase("dpo"),
-            _mk_phase("sft"),  # Invalid
+            _mk_phase("sft", dataset="ds_sft"),
+            _mk_phase("dpo", dataset="ds_dpo"),
+            _mk_phase("sft", dataset="ds_sft2"),  # Invalid
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -357,8 +363,8 @@ class TestInvalidTransitions:
     def test_orpo_is_terminal_no_next(self):
         """ORPO cannot transition to anything."""
         strategies = [
-            _mk_phase("orpo"),
-            _mk_phase("dpo"),  # Invalid
+            _mk_phase("orpo", dataset="ds_orpo"),
+            _mk_phase("dpo", dataset="ds_dpo"),  # Invalid
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -369,8 +375,8 @@ class TestInvalidTransitions:
     def test_sapo_is_terminal_no_next(self):
         """SAPO cannot transition to anything."""
         strategies = [
-            _mk_phase("sapo"),
-            _mk_phase("sft"),  # Invalid
+            _mk_phase("sapo", dataset="ds_sapo"),
+            _mk_phase("sft", dataset="ds_sft"),  # Invalid
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -393,7 +399,7 @@ class TestTrainingConfigIntegration:
             type="qlora",
             qlora=_MIN_LORA,
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
-            strategies=[_mk_phase("sft"), _mk_phase("dpo")],
+            strategies=[_mk_phase("sft", dataset="ds_sft"), _mk_phase("dpo", dataset="ds_dpo")],
         )
 
         is_valid, error_msg = config.validate_chain()
@@ -409,8 +415,8 @@ class TestTrainingConfigIntegration:
                 qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
-                    _mk_phase("dpo"),  # Invalid start
-                    _mk_phase("sft"),
+                    _mk_phase("dpo", dataset="ds_dpo"),  # Invalid start
+                    _mk_phase("sft", dataset="ds_sft"),
                 ],
             )
 
@@ -424,9 +430,9 @@ class TestTrainingConfigIntegration:
                 qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
-                    _mk_phase("sft"),
-                    _mk_phase("dpo"),
-                    _mk_phase("orpo"),  # Invalid: after terminal
+                    _mk_phase("sft", dataset="ds_sft"),
+                    _mk_phase("dpo", dataset="ds_dpo"),
+                    _mk_phase("orpo", dataset="ds_orpo"),  # Invalid: after terminal
                 ],
             )
 
@@ -483,10 +489,10 @@ class TestBoundaryCases:
     def test_very_long_valid_chain(self):
         """Maximum valid chain (4 phases) should work."""
         strategies = [
-            _mk_phase("cpt"),
-            _mk_phase("sft"),
-            _mk_phase("cot"),
-            _mk_phase("dpo"),
+            _mk_phase("cpt", dataset="ds_cpt"),
+            _mk_phase("sft", dataset="ds_sft"),
+            _mk_phase("cot", dataset="ds_cot"),
+            _mk_phase("dpo", dataset="ds_dpo"),
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -496,13 +502,11 @@ class TestBoundaryCases:
     def test_all_terminal_strategies_can_be_standalone(self):
         """All terminal strategies should work as standalone."""
         for terminal in ["dpo", "orpo", "sapo"]:
-            # They can't start on their own except ORPO and SAPO
             if terminal in ["orpo", "sapo"]:
                 strategies = [_mk_phase(terminal)]
                 is_valid, _ = validate_strategy_chain(strategies)
                 assert is_valid is True
             else:
-                # DPO cannot start
                 strategies = [_mk_phase(terminal)]
                 is_valid, _ = validate_strategy_chain(strategies)
                 assert is_valid is False
@@ -510,10 +514,10 @@ class TestBoundaryCases:
     def test_cpt_then_sft_then_cot_then_dpo(self):
         """Full pipeline CPT → SFT → CoT → DPO should work."""
         strategies = [
-            _mk_phase("cpt"),
-            _mk_phase("sft"),
-            _mk_phase("cot"),
-            _mk_phase("dpo"),
+            _mk_phase("cpt", dataset="ds_cpt"),
+            _mk_phase("sft", dataset="ds_sft"),
+            _mk_phase("cot", dataset="ds_cot"),
+            _mk_phase("dpo", dataset="ds_dpo"),
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -524,9 +528,9 @@ class TestBoundaryCases:
     def test_alternative_terminal_orpo(self):
         """SFT → CoT → ORPO should work."""
         strategies = [
-            _mk_phase("sft"),
-            _mk_phase("cot"),
-            _mk_phase("orpo"),
+            _mk_phase("sft", dataset="ds_sft"),
+            _mk_phase("cot", dataset="ds_cot"),
+            _mk_phase("orpo", dataset="ds_orpo"),
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -536,9 +540,9 @@ class TestBoundaryCases:
     def test_alternative_terminal_sapo(self):
         """SFT → CoT → SAPO should work."""
         strategies = [
-            _mk_phase("sft"),
-            _mk_phase("cot"),
-            _mk_phase("sapo"),
+            _mk_phase("sft", dataset="ds_sft"),
+            _mk_phase("cot", dataset="ds_cot"),
+            _mk_phase("sapo", dataset="ds_sapo"),
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -557,8 +561,8 @@ class TestErrorMessages:
     def test_error_message_includes_valid_transitions(self):
         """Error should list valid transitions."""
         strategies = [
-            _mk_phase("cpt"),
-            _mk_phase("dpo"),  # Invalid: CPT can't go to DPO
+            _mk_phase("cpt", dataset="ds_cpt"),
+            _mk_phase("dpo", dataset="ds_dpo"),  # Invalid: CPT can't go to DPO
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -570,8 +574,8 @@ class TestErrorMessages:
     def test_error_message_includes_strategy_names(self):
         """Error should include the strategy names involved."""
         strategies = [
-            _mk_phase("sft"),
-            _mk_phase("sft"),  # Invalid: can't repeat
+            _mk_phase("sft", dataset="ds_sft1"),
+            _mk_phase("sft", dataset="ds_sft2"),  # Invalid: can't repeat
         ]
 
         is_valid, error_msg = validate_strategy_chain(strategies)
@@ -592,3 +596,61 @@ class TestErrorMessages:
 
         assert is_valid is False
         assert "none" in error_msg.lower()
+
+
+# =============================================================================
+# TEST: Duplicate Dataset Validation
+# =============================================================================
+
+
+class TestDuplicateDatasetValidation:
+    """Test that strategies sharing the same dataset are rejected."""
+
+    def test_two_strategies_same_explicit_dataset(self):
+        """Two strategies with same dataset name should fail."""
+        strategies = [
+            _mk_phase("sft", dataset="shared"),
+            _mk_phase("dpo", dataset="shared"),
+        ]
+        is_valid, error_msg = validate_strategy_chain(strategies)
+        assert is_valid is False
+        assert "Duplicate dataset" in error_msg
+        assert "shared" in error_msg
+
+    def test_two_strategies_both_default_none(self):
+        """Two strategies with dataset=None (both resolve to 'default') should fail."""
+        strategies = [
+            _mk_phase("sft"),  # dataset=None → "default"
+            _mk_phase("dpo"),  # dataset=None → "default"
+        ]
+        is_valid, error_msg = validate_strategy_chain(strategies)
+        assert is_valid is False
+        assert "Duplicate dataset" in error_msg
+        assert "default" in error_msg
+
+    def test_single_strategy_no_duplicate_check(self):
+        """Single strategy never triggers duplicate check."""
+        strategies = [_mk_phase("sft")]
+        is_valid, _ = validate_strategy_chain(strategies)
+        assert is_valid is True
+
+    def test_two_strategies_different_datasets_ok(self):
+        """Two strategies with different datasets should pass."""
+        strategies = [
+            _mk_phase("sft", dataset="sft_data"),
+            _mk_phase("dpo", dataset="pref_data"),
+        ]
+        is_valid, error_msg = validate_strategy_chain(strategies)
+        assert is_valid is True
+        assert error_msg == ""
+
+    def test_error_mentions_both_strategy_types(self):
+        """Error should mention which strategies collide."""
+        strategies = [
+            _mk_phase("sft", dataset="same"),
+            _mk_phase("cot", dataset="same"),
+        ]
+        is_valid, error_msg = validate_strategy_chain(strategies)
+        assert is_valid is False
+        assert "sft" in error_msg
+        assert "cot" in error_msg

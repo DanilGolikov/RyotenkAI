@@ -35,6 +35,11 @@ class AdaLoraConfig(StrictBaseModel):
     # =========================================================================
     init_r: int = Field(..., ge=1, le=LORA_RANK_MAX, description="REQUIRED: Initial rank for all adapters")
     target_r: int = Field(..., ge=1, le=LORA_RANK_MAX, description="REQUIRED: Target average rank (after pruning)")
+    total_step: int = Field(
+        ...,
+        ge=1,
+        description="REQUIRED: Total training steps for the pruning schedule (dataset_size / batch_size * epochs)",
+    )
 
     # =========================================================================
     # OPTIONAL: AdaLoRA scheduling (reasonable defaults)

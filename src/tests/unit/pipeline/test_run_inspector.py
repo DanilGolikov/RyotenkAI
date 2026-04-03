@@ -25,11 +25,13 @@ from typer.testing import CliRunner
 from src.main import app
 from src.pipeline.domain import RunContext
 from src.pipeline.run_inspector import (
+    ROOT_GROUP,
     RunInspectionRenderer,
     RunInspector,
     _fmt_duration,
     diff_attempts,
     scan_runs_dir,
+    scan_runs_dir_grouped,
 )
 from src.pipeline.state import (
     PipelineState,
@@ -323,6 +325,74 @@ def test_scan_runs_dir_handles_corrupt_state(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["status"] == "unknown"
     assert rows[0]["error"] is not None
+
+
+# =============================================================================
+# scan_runs_dir_grouped
+# =============================================================================
+
+
+def test_scan_runs_dir_grouped_empty(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert groups == {}
+
+
+def test_scan_runs_dir_grouped_root_only(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_001")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP in groups
+    assert len(groups[ROOT_GROUP]) == 1
+    assert groups[ROOT_GROUP][0]["run_id"] == "run_001"
+    assert groups[ROOT_GROUP][0]["group"] == ROOT_GROUP
+
+
+def test_scan_runs_dir_grouped_subfolder(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    smoke = runs_dir / "smoke_abc12"
+    smoke.mkdir()
+    _make_state(smoke, run_id="run_in_smoke")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP not in groups
+    assert "smoke_abc12" in groups
+    assert len(groups["smoke_abc12"]) == 1
+    assert groups["smoke_abc12"][0]["run_id"] == "run_in_smoke"
+    assert groups["smoke_abc12"][0]["group"] == "smoke_abc12"
+
+
+def test_scan_runs_dir_grouped_mixed(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_root")
+    smoke = runs_dir / "smoke_xyz"
+    smoke.mkdir()
+    _make_state(smoke, run_id="run_nested")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP in groups
+    assert "smoke_xyz" in groups
+    assert len(groups[ROOT_GROUP]) == 1
+    assert len(groups["smoke_xyz"]) == 1
+    assert groups[ROOT_GROUP][0]["run_id"] == "run_root"
+    assert groups["smoke_xyz"][0]["run_id"] == "run_nested"
+
+
+def test_scan_runs_dir_grouped_includes_created_ts(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_ts")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    row = groups[ROOT_GROUP][0]
+    assert "created_ts" in row
+    assert isinstance(row["created_ts"], float)
+    assert row["created_ts"] > 0
 
 
 # =============================================================================
