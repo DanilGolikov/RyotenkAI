@@ -125,10 +125,14 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
         if not isinstance(adapter_cfg, AdaLoraConfigType):
             raise ValueError("type='adalora' requires 'adalora:' section in config")
 
-        logger.info(f"AdaLoRA config: init_r={adapter_cfg.init_r}, target_r={adapter_cfg.target_r}")
+        logger.info(
+            f"AdaLoRA config: init_r={adapter_cfg.init_r}, target_r={adapter_cfg.target_r}, "
+            f"total_step={adapter_cfg.total_step}"
+        )
         return AdaLoraConfig(
             init_r=adapter_cfg.init_r,
             target_r=adapter_cfg.target_r,
+            total_step=adapter_cfg.total_step,
             tinit=adapter_cfg.tinit,
             tfinal=adapter_cfg.tfinal,
             deltaT=adapter_cfg.delta_t,

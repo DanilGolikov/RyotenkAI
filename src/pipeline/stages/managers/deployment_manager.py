@@ -109,28 +109,40 @@ class TrainingDeploymentManager:
 
     @staticmethod
     def _build_ssh_opts(ssh_client: SSHClient) -> str:
-        """Build SSH command options (handles alias mode vs explicit)."""
-        # NOTE: tests/mocks may only provide the legacy `_is_alias_mode` attribute.
-        # Also, MagicMock may return a truthy object for missing attrs, so we only trust real bools.
+        """Build SSH options string reusing the client's ControlMaster socket.
+
+        When ssh_client has ``ssh_base_opts`` (always the case for a real
+        ``SSHClient``), we reuse them so that rsync/tar-over-ssh share the
+        persistent TCP connection opened by earlier SSH operations.
+        """
+        base_opts: list[str] | None = getattr(ssh_client, "ssh_base_opts", None)
+        if base_opts:
+            key_path = getattr(ssh_client, "key_path", None)
+            port = getattr(ssh_client, "port", None)
+            parts: list[str] = []
+            if isinstance(key_path, str) and key_path:
+                parts.extend(["-i", key_path])
+            if isinstance(port, int) and port:
+                parts.extend(["-p", str(port)])
+            parts.extend(base_opts)
+            return " ".join(parts)
+
+        # Legacy / mock fallback
         alias_mode_attr = getattr(ssh_client, "is_alias_mode", None)
         if not isinstance(alias_mode_attr, bool):
             alias_mode_attr = getattr(ssh_client, "_is_alias_mode", False)
         is_alias_mode = bool(alias_mode_attr) if isinstance(alias_mode_attr, bool) else False
 
         if is_alias_mode:
-            # For alias mode, just use StrictHostKeyChecking (SSH config handles rest)
             return "-o StrictHostKeyChecking=no"
 
-        # For explicit mode, specify key and port (if available)
         opts_parts: list[str] = []
         key_path = getattr(ssh_client, "key_path", None)
         if isinstance(key_path, str) and key_path:
             opts_parts.append(f"-i {key_path}")
-
         port = getattr(ssh_client, "port", None)
         if isinstance(port, int) and port:
             opts_parts.append(f"-p {port}")
-
         opts_parts.append("-o StrictHostKeyChecking=no")
         return " ".join(opts_parts)
 
@@ -144,8 +156,8 @@ class TrainingDeploymentManager:
         """
         self.config = config
         self.secrets = secrets
-        self._workspace = self.DEFAULT_WORKSPACE  # Run directory (where files are deployed)
-        logger.debug("🚀 TrainingDeploymentManager initialized (docker-only)")
+        self._workspace = self.DEFAULT_WORKSPACE
+        logger.debug("🚀 TrainingDeploymentManager initialized")
 
     @property
     def workspace(self) -> str:
@@ -170,34 +182,36 @@ class TrainingDeploymentManager:
     # =========================================================================
 
     def _sync_source_code(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """
-        Sync only required source code modules to remote server.
+        """Sync required source modules to remote in a single rsync call.
 
-        Uses REQUIRED_MODULES to upload only what's needed for training:
-        - src/training/  (training logic, includes models)
-        - src/utils/     (utilities)
-        - src/data/      (data loaders)
-        - src/__init__.py
-
-        Excludes: __pycache__, tests, docs, *.md, etc.
+        Directories get ``--delete`` semantics (stale files removed);
+        single ``.py`` files are included via ``--include``/``--exclude`` filters.
+        Falls back to per-module tar pipes when rsync is unavailable.
         """
         logger.info("📦 Syncing source code (selective)...")
 
-        # Create remote directories
-        remote_dirs: list[str] = []
+        existing_modules: list[str] = []
         for module in self.REQUIRED_MODULES:
+            if Path(module).exists():
+                existing_modules.append(module)
+            else:
+                logger.warning(f"⚠️ Module not found: {module}")
+
+        if not existing_modules:
+            logger.warning("⚠️ No modules to sync")
+            return Ok(None)
+
+        remote_dirs: list[str] = []
+        for module in existing_modules:
             if module.endswith(".py"):
-                # Single file - create parent dir
                 remote_dir = f"{self._workspace}/{Path(module).parent}"
             else:
-                # Directory
                 remote_dir = f"{self._workspace}/{module}"
-
             if remote_dir not in remote_dirs:
                 remote_dirs.append(remote_dir)
 
         if remote_dirs:
-            mkdir_targets = " ".join(shlex.quote(remote_dir) for remote_dir in remote_dirs)
+            mkdir_targets = " ".join(shlex.quote(d) for d in remote_dirs)
             ssh_client.exec_command(
                 command=f"mkdir -p {mkdir_targets}",
                 background=False,
@@ -205,63 +219,71 @@ class TrainingDeploymentManager:
                 silent=True,
             )
 
-        # Build exclude patterns for rsync
-        excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
         ssh_opts = self._build_ssh_opts(ssh_client)
 
-        uploaded_count = 0
-        for module in self.REQUIRED_MODULES:
-            local_path = Path(module)
+        rsync_ok = self._sync_all_modules_rsync(ssh_client, existing_modules, ssh_opts)
+        if rsync_ok:
+            self._clear_pycache(ssh_client)
+            logger.info(f"Source code synced ({len(existing_modules)} modules)")
+            return Ok(None)
 
-            if not local_path.exists():
-                logger.warning(f"⚠️ Module not found: {module}")
-                continue
+        logger.warning("⚠️ Batch rsync failed, falling back to per-module tar pipes")
+        for module in existing_modules:
+            tar_result = self._sync_module_tar(ssh_client, module, ssh_opts)
+            if tar_result.is_failure():
+                logger.error(f"❌ Failed to sync {module}")
+                return tar_result
+            logger.debug(f"   ✓ {module}")
 
-            remote_path = f"{self._workspace}/{module}"
+        self._clear_pycache(ssh_client)
+        logger.info(f"Source code synced ({len(existing_modules)} modules, tar fallback)")
+        return Ok(None)
 
-            if local_path.is_file():
-                # Single file upload
-                rsync_cmd = (
-                    # NOTE: Do not preserve owner/group. In containerized/cloud environments (RunPod),
-                    # chown may be disallowed (userns mapping), which breaks `-a` uploads.
-                    f"rsync -az --no-owner --no-group {excludes} -e 'ssh {ssh_opts}' "
-                    f"{local_path} {ssh_client.ssh_target}:{remote_path}"
-                )
-            else:
-                # Directory upload
-                rsync_cmd = (
-                    # Same rationale as above: avoid chown failures on receiver.
-                    f"rsync -az --no-owner --no-group --delete {excludes} "
-                    f"-e 'ssh {ssh_opts}' "
-                    f"{local_path}/ {ssh_client.ssh_target}:{remote_path}/"
-                )
+    def _sync_all_modules_rsync(
+        self,
+        ssh_client: SSHClient,
+        modules: list[str],
+        ssh_opts: str,
+    ) -> bool:
+        """Single rsync invocation for all modules. Returns True on success."""
+        excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
 
+        dirs = [m for m in modules if not m.endswith(".py")]
+        files = [m for m in modules if m.endswith(".py")]
+
+        # rsync --include/--filter to send only the dirs and files we need,
+        # rooted at project root so relative paths stay intact on the remote.
+        # --relative (-R) preserves the directory structure.
+        sources = " ".join(shlex.quote(m + "/" if m in dirs else m) for m in modules)
+        rsync_cmd = (
+            f"rsync -azR --no-owner --no-group --delete {excludes} "
+            f"-e 'ssh {ssh_opts}' "
+            f"{sources} {ssh_client.ssh_target}:{self._workspace}/"
+        )
+
+        try:
             result = subprocess.run(
                 rsync_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_RSYNC_TIMEOUT
             )
+        except subprocess.TimeoutExpired:
+            logger.warning("⚠️ Batch rsync timed out")
+            return False
 
-            if result.returncode != 0:
-                # Try tar fallback for this module
-                tar_result = self._sync_module_tar(ssh_client, module, ssh_opts)
-                if tar_result.is_failure():
-                    logger.error(
-                        f"❌ Failed to sync {module}: {result.stderr[:DEPLOYMENT_STDERR_TRUNCATE] if result.stderr else 'unknown'}"
-                    )
-                    return tar_result
+        if result.returncode != 0:
+            logger.debug(f"Batch rsync failed (rc={result.returncode}): {result.stderr[:200] if result.stderr else ''}")
+            return False
 
-            uploaded_count += 1
-            logger.debug(f"   ✓ {module}")
+        for m in modules:
+            logger.debug(f"   ✓ {m}")
+        return True
 
-        # Clear Python cache to ensure fresh code is used
+    def _clear_pycache(self, ssh_client: SSHClient) -> None:
         cache_clear_cmd = (
             f"find {self._workspace}/src -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null || true"
         )
         ssh_client.exec_command(
             command=cache_clear_cmd, background=False, timeout=DEPLOYMENT_SSH_CMD_TIMEOUT, silent=True
         )
-
-        logger.info(f"Source code synced ({uploaded_count} modules)")
-        return Ok(None)
 
     def _sync_module_tar(self, ssh_client: SSHClient, module: str, ssh_opts: str) -> Result[None, AppError]:
         """Fallback: sync module using tar pipe."""
@@ -351,6 +373,7 @@ class TrainingDeploymentManager:
             # - remote_rel_path: path as referenced in config (relative inside remote workspace)
             dataset_files: list[tuple[str, str]] = []
             missing_datasets: list[str] = []
+            resolved_datasets_count = 0
             # Use only datasets that are actually referenced by training strategies
             datasets_to_upload: dict[str, Any] = {}
             strategies = self.config.training.get_strategy_chain()
@@ -368,11 +391,12 @@ class TrainingDeploymentManager:
             for dataset_name, dataset_config in datasets_to_upload.items():
                 if not dataset_config:
                     continue
+                resolved_datasets_count += 1
 
-                    # NEW SCHEMA (v6.0):
-                    # - local source: source_local.local_paths.* (local fs)
-                    # - training_paths are AUTO-GENERATED: data/{strategy_type}/{basename}
-                    # - huggingface source: no uploads
+                # NEW SCHEMA (v6.0):
+                # - local source: source_local.local_paths.* (local fs)
+                # - training_paths are AUTO-GENERATED: data/{strategy_type}/{basename}
+                # - huggingface source: no uploads
                 if dataset_config.get_source_type() != "local":
                     continue
 
@@ -436,28 +460,22 @@ class TrainingDeploymentManager:
                             details={"missing": missing_datasets},
                         )
                     )
-                return Err(
-                    ConfigError(
-                        message="No datasets configured. Add 'datasets:' section to config.",
-                        code="NO_DATASETS_CONFIGURED",
+
+                if resolved_datasets_count == 0:
+                    return Err(
+                        ConfigError(
+                            message="No datasets configured. Add 'datasets:' section to config.",
+                            code="NO_DATASETS_CONFIGURED",
+                        )
                     )
-                )
+
+                logger.info("📦 No local dataset files to upload; using remote-backed datasets from config only")
 
             logger.info(f"📦 Uploading {len(files_to_upload)} files ({len(dataset_files)} datasets)...")
 
-            # ⚡ OPTIMIZED: Batch upload small files via tar pipe (3-5x faster!)
-            logger.debug("📦 Batch uploading files via tar stream...")
-
-            batch_result = self._upload_files_batch(ssh_client, files_to_upload)
+            batch_result = self._upload_files_with_transport(ssh_client, files_to_upload, dataset_files, config_path, context)
             if batch_result.is_failure():
-                # Type narrowing for mypy/pyright
-                assert isinstance(batch_result, Failure)
-                # Fallback to individual uploads if batch failed
-                err_msg = batch_result.unwrap_err()
-                logger.warning(f"⚠️ Batch upload failed: {err_msg}, falling back to individual uploads")
-                fallback_result = self._upload_files_individual(ssh_client, dataset_files, config_path)
-                if fallback_result.is_failure():
-                    return fallback_result
+                return batch_result
 
             # Upload source code modules (selective sync for smaller transfers)
             sync_result = self._sync_source_code(ssh_client)
@@ -473,6 +491,26 @@ class TrainingDeploymentManager:
         except (OSError, subprocess.SubprocessError) as e:
             logger.error(f"File upload error: {e}")
             return Err(ProviderError(message=f"Failed to upload files: {e!s}", code="FILE_UPLOAD_FAILED"))
+
+    def _upload_files_with_transport(
+        self,
+        ssh_client: SSHClient,
+        files_to_upload: list[tuple[str, str]],
+        dataset_files: list[tuple[str, str]],
+        config_path: str,
+        context: dict[str, Any],
+    ) -> Result[None, AppError]:
+        """Upload files via SSH batch (tar pipe), with individual file fallback."""
+        logger.debug("📦 Batch uploading files via tar stream...")
+        batch_result = self._upload_files_batch(ssh_client, files_to_upload)
+        if batch_result.is_failure():
+            assert isinstance(batch_result, Failure)
+            err_msg = batch_result.unwrap_err()
+            logger.warning(f"⚠️ Batch upload failed: {err_msg}, falling back to individual uploads")
+            fallback_result = self._upload_files_individual(ssh_client, dataset_files, config_path)
+            if fallback_result.is_failure():
+                return fallback_result
+        return Ok(None)
 
     # =========================================================================
     # PROVIDER HELPERS
@@ -677,7 +715,7 @@ class TrainingDeploymentManager:
 
         # MLflow configuration for nested runs
         mlflow_config = self.config.experiment_tracking.mlflow
-        if mlflow_config and mlflow_config.enabled:
+        if mlflow_config:
             # Tracking URI - remote server needs to know where to send runs
             if mlflow_config.tracking_uri:
                 env_vars["MLFLOW_TRACKING_URI"] = mlflow_config.tracking_uri

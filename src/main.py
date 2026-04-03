@@ -119,9 +119,9 @@ def _log_config_summary(config: PipelineConfig) -> None:
             lr_str = f", lr={phase_lr}" if phase_lr else ""
             logger.info(f"     Phase {i}: {s.strategy_type} ({phase_epochs} epochs{lr_str})")
 
-    # LoRA config
+    # Adapter config
     if config.training.type in ("qlora", "lora"):
-        lora = config.training.lora
+        lora = config.get_adapter_config()
         logger.info("🔧 LoRA:")
         logger.info(f"   r: {lora.r}")
         logger.info(f"   alpha: {lora.lora_alpha}")
@@ -131,11 +131,10 @@ def _log_config_summary(config: PipelineConfig) -> None:
         else:
             logger.info("   target_modules: auto (adapter default)")
     elif config.training.type == "adalora":
-        if config.training.adalora:
-            adalora = config.training.adalora
-            logger.info("🔧 AdaLoRA:")
-            logger.info(f"   init_r: {adalora.init_r}")
-            logger.info(f"   target_r: {adalora.target_r}")
+        adalora = config.get_adapter_config()
+        logger.info("🔧 AdaLoRA:")
+        logger.info(f"   init_r: {adalora.init_r}")
+        logger.info(f"   target_r: {adalora.target_r}")
 
     # Dataset config (use primary dataset from registry)
     default_dataset = config.get_primary_dataset()
@@ -399,10 +398,11 @@ def info(
         typer.echo("\nModel Configuration:")
         typer.echo(f"  Model         : {orchestrator.config.model.name}")
         typer.echo(f"  Training type : {orchestrator.config.training.type}")
+        adapter_cfg = orchestrator.config.training.get_adapter_config()
         if orchestrator.config.training.type in ("qlora", "lora"):
-            typer.echo(f"  LoRA r        : {orchestrator.config.training.lora.r}")
-        elif orchestrator.config.training.type == "adalora" and orchestrator.config.training.adalora:
-            typer.echo(f"  AdaLoRA init_r: {orchestrator.config.training.adalora.init_r}")
+            typer.echo(f"  LoRA r        : {adapter_cfg.r}")
+        elif orchestrator.config.training.type == "adalora":
+            typer.echo(f"  AdaLoRA init_r: {adapter_cfg.init_r}")
         strategies = orchestrator.config.training.get_strategy_chain()
         if strategies:
             typer.echo(f"  Strategies    : {' -> '.join(s.strategy_type.upper() for s in strategies)}")
@@ -954,23 +954,28 @@ def ryotenkai_tui(
         raise typer.BadParameter("log level must be INFO or DEBUG", param_hint="--log-level")
 
     from src.tui.apps import RyotenkaiApp
+    from src.tui.runtime import TuiRuntimeConfig, default_errors_log_path, run_tui_with_restart
     from src.utils.logger import set_log_level
 
     set_log_level(normalized_log_level)
 
+    runs_dir = Path("runs").resolve()
     resolved_run_dir = run_dir.expanduser().resolve() if run_dir is not None else None
-    RyotenkaiApp(
-        runs_dir=Path("runs").resolve(),
-        initial_run_dir=resolved_run_dir,
-        interval=interval,
-    ).run()
+    run_tui_with_restart(
+        lambda: RyotenkaiApp(
+            runs_dir=runs_dir,
+            initial_run_dir=resolved_run_dir,
+            interval=interval,
+        ),
+        config=TuiRuntimeConfig(errors_log_path=default_errors_log_path(runs_dir)),
+    )
 
 
 @app.command()
 def version():
     """Show version information."""
     typer.echo("RyotenkAI")
-    typer.echo("Version: 1.0.0")
+    typer.echo("Version: v0.1.0")
     typer.echo("Author: Golikov Daniil")
 
 

@@ -74,12 +74,12 @@ def _inference_cfg_disabled() -> InferenceConfig:
     )
 
 
-def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True) -> PipelineConfig:
+def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002") -> PipelineConfig:
     return PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],
         ),
@@ -92,7 +92,6 @@ def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=enabled,
                 tracking_uri=tracking_uri,
                 experiment_name="test",
                 log_artifacts=False,
@@ -102,9 +101,8 @@ def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002", enabled: bool = True
     )
 
 
-def test_is_enabled_and_is_active() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=True))
-    assert mgr.is_enabled is True
+def test_is_active_reflects_runtime_setup() -> None:
+    mgr = MLflowManager(_mk_cfg())
     assert mgr.is_active is False
 
     mgr._mlflow = object()
@@ -214,8 +212,8 @@ class FakeMLflow:
         return SimpleNamespace(empty=True)
 
 
-def test_start_run_disabled_yields_none() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=False))
+def test_start_run_without_setup_yields_none() -> None:
+    mgr = MLflowManager(_mk_cfg())
     with mgr.start_run(run_name="x") as run:
         assert run is None
 
@@ -362,7 +360,7 @@ def test_create_mlflow_dataset_from_pandas(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_event_logging_sets_has_errors_and_severity() -> None:
-    mgr = MLflowManager(_mk_cfg(enabled=False))
+    mgr = MLflowManager(_mk_cfg())
     ev = mgr.log_event_error("boom", category="system", source="MLflowManager", code=1)
     assert ev["event_type"] == "error"
     assert ev["severity"] == "ERROR"
@@ -376,7 +374,7 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="default")],
         ),
@@ -391,7 +389,6 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 log_artifacts=False,
@@ -427,19 +424,25 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
         model=_model_cfg(),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="cpt", dataset="corpus"),
-                StrategyPhaseConfig(strategy_type="sft", dataset="default"),
-                StrategyPhaseConfig(strategy_type="cot", dataset="default"),  # Reuses default
+                StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
+                StrategyPhaseConfig(strategy_type="cot", dataset="cot_data"),
             ],
         ),
         datasets={
-            "default": DatasetConfig(
+            "sft_data": DatasetConfig(
                 source_type="local",
                 source_local=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/sft.jsonl", eval=None),
+                ),
+            ),
+            "cot_data": DatasetConfig(
+                source_type="local",
+                source_local=DatasetSourceLocal(
+                    local_paths=DatasetLocalPaths(train="data/cot.jsonl", eval=None),
                 ),
             ),
             "corpus": DatasetConfig(
@@ -453,7 +456,6 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
                 log_artifacts=False,
@@ -479,12 +481,17 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
     assert captured["params"]["dataset.corpus.local.train_path"] == "data/corpus.jsonl"
     assert captured["params"]["dataset.corpus.max_samples"] == "10000"
 
-    # default dataset
-    assert captured["params"]["dataset.default.name"] == "sft"
-    assert captured["params"]["dataset.default.source_type"] == "local"
-    assert captured["params"]["dataset.default.local.train_path"] == "data/sft.jsonl"
+    # sft_data dataset (display_name from file stem: sft.jsonl → sft)
+    assert captured["params"]["dataset.sft_data.name"] == "sft"
+    assert captured["params"]["dataset.sft_data.source_type"] == "local"
+    assert captured["params"]["dataset.sft_data.local.train_path"] == "data/sft.jsonl"
 
-    # Check tags (sorted alphabetically: corpus, default)
+    # cot_data dataset (display_name from file stem: cot.jsonl → cot)
+    assert captured["params"]["dataset.cot_data.name"] == "cot"
+    assert captured["params"]["dataset.cot_data.source_type"] == "local"
+    assert captured["params"]["dataset.cot_data.local.train_path"] == "data/cot.jsonl"
+
+    # Check tags (sorted alphabetically: corpus, cot_data, sft_data)
     assert captured["tags"] is not None
-    assert captured["tags"]["dataset.names"] == "corpus,default"
-    assert captured["tags"]["dataset.count"] == "2"
+    assert captured["tags"]["dataset.names"] == "corpus,cot_data,sft_data"
+    assert captured["tags"]["dataset.count"] == "3"

@@ -120,8 +120,8 @@ class TestSavePluginReportHeader:
     def test_passed_verdict(self, patched_log_dir: Path) -> None:
         save_plugin_report("test_plugin", _make_rows(), _make_result(passed=True))
         content = (patched_log_dir / "evaluation" / "test_plugin_report.md").read_text()
-        assert "PASSED" in content
-        assert "FAILED" not in content
+        assert "**Verdict:** OK" in content
+        assert "**Verdict:** FAILED" not in content
 
     def test_failed_verdict(self, patched_log_dir: Path) -> None:
         save_plugin_report("test_plugin", _make_rows(), _make_result(passed=False))
@@ -236,7 +236,7 @@ class TestSavePluginReportSectionFormat:
 
 class TestSavePluginReportScoreDisplay:
     def test_syntax_valid_score(self, patched_log_dir: Path) -> None:
-        """helixql_syntax style: score=1.0, raw_score=None → shows ✓ valid"""
+        """helixql_syntax style: score=1.0, raw_score=None -> shows OK."""
         rows = [
             PluginReportRow(
                 idx=0, question="q", model_answer="QUERY A() =>\n  x <- N<X>\n  RETURN x",
@@ -246,10 +246,10 @@ class TestSavePluginReportScoreDisplay:
         result = EvalResult(plugin_name="p", passed=True, metrics={}, errors=[], sample_count=1)
         save_plugin_report("p", rows, result)
         content = (patched_log_dir / "evaluation" / "p_report.md").read_text()
-        assert "✓ valid" in content
+        assert "**Score:** OK" in content
 
     def test_syntax_invalid_score(self, patched_log_dir: Path) -> None:
-        """helixql_syntax style: score=0.0, raw_score=None → shows ✗ invalid"""
+        """helixql_syntax style: score=0.0, raw_score=None -> shows FAILED."""
         rows = [
             PluginReportRow(
                 idx=0, question="q", model_answer="bad answer",
@@ -259,7 +259,7 @@ class TestSavePluginReportScoreDisplay:
         result = EvalResult(plugin_name="p", passed=False, metrics={}, errors=[], sample_count=1)
         save_plugin_report("p", rows, result)
         content = (patched_log_dir / "evaluation" / "p_report.md").read_text()
-        assert "✗ invalid" in content
+        assert "**Score:** FAILED" in content
 
     def test_llm_judge_raw_score_displayed(self, patched_log_dir: Path) -> None:
         """cerebras_judge style: score=0.75, raw_score=4 → shows normalized + raw"""

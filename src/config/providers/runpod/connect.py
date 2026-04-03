@@ -10,7 +10,11 @@ class RunPodSSHConfig(StrictBaseModel):
 
     key_path: str = Field(
         ...,
-        description="REQUIRED: Path to SSH private key used to connect to RunPod SSH gateway (ssh.runpod.io).",
+        description=(
+            "REQUIRED: Path to SSH private key used for RunPod pod access. "
+            "RyotenkAI uses runpodctl-first for pod control/file transport, "
+            "then uses direct SSH over exposed TCP for runtime operations inside the pod."
+        ),
     )
 
 

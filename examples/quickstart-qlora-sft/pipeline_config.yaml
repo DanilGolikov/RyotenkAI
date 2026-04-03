@@ -17,7 +17,7 @@
 
 model:
   name: "Qwen/Qwen2.5-0.5B-Instruct"
-  torch_dtype: float16
+  torch_dtype: bfloat16
   trust_remote_code: false
 
 training:
@@ -25,7 +25,7 @@ training:
   provider: runpod
   type: "qlora"
 
-  lora:
+  qlora:
     r: 16
     lora_alpha: 32
     lora_dropout: 0.05
@@ -62,9 +62,9 @@ datasets:
     source_type: local
     source_local:
       local_paths:
-        # Paths are relative to the project root. Adjust if you moved the datasets.
-        train: "examples/quickstart-qlora-sft/datasets/training/train.jsonl"
-        eval: "examples/quickstart-qlora-sft/datasets/training/eval.jsonl"
+        # Paths are relative to this config file's directory.
+        train: "datasets/training/train.jsonl"
+        eval: "datasets/training/eval.jsonl"
 
     validations:
       mode: fast
@@ -173,7 +173,7 @@ evaluation:
   enabled: true
 
   dataset:
-    path: "examples/quickstart-qlora-sft/datasets/evaluation/helixql_eval.jsonl"
+    path: "datasets/evaluation/helixql_eval.jsonl"
 
   save_answers_md: true
 
@@ -234,9 +234,7 @@ inference:
 # =============================================================================
 experiment_tracking:
   mlflow:
-    # TODO: Set to true and configure tracking_uri to enable MLflow logging
-    enabled: false
-    # TODO: Your MLflow server URL (see docker/mlflow/ to run locally)
+    # TODO: Configure your MLflow server URL (see docker/mlflow/ to run locally)
     tracking_uri: "http://localhost:5002"
     experiment_name: "quickstart-qlora-sft"
     log_artifacts: true

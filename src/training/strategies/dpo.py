@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from peft import PeftModel
-
 from src.constants import DEFAULT_BATCH_SIZES, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATES, STRATEGY_DPO
 from src.training.strategies.base import StrategyMetadata, TrainingStrategy
 from src.utils.logger import logger
@@ -75,54 +73,22 @@ class DPOStrategy(TrainingStrategy):
         }
 
     def build_trainer_kwargs(self, config: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG002
-        """Return ref_model if provided. PEFT adapter config mutation is handled by post_build_config_hook."""
+        """Return ref_model if explicitly provided; otherwise TRL handles it."""
         trainer_kwargs: dict[str, Any] = {}
         ref_model = kwargs.get("ref_model")
 
         if ref_model is not None:
             trainer_kwargs["ref_model"] = ref_model
             logger.debug("[DPO] Using explicit reference model")
-        else:
-            model = kwargs.get("model")
-            if not isinstance(model, PeftModel):
-                logger.warning(
-                    "[DPO] No reference model provided. DPO will compute reference logprobs internally (slower)."
-                )
 
         return trainer_kwargs
 
-    def post_build_config_hook(self, config: Any, **context: Any) -> None:
-        """Configure PEFT adapter names on DPOConfig when a PEFT model is used.
+    def post_build_config_hook(self, config: Any, **context: Any) -> None:  # noqa: ARG002
+        """No-op: TRL DPOTrainer handles PeftModel reference logprobs natively.
 
-        Called by TrainerFactory after creating the DPOConfig instance.
-        Sets model_adapter_name / ref_adapter_name and loads the reference adapter
-        if the active model is a PeftModel.
+        When a PeftModel is passed without ref_model, TRL temporarily disables the
+        adapter to compute reference logprobs. No manual adapter name wiring needed.
         """
-        model = context.get("model")
-        ref_model = context.get("ref_model")
-
-        if ref_model is not None or not isinstance(model, PeftModel):
-            return
-
-        if not hasattr(model, "peft_config"):
-            return
-
-        active_adapter = getattr(model, "active_adapter", None)
-        if not active_adapter:
-            return
-
-        logger.debug("[DPO] Using PEFT adapter for reference model")
-        config.model_adapter_name = "train"
-        config.ref_adapter_name = "reference"
-
-        if "reference" not in model.peft_config:
-            try:
-                adapter_path = model.peft_config[active_adapter].base_model_name_or_path
-                if adapter_path:
-                    model.load_adapter(adapter_path, adapter_name="reference")
-                    logger.info("[DPO] Loaded reference adapter from PEFT")
-            except Exception as e:
-                logger.warning("[DPO] Could not load reference adapter: %s", e)
 
     def prepare_dataset(self, dataset: Dataset, _tokenizer: PreTrainedTokenizer) -> Result[Dataset, StrategyError]:
         """

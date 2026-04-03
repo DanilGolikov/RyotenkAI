@@ -33,6 +33,7 @@ from .integrations import (
 from .model import ModelConfig
 from .pipeline import PipelineConfig, load_config
 from .providers.ssh import SSHConfig, SSHConnectSettings
+from .runtime import RuntimeSettings, load_runtime_settings
 from .secrets import Secrets, load_secrets
 from .training import (
     VALID_START_STRATEGIES,
@@ -78,6 +79,7 @@ __all__ = [
     "PhaseHyperparametersConfig",
     "PipelineConfig",
     "QLoRAConfig",
+    "RuntimeSettings",
     "SSHConfig",
     "SSHConnectSettings",
     "Secrets",
@@ -86,6 +88,7 @@ __all__ = [
     "TrainingConfig",
     "TrainingOnlyConfig",
     "load_config",
+    "load_runtime_settings",
     "load_secrets",
     "validate_strategy_chain",
 ]

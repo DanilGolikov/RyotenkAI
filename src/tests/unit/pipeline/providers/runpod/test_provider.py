@@ -8,25 +8,27 @@ import pytest
 
 import src.providers.runpod.training.provider as rp
 from src.pipeline.domain import RunContext
+from src.providers.runpod.models import PodSnapshot, SshEndpoint
 from src.providers.runpod.training.provider import RunPodProvider
 from src.providers.training.interfaces import ProviderStatus
 from src.utils.config import Secrets
 from src.utils.result import Err, Ok, ProviderError, Result
 
+_SSH_OK = SshEndpoint(host="1.2.3.4", port=2222)
+
+
+def _ready_snapshot(*, ssh: SshEndpoint | None = _SSH_OK) -> PodSnapshot:
+    return PodSnapshot(pod_id="pod-1", status="RUNNING", uptime_seconds=10, ssh_endpoint=ssh, port_count=1 if ssh else 0)
+
 
 @dataclass
 class StubAPI:
     create_result: Result[dict[str, Any], ProviderError] = Ok({"pod_id": "pod-1", "machine": "host-1"})  # type: ignore[call-arg]
-    ready_result: Result[dict[str, Any], ProviderError] = Ok({"desiredStatus": "RUNNING"})  # type: ignore[call-arg]
-    ssh_result: Result[dict[str, Any], ProviderError] = Ok({"host": "1.2.3.4", "port": 2222})  # type: ignore[call-arg]
 
     def create_pod(self, config, *, pod_name: str | None = None):
         _ = config
         _ = pod_name
         return self.create_result
-
-    def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        return self.ssh_result
 
 
 @dataclass
@@ -44,10 +46,10 @@ class StubCleanup:
 
 @dataclass
 class StubLifecycle:
-    result: Result[dict[str, Any], ProviderError]
+    result: Result[PodSnapshot, ProviderError]
 
-    def wait_for_ready(self, pod_id: str, timeout: int = 300, max_retries: int = 3) -> Result[dict, ProviderError]:
-        return self.result  # type: ignore[return-value]
+    def wait_for_ready(self, pod_id: str, timeout: int = 300, max_retries: int = 3) -> Result[PodSnapshot, ProviderError]:
+        return self.result
 
 
 class FakeSSHClient:
@@ -70,15 +72,12 @@ class FakeSSHClient:
 
 def _mk_provider(*, cfg_overrides: dict[str, Any] | None = None) -> RunPodProvider:
     cfg: dict[str, Any] = {
-        # Use an existing file path to satisfy provider's existence check.
-        # FakeSSHClient does not use the key material.
         "connect": {"ssh": {"key_path": __file__}},
         "cleanup": {},
         "training": {
             "gpu_type": "NVIDIA A40",
             "image_name": "test/training:latest",
         },
-        # Unified schema requires inference block even for training-only usage.
         "inference": {},
     }
     if cfg_overrides:
@@ -101,7 +100,7 @@ def test_connect_success(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider()
     p._api_client = StubAPI()
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
 
     res = p.connect(run=_mk_run())
     assert res.is_success()
@@ -119,10 +118,6 @@ def test_connect_success(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_disconnect_keeps_pod_when_marked_error_and_keep_pod_on_error_true() -> None:
-    """
-    Regression: GPUDeployer calls provider.mark_error() before disconnect on stage failures.
-    RunPodProvider must respect keep_pod_on_error in that case.
-    """
     p = _mk_provider(cfg_overrides={"cleanup": {"auto_delete_pod": True, "keep_pod_on_error": True}})
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
@@ -134,17 +129,16 @@ def test_disconnect_keeps_pod_when_marked_error_and_keep_pod_on_error_true() -> 
     res = p.disconnect()
 
     assert res.is_success()
-    assert cleanup.cleaned == []  # Must keep pod alive for debugging
+    assert cleanup.cleaned == []
 
 
 def test_connect_uses_hardcoded_workspace_for_run_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run workspace is intentionally hardcoded to /workspace for this provider."""
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
 
     p = _mk_provider()
     p._api_client = StubAPI()
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
 
     res = p.connect(run=_mk_run())
     assert res.is_success()
@@ -152,24 +146,20 @@ def test_connect_uses_hardcoded_workspace_for_run_workspace(monkeypatch: pytest.
     assert ssh.workspace_path.startswith("/workspace/runs/")
 
 
-def test_connect_uses_machine_as_ssh_user_when_already_prefixed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_connect_fails_when_snapshot_has_no_ssh_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pod reported ready by lifecycle but with no SSH endpoint -> fail and cleanup."""
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
 
     p = _mk_provider()
-    # Force fallback to gateway by making exposed TCP SSH info unavailable.
-    p._api_client = StubAPI(
-        create_result=Ok({"pod_id": "pod-1", "machine": "pod-1-host-1"}),
-        ssh_result=Err("no ssh info"),
-    )
-    p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._api_client = StubAPI()
+    cleanup = StubCleanup()
+    p._cleanup_manager = cleanup
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot(ssh=None)))
 
     res = p.connect(run=_mk_run())
-    assert res.is_success()
-    ssh = res.unwrap()
-    assert ssh.host == "ssh.runpod.io"
-    assert ssh.port == 22
-    assert ssh.user == "pod-1-host-1"
+    assert res.is_failure()
+    assert cleanup.cleaned == ["pod-1"]
+    assert "SSH endpoint is missing" in str(res.unwrap_err())
 
 
 def test_provider_properties_and_repr() -> None:
@@ -199,7 +189,7 @@ def test_connect_create_pod_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider()
     p._api_client = StubAPI(create_result=Err("no capacity"))
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -211,27 +201,23 @@ def test_connect_create_pod_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_connect_invalid_pod_info_and_missing_machine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
 
-    # pod_info missing pod_id
     p = _mk_provider()
     p._api_client = StubAPI(create_result=Ok({"x": 1}))
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
     assert p.connect(run=_mk_run()).is_failure()
 
-    # pod_info missing machine/podHostId:
-    # - If exposed TCP SSH info is available, provider can still connect (machine is only needed for gateway).
     p = _mk_provider()
     p._api_client = StubAPI(create_result=Ok({"pod_id": "pod-1"}))
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
     assert p.connect(run=_mk_run()).is_success()
 
-    # - If exposed TCP SSH info is unavailable, missing machine must fail and trigger cleanup.
     p = _mk_provider()
-    p._api_client = StubAPI(create_result=Ok({"pod_id": "pod-1"}), ssh_result=Err("no ssh info"))
+    p._api_client = StubAPI(create_result=Ok({"pod_id": "pod-1"}))
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot(ssh=None)))
     assert p.connect(run=_mk_run()).is_failure()
     assert cleanup.cleaned == ["pod-1"]
 
@@ -247,7 +233,7 @@ def test_connect_ssh_test_connection_failure_triggers_cleanup(monkeypatch: pytes
     p._api_client = StubAPI()
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -265,7 +251,7 @@ def test_connect_health_check_failure_triggers_cleanup(monkeypatch: pytest.Monke
     p._api_client = StubAPI()
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok({"desiredStatus": "RUNNING"}))
+    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -355,21 +341,12 @@ def test_disconnect_not_connected_and_no_pod_id() -> None:
 
 
 def test_disconnect_while_connecting_terminates_pod_sigint_regression() -> None:
-    """Regression: SIGINT arriving during wait_for_ready leaves status=CONNECTING.
-
-    Before the fix, disconnect() returned early ("Not connected, nothing to do")
-    when status==CONNECTING, even though _pod_id was already set and the pod
-    was running (and billing). The pod was never terminated.
-
-    After the fix: if status==CONNECTING AND _pod_id is set, cleanup proceeds.
-    """
     p = _mk_provider(cfg_overrides={"cleanup": {"auto_delete_pod": True}})
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
 
-    # Simulate state mid-connect: pod created, waiting for ports, then SIGINT hits
     p._pod_id = "pod-sigint"
-    p._status = ProviderStatus.CONNECTING  # never reached CONNECTED
+    p._status = ProviderStatus.CONNECTING
 
     res = p.disconnect()
 
@@ -405,10 +382,8 @@ def test_check_gpu_errors_and_parse_fail(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
     p = _mk_provider()
 
-    # Not connected
     assert p.check_gpu().is_failure()
 
-    # nvidia-smi command fails
     class _FailSSH(FakeSSHClient):
         def exec_command(self, command: str, timeout: int = 30, silent: bool = False):
             return False, "", "err"
@@ -420,7 +395,6 @@ def test_check_gpu_errors_and_parse_fail(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert p.check_gpu().is_failure()
 
-    # Unexpected format
     class _BadFmtSSH(FakeSSHClient):
         def exec_command(self, command: str, timeout: int = 30, silent: bool = False):
             return True, "only_one_field", ""
@@ -428,7 +402,6 @@ def test_check_gpu_errors_and_parse_fail(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(rp, "SSHClient", _BadFmtSSH)
     assert p.check_gpu().is_failure()
 
-    # Parse error
     class _ParseSSH(FakeSSHClient):
         def exec_command(self, command: str, timeout: int = 30, silent: bool = False):
             return True, "GPU, notint, 1, driver", ""

@@ -311,8 +311,10 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
             selector.set_options([])
             selector.clear()
             selector.disabled = True
+            from rich.markup import escape
+
             error_prefix = "Cannot prepare resume" if mode == "resume" else "Cannot load restart points"
-            info.update(f"[red]{error_prefix}: {exc}[/red]")
+            info.update(f"[red]{error_prefix}: {escape(str(exc))}[/red]")
             self._refresh_footer()
             return
 

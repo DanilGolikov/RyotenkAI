@@ -11,20 +11,20 @@ from src.training.callbacks.gpu_metrics_callback import GPUMetricsCallback
 
 @dataclass
 class FakeMLflowManager:
-    enabled: bool = True
+    active: bool = True
     calls: list[tuple[dict[str, float], int]] = field(default_factory=list)
 
     @property
-    def is_enabled(self) -> bool:
-        return self.enabled
+    def is_active(self) -> bool:
+        return self.active
 
     def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         assert step is not None
         self.calls.append((metrics, step))
 
 
-def test_noop_when_mlflow_disabled() -> None:
-    mgr = FakeMLflowManager(enabled=False)
+def test_noop_when_mlflow_inactive() -> None:
+    mgr = FakeMLflowManager(active=False)
     cb = GPUMetricsCallback(mlflow_manager=mgr)
 
     state = SimpleNamespace(global_step=1)
@@ -34,7 +34,7 @@ def test_noop_when_mlflow_disabled() -> None:
 
 
 def test_logs_cpu_ram_disk_and_gpu_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
-    mgr = FakeMLflowManager(enabled=True)
+    mgr = FakeMLflowManager(active=True)
     cb = GPUMetricsCallback(mlflow_manager=mgr)
 
     # Force "GPU available" path deterministically
@@ -66,7 +66,7 @@ def test_logs_cpu_ram_disk_and_gpu_metrics(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_ignores_nvidia_smi_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    mgr = FakeMLflowManager(enabled=True)
+    mgr = FakeMLflowManager(active=True)
     cb = GPUMetricsCallback(mlflow_manager=mgr)
 
     monkeypatch.setattr(gm.torch.cuda, "is_available", lambda: True)
@@ -85,7 +85,7 @@ def test_ignores_nvidia_smi_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cpu_only_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    mgr = FakeMLflowManager(enabled=True)
+    mgr = FakeMLflowManager(active=True)
     cb = GPUMetricsCallback(mlflow_manager=mgr)
 
     monkeypatch.setattr(gm.torch.cuda, "is_available", lambda: False)

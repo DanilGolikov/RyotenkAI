@@ -30,7 +30,10 @@ def _build_mock_config(*, inference_enabled: bool, evaluation_enabled: bool) -> 
 
     config.get_active_provider_name.return_value = "single_node"
     config.get_provider_config.return_value = {"cleanup": {"on_interrupt": True}}
-    config.experiment_tracking.mlflow = None
+    config.experiment_tracking.mlflow = MagicMock(
+        tracking_uri="http://localhost:5002",
+        system_metrics_callback_enabled=False,
+    )
 
     config.inference.enabled = inference_enabled
     config.inference.model_dump.return_value = {"enabled": inference_enabled}
@@ -161,7 +164,10 @@ def _build_orchestrator(
         patch.object(PipelineOrchestrator, "_init_stages", return_value=stages),
         patch.object(PipelineOrchestrator, "_setup_mlflow", return_value=None),
     ):
-        return PipelineOrchestrator(config_path, run_directory=run_directory)
+        orchestrator = PipelineOrchestrator(config_path, run_directory=run_directory)
+    orchestrator._setup_mlflow_for_attempt = MagicMock(return_value=None)
+    orchestrator._ensure_mlflow_preflight = MagicMock(return_value=None)
+    return orchestrator
 
 
 def test_stateful_fresh_run_persists_completed_and_skipped_stages(tmp_path: Path) -> None:

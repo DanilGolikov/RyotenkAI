@@ -74,6 +74,7 @@ def test_create_peft_config_adalora(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg.get_adapter_config.return_value = AdaLoraConfigType(
         init_r=12,
         target_r=8,
+        total_step=100,
         tinit=200,
         tfinal=1000,
         deltaT=10,

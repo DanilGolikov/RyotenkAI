@@ -83,6 +83,25 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
                 f"Invalid transition: '{current}' → '{next_strategy}'. Valid transitions from '{current}': {valid_next}"
             )
 
+    # Check dataset uniqueness across strategies
+    if len(strategies) > 1:
+        seen_datasets: dict[str, str] = {}
+        for phase in strategies:
+            resolved = phase.dataset or "default"
+            if resolved in seen_datasets:
+                prev_type = seen_datasets[resolved]
+                cur_type = phase.strategy_type
+                logger.debug(
+                    f"[CFG:CHAIN_INVALID] reason=duplicate_dataset, dataset={resolved}, "
+                    f"strategies={prev_type}+{cur_type}"
+                )
+                return False, (
+                    f"Duplicate dataset '{resolved}': strategies '{prev_type}' and '{cur_type}' "
+                    f"reference the same dataset. Each strategy must use its own dataset entry "
+                    f"(different data formats are uploaded to separate remote paths)."
+                )
+            seen_datasets[resolved] = phase.strategy_type
+
     logger.debug(f"[CFG:CHAIN_VALIDATED] chain={chain_str}, phases={len(strategies)}")
     return True, ""
 

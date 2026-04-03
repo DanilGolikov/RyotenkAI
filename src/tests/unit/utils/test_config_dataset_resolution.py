@@ -65,7 +65,7 @@ def _lora_cfg() -> LoraConfig:
 def _training_cfg(strategies: list[StrategyPhaseConfig]) -> TrainingOnlyConfig:
     return TrainingOnlyConfig(
         type="qlora",
-        lora=_lora_cfg(),
+        qlora=_lora_cfg(),
         hyperparams=_hp_cfg(),
         strategies=strategies,
     )
@@ -112,7 +112,6 @@ class TestGetDataset:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -133,7 +132,6 @@ class TestGetDataset:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -154,7 +152,6 @@ class TestGetDataset:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -182,7 +179,6 @@ class TestPrimaryDataset:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -203,7 +199,6 @@ class TestPrimaryDataset:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -235,7 +230,6 @@ class TestDatasetForStrategy:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -263,7 +257,6 @@ class TestDatasetForStrategy:
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
                 mlflow=MLflowConfig(
-                    enabled=True,
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
                     log_artifacts=False,
@@ -291,7 +284,6 @@ class TestValidateDatasets:
                 inference=_inference_cfg_disabled(),
                 experiment_tracking=ExperimentTrackingConfig(
                     mlflow=MLflowConfig(
-                        enabled=True,
                         tracking_uri="http://localhost:5000",
                         experiment_name="test",
                         log_artifacts=False,

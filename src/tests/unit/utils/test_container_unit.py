@@ -16,7 +16,10 @@ def _mk_cfg() -> MagicMock:
     cfg.training.type = "qlora"
     cfg.training.get_effective_load_in_4bit.return_value = False
     cfg.datasets = {}
-    cfg.experiment_tracking.mlflow = None
+    cfg.experiment_tracking.mlflow = SimpleNamespace(
+        tracking_uri="http://localhost:5002",
+        system_metrics_callback_enabled=False,
+    )
     return cfg
 
 
@@ -113,15 +116,8 @@ class TestMLflowManagerProperty:
         container = TrainingContainer(cfg, _mlflow_manager=injected)
         assert container.mlflow_manager is injected
 
-    def test_returns_none_when_disabled(self) -> None:
+    def test_lazy_initializes_and_caches(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=False)
-        container = TrainingContainer(cfg)
-        assert container.mlflow_manager is None
-
-    def test_lazy_initializes_when_enabled_and_caches(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=True)
         container = TrainingContainer(cfg)
 
         mgr = MagicMock()

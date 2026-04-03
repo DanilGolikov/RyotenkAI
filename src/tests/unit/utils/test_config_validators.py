@@ -17,9 +17,12 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
+    ExperimentTrackingConfig,
     GlobalHyperparametersConfig,
     LoraConfig,
+    MLflowConfig,
     ModelConfig,
+    PipelineConfig,
     PhaseHyperparametersConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
@@ -66,12 +69,46 @@ def _hp_global_cfg(**overrides) -> GlobalHyperparametersConfig:
 def _training_cfg(**overrides) -> TrainingOnlyConfig:
     data = {
         "type": "qlora",
-        "lora": _lora_cfg(),
+        "qlora": _lora_cfg(),
         "hyperparams": _hp_global_cfg(),
         "strategies": [StrategyPhaseConfig(strategy_type="sft")],
     }
     data.update(overrides)
+    training_type = data.get("type")
+    if training_type == "lora":
+        data.setdefault("lora", _lora_cfg())
+        data.pop("qlora", None)
+    elif training_type == "qlora":
+        data.setdefault("qlora", _lora_cfg())
+        data.pop("lora", None)
+    elif training_type == "adalora":
+        data.pop("lora", None)
+        data.pop("qlora", None)
     return TrainingOnlyConfig(**data)
+
+
+def _pipeline_cfg(**training_overrides) -> PipelineConfig:
+    return PipelineConfig(
+        model=_model_cfg(),
+        training=_training_cfg(**training_overrides),
+        datasets={
+            "default": DatasetConfig(
+                source_type="local",
+                source_local=DatasetSourceLocal(
+                    local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)
+                ),
+            )
+        },
+        providers={},
+        experiment_tracking=ExperimentTrackingConfig(
+            mlflow=MLflowConfig(
+                tracking_uri="http://127.0.0.1:5002",
+                experiment_name="test-exp",
+                log_artifacts=False,
+                log_model=False,
+            )
+        ),
+    )
 
 
 class TestModelConfig:
@@ -130,6 +167,7 @@ class TestTrainingOnlyConfig:
                 adalora=AdaLoraConfig(
                     init_r=16,
                     target_r=8,
+                    total_step=100,
                     lora_alpha=16,
                     lora_dropout=0.05,
                     bias="none",
@@ -160,6 +198,12 @@ class TestTrainingOnlyConfig:
                     StrategyPhaseConfig(strategy_type="cpt"),
                 ]
             )
+
+    def test_pipeline_get_adapter_config_uses_matching_block(self) -> None:
+        cfg = _pipeline_cfg(type="qlora")
+        adapter = cfg.get_adapter_config()
+        assert isinstance(adapter, LoraConfig)
+        assert adapter.r == 8
 
 
 class TestDatasetConfig:

@@ -43,7 +43,7 @@ class GPUMetricsCallback(TrainerCallback):
         **kwargs: Any,
     ) -> Any:
         _ = args, control, kwargs
-        if not self.mlflow_manager or not self.mlflow_manager.is_enabled:
+        if not self.mlflow_manager or not self.mlflow_manager.is_active:
             return
 
         try:

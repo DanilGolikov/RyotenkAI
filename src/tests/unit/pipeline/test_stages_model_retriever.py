@@ -49,8 +49,8 @@ def mock_config_with_hf() -> MagicMock:
         per_device_train_batch_size=8,
     )
     cfg.training.get_strategy_chain.return_value = [
-        StrategyPhaseConfig(strategy_type="cpt", hyperparams=PhaseHyperparametersConfig(epochs=1)),
-        StrategyPhaseConfig(strategy_type="sft", hyperparams=PhaseHyperparametersConfig()),  # fallback to global=3
+        StrategyPhaseConfig(strategy_type="cpt", dataset="ds_cpt", hyperparams=PhaseHyperparametersConfig(epochs=1)),
+        StrategyPhaseConfig(strategy_type="sft", dataset="ds_sft", hyperparams=PhaseHyperparametersConfig()),
     ]
 
     # Make adapter lookup fail so _get_lora_param returns "N/A" deterministically

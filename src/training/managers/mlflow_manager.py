@@ -76,7 +76,7 @@ class MLflowManager:
 
     def __init__(self, config: PipelineConfig) -> None:
         self.config = config
-        self._mlflow_config = config.experiment_tracking.mlflow if config.experiment_tracking.mlflow else None
+        self._mlflow_config = config.experiment_tracking.mlflow
         self._mlflow: Any = None
         self._run: Any = None
         self._run_id: str | None = None
@@ -122,13 +122,9 @@ class MLflowManager:
     # =========================================================================
 
     @property
-    def is_enabled(self) -> bool:
-        return self._mlflow_config is not None and self._mlflow_config.enabled
-
-    @property
     def is_active(self) -> bool:
         """True only if setup() succeeded and mlflow module is loaded."""
-        return self.is_enabled and self._mlflow is not None
+        return self._mlflow is not None
 
     @property
     def client(self) -> Any:
@@ -164,17 +160,9 @@ class MLflowManager:
         """
         Initialize MLflow connection with retries.
 
-        Non-blocking: if MLflow is unavailable, training continues without it.
-
         Returns:
             True if setup successful
         """
-        if not self.is_enabled:
-            logger.info("MLflow disabled in config")
-            return False
-
-        assert self._mlflow_config is not None
-
         try:
             import mlflow
 
@@ -203,7 +191,6 @@ class MLflowManager:
                         error_type="ConnectionError",
                         severity="ERROR",
                     )
-                    logger.info("Continuing without MLflow tracking")
                     self._mlflow = None
                     self._gateway = NullMLflowGateway()
                     return False
@@ -250,14 +237,20 @@ class MLflowManager:
             return True
 
         except ImportError:
-            logger.warning("MLflow not installed. Continuing without MLflow.")
+            logger.warning("MLflow not installed.")
             self._mlflow = None
             return False
         except Exception as e:
             logger.warning(f"MLflow setup failed: {e}")
-            logger.info("Continuing without MLflow tracking")
             self._mlflow = None
             return False
+
+    def check_mlflow_connectivity(self, timeout: float = 5.0) -> bool:
+        """Check whether the configured MLflow tracking backend is reachable."""
+        tracking_uri = self._mlflow_config.tracking_uri
+        if not tracking_uri.startswith("http"):
+            return True
+        return MLflowGateway(tracking_uri).check_connectivity(timeout)
 
     def _build_subcomponents(self) -> None:
         """Update mlflow-dependent subcomponents after successful setup."""
@@ -310,7 +303,7 @@ class MLflowManager:
     @contextmanager
     def start_run(self, run_name: str | None = None, description: str | None = None) -> Generator[Any, None, None]:
         """Start a parent MLflow run (context manager)."""
-        if not self.is_enabled or self._mlflow is None:
+        if self._mlflow is None:
             yield None
             return
 
@@ -351,7 +344,7 @@ class MLflowManager:
         description: str | None = None,
     ) -> Generator[Any, None, None]:
         """Start a nested (child) run within current parent run."""
-        if not self.is_enabled or self._mlflow is None:
+        if self._mlflow is None:
             yield None
             return
 

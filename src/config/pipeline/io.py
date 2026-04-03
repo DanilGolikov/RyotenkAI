@@ -70,7 +70,7 @@ class PipelineIOMixin:
         """Load configuration from YAML file."""
         yaml_mod = cast("Any", yaml)  # PyYAML stubs can confuse IDEs
 
-        path_obj = Path(path) if isinstance(path, str) else path
+        path_obj = Path(path).resolve() if isinstance(path, str) else path.resolve()
         with path_obj.open() as f:
             data = yaml_mod.safe_load(f)
         cfg = cls(**data)

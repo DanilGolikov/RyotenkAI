@@ -21,6 +21,8 @@ from src.providers.training.interfaces import (
 from src.utils.result import Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
+from ..models import PodResourceInfo
+from ..pod_control import RunPodTrainingPodControl
 from .api_client import RunPodAPIClient
 from .cleanup_manager import RunPodCleanupManager
 from .config import RunPodProviderConfig
@@ -31,9 +33,12 @@ _GPU_CHECK_TIMEOUT = 20
 _SSH_RETRIES = 12
 _SSH_RETRY_DELAY = 10
 _GPU_CHECK_FAILED_CODE = "GPU_CHECK_FAILED"
+_POD_CREATE_MAX_RETRIES = 3
+_RECREATABLE_ERRORS = ("RUNPOD_NO_EXPOSED_TCP", "RUNPOD_POD_TIMEOUT", "RUNPOD_POD_FAILED")
 
 if TYPE_CHECKING:
     from src.pipeline.domain import RunContext
+    from src.providers.runpod.models import PodSnapshot
     from src.utils.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
@@ -70,7 +75,7 @@ class RunPodProvider(IGPUProvider):
         self._pod_id: str | None = None
         self._ssh_connection_info: SSHConnectionInfo | None = None
         self._gpu_info: GPUInfo | None = None
-        self._pod_info: dict[str, Any] | None = None
+        self._pod_info: PodResourceInfo | None = None
         self._had_error: bool = False
 
         api_key = secrets.runpod_api_key
@@ -78,18 +83,15 @@ class RunPodProvider(IGPUProvider):
             raise ValueError("secrets.runpod_api_key is required to use RunPodProvider")
         self._api_key: str = api_key
 
-        # Initialize RunPod components
-        self._api_client = RunPodAPIClient(
+        self._graphql_api_client = RunPodAPIClient(
             api_base_url=RUNPOD_API_BASE_URL,
             api_key=self._api_key,
         )
+        self._api_client = RunPodTrainingPodControl(api=self._graphql_api_client)
 
         self._cleanup_manager = RunPodCleanupManager(self._api_client)
 
-        self._lifecycle = PodLifecycleManager(
-            api_client=self._api_client,
-            cleanup_manager=self._cleanup_manager,
-        )
+        self._lifecycle = PodLifecycleManager(api_client=self._api_client)
 
         logger.info(
             f"[PROVIDER:INIT] RunPodProvider initialized: "
@@ -129,55 +131,20 @@ class RunPodProvider(IGPUProvider):
         logger.info(f"[PROVIDER:CONNECT] Creating RunPod with {self._config.training.gpu_type}...")
 
         try:
-            # Step 1: Create pod (using RunPodProviderConfig directly!)
-            pod_result = self._api_client.create_pod(
-                config=self._config,
-                pod_name=f"ryotenkai-train-{run.name}",
-            )
-
-            if pod_result.is_failure():
+            # Step 1+2: Create pod and wait for ready (with pod recreation on failure).
+            pod_name = f"ryotenkai-train-{run.name}"
+            create_wait_result = self._create_and_wait_for_pod(pod_name)
+            if create_wait_result.is_failure():
                 self._status = ProviderStatus.ERROR
-                return Err(pod_result.unwrap_err())  # type: ignore[union-attr]
+                return Err(create_wait_result.unwrap_err())  # type: ignore[union-attr]
 
-            self._pod_info = pod_result.unwrap()
-
-            if self._pod_info is None or "pod_id" not in self._pod_info:
-                self._status = ProviderStatus.ERROR
-                return Err(ProviderError(message="Invalid pod info returned", code="RUNPOD_INVALID_POD_INFO"))
-
-            pod_id_raw = self._pod_info.get("pod_id")
-            if not isinstance(pod_id_raw, str) or not pod_id_raw:
-                self._status = ProviderStatus.ERROR
-                return Err(
-                    ProviderError(message="Invalid pod info returned (pod_id missing)", code="RUNPOD_INVALID_POD_INFO")
-                )
-
-            pod_id = pod_id_raw
-            self._pod_id = pod_id
-
-            # Register for cleanup
-            self._cleanup_manager.register_pod(pod_id=pod_id, api_base=RUNPOD_API_BASE_URL)
-
-            logger.info(f"✅ Pod created: {pod_id}")
-
-            # Step 2: Wait for pod to be ready
-            ready_result = self._lifecycle.wait_for_ready(pod_id)
-            if ready_result.is_failure():
-                self._status = ProviderStatus.ERROR
-                self._cleanup_manager.cleanup_pod(pod_id)
-                return Err(ready_result.unwrap_err())  # type: ignore[union-attr]
-
+            snapshot, resource_info = create_wait_result.unwrap()
+            self._pod_info = resource_info
             logger.info("✅ Pod is ready!")
 
-            # Step 3: Build SSH connection target.
-            #
-            # IMPORTANT (RunPod semantics):
-            # - "SSH over exposed TCP" (root@publicIp:publicPort) provides full SSH capabilities
-            #   (SCP/SFTP/rsync/command exec) and is the correct transport for automation.
-            # - "basic SSH" via ssh.runpod.io is more interactive and may not support
-            #   non-interactive command execution reliably (PTY requirements, banners, etc.).
-            #
-            # Therefore: prefer exposed TCP; fallback to ssh.runpod.io only if needed.
+            pod_id = snapshot.pod_id
+
+            # Step 3: Build SSH connection target from the typed snapshot.
             key_path = str(Path(self._config.connect.ssh.key_path).expanduser())
             if not Path(key_path).exists():
                 self._status = ProviderStatus.ERROR
@@ -190,47 +157,18 @@ class RunPodProvider(IGPUProvider):
                     )
                 )
 
-            ssh_client: SSHClient | None = None
-            host: str | None = None
-            port: int | None = None
-            ssh_user: str | None = None
-
-            exposed = self._api_client.get_ssh_info(pod_id)
-            if exposed.is_success():
-                data = exposed.unwrap()
-                host_raw = data.get("host") if isinstance(data, dict) else None
-                port_raw = data.get("port") if isinstance(data, dict) else None
-                if isinstance(host_raw, str) and host_raw and isinstance(port_raw, int) and port_raw > 0:
-                    host = host_raw
-                    port = port_raw
-                    ssh_user = "root"
-                    ssh_client = SSHClient(host=host, port=port, username=ssh_user, key_path=key_path)
-                else:
-                    logger.warning(f"[RUNPOD:SSH] Invalid exposed TCP SSH info: {data!r}")
-            else:
-                logger.warning(f"[RUNPOD:SSH] Exposed TCP SSH info unavailable: {exposed.unwrap_err()}")  # type: ignore[union-attr]
-
-            if ssh_client is None:
-                pod_host_id = (self._pod_info or {}).get("machine")
-                if not isinstance(pod_host_id, str) or not pod_host_id.strip():
-                    self._status = ProviderStatus.ERROR
-                    self._cleanup_manager.cleanup_pod(pod_id)
-                    return Err(
-                        ProviderError(
-                            message="RunPod podHostId (machine) not available; cannot build SSH username",
-                            code="RUNPOD_SSH_HOST_UNAVAILABLE",
-                        )
+            ssh_ep = snapshot.ssh_endpoint
+            if ssh_ep is None:
+                self._status = ProviderStatus.ERROR
+                self._cleanup_manager.cleanup_pod(pod_id)
+                return Err(
+                    ProviderError(
+                        message="Pod reported ready but SSH endpoint is missing",
+                        code="RUNPOD_SSH_INFO_INVALID",
                     )
+                )
 
-                pod_host_id = pod_host_id.strip()
-                # RunPod may return podHostId already prefixed with "<pod_id>-".
-                # Examples:
-                # - podHostId="644111e7" → ssh_user="<pod_id>-644111e7"
-                # - podHostId="<pod_id>-64411ba5" → ssh_user="<pod_id>-64411ba5" (do NOT double-prefix)
-                ssh_user = pod_host_id if pod_host_id.startswith(f"{pod_id}-") else f"{pod_id}-{pod_host_id}"
-                host = "ssh.runpod.io"
-                port = 22
-                ssh_client = SSHClient(host=host, port=port, username=ssh_user, key_path=key_path)
+            ssh_client = SSHClient(host=ssh_ep.host, port=ssh_ep.port, username="root", key_path=key_path)
 
             # Step 4: Wait for SSH to be ready
             success, error = ssh_client.test_connection(max_retries=_SSH_RETRIES, retry_delay=_SSH_RETRY_DELAY)
@@ -250,7 +188,6 @@ class RunPodProvider(IGPUProvider):
             self._gpu_info = gpu_check.unwrap()
 
             # Create run-scoped workspace inside the pod.
-            # Canonical layout: /workspace/runs/<run_name>/
             base = "/workspace"
             runs_root = f"{base}/runs"
             run_workspace = f"{runs_root}/{run.name}"
@@ -270,14 +207,13 @@ class RunPodProvider(IGPUProvider):
                     ProviderError(message=f"Failed to create run workspace on pod: {err_run}", code="SSH_MKDIR_FAILED")
                 )
 
-            # Now that run workspace exists, build connection info.
             self._ssh_connection_info = SSHConnectionInfo(
-                host=str(ssh_client.host),
-                port=int(ssh_client.port),
-                user=str(ssh_client.username or ""),
-                key_path=ssh_client.key_path,
+                host=ssh_ep.host,
+                port=ssh_ep.port,
+                user="root",
+                key_path=key_path,
                 workspace_path=run_workspace,
-                resource_id=pod_id,  # Pod ID as resource ID
+                resource_id=pod_id,
             )
 
             self._status = ProviderStatus.CONNECTED
@@ -309,6 +245,70 @@ class RunPodProvider(IGPUProvider):
                     message=str(e), code="RUNPOD_CONNECT_UNEXPECTED_ERROR", details={"exception_type": type(e).__name__}
                 )
             )
+
+    def _create_and_wait_for_pod(
+        self, pod_name: str
+    ) -> Result[tuple["PodSnapshot", "PodResourceInfo"], ProviderError]:
+        """Create a pod and wait for it to become ready.
+
+        If the pod fails to get SSH exposed TCP (community cloud limitation),
+        terminates it and tries creating a new one on a different machine.
+
+        Side-effect: ``self._pod_id`` is kept in sync with the current pod so
+        that the SIGINT handler in ``connect()`` can always clean up.
+        """
+        last_err: ProviderError | None = None
+
+        for attempt in range(1, _POD_CREATE_MAX_RETRIES + 1):
+            if attempt > 1:
+                logger.info(f"🔄 Pod creation attempt {attempt}/{_POD_CREATE_MAX_RETRIES}")
+
+            pod_result = self._api_client.create_pod(config=self._config, pod_name=pod_name)
+            if pod_result.is_failure():
+                return Err(pod_result.unwrap_err())  # type: ignore[union-attr]
+
+            raw_info = pod_result.unwrap()
+            resource_info = PodResourceInfo.from_create_response(raw_info)
+
+            if not resource_info.pod_id:
+                return Err(ProviderError(message="Invalid pod info returned", code="RUNPOD_INVALID_POD_INFO"))
+
+            pod_id = resource_info.pod_id
+            self._pod_id = pod_id  # kept for SIGINT safety in connect()
+            self._cleanup_manager.register_pod(pod_id=pod_id, api_base=RUNPOD_API_BASE_URL)
+            logger.info(f"✅ Pod created: {pod_id}")
+
+            ready_result = self._lifecycle.wait_for_ready(pod_id)
+            if ready_result.is_success():
+                return Ok((ready_result.unwrap(), resource_info))
+
+            last_err = ready_result.unwrap_err()
+
+            if last_err.code not in _RECREATABLE_ERRORS or attempt >= _POD_CREATE_MAX_RETRIES:
+                self._safe_cleanup_pod(pod_id)
+                self._pod_id = None
+                break
+
+            logger.warning(
+                f"[PROVIDER] Pod {pod_id} failed ({last_err.code}), "
+                f"terminating and trying a new one ({attempt}/{_POD_CREATE_MAX_RETRIES})..."
+            )
+            self._safe_cleanup_pod(pod_id)
+            self._pod_id = None
+
+        return Err(
+            last_err
+            or ProviderError(
+                message=f"Pod creation failed after {_POD_CREATE_MAX_RETRIES} attempts",
+                code="RUNPOD_POD_NOT_READY",
+            )
+        )
+
+    def _safe_cleanup_pod(self, pod_id: str) -> None:
+        """Terminate and unregister a pod, logging on failure instead of raising."""
+        result = self._cleanup_manager.cleanup_pod(pod_id)
+        if result.is_failure():
+            logger.warning(f"[PROVIDER] Failed to cleanup pod {pod_id}: {result.unwrap_err()}")
 
     def mark_error(self) -> None:
         """
@@ -472,7 +472,7 @@ class RunPodProvider(IGPUProvider):
         """Get current pod ID."""
         return self._pod_id
 
-    def get_resource_info(self) -> dict[str, Any] | None:
+    def get_resource_info(self) -> PodResourceInfo | None:
         """Return RunPod instance metadata (cost_per_hr, gpu_type, gpu_count) after connect()."""
         return self._pod_info
 

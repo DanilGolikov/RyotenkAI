@@ -11,13 +11,13 @@ from src.training.callbacks.training_events_callback import TrainingEventsCallba
 
 @dataclass
 class FakeMLflowManager:
-    enabled: bool = True
+    active: bool = True
     calls: list[tuple[str, str, dict]] = field(default_factory=list)
     metrics_calls: list[tuple[dict[str, float], int | None]] = field(default_factory=list)
 
     @property
-    def is_enabled(self) -> bool:
-        return self.enabled
+    def is_active(self) -> bool:
+        return self.active
 
     def log_event_start(self, message: str, **kwargs) -> None:
         self.calls.append(("start", message, kwargs))
@@ -32,8 +32,8 @@ class FakeMLflowManager:
         self.metrics_calls.append((metrics, step))
 
 
-def test_on_train_begin_logs_event_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+def test_on_train_begin_logs_event_when_active(monkeypatch: pytest.MonkeyPatch) -> None:
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     monkeypatch.setattr(te.time, "time", lambda: 100.0)
@@ -54,8 +54,8 @@ def test_on_train_begin_logs_event_when_enabled(monkeypatch: pytest.MonkeyPatch)
     assert payload["num_epochs"] == 3
 
 
-def test_on_train_begin_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=False)
+def test_on_train_begin_noop_when_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
+    mlflow_mgr = FakeMLflowManager(active=False)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     monkeypatch.setattr(te.time, "time", lambda: 100.0)
@@ -70,7 +70,7 @@ def test_on_train_begin_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_on_epoch_begin_sets_epoch_and_logs(monkeypatch: pytest.MonkeyPatch) -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     monkeypatch.setattr(te.time, "time", lambda: 200.0)
@@ -90,7 +90,7 @@ def test_on_epoch_begin_sets_epoch_and_logs(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_on_epoch_end_logs_complete_and_metric(monkeypatch: pytest.MonkeyPatch) -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     times = iter([300.0, 305.5])
@@ -119,7 +119,7 @@ def test_on_epoch_end_logs_complete_and_metric(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_on_train_end_logs_total_duration(monkeypatch: pytest.MonkeyPatch) -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     times = iter([10.0, 25.0])
@@ -141,7 +141,7 @@ def test_on_train_end_logs_total_duration(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_on_save_logs_checkpoint() -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     args = SimpleNamespace(num_train_epochs=1)
@@ -158,7 +158,7 @@ def test_on_save_logs_checkpoint() -> None:
 
 
 def test_on_train_end_noop_when_never_started() -> None:
-    mlflow_mgr = FakeMLflowManager(enabled=True)
+    mlflow_mgr = FakeMLflowManager(active=True)
     cb = TrainingEventsCallback(mlflow_manager=mlflow_mgr)
 
     args = SimpleNamespace(num_train_epochs=1)

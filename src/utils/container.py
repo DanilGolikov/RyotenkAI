@@ -466,22 +466,15 @@ class TrainingContainer:
         Get MLflowManager instance.
 
         Returns injected mock or creates real MLflowManager instance.
-        Returns None if MLflow is disabled in config.
 
         Returns:
-            IMLflowManager | None: MLflow manager or None if disabled
+            IMLflowManager | None: MLflow manager instance
         """
         if self._mlflow_manager is not None:
             return self._mlflow_manager
 
         # Lazy initialization of real MLflowManager
         if self._lazy_mlflow_manager is None:
-            # Check if MLflow is enabled in config
-            mlflow_config = getattr(self.config.experiment_tracking, "mlflow", None)
-            if mlflow_config is None or not mlflow_config.enabled:
-                logger.debug("[CONTAINER:MLFLOW_DISABLED] MLflow disabled in config")
-                return None
-
             from src.training.managers.mlflow_manager import MLflowManager
 
             # PyCharm: may not reliably treat Protocols as structural types here (false positive).

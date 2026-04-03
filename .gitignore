@@ -109,3 +109,6 @@ secrets.env
 
 # Docker build logs
 docker/training/build_and_push.log
+/.claude/worktrees/focused-perlman/
+/.claude/worktrees/laughing-davinci/
+/.claude/worktrees/tender-shtern/

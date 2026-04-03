@@ -26,12 +26,12 @@ def _mk_strategies(*, epochs: int | None = None, learning_rate: float | None = N
     return [
         StrategyPhaseConfig(
             strategy_type="sft",
-            dataset="default",
+            dataset="sft_data",
             hyperparams=PhaseHyperparametersConfig(epochs=epochs, learning_rate=learning_rate),
         ),
         StrategyPhaseConfig(
             strategy_type="dpo",
-            dataset="default",
+            dataset="pref_data",
             hyperparams=PhaseHyperparametersConfig(epochs=1, learning_rate=2e-4, beta=0.1),
         ),
     ]

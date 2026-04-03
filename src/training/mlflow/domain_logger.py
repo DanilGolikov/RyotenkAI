@@ -76,8 +76,11 @@ class MLflowDomainLogger:
             "weight_decay": hp.weight_decay,
         }
 
-        lora = config.training.lora
-        if lora and config.training.type in ("lora", "qlora"):
+        lora = None
+        if config.training.type in ("lora", "qlora"):
+            with contextlib.suppress(ValueError):
+                lora = config.training.get_adapter_config()
+        if lora is not None and config.training.type in ("lora", "qlora"):
             params.update(
                 {
                     "lora_r": lora.r,
@@ -154,8 +157,11 @@ class MLflowDomainLogger:
             params[f"training.hyperparams.{field}"] = value
         params["training.hyperparams.load_in_4bit"] = config.training.get_effective_load_in_4bit()
 
-        lora = config.training.lora
-        if lora and config.training.type in ("lora", "qlora"):
+        lora = None
+        if config.training.type in ("lora", "qlora"):
+            with contextlib.suppress(ValueError):
+                lora = config.training.get_adapter_config()
+        if lora is not None and config.training.type in ("lora", "qlora"):
             params["config.lora.r"] = lora.r
             params["config.lora.alpha"] = lora.lora_alpha
             params["config.lora.dropout"] = lora.lora_dropout

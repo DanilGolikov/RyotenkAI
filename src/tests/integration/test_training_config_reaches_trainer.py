@@ -111,7 +111,7 @@ training:
     save_steps: 222
     optim: adamw_torch
     beta: 0.2
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -231,7 +231,7 @@ training:
     per_device_train_batch_size: 1
     gradient_accumulation_steps: 1
     warmup_ratio: 0.0
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -321,7 +321,7 @@ training:
     warmup_ratio: 0.0
     epochs: 1
     save_steps: 200
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05

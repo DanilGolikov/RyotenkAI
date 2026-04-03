@@ -44,7 +44,10 @@ def _mk_config() -> MagicMock:
         source_local=SimpleNamespace(local_paths=SimpleNamespace(train="data/train.jsonl", eval=None)),
         adapter_type="chat",
     )
-    cfg.experiment_tracking.mlflow = None
+    cfg.experiment_tracking.mlflow = SimpleNamespace(
+        tracking_uri="http://localhost:5002",
+        system_metrics_callback_enabled=False,
+    )
     cfg.get_adapter_config.side_effect = ValueError("no adapter")  # default: non-LoRA
     return cfg
 
@@ -79,17 +82,21 @@ class TestMissingInitAndMlflowSetupLines:
         # Should not raise: provider_type becomes None via except path
         _ = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=secrets, stages=[])
 
-    def test_setup_mlflow_disabled_returns_none(self, tmp_path: Path) -> None:
+    def test_ensure_mlflow_preflight_raises_when_manager_missing(self, tmp_path: Path) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = None
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
-        assert orch._setup_mlflow() is None
+        state = _mk_pipeline_state(tmp_path)
+        with pytest.raises(Exception, match="MLflow setup failed"):
+            orch._ensure_mlflow_preflight(state=state)
 
     def test_setup_mlflow_disable_system_metrics_logging_exception_is_ignored_and_manager_returns(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=True, system_metrics_callback_enabled=True)
+        cfg.experiment_tracking.mlflow = SimpleNamespace(
+            tracking_uri="http://localhost:5002",
+            system_metrics_callback_enabled=True,
+        )
 
         secrets = _mk_secrets()
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=secrets, stages=[])
@@ -112,7 +119,10 @@ class TestMissingInitAndMlflowSetupLines:
 
     def test_setup_mlflow_outer_exception_returns_none(self, tmp_path: Path) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=True)
+        cfg.experiment_tracking.mlflow = SimpleNamespace(
+            tracking_uri="http://localhost:5002",
+            system_metrics_callback_enabled=False,
+        )
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
 
         with patch("src.pipeline.orchestrator.MLflowManager", side_effect=RuntimeError("boom")):
@@ -125,7 +135,10 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
     ) -> None:
         """Invariant: finally always calls _flush_pending_collectors even if stage failed."""
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=True)
+        cfg.experiment_tracking.mlflow = SimpleNamespace(
+            tracking_uri="http://localhost:5002",
+            system_metrics_callback_enabled=False,
+        )
 
         stage = MagicMock()
         stage.stage_name = "Dataset Validator"
@@ -135,7 +148,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=stage_list)
 
         mgr = MagicMock()
-        mgr.is_enabled = True
+        mgr.is_active = True
         mgr._run_id = "rid"
         ctx = MagicMock()
         mgr.start_run.return_value = ctx
@@ -184,7 +197,10 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
     ) -> None:
         """Regression: log_summary_artifact(pipeline_events.json) is no longer called."""
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(enabled=True)
+        cfg.experiment_tracking.mlflow = SimpleNamespace(
+            tracking_uri="http://localhost:5002",
+            system_metrics_callback_enabled=False,
+        )
 
         stage = MagicMock()
         stage.stage_name = "Dataset Validator"
@@ -193,7 +209,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[stage])
 
         mgr = MagicMock()
-        mgr.is_enabled = True
+        mgr.is_active = True
         mgr._run_id = "rid"
         mgr.start_run.return_value = MagicMock()
 

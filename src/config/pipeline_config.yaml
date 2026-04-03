@@ -156,11 +156,12 @@ training:
   type: qlora
 
   # =========================================================================
-  # LORA CONFIGURATION (unified for both LoRA and QLoRA)
+  # QLORA CONFIGURATION (4-bit quantization + LoRA)
   # =========================================================================
-  # Used when type: qlora or type: lora
-  # Difference: QLoRA loads model in 4-bit, LoRA uses full precision
-  lora:
+  # Use 'qlora:' block when type: qlora
+  # Use 'lora:' block when type: lora
+  # Use 'adalora:' block when type: adalora
+  qlora:
     # ✅ v6.0 REQUIRED: Base LoRA parameters (5 fields)
     r: 16                           # REQUIRED: Rank (8-64 typical, higher = more capacity)
     lora_alpha: 32                  # REQUIRED: Alpha scaling (typically 2*r)
@@ -372,7 +373,6 @@ experiment_tracking:
   # Clients need ONLY tracking_uri - server handles MinIO credentials!
   # -------------------------------------------------------------------------
   mlflow:
-    enabled: true
     tracking_uri: "http://localhost:5002"
     experiment_name: ryotenkai
     log_artifacts: true

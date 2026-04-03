@@ -67,11 +67,10 @@ def load_model_and_tokenizer(
     # Create quantization config for QLoRA
     bnb_config = None
     if use_4bit:
-        # Get QLoRA-specific settings from training.lora (unified config)
-        lora_cfg = config.training.lora
-        quant_type = lora_cfg.bnb_4bit_quant_type
-        compute_dtype = _get_torch_dtype(lora_cfg.bnb_4bit_compute_dtype)
-        use_double_quant = lora_cfg.bnb_4bit_use_double_quant
+        adapter_cfg = config.training.get_adapter_config()
+        quant_type = adapter_cfg.bnb_4bit_quant_type
+        compute_dtype = _get_torch_dtype(adapter_cfg.bnb_4bit_compute_dtype)
+        use_double_quant = adapter_cfg.bnb_4bit_use_double_quant
 
         bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -79,7 +78,7 @@ def load_model_and_tokenizer(
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=use_double_quant,
         )
-        logger.info(f"Using 4-bit quantization (QLoRA): {quant_type}, double_quant={use_double_quant}")
+        logger.info(f"Using 4-bit quantization (QLoRA): quant={quant_type}, compute_dtype={compute_dtype}, double_quant={use_double_quant}")
 
     # Determine torch dtype
     torch_dtype = _get_torch_dtype(config.model.torch_dtype)

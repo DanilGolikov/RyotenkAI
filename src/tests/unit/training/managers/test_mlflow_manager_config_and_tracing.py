@@ -87,17 +87,17 @@ def _mk_cfg() -> PipelineConfig:
         training=TrainingOnlyConfig(
             type="qlora",
             provider="runpod",
-            lora=_lora_cfg(),
+            qlora=_lora_cfg(),
             hyperparams=_hp_global_cfg(),
             strategies=[
                 StrategyPhaseConfig(
                     strategy_type="sft",
-                    dataset="default",
+                    dataset="sft_data",
                     hyperparams=PhaseHyperparametersConfig(epochs=1),
                 ),
                 StrategyPhaseConfig(
                     strategy_type="dpo",
-                    dataset="default",
+                    dataset="pref_data",
                     hyperparams=PhaseHyperparametersConfig(epochs=2),
                 ),
             ],
@@ -110,11 +110,13 @@ def _mk_cfg() -> PipelineConfig:
                 "inference": {},
             }
         },
-        datasets={"default": _ds_local("data/train.jsonl")},
+        datasets={
+            "sft_data": _ds_local("data/train.jsonl"),
+            "pref_data": _ds_local("data/pref.jsonl"),
+        },
         inference=_inference_cfg_disabled(),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test",
                 log_artifacts=True,
@@ -162,7 +164,7 @@ class TestConfigLogging:
         assert any(k.startswith("training.hyperparams.") for k in params)
         # phase-specific params logged
         assert params["config.strategy.0.type"] == "sft"
-        assert params["config.strategy.0.dataset"] == "default"
+        assert params["config.strategy.0.dataset"] == "sft_data"
 
     def test_log_pipeline_config_handles_provider_exceptions(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()
@@ -186,17 +188,18 @@ class TestConfigLogging:
         monkeypatch.setattr(mgr, "log_params", lambda p: params.update(p))
         monkeypatch.setattr(mgr, "set_tags", lambda t: tags.update(t))
 
-        cfg.datasets["default"] = DatasetConfig(
+        cfg.datasets.clear()
+        cfg.datasets["sft_data"] = DatasetConfig(
             source_type="huggingface",
             source_hf={"train_id": "org/ds", "eval_id": "org/ds_eval"},
             max_samples=123,
         )
 
         mgr.log_dataset_config(cfg)
-        assert params["dataset.default.source_type"] == "huggingface"
-        assert params["dataset.default.hf.train_id"] == "org/ds"
-        assert params["dataset.default.max_samples"] == "123"
-        assert tags["dataset.names"] == "default"
+        assert params["dataset.sft_data.source_type"] == "huggingface"
+        assert params["dataset.sft_data.hf.train_id"] == "org/ds"
+        assert params["dataset.sft_data.max_samples"] == "123"
+        assert tags["dataset.names"] == "sft_data"
         assert tags["dataset.count"] == "1"
 
         # exception path should not raise

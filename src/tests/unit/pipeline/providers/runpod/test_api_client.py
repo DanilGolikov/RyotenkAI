@@ -7,7 +7,11 @@ import pytest
 import requests
 
 from src.config.providers.runpod import RunPodProviderConfig
-from src.providers.runpod.training.api_client import RunPodAPIClient
+from src.providers.runpod.training.api_client import (
+    RunPodAPIClient,
+    build_pod_launch_mutation,
+    build_ssh_bootstrap_cmd,
+)
 
 
 @dataclass
@@ -155,7 +159,7 @@ def test_get_ssh_info_success(monkeypatch: pytest.MonkeyPatch) -> None:
                         "runtime": {
                             "ports": [
                                 {"ip": "1.2.3.4", "privatePort": 123, "publicPort": 111},
-                                {"ip": "5.6.7.8", "privatePort": 22, "publicPort": 2222},
+                                {"ip": "5.6.7.8", "privatePort": 22, "publicPort": 2222, "isIpPublic": True},
                             ]
                         },
                     }
@@ -183,4 +187,84 @@ def test_get_ssh_info_no_ssh_port(monkeypatch: pytest.MonkeyPatch) -> None:
 
     res = client.get_ssh_info("pod-1")
     assert res.is_failure()
-    assert "SSH port" in str(res.unwrap_err())
+    assert "SSH over exposed TCP" in str(res.unwrap_err())
+
+
+def test_get_ssh_info_ignores_non_public_or_invalid_ssh_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_post(*a, **k):
+        return FakeResponse(
+            status_code=200,
+            payload={
+                "data": {
+                    "pod": {
+                        "id": "pod-1",
+                        "runtime": {
+                            "ports": [
+                                {"ip": "10.0.0.1", "privatePort": 22, "publicPort": 2222, "isIpPublic": False},
+                                {"ip": "", "privatePort": 22, "publicPort": 3333, "isIpPublic": True},
+                            ]
+                        },
+                    }
+                }
+            },
+        )
+
+    client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
+    monkeypatch.setattr(client.session, "post", fake_post)
+
+    res = client.get_ssh_info("pod-1")
+    assert res.is_failure()
+    assert "SSH over exposed TCP" in str(res.unwrap_err())
+
+
+# ---------------------------------------------------------------------------
+# Extracted pure functions
+# ---------------------------------------------------------------------------
+
+
+def test_build_ssh_bootstrap_cmd_contains_sshd_setup() -> None:
+    cmd = build_ssh_bootstrap_cmd()
+    assert "sshd" in cmd
+    assert "authorized_keys" in cmd
+    assert "PUBLIC_KEY" in cmd
+    assert cmd.startswith("bash -c")
+
+
+def test_build_pod_launch_mutation_contains_config_values() -> None:
+    cfg = RunPodProviderConfig(
+        connect={"ssh": {"key_path": "/k"}},
+        cleanup={},
+        training={"image_name": "myimg:v1", "gpu_type": "NVIDIA A40", "ports": "8888/http,22/tcp"},
+        inference={},
+    )
+    mutation = build_pod_launch_mutation(cfg, "test-pod", "ssh-ed25519 AAAA...")
+    assert "NVIDIA A40" in mutation
+    assert "myimg:v1" in mutation
+    assert "test-pod" in mutation
+    assert "PUBLIC_KEY" in mutation
+    assert "8888/http,22/tcp" in mutation
+    assert "podFindAndDeployOnDemand" in mutation
+
+
+def test_build_pod_launch_mutation_without_public_key() -> None:
+    cfg = RunPodProviderConfig(
+        connect={"ssh": {"key_path": "/k"}},
+        cleanup={},
+        training={"image_name": "img", "gpu_type": "NVIDIA A40"},
+        inference={},
+    )
+    mutation = build_pod_launch_mutation(cfg, None, None)
+    assert "env: []" in mutation
+
+
+def test_build_pod_launch_mutation_truncates_long_name() -> None:
+    cfg = RunPodProviderConfig(
+        connect={"ssh": {"key_path": "/k"}},
+        cleanup={},
+        training={"image_name": "img", "gpu_type": "NVIDIA A40"},
+        inference={},
+    )
+    long_name = "x" * 200
+    mutation = build_pod_launch_mutation(cfg, long_name, None)
+    assert "x" * 80 in mutation
+    assert "x" * 81 not in mutation

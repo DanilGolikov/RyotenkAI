@@ -344,6 +344,7 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         self._maybe_add_inference_tab()
         self._maybe_add_eval_tab()
         self._maybe_add_report_tab()
+        self.refresh_bindings()
         self._start_live_updates()
         self._focus_tabs_after_mount()
 
@@ -849,12 +850,14 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
                 self._attempt_status == "running" or app.get_active_launch_for_run(self._run_dir) is not None
             )
             if should_refresh_attempt:
+                prev_status = self._attempt_status
                 self._attempt_status = self._load_details()
                 self._populate_log_selector()
                 self._maybe_add_inference_tab()
                 self._maybe_add_eval_tab()
                 self._maybe_add_report_tab()
-                self.refresh_bindings()
+                if prev_status != self._attempt_status:
+                    self.refresh_bindings()
             tabs = self.query_one(TabbedContent)
             if tabs.active != "logs":
                 return

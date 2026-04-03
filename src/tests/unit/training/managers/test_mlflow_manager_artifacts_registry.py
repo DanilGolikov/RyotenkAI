@@ -38,7 +38,7 @@ def _mk_cfg(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         training=TrainingOnlyConfig(
             type="qlora",
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -76,7 +76,6 @@ def _mk_cfg(
         ),
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
-                enabled=True,
                 tracking_uri=tracking_uri,
                 experiment_name="test",
                 log_artifacts=log_artifacts,

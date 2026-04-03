@@ -313,13 +313,13 @@ class TestSaveStageArtifact:
         env = _make_envelope()
         save_stage_artifact({}, env, "test.json")  # must not raise
 
-    def test_disabled_mlflow_is_silent(self) -> None:
-        """MLflowManager disabled → does not write artifact."""
+    def test_inactive_mlflow_is_silent(self) -> None:
+        """Inactive MLflowManager does not write artifact."""
         from src.pipeline.stages.constants import PipelineContextKeys
         from src.training.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = False
+        mock_mgr.is_active = False
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
@@ -334,7 +334,7 @@ class TestSaveStageArtifact:
         from src.training.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
         context = {PipelineContextKeys.MLFLOW_MANAGER: mock_mgr}  # no run_id
         env = _make_envelope()
         save_stage_artifact(context, env, "test.json")
@@ -348,7 +348,7 @@ class TestSaveStageArtifact:
         logged_args: list[tuple[Any, ...]] = []
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
 
         def capture_log(path: str, *, artifact_path: str = "", run_id: str = "") -> None:
             logged_args.append((path, artifact_path, run_id))
@@ -376,7 +376,7 @@ class TestSaveStageArtifact:
         from src.training.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
         mock_mgr.log_artifact.side_effect = RuntimeError("MLflow server down")
 
         context = {
@@ -395,7 +395,7 @@ class TestSaveStageArtifact:
         logged_kwargs: list[dict[str, Any]] = []
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
         mock_mgr.log_artifact.side_effect = lambda path, **kw: logged_kwargs.append(kw)
 
         context = {
@@ -411,7 +411,7 @@ class TestSaveStageArtifact:
         from src.training.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "",
@@ -633,7 +633,7 @@ class TestArtifactRegressions:
         written_payloads: list[str] = []
 
         mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_enabled = True
+        mock_mgr.is_active = True
 
         def capture(path: str, **kwargs: Any) -> None:
             written_payloads.append(Path(path).read_text(encoding="utf-8"))

@@ -14,11 +14,13 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
+    ExperimentTrackingConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
     LoraConfig,
+    MLflowConfig,
     ModelConfig,
     PipelineConfig,
     StrategyPhaseConfig,
@@ -38,6 +40,17 @@ RUNPOD_PROVIDER_CFG: dict = {
 }
 
 
+def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
+    return ExperimentTrackingConfig(
+        mlflow=MLflowConfig(
+            tracking_uri="http://127.0.0.1:5002",
+            experiment_name="test-exp",
+            log_artifacts=False,
+            log_model=False,
+        )
+    )
+
+
 def _mk_cfg(
     *,
     providers: dict,
@@ -51,7 +64,7 @@ def _mk_cfg(
         training=TrainingOnlyConfig(
             type="qlora",
             provider=training_provider,
-            lora=LoraConfig(
+            qlora=LoraConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -87,6 +100,7 @@ def _mk_cfg(
                 )
             ),
         ),
+        experiment_tracking=_experiment_tracking_cfg(),
     )
 
 

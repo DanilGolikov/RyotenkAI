@@ -96,20 +96,16 @@ def _setup_mlflow(config: PipelineConfig) -> MLflowManager | None:
         config: Pipeline configuration
 
     Returns:
-        MLflowManager instance or None if disabled
+        MLflowManager instance when tracking is available, otherwise None
     """
-    mlflow_config = config.experiment_tracking.mlflow
-    if not mlflow_config or not mlflow_config.enabled:
-        logger.info("MLflow tracking disabled")
-        return None
-
     try:
         manager = MLflowManager(config)
-        if manager.setup():
-            return manager
-        return None
+        if not manager.setup():
+            logger.warning("MLflow setup failed or tracking backend is unreachable; continuing without MLflow")
+            return None
+        return manager
     except Exception as e:
-        logger.warning(f"MLflow setup failed: {e}")
+        logger.warning(f"MLflow setup failed: {e}; continuing without MLflow")
         return None
 
 
@@ -192,7 +188,7 @@ def run_training(
         # =====================================================================
         mlflow_mgr = _setup_mlflow(config)
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             # Enable autologging for Transformers
             mlflow_mgr.enable_autolog(log_models=False)
 
@@ -212,7 +208,7 @@ def run_training(
         strategy_chain = "_".join(s.strategy_type for s in strategies)
         run_name = f"{config.model.name.split('/')[-1]}_{strategy_chain}_{datetime.now().strftime('%Y%m%d_%H%M')}"
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_run_context = mlflow_mgr.start_run(run_name=run_name)
             mlflow_run_context.__enter__()
 
@@ -259,7 +255,7 @@ def run_training(
         logger.debug("[RUN_TRAINING:ENV] Environment snapshot collected")
 
         # Log environment to MLflow
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.log_environment(env_reporter.snapshot.to_dict())
 
         # =====================================================================
@@ -289,7 +285,7 @@ def run_training(
             logger.info("GPU: Unknown/CPU")
 
         # Log recommendations to MLflow with config comparison
-        if mlflow_mgr and mlflow_mgr.is_enabled and memory_manager.gpu_info:
+        if mlflow_mgr and mlflow_mgr.is_active and memory_manager.gpu_info:
             gpu = memory_manager.gpu_info
             # Explicitly log GPU detection event with structured data for Report Generator
             # Note: memory_manager.gpu_info is typed as Any in protocol due to circular imports,
@@ -324,7 +320,7 @@ def run_training(
                 )
 
         # Log initial memory state (before model loading)
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mem_stats = memory_manager.get_memory_stats()
             if mem_stats:
                 mlflow_mgr.log_memory_snapshot(
@@ -354,7 +350,7 @@ def run_training(
         logger.info(f"   Trainable parameters: {trainable_params:,} ({trainable_percent:.2f}%)")
 
         # Log memory state after model loading
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mem_stats = memory_manager.get_memory_stats()
             if mem_stats:
                 mlflow_mgr.log_memory_snapshot(
@@ -375,7 +371,7 @@ def run_training(
                 }
             )
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.log_event_info(
                 f"Model loaded: {trainable_params:,} trainable params ({model_load_duration:.1f}s)",
                 category="training",
@@ -398,7 +394,7 @@ def run_training(
         logger.info("StrategyOrchestrator ready")
 
         # Log additional params
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.set_tags(
                 {
                     "run_id": run_id or "none",
@@ -411,7 +407,7 @@ def run_training(
         # =====================================================================
         logger.info(f"Running training chain: {' -> '.join(s.strategy_type.upper() for s in strategies)}")
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.log_pipeline_initialized(
                 run_id=run_id or generate_run_name()[0],
                 total_phases=len(strategies),
@@ -431,7 +427,7 @@ def run_training(
             error_msg = result.unwrap_err()  # type: ignore[union-attr]
             logger.error(f"Training failed: {error_msg}")
 
-            if mlflow_mgr and mlflow_mgr.is_enabled:
+            if mlflow_mgr and mlflow_mgr.is_active:
                 mlflow_mgr.set_tag("status", "failed")
                 mlflow_mgr.log_params({"error": str(error_msg)[:TRUNCATE_ERROR_MSG]})
                 mlflow_mgr.log_event_error(
@@ -468,7 +464,7 @@ def run_training(
             last_phase = strategies[last_phase_idx]
             output_path = Path("output") / f"phase_{last_phase_idx}_{last_phase.strategy_type}" / "checkpoint-final"
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.set_tag("status", "completed")
             mlflow_mgr.log_params({"output_path": str(output_path)})
             mlflow_mgr.log_event_complete(
@@ -509,7 +505,7 @@ def run_training(
         logger.exception(f"Unexpected error during training: {e}")
 
         # Log error event to MLflow
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             mlflow_mgr.log_event_error(
                 f"Training failed: {e!s}",
                 category="training",
@@ -531,7 +527,7 @@ def run_training(
         # GENERATE TRAINING SUMMARY (always runs)
         # =====================================================================
         # Log final memory state
-        if mlflow_mgr and mlflow_mgr.is_enabled and memory_manager:
+        if mlflow_mgr and mlflow_mgr.is_active and memory_manager:
             mem_stats = memory_manager.get_memory_stats()
             if mem_stats:
                 mlflow_mgr.log_memory_snapshot(
@@ -542,7 +538,7 @@ def run_training(
                     utilization_percent=mem_stats.utilization_percent,
                 )
 
-        if mlflow_mgr and mlflow_mgr.is_enabled:
+        if mlflow_mgr and mlflow_mgr.is_active:
             try:
                 # Log training_events.json to PARENT run (pipeline_* on Mac)
                 # All artifacts should be centralized in parent for easy access

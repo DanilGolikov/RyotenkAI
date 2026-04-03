@@ -17,6 +17,14 @@
 #   ./run.sh --list-runs [runs/]                               — list all runs
 #   ./run.sh config.yaml runs/<id> --resume                    — resume with explicit config
 #
+# Batch smoke testing:
+#   ./run.sh /path/to/configs --smoke                          — run all configs in parallel
+#   ./run.sh /path/to/configs --smoke --workers 2              — limit parallelism
+#   ./run.sh /path/to/configs --smoke --workers -1             — 1 worker per config (unlimited)
+#   ./run.sh /path/to/configs --smoke --timeout 1200           — idle timeout 20 min per config
+#   ./run.sh /path/to/configs --smoke --stagger 10             — 10s between launches (default: 5)
+#   ./run.sh /path/to/configs --smoke --dry-run                — list configs only
+#
 # ryotenkai TUI (interactive terminal UI):
 #   ./run.sh --tui                                             — browse all runs (uses ./runs)
 #   ./run.sh runs/<id> --tui                                   — live monitor for a run
@@ -52,6 +60,14 @@ ryotenkai TUI (interactive browser):
   ./run.sh runs/<id> --tui                                 — live monitor for a run
   ./run.sh runs/<id> --tui --interval 10                   — refresh interval 10s
 
+Batch smoke testing:
+  ./run.sh /path/to/configs --smoke                        — run all *.yaml configs in parallel
+  ./run.sh /path/to/configs --smoke --workers 2            — limit parallelism (default: 4)
+  ./run.sh /path/to/configs --smoke --workers -1           — 1 worker per config (unlimited)
+  ./run.sh /path/to/configs --smoke --timeout 1200         — idle timeout per config (default: 600s)
+  ./run.sh /path/to/configs --smoke --stagger 10           — delay between launches (default: 5s)
+  ./run.sh /path/to/configs --smoke --dry-run              — list configs without running
+
 Pre-flight:
   ./run.sh config.yaml --validate-config                   — static config checks
 EOF
@@ -78,6 +94,12 @@ RUN_STATUS=false
 VALIDATE_CONFIG=false
 REPORT=false
 TUI=false
+SMOKE=false
+SMOKE_WORKERS=""
+SMOKE_TIMEOUT=""
+SMOKE_STAGGER=""
+SMOKE_DRY_RUN=false
+SMOKE_REPORT_DIR=""
 PASSTHROUGH=()
 
 i=0
@@ -114,6 +136,40 @@ while [[ $i -lt ${#args[@]} ]]; do
             ;;
         --tui)
             TUI=true
+            ;;
+        --smoke)
+            SMOKE=true
+            ;;
+        --workers)
+            i=$((i + 1))
+            SMOKE_WORKERS="${args[$i]}"
+            ;;
+        --workers=*)
+            SMOKE_WORKERS="${arg#--workers=}"
+            ;;
+        --smoke-report-dir)
+            i=$((i + 1))
+            SMOKE_REPORT_DIR="${args[$i]}"
+            ;;
+        --smoke-report-dir=*)
+            SMOKE_REPORT_DIR="${arg#--smoke-report-dir=}"
+            ;;
+        --timeout)
+            i=$((i + 1))
+            SMOKE_TIMEOUT="${args[$i]}"
+            ;;
+        --timeout=*)
+            SMOKE_TIMEOUT="${arg#--timeout=}"
+            ;;
+        --stagger)
+            i=$((i + 1))
+            SMOKE_STAGGER="${args[$i]}"
+            ;;
+        --stagger=*)
+            SMOKE_STAGGER="${arg#--stagger=}"
+            ;;
+        --dry-run)
+            SMOKE_DRY_RUN=true
             ;;
         --run-dir)
             i=$((i + 1))
@@ -171,7 +227,7 @@ done
 IS_QUERY=$([[ "$LIST_RESTART_POINTS" == true || "$INSPECT" == true || "$LIST_RUNS" == true || \
               "$SHOW_LOGS" == true || "$RUN_DIFF" == true || "$RUN_STATUS" == true || \
               "$VALIDATE_ONLY" == true || "$VALIDATE_CONFIG" == true || "$REPORT" == true || \
-              "$TUI" == true ]] && echo true || echo false)
+              "$TUI" == true || "$SMOKE" == true ]] && echo true || echo false)
 
 if [[ -z "$CONFIG" && -z "$RUN_DIR" && "$IS_QUERY" == false ]]; then
     _show_help
@@ -185,7 +241,21 @@ fi
 
 # ── Activate environment ───────────────────────────────────────────────────
 
-source venv/bin/activate
+VENV_ACTIVATE=""
+for ENV_DIR in ".venv" "venv"; do
+    if [[ -f "$ENV_DIR/bin/activate" ]]; then
+        VENV_ACTIVATE="$ENV_DIR/bin/activate"
+        break
+    fi
+done
+
+if [[ -z "$VENV_ACTIVATE" ]]; then
+    echo "Virtual environment not found (.venv or venv). Run: bash setup.sh"
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$VENV_ACTIVATE"
 
 # ── Run ─────────────────────────────────────────────────────────────────────
 
@@ -204,7 +274,7 @@ elif [[ "$VALIDATE_CONFIG" == true ]]; then
         echo "Error: --validate-config requires a config path"
         exit 1
     fi
-    python -m src.main config-validate "$CONFIG" "${PASSTHROUGH[@]}"
+    python -m src.main config-validate --config "$CONFIG" "${PASSTHROUGH[@]}"
 
 elif [[ "$LIST_RESTART_POINTS" == true ]]; then
     if [[ -z "$RUN_DIR" ]]; then
@@ -259,6 +329,22 @@ elif [[ "$TUI" == true ]]; then
     ARGS=()
     [[ -n "$RUN_DIR" ]] && ARGS+=("$RUN_DIR")
     python -m src.main tui "${ARGS[@]}" "${PASSTHROUGH[@]}"
+
+elif [[ "$SMOKE" == true ]]; then
+    # Smoke requires a directory with configs (passed as CONFIG or RUN_DIR positional)
+    SMOKE_DIR="${RUN_DIR:-$CONFIG}"
+    if [[ -z "$SMOKE_DIR" || ! -d "$SMOKE_DIR" ]]; then
+        echo "Error: --smoke requires a directory with *.yaml configs"
+        echo "Usage: ./run.sh /path/to/configs --smoke [--workers N] [--timeout S] [--dry-run]"
+        exit 1
+    fi
+    ARGS=("$SMOKE_DIR")
+    [[ -n "$SMOKE_WORKERS" ]]    && ARGS+=(--workers "$SMOKE_WORKERS")
+    [[ -n "$SMOKE_TIMEOUT" ]]    && ARGS+=(--idle-timeout "$SMOKE_TIMEOUT")
+    [[ -n "$SMOKE_STAGGER" ]]    && ARGS+=(--stagger "$SMOKE_STAGGER")
+    [[ -n "$SMOKE_REPORT_DIR" ]] && ARGS+=(--report-dir "$SMOKE_REPORT_DIR")
+    [[ "$SMOKE_DRY_RUN" == true ]] && ARGS+=(--dry-run)
+    python scripts/batch_smoke.py "${ARGS[@]}"
 
 else
     [[ -n "$CONFIG" ]]  && echo "Config:  $CONFIG"

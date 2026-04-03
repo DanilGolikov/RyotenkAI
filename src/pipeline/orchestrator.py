@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -68,6 +69,7 @@ from src.pipeline.state import (
 )
 from src.reports import ExperimentReportGenerator
 from src.training.managers.mlflow_manager import MLflowManager
+from src.config.runtime import RuntimeSettings, load_runtime_settings
 from src.utils.config import AdaLoraConfig, PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
 from src.utils.logger import console, get_run_log_dir, init_run_logging, logger
 from src.utils.result import AppError, ConfigDriftError, Err, Ok, Result
@@ -123,13 +125,21 @@ class PipelineOrchestrator:
     - Summary generation from centralized MLflow data
     """
 
-    def __init__(self, config_path: Path, run_directory: Path | None = None):
+    def __init__(
+        self,
+        config_path: Path,
+        run_directory: Path | None = None,
+        settings: RuntimeSettings | None = None,
+    ):
         """
         Initialize the orchestrator with configuration.
 
         Args:
             config_path: Path to pipeline configuration YAML file
+            run_directory: Explicit run directory (resume / restart).
+            settings: Runtime settings (env vars snapshot). Auto-loaded if not provided.
         """
+        self.settings: RuntimeSettings = settings or load_runtime_settings()
         # Single source of truth for run naming (no env fallbacks, no legacy).
         # NOTE: Do not name this attribute `run` — it would shadow PipelineOrchestrator.run().
         self.run_ctx: RunContext = RunContext.create()
@@ -296,10 +306,6 @@ class PipelineOrchestrator:
     def _setup_mlflow(self) -> MLflowManager | None:
         """Setup MLflow for pipeline event logging."""
         mlflow_config = self.config.experiment_tracking.mlflow
-        if not mlflow_config or not mlflow_config.enabled:
-            logger.debug("MLflow tracking disabled")
-            return None
-
         try:
             # Explicitly disable system metrics for pipeline orchestrator (Control Plane)
             # We don't want to log Mac/Host CPU/RAM metrics to the main run
@@ -307,8 +313,7 @@ class PipelineOrchestrator:
 
             # 1. Force config setting
             config_copy = self.config
-            if config_copy.experiment_tracking.mlflow:
-                config_copy.experiment_tracking.mlflow.system_metrics_callback_enabled = False
+            config_copy.experiment_tracking.mlflow.system_metrics_callback_enabled = False
 
             # 2. Force environment variable (critical for MLflow internals)
             import os
@@ -329,10 +334,7 @@ class PipelineOrchestrator:
                 pass
 
             manager.setup(disable_system_metrics=True)
-
-            if manager.is_active:
-                return manager
-            return None
+            return manager
         except Exception as e:
             logger.warning(f"MLflow setup failed: {e}")
             return None
@@ -451,6 +453,7 @@ class PipelineOrchestrator:
             self._save_state()
 
             self._setup_mlflow_for_attempt(state=state, attempt=attempt, start_stage_idx=start_idx)
+            self._ensure_mlflow_preflight(state=state)
 
             for i, stage in enumerate(self.stages):
                 stage_name = stage.stage_name
@@ -753,7 +756,8 @@ class PipelineOrchestrator:
         if requested_run_dir is not None:
             resolved_run_dir = requested_run_dir.expanduser().resolve()
         else:
-            resolved_run_dir = (Path("runs") / self.run_ctx.name).resolve()
+            runs_base = self.settings.runs_base_dir
+            resolved_run_dir = (runs_base / self.run_ctx.name).resolve()
 
         self.run_directory = resolved_run_dir
         self._state_store = PipelineStateStore(resolved_run_dir)
@@ -1199,7 +1203,7 @@ class PipelineOrchestrator:
         self, *, state: PipelineState, attempt: PipelineAttemptState, start_stage_idx: int
     ) -> None:
         self._mlflow_manager = self._setup_mlflow()
-        if not self._mlflow_manager or not self._mlflow_manager.is_enabled:
+        if not self._mlflow_manager or not self._mlflow_manager.is_active:
             return
         try:
             import mlflow
@@ -1242,6 +1246,26 @@ class PipelineOrchestrator:
                 "pipeline.run_directory": str(self.run_directory),
             }
         )
+
+    def _ensure_mlflow_preflight(self, *, state: PipelineState) -> None:
+        """Fail fast when mandatory MLflow setup/connectivity is not available."""
+        tracking_uri = self.config.experiment_tracking.mlflow.tracking_uri
+        if self._mlflow_manager is None or not self._mlflow_manager.is_active:
+            raise LaunchPreparationError(
+                AppError(
+                    code="MLFLOW_SETUP_FAILED",
+                    message=f"MLflow setup failed: {tracking_uri}",
+                ),
+                state=state,
+            )
+        if not self._mlflow_manager.check_mlflow_connectivity():
+            raise LaunchPreparationError(
+                AppError(
+                    code="MLFLOW_UNREACHABLE",
+                    message=f"MLflow not reachable: {tracking_uri}",
+                ),
+                state=state,
+            )
         if self.config_path.exists():
             self._mlflow_manager.log_artifact(str(self.config_path))
         self._save_state()
@@ -1788,8 +1812,15 @@ class PipelineOrchestrator:
             logger.debug("Cleanup already done, skipping duplicate call")
             return
         self._cleanup_done = True
-        _ = success
         logger.info("Cleaning up pipeline resources...")
+
+        if not success:
+            for stage in self.stages:
+                if hasattr(stage, "notify_pipeline_failure"):
+                    try:
+                        stage.notify_pipeline_failure()
+                    except Exception as e:
+                        logger.debug(f"Error notifying pipeline failure to {stage.stage_name}: {e}")
 
         # Policy: optionally skip provider disconnect on Ctrl+C (SIGINT).
         skip_gpu_deployer_cleanup = False

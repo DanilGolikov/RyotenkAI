@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from src.config.validators.training import (
     validate_lora_config,
     validate_strategy_phase_config,
-    validate_training_adalora_requires_block,
+    validate_training_adapter_requires_block,
 )
 from src.utils.config import (
     AdaLoraConfig,
@@ -49,6 +49,7 @@ def _adalora_cfg() -> AdaLoraConfig:
     return AdaLoraConfig(
         init_r=8,
         target_r=4,
+        total_step=100,
         lora_alpha=16,
         lora_dropout=0.05,
         bias="none",
@@ -56,21 +57,42 @@ def _adalora_cfg() -> AdaLoraConfig:
     )
 
 
-class TestValidateTrainingAdaloraRequiresBlock:
-    def test_positive_non_adalora_no_block_needed(self) -> None:
-        cfg = SimpleNamespace(type="qlora", adalora=None)
-        validate_training_adalora_requires_block(cfg)  # type: ignore[arg-type]
+class TestValidateTrainingAdapterRequiresBlock:
+    def test_positive_qlora_with_block(self) -> None:
+        cfg = SimpleNamespace(type="qlora", lora=None, qlora=object(), adalora=None)
+        validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
+
+    def test_positive_lora_with_block(self) -> None:
+        cfg = SimpleNamespace(type="lora", lora=object(), qlora=None, adalora=None)
+        validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
+
+    def test_negative_qlora_missing_block(self) -> None:
+        cfg = SimpleNamespace(type="qlora", lora=None, qlora=None, adalora=None)
+        with pytest.raises(ValueError, match=r"training\.type='qlora' requires 'training\.qlora:'"):
+            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
+
+    def test_negative_lora_missing_block(self) -> None:
+        cfg = SimpleNamespace(type="lora", lora=None, qlora=None, adalora=None)
+        with pytest.raises(ValueError, match=r"training\.type='lora' requires 'training\.lora:'"):
+            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
 
     def test_negative_adalora_requires_block(self) -> None:
-        cfg = SimpleNamespace(type="adalora", adalora=None)
+        cfg = SimpleNamespace(type="adalora", lora=None, qlora=None, adalora=None)
         with pytest.raises(ValueError, match=r"training\.type='adalora' requires 'training\.adalora:'"):
-            validate_training_adalora_requires_block(cfg)  # type: ignore[arg-type]
+            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
 
-    def test_regression_wiring_trainingonlyconfig_raises_validation_error(self) -> None:
+    def test_regression_wiring_qlora_missing_block_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError, match=r"training\.type='qlora' requires 'training\.qlora:'"):
+            _ = TrainingOnlyConfig(
+                type="qlora",
+                hyperparams=_hp_cfg(),
+                strategies=[StrategyPhaseConfig(strategy_type="sft")],
+            )
+
+    def test_regression_wiring_adalora_missing_block_raises_validation_error(self) -> None:
         with pytest.raises(ValidationError, match=r"training\.type='adalora' requires 'training\.adalora:'"):
             _ = TrainingOnlyConfig(
                 type="adalora",
-                lora=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 adalora=None,
                 strategies=[StrategyPhaseConfig(strategy_type="sft")],
@@ -79,7 +101,6 @@ class TestValidateTrainingAdaloraRequiresBlock:
     def test_positive_trainingonlyconfig_adalora_with_block(self) -> None:
         _ = TrainingOnlyConfig(
             type="adalora",
-            lora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             adalora=_adalora_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],

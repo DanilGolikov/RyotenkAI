@@ -102,6 +102,7 @@ def test_adalora_scheduling_params_have_defaults():
     config = AdaLoraConfig(
         init_r=12,
         target_r=8,
+        total_step=100,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
@@ -282,6 +283,7 @@ def test_dataset_local_paths_train_basename_extraction():
             AdaLoraConfig(
                 init_r=12,
                 target_r=8,
+                total_step=100,
                 lora_alpha=32,
                 lora_dropout=0.05,
                 bias="none",
@@ -545,6 +547,7 @@ def test_adalora_init_target_r_combinations(init_r, target_r):
     config = AdaLoraConfig(
         init_r=init_r,
         target_r=target_r,
+        total_step=100,
         lora_alpha=32,
         lora_dropout=0.05,
         bias="none",
@@ -569,6 +572,7 @@ def test_adalora_scheduling_combinations(tinit, tfinal, delta_t):
     config = AdaLoraConfig(
         init_r=12,
         target_r=8,
+        total_step=100,
         tinit=tinit,
         tfinal=tfinal,
         delta_t=delta_t,

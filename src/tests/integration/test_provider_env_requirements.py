@@ -68,7 +68,7 @@ training:
     learning_rate: 2.0e-4
     warmup_ratio: 0.0
     epochs: 1
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -97,6 +97,13 @@ datasets:
       local_paths:
         train: data/does_not_matter.jsonl
         eval: null
+
+experiment_tracking:
+  mlflow:
+    tracking_uri: http://127.0.0.1:5002
+    experiment_name: test-exp
+    log_artifacts: false
+    log_model: false
 """,
     )
 
@@ -147,7 +154,7 @@ training:
     learning_rate: 2.0e-4
     warmup_ratio: 0.0
     epochs: 1
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -176,6 +183,13 @@ datasets:
       local_paths:
         train: data/does_not_matter.jsonl
         eval: null
+
+experiment_tracking:
+  mlflow:
+    tracking_uri: http://127.0.0.1:5002
+    experiment_name: test-exp
+    log_artifacts: false
+    log_model: false
 """,
     )
 
@@ -247,7 +261,7 @@ training:
     learning_rate: 2.0e-4
     warmup_ratio: 0.0
     epochs: 1
-  lora:
+  qlora:
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -276,6 +290,13 @@ datasets:
       local_paths:
         train: data/does_not_matter.jsonl
         eval: null
+
+experiment_tracking:
+  mlflow:
+    tracking_uri: http://127.0.0.1:5002
+    experiment_name: test-exp
+    log_artifacts: false
+    log_model: false
 """,
     )
 

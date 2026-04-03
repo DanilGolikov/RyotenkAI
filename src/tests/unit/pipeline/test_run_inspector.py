@@ -25,11 +25,13 @@ from typer.testing import CliRunner
 from src.main import app
 from src.pipeline.domain import RunContext
 from src.pipeline.run_inspector import (
+    ROOT_GROUP,
     RunInspectionRenderer,
     RunInspector,
     _fmt_duration,
     diff_attempts,
     scan_runs_dir,
+    scan_runs_dir_grouped,
 )
 from src.pipeline.state import (
     PipelineState,
@@ -88,12 +90,17 @@ def _make_state(
                 started_at="2026-03-19T03:06:12+00:00",
                 completed_at="2026-03-19T03:10:12+00:00",
             )
+        attempt.status = (
+            StageRunState.STATUS_FAILED
+            if n == n_attempts and status == StageRunState.STATUS_FAILED
+            else StageRunState.STATUS_COMPLETED
+        )
         attempt.started_at = "2026-03-19T03:06:00+00:00"
         attempt.completed_at = "2026-03-19T05:20:03+00:00"
         state.attempts.append(attempt)
 
     state.pipeline_status = status
-    state.active_attempt_id = state.attempts[-1].attempt_id if state.attempts else None
+    state.active_attempt_id = state.attempts[-1].attempt_id if status == StageRunState.STATUS_RUNNING else None
     store.save(state)
     return store, state
 
@@ -318,6 +325,74 @@ def test_scan_runs_dir_handles_corrupt_state(tmp_path: Path) -> None:
     assert len(rows) == 1
     assert rows[0]["status"] == "unknown"
     assert rows[0]["error"] is not None
+
+
+# =============================================================================
+# scan_runs_dir_grouped
+# =============================================================================
+
+
+def test_scan_runs_dir_grouped_empty(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert groups == {}
+
+
+def test_scan_runs_dir_grouped_root_only(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_001")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP in groups
+    assert len(groups[ROOT_GROUP]) == 1
+    assert groups[ROOT_GROUP][0]["run_id"] == "run_001"
+    assert groups[ROOT_GROUP][0]["group"] == ROOT_GROUP
+
+
+def test_scan_runs_dir_grouped_subfolder(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    smoke = runs_dir / "smoke_abc12"
+    smoke.mkdir()
+    _make_state(smoke, run_id="run_in_smoke")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP not in groups
+    assert "smoke_abc12" in groups
+    assert len(groups["smoke_abc12"]) == 1
+    assert groups["smoke_abc12"][0]["run_id"] == "run_in_smoke"
+    assert groups["smoke_abc12"][0]["group"] == "smoke_abc12"
+
+
+def test_scan_runs_dir_grouped_mixed(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_root")
+    smoke = runs_dir / "smoke_xyz"
+    smoke.mkdir()
+    _make_state(smoke, run_id="run_nested")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    assert ROOT_GROUP in groups
+    assert "smoke_xyz" in groups
+    assert len(groups[ROOT_GROUP]) == 1
+    assert len(groups["smoke_xyz"]) == 1
+    assert groups[ROOT_GROUP][0]["run_id"] == "run_root"
+    assert groups["smoke_xyz"][0]["run_id"] == "run_nested"
+
+
+def test_scan_runs_dir_grouped_includes_created_ts(tmp_path: Path) -> None:
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+    _make_state(runs_dir, run_id="run_ts")
+
+    groups = scan_runs_dir_grouped(runs_dir)
+    row = groups[ROOT_GROUP][0]
+    assert "created_ts" in row
+    assert isinstance(row["created_ts"], float)
+    assert row["created_ts"] > 0
 
 
 # =============================================================================
@@ -547,14 +622,14 @@ def test_cli_run_diff_only_one_attempt(tmp_path: Path, cli_runner: CliRunner) ->
 
 
 def test_cli_config_validate_missing_file(tmp_path: Path, cli_runner: CliRunner) -> None:
-    result = cli_runner.invoke(app, ["config-validate", str(tmp_path / "nonexistent.yaml")])
+    result = cli_runner.invoke(app, ["config-validate", "--config", str(tmp_path / "nonexistent.yaml")])
     assert result.exit_code != 0
 
 
 def test_cli_config_validate_invalid_yaml(tmp_path: Path, cli_runner: CliRunner) -> None:
     bad_yaml = tmp_path / "bad.yaml"
     bad_yaml.write_text("{invalid: yaml: :", encoding="utf-8")
-    result = cli_runner.invoke(app, ["config-validate", str(bad_yaml)])
+    result = cli_runner.invoke(app, ["config-validate", "--config", str(bad_yaml)])
     assert result.exit_code != 0
     assert "❌" in result.output or "schema" in result.output.lower()
 
@@ -572,7 +647,7 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
     with patch("src.utils.config.load_config", return_value=mock_cfg):
-        result = cli_runner.invoke(app, ["config-validate", str(config_path)])
+        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
 
     assert result.exit_code == 0
     assert "ready to run" in result.output
@@ -594,7 +669,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
     with patch("src.utils.config.load_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
-        result = cli_runner.invoke(app, ["config-validate", str(config_path)])
+        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
 
     assert result.exit_code != 0
     assert "HF_TOKEN" in result.output

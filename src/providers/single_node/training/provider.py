@@ -447,7 +447,7 @@ class SingleNodeProvider(IGPUProvider):
             gpu_vram_gb=gpu_vram_gb,
         )
 
-    def get_resource_info(self) -> dict[str, Any] | None:
+    def get_resource_info(self) -> None:
         """Local provider has no dynamic resource metadata."""
         return None
 

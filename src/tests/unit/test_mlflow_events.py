@@ -460,7 +460,6 @@ class TestMLflowManagerSetup:
         """Create mock config with MLflow enabled."""
         config = MagicMock()
         mlflow_config = MagicMock()
-        mlflow_config.enabled = True
         mlflow_config.tracking_uri = "http://localhost:5002"
         mlflow_config.experiment_name = "test_experiment"
         mlflow_config.system_metrics_callback_enabled = False
@@ -471,11 +470,13 @@ class TestMLflowManagerSetup:
         return config
 
     @pytest.fixture
-    def mock_config_disabled(self) -> MagicMock:
-        """Create mock config with MLflow disabled."""
+    def mock_config_import_error(self) -> MagicMock:
+        """Create mock config for MLflow import/setup failure scenarios."""
         config = MagicMock()
         mlflow_config = MagicMock()
-        mlflow_config.enabled = False
+        mlflow_config.tracking_uri = "http://localhost:5002"
+        mlflow_config.experiment_name = "test_experiment"
+        mlflow_config.system_metrics_callback_enabled = False
         config.experiment_tracking.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
@@ -577,16 +578,29 @@ class TestMLflowManagerSetup:
             # Should handle exception gracefully
             assert result is False or manager._mlflow is None
 
-    def test_setup_disabled_in_config(self, mock_config_disabled: MagicMock) -> None:
-        """Test setup when MLflow is disabled in config."""
+    def test_setup_import_error_returns_false(self, mock_config_import_error: MagicMock) -> None:
+        """Test setup returns False when MLflow package is unavailable."""
+        import builtins
+
         from src.training.managers.mlflow_manager import MLflowManager
 
-        manager = MLflowManager(mock_config_disabled)
+        manager = MLflowManager(mock_config_import_error)
+
+        orig_import = builtins.__import__
+
+        def guarded_import(name: str, *args: Any, **kwargs: Any):
+            if name == "mlflow":
+                raise ImportError("no mlflow")
+            return orig_import(name, *args, **kwargs)
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
         result = manager.setup()
+        monkeypatch.undo()
 
         assert result is False
         assert manager._mlflow is None
-        assert manager.is_enabled is False
+        assert manager.is_active is False
 
 
 # =============================================================================
@@ -602,7 +616,6 @@ class TestMLflowManagerNestedRuns:
         """Create mock PipelineConfig."""
         config = MagicMock()
         mlflow_config = MagicMock()
-        mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
         mlflow_config.system_metrics_callback_enabled = False
