@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.training.strategies.dpo import DPOStrategy
 from src.training.strategies.orpo import ORPOStrategy
 from src.training.strategies.sapo import SAPOStrategy
@@ -25,31 +23,16 @@ class _PairDataset:
         return self.sample
 
 
-def test_dpo_validate_dataset_missing_columns() -> None:
+def test_dpo_validate_dataset_missing_rejected() -> None:
     s = DPOStrategy(MagicMock())
     ds = _PairDataset(column_names=["chosen"], sample={})
     assert s.validate_dataset(ds).is_failure()
 
 
-def test_dpo_validate_dataset_bad_message_shape() -> None:
+def test_dpo_validate_dataset_valid_columns() -> None:
     s = DPOStrategy(MagicMock())
-    ds = _PairDataset(column_names=["chosen", "rejected"], sample={"chosen": "x", "rejected": []})
-    res = s.validate_dataset(ds)
-    assert res.is_failure()
-
-
-def test_dpo_prepare_dataset_valid_pass_through() -> None:
-    s = DPOStrategy(MagicMock())
-    ds = _PairDataset(
-        column_names=["chosen", "rejected"],
-        sample={
-            "chosen": [{"role": "user", "content": "hi"}],
-            "rejected": [{"role": "user", "content": "no"}],
-        },
-    )
-    res = s.prepare_dataset(ds, MagicMock())
-    assert res.is_success()
-    assert res.unwrap() is ds
+    ds = _PairDataset(column_names=["chosen", "rejected"], sample={})
+    assert s.validate_dataset(ds).is_success()
 
 
 def test_dpo_build_trainer_kwargs_uses_ref_model_when_provided() -> None:
@@ -72,58 +55,33 @@ def test_dpo_post_build_config_hook_is_noop() -> None:
     assert not hasattr(cfg, "ref_adapter_name")
 
 
-def test_orpo_validate_and_prepare_dataset() -> None:
+def test_orpo_validate_dataset() -> None:
     s = ORPOStrategy(MagicMock())
     ds = _PairDataset(
         column_names=["chosen", "rejected"],
-        sample={
-            "chosen": [{"role": "user", "content": "hi"}],
-            "rejected": [{"role": "user", "content": "no"}],
-        },
+        sample={},
     )
     assert s.validate_dataset(ds).is_success()
-    assert s.prepare_dataset(ds, MagicMock()).is_success()
 
 
 @dataclass
 class _SAPODataset:
-    features: dict
-    mapped: bool = False
-
-    def map(self, fn):
-        # exercise mapping once
-        fn({"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "ok"}]})
-        self.mapped = True
-        return self
+    column_names: list[str]
 
 
-def test_sapo_validate_dataset_requires_prompt_or_messages() -> None:
+def test_sapo_validate_dataset_requires_prompt() -> None:
     s = SAPOStrategy(MagicMock())
-    ds = _SAPODataset(features={})
+    ds = _SAPODataset(column_names=[])
     result = s.validate_dataset(ds)
     assert result.is_failure()
     assert result.unwrap_err().code == "RL_MISSING_PROMPT_COLUMN"
 
 
-def test_sapo_prepare_dataset_uses_prompt_column_when_present() -> None:
+def test_sapo_validate_dataset_with_prompt() -> None:
     s = SAPOStrategy(MagicMock())
-    ds = _SAPODataset(features={"prompt": object(), "reference_answer": object(), "schema_context": object()})
-    res = s.prepare_dataset(ds, tokenizer=MagicMock())
-    assert res.is_success()
-    assert res.unwrap() is ds
-
-
-def test_sapo_prepare_dataset_extracts_prompt_from_messages(monkeypatch: pytest.MonkeyPatch) -> None:
-    s = SAPOStrategy(MagicMock())
-    ds = _SAPODataset(features={"messages": object()})
-
-    tok = MagicMock()
-    tok.chat_template = "x"
-    tok.apply_chat_template.return_value = "PROMPT"
-
-    res = s.prepare_dataset(ds, tokenizer=tok)
-    assert res.is_success()
-    assert ds.mapped is True
+    ds = _SAPODataset(column_names=["prompt", "reference_answer"])
+    result = s.validate_dataset(ds)
+    assert result.is_success()
 
 
 def test_sapo_build_trainer_kwargs_returns_empty_without_injected_reward() -> None:

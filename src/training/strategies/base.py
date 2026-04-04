@@ -20,16 +20,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import (
-    BATCH_SIZE_DEFAULT_FALLBACK,
-    EPOCHS_DEFAULT_FALLBACK,
-    LEARNING_RATE_DEFAULT_FALLBACK,
-)
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
-    from transformers import PreTrainedTokenizer
 
     from src.utils.config import PipelineConfig
     from src.utils.result import Result, StrategyError
@@ -61,77 +55,32 @@ class TrainingStrategy(ABC):
     Works in combination with Training Adapters (which handle HOW to train).
 
     Responsibility:
-    - Data preparation and formatting
+    - Dataset format validation (column-presence check aligned with TRL)
     - Training objective configuration
     - Loss function setup
     - Method-specific logic
 
-    Example:
-        # Use with any adapter
-        adapter = QLoRAAdapter(model, tokenizer, config)
-        strategy = CoTStrategy(config)
-
-        # Strategy prepares data
-        prepared_data = strategy.prepare_dataset(raw_data)
-
-        # Adapter handles training
-        result = adapter.train(prepared_data)
+    Dataset contract: datasets must arrive in canonical TRL format.
+    No preprocessing or conversion is done inside strategies.
     """
 
     def __init__(self, config: PipelineConfig):
-        """
-        Initialize training strategy.
-
-        Args:
-            config: Pipeline configuration
-        """
         self.config = config
         logger.info(f"Initialized {self.__class__.__name__}")
 
     @abstractmethod
-    def prepare_dataset(self, dataset: Dataset, tokenizer: PreTrainedTokenizer) -> Result[Dataset, StrategyError]:
-        """
-        Prepare dataset for this training strategy.
-
-        Args:
-            dataset: Raw dataset
-            tokenizer: Tokenizer for formatting
-
-        Returns:
-            Result[Dataset, StrategyError]: Prepared dataset or error
-        """
-        pass
-
-    @abstractmethod
     def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
         """
-        Validate dataset structure for this strategy.
+        Validate dataset column format for this strategy.
+
+        Only checks column presence aligned with what TRL trainer requires.
+        No deep content inspection — TRL handles that during tokenization.
 
         Args:
             dataset: Dataset to validate
 
         Returns:
             Result[bool, StrategyError]: True if valid, error otherwise
-        """
-        pass
-
-    @abstractmethod
-    def get_training_objective(self) -> str:
-        """
-        Get the training objective for this strategy.
-
-        Returns:
-            str: Objective description (e.g., "language_modeling", "preference_optimization")
-        """
-        pass
-
-    @abstractmethod
-    def get_metadata(self) -> StrategyMetadata:
-        """
-        Get metadata about this strategy.
-
-        Returns:
-            StrategyMetadata: Strategy metadata
         """
         pass
 
@@ -164,6 +113,33 @@ class TrainingStrategy(ABC):
             Type[TrainingArguments]: TRL Config class (e.g. SFTConfig, DPOConfig)
         """
         pass
+
+    def get_training_objective(self) -> str:
+        """
+        Get the training objective for this strategy.
+
+        Returns:
+            str: Objective description (e.g., "language_modeling", "preference_optimization")
+        """
+        return self.get_trainer_type()
+
+    def get_metadata(self) -> StrategyMetadata:
+        """
+        Get metadata about this strategy.
+
+        Returns:
+            StrategyMetadata: Strategy metadata
+        """
+        trainer_type = self.get_trainer_type()
+        return StrategyMetadata(
+            name=f"{trainer_type}_strategy",
+            version="1.0.0",
+            description=f"{trainer_type.upper()} training strategy",
+            strategy_type=trainer_type,
+            data_format="",
+            objective=self.get_training_objective(),
+            recommended_use="",
+        )
 
     @property
     def requires_reward_plugin(self) -> bool:
@@ -222,37 +198,6 @@ class TrainingStrategy(ABC):
             config: Already-created TRL config instance (e.g. DPOConfig)
             **context: Runtime context, e.g. ``model``, ``ref_model``
         """
-
-    def get_recommended_hyperparameters(self) -> dict[str, Any]:
-        """
-        Get recommended hyperparameters for this strategy.
-
-        Override in subclass for strategy-specific recommendations.
-
-        Returns:
-            Dict with recommended hyperparameters
-        """
-        # Get current strategy info
-        strategies = self.config.training.get_strategy_chain()
-        current = strategies[0] if strategies else None
-
-        current_lr = (
-            (current.hyperparams.learning_rate if current else None)
-            or self.config.training.hyperparams.learning_rate
-            or LEARNING_RATE_DEFAULT_FALLBACK
-        )
-        current_epochs = (
-            (current.hyperparams.epochs if current else None)
-            or self.config.training.hyperparams.epochs
-            or EPOCHS_DEFAULT_FALLBACK
-        )
-        current_bs = self.config.training.hyperparams.per_device_train_batch_size or BATCH_SIZE_DEFAULT_FALLBACK
-
-        return {
-            "learning_rate": current_lr,
-            "num_epochs": current_epochs,
-            "batch_size": current_bs,
-        }
 
     def __repr__(self) -> str:
         """String representation."""

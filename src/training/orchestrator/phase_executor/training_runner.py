@@ -2,8 +2,7 @@
 PhaseTrainingRunner — Core training loop for a single pipeline phase.
 
 Handles:
-- Strategy creation
-- Dataset loading, validation, preparation
+- Dataset loading
 - Trainer creation with OOM protection
 - Training execution with graceful shutdown support
 - Checkpoint saving
@@ -23,7 +22,6 @@ from src.training.constants import (
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
 )
-from src.training.strategies.factory import StrategyFactory
 from src.training.trainers.factory import TrainerFactory
 from src.utils.logger import logger
 from src.utils.memory_manager import MemoryManager, OOMRecoverableError
@@ -35,7 +33,7 @@ if TYPE_CHECKING:
     from src.training.managers.data_buffer import DataBuffer
     from src.training.orchestrator.shutdown_handler import ShutdownHandler
     from src.utils.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from src.utils.container import IDatasetLoader, IMLflowManager, ITrainerFactory
 
 
 class PhaseTrainingRunner:
@@ -43,7 +41,7 @@ class PhaseTrainingRunner:
     Executes the core training workflow for a single phase.
 
     Responsibilities:
-    - Strategy creation and dataset processing
+    - Dataset loading (format already validated by Stage 0)
     - Trainer lifecycle (create, train, save)
     - OOM recovery via MemoryManager
     - Graceful shutdown checkpoint saving
@@ -57,7 +55,6 @@ class PhaseTrainingRunner:
         memory_manager: MemoryManager,
         dataset_loader: IDatasetLoader,
         metrics_collector: Any,
-        strategy_factory: IStrategyFactory | None = None,
         trainer_factory: ITrainerFactory | None = None,
         mlflow_manager: IMLflowManager | None = None,
         shutdown_handler: ShutdownHandler | None = None,
@@ -70,9 +67,6 @@ class PhaseTrainingRunner:
         self._mlflow_manager = mlflow_manager
         self.shutdown_handler = shutdown_handler
 
-        self.strategy_factory: IStrategyFactory = (
-            strategy_factory if strategy_factory is not None else StrategyFactory()
-        )
         self.trainer_factory: ITrainerFactory = (
             trainer_factory if trainer_factory is not None else TrainerFactory()
         )
@@ -107,42 +101,13 @@ class PhaseTrainingRunner:
             self._current_output_dir = output_dir
             logger.info(f"   Output: {output_dir}")
 
-            strategy = self._create_strategy(phase)
-
             dataset_result = self.dataset_loader.load_for_phase(phase)
             if dataset_result.is_failure():
                 buffer.mark_phase_failed(phase_idx, dataset_result.error)  # type: ignore[union-attr]
                 return dataset_result
 
-            raw_train_dataset, raw_eval_dataset = dataset_result.unwrap()
-
-            validation_result = strategy.validate_dataset(raw_train_dataset)
-            if validation_result.is_failure():
-                buffer.mark_phase_failed(phase_idx, validation_result.error)
-                return validation_result
-
-            if raw_eval_dataset is not None:
-                eval_validation = strategy.validate_dataset(raw_eval_dataset)
-                if eval_validation.is_failure():
-                    buffer.mark_phase_failed(phase_idx, eval_validation.error)
-                    return eval_validation
-
-            prepare_result = strategy.prepare_dataset(raw_train_dataset, self.tokenizer)
-            if prepare_result.is_failure():
-                buffer.mark_phase_failed(phase_idx, prepare_result.error)
-                return prepare_result
-
-            train_dataset = prepare_result.unwrap()
-            logger.info(f"   Dataset prepared: {len(train_dataset)} samples")
-
-            eval_dataset = None
-            if raw_eval_dataset is not None:
-                eval_prepare = strategy.prepare_dataset(raw_eval_dataset, self.tokenizer)
-                if eval_prepare.is_failure():
-                    buffer.mark_phase_failed(phase_idx, eval_prepare.error)
-                    return eval_prepare
-                eval_dataset = eval_prepare.unwrap()
-                logger.info(f"   Eval dataset prepared: {len(eval_dataset)} samples")
+            train_dataset, eval_dataset = dataset_result.unwrap()
+            logger.info(f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples")
 
             if self._mlflow_manager:
                 self._mlflow_manager.log_event_info(
@@ -236,13 +201,6 @@ class PhaseTrainingRunner:
         if self.shutdown_handler is not None:
             return self.shutdown_handler.should_stop()
         return False
-
-    def _create_strategy(self, phase: StrategyPhaseConfig) -> Any:
-        """Create training strategy for data preparation."""
-        logger.debug(f"[PE:CREATE_STRATEGY] type={phase.strategy_type}")
-        strategy = self.strategy_factory.create_from_phase(phase, self.config)
-        logger.debug(f"[PE:STRATEGY_CREATED] class={strategy.__class__.__name__}")
-        return strategy
 
     def _create_trainer(
         self,

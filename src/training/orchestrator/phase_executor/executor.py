@@ -76,7 +76,6 @@ class PhaseExecutor:
             memory_manager=memory_manager,
             dataset_loader=dataset_loader,
             metrics_collector=metrics_collector,
-            strategy_factory=strategy_factory,
             trainer_factory=trainer_factory,
             mlflow_manager=mlflow_manager,
             shutdown_handler=shutdown_handler,
@@ -86,7 +85,12 @@ class PhaseExecutor:
         self.memory_manager = memory_manager
         self.dataset_loader: IDatasetLoader = dataset_loader
         self.metrics_collector = metrics_collector
-        self.strategy_factory = self._training_runner.strategy_factory
+        # strategy_factory kept as attribute for backward compat; no longer used in training loop
+        if strategy_factory is None:
+            from src.training.strategies.factory import StrategyFactory
+            self.strategy_factory = StrategyFactory()
+        else:
+            self.strategy_factory = strategy_factory
         self.trainer_factory = self._training_runner.trainer_factory
 
         # Internal tracking (for backward-compat access from tests/callbacks)
