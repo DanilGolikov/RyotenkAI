@@ -12,6 +12,7 @@ def validate_pipeline_config_references(cfg: PipelineConfig) -> None:
     # Local import to avoid import-time cycles.
     from .cross import (
         validate_pipeline_active_provider_is_registered,
+        validate_pipeline_adapter_cache_hf_config,
         validate_pipeline_evaluation_requires_inference,
         validate_pipeline_inference_provider_config,
         validate_pipeline_strategy_dataset_references,
@@ -37,6 +38,11 @@ def validate_pipeline_config_references(cfg: PipelineConfig) -> None:
 
     # Evaluation fail-fast: evaluation.enabled=true requires inference.enabled=true
     ok, err = validate_pipeline_evaluation_requires_inference(cfg)
+    if not ok:
+        raise ValueError(err)
+
+    # Adapter cache: HF integration must be enabled; repo_id must differ from final model repo
+    ok, err = validate_pipeline_adapter_cache_hf_config(cfg)
     if not ok:
         raise ValueError(err)
 

@@ -117,6 +117,21 @@ def validate_strategy_phase_config(cfg: StrategyPhaseConfig) -> None:
                 "Example: params: {reward_plugin: helixql_compiler_semantic}"
             )
 
+    # Adapter cache validation.
+    cache = getattr(cfg, "adapter_cache", None)
+    if cache is not None and getattr(cache, "enabled", False):
+        if not cache.repo_id:
+            raise ValueError(
+                "adapter_cache.repo_id is required when adapter_cache.enabled=true.\n"
+                "Example: adapter_cache:\n  enabled: true\n  repo_id: org/my-adapters-cache"
+            )
+        if not cfg.dataset:
+            raise ValueError(
+                "adapter_cache.enabled=true requires dataset to be set.\n"
+                "The dataset is used to compute a fingerprint for cache invalidation.\n"
+                "Example: dataset: sft_data"
+            )
+
 
 __all__ = [
     "validate_lora_config",

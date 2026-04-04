@@ -800,14 +800,34 @@ class ModelRetriever(PipelineStage):
             )
 
             logger.info(f"Uploading from {self._provider_name} to {self.hf_repo_id}...")
-            success, _stdout, stderr = ssh_client.exec_command(
-                command=upload_cmd,
-                background=False,
-                timeout=MR_UPLOAD_TIMEOUT,
-            )
 
-            if not success:
-                return Err(ModelError(message=f"Upload command failed: {stderr}", code="HF_UPLOAD_COMMAND_FAILED"))
+            # Retry loop for transient network failures (3 attempts, 10s delay)
+            _upload_last_err: str = ""
+            _upload_success = False
+            for _attempt in range(1, 4):
+                success, _stdout, stderr = ssh_client.exec_command(
+                    command=upload_cmd,
+                    background=False,
+                    timeout=MR_UPLOAD_TIMEOUT,
+                )
+                if success:
+                    _upload_success = True
+                    break
+                _upload_last_err = stderr
+                if _attempt < 3:
+                    logger.warning(
+                        f"[MR:UPLOAD_RETRY {_attempt}/3] Upload attempt failed: {stderr}. "
+                        "Retrying in 10s..."
+                    )
+                    time.sleep(10)
+
+            if not _upload_success:
+                return Err(
+                    ModelError(
+                        message=f"Upload command failed after 3 attempts: {_upload_last_err}",
+                        code="HF_UPLOAD_COMMAND_FAILED",
+                    )
+                )
 
             # Step 5: Cleanup temp upload dir
             ssh_client.exec_command(command=f"rm -rf {upload_dir}", background=False, timeout=MR_SSH_CMD_TIMEOUT)

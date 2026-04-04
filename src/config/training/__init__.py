@@ -1,3 +1,4 @@
+from .adapter_cache import AdapterCacheConfig
 from .hyperparams import GlobalHyperparametersConfig, PhaseHyperparametersConfig
 from .lora import AdaLoraConfig, LoRAConfig, LoraConfig, QLoRAConfig
 from .schema import TrainingConfig, TrainingOnlyConfig
@@ -12,6 +13,7 @@ __all__ = [
     "VALID_START_STRATEGIES",
     "VALID_STRATEGY_TRANSITIONS",
     "AdaLoraConfig",
+    "AdapterCacheConfig",
     "GlobalHyperparametersConfig",
     "LoRAConfig",
     "LoraConfig",

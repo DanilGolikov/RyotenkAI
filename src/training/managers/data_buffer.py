@@ -269,6 +269,11 @@ class PhaseState:
     learning_rate: float | None = None
     dataset_name: str | None = None
 
+    # Adapter cache state (populated when adapter_cache.enabled=true)
+    adapter_cache_hit: bool = False
+    adapter_cache_tag: str | None = None
+    adapter_cache_upload_error: str | None = None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         data = asdict(self)
@@ -980,6 +985,41 @@ class DataBuffer:
         # Fire callback
         if self._callbacks.on_phase_completed:
             self._callbacks.on_phase_completed(phase_idx, phase.strategy_type, "interrupted")
+
+    def mark_phase_skipped(
+        self,
+        phase_idx: int,
+        reason: str,
+        checkpoint_path: str | None = None,
+    ) -> None:
+        """
+        Mark a phase as skipped (adapter cache hit).
+
+        Skipped phases loaded a pre-trained adapter from HF Hub instead of training.
+
+        Args:
+            phase_idx: Phase index to mark
+            reason: Reason for skipping (e.g., "adapter_cache_hit: phase-0-sft-dsABC123")
+            checkpoint_path: Optional path if a local checkpoint was also used
+        """
+        if phase_idx < 0 or phase_idx >= self.total_phases:
+            raise IndexError(f"Phase index {phase_idx} out of range")
+
+        phase = self.state.phases[phase_idx]
+        phase.status = PhaseStatus.SKIPPED
+        phase.completed_at = datetime.now()
+        if checkpoint_path:
+            phase.checkpoint_path = checkpoint_path
+
+        logger.debug(
+            f"[DB:PHASE_SKIPPED] phase={phase_idx}, strategy={phase.strategy_type}, reason={reason}"
+        )
+        logger.info(f"Phase {phase_idx} ({phase.strategy_type}) skipped: {reason}")
+        self.save_state()
+
+        # Fire callback
+        if self._callbacks.on_phase_completed:
+            self._callbacks.on_phase_completed(phase_idx, phase.strategy_type, "skipped")
 
     # =========================================================================
     # STATE PERSISTENCE

@@ -121,19 +121,22 @@ class ChainRunner:
 
         logger.debug(f"[CR:RUN_START] chain={chain_str}, start={start_phase}, total={total_phases}")
 
+        upstream_retrained = False
+
         for idx in range(start_phase, total_phases):
             phase = strategies[idx]
 
             # Log phase header
             self._log_phase_header(idx, total_phases, phase)
 
-            # Execute phase
-            logger.debug(f"[CR:PHASE_EXECUTING] idx={idx}")
+            # Execute phase (pass upstream_retrained for cascade cache invalidation)
+            logger.debug(f"[CR:PHASE_EXECUTING] idx={idx}, upstream_retrained={upstream_retrained}")
             result = self.phase_executor.execute(
                 phase_idx=idx,
                 phase=phase,
                 model=current_model,
                 buffer=buffer,
+                upstream_retrained=upstream_retrained,
             )
 
             # Handle result
@@ -146,7 +149,15 @@ class ChainRunner:
                 return result
 
             current_model = result.unwrap()
-            logger.debug(f"[CR:PHASE_SUCCESS] idx={idx}")
+
+            # Update cascade flag: if phase was actually trained (not skipped), mark upstream as retrained
+            from src.training.managers.data_buffer import PhaseStatus
+
+            phase_status = buffer.state.phases[idx].status
+            if phase_status != PhaseStatus.SKIPPED:
+                upstream_retrained = True
+
+            logger.debug(f"[CR:PHASE_SUCCESS] idx={idx}, upstream_retrained_now={upstream_retrained}")
             logger.info(f"✅ Phase {idx} ({phase.strategy_type}) completed\n")
 
         logger.debug(f"[CR:RUN_COMPLETE] run_id={buffer.run_id}, phases={total_phases}")
