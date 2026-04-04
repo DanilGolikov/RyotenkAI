@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.constants import PROVIDER_SINGLE_NODE
+from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 from src.pipeline.constants import (
     DEPLOYMENT_CONFIG_PATH,
     DEPLOYMENT_CONTAINER_NAME_MAX_LEN,
@@ -397,7 +398,7 @@ class TrainingDeploymentManager:
                 # - local source: source_local.local_paths.* (local fs)
                 # - training_paths are AUTO-GENERATED: data/{strategy_type}/{basename}
                 # - huggingface source: no uploads
-                if dataset_config.get_source_type() != "local":
+                if dataset_config.get_source_type() != SOURCE_TYPE_LOCAL:
                     continue
 
                 source_local = dataset_config.source_local

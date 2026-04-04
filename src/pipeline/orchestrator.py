@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen
 
 from src.constants import PROVIDER_RUNPOD
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.artifacts import (
     StageArtifactCollector,
     ValidationArtifactData,
@@ -1670,7 +1671,7 @@ class PipelineOrchestrator:
         # Dataset section
         default_ds = self.config.get_primary_dataset()
         console.print("\n[bold cyan]Dataset:[/bold cyan]")
-        if default_ds.get_source_type() == "huggingface" and default_ds.source_hf is not None:
+        if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE and default_ds.source_hf is not None:
             console.print(f"   Train (HF): {default_ds.source_hf.train_id}")
             if default_ds.source_hf.eval_id:
                 console.print(f"   Eval  (HF): {default_ds.source_hf.eval_id}")

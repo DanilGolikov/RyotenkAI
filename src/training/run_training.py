@@ -628,6 +628,19 @@ Debug log tags:
 
     args = parser.parse_args()
 
+    # Propagate HF_HUB_* keys from secrets.env to os.environ before training starts.
+    # pydantic-settings does not write env-file values to os.environ automatically, so
+    # variables like HF_HUB_DISABLE_XET=1 would be silently ignored without this step.
+    # setdefault() preserves any values already set in the environment.
+    try:
+        from src.config.secrets import load_secrets as _load_secrets
+        _secrets = _load_secrets()
+        for _key, _val in (_secrets.model_extra or {}).items():
+            if _key.startswith("HF_HUB_") and isinstance(_val, str):
+                os.environ.setdefault(_key, _val)
+    except Exception:
+        pass  # never block training due to secrets propagation
+
     try:
         output_path = run_training(
             config_path=args.config,

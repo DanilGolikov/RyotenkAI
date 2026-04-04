@@ -19,6 +19,7 @@ import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.training.constants import (
     MLFLOW_CATEGORY_MEMORY,
     MLFLOW_SEVERITY_ERROR,
@@ -203,7 +204,7 @@ class MLflowDomainLogger:
             for ds_name in sorted(dataset_names):
                 ds_cfg = config.datasets[ds_name]
 
-                if ds_cfg.get_source_type() == "huggingface" and ds_cfg.source_hf is not None:
+                if ds_cfg.get_source_type() == SOURCE_TYPE_HUGGINGFACE and ds_cfg.source_hf is not None:
                     display_name = Path(ds_cfg.source_hf.train_id).name
                 elif ds_cfg.source_local is not None:
                     display_name = Path(ds_cfg.source_local.local_paths.train).stem
@@ -214,7 +215,7 @@ class MLflowDomainLogger:
                 params[f"dataset.{ds_name}.source_type"] = ds_cfg.get_source_type()
                 params[f"dataset.{ds_name}.adapter_type"] = ds_cfg.adapter_type or "auto"
 
-                if ds_cfg.get_source_type() == "huggingface" and ds_cfg.source_hf is not None:
+                if ds_cfg.get_source_type() == SOURCE_TYPE_HUGGINGFACE and ds_cfg.source_hf is not None:
                     params[f"dataset.{ds_name}.hf.train_id"] = ds_cfg.source_hf.train_id
                     if ds_cfg.source_hf.eval_id:
                         params[f"dataset.{ds_name}.hf.eval_id"] = ds_cfg.source_hf.eval_id

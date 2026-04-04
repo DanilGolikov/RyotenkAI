@@ -9,11 +9,19 @@ Handles:
 
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.config.datasets.constants import SOURCE_TYPE_LOCAL
+from src.constants import (
+    HF_UPLOAD_RETRIES,
+    HF_UPLOAD_RETRY_DELAY_S,
+    HF_UPLOAD_TIMEOUT_S,
+    LORA_CHECKPOINT_PATTERNS,
+)
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, Result, TrainingError
 
@@ -24,11 +32,7 @@ if TYPE_CHECKING:
     from src.utils.config import PipelineConfig, StrategyPhaseConfig
 
 
-_HF_UPLOAD_RETRIES = 3
-_HF_UPLOAD_RETRY_DELAY_S = 10
-
-
-def _retry_call(fn: Any, retries: int = 3, delay_s: int = 10, label: str = "") -> Any:
+def _retry_call(fn: Any, retries: int = HF_UPLOAD_RETRIES, delay_s: int = HF_UPLOAD_RETRY_DELAY_S, label: str = "") -> Any:
     """
     Call fn() with retry logic. Raises the last exception after exhausting retries.
     """
@@ -44,6 +48,24 @@ def _retry_call(fn: Any, retries: int = 3, delay_s: int = 10, label: str = "") -
                 )
                 time.sleep(delay_s)
     raise last_err  # type: ignore[misc]
+
+
+def _call_with_timeout(fn: Any, timeout_s: int, label: str = "") -> Any:
+    """
+    Run fn() in a background thread. Raise TimeoutError if it doesn't finish in timeout_s.
+
+    huggingface_hub.upload_folder() has no built-in timeout — on a slow or stalled
+    connection it hangs indefinitely. This wrapper gives it a hard ceiling.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn)
+        try:
+            return future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError:
+            raise TimeoutError(
+                f"{label}: upload did not complete within {timeout_s}s "
+                "(connection likely stalled — will retry)"
+            )
 
 
 class AdapterCacheManager:
@@ -72,7 +94,7 @@ class AdapterCacheManager:
         HF dataset:  sha256(train_id + commit_sha)[:10]  (one network call)
         """
         source_type = dataset_config.get_source_type()
-        if source_type == "local":
+        if source_type == SOURCE_TYPE_LOCAL:
             train_path = Path(dataset_config.source_local.local_paths.train).resolve()
             if train_path.exists():
                 stat = train_path.stat()
@@ -216,13 +238,14 @@ class AdapterCacheManager:
 
         def do_upload() -> None:
             api.create_repo(repo_id, private=cache.private, exist_ok=True, repo_type="model")
-            api.upload_folder(
+            # Upload the same file set as ModelRetriever: adapter weights + tokenizer + configs.
+            # upload_large_folder supports resumable uploads — if _call_with_timeout interrupts
+            # a stalled connection, the next retry picks up from the last committed chunk.
+            api.upload_large_folder(
                 folder_path=str(checkpoint_path),
                 repo_id=repo_id,
                 repo_type="model",
-                commit_message=(
-                    f"RyotenkAI: phase-{phase_idx} {phase.strategy_type}, tag={expected_tag}"
-                ),
+                allow_patterns=list(LORA_CHECKPOINT_PATTERNS),
             )
             api.create_tag(
                 repo_id=repo_id,
@@ -231,11 +254,18 @@ class AdapterCacheManager:
                 repo_type="model",
             )
 
+        def do_upload_with_timeout() -> None:
+            _call_with_timeout(
+                do_upload,
+                timeout_s=HF_UPLOAD_TIMEOUT_S,
+                label=f"upload adapter phase {phase_idx} to {repo_id}",
+            )
+
         try:
             _retry_call(
-                do_upload,
-                retries=_HF_UPLOAD_RETRIES,
-                delay_s=_HF_UPLOAD_RETRY_DELAY_S,
+                do_upload_with_timeout,
+                retries=HF_UPLOAD_RETRIES,
+                delay_s=HF_UPLOAD_RETRY_DELAY_S,
                 label=f"upload adapter phase {phase_idx} to {repo_id}",
             )
             buffer.state.phases[phase_idx].adapter_cache_tag = expected_tag
@@ -250,9 +280,9 @@ class AdapterCacheManager:
                 f"tag={expected_tag}: {err_msg}"
             )
             logger.warning(
-                f"   \u26a0\ufe0f  Adapter upload failed after {_HF_UPLOAD_RETRIES} attempts (soft-fail). "
+                f"   \u26a0\ufe0f  Adapter upload failed after {HF_UPLOAD_RETRIES} attempts (soft-fail). "
                 f"Next run will retrain phase {phase_idx} due to cache miss."
             )
 
 
-__all__ = ["AdapterCacheManager", "_retry_call", "_HF_UPLOAD_RETRIES", "_HF_UPLOAD_RETRY_DELAY_S"]
+__all__ = ["AdapterCacheManager", "_retry_call", "_call_with_timeout"]

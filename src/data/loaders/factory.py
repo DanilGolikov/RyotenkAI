@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -51,7 +52,7 @@ class DatasetLoaderFactory:
         """
         source_type = dataset_config.get_source_type()
 
-        if source_type == "huggingface":
+        if source_type == SOURCE_TYPE_HUGGINGFACE:
             return self._create_huggingface_loader()
         else:  # local
             return self._create_json_loader()
@@ -66,7 +67,7 @@ class DatasetLoaderFactory:
         Returns:
             IDatasetLoader instance
         """
-        if source_type == "huggingface":
+        if source_type == SOURCE_TYPE_HUGGINGFACE:
             return self._create_huggingface_loader()
         return self._create_json_loader()
 

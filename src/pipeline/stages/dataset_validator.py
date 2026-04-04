@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
 from src.data.validation.registry import ValidationPluginRegistry
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
@@ -665,7 +666,7 @@ class DatasetValidator(PipelineStage):
             getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
         )
 
-        if source_type == "huggingface":
+        if source_type == SOURCE_TYPE_HUGGINGFACE:
             # HuggingFace: streaming mode + limit
             try:
                 from datasets import load_dataset
@@ -959,7 +960,7 @@ class DatasetValidator(PipelineStage):
     def _get_dataset_train_ref(dataset_config: Any) -> str:
         """Get a stable train reference string for logging/events."""
         try:
-            if dataset_config.get_source_type() == "huggingface" and dataset_config.source_hf is not None:
+            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE and dataset_config.source_hf is not None:
                 return dataset_config.source_hf.train_id
             if dataset_config.source_local is not None:
                 return dataset_config.source_local.local_paths.train
@@ -974,7 +975,7 @@ class DatasetValidator(PipelineStage):
     ) -> tuple[Dataset | IterableDataset | None, str | None]:
         """Load eval dataset if configured; returns (dataset, ref)."""
         try:
-            if dataset_config.get_source_type() == "huggingface":
+            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
                 if dataset_config.source_hf is None or not dataset_config.source_hf.eval_id:
                     return None, None
                 ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")

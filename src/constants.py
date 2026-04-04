@@ -142,3 +142,25 @@ ERROR_MESSAGE_TRUNCATE: Final[int] = 200  # Max chars for error messages in logs
 CONSOLE_LINE_WIDTH: Final[int] = 80  # Width for console separators/boxes
 TRAINING_START_TIMEOUT_DEFAULT: Final[int] = 120  # Default timeout waiting for training to start
 LOG_DOWNLOAD_INTERVAL_DEFAULT: Final[int] = 30  # Default interval for downloading training logs (seconds)
+
+# ---------------------------------------------------------------------------
+# HuggingFace Hub upload policy (shared: adapter_cache + model_retriever)
+# ---------------------------------------------------------------------------
+
+HF_UPLOAD_RETRIES: Final[int] = 3
+HF_UPLOAD_RETRY_DELAY_S: Final[int] = 10
+# Per-attempt ceiling; matches legacy MR_UPLOAD_TIMEOUT in pipeline/constants.py.
+HF_UPLOAD_TIMEOUT_S: Final[int] = 1800
+
+# Files that constitute a LoRA adapter checkpoint.
+# Used by adapter_cache (allow_patterns) and model_retriever (copy_cmds).
+LORA_CHECKPOINT_PATTERNS: Final[tuple[str, ...]] = (
+    "adapter_model.safetensors",
+    "adapter_model.bin",
+    "adapter_config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "tokenizer.model",
+    "special_tokens_map.json",
+    "config.json",
+)

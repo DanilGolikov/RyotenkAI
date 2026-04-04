@@ -57,7 +57,7 @@ def _mk_local_dataset_config(path: str, *, mtime: float = 1000.0, size: int = 51
 
 def _mk_hf_dataset_config(train_id: str = "org/dataset", commit_sha: str = "abc123") -> MagicMock:
     ds = MagicMock()
-    ds.get_source_type.return_value = "hf"
+    ds.get_source_type.return_value = "huggingface"
     ds.source_hf.train_id = train_id
     return ds, commit_sha
 
@@ -448,7 +448,7 @@ class TestUploadAdapterToCache:
                 api_instance.create_repo.side_effect = upload_raises
             else:
                 api_instance.create_repo.return_value = None
-                api_instance.upload_folder.return_value = None
+                api_instance.upload_large_folder.return_value = None
                 api_instance.create_tag.return_value = None
 
             with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):

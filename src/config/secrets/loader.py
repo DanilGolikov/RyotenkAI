@@ -117,6 +117,31 @@ def load_secrets(env_file: str | Path | None = None) -> Secrets:
                 if v is not None:
                     init_kwargs[str(alias)] = v
 
+            # Also collect arbitrary plugin / env-forward keys from the file so they land in
+            # Secrets.model_extra (extra="allow"). This is needed for keys like HF_HUB_DISABLE_XET
+            # that are not declared as model fields but should be accessible via model_extra.
+            # We avoid double-adding already-captured field aliases.
+            known_aliases = {str(fi.alias or fn) for fn, fi in Secrets.model_fields.items()}
+            try:
+                for raw_line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    if line.startswith("export "):
+                        line = line[len("export "):].strip()
+                    k, v_raw = line.split("=", 1)
+                    key = k.strip()
+                    if key in known_aliases or key in init_kwargs:
+                        continue
+                    val = v_raw.strip()
+                    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                        val = val[1:-1]
+                    val = val.strip()
+                    if val:
+                        init_kwargs[key] = val
+            except Exception:
+                pass  # extra keys are best-effort; never fail secrets loading
+
             logger.debug(f"[SECRETS] Loading secrets from env_file (preferred): {p}")
             return Secrets(**init_kwargs)  # type: ignore[call-arg]
 

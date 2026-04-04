@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 from huggingface_hub import HfApi
 
+from src.constants import LORA_CHECKPOINT_PATTERNS
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.pipeline.constants import (
     HTTP_STATUS_NOT_FOUND,
     HTTP_STATUS_UNAUTHORIZED,
@@ -349,7 +351,7 @@ class HFModelUploader:
             source_type = default_ds.get_source_type()
             out: list[str] = []
 
-            if source_type == "huggingface" and default_ds.source_hf is not None:
+            if source_type == SOURCE_TYPE_HUGGINGFACE and default_ds.source_hf is not None:
                 train_id = getattr(default_ds.source_hf, "train_id", None)
                 eval_id = getattr(default_ds.source_hf, "eval_id", None)
                 if isinstance(train_id, str) and train_id.strip():
@@ -357,7 +359,7 @@ class HFModelUploader:
                 if isinstance(eval_id, str) and eval_id.strip() and eval_id.strip() not in out:
                     out.append(eval_id.strip())
 
-            elif source_type == "local" and default_ds.source_local is not None:
+            elif source_type == SOURCE_TYPE_LOCAL and default_ds.source_local is not None:
                 local_paths = getattr(default_ds.source_local, "local_paths", None)
                 train_path = getattr(local_paths, "train", None) if local_paths is not None else None
                 eval_path = getattr(local_paths, "eval", None) if local_paths is not None else None
@@ -437,12 +439,11 @@ class HFModelUploader:
                 ssh_client.exec_command(command=cmd, background=False, timeout=60)
 
             copy_cmds = [
-                f"cp -r {final_checkpoint}/adapter_* {upload_dir}/ 2>/dev/null || true",
-                f"cp -r {final_checkpoint}/tokenizer* {upload_dir}/ 2>/dev/null || true",
-                f"cp -r {final_checkpoint}/special_tokens* {upload_dir}/ 2>/dev/null || true",
-                f"cp -r {final_checkpoint}/config.json {upload_dir}/ 2>/dev/null || true",
-                f"cp -r {final_checkpoint}/*.json {upload_dir}/ 2>/dev/null || true",
-                f"cp -r {final_checkpoint}/*.model {upload_dir}/ 2>/dev/null || true",
+                f"cp -r {final_checkpoint}/{pattern} {upload_dir}/ 2>/dev/null || true"
+                for pattern in LORA_CHECKPOINT_PATTERNS
+            ]
+            # full-model specific patterns (dense weights, not LoRA-specific):
+            copy_cmds += [
                 f"cp -r {final_checkpoint}/*.safetensors {upload_dir}/ 2>/dev/null || true",
                 f"cp -r {final_checkpoint}/model.safetensors {upload_dir}/ 2>/dev/null || true",
             ]
