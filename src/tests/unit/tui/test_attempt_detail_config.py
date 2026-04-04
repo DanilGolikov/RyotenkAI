@@ -11,6 +11,7 @@ def test_attempt_detail_uses_c_for_structured_config() -> None:
 
     assert "preview_config" not in bindings
     assert bindings["browse_config"] == "c"
+    assert bindings["relaunch"] == "l"
 
 
 def test_resolve_attempt_config_path_normalizes_existing_value(tmp_path: Path) -> None:
@@ -49,3 +50,22 @@ def test_attempt_detail_browse_config_opens_structured_browser(monkeypatch, tmp_
 
     assert len(pushed) == 1
     assert isinstance(pushed[0], StructuredConfigBrowser)
+
+
+def test_attempt_detail_relaunch_opens_launch_modal(monkeypatch, tmp_path: Path) -> None:
+    from src.tui.screens.launch_modal import LaunchModal
+
+    screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 2)
+    pushed: list[object] = []
+
+    class DummyApp:
+        def push_screen(self, screen_obj, callback=None):
+            pushed.append(screen_obj)
+
+    monkeypatch.setattr(AttemptDetailScreen, "app", property(lambda self: DummyApp()))
+    monkeypatch.setattr("src.tui.launch.pick_default_launch_mode", lambda _run_dir: "restart")
+
+    screen.action_relaunch()
+
+    assert len(pushed) == 1
+    assert isinstance(pushed[0], LaunchModal)
