@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import re
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -33,6 +34,14 @@ _SSH_QUICK_CMD_TIMEOUT = 30  # seconds — fast one-liners (healthcheck, rm)
 _SSH_CONTROL_PERSIST_SECONDS = 120
 _SSH_CONTROL_CLOSE_TIMEOUT = 5
 _SSH_SOCKET_DIR_MODE = 0o700  # Restrictive permissions for control socket directory
+
+_SSH_DOWNLOAD_STALL_S: int = 120       # seconds without new bytes → stall
+_SSH_DOWNLOAD_MAX_RETRIES: int = 3     # restart attempts before giving up
+_SSH_DOWNLOAD_CHECK_INTERVAL: int = 30 # progress-poll interval
+
+
+class _StallDetected(Exception):
+    """Raised internally when download makes no progress for too long."""
 
 _MASK_REPL = r"\1***\3"
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -450,55 +459,153 @@ class SSHClient:
             return False, f"Failed to create directory: {stderr}"
         return True, ""
 
+    @staticmethod
+    def _dir_size_mb(path: Path) -> float:
+        """Return current size of a directory tree in MB (best-effort, non-blocking)."""
+        try:
+            return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) / (1024 * 1024)
+        except OSError:
+            return 0.0
+
+    def _monitor_download(
+        self,
+        proc: subprocess.Popen,  # type: ignore[type-arg]
+        local_path: Path,
+        stall_timeout: int,
+        interval: int = _SSH_DOWNLOAD_CHECK_INTERVAL,
+    ) -> None:
+        """
+        Block until *proc* finishes, logging progress every *interval* seconds.
+        If no new bytes arrive for *stall_timeout* seconds the process is killed
+        and _StallDetected is raised so the caller can restart.
+        """
+        last_size_mb = 0.0
+        last_progress_t = time.monotonic()
+        elapsed = 0
+
+        while True:
+            try:
+                proc.wait(timeout=interval)
+                return  # finished normally
+            except subprocess.TimeoutExpired:
+                elapsed += interval
+                size_mb = self._dir_size_mb(local_path)
+                stalled_for = int(time.monotonic() - last_progress_t)
+
+                if size_mb > last_size_mb:
+                    last_size_mb = size_mb
+                    last_progress_t = time.monotonic()
+                    stalled_for = 0
+
+                logger.info(
+                    f"⏳ Downloading... {elapsed}s elapsed, "
+                    f"{size_mb:.1f} MB received"
+                    + (f", no progress for {stalled_for}s/{stall_timeout}s" if stalled_for else "")
+                )
+
+                if stalled_for >= stall_timeout:
+                    proc.kill()
+                    proc.wait()
+                    raise _StallDetected(
+                        f"No new bytes for {stalled_for}s (stall_timeout={stall_timeout}s)"
+                    )
+
     def download_directory(
         self,
         remote_path: str,
         local_path: Path,
-        timeout: int = 1800,
+        stall_timeout: int = _SSH_DOWNLOAD_STALL_S,
+        max_retries: int = _SSH_DOWNLOAD_MAX_RETRIES,
     ) -> Result[None, ProviderError]:
         """
         Download a directory from server using tar+ssh streaming.
 
+        Instead of a fixed timeout the download is monitored for stalls: if no
+        new bytes land in *stall_timeout* seconds the transfer is killed and
+        restarted (up to *max_retries* times).
+
         Args:
-            remote_path: Remote directory path (e.g., /workspace/output)
-            local_path: Local directory path to save to
-            timeout: Download timeout in seconds (default 30 min)
+            remote_path:   Remote directory path (e.g. /workspace/output)
+            local_path:    Local directory path to save to
+            stall_timeout: Seconds without new bytes before restart (default 120s)
+            max_retries:   Max restart attempts before giving up (default 3)
 
         Returns:
-            Result[None, ProviderError]: Success or structured provider error
+            Result[None, ProviderError]
         """
         logger.info(f"📥 Downloading directory: {remote_path} -> {local_path}")
 
-        try:
-            local_path.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            return Err(
-                ProviderError(
-                    message=f"Failed to create local directory '{local_path}': {e}",
-                    code="SSH_DOWNLOAD_LOCAL_DIR_FAILED",
-                    details={_LOCAL_PATH_KEY: str(local_path)},
-                )
-            )
+        tar_create_cmd = f"cd {remote_path} && tar czf - ."
+        ssh_cmd = self._build_ssh_cmd(tar_create_cmd, background=False)
+        full_cmd = f"{ssh_cmd} | tar xzf - -C {local_path}"
 
-        try:
-            tar_create_cmd = f"cd {remote_path} && tar czf - ."
-            ssh_cmd = self._build_ssh_cmd(tar_create_cmd, background=False)
-            full_cmd = f"{ssh_cmd} | tar xzf - -C {local_path}"
-
-            logger.info(f"🚀 Starting download (timeout: {timeout}s)...")
-
-            result = subprocess.run(
-                full_cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-
-            if result.returncode != 0:
+        for attempt in range(1, max_retries + 1):
+            # Clear partial files from any previous attempt
+            if local_path.exists():
+                try:
+                    shutil.rmtree(local_path)
+                except OSError as e:
+                    return Err(
+                        ProviderError(
+                            message=f"Failed to clear local directory '{local_path}': {e}",
+                            code="SSH_DOWNLOAD_LOCAL_DIR_FAILED",
+                            details={_LOCAL_PATH_KEY: str(local_path)},
+                        )
+                    )
+            try:
+                local_path.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
                 return Err(
                     ProviderError(
-                        message=f"Download failed: {result.stderr}",
+                        message=f"Failed to create local directory '{local_path}': {e}",
+                        code="SSH_DOWNLOAD_LOCAL_DIR_FAILED",
+                        details={_LOCAL_PATH_KEY: str(local_path)},
+                    )
+                )
+
+            logger.info(
+                f"🚀 Starting download"
+                + (f" (attempt {attempt}/{max_retries})" if attempt > 1 else "")
+                + f" (stall_timeout: {stall_timeout}s)..."
+            )
+
+            try:
+                proc = subprocess.Popen(
+                    full_cmd,
+                    shell=True,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+            except OSError as e:
+                return Err(
+                    ProviderError(
+                        message=f"Download I/O error: {e}",
+                        code="SSH_DOWNLOAD_IO_ERROR",
+                        details={_REMOTE_PATH_KEY: remote_path, _LOCAL_PATH_KEY: str(local_path)},
+                    )
+                )
+
+            try:
+                self._monitor_download(proc, local_path, stall_timeout)
+            except _StallDetected as exc:
+                if attempt < max_retries:
+                    logger.warning(
+                        f"⚠️ Download stalled (attempt {attempt}/{max_retries}): {exc}. Restarting..."
+                    )
+                    continue
+                return Err(
+                    ProviderError(
+                        message=f"Download stalled after {max_retries} attempts: {exc}",
+                        code="SSH_DOWNLOAD_STALLED",
+                        details={_REMOTE_PATH_KEY: remote_path, "stall_timeout": stall_timeout},
+                    )
+                )
+
+            stderr_output = proc.stderr.read() if proc.stderr else ""
+            if proc.returncode != 0:
+                return Err(
+                    ProviderError(
+                        message=f"Download failed: {stderr_output}",
                         code="SSH_DOWNLOAD_FAILED",
                         details={_REMOTE_PATH_KEY: remote_path, _LOCAL_PATH_KEY: str(local_path)},
                     )
@@ -507,22 +614,10 @@ class SSHClient:
             logger.info("✅ Directory downloaded successfully")
             return Ok(None)
 
-        except subprocess.TimeoutExpired:
-            return Err(
-                ProviderError(
-                    message=f"Download timeout (>{timeout}s)",
-                    code="SSH_DOWNLOAD_TIMEOUT",
-                    details={_REMOTE_PATH_KEY: remote_path, "timeout": timeout},
-                )
-            )
-        except OSError as e:
-            return Err(
-                ProviderError(
-                    message=f"Download I/O error: {e}",
-                    code="SSH_DOWNLOAD_IO_ERROR",
-                    details={_REMOTE_PATH_KEY: remote_path, _LOCAL_PATH_KEY: str(local_path)},
-                )
-            )
+        # Unreachable — loop always returns, but keeps type-checker happy
+        return Err(  # pragma: no cover
+            ProviderError(message="Download failed", code="SSH_DOWNLOAD_FAILED", details={})
+        )
 
     def upload_directory(
         self,
