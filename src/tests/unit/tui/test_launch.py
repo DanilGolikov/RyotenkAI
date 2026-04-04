@@ -10,6 +10,7 @@ from src.tui.launch import (
     RestartPointOption,
     build_train_command,
     execute_launch_subprocess,
+    interrupt_launch_process,
     load_restart_point_options,
     resolve_config_path_for_run,
     validate_resume_run,
@@ -219,6 +220,32 @@ def test_execute_launch_subprocess_passes_log_level_via_environment(tmp_path: Pa
     assert any("LOG_LEVEL: DEBUG" in line for line in result.output_tail)
 
 
+def test_interrupt_launch_process_uses_process_group_for_session_leader(monkeypatch) -> None:
+    killpg_calls: list[tuple[int, int]] = []
+    kill_calls: list[tuple[int, int]] = []
+
+    monkeypatch.setattr("src.tui.launch.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("src.tui.launch.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
+    monkeypatch.setattr("src.tui.launch.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
+
+    assert interrupt_launch_process(12345) is True
+    assert len(killpg_calls) == 2
+    assert kill_calls == []
+
+
+def test_interrupt_launch_process_falls_back_to_single_pid_for_external_run(monkeypatch) -> None:
+    killpg_calls: list[tuple[int, int]] = []
+    kill_calls: list[tuple[int, int]] = []
+
+    monkeypatch.setattr("src.tui.launch.os.getpgid", lambda _pid: 99999)
+    monkeypatch.setattr("src.tui.launch.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
+    monkeypatch.setattr("src.tui.launch.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
+
+    assert interrupt_launch_process(12345) is True
+    assert killpg_calls == []
+    assert len(kill_calls) == 2
+
+
 def test_ryotenkai_app_blocks_parallel_launches(tmp_path: Path, monkeypatch) -> None:
     pytest.importorskip("textual")
     from src.tui.apps import RyotenkaiApp
@@ -238,6 +265,15 @@ def test_ryotenkai_app_blocks_parallel_launches(tmp_path: Path, monkeypatch) -> 
     assert app.active_launch is not None
     assert app.active_launch.status == "launching"
     assert app.start_launch(request) is False
+
+
+def test_ryotenkai_app_uses_triple_notification_timeout(tmp_path: Path) -> None:
+    pytest.importorskip("textual")
+    from src.tui.apps import RyotenkaiApp
+
+    app = RyotenkaiApp(runs_dir=tmp_path)
+
+    assert app.NOTIFICATION_TIMEOUT == 9.0
 
 
 def test_ryotenkai_app_opens_predicted_next_attempt_for_existing_run(tmp_path: Path, monkeypatch) -> None:

@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 _DEFAULT_INTERVAL = 5.0
 _ACTIVE_LAUNCH_STATUSES = {"launching", "running", "stopping"}
+_DEFAULT_NOTIFICATION_TIMEOUT = 3.0
+_NOTIFICATION_TIMEOUT_MULTIPLIER = 3.0
 
 
 def _resolve_next_attempt_no(state: PipelineState) -> int:
@@ -57,6 +59,7 @@ class RyotenkaiApp(App):
 
     TITLE = "ryotenkai"
     SUB_TITLE = "pipeline run inspector"
+    NOTIFICATION_TIMEOUT = _DEFAULT_NOTIFICATION_TIMEOUT * _NOTIFICATION_TIMEOUT_MULTIPLIER
 
     CSS = """
     #status-bar {

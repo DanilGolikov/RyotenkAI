@@ -114,7 +114,17 @@ def interrupt_launch_process(pid: int | None) -> bool:
     if pid is None:
         return False
     try:
-        if hasattr(os, "killpg"):
+        pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
+
+    try:
+        # TUI-launched runs use start_new_session=True, so pid == pgid and we can
+        # gracefully interrupt the entire process group. For externally launched
+        # runs (e.g. smoke runner), fall back to signalling the process itself.
+        if hasattr(os, "killpg") and pgid == pid:
             with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(pid, signal.SIGCONT)
             os.killpg(pid, signal.SIGINT)
