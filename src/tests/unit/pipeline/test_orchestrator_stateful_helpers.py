@@ -158,7 +158,7 @@ def test_bootstrap_pipeline_state_fresh_creates_new_state(tmp_path: Path) -> Non
         run_dir=run_dir,
         resume=False,
         restart_from_stage=None,
-        config_hashes={"training_critical": "train_hash", "late_stage": "late_hash"},
+        config_hashes={"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
     )
 
     assert requested_action == "fresh"
@@ -179,7 +179,7 @@ def test_bootstrap_pipeline_state_resume_requires_existing_state(tmp_path: Path)
             run_dir=run_dir,
             resume=True,
             restart_from_stage=None,
-            config_hashes={"training_critical": "train_hash", "late_stage": "late_hash"},
+            config_hashes={"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
         )
 
 
@@ -210,7 +210,7 @@ def test_bootstrap_pipeline_state_resume_uses_failed_stage(tmp_path: Path) -> No
         run_dir=run_dir,
         resume=True,
         restart_from_stage=None,
-        config_hashes={"training_critical": "train_hash", "late_stage": "late_hash"},
+        config_hashes={"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
     )
 
     assert loaded_state.logical_run_id == "logical_run_1"
@@ -239,7 +239,7 @@ def test_bootstrap_pipeline_state_blocks_training_critical_drift(tmp_path: Path)
             run_dir=run_dir,
             resume=False,
             restart_from_stage=StageNames.MODEL_RETRIEVER,
-            config_hashes={"training_critical": "new_hash", "late_stage": "late_hash"},
+            config_hashes={"training_critical": "new_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
         )
 
 

@@ -403,6 +403,7 @@ class PipelineOrchestrator:
             assert self.run_directory is not None
             state.training_critical_config_hash = config_hashes["training_critical"]
             state.late_stage_config_hash = config_hashes["late_stage"]
+            state.model_dataset_config_hash = config_hashes["model_dataset"]
 
             start_idx = self._get_stage_index(start_stage_name)
             stop_idx = len(self.stages)
@@ -419,6 +420,7 @@ class PipelineOrchestrator:
                 enabled_stage_names=enabled_stage_names,
                 training_critical_config_hash=config_hashes["training_critical"],
                 late_stage_config_hash=config_hashes["late_stage"],
+                model_dataset_config_hash=config_hashes["model_dataset"],
             )
             self._current_attempt = attempt
             self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
@@ -812,6 +814,7 @@ class PipelineOrchestrator:
             config_path=str(self.config_path.expanduser().resolve()),
             training_critical_config_hash=config_hashes["training_critical"],
             late_stage_config_hash=config_hashes["late_stage"],
+            model_dataset_config_hash=config_hashes["model_dataset"],
         )
         self._pipeline_state = state
         self.logical_run_id = logical_run_id
@@ -820,10 +823,13 @@ class PipelineOrchestrator:
     def _build_config_hashes(self) -> dict[str, str]:
         training_provider_name = self.config.get_active_provider_name()
         training_provider_cfg = self.config.get_provider_config()
-        training_payload = {
+        model_dataset_payload = {
             "model": self.config.model.model_dump(mode="json"),
             "training": self.config.training.model_dump(mode="json"),
             "datasets": {name: cfg.model_dump(mode="json") for name, cfg in self.config.datasets.items()},
+        }
+        training_payload = {
+            **model_dataset_payload,
             "provider_name": training_provider_name,
             "provider": training_provider_cfg,
         }
@@ -834,6 +840,7 @@ class PipelineOrchestrator:
         return {
             "training_critical": hash_payload(training_payload),
             "late_stage": hash_payload(late_payload),
+            "model_dataset": hash_payload(model_dataset_payload),
         }
 
     def _normalize_stage_ref(self, stage_ref: str | int | None) -> str:
@@ -918,9 +925,16 @@ class PipelineOrchestrator:
         config_hashes: dict[str, str],
         resume: bool,
     ) -> AppError | None:
-        training_changed = state.training_critical_config_hash != config_hashes["training_critical"]
+        # Fine-grained check: if model_dataset_config_hash is stored, use it (provider changes are allowed).
+        # Legacy fallback: states without model_dataset_config_hash use the full training_critical hash.
+        if state.model_dataset_config_hash:
+            model_dataset_changed = state.model_dataset_config_hash != config_hashes["model_dataset"]
+        else:
+            model_dataset_changed = state.training_critical_config_hash != config_hashes["training_critical"]
+
         late_changed = state.late_stage_config_hash != config_hashes["late_stage"]
-        if training_changed:
+
+        if model_dataset_changed:
             return ConfigDriftError(
                 message=(
                     "training_critical config changed for existing logical run; "
@@ -970,6 +984,7 @@ class PipelineOrchestrator:
             enabled_stage_names=enabled_stage_names,
             training_critical_config_hash=config_hashes["training_critical"],
             late_stage_config_hash=config_hashes["late_stage"],
+            model_dataset_config_hash=config_hashes["model_dataset"],
         )
         self._current_attempt = attempt
         self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
@@ -1410,10 +1425,15 @@ class PipelineOrchestrator:
                         available = False
                         reason = "inference_runtime_not_healthy"
 
-            if state.training_critical_config_hash != config_hashes["training_critical"]:
+            if state.model_dataset_config_hash:
+                if state.model_dataset_config_hash != config_hashes["model_dataset"]:
+                    available = False
+                    reason = "training_critical_config_changed"
+            elif state.training_critical_config_hash != config_hashes["training_critical"]:
                 available = False
                 reason = "training_critical_config_changed"
-            elif state.late_stage_config_hash != config_hashes["late_stage"] and stage_name not in {
+
+            if state.late_stage_config_hash != config_hashes["late_stage"] and stage_name not in {
                 StageNames.INFERENCE_DEPLOYER,
                 StageNames.MODEL_EVALUATOR,
             }:

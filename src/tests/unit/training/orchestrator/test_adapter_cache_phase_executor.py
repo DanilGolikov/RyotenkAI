@@ -198,14 +198,14 @@ class TestRetryCall:
                 raise ConnectionError("transient")
             return "ok"
 
-        with patch("src.training.orchestrator.phase_executor.time.sleep"):
+        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
             result = PhaseExecutor._retry_call(fn, retries=3, delay_s=1)
         assert result == "ok"
         assert len(attempts) == 3
 
     def test_negative_raises_after_exhausting_retries(self) -> None:
         fn = MagicMock(side_effect=ValueError("always fails"))
-        with patch("src.training.orchestrator.phase_executor.time.sleep"):
+        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
             with pytest.raises(ValueError, match="always fails"):
                 PhaseExecutor._retry_call(fn, retries=3, delay_s=1)
         assert fn.call_count == 3
@@ -218,7 +218,7 @@ class TestRetryCall:
 
     def test_boundary_sleep_called_between_attempts(self) -> None:
         fn = MagicMock(side_effect=[Exception("err1"), Exception("err2"), "done"])
-        with patch("src.training.orchestrator.phase_executor.time.sleep") as mock_sleep:
+        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep") as mock_sleep:
             PhaseExecutor._retry_call(fn, retries=3, delay_s=5)
         assert mock_sleep.call_count == 2  # sleep after attempt 1 and 2 (not after 3rd success)
 
@@ -226,7 +226,7 @@ class TestRetryCall:
         """The LAST exception (not the first) is the one that propagates."""
         errors = [ValueError("first"), ValueError("last")]
         fn = MagicMock(side_effect=errors)
-        with patch("src.training.orchestrator.phase_executor.time.sleep"):
+        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
             with pytest.raises(ValueError, match="last"):
                 PhaseExecutor._retry_call(fn, retries=2, delay_s=0)
 
@@ -451,7 +451,7 @@ class TestUploadAdapterToCache:
                 api_instance.upload_folder.return_value = None
                 api_instance.create_tag.return_value = None
 
-            with patch("src.training.orchestrator.phase_executor.time.sleep"):
+            with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
                 executor._upload_adapter_to_cache(
                     phase_idx=0,
                     phase=phase,  # type: ignore[arg-type]
@@ -491,7 +491,7 @@ class TestUploadAdapterToCache:
         with patch("huggingface_hub.HfApi") as MockHfApi:
             api_instance = MockHfApi.return_value
             api_instance.create_repo.side_effect = IOError("fail")
-            with patch("src.training.orchestrator.phase_executor.time.sleep"):
+            with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
                 executor._upload_adapter_to_cache(
                     phase_idx=0,
                     phase=phase,  # type: ignore[arg-type]

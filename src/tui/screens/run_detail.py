@@ -433,14 +433,16 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
         self._ryotenkai_app().open_running_attempt_for_run(self._run_dir)
 
     def action_relaunch(self) -> None:
+        from src.tui.launch import pick_default_launch_mode
         from src.tui.screens.launch_modal import LaunchModal
 
         def _on_submit(result) -> None:
             if result is not None:
                 self._ryotenkai_app().start_launch(result)
 
+        default_mode = pick_default_launch_mode(self._run_dir)
         self.app.push_screen(
-            LaunchModal(default_mode="restart", default_run_dir=self._run_dir),
+            LaunchModal(default_mode=default_mode, default_run_dir=self._run_dir),
             _on_submit,
         )
 

@@ -106,6 +106,7 @@ class PipelineAttemptState:
     error: str | None = None
     training_critical_config_hash: str = ""
     late_stage_config_hash: str = ""
+    model_dataset_config_hash: str = ""
     root_mlflow_run_id: str | None = None
     pipeline_attempt_mlflow_run_id: str | None = None
     training_run_id: str | None = None
@@ -126,6 +127,7 @@ class PipelineAttemptState:
             "error": self.error,
             "training_critical_config_hash": self.training_critical_config_hash,
             "late_stage_config_hash": self.late_stage_config_hash,
+            "model_dataset_config_hash": self.model_dataset_config_hash,
             "root_mlflow_run_id": self.root_mlflow_run_id,
             "pipeline_attempt_mlflow_run_id": self.pipeline_attempt_mlflow_run_id,
             "training_run_id": self.training_run_id,
@@ -154,6 +156,7 @@ class PipelineAttemptState:
             error=data.get("error"),
             training_critical_config_hash=str(data.get("training_critical_config_hash", "")),
             late_stage_config_hash=str(data.get("late_stage_config_hash", "")),
+            model_dataset_config_hash=str(data.get("model_dataset_config_hash", "")),
             root_mlflow_run_id=data.get("root_mlflow_run_id"),
             pipeline_attempt_mlflow_run_id=data.get("pipeline_attempt_mlflow_run_id"),
             training_run_id=data.get("training_run_id"),
@@ -172,6 +175,7 @@ class PipelineState:
     pipeline_status: str
     training_critical_config_hash: str
     late_stage_config_hash: str
+    model_dataset_config_hash: str = ""
     root_mlflow_run_id: str | None = None
     attempts: list[PipelineAttemptState] = field(default_factory=list)
     current_output_lineage: dict[str, StageLineageRef] = field(default_factory=dict)
@@ -186,6 +190,7 @@ class PipelineState:
             "pipeline_status": self.pipeline_status,
             "training_critical_config_hash": self.training_critical_config_hash,
             "late_stage_config_hash": self.late_stage_config_hash,
+            "model_dataset_config_hash": self.model_dataset_config_hash,
             "root_mlflow_run_id": self.root_mlflow_run_id,
             "attempts": [attempt.to_dict() for attempt in self.attempts],
             "current_output_lineage": {
@@ -211,6 +216,7 @@ class PipelineState:
             pipeline_status=str(data.get("pipeline_status", StageRunState.STATUS_PENDING)),
             training_critical_config_hash=str(data.get("training_critical_config_hash", "")),
             late_stage_config_hash=str(data.get("late_stage_config_hash", "")),
+            model_dataset_config_hash=str(data.get("model_dataset_config_hash", "")),
             root_mlflow_run_id=data.get("root_mlflow_run_id"),
             attempts=attempts,
             current_output_lineage=current_output_lineage,

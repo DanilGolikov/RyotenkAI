@@ -141,6 +141,7 @@ def test_validate_resume_run_rejects_completed_latest_attempt(tmp_path: Path, mo
     state = MagicMock(
         training_critical_config_hash="train_hash",
         late_stage_config_hash="late_hash",
+        model_dataset_config_hash="md_hash",
         pipeline_status="failed",
     )
     latest_attempt = MagicMock(
@@ -156,7 +157,7 @@ def test_validate_resume_run_rejects_completed_latest_attempt(tmp_path: Path, mo
     monkeypatch.setattr("src.tui.launch.resolve_config_path_for_run", lambda run_dir, config_path=None: tmp_path / "cfg.yaml")
     mock_config = MagicMock()
     monkeypatch.setattr("src.tui.launch.load_config", lambda _path: mock_config)
-    monkeypatch.setattr("src.tui.launch.compute_config_hashes", lambda _config: {"training_critical": "train_hash", "late_stage": "late_hash"})
+    monkeypatch.setattr("src.tui.launch.compute_config_hashes", lambda _config: {"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"})
 
     with pytest.raises(ValueError, match="Nothing to resume"):
         validate_resume_run(tmp_path / "runs" / "existing")

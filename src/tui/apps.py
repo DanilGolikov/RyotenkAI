@@ -154,9 +154,6 @@ class RyotenkaiApp(App):
         if current is not None:
             self.notify(f"This run is already launched in the TUI: {normalized.run_dir.name}", severity="warning")
             return False
-        if self._active_launches and normalized.mode != "new_run":
-            self.notify("Parallel launch in the TUI is only allowed for new run for now", severity="warning")
-            return False
 
         command = tuple(build_train_command(normalized))
         expected_attempt_no = self._predict_launched_attempt_no(normalized.run_dir)

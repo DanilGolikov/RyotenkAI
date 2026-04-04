@@ -26,10 +26,13 @@ _HTTP_ERROR_MIN = 400
 
 
 def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:
-    training_payload = {
+    model_dataset_payload = {
         "model": config.model.model_dump(mode="json"),
         "training": config.training.model_dump(mode="json"),
         "datasets": {name: cfg.model_dump(mode="json") for name, cfg in config.datasets.items()},
+    }
+    training_payload = {
+        **model_dataset_payload,
         "provider_name": config.get_active_provider_name(),
         "provider": config.get_provider_config(),
     }
@@ -40,6 +43,7 @@ def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:
     return {
         "training_critical": hash_payload(training_payload),
         "late_stage": hash_payload(late_payload),
+        "model_dataset": hash_payload(model_dataset_payload),
     }
 
 
@@ -105,10 +109,17 @@ def list_restart_points(run_dir: Path, config: PipelineConfig) -> list[dict[str,
             # Health probe is intentionally omitted here — it's a network call with timeout
             # and belongs at runtime (fail-fast in _validate_stage_prerequisites).
 
-        if state.training_critical_config_hash != config_hashes["training_critical"]:
+        if state.model_dataset_config_hash:
+            # Fine-grained check: only model/training/datasets matter, provider change is allowed
+            if state.model_dataset_config_hash != config_hashes["model_dataset"]:
+                available = False
+                reason = "training_critical_config_changed"
+        elif state.training_critical_config_hash != config_hashes["training_critical"]:
+            # Legacy check for states without model_dataset_config_hash
             available = False
             reason = "training_critical_config_changed"
-        elif state.late_stage_config_hash != config_hashes["late_stage"] and stage_name not in {
+
+        if state.late_stage_config_hash != config_hashes["late_stage"] and stage_name not in {
             StageNames.INFERENCE_DEPLOYER,
             StageNames.MODEL_EVALUATOR,
         }:
