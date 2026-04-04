@@ -192,7 +192,7 @@ class TestDatasetValidatorAdditionalCoverage:
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=1))
         callbacks = DatasetValidatorEventCallbacks(on_dataset_scheduled=MagicMock())
         v = DatasetValidator(cfg, callbacks=callbacks)
-        monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {"d1": ds1, "d2": ds2})
+        monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {"d1": (ds1, []), "d2": (ds2, [])})
         monkeypatch.setattr(v, "_get_dataset_train_ref", lambda c: "ref")  # noqa: ARG005
 
         class _F:
@@ -249,7 +249,7 @@ class TestDatasetValidatorAdditionalCoverage:
 
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=1))
         v = DatasetValidator(cfg)
-        monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {"d1": ds1, "d2": ds2})
+        monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {"d1": (ds1, []), "d2": (ds2, [])})
         monkeypatch.setattr(v, "_get_dataset_train_ref", lambda c: "ref")  # noqa: ARG005
 
         class _F:
@@ -309,7 +309,9 @@ class TestDatasetValidatorAdditionalCoverage:
 
         v = DatasetValidator(cfg)
         out = v._get_datasets_to_validate()
-        assert out == {"primary": primary}
+        dataset_config, strategy_phases = out["primary"]
+        assert dataset_config is primary
+        assert strategy_phases == []
 
     def test_validate_single_dataset_runs_eval_and_merges_errors(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=0))
@@ -329,7 +331,8 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr(
             v, "_run_plugin_validations", lambda *a, **k: Ok({"m": 1}) if k.get("split_name") == "train" else Err("bad")
         )
-        res = v._validate_single_dataset("d", dataset_config, context={})
+        monkeypatch.setattr(v, "_check_dataset_format", lambda *a, **k: Ok(None))
+        res = v._validate_single_dataset("d", dataset_config, [], context={})
         assert res.is_failure()
         assert "eval:" in str(res.unwrap_err())
 

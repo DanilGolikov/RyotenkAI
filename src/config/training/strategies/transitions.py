@@ -84,9 +84,13 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
             )
 
     # Check dataset uniqueness across strategies
+    # Phases with adapter_cache.enabled are excluded: they use their dataset only for
+    # fingerprinting (cache validation), not for actual training data upload — no conflict.
     if len(strategies) > 1:
         seen_datasets: dict[str, str] = {}
         for phase in strategies:
+            if hasattr(phase, "adapter_cache") and phase.adapter_cache.enabled:
+                continue
             resolved = phase.dataset or "default"
             if resolved in seen_datasets:
                 prev_type = seen_datasets[resolved]

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -43,7 +44,7 @@ class MultiSourceDatasetLoader:
             return self._loaders[source_type]
 
         loader: Any
-        if source_type == "huggingface":
+        if source_type == SOURCE_TYPE_HUGGINGFACE:
             from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
             loader = HuggingFaceDatasetLoader(self.config)
@@ -65,7 +66,7 @@ class MultiSourceDatasetLoader:
         # Heuristic routing for direct load() usage
         from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
-        source_type = "huggingface" if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else "local"
+        source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)
         logger.debug(f"[{self._log_prefix}:LOAD] source={source}, split={split}, source_type={source_type}")
         return loader.load(source, split=split, max_samples=max_samples)
@@ -73,7 +74,7 @@ class MultiSourceDatasetLoader:
     def validate_source(self, source: str) -> bool:
         from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
-        source_type = "huggingface" if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else "local"
+        source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)
         return bool(loader.validate_source(source))
 

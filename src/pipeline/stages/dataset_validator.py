@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
 from src.data.validation.registry import ValidationPluginRegistry
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
@@ -272,7 +273,7 @@ class DatasetValidator(PipelineStage):
         logger.info(f"[VALIDATOR] Validating {len(datasets_to_validate)} dataset(s)")
 
         # Log all datasets scheduled for validation (for complete reporting)
-        for dataset_name, dataset_config in datasets_to_validate.items():
+        for dataset_name, (dataset_config, _strategy_phases) in datasets_to_validate.items():
             dataset_path = self._get_dataset_train_ref(dataset_config)
             validation_mode = getattr(
                 getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
@@ -292,11 +293,11 @@ class DatasetValidator(PipelineStage):
 
         with ThreadPoolExecutor(max_workers=len(datasets_to_validate)) as executor:
             futures = {
-                executor.submit(self._validate_single_dataset, dataset_name, dataset_config, context): (
+                executor.submit(self._validate_single_dataset, dataset_name, dataset_config, strategy_phases, context): (
                     dataset_name,
                     dataset_config,
                 )
-                for dataset_name, dataset_config in datasets_to_validate.items()
+                for dataset_name, (dataset_config, strategy_phases) in datasets_to_validate.items()
             }
 
             def stop_on_critical_failure(reason: str, dataset_cfg: Any) -> None:
@@ -356,22 +357,25 @@ class DatasetValidator(PipelineStage):
         # Aggregate results
         return self._aggregate_results(all_results, all_errors)
 
-    def _get_datasets_to_validate(self) -> dict[str, Any]:
+    def _get_datasets_to_validate(self) -> dict[str, tuple[Any, list[Any]]]:
         """
         Extract all unique datasets from training strategies.
 
-        Returns dict: {dataset_name: DatasetConfig}
+        Returns dict: {dataset_name: (DatasetConfig, [StrategyPhaseConfig, ...])}
+        Each dataset maps to its config and all strategy phases that consume it.
         """
-        datasets = {}
+        datasets: dict[str, tuple[Any, list[Any]]] = {}
 
         # Get datasets from training strategies
         if hasattr(self._config, "training") and hasattr(self._config.training, "strategies"):
             for strategy in self._config.training.strategies:
                 dataset_name = strategy.dataset
-                if dataset_name and dataset_name not in datasets:
+                if dataset_name:
                     try:
                         dataset_config = self._config.get_dataset_for_strategy(strategy)
-                        datasets[dataset_name] = dataset_config
+                        if dataset_name not in datasets:
+                            datasets[dataset_name] = (dataset_config, [])
+                        datasets[dataset_name][1].append(strategy)
                     except KeyError:
                         logger.warning(f"[VALIDATOR] Dataset '{dataset_name}' not found in config")
 
@@ -379,8 +383,7 @@ class DatasetValidator(PipelineStage):
         if not datasets:
             logger.debug("[VALIDATOR] No strategies found, using primary dataset")
             primary = self._config.get_primary_dataset()
-            dataset_name = "primary"
-            datasets[dataset_name] = primary
+            datasets["primary"] = (primary, [])
 
         return datasets
 
@@ -388,6 +391,7 @@ class DatasetValidator(PipelineStage):
         self,
         dataset_name: str,
         dataset_config: Any,
+        strategy_phases: list[Any],
         context: dict[str, Any],
     ) -> Result[dict[str, Any], AppError]:
         """
@@ -396,6 +400,7 @@ class DatasetValidator(PipelineStage):
         Args:
             dataset_name: Unique dataset identifier
             dataset_config: Dataset configuration
+            strategy_phases: Strategy phase configs that consume this dataset
             context: Pipeline context
 
         Returns:
@@ -409,6 +414,11 @@ class DatasetValidator(PipelineStage):
 
         if dataset is None:
             return Err(DatasetError(message=f"Failed to load dataset: {dataset_name}", code="DATASET_LOAD_ERROR"))
+
+        # FORMAT CHECK FIRST — fail fast before quality plugins (before GPU)
+        fmt_result = self._check_dataset_format(dataset, dataset_name, strategy_phases)
+        if fmt_result.is_err():
+            return fmt_result
 
         # Get dataset train ref for event tracking
         dataset_path = self._get_dataset_train_ref(dataset_config)
@@ -442,6 +452,11 @@ class DatasetValidator(PipelineStage):
         eval_result: Result[dict[str, Any], AppError] | None = None
         eval_dataset, eval_ref = self._try_load_eval_dataset_for_validation(dataset_config, loader)
         if eval_dataset is not None and eval_ref is not None:
+            # FORMAT CHECK for eval dataset too
+            fmt_eval_result = self._check_dataset_format(eval_dataset, dataset_name, strategy_phases)
+            if fmt_eval_result.is_err():
+                return fmt_eval_result
+
             eval_plugins = [
                 (plugin_id, plugin_name, p, apply_to)
                 for (plugin_id, plugin_name, p, apply_to) in plugins
@@ -486,6 +501,73 @@ class DatasetValidator(PipelineStage):
             return Err(DatasetError(message="; ".join(errors), code="DATASET_VALIDATION_ERROR"))
 
         return Ok(merged)
+
+    def _check_dataset_format(
+        self,
+        dataset: Dataset | IterableDataset,
+        dataset_name: str,
+        strategy_phases: list[Any],
+    ) -> Result[None, AppError]:
+        """
+        Check dataset column format against strategy requirements.
+
+        Calls strategy.validate_dataset() for each unique strategy type.
+        Runs O(1) — only reads column metadata, no dataset iteration.
+
+        Called BEFORE quality plugins to fail fast before GPU spin-up.
+        """
+        if not strategy_phases:
+            return Ok(None)
+
+        from src.training.strategies.factory import StrategyFactory
+
+        factory = StrategyFactory()
+        seen_types: set[str] = set()
+
+        for phase in strategy_phases:
+            strategy_type = phase.strategy_type
+            if strategy_type in seen_types:
+                continue
+            seen_types.add(strategy_type)
+
+            try:
+                strategy = factory.create_from_phase(phase, self._config)
+            except ValueError as e:
+                return Err(
+                    DatasetError(
+                        message=f"[{dataset_name}] Unknown strategy type '{strategy_type}': {e}",
+                        code="DATASET_FORMAT_ERROR",
+                    )
+                )
+
+            result = strategy.validate_dataset(dataset)
+            if result.is_failure():
+                err = result.unwrap_err()
+                return Err(
+                    DatasetError(
+                        message=f"[{dataset_name}] Format check failed for '{strategy_type}': {err.message}",
+                        code="DATASET_FORMAT_ERROR",
+                    )
+                )
+
+        return Ok(None)
+
+    @staticmethod
+    def _get_column_names(dataset: Dataset | IterableDataset) -> list[str]:
+        """
+        Safely resolve column names for both Dataset and IterableDataset.
+
+        For IterableDataset, column_names may be None if Arrow schema is unavailable.
+        In that case, peek one sample to infer keys.
+        """
+        col_names = dataset.column_names
+        if col_names is not None:
+            return col_names
+        try:
+            sample = next(iter(dataset.take(1)), None)  # type: ignore[union-attr]
+            return list(sample.keys()) if sample else []
+        except Exception:
+            return []
 
     def _load_plugins_for_dataset(self, dataset_config: Any) -> list:
         """
@@ -584,7 +666,7 @@ class DatasetValidator(PipelineStage):
             getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
         )
 
-        if source_type == "huggingface":
+        if source_type == SOURCE_TYPE_HUGGINGFACE:
             # HuggingFace: streaming mode + limit
             try:
                 from datasets import load_dataset
@@ -878,7 +960,7 @@ class DatasetValidator(PipelineStage):
     def _get_dataset_train_ref(dataset_config: Any) -> str:
         """Get a stable train reference string for logging/events."""
         try:
-            if dataset_config.get_source_type() == "huggingface" and dataset_config.source_hf is not None:
+            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE and dataset_config.source_hf is not None:
                 return dataset_config.source_hf.train_id
             if dataset_config.source_local is not None:
                 return dataset_config.source_local.local_paths.train
@@ -893,7 +975,7 @@ class DatasetValidator(PipelineStage):
     ) -> tuple[Dataset | IterableDataset | None, str | None]:
         """Load eval dataset if configured; returns (dataset, ref)."""
         try:
-            if dataset_config.get_source_type() == "huggingface":
+            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
                 if dataset_config.source_hf is None or not dataset_config.source_hf.eval_id:
                     return None, None
                 ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")

@@ -812,6 +812,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             if not self._rows:
                 self.action_new_run()
             return
+        from src.tui.launch import pick_default_launch_mode
         from src.tui.screens.launch_modal import LaunchModal
 
         def _on_submit(result) -> None:
@@ -820,8 +821,9 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             self._refocus_table()
 
         self._release_table_focus()
+        default_mode = pick_default_launch_mode(run_dir)
         self.app.push_screen(
-            LaunchModal(default_mode="restart", default_run_dir=run_dir),
+            LaunchModal(default_mode=default_mode, default_run_dir=run_dir),
             _on_submit,
         )
 

@@ -255,6 +255,7 @@ def _run_single(
         text=True,
         cwd=str(project_root),
         env=env,
+        start_new_session=True,
     )
 
     stdout_reader = _LivenessReader()

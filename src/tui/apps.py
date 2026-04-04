@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 _DEFAULT_INTERVAL = 5.0
 _ACTIVE_LAUNCH_STATUSES = {"launching", "running", "stopping"}
+_DEFAULT_NOTIFICATION_TIMEOUT = 3.0
+_NOTIFICATION_TIMEOUT_MULTIPLIER = 3.0
 
 
 def _resolve_next_attempt_no(state: PipelineState) -> int:
@@ -57,6 +59,7 @@ class RyotenkaiApp(App):
 
     TITLE = "ryotenkai"
     SUB_TITLE = "pipeline run inspector"
+    NOTIFICATION_TIMEOUT = _DEFAULT_NOTIFICATION_TIMEOUT * _NOTIFICATION_TIMEOUT_MULTIPLIER
 
     CSS = """
     #status-bar {
@@ -153,9 +156,6 @@ class RyotenkaiApp(App):
         current = self.get_active_launch_for_run(normalized.run_dir)
         if current is not None:
             self.notify(f"This run is already launched in the TUI: {normalized.run_dir.name}", severity="warning")
-            return False
-        if self._active_launches and normalized.mode != "new_run":
-            self.notify("Parallel launch in the TUI is only allowed for new run for now", severity="warning")
             return False
 
         command = tuple(build_train_command(normalized))

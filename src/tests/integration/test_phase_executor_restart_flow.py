@@ -64,16 +64,9 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
 
     # 3) Training dependencies (mocked)
     dataset_loader = MagicMock()
-    dataset_loader.load_for_phase.return_value = Ok((MagicMock(), None))
+    dataset_loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=5)), None))
 
     strategy_factory = MagicMock()
-    strategy = MagicMock()
-    strategy.validate_dataset.return_value = Ok(True)
-    prepared = MagicMock()
-    prepared.__len__.return_value = 5
-    strategy.prepare_dataset.return_value = Ok(prepared)
-    strategy_factory.create_from_phase.return_value = strategy
-
     trainer_factory = MagicMock()
     trainer = MagicMock()
     trainer.model = MagicMock(name="trained_model")

@@ -23,14 +23,21 @@ _RUNPODCTL_OUTPUT_INVALID = "RUNPODCTL_OUTPUT_INVALID"
 
 
 def resolve_runpodctl_binary(binary: str | None = None, settings_path: str = "") -> str:
-    """Resolve runpodctl binary path with repo-local preference.
+    """Resolve runpodctl binary path.
 
-    Args:
-        binary: Explicit path (highest priority).
-        settings_path: Path from RuntimeSettings.runpodctl_path.
+    Priority:
+      1. Explicit ``binary`` argument.
+      2. ``RYOTENKAI_RUNPODCTL_PATH`` environment variable.
+      3. ``settings_path`` from RuntimeSettings.
+      4. Repo-local ``runpodctl`` binary (if executable).
+      5. Bare ``runpodctl`` (resolved via PATH at runtime).
     """
     if binary:
         return binary
+
+    env_path = os.environ.get("RYOTENKAI_RUNPODCTL_PATH", "")
+    if env_path:
+        return env_path
 
     if settings_path:
         return settings_path

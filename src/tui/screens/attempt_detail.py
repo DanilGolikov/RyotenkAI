@@ -286,6 +286,7 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         Binding("escape,q", "go_back", "Back", show=True),
         Binding("question_mark", "show_help", "Help", key_display="?", show=True),
         Binding("c", "browse_config", "Config", show=True, priority=True),
+        Binding("l", "relaunch", "Launch", show=True),
         Binding("h", "toggle_log_highlight", "Highlight", show=True),
         Binding("w", "toggle_log_wrap", "Wrap", show=True),
         Binding("ctrl+e", "stop_run", "Stop", key_display="⌃e", show=True, priority=True),
@@ -980,6 +981,22 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             return
         with self.app.suspend():
             subprocess.run(["python3", str(self._chat_script)], check=False)
+
+    def action_relaunch(self) -> None:
+        from src.tui.launch import pick_default_launch_mode
+        from src.tui.screens.launch_modal import LaunchModal
+
+        def _on_submit(result) -> None:
+            if result is not None:
+                from typing import cast
+
+                cast("RyotenkaiApp", self.app).start_launch(result)
+
+        default_mode = pick_default_launch_mode(self._run_dir)
+        self.app.push_screen(
+            LaunchModal(default_mode=default_mode, default_run_dir=self._run_dir),
+            _on_submit,
+        )
 
     def action_stop_run(self) -> None:
         self._confirm_interrupt_run(self._run_dir)

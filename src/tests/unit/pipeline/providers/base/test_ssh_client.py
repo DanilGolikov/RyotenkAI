@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +15,23 @@ class _RunResult(SimpleNamespace):
     returncode: int
     stdout: str
     stderr: str
+
+
+class _FakeProc:
+    """Minimal subprocess.Popen stand-in for download_directory tests."""
+
+    def __init__(self, returncode: int = 0, always_timeout: bool = False, stderr_text: str = "") -> None:
+        self.returncode = returncode
+        self._always_timeout = always_timeout
+        self.stderr = io.StringIO(stderr_text)
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._always_timeout and timeout is not None:
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+        return self.returncode
+
+    def kill(self) -> None:
+        pass
 
 
 def test_mask_secrets_redacts_tokens() -> None:
@@ -114,13 +133,10 @@ def test_upload_file_success_without_verify(monkeypatch: pytest.MonkeyPatch, tmp
 
 
 def test_download_directory_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    def fake_run(cmd, **kwargs):
-        return _RunResult(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(returncode=0))
 
     c = SSHClient(host="pc", username=None)
-    res = c.download_directory("/remote/dir", tmp_path / "out", timeout=1)
+    res = c.download_directory("/remote/dir", tmp_path / "out")
     assert res.is_success()
 
 
@@ -311,22 +327,25 @@ def test_file_and_directory_exists_and_create_directory(monkeypatch: pytest.Monk
 def test_download_directory_failure_and_exceptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     c = SSHClient(host="pc", username=None)
 
-    monkeypatch.setattr(
-        ssh_mod.subprocess,
-        "run",
-        lambda *a, **k: _RunResult(returncode=1, stdout="", stderr="no"),
-    )
-    res = c.download_directory("/remote/dir", tmp_path / "out", timeout=1)
+    # returncode != 0 → SSH_DOWNLOAD_FAILED
+    monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(returncode=1, stderr_text="no"))
+    res = c.download_directory("/remote/dir", tmp_path / "out")
     assert res.is_failure()
+    assert res.unwrap_err().code == "SSH_DOWNLOAD_FAILED"
 
-    def timeout(*a, **k):
-        raise ssh_mod.subprocess.TimeoutExpired(cmd="x", timeout=1)
+    # Stall detected across all retries → SSH_DOWNLOAD_STALLED
+    monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(always_timeout=True))
+    res2 = c.download_directory(
+        "/remote/dir", tmp_path / "out2",
+        stall_timeout=1,
+        max_retries=2,
+    )
+    assert res2.is_failure()
+    assert res2.unwrap_err().code == "SSH_DOWNLOAD_STALLED"
 
-    monkeypatch.setattr(ssh_mod.subprocess, "run", timeout)
-    assert c.download_directory("/remote/dir", tmp_path / "out2", timeout=1).is_failure()
-
-    monkeypatch.setattr(ssh_mod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-    assert c.download_directory("/remote/dir", tmp_path / "out3", timeout=1).is_failure()
+    # OSError when spawning Popen → SSH_DOWNLOAD_IO_ERROR
+    monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
+    assert c.download_directory("/remote/dir", tmp_path / "out3").is_failure()
 
 
 def test_get_file_content_tail_lines(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -513,7 +532,7 @@ def test_download_directory_local_mkdir_oserror(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(Path, "mkdir", patched_mkdir)
 
-    res = c.download_directory("/remote/dir", bad_local, timeout=1)
+    res = c.download_directory("/remote/dir", bad_local)
     assert res.is_failure()
     err = res.unwrap_err()
     assert err.code == "SSH_DOWNLOAD_LOCAL_DIR_FAILED"

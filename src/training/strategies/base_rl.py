@@ -6,11 +6,13 @@ Responsibilities:
   so that TrainerFactory can resolve reward plugins without hardcoded strategy names.
 - Provides get_trainer_class / get_config_class (both return GRPOTrainer / GRPOConfig).
 - Provides _base_rl_config_kwargs() with the common GRPO-family hyperparams.
-- Provides validate_dataset / prepare_dataset for the shared prompt+reference dataset
-  contract used by all online-RL strategies.
+- Provides validate_dataset for the canonical prompt-based dataset contract.
 - Accepts an optional schema_extractor callable (injected at construction time) so
   that domain-specific schema extraction (e.g. HelixQL) can be plugged in without
   importing domain code from within the core training package.
+
+Dataset contract: dataset must arrive with `prompt` column (canonical TRL format).
+Conversion from other formats (e.g. messages) is the responsibility of the dataset owner.
 """
 
 from __future__ import annotations
@@ -18,26 +20,15 @@ from __future__ import annotations
 from abc import ABC
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import COL_MESSAGES, COL_PROMPT, COL_REFERENCE_ANSWER, COL_SCHEMA_CONTEXT
+from src.training.constants import COL_PROMPT
 from src.training.strategies.base import TrainingStrategy
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, Result, StrategyError
-from src.utils.text_utils import extract_nested_text
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from datasets import Dataset
-    from transformers import PreTrainedTokenizer
-
-
-def _extract_message_text(messages: list[Any], role: str) -> str:
-    from collections.abc import Mapping
-
-    for message in messages:
-        if isinstance(message, Mapping) and message.get("role") == role:
-            return str(message.get("content", "") or "")
-    return ""
 
 
 class BaseRLStrategy(TrainingStrategy, ABC):
@@ -56,7 +47,6 @@ class BaseRLStrategy(TrainingStrategy, ABC):
     - get_trainer_class() → GRPOTrainer
     - get_config_class() → GRPOConfig
     - validate_dataset()
-    - prepare_dataset()
     - build_trainer_kwargs()
     """
 
@@ -121,117 +111,23 @@ class BaseRLStrategy(TrainingStrategy, ABC):
         return {}
 
     # ------------------------------------------------------------------
-    # Dataset contract — prompt + reference_answer required
+    # Dataset contract — prompt column required (canonical TRL format)
     # ------------------------------------------------------------------
 
     def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        features = dataset.features
-        has_prompt = COL_PROMPT in features
-        has_messages = COL_MESSAGES in features
-        has_reference = COL_REFERENCE_ANSWER in features or has_messages
+        """Validate RL dataset has required TRL column."""
+        columns = dataset.column_names or []
 
-        if not (has_prompt or has_messages):
+        if COL_PROMPT not in columns:
             return Err(
                 StrategyError(
-                    message="Dataset must contain 'prompt' or 'messages' column for RL training",
+                    message=f"Dataset must contain '{COL_PROMPT}' column for RL training (GRPOTrainer requirement)",
                     code="RL_MISSING_PROMPT_COLUMN",
                 )
             )
-        if not has_reference:
-            return Err(
-                StrategyError(
-                    message="Dataset must contain 'reference_answer' or 'messages' column for RL reward",
-                    code="RL_MISSING_REFERENCE_ANSWER",
-                )
-            )
+
+        logger.debug("[BaseRL] Dataset format validated: '%s' column present", COL_PROMPT)
         return Ok(True)
-
-    def prepare_dataset(self, dataset: Dataset, tokenizer: PreTrainedTokenizer) -> Result[Dataset, StrategyError]:
-        strategy_name = self.get_trainer_type().upper()
-        logger.info("[STRATEGY:%s] Preparing dataset...", strategy_name)
-
-        if COL_PROMPT in dataset.features:
-            logger.info("[STRATEGY:%s] Using existing prompt-based dataset", strategy_name)
-            if COL_SCHEMA_CONTEXT in dataset.features and COL_REFERENCE_ANSWER in dataset.features:
-                return Ok(dataset)
-            try:
-                prepared_dataset = dataset.map(
-                    lambda example: {
-                        COL_SCHEMA_CONTEXT: extract_nested_text(example.get(COL_SCHEMA_CONTEXT))
-                        or self._schema_extractor(extract_nested_text(example.get(COL_PROMPT))),
-                        COL_REFERENCE_ANSWER: extract_nested_text(example.get(COL_REFERENCE_ANSWER))
-                        or extract_nested_text(example.get("expected_answer")),
-                    }
-                )
-                return Ok(prepared_dataset)
-            except Exception as e:
-                return Err(
-                    StrategyError(
-                        message=f"Failed to enrich RL prompt dataset: {e}",
-                        code="RL_PROMPT_ENRICH_FAILED",
-                    )
-                )
-
-        if COL_MESSAGES in dataset.features:
-            logger.info("[STRATEGY:%s] Converting chat samples to prompt-only RL dataset", strategy_name)
-            try:
-                prepared_dataset = dataset.map(
-                    lambda example: self._extract_prompt_payload(example=example, tokenizer=tokenizer)
-                )
-                return Ok(prepared_dataset)
-            except Exception as e:
-                return Err(
-                    StrategyError(
-                        message=f"Failed to prepare RL dataset: {e}",
-                        code="RL_PREPARATION_FAILED",
-                    )
-                )
-
-        return Err(
-            StrategyError(
-                message="Could not find usable prompt in dataset",
-                code="RL_NO_USABLE_PROMPT",
-            )
-        )
-
-    def _extract_prompt_payload(
-        self,
-        *,
-        example: Any,
-        tokenizer: PreTrainedTokenizer,
-    ) -> dict[str, str]:
-        """Convert a ChatML messages example into a prompt-only RL training record."""
-        from collections.abc import Mapping
-
-        messages = example.get(COL_MESSAGES) if isinstance(example, Mapping) else None
-        if not isinstance(messages, list):
-            return {
-                COL_PROMPT: extract_nested_text(example.get(COL_PROMPT) if isinstance(example, Mapping) else None),
-                COL_SCHEMA_CONTEXT: extract_nested_text(
-                    example.get(COL_SCHEMA_CONTEXT) if isinstance(example, Mapping) else None
-                ),
-                COL_REFERENCE_ANSWER: extract_nested_text(
-                    example.get(COL_REFERENCE_ANSWER) if isinstance(example, Mapping) else None
-                ),
-            }
-
-        user_text = _extract_message_text(messages, "user")
-        assistant_text = _extract_message_text(messages, "assistant")
-
-        prompt_text = user_text
-        if getattr(tokenizer, "chat_template", None):
-            try:
-                prompt_text = str(
-                    tokenizer.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True)
-                )
-            except (AttributeError, IndexError, KeyError, TypeError, ValueError):
-                prompt_text = user_text
-
-        return {
-            COL_PROMPT: prompt_text,
-            COL_SCHEMA_CONTEXT: self._schema_extractor(user_text),
-            COL_REFERENCE_ANSWER: assistant_text,
-        }
 
 
 __all__ = ["BaseRLStrategy"]

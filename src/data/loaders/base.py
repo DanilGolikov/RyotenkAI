@@ -14,6 +14,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
+from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -132,7 +133,7 @@ class BaseDatasetLoader(ABC):
         try:
             # Get dataset config for this phase
             dataset_config = self.config.get_dataset_for_strategy(phase)
-            if dataset_config.get_source_type() != "local":
+            if dataset_config.get_source_type() != SOURCE_TYPE_LOCAL:
                 return Err(
                     DataLoaderError(
                         message="BaseDatasetLoader.load_for_phase supports only local datasets (use MultiSourceDatasetLoader)",
@@ -143,7 +144,7 @@ class BaseDatasetLoader(ABC):
             if dataset_config.source_local is None:
                 return Err(
                     DataLoaderError(
-                        message="source_type='local' requires source_local",
+                        message=f"source_type='{SOURCE_TYPE_LOCAL}' requires source_local",
                         code="DATA_LOADER_LOCAL_SOURCE_MISSING",
                     )
                 )

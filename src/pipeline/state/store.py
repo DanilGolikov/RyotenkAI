@@ -109,6 +109,7 @@ class PipelineStateStore:
         config_path: str,
         training_critical_config_hash: str,
         late_stage_config_hash: str,
+        model_dataset_config_hash: str = "",
         root_mlflow_run_id: str | None = None,
     ) -> PipelineState:
         state = PipelineState(
@@ -120,6 +121,7 @@ class PipelineStateStore:
             pipeline_status=StageRunState.STATUS_PENDING,
             training_critical_config_hash=training_critical_config_hash,
             late_stage_config_hash=late_stage_config_hash,
+            model_dataset_config_hash=model_dataset_config_hash,
             root_mlflow_run_id=root_mlflow_run_id,
             attempts=[],
             current_output_lineage={},
@@ -145,6 +147,7 @@ def build_attempt_state(
     enabled_stage_names: list[str],
     training_critical_config_hash: str,
     late_stage_config_hash: str,
+    model_dataset_config_hash: str = "",
 ) -> PipelineAttemptState:
     attempt_no = len(state.attempts) + 1
     attempt_id = build_attempt_id(state.logical_run_id, attempt_no)
@@ -159,6 +162,7 @@ def build_attempt_state(
         started_at=utc_now_iso(),
         training_critical_config_hash=training_critical_config_hash,
         late_stage_config_hash=late_stage_config_hash,
+        model_dataset_config_hash=model_dataset_config_hash,
         root_mlflow_run_id=state.root_mlflow_run_id,
         enabled_stage_names=list(enabled_stage_names),
         stage_runs={},

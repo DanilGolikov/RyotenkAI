@@ -114,7 +114,17 @@ def interrupt_launch_process(pid: int | None) -> bool:
     if pid is None:
         return False
     try:
-        if hasattr(os, "killpg"):
+        pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return False
+
+    try:
+        # TUI-launched runs use start_new_session=True, so pid == pgid and we can
+        # gracefully interrupt the entire process group. For externally launched
+        # runs (e.g. smoke runner), fall back to signalling the process itself.
+        if hasattr(os, "killpg") and pgid == pid:
             with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(pid, signal.SIGCONT)
             os.killpg(pid, signal.SIGINT)
@@ -178,6 +188,20 @@ def _derive_resume_stage(state) -> str | None:
     return None
 
 
+def pick_default_launch_mode(run_dir: Path) -> str:
+    """Return 'resume' if the run has a failed/interrupted stage, otherwise 'restart'.
+
+    Does not check config hashes — just inspects stage statuses. Safe to call
+    with potentially stale Python module state (no model_dump involved).
+    """
+    try:
+        state = PipelineStateStore(run_dir.expanduser().resolve()).load()
+    except Exception:
+        return "restart"
+    resume_stage = _derive_resume_stage(state)
+    return "resume" if resume_stage is not None else "restart"
+
+
 def validate_resume_run(run_dir: Path, config_path: Path | None = None) -> tuple[Path, str]:
     resolved_run_dir = run_dir.expanduser().resolve()
     state = PipelineStateStore(resolved_run_dir).load()
@@ -185,8 +209,14 @@ def validate_resume_run(run_dir: Path, config_path: Path | None = None) -> tuple
     config = load_config(resolved_config)
     config_hashes = compute_config_hashes(config)
 
-    if state.training_critical_config_hash != config_hashes["training_critical"]:
+    # Fine-grained check: if model_dataset_config_hash is stored, provider changes are allowed.
+    # Legacy fallback for states without model_dataset_config_hash.
+    if state.model_dataset_config_hash:
+        if state.model_dataset_config_hash != config_hashes["model_dataset"]:
+            raise ValueError("training_critical config changed for existing logical run; resume is blocked")
+    elif state.training_critical_config_hash != config_hashes["training_critical"]:
         raise ValueError("training_critical config changed for existing logical run; resume is blocked")
+
     if state.late_stage_config_hash != config_hashes["late_stage"]:
         raise ValueError(
             "late_stage config changed; resume is blocked. Use manual restart from Inference Deployer or Model Evaluator"

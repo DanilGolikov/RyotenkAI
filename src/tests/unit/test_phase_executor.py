@@ -330,45 +330,15 @@ class TestPhaseExecutorHappyPath:
             trainer = mock_trainer_factory.create_from_phase.return_value
             trainer.train.assert_called_once()
 
-    def test_execute_creates_strategy_correctly(
-        self,
-        phase_executor: PhaseExecutor,
-        mock_buffer: MagicMock,
-        mock_model: MagicMock,
-        mock_phase_config: StrategyPhaseConfig,
-        mock_strategy_factory: MagicMock,
-    ):
-        """Test that strategy is created correctly."""
-        mock_mlflow = MagicMock()
-        mock_mlflow.start_run.return_value = MagicMock()
-        mock_mlflow.set_tags = MagicMock()
-        mock_mlflow.disable_system_metrics_logging = MagicMock()
-        mock_mlflow.enable_system_metrics_logging = MagicMock()
-
-        with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
-
-            assert result.is_success()
-            mock_strategy_factory.create_from_phase.assert_called_once_with(
-                mock_phase_config,
-                phase_executor.config,
-            )
-
-    def test_execute_loads_and_validates_dataset(
+    def test_execute_loads_dataset(
         self,
         phase_executor: PhaseExecutor,
         mock_buffer: MagicMock,
         mock_model: MagicMock,
         mock_phase_config: StrategyPhaseConfig,
         mock_dataset_loader: MagicMock,
-        mock_strategy_factory: MagicMock,
     ):
-        """Test that dataset is loaded and validated."""
+        """Test that dataset is loaded correctly."""
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()
         mock_mlflow.set_tags = MagicMock()
@@ -385,10 +355,6 @@ class TestPhaseExecutorHappyPath:
 
             assert result.is_success()
             mock_dataset_loader.load_for_phase.assert_called_once_with(mock_phase_config)
-
-            strategy = mock_strategy_factory.create_from_phase.return_value
-            strategy.validate_dataset.assert_called_once()
-            strategy.prepare_dataset.assert_called_once()
 
     def test_execute_creates_trainer_with_oom_protection(
         self,
@@ -485,66 +451,6 @@ class TestPhaseExecutorErrorHandling:
             assert result.is_failure()
             assert str(result.unwrap_err()) == "Failed to load dataset"
             mock_buffer.mark_phase_failed.assert_called_once_with(0, "Failed to load dataset")
-
-    def test_execute_dataset_validation_failure(
-        self,
-        phase_executor: PhaseExecutor,
-        mock_buffer: MagicMock,
-        mock_model: MagicMock,
-        mock_phase_config: StrategyPhaseConfig,
-        mock_strategy_factory: MagicMock,
-    ):
-        """Test handling of dataset validation failure."""
-        strategy = mock_strategy_factory.create_from_phase.return_value
-        strategy.validate_dataset.return_value = Err("Dataset validation failed")
-
-        mock_mlflow = MagicMock()
-        mock_mlflow.start_run.return_value = MagicMock()
-        mock_mlflow.set_tags = MagicMock()
-        mock_mlflow.disable_system_metrics_logging = MagicMock()
-        mock_mlflow.enable_system_metrics_logging = MagicMock()
-
-        with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
-
-            assert result.is_failure()
-            assert str(result.unwrap_err()) == "Dataset validation failed"
-            mock_buffer.mark_phase_failed.assert_called_once_with(0, "Dataset validation failed")
-
-    def test_execute_dataset_preparation_failure(
-        self,
-        phase_executor: PhaseExecutor,
-        mock_buffer: MagicMock,
-        mock_model: MagicMock,
-        mock_phase_config: StrategyPhaseConfig,
-        mock_strategy_factory: MagicMock,
-    ):
-        """Test handling of dataset preparation failure."""
-        strategy = mock_strategy_factory.create_from_phase.return_value
-        strategy.prepare_dataset.return_value = Err("Dataset preparation failed")
-
-        mock_mlflow = MagicMock()
-        mock_mlflow.start_run.return_value = MagicMock()
-        mock_mlflow.set_tags = MagicMock()
-        mock_mlflow.disable_system_metrics_logging = MagicMock()
-        mock_mlflow.enable_system_metrics_logging = MagicMock()
-
-        with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
-
-            assert result.is_failure()
-            assert str(result.unwrap_err()) == "Dataset preparation failed"
-            mock_buffer.mark_phase_failed.assert_called_once_with(0, "Dataset preparation failed")
 
     def test_execute_trainer_creation_failure(
         self,
@@ -1263,14 +1169,11 @@ class TestPhaseExecutorEdgeCases:
         mock_model: MagicMock,
         mock_phase_config: StrategyPhaseConfig,
         mock_dataset_loader: MagicMock,
-        mock_strategy_factory: MagicMock,
     ):
         """Test execution with empty dataset."""
         # Empty dataset (0 samples)
         empty_dataset = MagicMock(__len__=MagicMock(return_value=0))
         mock_dataset_loader.load_for_phase.return_value = Ok((empty_dataset, None))
-        strategy = mock_strategy_factory.create_from_phase.return_value
-        strategy.prepare_dataset.return_value = Ok(empty_dataset)
 
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()

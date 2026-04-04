@@ -18,14 +18,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.constants import DEFAULT_BATCH_SIZES, DEFAULT_EPOCHS, DEFAULT_LEARNING_RATES, STRATEGY_DPO
+from src.constants import STRATEGY_DPO
 from src.training.strategies.base import StrategyMetadata, TrainingStrategy
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from datasets import Dataset
-    from transformers import PreTrainedTokenizer
 
 
 class DPOStrategy(TrainingStrategy):
@@ -35,21 +34,9 @@ class DPOStrategy(TrainingStrategy):
     DPO trains the model to prefer "chosen" responses over "rejected" ones
     without needing a separate reward model (unlike RLHF).
 
-    Data format requirements:
-    - `chosen`: List of messages (ChatML format) for preferred response
-    - `rejected`: List of messages (ChatML format) for dispreferred response
-
-    Example data:
-        {
-            "chosen": [
-                {"role": "user", "content": "What is 2+2?"},
-                {"role": "assistant", "content": "2+2 equals 4."}
-            ],
-            "rejected": [
-                {"role": "user", "content": "What is 2+2?"},
-                {"role": "assistant", "content": "I don't know math."}
-            ]
-        }
+    Accepts canonical TRL format:
+    - `chosen`: preferred response (list of messages or plain text)
+    - `rejected`: dispreferred response (list of messages or plain text)
 
     Critical hyperparameters:
     - learning_rate: 5e-6 (10-100x lower than SFT!)
@@ -90,41 +77,9 @@ class DPOStrategy(TrainingStrategy):
         adapter to compute reference logprobs. No manual adapter name wiring needed.
         """
 
-    def prepare_dataset(self, dataset: Dataset, _tokenizer: PreTrainedTokenizer) -> Result[Dataset, StrategyError]:
-        """
-        Prepare dataset for DPO.
-
-        TRL DPOTrainer expects:
-        - `chosen`: List[Dict] messages for preferred response
-        - `rejected`: List[Dict] messages for dispreferred response
-
-        We validate format and pass through - TRL handles tokenization.
-        """
-        try:
-            logger.info("Preparing dataset for DPO...")
-
-            # Validate format
-            validation = self.validate_dataset(dataset)
-            if validation.is_failure():
-                return validation  # type: ignore
-
-            # TRL DPOTrainer handles formatting natively
-            logger.info(f"DPO dataset ready: {len(dataset)} preference pairs")
-            return Ok(dataset)
-
-        except Exception as e:
-            return Err(StrategyError(message=f"DPO preparation failed: {e!s}", code="DPO_PREPARATION_FAILED"))
-
     def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        """
-        Validate DPO dataset structure.
-
-        Requirements:
-        - Must have `chosen` column
-        - Must have `rejected` column
-        - Each should be list of messages (ChatML format)
-        """
-        columns = dataset.column_names
+        """Validate DPO dataset has required TRL columns."""
+        columns = dataset.column_names or []
 
         if "chosen" not in columns:
             return Err(
@@ -142,49 +97,12 @@ class DPOStrategy(TrainingStrategy):
                 )
             )
 
-        # Validate first sample structure
-        try:
-            sample = dataset[0]
-            chosen = sample["chosen"]
-            rejected = sample["rejected"]
-
-            # Check if they're lists of dicts (messages format)
-            if not isinstance(chosen, list) or not isinstance(rejected, list):
-                return Err(
-                    StrategyError(
-                        message="DPO 'chosen' and 'rejected' must be lists of messages",
-                        code="DPO_INVALID_MESSAGE_FORMAT",
-                    )
-                )
-
-            # Check message structure
-            if len(chosen) > 0:
-                if not isinstance(chosen[0], dict):
-                    return Err(
-                        StrategyError(
-                            message="DPO messages must be dicts with 'role' and 'content'",
-                            code="DPO_INVALID_MESSAGE_STRUCTURE",
-                        )
-                    )
-                if "role" not in chosen[0] or "content" not in chosen[0]:
-                    return Err(
-                        StrategyError(
-                            message="DPO messages must have 'role' and 'content' keys",
-                            code="DPO_MISSING_MESSAGE_KEYS",
-                        )
-                    )
-
-        except Exception as e:
-            logger.warning(f"Could not validate DPO sample structure: {e}")
-            # Continue anyway, TRL will catch format errors
-
         return Ok(True)
 
     def get_training_objective(self) -> str:
         return "preference_optimization"
 
     def get_trainer_type(self) -> str:
-        """Return TRL trainer type for this strategy."""
         return STRATEGY_DPO
 
     def get_metadata(self) -> StrategyMetadata:
@@ -198,19 +116,6 @@ class DPOStrategy(TrainingStrategy):
             recommended_use="Alignment after SFT, reducing harmful outputs",
             dependencies={"trl": ">=0.8.0"},
         )
-
-    def get_recommended_hyperparameters(self) -> dict:
-        """
-        Get DPO-specific recommended hyperparameters.
-
-        Critical: DPO requires much lower learning rate than SFT!
-        """
-        return {
-            "learning_rate": DEFAULT_LEARNING_RATES[STRATEGY_DPO],
-            "num_epochs": DEFAULT_EPOCHS[STRATEGY_DPO],
-            "batch_size": DEFAULT_BATCH_SIZES[STRATEGY_DPO],
-            "beta": 0.1,  # DPO-specific: strength of preference
-        }
 
 
 __all__ = ["DPOStrategy"]

@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 import typer
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.pipeline.restart_points import list_restart_points as _query_restart_points
 from src.utils.config import PipelineConfig, load_config
 from src.utils.logger import logger
@@ -139,7 +140,7 @@ def _log_config_summary(config: PipelineConfig) -> None:
     # Dataset config (use primary dataset from registry)
     default_dataset = config.get_primary_dataset()
     logger.info("📊 Dataset:")
-    if default_dataset.get_source_type() == "huggingface" and default_dataset.source_hf is not None:
+    if default_dataset.get_source_type() == SOURCE_TYPE_HUGGINGFACE and default_dataset.source_hf is not None:
         logger.info(f"   Train (HF): {default_dataset.source_hf.train_id}")
         if default_dataset.source_hf.eval_id:
             logger.info(f"   Eval  (HF): {default_dataset.source_hf.eval_id}")
@@ -411,7 +412,7 @@ def info(
         default_ds = orchestrator.config.get_primary_dataset()
         train_ref = default_ds.get_display_train_ref()
 
-        if default_ds.get_source_type() == "huggingface":
+        if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
             assert default_ds.source_hf is not None
             eval_ref = default_ds.source_hf.eval_id or "N/A"
         else:
@@ -784,7 +785,7 @@ def config_validate(
     if cfg is not None:
         # 2. Dataset paths
         for ds_name, ds_cfg in cfg.datasets.items():
-            if ds_cfg.get_source_type() == "local" and ds_cfg.source_local:
+            if ds_cfg.get_source_type() == SOURCE_TYPE_LOCAL and ds_cfg.source_local:
                 train_path = ds_cfg.source_local.local_paths.train
                 eval_path = getattr(ds_cfg.source_local.local_paths, "eval", None)
                 if Path(train_path).exists():

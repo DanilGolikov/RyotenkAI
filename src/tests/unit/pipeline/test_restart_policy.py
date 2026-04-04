@@ -80,7 +80,7 @@ def test_late_stage_config_drift_allowed_only_for_late_stages(tmp_path: Path) ->
     drift_error = orchestrator._validate_config_drift(
         state=state,
         start_stage_name=StageNames.INFERENCE_DEPLOYER,
-        config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash"},
+        config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash", "model_dataset": "md_hash"},
         resume=False,
     )
     assert drift_error is None
@@ -88,7 +88,7 @@ def test_late_stage_config_drift_allowed_only_for_late_stages(tmp_path: Path) ->
     drift_error = orchestrator._validate_config_drift(
         state=state,
         start_stage_name=StageNames.MODEL_RETRIEVER,
-        config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash"},
+        config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash", "model_dataset": "md_hash"},
         resume=False,
     )
     assert drift_error is not None

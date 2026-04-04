@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from datasets import load_dataset
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.base import BaseDatasetLoader
 from src.utils.logger import logger
 
@@ -173,7 +174,7 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
             if dataset_config.source_hf is None:
                 return Err(
                     DataLoaderError(
-                        message="source_type='huggingface' requires source_hf",
+                        message=f"source_type='{SOURCE_TYPE_HUGGINGFACE}' requires source_hf",
                         code="DATA_LOADER_HF_SOURCE_MISSING",
                     )
                 )

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from datasets import Dataset, load_dataset
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.constants import STRATEGY_SFT
 from src.training.managers.constants import HF_SPLIT_TRAIN
 from src.utils.logger import logger
@@ -71,7 +72,7 @@ class DatasetLoader:
             # New schema supports: local (training_paths auto-generated) and HuggingFace (train_id/eval_id)
             source_type = dataset_config.get_source_type()
 
-            if source_type == "huggingface":
+            if source_type == SOURCE_TYPE_HUGGINGFACE:
                 loaded_result = self._load_hf_datasets(dataset_config)
             else:
                 # Pass strategy_type for auto-generating training paths
@@ -115,7 +116,7 @@ class DatasetLoader:
         if dataset_config.source_hf is None:
             return Err(
                 DataLoaderError(
-                    message="Dataset source_type='huggingface' requires source_hf",
+                    message=f"Dataset source_type='{SOURCE_TYPE_HUGGINGFACE}' requires source_hf",
                     code="DATA_LOADER_HF_SOURCE_MISSING",
                 )
             )
@@ -159,7 +160,7 @@ class DatasetLoader:
         if dataset_config.source_local is None:
             return Err(
                 DataLoaderError(
-                    message="Dataset source_type='local' requires source_local",
+                    message=f"Dataset source_type='{SOURCE_TYPE_LOCAL}' requires source_local",
                     code="DATA_LOADER_LOCAL_SOURCE_MISSING",
                 )
             )

@@ -226,7 +226,7 @@ class TestPhaseCallbacksAndStateIOEdges:
         buffer = DataBuffer(base_output_dir=tmp_path, base_model_path="m")
         buffer.init_pipeline(_mk_strategies(), force=True)
 
-        with patch("src.training.managers.data_buffer.json.dump", side_effect=RuntimeError("boom")):
+        with patch("src.training.managers.data_buffer.manager.json.dump", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError):
                 buffer.save_state()
 
@@ -248,7 +248,7 @@ class TestPhaseCallbacksAndStateIOEdges:
         # Mutate in-memory state so a successful save would change the file.
         buffer.state.current_phase = 123
 
-        with patch("src.training.managers.data_buffer.json.dump", side_effect=RuntimeError("boom")):
+        with patch("src.training.managers.data_buffer.manager.json.dump", side_effect=RuntimeError("boom")):
             with pytest.raises(RuntimeError):
                 buffer.save_state()
 
@@ -277,7 +277,7 @@ class TestPhaseCallbacksAndStateIOEdges:
         buffer.init_pipeline(_mk_strategies(), force=True)
 
         buffer._fault_simulator = FaultSimulator(slow_io_delay_ms=10)
-        monkeypatch.setattr("src.training.managers.data_buffer.time.sleep", lambda _s: None)
+        monkeypatch.setattr("src.training.managers.data_buffer.manager.time.sleep", lambda _s: None)
 
         assert buffer.load_state() is True
 
@@ -335,7 +335,7 @@ class TestPhaseCallbacksAndStateIOEdges:
 
         # PermissionError + OSError are swallowed
         with patch(
-            "src.training.managers.data_buffer.shutil.rmtree",
+            "src.training.managers.data_buffer.manager.shutil.rmtree",
             side_effect=[PermissionError("no"), OSError("nope")],
         ):
             _ = buffer.cleanup_old_checkpoints(keep_last=0, dry_run=False)

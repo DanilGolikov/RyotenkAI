@@ -321,8 +321,48 @@ def validate_pipeline_evaluation_requires_inference(cfg: PipelineConfig) -> tupl
     return True, ""
 
 
+def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> tuple[bool, str]:
+    """
+    Validate adapter cache configuration against HF Hub integration settings.
+
+    Rules:
+    - If any phase has adapter_cache.enabled=true:
+      → experiment_tracking.huggingface must be configured and enabled
+      → adapter_cache.repo_id must differ from experiment_tracking.huggingface.repo_id
+        (to prevent mixing intermediate adapters with the final merged model)
+    """
+    cache_phases = [
+        s for s in cfg.training.strategies
+        if hasattr(s, "adapter_cache") and getattr(s.adapter_cache, "enabled", False)
+    ]
+    if not cache_phases:
+        return True, ""
+
+    hf_cfg = getattr(cfg.experiment_tracking, "huggingface", None)
+    if hf_cfg is None or not hf_cfg.enabled:
+        return (
+            False,
+            "adapter_cache.enabled=true requires experiment_tracking.huggingface to be configured and enabled. "
+            "Add experiment_tracking.huggingface section with enabled: true, repo_id, and private fields.",
+        )
+
+    final_repo_id = hf_cfg.repo_id
+    for i, phase in enumerate(cache_phases):
+        if phase.adapter_cache.repo_id == final_repo_id:
+            return (
+                False,
+                f"Strategy {i} ({phase.strategy_type}): adapter_cache.repo_id='{phase.adapter_cache.repo_id}' "
+                f"must differ from experiment_tracking.huggingface.repo_id='{final_repo_id}'. "
+                "The adapter cache repository stores intermediate adapters; "
+                "the HF Hub repo_id is reserved for the final merged model.",
+            )
+
+    return True, ""
+
+
 __all__ = [
     "validate_pipeline_active_provider_is_registered",
+    "validate_pipeline_adapter_cache_hf_config",
     "validate_pipeline_evaluation_requires_inference",
     "validate_pipeline_inference_provider_config",
     "validate_pipeline_providers_config",

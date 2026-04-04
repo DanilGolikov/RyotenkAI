@@ -657,7 +657,6 @@ def mock_strategy_factory():
                 name=f"{strategy_type}_strategy",
                 strategy_type=strategy_type,
             )
-            strategy.prepare_dataset.return_value = MagicMock(is_success=lambda: True)
             strategy.validate_dataset.return_value = MagicMock(is_success=lambda: True)
             return strategy
 
