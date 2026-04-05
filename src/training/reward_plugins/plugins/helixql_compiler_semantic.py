@@ -88,6 +88,16 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
         semantic_reward.__name__ = "semantic_reward"
         return {
             "reward_funcs": [compiler_reward, semantic_reward],
+        }
+
+    def build_config_kwargs(
+        self,
+        *,
+        train_dataset: Any,
+        phase_config: Any,
+        pipeline_config: Any,
+    ) -> dict[str, Any]:
+        return {
             "reward_weights": [1.0, 1.0],
         }
 

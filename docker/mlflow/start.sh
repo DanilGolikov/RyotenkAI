@@ -19,6 +19,13 @@ cd "$(dirname "$0")" || exit 1
 COMPOSE_FILE="docker-compose.mlflow.yml"
 ENV_FILE=".env.mlflow"
 
+if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+fi
+
 if [[ ! -f "$COMPOSE_FILE" ]]; then
     echo "Error: $COMPOSE_FILE not found"
     exit 1
@@ -33,7 +40,7 @@ case "$ACTION" in
         ;;
     up|start)
         echo "Starting MLflow stack..."
-        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
         echo ""
         echo "Services:"
         echo "  MLflow UI:      http://localhost:${MLFLOW_PORT:-5002}"
@@ -47,7 +54,7 @@ case "$ACTION" in
     restart)
         echo "Restarting MLflow stack..."
         docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down
-        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
         ;;
     logs)
         docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs -f

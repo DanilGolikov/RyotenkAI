@@ -9,4 +9,8 @@ RUN pip install --no-cache-dir \
     psycopg2-binary==2.9.9 \
     boto3==1.35.76
 
+COPY entrypoint.mlflow.sh /usr/local/bin/entrypoint.mlflow.sh
+RUN chmod +x /usr/local/bin/entrypoint.mlflow.sh
+
 EXPOSE 5000
+ENTRYPOINT ["/usr/local/bin/entrypoint.mlflow.sh"]

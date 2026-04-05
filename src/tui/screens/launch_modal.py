@@ -4,6 +4,7 @@ import contextlib
 from pathlib import Path
 from typing import ClassVar
 
+from rich.text import Text
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -36,6 +37,13 @@ def _run_dir_value_for_mode(mode: str, *, context_run_dir: Path | None, new_run_
 
 def _restart_section_visible(mode: str) -> bool:
     return mode == "restart"
+
+
+def _update_plain_text(widget: Static, message: str, *, style: str | None = None) -> None:
+    text = Text(message)
+    if style:
+        text.stylize(style)
+    widget.update(text)
 
 
 class _FocusSink(Static):
@@ -299,7 +307,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         selector = self.query_one("#launch-restart-stage", Select)
         mode_selector = self.query_one("#launch-mode", Select)
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
 
         mode = self._selected_mode()
         run_dir = self._read_run_dir()
@@ -311,10 +319,8 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
             selector.set_options([])
             selector.clear()
             selector.disabled = True
-            from rich.markup import escape
-
             error_prefix = "Cannot prepare resume" if mode == "resume" else "Cannot load restart points"
-            info.update(f"[red]{error_prefix}: {escape(str(exc))}[/red]")
+            _update_plain_text(info, f"{error_prefix}: {exc}", style="red")
             self._refresh_footer()
             return
 
@@ -363,14 +369,14 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         from src.tui.screens.file_preview_modal import FilePreviewModal
 
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
         focused = self.focused
         if not isinstance(focused, Input) or focused.id != "launch-config-path":
             self._refresh_footer()
             return
         config_path = self._read_config_path()
         if config_path is None:
-            error.update("Config path is empty.")
+            _update_plain_text(error, "Config path is empty.", style="red")
             self._refresh_footer()
             return
         self._release_focus()
@@ -380,10 +386,10 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         from src.tui.screens.config_browser_modal import StructuredConfigBrowser
 
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
         config_path = self._read_config_path()
         if config_path is None:
-            error.update("Config path is empty.")
+            _update_plain_text(error, "Config path is empty.", style="red")
             self._refresh_footer()
             return
         self._release_focus()
@@ -399,7 +405,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         restart_stage = None if mode != "restart" or restart_stage_value is Select.BLANK else str(restart_stage_value)
 
         if run_dir is None:
-            error.update("Run directory is required.")
+            _update_plain_text(error, "Run directory is required.", style="red")
             return
 
         try:
@@ -411,7 +417,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
                 log_level=log_level,
             )
         except ValueError as exc:
-            error.update(str(exc))
+            _update_plain_text(error, str(exc), style="red")
             return
         if config_path is None and resolved_config is not None:
             self.query_one("#launch-config-path", Input).value = str(resolved_config)

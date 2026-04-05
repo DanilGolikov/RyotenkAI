@@ -38,6 +38,58 @@ After startup:
 - **MLflow UI:** http://localhost:5002
 - **MinIO Console:** http://localhost:9001 (login: `minio_admin` / `minio_secure_pass_2024`)
 
+## Public Access via Tailscale
+
+If you want a remote machine (for example, RunPod) to log to your local MLflow stack,
+you can publish only the MLflow endpoint through Tailscale Funnel.
+
+Prerequisites:
+- Docker
+- Tailscale installed locally
+- `tailscale up` completed on your machine
+
+```bash
+cd docker/mlflow
+
+# Start/rebuild local stack and publish MLflow over HTTPS
+./expose-tailscale.sh up
+
+# Inspect current public status
+./expose-tailscale.sh status
+
+# Print only the public URL
+./expose-tailscale.sh url
+
+# Disable public access
+./expose-tailscale.sh down
+```
+
+The script:
+- starts or rebuilds the local MLflow stack
+- enables `tailscale funnel` only for MLflow
+- configures `MLflow` `allowed-hosts` for the generated `*.ts.net` hostname
+- leaves MinIO private on your machine
+- asks for confirmation before changing local state
+- falls back to a rootless local `tailscaled` when the system daemon is unavailable
+- waits until the public HTTPS endpoint is actually reachable before printing the final URL
+
+Re-running `./expose-tailscale.sh up` is safe:
+- it reuses the existing stack when possible
+- it refreshes the Funnel configuration
+- it does not force a Docker rebuild on every run
+
+Use the printed URL as your remote tracking URI:
+
+```bash
+export MLFLOW_TRACKING_URI=https://your-machine.your-tailnet.ts.net:8443
+```
+
+Security notes:
+- Prefer enabling MLflow auth before using this outside your private machine.
+- Only `MLflow` is exposed publicly; `MinIO` is not.
+- Default Funnel port is `443`. Override with `TAILSCALE_FUNNEL_HTTPS_PORT=8443` if needed.
+- Rootless Tailscale runtime files are stored in `~/.local/state/ryotenkai-mlflow-tailscale` by default.
+
 ## Configuration
 
 Edit `.env.mlflow` to customize credentials and ports:
@@ -55,6 +107,12 @@ MINIO_API_PORT=9000
 MINIO_CONSOLE_PORT=9001
 
 MLFLOW_PORT=5002
+
+# Optional public exposure / security settings
+# MLFLOW_SERVER_ALLOWED_HOSTS=my-node.example.ts.net,localhost:
+# MLFLOW_SERVER_CORS_ALLOWED_ORIGINS=https://my-ui.example.com
+# MLFLOW_APP_NAME=basic-auth
+# MLFLOW_FLASK_SERVER_SECRET_KEY=CHANGE_ME
 ```
 
 ## Pipeline Integration
@@ -78,6 +136,8 @@ docker/mlflow/
 ├── Dockerfile.mlflow           # MLflow server image (+ psycopg2, boto3)
 ├── .dockerignore
 ├── .env.mlflow                 # Environment configuration
+├── entrypoint.mlflow.sh        # MLflow startup with optional security flags
+├── expose-tailscale.sh         # Public HTTPS access via Tailscale Funnel
 ├── start.sh                    # Startup/management script
 └── README.md
 
