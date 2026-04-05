@@ -19,6 +19,19 @@ from src.config.validators.pipeline import validate_pipeline_config_references
 pytestmark = pytest.mark.unit
 
 
+def _assert_ok(result) -> None:
+    assert result.is_success()
+    assert result.unwrap() is None
+
+
+def _assert_err(result, *, code: str | None = None) -> str:
+    assert result.is_failure()
+    err = result.unwrap_err()
+    if code is not None:
+        assert err.code == code
+    return str(err)
+
+
 @dataclass(frozen=True)
 class DummyStrategy:
     strategy_type: str
@@ -50,9 +63,7 @@ class TestValidatePipelineProvidersConfig:
             training=DummyTraining(provider="single_node", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_providers_config(cfg))  # type: ignore[arg-type]
 
     def test_negative_no_providers(self) -> None:
         cfg = DummyPipelineCfg(
@@ -60,8 +71,7 @@ class TestValidatePipelineProvidersConfig:
             training=DummyTraining(provider="single_node", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_PROVIDERS_MISSING")  # type: ignore[arg-type]
         assert "No providers configured" in err
 
     def test_negative_training_provider_not_set(self) -> None:
@@ -70,8 +80,7 @@ class TestValidatePipelineProvidersConfig:
             training=DummyTraining(provider=None, strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_TRAINING_PROVIDER_MISSING")  # type: ignore[arg-type]
         assert "training.provider not set" in err
 
     def test_negative_training_provider_not_found(self) -> None:
@@ -80,8 +89,7 @@ class TestValidatePipelineProvidersConfig:
             training=DummyTraining(provider="missing", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_TRAINING_PROVIDER_NOT_FOUND")  # type: ignore[arg-type]
         assert "training.provider='missing' not found" in err
 
 
@@ -92,9 +100,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
             training=DummyTraining(provider=None, strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_active_provider_is_registered(cfg))  # type: ignore[arg-type]
 
     def test_dependency_error_skips_when_src_pipeline_missing(self) -> None:
         cfg = DummyPipelineCfg(
@@ -111,9 +117,8 @@ class TestValidatePipelineActiveProviderIsRegistered:
             "src.config.validators.cross.importlib.import_module",
             side_effect=ModuleNotFoundError("nope", name="src.pipeline.providers"),
         ):
-            ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+            result = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
+        _assert_ok(result)
 
     def test_negative_unknown_provider_not_registered(self) -> None:
         cfg = DummyPipelineCfg(
@@ -129,8 +134,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
 
         dummy_mod = SimpleNamespace(GPUProviderFactory=DummyFactory)
         with patch("src.config.validators.cross.importlib.import_module", return_value=dummy_mod):
-            ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_NOT_REGISTERED")  # type: ignore[arg-type]
         assert "Unknown provider" in err
         assert "local" in err
 
@@ -155,9 +159,8 @@ class TestValidatePipelineActiveProviderIsRegistered:
 
         dummy_mod = SimpleNamespace(GPUProviderFactory=DummyFactory)
         with patch("src.config.validators.cross.importlib.import_module", return_value=dummy_mod):
-            ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+            result = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
+        _assert_ok(result)
 
 
 class TestValidatePipelineStrategyDatasetReferences:
@@ -167,8 +170,7 @@ class TestValidatePipelineStrategyDatasetReferences:
             training=DummyTraining(provider=None, strategies=[DummyStrategy(strategy_type="sft", dataset=None)]),
             datasets={},
         )
-        ok, err = validate_pipeline_strategy_dataset_references(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_strategy_dataset_references(cfg), code="CONFIG_DATASETS_EMPTY")  # type: ignore[arg-type]
         assert "datasets must contain at least one entry" in err
 
     def test_positive_strategy_without_dataset_ok_when_datasets_non_empty(self) -> None:
@@ -177,9 +179,7 @@ class TestValidatePipelineStrategyDatasetReferences:
             training=DummyTraining(provider=None, strategies=[DummyStrategy(strategy_type="sft", dataset=None)]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_strategy_dataset_references(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_strategy_dataset_references(cfg))  # type: ignore[arg-type]
 
     def test_negative_missing_dataset_reference(self) -> None:
         cfg = DummyPipelineCfg(
@@ -187,8 +187,7 @@ class TestValidatePipelineStrategyDatasetReferences:
             training=DummyTraining(provider=None, strategies=[DummyStrategy(strategy_type="sft", dataset="missing")]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_strategy_dataset_references(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_strategy_dataset_references(cfg), code="CONFIG_STRATEGY_DATASET_MISSING")  # type: ignore[arg-type]
         assert "references" in err
         assert "dataset 'missing'" in err
 
@@ -204,8 +203,7 @@ class TestValidatePipelineStrategyDatasetReferences:
             ),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_strategy_dataset_references(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_strategy_dataset_references(cfg), code="CONFIG_STRATEGY_DATASET_MISSING")  # type: ignore[arg-type]
         assert "Strategy 1" in err
         assert "dataset 'missing'" in err
 
@@ -257,8 +255,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
             training=DummyTraining(provider="single_node", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_SINGLE_NODE_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "single_node" in err
         assert "invalid for SingleNodeConfig" in err
 
@@ -271,8 +268,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         mock_sn = MagicMock()
         mock_sn.SingleNodeConfig.side_effect = OSError("disk error")
         with patch.dict(sys.modules, {"src.config.providers.single_node": mock_sn}):
-            ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_SINGLE_NODE_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "invalid for SingleNodeConfig" in err
         assert "disk error" in err
 
@@ -282,8 +278,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
             training=DummyTraining(provider="runpod", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_RUNPOD_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "runpod" in err
         assert "invalid for RunPodProviderConfig" in err
 
@@ -296,8 +291,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         mock_rp = MagicMock()
         mock_rp.RunPodProviderConfig.side_effect = OSError("network error")
         with patch.dict(sys.modules, {"src.config.providers.runpod": mock_rp}):
-            ok, err = validate_pipeline_providers_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_RUNPOD_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "invalid for RunPodProviderConfig" in err
         assert "network error" in err
 
@@ -316,8 +310,7 @@ class TestValidatePipelineActiveProviderIsRegisteredEdgeCases:
             training=DummyTraining(provider="some_provider", strategies=[]),
             datasets={"default": object()},
         )
-        ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDERS_MISSING")  # type: ignore[arg-type]
         assert "No providers configured" in err
 
     def test_negative_non_pipeline_module_not_found_error(self) -> None:
@@ -326,8 +319,7 @@ class TestValidatePipelineActiveProviderIsRegisteredEdgeCases:
             "src.config.validators.cross.importlib.import_module",
             side_effect=ModuleNotFoundError("bad module", name="some.other.module"),
         ):
-            ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_REGISTRY_LOAD_FAILED")  # type: ignore[arg-type]
         assert "Failed to load provider registry" in err
 
     def test_negative_generic_exception_from_factory_import(self) -> None:
@@ -336,8 +328,7 @@ class TestValidatePipelineActiveProviderIsRegisteredEdgeCases:
             "src.config.validators.cross.importlib.import_module",
             side_effect=RuntimeError("unexpected crash"),
         ):
-            ok, err = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_REGISTRY_LOAD_FAILED")  # type: ignore[arg-type]
         assert "Failed to load provider registry" in err
         assert "unexpected crash" in err
 
@@ -350,9 +341,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=False),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_inference_provider_config(cfg))  # type: ignore[arg-type]
 
     def test_positive_inference_none(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -361,9 +350,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=None,
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_inference_provider_config(cfg))  # type: ignore[arg-type]
 
     def test_positive_inference_unknown_provider_skipped(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -372,9 +359,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="custom_cloud"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_inference_provider_config(cfg))  # type: ignore[arg-type]
 
     def test_negative_single_node_missing_from_providers(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -383,8 +368,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="single_node"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_PROVIDER_MISSING")  # type: ignore[arg-type]
         assert "providers.single_node is missing" in err
 
     def test_negative_single_node_invalid_schema(self) -> None:
@@ -394,8 +378,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="single_node"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_SINGLE_NODE_INVALID")  # type: ignore[arg-type]
         assert "invalid for SingleNodeConfig" in err
 
     def test_negative_single_node_generic_exception(self) -> None:
@@ -408,8 +391,7 @@ class TestValidatePipelineInferenceProviderConfig:
         mock_sn = MagicMock()
         mock_sn.SingleNodeConfig.side_effect = OSError("disk error")
         with patch.dict(sys.modules, {"src.config.providers.single_node": mock_sn}):
-            ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_SINGLE_NODE_INVALID")  # type: ignore[arg-type]
         assert "invalid for SingleNodeConfig" in err
 
     def test_positive_single_node_valid_config(self) -> None:
@@ -419,9 +401,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="single_node"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_inference_provider_config(cfg))  # type: ignore[arg-type]
 
     def test_negative_runpod_missing_from_providers(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -430,8 +410,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="runpod"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_PROVIDER_MISSING")  # type: ignore[arg-type]
         assert "providers.runpod is missing" in err
 
     def test_negative_runpod_pod_is_none(self) -> None:
@@ -441,8 +420,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="runpod"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_RUNPOD_INFERENCE_POD_MISSING")  # type: ignore[arg-type]
         assert "inference.pod is missing" in err
 
     def test_negative_runpod_invalid_schema(self) -> None:
@@ -452,8 +430,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="runpod"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_RUNPOD_INVALID")  # type: ignore[arg-type]
         assert "invalid for RunPodProviderConfig" in err
 
     def test_negative_runpod_generic_exception(self) -> None:
@@ -466,8 +443,7 @@ class TestValidatePipelineInferenceProviderConfig:
         mock_rp = MagicMock()
         mock_rp.RunPodProviderConfig.side_effect = OSError("crash")
         with patch.dict(sys.modules, {"src.config.providers.runpod": mock_rp}):
-            ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+            err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_RUNPOD_INVALID")  # type: ignore[arg-type]
         assert "invalid for RunPodProviderConfig" in err
 
     def test_positive_runpod_valid_config_with_pod(self) -> None:
@@ -477,9 +453,7 @@ class TestValidatePipelineInferenceProviderConfig:
             datasets={},
             inference=DummyInferenceConfig(enabled=True, provider="runpod"),
         )
-        ok, err = validate_pipeline_inference_provider_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_inference_provider_config(cfg))  # type: ignore[arg-type]
 
 
 class TestValidatePipelineEvaluationRequiresInference:
@@ -490,9 +464,7 @@ class TestValidatePipelineEvaluationRequiresInference:
             datasets={},
             evaluation=DummyEvalConfig(enabled=False),
         )
-        ok, err = validate_pipeline_evaluation_requires_inference(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_evaluation_requires_inference(cfg))  # type: ignore[arg-type]
 
     def test_positive_eval_none(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -501,9 +473,7 @@ class TestValidatePipelineEvaluationRequiresInference:
             datasets={},
             evaluation=None,
         )
-        ok, err = validate_pipeline_evaluation_requires_inference(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_evaluation_requires_inference(cfg))  # type: ignore[arg-type]
 
     def test_negative_eval_enabled_inference_disabled(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -513,8 +483,7 @@ class TestValidatePipelineEvaluationRequiresInference:
             inference=DummyInferenceConfig(enabled=False),
             evaluation=DummyEvalConfig(enabled=True),
         )
-        ok, err = validate_pipeline_evaluation_requires_inference(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_evaluation_requires_inference(cfg), code="CONFIG_EVALUATION_REQUIRES_INFERENCE")  # type: ignore[arg-type]
         assert "evaluation.enabled=true requires inference.enabled=true" in err
 
     def test_negative_eval_enabled_inference_none(self) -> None:
@@ -525,8 +494,7 @@ class TestValidatePipelineEvaluationRequiresInference:
             inference=None,
             evaluation=DummyEvalConfig(enabled=True),
         )
-        ok, err = validate_pipeline_evaluation_requires_inference(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_evaluation_requires_inference(cfg), code="CONFIG_EVALUATION_REQUIRES_INFERENCE")  # type: ignore[arg-type]
         assert "evaluation.enabled=true requires inference.enabled=true" in err
 
     def test_positive_eval_enabled_inference_enabled(self) -> None:
@@ -537,9 +505,7 @@ class TestValidatePipelineEvaluationRequiresInference:
             inference=DummyInferenceConfig(enabled=True),
             evaluation=DummyEvalConfig(enabled=True),
         )
-        ok, err = validate_pipeline_evaluation_requires_inference(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_evaluation_requires_inference(cfg))  # type: ignore[arg-type]
 
 
 class TestValidatePipelineConfigReferences:

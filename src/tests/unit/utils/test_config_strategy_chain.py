@@ -93,6 +93,19 @@ def _warning_text(mock_warning) -> str:
     return "\n".join(str(call.args[0]) for call in mock_warning.call_args_list)
 
 
+def _assert_ok(result) -> None:
+    assert result.is_success()
+    assert result.unwrap() is None
+
+
+def _assert_err(result, *, code: str | None = None) -> str:
+    assert result.is_failure()
+    err = result.unwrap_err()
+    if code is not None:
+        assert err.code == code
+    return str(err)
+
+
 # =============================================================================
 # TEST: Constants
 # =============================================================================
@@ -163,21 +176,15 @@ class TestValidSinglePhaseChains:
     def test_single_phase_valid(self, strategy_type):
         """Single valid start strategy should pass."""
         strategies = [_mk_phase(strategy_type)]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_single_phase_cot_warns_but_passes(self):
         """Single CoT should emit warning but still pass validation."""
         strategies = [_mk_phase("cot")]
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
-
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "reason=invalid_start" in warning_text
 
 
@@ -198,11 +205,7 @@ class TestValidTwoPhaseChains:
     def test_two_phase_valid(self, chain):
         """Valid two-phase chains should pass."""
         strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True, f"Chain {chain} should be valid but got: {error_msg}"
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
 
 class TestValidThreePhaseChains:
@@ -226,11 +229,7 @@ class TestValidThreePhaseChains:
     def test_three_phase_valid(self, chain):
         """Valid three-phase chains should pass."""
         strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True, f"Chain {chain} should be valid but got: {error_msg}"
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
 
 class TestValidFourPhaseChains:
@@ -247,11 +246,7 @@ class TestValidFourPhaseChains:
     def test_four_phase_valid(self, chain):
         """Maximum length chains should pass."""
         strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True, f"Chain {chain} should be valid but got: {error_msg}"
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
 
 # =============================================================================
@@ -265,19 +260,13 @@ class TestInvalidChains:
     def test_empty_chain(self):
         """Empty chain should fail with appropriate error."""
         strategies = []
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_EMPTY")
         assert "cannot be empty" in error_msg
 
     def test_none_in_chain(self):
         """Chain with None should fail (BUG-010 fix)."""
         strategies = [None]  # type: ignore
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
     def test_none_in_middle_of_chain(self):
@@ -287,19 +276,13 @@ class TestInvalidChains:
             None,  # type: ignore
             _mk_phase("dpo", dataset="ds_dpo"),
         ]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
     def test_none_at_start(self):
         """None at start should fail."""
         strategies = [None, _mk_phase("sft")]  # type: ignore
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
 
@@ -312,11 +295,10 @@ class TestInvalidStartStrategies:
         strategies = [_mk_phase(invalid_start)]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "reason=invalid_start" in warning_text
         assert "got=cot" in warning_text
         assert "cpt" in warning_text
@@ -341,11 +323,10 @@ class TestInvalidTransitions:
         strategies = [_mk_phase(t, dataset=f"ds_{idx}_{t}") for idx, t in enumerate(chain)]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "reason=invalid_transition" in warning_text
         assert f"from={from_strategy}" in warning_text
         assert f"to={to_strategy}" in warning_text
@@ -359,11 +340,10 @@ class TestInvalidTransitions:
         ]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "from=dpo" in warning_text
         assert "valid=()" in warning_text
 
@@ -375,11 +355,10 @@ class TestInvalidTransitions:
         ]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "from=orpo" in warning_text
 
     def test_sapo_is_terminal_no_next(self):
@@ -390,11 +369,10 @@ class TestInvalidTransitions:
         ]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "from=sapo" in warning_text
 
 
@@ -415,10 +393,7 @@ class TestTrainingConfigIntegration:
             strategies=[_mk_phase("sft", dataset="ds_sft"), _mk_phase("dpo", dataset="ds_dpo")],
         )
 
-        is_valid, error_msg = config.validate_chain()
-
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(config.validate_chain())
 
     def test_training_config_invalid_start_warns_but_builds(self):
         """TrainingOnlyConfig should still build when ordering is only semantically invalid."""
@@ -465,9 +440,7 @@ class TestTrainingConfigIntegration:
             strategies=[_mk_phase("sft")],
         )
 
-        is_valid, error_msg = config.validate_chain()
-
-        assert is_valid is True
+        _assert_ok(config.validate_chain())
 
     def test_training_config_orpo_standalone(self):
         """ORPO as standalone (valid start + terminal) should work."""
@@ -478,9 +451,7 @@ class TestTrainingConfigIntegration:
             strategies=[_mk_phase("orpo")],
         )
 
-        is_valid, error_msg = config.validate_chain()
-
-        assert is_valid is True
+        _assert_ok(config.validate_chain())
 
     def test_training_config_sapo_standalone(self):
         """SAPO as standalone should work."""
@@ -491,9 +462,7 @@ class TestTrainingConfigIntegration:
             strategies=[_mk_phase("sapo")],
         )
 
-        is_valid, error_msg = config.validate_chain()
-
-        assert is_valid is True
+        _assert_ok(config.validate_chain())
 
 
 # =============================================================================
@@ -512,17 +481,13 @@ class TestBoundaryCases:
             _mk_phase("cot", dataset="ds_cot"),
             _mk_phase("dpo", dataset="ds_dpo"),
         ]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_all_terminal_strategies_can_be_standalone(self):
         """All terminal strategies should work as standalone."""
         for terminal in ["dpo", "orpo", "sapo"]:
             strategies = [_mk_phase(terminal)]
-            is_valid, _ = validate_strategy_chain(strategies)
-            assert is_valid is True
+            _assert_ok(validate_strategy_chain(strategies))
 
     def test_cpt_then_sft_then_cot_then_dpo(self):
         """Full pipeline CPT → SFT → CoT → DPO should work."""
@@ -533,10 +498,7 @@ class TestBoundaryCases:
             _mk_phase("dpo", dataset="ds_dpo"),
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_alternative_terminal_orpo(self):
         """SFT → CoT → ORPO should work."""
@@ -546,9 +508,7 @@ class TestBoundaryCases:
             _mk_phase("orpo", dataset="ds_orpo"),
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_alternative_terminal_sapo(self):
         """SFT → CoT → SAPO should work."""
@@ -558,9 +518,7 @@ class TestBoundaryCases:
             _mk_phase("sapo", dataset="ds_sapo"),
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(strategies))
 
 
 # =============================================================================
@@ -579,11 +537,10 @@ class TestErrorMessages:
         ]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "valid=('sft', 'cot')" in warning_text
 
     def test_warning_message_includes_strategy_names(self):
@@ -594,26 +551,21 @@ class TestErrorMessages:
         ]
 
         with patch("src.utils.logger.logger.warning") as mock_warning:
-            is_valid, error_msg = validate_strategy_chain(strategies)
+            result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(result)
         assert "from=sft" in warning_text
         assert "to=sft" in warning_text
 
     def test_empty_chain_error_is_clear(self):
         """Empty chain error should be clear."""
-        is_valid, error_msg = validate_strategy_chain([])
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error_msg.lower()
 
     def test_none_chain_error_is_clear(self):
         """None in chain error should be clear."""
-        is_valid, error_msg = validate_strategy_chain([None])  # type: ignore
-
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain([None]), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "none" in error_msg.lower()
 
 
@@ -631,8 +583,7 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft", dataset="shared"),
             _mk_phase("dpo", dataset="shared"),
         ]
-        is_valid, error_msg = validate_strategy_chain(strategies)
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "Duplicate dataset" in error_msg
         assert "shared" in error_msg
 
@@ -642,16 +593,14 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft"),  # dataset=None → "default"
             _mk_phase("dpo"),  # dataset=None → "default"
         ]
-        is_valid, error_msg = validate_strategy_chain(strategies)
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "Duplicate dataset" in error_msg
         assert "default" in error_msg
 
     def test_single_strategy_no_duplicate_check(self):
         """Single strategy never triggers duplicate check."""
         strategies = [_mk_phase("sft")]
-        is_valid, _ = validate_strategy_chain(strategies)
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_two_strategies_different_datasets_ok(self):
         """Two strategies with different datasets should pass."""
@@ -659,9 +608,7 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft", dataset="sft_data"),
             _mk_phase("dpo", dataset="pref_data"),
         ]
-        is_valid, error_msg = validate_strategy_chain(strategies)
-        assert is_valid is True
-        assert error_msg == ""
+        _assert_ok(validate_strategy_chain(strategies))
 
     def test_error_mentions_both_strategy_types(self):
         """Error should mention which strategies collide."""
@@ -669,7 +616,6 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft", dataset="same"),
             _mk_phase("cot", dataset="same"),
         ]
-        is_valid, error_msg = validate_strategy_chain(strategies)
-        assert is_valid is False
+        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "sft" in error_msg
         assert "cot" in error_msg

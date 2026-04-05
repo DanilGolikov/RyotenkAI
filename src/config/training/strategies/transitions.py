@@ -19,6 +19,7 @@ from src.constants import (
 
 if TYPE_CHECKING:
     from .phase import StrategyPhaseConfig
+    from src.utils.result import Result, StrategyError
 
 # Valid strategy transitions (from → to)
 # WPS407: use MappingProxyType for immutable module-level constant
@@ -40,7 +41,13 @@ VALID_STRATEGY_TRANSITIONS: MappingProxyType[str, tuple[str, ...]] = MappingProx
 VALID_START_STRATEGIES: tuple[str, ...] = (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_ORPO, STRATEGY_GRPO, STRATEGY_SAPO, STRATEGY_DPO)
 
 
-def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool, str]:
+def _strategy_chain_error(message: str, code: str) -> Result[None, StrategyError]:
+    from src.utils.result import Err, StrategyError
+
+    return Err(StrategyError(message=message, code=code))
+
+
+def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> Result[None, StrategyError]:
     """
     Validate a chain of training strategies.
 
@@ -52,15 +59,16 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
     """
     # Local import to avoid heavy side-effects at module import time.
     from src.utils.logger import logger
+    from src.utils.result import Ok
 
     if not strategies:
         logger.debug("[CFG:CHAIN_INVALID] reason=empty_chain")
-        return False, "Strategy chain cannot be empty"
+        return _strategy_chain_error("Strategy chain cannot be empty", "STRATEGY_CHAIN_EMPTY")
 
     # FIX BUG-010: Check for None elements before accessing attributes
     if any(s is None for s in strategies):
         logger.debug("[CFG:CHAIN_INVALID] reason=contains_none")
-        return False, "Strategy chain cannot contain None values"
+        return _strategy_chain_error("Strategy chain cannot contain None values", "STRATEGY_CHAIN_CONTAINS_NONE")
 
     chain_str = " → ".join(s.strategy_type for s in strategies)
     logger.debug(f"[CFG:CHAIN_VALIDATING] chain={chain_str}")
@@ -101,15 +109,18 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
                     f"[CFG:CHAIN_INVALID] reason=duplicate_dataset, dataset={resolved}, "
                     f"strategies={prev_type}+{cur_type}"
                 )
-                return False, (
-                    f"Duplicate dataset '{resolved}': strategies '{prev_type}' and '{cur_type}' "
-                    f"reference the same dataset. Each strategy must use its own dataset entry "
-                    f"(different data formats are uploaded to separate remote paths)."
+                return _strategy_chain_error(
+                    (
+                        f"Duplicate dataset '{resolved}': strategies '{prev_type}' and '{cur_type}' "
+                        f"reference the same dataset. Each strategy must use its own dataset entry "
+                        f"(different data formats are uploaded to separate remote paths)."
+                    ),
+                    "STRATEGY_CHAIN_DUPLICATE_DATASET",
                 )
             seen_datasets[resolved] = phase.strategy_type
 
     logger.debug(f"[CFG:CHAIN_CHECKED] chain={chain_str}, phases={len(strategies)}")
-    return True, ""
+    return Ok(None)
 
 
 __all__ = [

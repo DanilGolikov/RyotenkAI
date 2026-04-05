@@ -201,6 +201,15 @@ class TestTrainingOnlyConfig:
         assert len(cfg.strategies) == 2
         assert "reason=invalid_transition" in str(mock_warning.call_args_list)
 
+    def test_structural_strategy_chain_error_preserves_error_code_in_validation(self) -> None:
+        with pytest.raises(ValidationError, match=r"STRATEGY_CHAIN_DUPLICATE_DATASET"):
+            _training_cfg(
+                strategies=[
+                    StrategyPhaseConfig(strategy_type="sft", dataset="shared"),
+                    StrategyPhaseConfig(strategy_type="dpo", dataset="shared"),
+                ]
+            )
+
     def test_pipeline_get_adapter_config_uses_matching_block(self) -> None:
         cfg = _pipeline_cfg(type="qlora")
         adapter = cfg.get_adapter_config()

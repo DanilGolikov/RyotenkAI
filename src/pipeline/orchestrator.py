@@ -206,12 +206,13 @@ class PipelineOrchestrator:
         # Check strategy chain EARLY (before any stages run)
         strategies = self.config.training.strategies
         if strategies:
-            is_valid, error_msg = validate_strategy_chain(strategies)
-            if not is_valid:
+            validation = validate_strategy_chain(strategies)
+            if validation.is_failure():
+                error = validation.unwrap_err()
                 chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
                 logger.error(f"Invalid strategy chain: {chain_str}")
-                logger.error(f"   Error: {error_msg}")
-                raise ValueError(f"Invalid strategy chain: {error_msg}")
+                logger.error(f"   Error: {error}")
+                raise ValueError(f"Invalid strategy chain: {error}")
             chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
             logger.info(f"Strategy chain checked: {chain_str}")
 

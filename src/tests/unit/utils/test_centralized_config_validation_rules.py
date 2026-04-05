@@ -129,6 +129,21 @@ def test_rule_2_dataset_reference_must_exist_in_registry() -> None:
         )
 
 
+def test_rule_2_dataset_reference_preserves_config_error_code() -> None:
+    with pytest.raises(ValidationError, match=r"CONFIG_STRATEGY_DATASET_MISSING"):
+        _pipeline_cfg(
+            training=TrainingOnlyConfig(
+                provider=None,
+                type="qlora",
+                qlora=_lora_cfg(),
+                hyperparams=_hp_cfg(),
+                strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="missing")],
+            ),
+            providers={},
+            datasets={"default": _dataset_cfg_local()},
+        )
+
+
 def test_rule_3_training_provider_must_exist_in_providers_registry_if_set() -> None:
     with pytest.raises(ValidationError, match=r"training\.provider='runpod' not found"):
         _pipeline_cfg(
