@@ -4,6 +4,7 @@ import contextlib
 from pathlib import Path
 from typing import ClassVar
 
+from rich.text import Text
 from textual import on
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -11,15 +12,22 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Select, Static
 
 from src.pipeline.domain import build_run_directory
-from src.tui.launch import LaunchRequest, RestartPointOption
+from src.tui.launch import (
+    MODE_FRESH,
+    MODE_NEW_RUN,
+    MODE_RESTART,
+    MODE_RESUME,
+    LaunchRequest,
+    RestartPointOption,
+)
 from src.tui.launch_state import build_submittable_launch_request, mode_label, prepare_launch_mode_state
 from src.tui.screens._hotkey_bar import DockedHotkeyBar
 
 _MODE_OPTIONS = [
-    ("New Run", "new_run"),
-    ("Fresh attempt", "fresh"),
-    ("Resume", "resume"),
-    ("Start from stage", "restart"),
+    ("New Run", MODE_NEW_RUN),
+    ("Fresh attempt", MODE_FRESH),
+    ("Resume", MODE_RESUME),
+    ("Start from stage", MODE_RESTART),
 ]
 
 _LOG_LEVEL_OPTIONS = [
@@ -29,13 +37,20 @@ _LOG_LEVEL_OPTIONS = [
 
 
 def _run_dir_value_for_mode(mode: str, *, context_run_dir: Path | None, new_run_dir: Path) -> str:
-    if mode == "new_run":
+    if mode == MODE_NEW_RUN:
         return str(new_run_dir)
     return str(context_run_dir) if context_run_dir is not None else ""
 
 
 def _restart_section_visible(mode: str) -> bool:
-    return mode == "restart"
+    return mode == MODE_RESTART
+
+
+def _update_plain_text(widget: Static, message: str, *, style: str | None = None) -> None:
+    text = Text(message)
+    if style:
+        text.stylize(style)
+    widget.update(text)
 
 
 class _FocusSink(Static):
@@ -82,9 +97,9 @@ class _LaunchConfirmModal(ModalScreen[bool]):
             f"[bold]Config:[/bold] {config_text}",
             f"[bold]Log level:[/bold] {self._request.log_level}",
         ]
-        if self._request.mode != "new_run":
+        if self._request.mode != MODE_NEW_RUN:
             lines.insert(0, f"[bold]Run dir:[/bold] {self._request.run_dir}")
-        if self._request.mode == "restart":
+        if self._request.mode == MODE_RESTART:
             lines.append(f"[bold]Stage:[/bold] {stage_text}")
         body = "\n".join(lines) + "\n\n[dim]Enter / Y — confirm    Esc / N — cancel[/dim]"
         with Vertical(id="launch-confirm-dialog"):
@@ -180,7 +195,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
     def __init__(
         self,
         *,
-        default_mode: str = "new_run",
+        default_mode: str = MODE_NEW_RUN,
         default_run_dir: Path | None = None,
         default_config_path: Path | None = None,
     ) -> None:
@@ -188,9 +203,9 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         self._default_mode = default_mode
         self._default_config_path = default_config_path
         generated_run_dir, _created_at = build_run_directory(base_dir=Path("runs"))
-        self._context_run_dir = default_run_dir if default_mode != "new_run" else None
+        self._context_run_dir = default_run_dir if default_mode != MODE_NEW_RUN else None
         self._new_run_dir = (
-            default_run_dir if default_mode == "new_run" and default_run_dir is not None else generated_run_dir
+            default_run_dir if default_mode == MODE_NEW_RUN and default_run_dir is not None else generated_run_dir
         )
         self._restart_points: list[RestartPointOption] = []
         self._history_lock = False
@@ -263,7 +278,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         target_section = self.query_one("#launch-target-section", Vertical)
         restart_section = self.query_one("#launch-restart-section", Vertical)
         run_dir_input = self.query_one("#launch-run-dir", Input)
-        if mode == "new_run":
+        if mode == MODE_NEW_RUN:
             target_section.add_class("is-hidden")
             run_dir_input.value = _run_dir_value_for_mode(
                 mode,
@@ -299,7 +314,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         selector = self.query_one("#launch-restart-stage", Select)
         mode_selector = self.query_one("#launch-mode", Select)
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
 
         mode = self._selected_mode()
         run_dir = self._read_run_dir()
@@ -311,10 +326,8 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
             selector.set_options([])
             selector.clear()
             selector.disabled = True
-            from rich.markup import escape
-
-            error_prefix = "Cannot prepare resume" if mode == "resume" else "Cannot load restart points"
-            info.update(f"[red]{error_prefix}: {escape(str(exc))}[/red]")
+            error_prefix = "Cannot prepare resume" if mode == MODE_RESUME else "Cannot load restart points"
+            _update_plain_text(info, f"{error_prefix}: {exc}", style="red")
             self._refresh_footer()
             return
 
@@ -346,7 +359,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
                 parts.append("[bold]Enter[/bold] Open list")
             else:
                 parts.append("[bold]Enter[/bold] Launch")
-            if mode == "restart":
+            if mode == MODE_RESTART:
                 parts.append("[bold]P[/bold] Reload")
             if isinstance(focused, Input) and focused.id == "launch-config-path":
                 parts.append("[bold]⌃z[/bold] Undo")
@@ -363,14 +376,14 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         from src.tui.screens.file_preview_modal import FilePreviewModal
 
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
         focused = self.focused
         if not isinstance(focused, Input) or focused.id != "launch-config-path":
             self._refresh_footer()
             return
         config_path = self._read_config_path()
         if config_path is None:
-            error.update("Config path is empty.")
+            _update_plain_text(error, "Config path is empty.", style="red")
             self._refresh_footer()
             return
         self._release_focus()
@@ -380,10 +393,10 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         from src.tui.screens.config_browser_modal import StructuredConfigBrowser
 
         error = self.query_one("#launch-error", Static)
-        error.update("")
+        _update_plain_text(error, "")
         config_path = self._read_config_path()
         if config_path is None:
-            error.update("Config path is empty.")
+            _update_plain_text(error, "Config path is empty.", style="red")
             self._refresh_footer()
             return
         self._release_focus()
@@ -396,10 +409,10 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         config_path = self._read_config_path()
         restart_stage_value = self.query_one("#launch-restart-stage", Select).value
         log_level = self._selected_log_level()
-        restart_stage = None if mode != "restart" or restart_stage_value is Select.BLANK else str(restart_stage_value)
+        restart_stage = None if mode != MODE_RESTART or restart_stage_value is Select.BLANK else str(restart_stage_value)
 
         if run_dir is None:
-            error.update("Run directory is required.")
+            _update_plain_text(error, "Run directory is required.", style="red")
             return
 
         try:
@@ -411,7 +424,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
                 log_level=log_level,
             )
         except ValueError as exc:
-            error.update(str(exc))
+            _update_plain_text(error, str(exc), style="red")
             return
         if config_path is None and resolved_config is not None:
             self.query_one("#launch-config-path", Input).value = str(resolved_config)
@@ -475,7 +488,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         if action == "submit":
             return not isinstance(self.focused, Select | OptionList)
         if action == "reload_points":
-            return self._selected_mode() == "restart"
+            return self._selected_mode() == MODE_RESTART
         if action == "undo_input":
             return isinstance(self.focused, Input) and getattr(self.focused, "id", None) != "launch-run-dir"
         if action == "browse_config":

@@ -99,7 +99,7 @@ def _setup_mlflow(config: PipelineConfig) -> MLflowManager | None:
         MLflowManager instance when tracking is available, otherwise None
     """
     try:
-        manager = MLflowManager(config)
+        manager = MLflowManager(config, runtime_role="training")
         if not manager.setup():
             logger.warning("MLflow setup failed or tracking backend is unreachable; continuing without MLflow")
             return None

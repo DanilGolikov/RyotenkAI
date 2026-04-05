@@ -107,10 +107,15 @@ class MlflowPhaseLogger:
             mlflow.end_run(status=status)
             logger.debug(f"[PE:MLFLOW_NESTED_RUN_ENDED] status={status}")
 
-            # CRITICAL: Restore parent run as active
+            # MLflow automatically restores the parent run after ending a nested run.
+            # Only call start_run if the parent is not already the active run.
             if parent_run_id:
-                mlflow.start_run(run_id=parent_run_id, nested=False)
-                logger.debug(f"[PE:MLFLOW_PARENT_RUN_RESTORED] run_id={parent_run_id}")
+                active = mlflow.active_run()
+                if active is None or active.info.run_id != parent_run_id:
+                    mlflow.start_run(run_id=parent_run_id, nested=False)
+                    logger.debug(f"[PE:MLFLOW_PARENT_RUN_RESTORED] run_id={parent_run_id}")
+                else:
+                    logger.debug(f"[PE:MLFLOW_PARENT_RUN_ALREADY_ACTIVE] run_id={parent_run_id}")
 
                 mlflow_cfg = self.config.experiment_tracking.mlflow
                 if mlflow_cfg and mlflow_cfg.system_metrics_callback_enabled:
@@ -215,6 +220,21 @@ class MlflowPhaseLogger:
 
         self._mlflow_manager.log_params({"checkpoint_path": checkpoint_path})
         self._mlflow_manager.set_tags({TAG_PHASE_IDX: str(phase_idx), "status": "completed"})
+
+    def log_cache_hit(self, phase_idx: int, phase: StrategyPhaseConfig) -> None:
+        """Log adapter cache hit to MLflow nested run."""
+        if self._mlflow_manager is None:
+            return
+
+        self._mlflow_manager.set_tags(
+            {
+                TAG_PHASE_IDX: str(phase_idx),
+                TAG_STRATEGY_TYPE: phase.strategy_type,
+                "status": "cache_hit",
+                "adapter_cache.hit": "true",
+            }
+        )
+        self._mlflow_manager.log_params({"adapter_cache.hit": True})
 
     def log_error(self, phase_idx: int, error_type: str, error_msg: str) -> None:
         """Log error to MLflow."""

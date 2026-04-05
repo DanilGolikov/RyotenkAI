@@ -416,7 +416,9 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         att_dur = _fmt_duration(attempt.started_at, attempt.completed_at)
         started = (attempt.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
         completed = (attempt.completed_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
-        action = attempt.restart_from_stage or attempt.effective_action or "fresh"
+        from src.tui.launch import MODE_FRESH
+
+        action = attempt.restart_from_stage or attempt.effective_action or MODE_FRESH
         config_hash = (attempt.training_critical_config_hash or "—")[:16]
 
         from rich.text import Text

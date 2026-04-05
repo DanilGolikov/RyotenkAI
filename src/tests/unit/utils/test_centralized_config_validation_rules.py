@@ -1,5 +1,6 @@
 import pytest
 from pydantic import ValidationError
+from unittest.mock import patch
 
 from src.utils.config import (
     DatasetConfig,
@@ -81,8 +82,6 @@ def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
         mlflow=MLflowConfig(
             tracking_uri="http://127.0.0.1:5002",
             experiment_name="test-exp",
-            log_artifacts=False,
-            log_model=False,
         )
     )
 
@@ -98,21 +97,38 @@ def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: di
     )
 
 
-def test_rule_1_strategies_chain_invalid_transition_fails_fast() -> None:
-    with pytest.raises(ValidationError, match="Invalid transition"):
-        TrainingOnlyConfig(
+def test_rule_1_strategies_chain_invalid_transition_warns_only() -> None:
+    with patch("src.utils.logger.logger.warning") as mock_warning:
+        cfg = TrainingOnlyConfig(
             type="qlora",
             qlora=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
-                StrategyPhaseConfig(strategy_type="sft"),
-                StrategyPhaseConfig(strategy_type="cpt"),
+                StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
+                StrategyPhaseConfig(strategy_type="cpt", dataset="cpt_data"),
             ],
         )
+    assert len(cfg.strategies) == 2
+    assert "reason=invalid_transition" in str(mock_warning.call_args_list)
 
 
 def test_rule_2_dataset_reference_must_exist_in_registry() -> None:
     with pytest.raises(ValidationError, match=r"references dataset 'missing'"):
+        _pipeline_cfg(
+            training=TrainingOnlyConfig(
+                provider=None,
+                type="qlora",
+                qlora=_lora_cfg(),
+                hyperparams=_hp_cfg(),
+                strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="missing")],
+            ),
+            providers={},
+            datasets={"default": _dataset_cfg_local()},
+        )
+
+
+def test_rule_2_dataset_reference_preserves_config_error_code() -> None:
+    with pytest.raises(ValidationError, match=r"CONFIG_STRATEGY_DATASET_MISSING"):
         _pipeline_cfg(
             training=TrainingOnlyConfig(
                 provider=None,

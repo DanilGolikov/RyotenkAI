@@ -40,7 +40,7 @@ from src.training.constants import (
     HP_MAX_COMPLETION_LENGTH,
     HP_MAX_LENGTH,
 )
-from src.training.reward_plugins import build_reward_plugin_kwargs
+from src.training.reward_plugins import build_reward_plugin_result
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -199,6 +199,7 @@ def create_training_args(
     *,
     output_dir: str | None = None,
     strategy_instance: TrainingStrategy | None = None,
+    extra_config_kwargs: dict[str, Any] | None = None,
 ) -> Any:
     """
     Create TRL training arguments from config and strategy.
@@ -308,6 +309,9 @@ def create_training_args(
                 args["sapo_temperature_pos"] = get_hp("sapo_temperature_pos", 1.0)
                 args["sapo_temperature_neg"] = get_hp("sapo_temperature_neg", 1.0)
 
+    if extra_config_kwargs:
+        args.update(extra_config_kwargs)
+
     training_args = config_class(**args)
 
     logger.debug(
@@ -364,7 +368,27 @@ def create_trainer(
     else:
         trainer_class = STRATEGY_TRAINERS[strategy_type]
 
-    training_args = create_training_args(config, strategy, strategy_instance=strategy_instance)
+    needs_reward_plugin = (
+        strategy_instance.requires_reward_plugin
+        if strategy_instance is not None
+        else strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO)
+    )
+
+    reward_result = None
+    if needs_reward_plugin:
+        reward_result = build_reward_plugin_result(
+            train_dataset=train_dataset,
+            phase_config=strategy,
+            pipeline_config=config,
+        )
+        logger.info("[TRAINER:%s] Using configured reward plugin", strategy_type.upper())
+
+    training_args = create_training_args(
+        config,
+        strategy,
+        strategy_instance=strategy_instance,
+        extra_config_kwargs=reward_result.config_kwargs if reward_result is not None else None,
+    )
 
     trainer_kwargs: dict[str, Any] = {
         "model": model,
@@ -379,20 +403,9 @@ def create_trainer(
     if eval_dataset is not None:
         trainer_kwargs["eval_dataset"] = eval_dataset
 
-    needs_reward_plugin = (
-        strategy_instance.requires_reward_plugin
-        if strategy_instance is not None
-        else strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO)
-    )
-    if needs_reward_plugin:
-        trainer_kwargs.update(
-            build_reward_plugin_kwargs(
-                train_dataset=train_dataset,
-                phase_config=strategy,
-                pipeline_config=config,
-            )
-        )
-        logger.info("[TRAINER:%s] Using configured reward plugin", strategy_type.upper())
+    if reward_result is not None:
+        trainer_kwargs.update(reward_result.trainer_kwargs)
+        logger.info("[TRAINER:%s] Reward funcs applied", strategy_type.upper())
 
     trainer = trainer_class(**trainer_kwargs)
 

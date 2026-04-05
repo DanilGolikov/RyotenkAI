@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import Field, field_validator, model_validator
 
 from src.constants import STRATEGY_SFT
@@ -11,6 +13,9 @@ from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
 from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
 from .lora import AdaLoraConfig, LoraConfig  # noqa: TC001
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
+
+if TYPE_CHECKING:
+    from src.utils.result import Result, StrategyError
 
 
 class TrainingOnlyConfig(StrictBaseModel):
@@ -107,13 +112,13 @@ class TrainingOnlyConfig(StrictBaseModel):
     @classmethod
     def validate_strategies_chain(cls, v: list[StrategyPhaseConfig]) -> list[StrategyPhaseConfig]:
         """
-        Fail-fast validation for strategy chain.
+        Fail-fast validation for critical strategy-chain issues.
 
-        This MUST run at config load time so we never construct an invalid TrainingOnlyConfig.
+        Invalid ordering is warning-only; structural issues must still fail at config load time.
         """
-        ok, err = validate_strategy_chain(v)
-        if not ok:
-            raise ValueError(err)
+        validation = validate_strategy_chain(v)
+        if validation.is_failure():
+            raise ValueError(str(validation.unwrap_err()))
         return v
 
     @model_validator(mode="after")
@@ -182,7 +187,7 @@ class TrainingOnlyConfig(StrictBaseModel):
             total += epochs
         return total
 
-    def validate_chain(self) -> tuple[bool, str]:
+    def validate_chain(self) -> Result[None, StrategyError]:
         """Validate the strategy chain transitions."""
         return validate_strategy_chain(self.strategies)
 

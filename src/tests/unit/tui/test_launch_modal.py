@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rich.text import Text
+
 from src.tui.screens.launch_modal import (
     LaunchModal,
     _LOG_LEVEL_OPTIONS,
     _restart_section_visible,
     _run_dir_value_for_mode,
+    _update_plain_text,
 )
 
 
@@ -52,3 +55,20 @@ def test_launch_modal_exposes_log_level_options() -> None:
 def test_launch_modal_body_is_scrollable_for_taller_modes() -> None:
     assert "max-height: 80vh;" in LaunchModal.DEFAULT_CSS
     assert "overflow-y: auto;" in LaunchModal.DEFAULT_CSS
+
+
+def test_update_plain_text_renders_validation_errors_without_markup_parsing() -> None:
+    class DummyStatic:
+        def __init__(self) -> None:
+            self.content = None
+
+        def update(self, content) -> None:
+            self.content = content
+
+    widget = DummyStatic()
+    message = "1 validation error for PipelineConfig\ntraining.strategies.0: Input should be a valid list[dict]"
+
+    _update_plain_text(widget, message, style="red")
+
+    assert isinstance(widget.content, Text)
+    assert widget.content.plain == message

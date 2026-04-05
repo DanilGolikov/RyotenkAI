@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.orchestrator import PipelineOrchestrator
-from src.utils.result import AppError, Err, Ok
+from src.utils.result import AppError, Err, Ok, StrategyError
 
 # ========================================================================
 # FIXTURES
@@ -130,7 +130,7 @@ class TestPipelineOrchestratorInitialization:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
 
             orchestrator = PipelineOrchestrator(mock_config_path)
 
@@ -177,7 +177,7 @@ class TestPipelineOrchestratorInitialization:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
 
             orchestrator = PipelineOrchestrator(mock_config_path)
 
@@ -185,15 +185,15 @@ class TestPipelineOrchestratorInitialization:
             mock_validate.assert_called_once_with([mock_strategy1, mock_strategy2])
             assert orchestrator.config is mock_config
 
-    def test_init_invalid_strategy_chain_raises_valueerror(
+    def test_init_critical_strategy_chain_error_raises_valueerror(
         self,
         mock_config_path: Path,
         mock_config: MagicMock,
         mock_secrets: MagicMock,
     ):
-        """Test that invalid strategy chain raises ValueError."""
+        """Critical strategy-chain errors should still raise ValueError."""
         mock_strategy = MagicMock()
-        mock_strategy.strategy_type = "invalid"
+        mock_strategy.strategy_type = "sft"
         mock_config.training.strategies = [mock_strategy]
 
         with (
@@ -203,7 +203,9 @@ class TestPipelineOrchestratorInitialization:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (False, "Invalid strategy type")
+            mock_validate.return_value = Err(
+                StrategyError("Duplicate dataset 'shared'", code="STRATEGY_CHAIN_DUPLICATE_DATASET")
+            )
 
             with pytest.raises(ValueError, match="Invalid strategy chain"):
                 PipelineOrchestrator(mock_config_path)
@@ -228,7 +230,7 @@ class TestPipelineOrchestratorInitialization:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
 
             orchestrator = PipelineOrchestrator(mock_config_path)
 
@@ -268,7 +270,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -301,7 +303,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -334,7 +336,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -372,7 +374,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -411,7 +413,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -448,7 +450,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -476,7 +478,7 @@ class TestPipelineOrchestratorHappyPath:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -516,7 +518,7 @@ class TestPipelineOrchestratorErrorHandling:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -558,7 +560,7 @@ class TestPipelineOrchestratorErrorHandling:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -589,7 +591,7 @@ class TestPipelineOrchestratorErrorHandling:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -619,7 +621,7 @@ class TestPipelineOrchestratorErrorHandling:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -650,7 +652,7 @@ class TestPipelineOrchestratorErrorHandling:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -692,7 +694,7 @@ class TestPipelineOrchestratorPartialExecution:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -735,7 +737,7 @@ class TestPipelineOrchestratorPartialExecution:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -768,7 +770,7 @@ class TestPipelineOrchestratorPartialExecution:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -817,7 +819,7 @@ class TestPipelineOrchestratorMLflowLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -853,7 +855,7 @@ class TestPipelineOrchestratorMLflowLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -891,7 +893,7 @@ class TestPipelineOrchestratorMLflowLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -928,7 +930,7 @@ class TestPipelineOrchestratorMLflowLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -975,7 +977,7 @@ class TestPipelineOrchestratorMLflowAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = [{"loss": 0.1, "accuracy": 0.9}, {"loss": 0.2, "accuracy": 0.95}]
@@ -1014,7 +1016,7 @@ class TestPipelineOrchestratorMLflowAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = {}
@@ -1052,7 +1054,7 @@ class TestPipelineOrchestratorMLflowAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.side_effect = Exception("MLflow error")
@@ -1099,7 +1101,7 @@ class TestPipelineOrchestratorReportGeneration:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1141,7 +1143,7 @@ class TestPipelineOrchestratorReportGeneration:
             MockReportGen.return_value = mock_report_gen
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1180,7 +1182,7 @@ class TestPipelineOrchestratorReportGeneration:
             MockReportGen.side_effect = Exception("Report generation failed")
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1208,7 +1210,7 @@ class TestPipelineOrchestratorReportGeneration:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None  # MLflow disabled
 
@@ -1245,7 +1247,7 @@ class TestPipelineOrchestratorHelpers:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -1289,7 +1291,7 @@ class TestPipelineOrchestratorHelpers:
 
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -1322,7 +1324,7 @@ class TestPipelineOrchestratorHelpers:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -1361,7 +1363,7 @@ class TestPipelineOrchestratorEdgeCases:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -1388,7 +1390,7 @@ class TestPipelineOrchestratorEdgeCases:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = []  # Empty stages
             mock_setup_mlflow.return_value = None
 
@@ -1418,7 +1420,7 @@ class TestPipelineOrchestratorEdgeCases:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None
 
@@ -1478,7 +1480,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:3]  # Only first 3 stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1527,7 +1529,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:4]  # First 4 stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1573,7 +1575,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:1]  # Only first stage
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1620,7 +1622,7 @@ class TestPipelineOrchestratorMetricsAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1658,7 +1660,7 @@ class TestPipelineOrchestratorMetricsAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = []  # No metrics
@@ -1687,7 +1689,7 @@ class TestPipelineOrchestratorMetricsAggregation:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = None  # MLflow disabled
 
@@ -1733,7 +1735,7 @@ class TestPipelineOrchestratorExceptionHandlers:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1772,7 +1774,7 @@ class TestPipelineOrchestratorExceptionHandlers:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
 
@@ -1826,7 +1828,7 @@ class TestPipelineOrchestratorPrintSummary:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:3]
             mock_setup_mlflow.return_value = None
 
@@ -1866,7 +1868,7 @@ class TestPipelineOrchestratorPrintSummary:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:2]
             mock_setup_mlflow.return_value = None
 
@@ -1897,7 +1899,7 @@ class TestPipelineOrchestratorPrintSummary:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:2]
             mock_setup_mlflow.return_value = None
 
@@ -1939,7 +1941,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:5]
             mock_setup_mlflow.return_value = None
 
@@ -1973,7 +1975,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:5]
             mock_setup_mlflow.return_value = None
 
@@ -2020,7 +2022,7 @@ class TestPipelineOrchestratorAggregationDetails:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = [{"train_loss": 0.45}]
@@ -2060,7 +2062,7 @@ class TestPipelineOrchestratorAggregationDetails:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = [{"train_runtime": 120.5}, {"train_runtime": 150.3}]
@@ -2099,7 +2101,7 @@ class TestPipelineOrchestratorAggregationDetails:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = [{"global_step": 100}, {"global_step": 200}]
@@ -2138,7 +2140,7 @@ class TestPipelineOrchestratorAggregationDetails:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
             mock_setup_mlflow.return_value = mock_mlflow_manager
             mock_collect.return_value = [
@@ -2182,7 +2184,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:2]
             mock_setup_mlflow.return_value = None
 
@@ -2209,7 +2211,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages[:3]  # Skip retriever
             mock_setup_mlflow.return_value = None
 
@@ -2246,7 +2248,7 @@ class TestPipelineOrchestratorMLflowInternals:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
 
             orchestrator = PipelineOrchestrator(mock_config_path)
@@ -2279,7 +2281,7 @@ class TestPipelineOrchestratorMLflowInternals:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
 
             orchestrator = PipelineOrchestrator(mock_config_path)
@@ -2316,7 +2318,7 @@ class TestPipelineOrchestratorMLflowInternals:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (True, None)
+            mock_validate.return_value = Ok(None)
             mock_init_stages.return_value = mock_stages
 
             orchestrator = PipelineOrchestrator(mock_config_path)

@@ -36,7 +36,7 @@ import inspect
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from src.training.constants import DEFAULT_EVAL_SAVE_STEPS
-from src.training.reward_plugins import build_reward_plugin_kwargs
+from src.training.reward_plugins import build_reward_plugin_result
 from src.training.strategies.factory import StrategyFactory
 from src.utils.logger import logger
 
@@ -153,6 +153,22 @@ class TrainerFactory:
         strategy_config_kwargs = strategy.build_config_kwargs(hp)
         config_kwargs.update(strategy_config_kwargs)
 
+        # Resolve reward plugin config kwargs before instantiating the TRL config.
+        # reward_weights (and any future config-level plugin params) must reach the
+        # config constructor directly — not via setattr after the fact.
+        reward_result = None
+        if strategy.requires_reward_plugin:
+            if phase_config is None:
+                raise ValueError(
+                    f"{strategy_type.upper()} strategy requires explicit phase_config for reward plugin resolution"
+                )
+            reward_result = build_reward_plugin_result(
+                train_dataset=train_dataset,
+                phase_config=phase_config,
+                pipeline_config=config,
+            )
+            config_kwargs.update(reward_result.config_kwargs)
+
         # Enable evaluation only when eval_dataset is provided
         if eval_dataset is not None:
             # Default eval cadence must be compatible with save cadence when load_best_model_at_end=True.
@@ -248,18 +264,8 @@ class TrainerFactory:
             training_config,
             **strategy_kwargs,
         )
-        if strategy.requires_reward_plugin:
-            if phase_config is None:
-                raise ValueError(
-                    f"{strategy_type.upper()} strategy requires explicit phase_config for reward plugin resolution"
-                )
-            strategy_trainer_kwargs.update(
-                build_reward_plugin_kwargs(
-                    train_dataset=train_dataset,
-                    phase_config=phase_config,
-                    pipeline_config=config,
-                )
-            )
+        if reward_result is not None:
+            strategy_trainer_kwargs.update(reward_result.trainer_kwargs)
         trainer_kwargs.update(strategy_trainer_kwargs)
 
         # 5. Add Callbacks (Common Logic)

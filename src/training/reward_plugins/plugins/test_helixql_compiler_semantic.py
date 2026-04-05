@@ -3,8 +3,9 @@ Tests for HelixQLCompilerSemanticRewardPlugin.
 
 Coverage:
 - _validate_params: no longer checks backend (always compile)
+- build_config_kwargs: returns reward_weights with correct values and count
 - build_trainer_kwargs: missing required dataset fields
-- build_trainer_kwargs: returns correct keys (reward_funcs, reward_weights)
+- build_trainer_kwargs: returns reward_funcs only (no reward_weights)
 - compiler_reward: helix CLI missing → -1.0 for all
 - compiler_reward: empty schema/query → -1.0
 - compiler_reward: columns coercion from list/scalar/missing
@@ -80,17 +81,54 @@ class TestValidateParams:
 
 
 # ---------------------------------------------------------------------------
+# build_config_kwargs
+# ---------------------------------------------------------------------------
+
+
+class TestBuildConfigKwargs:
+    def test_returns_reward_weights(self) -> None:
+        plugin = _make_plugin()
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert "reward_weights" in result
+
+    def test_reward_weights_are_1_0(self) -> None:
+        plugin = _make_plugin()
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert all(w == 1.0 for w in result["reward_weights"])
+
+    def test_reward_weights_count_matches_reward_funcs(self) -> None:
+        plugin = _make_plugin()
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        config_result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        trainer_result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert len(config_result["reward_weights"]) == len(trainer_result["reward_funcs"])
+
+    def test_does_not_contain_reward_funcs(self) -> None:
+        plugin = _make_plugin()
+        ds = _make_dataset_with_features("prompt", "reference_answer")
+        result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert "reward_funcs" not in result
+
+
+# ---------------------------------------------------------------------------
 # build_trainer_kwargs
 # ---------------------------------------------------------------------------
 
 
 class TestBuildTrainerKwargs:
-    def test_returns_reward_funcs_and_weights(self) -> None:
+    def test_returns_reward_funcs(self) -> None:
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
         result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         assert "reward_funcs" in result
-        assert "reward_weights" in result
+
+    def test_does_not_contain_reward_weights(self) -> None:
+        plugin = _make_plugin()
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert "reward_weights" not in result
 
     def test_reward_funcs_has_two_functions(self) -> None:
         plugin = _make_plugin()
@@ -98,18 +136,6 @@ class TestBuildTrainerKwargs:
         result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         assert len(result["reward_funcs"]) == 2
         assert all(callable(f) for f in result["reward_funcs"])
-
-    def test_reward_weights_match_funcs_count(self) -> None:
-        plugin = _make_plugin()
-        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
-        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
-        assert len(result["reward_weights"]) == len(result["reward_funcs"])
-
-    def test_reward_weights_are_1_0(self) -> None:
-        plugin = _make_plugin()
-        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
-        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
-        assert all(w == 1.0 for w in result["reward_weights"])
 
     def test_missing_prompt_field_raises(self) -> None:
         plugin = _make_plugin()

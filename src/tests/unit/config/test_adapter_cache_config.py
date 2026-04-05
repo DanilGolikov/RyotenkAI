@@ -30,6 +30,19 @@ from src.config.validators.training import validate_strategy_phase_config
 pytestmark = pytest.mark.unit
 
 
+def _assert_ok(result) -> None:
+    assert result.is_success()
+    assert result.unwrap() is None
+
+
+def _assert_err(result, *, code: str | None = None) -> str:
+    assert result.is_failure()
+    err = result.unwrap_err()
+    if code is not None:
+        assert err.code == code
+    return str(err)
+
+
 # ─────────────────────────────────────────────
 # Helpers / fixtures
 # ─────────────────────────────────────────────
@@ -259,16 +272,12 @@ class TestValidatePipelineAdapterCacheHFConfig:
 
     def test_positive_no_phases_with_cache_enabled(self) -> None:
         cfg = _pipeline(strategies=[_StrategyWithCache("sft")])
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
     def test_positive_cache_enabled_hf_configured_different_repo(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline(strategies=[s], hf_enabled=True, hf_repo="org/final-model")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
-        assert err == ""
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
     def test_positive_multiple_phases_different_repo_ids(self) -> None:
         phases = [
@@ -276,30 +285,26 @@ class TestValidatePipelineAdapterCacheHFConfig:
             _StrategyWithCache("dpo", _AdapterCacheStub(enabled=True, repo_id="org/dpo-cache")),
         ]
         cfg = _pipeline(strategies=phases, hf_enabled=True, hf_repo="org/final")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
     # ── Negative ──────────────────────────────
 
     def test_negative_cache_enabled_hf_not_configured(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline_no_hf(strategies=[s])
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
         assert "experiment_tracking.huggingface" in err
 
     def test_negative_cache_enabled_hf_not_enabled(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline(strategies=[s], hf_enabled=False, hf_repo="org/final")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
         assert "huggingface" in err.lower()
 
     def test_negative_adapter_cache_repo_equals_final_model_repo(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/final-model"))
         cfg = _pipeline(strategies=[s], hf_enabled=True, hf_repo="org/final-model")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
         assert "must differ" in err
 
     def test_negative_second_phase_repo_equals_final_model_repo(self) -> None:
@@ -308,30 +313,26 @@ class TestValidatePipelineAdapterCacheHFConfig:
             _StrategyWithCache("dpo", _AdapterCacheStub(enabled=True, repo_id="org/final")),
         ]
         cfg = _pipeline(strategies=phases, hf_enabled=True, hf_repo="org/final")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
         assert "must differ" in err
 
     # ── Boundary ──────────────────────────────
 
     def test_boundary_empty_strategies_list(self) -> None:
         cfg = _pipeline(strategies=[], hf_enabled=True, hf_repo="org/final")
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
     def test_boundary_all_phases_disabled_hf_not_configured(self) -> None:
         """If no phase has cache enabled, HF config is not required."""
         phases = [_StrategyWithCache("sft"), _StrategyWithCache("dpo")]
         cfg = _pipeline_no_hf(strategies=phases)
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
     def test_boundary_strategy_without_adapter_cache_attr_skipped(self) -> None:
         """Strategies without adapter_cache attribute should be treated as disabled."""
         plain_strategy = SimpleNamespace(strategy_type="sft", dataset="d")
         cfg = _pipeline_no_hf(strategies=[plain_strategy])
-        ok, err = validate_pipeline_adapter_cache_hf_config(cfg)  # type: ignore[arg-type]
-        assert ok is True
+        _assert_ok(validate_pipeline_adapter_cache_hf_config(cfg))  # type: ignore[arg-type]
 
 
 # ─────────────────────────────────────────────
@@ -356,24 +357,21 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="shared_data", adapter_cache=_AdapterCacheStub(enabled=True)),
             _FullPhase("dpo", dataset="shared_data"),
         ]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is True, err
+        _assert_ok(validate_strategy_chain(phases))  # type: ignore[arg-type]
 
     def test_positive_all_cache_enabled_phases_skip_uniqueness_check(self) -> None:
         phases = [
             _FullPhase("sft", dataset="d1", adapter_cache=_AdapterCacheStub(enabled=True)),
             _FullPhase("dpo", dataset="d1", adapter_cache=_AdapterCacheStub(enabled=True)),
         ]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is True, err
+        _assert_ok(validate_strategy_chain(phases))  # type: ignore[arg-type]
 
     def test_positive_normal_phases_with_unique_datasets(self) -> None:
         phases = [
             _FullPhase("sft", dataset="sft_data"),
             _FullPhase("dpo", dataset="dpo_data"),
         ]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is True, err
+        _assert_ok(validate_strategy_chain(phases))  # type: ignore[arg-type]
 
     # ── Negative ──────────────────────────────
 
@@ -383,8 +381,7 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="shared"),
             _FullPhase("dpo", dataset="shared"),
         ]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
         assert "shared" in err
 
     def test_negative_mixed_only_non_cache_duplicate_fails(self) -> None:
@@ -400,16 +397,14 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="dup"),
             _FullPhase("dpo", dataset="dup"),
         ]
-        ok, err = validate_strategy_chain(phases2)  # type: ignore[arg-type]
-        assert ok is False
+        err = _assert_err(validate_strategy_chain(phases2), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
         assert "dup" in err
 
     # ── Boundary ──────────────────────────────
 
     def test_boundary_single_cache_enabled_phase_is_valid(self) -> None:
         phases = [_FullPhase("sft", dataset="d", adapter_cache=_AdapterCacheStub(enabled=True))]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is True, err
+        _assert_ok(validate_strategy_chain(phases))  # type: ignore[arg-type]
 
     def test_boundary_phase_without_adapter_cache_attr_uses_default_false(self) -> None:
         """Plain dataclass without adapter_cache field is treated as cache-disabled."""
@@ -419,8 +414,7 @@ class TestValidateStrategyChainAdapterCache:
             dataset: str | None = None
 
         phases = [MinPhase("sft", "shared"), MinPhase("dpo", "shared")]
-        ok, err = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is False  # uniqueness still enforced for non-cache phases
+        _assert_err(validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
 
     # ── Combinatorial ─────────────────────────
 
@@ -434,5 +428,4 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="shared", adapter_cache=_AdapterCacheStub(enabled=True)),
             _FullPhase("dpo", dataset="shared"),
         ]
-        ok, _ = validate_strategy_chain(phases)  # type: ignore[arg-type]
-        assert ok is True  # only dpo sees "shared" in uniqueness dict
+        _assert_ok(validate_strategy_chain(phases))  # type: ignore[arg-type]

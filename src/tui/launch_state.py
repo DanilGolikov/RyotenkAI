@@ -4,16 +4,26 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from src.pipeline.state import PipelineStateStore
-from src.tui.launch import LaunchRequest, RestartPointOption, load_restart_point_options, validate_resume_run
+from src.tui.launch import (
+    MODE_FRESH,
+    MODE_NEW_RUN,
+    MODE_RESTART,
+    MODE_RESUME,
+    LaunchRequest,
+    RestartPointOption,
+    load_restart_point_options,
+    resolve_config_path_for_run,
+    validate_resume_run,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 _MODE_LABELS = {
-    "new_run": "new run",
-    "fresh": "fresh attempt",
-    "resume": "resume",
-    "restart": "start from stage",
+    MODE_NEW_RUN: "new run",
+    MODE_FRESH: "fresh attempt",
+    MODE_RESUME: "resume",
+    MODE_RESTART: "start from stage",
 }
 
 _RESTART_MODE_LABELS = {
@@ -67,22 +77,27 @@ def restart_reason_label(value: str) -> str:
 
 
 def prepare_launch_mode_state(mode: str, run_dir: Path | None, config_path: Path | None) -> LaunchModeState:
-    if mode == "new_run":
+    if mode == MODE_NEW_RUN:
         return LaunchModeState(
             mode_title="new run",
             info_markup="[dim]New run: a new logical run directory will be created automatically.[/dim]",
         )
 
-    if mode == "fresh":
+    if mode == MODE_FRESH:
         if run_dir is None or not PipelineStateStore(run_dir.expanduser().resolve()).exists():
             info_markup = "[yellow]Fresh attempt requires an existing run with pipeline_state.json.[/yellow]"
-        else:
-            info_markup = (
-                "[dim]Fresh attempt will restart the selected run from stage 1 and create a new attempt.[/dim]"
-            )
-        return LaunchModeState(mode_title="fresh attempt", info_markup=info_markup)
+            return LaunchModeState(mode_title="fresh attempt", info_markup=info_markup)
+        info_markup = (
+            "[dim]Fresh attempt will restart the selected run from stage 1 and create a new attempt.[/dim]"
+        )
+        resolved_config = resolve_config_path_for_run(run_dir.expanduser().resolve(), config_path)
+        return LaunchModeState(
+            mode_title="fresh attempt",
+            info_markup=info_markup,
+            resolved_config_path=resolved_config,
+        )
 
-    if mode == "resume":
+    if mode == MODE_RESUME:
         if run_dir is None:
             return LaunchModeState(
                 mode_title="resume",
@@ -140,7 +155,7 @@ def build_submittable_launch_request(
         raise ValueError("Run directory is required.")
 
     resolved_config_path = config_path
-    if mode == "resume":
+    if mode == MODE_RESUME:
         resolved_config_path, _resume_stage = validate_resume_run(run_dir, config_path)
 
     request = LaunchRequest(
@@ -151,7 +166,7 @@ def build_submittable_launch_request(
         log_level=log_level,  # type: ignore[arg-type]
     ).validate()
 
-    if mode == "fresh" and not PipelineStateStore(run_dir.expanduser().resolve()).exists():
+    if mode == MODE_FRESH and not PipelineStateStore(run_dir.expanduser().resolve()).exists():
         raise ValueError("Fresh attempt requires an existing run directory with pipeline_state.json.")
 
     return request, resolved_config_path

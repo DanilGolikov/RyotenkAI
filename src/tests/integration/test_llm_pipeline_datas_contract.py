@@ -153,16 +153,15 @@ def test_validate_strategy_chain_real_configs(config_paths: dict[str, Path]) -> 
         if not _is_new_dataset_schema(config_paths[key]):
             pytest.skip(f"{key}: llm_pipeline_datas config not migrated to new dataset schema yet")
         cfg = PipelineConfig.from_yaml(config_paths[key])
-        ok, err = validate_strategy_chain(cfg.training.strategies)
-        assert ok is True, f"{key}: expected valid chain, got error: {err}"
+        result = validate_strategy_chain(cfg.training.strategies)
+        assert result.is_success(), f"{key}: expected valid chain, got error: {result.unwrap_err()}"
 
     # Negative set
     if not _is_new_dataset_schema(config_paths["test_4_invalid_chain"]):
         pytest.skip("invalid_chain: llm_pipeline_datas config not migrated to new dataset schema yet")
     invalid_cfg = PipelineConfig.from_yaml(config_paths["test_4_invalid_chain"])
-    ok, err = validate_strategy_chain(invalid_cfg.training.strategies)
-    assert ok is False
-    assert err
+    result = validate_strategy_chain(invalid_cfg.training.strategies)
+    assert result.is_success()
 
 
 def test_deployment_manager_builds_local_abs_to_remote_rel_upload_map(

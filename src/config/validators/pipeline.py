@@ -21,30 +21,30 @@ def validate_pipeline_config_references(cfg: PipelineConfig) -> None:
     # Provider validation:
     # - schema-only: providers registry contains training.provider
     # - best-effort: training.provider is registered in GPUProviderFactory (when available)
-    ok, err = validate_pipeline_active_provider_is_registered(cfg)
-    if not ok:
-        raise ValueError(err)
+    providers_validation = validate_pipeline_active_provider_is_registered(cfg)
+    if providers_validation.is_failure():
+        raise ValueError(str(providers_validation.unwrap_err()))
 
     # Dataset validation: strategy.dataset references must exist in datasets registry.
-    ok, err = validate_pipeline_strategy_dataset_references(cfg)
-    if not ok:
-        raise ValueError(err)
+    datasets_validation = validate_pipeline_strategy_dataset_references(cfg)
+    if datasets_validation.is_failure():
+        raise ValueError(str(datasets_validation.unwrap_err()))
 
     # Inference validation (cross-block):
     # - when inference is enabled, ensure selected inference provider is configurable
-    ok, err = validate_pipeline_inference_provider_config(cfg)
-    if not ok:
-        raise ValueError(err)
+    inference_validation = validate_pipeline_inference_provider_config(cfg)
+    if inference_validation.is_failure():
+        raise ValueError(str(inference_validation.unwrap_err()))
 
     # Evaluation fail-fast: evaluation.enabled=true requires inference.enabled=true
-    ok, err = validate_pipeline_evaluation_requires_inference(cfg)
-    if not ok:
-        raise ValueError(err)
+    evaluation_validation = validate_pipeline_evaluation_requires_inference(cfg)
+    if evaluation_validation.is_failure():
+        raise ValueError(str(evaluation_validation.unwrap_err()))
 
     # Adapter cache: HF integration must be enabled; repo_id must differ from final model repo
-    ok, err = validate_pipeline_adapter_cache_hf_config(cfg)
-    if not ok:
-        raise ValueError(err)
+    cache_validation = validate_pipeline_adapter_cache_hf_config(cfg)
+    if cache_validation.is_failure():
+        raise ValueError(str(cache_validation.unwrap_err()))
 
 
 __all__ = [

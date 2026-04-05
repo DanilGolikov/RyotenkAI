@@ -21,7 +21,7 @@ Local MLflow server for RyotenkAI with PostgreSQL (metadata) and MinIO (S3-compa
 ```bash
 cd docker/mlflow
 
-# Start all services
+# Start all services (creates .env.mlflow from template on first run)
 ./start.sh
 
 # Check status
@@ -34,9 +34,75 @@ cd docker/mlflow
 ./start.sh stop
 ```
 
+The stack works immediately with dev defaults from `.env.mlflow` — no manual configuration needed.
+
 After startup:
 - **MLflow UI:** http://localhost:5002
-- **MinIO Console:** http://localhost:9001 (login: `minio_admin` / `minio_secure_pass_2024`)
+- **MinIO Console:** http://localhost:9001 (login: `minio_admin` / `minio_dev_pass`)
+
+## Pipeline Configuration
+
+### Local training (single machine)
+
+```yaml
+tracking:
+  mlflow:
+    tracking_uri: "http://localhost:5002"
+    experiment_name: "my-experiment"
+```
+
+### Remote training (e.g. RunPod)
+
+When the training node cannot reach `localhost`, expose MLflow publicly
+(see next section) and use two URIs:
+
+```yaml
+tracking:
+  mlflow:
+    tracking_uri: "https://your-machine.your-tailnet.ts.net"
+    local_tracking_uri: "http://localhost:5002"
+    experiment_name: "my-experiment"
+```
+
+| Field | Used by | Purpose |
+|---|---|---|
+| `tracking_uri` | Remote training node | Public URL reachable from the internet |
+| `local_tracking_uri` | Local orchestrator | Direct localhost access (faster, no TLS) |
+
+If `local_tracking_uri` is omitted, the orchestrator also uses `tracking_uri`.
+
+## Public Access via Tailscale
+
+Publish MLflow to the internet so a remote GPU machine can log to it.
+
+**Prerequisites:** Docker, [Tailscale](https://tailscale.com/download) installed and authenticated (`tailscale up`).
+
+```bash
+cd docker/mlflow
+
+# Start stack + expose via Tailscale Funnel (one command)
+./expose-tailscale.sh up
+
+# Check public status
+./expose-tailscale.sh status
+
+# Print only the public URL
+./expose-tailscale.sh url
+
+# Disable public access
+./expose-tailscale.sh down
+```
+
+The script automatically:
+- starts or reuses the local MLflow stack
+- detects your Tailscale hostname
+- injects `allowed-hosts` into the container at runtime (`.env.mlflow` is never modified)
+- enables `tailscale funnel` for MLflow only (MinIO stays private)
+- waits until the public HTTPS endpoint is reachable
+
+Re-running `./expose-tailscale.sh up` is safe — it reuses the existing stack.
+
+Default HTTPS port is `443`. Override with `TAILSCALE_FUNNEL_HTTPS_PORT=8443` if needed.
 
 ## Configuration
 
@@ -44,12 +110,12 @@ Edit `.env.mlflow` to customize credentials and ports:
 
 ```env
 POSTGRES_USER=mlflow
-POSTGRES_PASSWORD=mlflow_secure_pass_2024
+POSTGRES_PASSWORD=mlflow_dev_pass
 POSTGRES_DB=mlflow_db
 POSTGRES_PORT=5432
 
 MINIO_ROOT_USER=minio_admin
-MINIO_ROOT_PASSWORD=minio_secure_pass_2024
+MINIO_ROOT_PASSWORD=minio_dev_pass
 MINIO_BUCKET=mlflow
 MINIO_API_PORT=9000
 MINIO_CONSOLE_PORT=9001
@@ -57,39 +123,27 @@ MINIO_CONSOLE_PORT=9001
 MLFLOW_PORT=5002
 ```
 
-## Pipeline Integration
-
-The training pipeline connects to MLflow via the `tracking` section in your pipeline config:
-
-```yaml
-tracking:
-  mlflow:
-    tracking_uri: "http://localhost:5002"
-    experiment_name: "ryotenkai"
-```
-
-The pipeline logs metrics, parameters, and artifacts automatically during training.
+> **Note:** Change passwords before any non-local usage.
 
 ## File Structure
 
 ```
 docker/mlflow/
 ├── docker-compose.mlflow.yml  # Service definitions
-├── Dockerfile.mlflow           # MLflow server image (+ psycopg2, boto3)
+├── Dockerfile.mlflow           # MLflow image (+ psycopg2, boto3)
 ├── .dockerignore
-├── .env.mlflow                 # Environment configuration
+├── .env.mlflow                 # Environment config (dev defaults, works out of the box)
+├── entrypoint.mlflow.sh        # MLflow startup with optional security flags
+├── expose-tailscale.sh         # Public HTTPS access via Tailscale Funnel
 ├── start.sh                    # Startup/management script
 └── README.md
-
-# Note: an init container (minio/mc) auto-creates the MLflow
-# bucket on first startup. See docker-compose.mlflow.yml.
 ```
 
 ## Data Persistence
 
 Data is stored in Docker named volumes:
-- `postgres_data` — MLflow metadata
-- `minio_data` — Artifact files
+- `ryotenkai_postgres_data` — MLflow metadata
+- `ryotenkai_minio_data` — Artifact files
 
 To reset everything:
 
@@ -102,7 +156,7 @@ docker volume rm ryotenkai_postgres_data ryotenkai_minio_data
 
 ### Port conflict
 
-Change ports in `.env.mlflow` if defaults are in use:
+Change ports in `.env.mlflow`:
 
 ```env
 MLFLOW_PORT=5003
@@ -113,10 +167,25 @@ MINIO_CONSOLE_PORT=9003
 
 ### MLflow fails to start
 
-Check that PostgreSQL and MinIO are healthy first:
-
 ```bash
 ./start.sh status
 docker logs mlflow_postgres
 docker logs mlflow_minio
+docker logs mlflow_server
+```
+
+### "Invalid Host header" on public URL
+
+This means the container was started without the Tailscale hostname in `allowed-hosts`.
+Run `./expose-tailscale.sh up` — it injects the hostname at runtime automatically.
+If you restarted the stack with `start.sh restart`, run `expose-tailscale.sh up` again.
+
+### Password mismatch after volume recreation
+
+If you changed passwords in `.env.mlflow` but the Docker volume was created with old passwords, reset the volumes:
+
+```bash
+./start.sh stop
+docker volume rm ryotenkai_postgres_data ryotenkai_minio_data
+./start.sh
 ```

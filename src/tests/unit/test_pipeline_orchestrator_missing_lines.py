@@ -11,7 +11,7 @@ from src.pipeline.orchestrator import PipelineOrchestrator, run_pipeline
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.state.models import PipelineState, StageRunState
 from src.pipeline.state.store import SCHEMA_VERSION
-from src.utils.result import Err, Ok
+from src.utils.result import AppError, Err, Ok
 
 
 def _mk_orchestrator(
@@ -87,6 +87,27 @@ class TestMissingInitAndMlflowSetupLines:
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
         state = _mk_pipeline_state(tmp_path)
         with pytest.raises(Exception, match="MLflow setup failed"):
+            orch._ensure_mlflow_preflight(state=state)
+
+    def test_ensure_mlflow_preflight_surfaces_effective_uri_and_gateway_error(self, tmp_path: Path) -> None:
+        cfg = _mk_config()
+        cfg.experiment_tracking.mlflow = SimpleNamespace(
+            tracking_uri="https://public.example.ts.net",
+            local_tracking_uri="http://localhost:5002",
+            system_metrics_callback_enabled=False,
+        )
+        orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
+        orch._mlflow_manager = MagicMock()
+        orch._mlflow_manager.is_active = True
+        orch._mlflow_manager.get_runtime_tracking_uri.return_value = "http://localhost:5002"
+        orch._mlflow_manager.check_mlflow_connectivity.return_value = False
+        orch._mlflow_manager.get_last_connectivity_error.return_value = AppError(
+            message="certificate verify failed",
+            code="MLFLOW_TLS_CERT_VERIFY_FAILED",
+        )
+
+        state = _mk_pipeline_state(tmp_path)
+        with pytest.raises(Exception, match="effective_uri=http://localhost:5002"):
             orch._ensure_mlflow_preflight(state=state)
 
     def test_setup_mlflow_disable_system_metrics_logging_exception_is_ignored_and_manager_returns(

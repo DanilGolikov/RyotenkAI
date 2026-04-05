@@ -9,6 +9,7 @@ import pytest
 from src.pipeline.orchestrator import LaunchPreparationError, PipelineOrchestrator
 from src.pipeline.state import PipelineAttemptState, PipelineState, PipelineStateLoadError, PipelineStateStore, StageLineageRef, StageRunState
 from src.pipeline.stages.constants import StageNames
+from src.utils.result import Ok
 
 
 def _build_mock_config() -> MagicMock:
@@ -56,7 +57,7 @@ def _build_orchestrator(config_path: Path, config: MagicMock, *, run_directory: 
     with (
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
-        patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=(True, None)),
+        patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
         patch.object(PipelineOrchestrator, "_init_stages", return_value=stages),
     ):
         orchestrator = PipelineOrchestrator(config_path, run_directory=run_directory)

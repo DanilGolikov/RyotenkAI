@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from ..base import StrictBaseModel
 
@@ -18,10 +18,19 @@ class MLflowConfig(StrictBaseModel):
         MLFLOW_TRACKING_TOKEN - for authenticated servers
     """
 
-    tracking_uri: str = Field(..., description="MLflow tracking server URI")
+    tracking_uri: str | None = Field(
+        None,
+        description="Primary MLflow tracking URI for training/runtime and external access",
+    )
+    local_tracking_uri: str | None = Field(
+        None,
+        description="Optional MLflow tracking URI for the local control plane/orchestrator",
+    )
+    ca_bundle_path: str | None = Field(
+        None,
+        description="Optional CA bundle path for HTTPS verification against MLflow",
+    )
     experiment_name: str = Field(..., description="MLflow experiment name")
-    log_artifacts: bool = Field(..., description="Log artifacts to MLflow")
-    log_model: bool = Field(..., description="Log full model (large!)")
     run_description_file: str | None = Field(None, description="Path to run description .md file")
 
     # System metrics (GPU/CPU/RAM monitoring) - MLflow built-in
@@ -42,6 +51,20 @@ class MLflowConfig(StrictBaseModel):
     system_metrics_callback_interval: int = Field(
         10, ge=1, le=100, description="Log system metrics every N training steps (if callback enabled)"
     )
+
+    @field_validator("tracking_uri", "local_tracking_uri", "ca_bundle_path", mode="before")
+    @classmethod
+    def _normalize_optional_strings(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
+    @model_validator(mode="after")
+    def _run_model_validators(self) -> MLflowConfig:
+        if not (self.tracking_uri or self.local_tracking_uri):
+            raise ValueError("At least one of 'tracking_uri' or 'local_tracking_uri' must be set for MLflow")
+        return self
 
 
 __all__ = [

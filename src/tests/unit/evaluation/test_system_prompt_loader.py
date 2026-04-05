@@ -95,6 +95,8 @@ def _mlflow_cfg(enabled: bool = True, tracking_uri: str = "http://mlflow:5000") 
     cfg = MagicMock()
     cfg.enabled = enabled
     cfg.tracking_uri = tracking_uri
+    cfg.local_tracking_uri = None
+    cfg.ca_bundle_path = None
     return cfg
 
 

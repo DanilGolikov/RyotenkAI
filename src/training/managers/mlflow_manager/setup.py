@@ -13,7 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
+from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.training.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
 from src.training.mlflow.autolog import MLflowAutologManager
 from src.training.mlflow.dataset_logger import MLflowDatasetLogger
@@ -57,10 +59,28 @@ class MLflowSetupMixin:
 
             self._mlflow = mlflow  # type: ignore[attr-defined]
 
-            self._gateway = MLflowGateway(self._mlflow_config.tracking_uri)  # type: ignore[attr-defined]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
+                self._mlflow_config,
+                runtime_role=self._runtime_role,  # type: ignore[attr-defined]
+            )
+            self._gateway = MLflowGateway(
+                self._resolved_uris.runtime_tracking_uri,
+                ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
+            )  # type: ignore[attr-defined]
             tracking_uri = self._gateway.uri  # type: ignore[attr-defined]
-            mlflow.set_tracking_uri(tracking_uri)
-            logger.info(f"MLflow tracking URI: {tracking_uri}")
+            self._environment = MLflowEnvironment(  # type: ignore[attr-defined]
+                tracking_uri,
+                ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
+            )
+            self._environment.activate()  # type: ignore[attr-defined]
+            logger.info(
+                "MLflow tracking URI: %s (role=%s, raw=%s, local=%s, remote=%s)",
+                tracking_uri,
+                self._runtime_role,  # type: ignore[attr-defined]
+                self._resolved_uris.tracking_uri,  # type: ignore[attr-defined]
+                self._resolved_uris.effective_local_tracking_uri,  # type: ignore[attr-defined]
+                self._resolved_uris.effective_remote_tracking_uri,  # type: ignore[attr-defined]
+            )
 
             if tracking_uri and tracking_uri.startswith("http"):
                 connected = False
@@ -68,10 +88,22 @@ class MLflowSetupMixin:
                     if self._gateway.check_connectivity(timeout):  # type: ignore[attr-defined]
                         connected = True
                         break
-                    logger.warning(f"MLflow connection attempt {attempt}/{max_retries} failed")
+                    gateway_error = self._gateway.last_connectivity_error  # type: ignore[attr-defined]
+                    if gateway_error is not None:
+                        logger.warning(
+                            "MLflow connection attempt %s/%s failed: %s",
+                            attempt,
+                            max_retries,
+                            gateway_error,
+                        )
+                    else:
+                        logger.warning(f"MLflow connection attempt {attempt}/{max_retries} failed")
 
                 if not connected:
+                    gateway_error = self._gateway.last_connectivity_error  # type: ignore[attr-defined]
                     error_msg = f"MLflow server not reachable at {tracking_uri} after {max_retries} attempts"
+                    if gateway_error is not None:
+                        error_msg = f"{error_msg}: {gateway_error}"
                     logger.error(f"[MLFLOW] {error_msg}")
                     self._event_log.log_event_error(  # type: ignore[attr-defined]
                         error_msg,
@@ -107,10 +139,48 @@ class MLflowSetupMixin:
 
     def check_mlflow_connectivity(self, timeout: float = 5.0) -> bool:
         """Check whether the configured MLflow tracking backend is reachable."""
-        tracking_uri = self._mlflow_config.tracking_uri  # type: ignore[attr-defined]
-        if not tracking_uri.startswith("http"):
+        tracking_uri = self.get_runtime_tracking_uri()
+        if not tracking_uri or not tracking_uri.startswith("http"):
             return True
-        return MLflowGateway(tracking_uri).check_connectivity(timeout)
+        if isinstance(self._gateway, NullMLflowGateway):  # type: ignore[arg-type]
+            self._gateway = MLflowGateway(
+                tracking_uri,
+                ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
+            )  # type: ignore[attr-defined]
+        return self._gateway.check_connectivity(timeout)  # type: ignore[attr-defined]
+
+    def get_runtime_tracking_uri(self) -> str:
+        if self._resolved_uris is None:  # type: ignore[attr-defined]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
+                self._mlflow_config,
+                runtime_role=self._runtime_role,  # type: ignore[attr-defined]
+            )
+        return self._resolved_uris.runtime_tracking_uri  # type: ignore[attr-defined]
+
+    def get_effective_local_tracking_uri(self) -> str:
+        if self._resolved_uris is None:  # type: ignore[attr-defined]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
+                self._mlflow_config,
+                runtime_role=self._runtime_role,  # type: ignore[attr-defined]
+            )
+        return self._resolved_uris.effective_local_tracking_uri  # type: ignore[attr-defined]
+
+    def get_effective_remote_tracking_uri(self) -> str:
+        if self._resolved_uris is None:  # type: ignore[attr-defined]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
+                self._mlflow_config,
+                runtime_role=self._runtime_role,  # type: ignore[attr-defined]
+            )
+        return self._resolved_uris.effective_remote_tracking_uri  # type: ignore[attr-defined]
+
+    def get_raw_tracking_uri(self) -> str | None:
+        return getattr(self._mlflow_config, "tracking_uri", None)  # type: ignore[attr-defined]
+
+    def get_raw_local_tracking_uri(self) -> str | None:
+        return getattr(self._mlflow_config, "local_tracking_uri", None)  # type: ignore[attr-defined]
+
+    def get_last_connectivity_error(self) -> Any:
+        return self._gateway.last_connectivity_error  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -152,7 +222,6 @@ class MLflowSetupMixin:
     def _build_subcomponents(self) -> None:
         """Update mlflow-dependent subcomponents after successful setup."""
         assert self._mlflow_config is not None  # type: ignore[attr-defined]
-        log_model = getattr(self._mlflow_config, "log_model", True)  # type: ignore[attr-defined]
         experiment_name = getattr(self._mlflow_config, "experiment_name", None)  # type: ignore[attr-defined]
         tracking_uri = self._gateway.uri  # type: ignore[attr-defined]
 
@@ -162,7 +231,7 @@ class MLflowSetupMixin:
         self._analytics._experiment_name = experiment_name  # type: ignore[attr-defined]
         self._analytics._gateway = self._gateway  # type: ignore[attr-defined]
 
-        self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model)  # type: ignore[attr-defined]
+        self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model_enabled=False)  # type: ignore[attr-defined]
         self._dataset_logger = MLflowDatasetLogger(  # type: ignore[attr-defined]
             self._mlflow,  # type: ignore[attr-defined]
             self,  # type: ignore[arg-type]

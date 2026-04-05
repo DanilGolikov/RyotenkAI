@@ -7,9 +7,9 @@ services:
     container_name: mlflow_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-mlflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlflow_secure_pass_2024}
-      POSTGRES_DB: ${POSTGRES_DB:-mlflow_db}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env.mlflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.mlflow}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env.mlflow}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -29,8 +29,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_secure_pass_2024}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env.mlflow}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env.mlflow}
     volumes:
       - minio_data:/data
     ports:
@@ -54,10 +54,10 @@ services:
     entrypoint: >
       /bin/sh -c "
       echo '🔧 Configuring MinIO...';
-      mc alias set minio http://minio:9000 ${MINIO_ROOT_USER:-minio_admin} ${MINIO_ROOT_PASSWORD:-minio_secure_pass_2024};
-      mc mb minio/${MINIO_BUCKET:-mlflow} --ignore-existing;
-      mc anonymous set download minio/${MINIO_BUCKET:-mlflow};
-      echo '✅ MinIO bucket created: ${MINIO_BUCKET:-mlflow}';
+      mc alias set minio http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb minio/${MINIO_BUCKET} --ignore-existing;
+      mc anonymous set download minio/${MINIO_BUCKET};
+      echo 'MinIO bucket created: ${MINIO_BUCKET}';
       "
     networks:
       - mlflow_network
@@ -79,17 +79,17 @@ services:
         condition: service_completed_successfully
     environment:
       # S3/MinIO credentials for artifact storage
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio_admin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio_secure_pass_2024}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       MLFLOW_S3_IGNORE_TLS: "true"
-    command: >
-      mlflow server
-      --host 0.0.0.0
-      --port 5000
-      --backend-store-uri postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD:-mlflow_secure_pass_2024}@postgres:5432/${POSTGRES_DB:-mlflow_db}
-      --serve-artifacts
-      --artifacts-destination s3://${MINIO_BUCKET:-mlflow}
+      BACKEND_STORE_URI: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ARTIFACTS_DESTINATION: s3://${MINIO_BUCKET}
+      MLFLOW_APP_NAME: ${MLFLOW_APP_NAME:-}
+      MLFLOW_HOST_PORT: ${MLFLOW_PORT:-5002}
+      MLFLOW_SERVER_ALLOWED_HOSTS: ${MLFLOW_SERVER_ALLOWED_HOSTS:-}
+      MLFLOW_SERVER_CORS_ALLOWED_ORIGINS: ${MLFLOW_SERVER_CORS_ALLOWED_ORIGINS:-}
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY:-}
     ports:
       - "${MLFLOW_PORT:-5002}:5000"
     healthcheck:

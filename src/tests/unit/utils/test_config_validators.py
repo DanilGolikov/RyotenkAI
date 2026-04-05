@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from unittest.mock import patch
 
 from src.utils.config import (
     AdaLoraConfig,
@@ -104,8 +105,6 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
             mlflow=MLflowConfig(
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test-exp",
-                log_artifacts=False,
-                log_model=False,
             )
         ),
     )
@@ -125,6 +124,25 @@ class TestModelConfig:
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError, match="Field required"):
             _ = ModelConfig(name="x")  # missing torch_dtype + trust_remote_code
+
+
+class TestMLflowConfig:
+    def test_local_tracking_uri_only_is_valid(self) -> None:
+        cfg = MLflowConfig(
+            tracking_uri=None,
+            local_tracking_uri="http://localhost:5002",
+            experiment_name="test-exp",
+        )
+        assert cfg.local_tracking_uri == "http://localhost:5002"
+        assert cfg.tracking_uri is None
+
+    def test_mlflow_requires_at_least_one_tracking_uri(self) -> None:
+        with pytest.raises(ValidationError, match="At least one of 'tracking_uri' or 'local_tracking_uri' must be set"):
+            _ = MLflowConfig(
+                tracking_uri=None,
+                local_tracking_uri=None,
+                experiment_name="test-exp",
+            )
 
 
 class TestLoraConfig:
@@ -189,13 +207,23 @@ class TestTrainingOnlyConfig:
         with pytest.raises(ValidationError, match="requires 'training\\.adalora:'"):
             _ = _training_cfg(type="adalora", adalora=None)
 
-    def test_invalid_strategy_chain_rejected(self) -> None:
-        # sft -> cpt is invalid
-        with pytest.raises(ValidationError, match="Invalid transition"):
-            _ = _training_cfg(
+    def test_invalid_strategy_chain_warns_but_builds(self) -> None:
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            cfg = _training_cfg(
                 strategies=[
-                    StrategyPhaseConfig(strategy_type="sft"),
-                    StrategyPhaseConfig(strategy_type="cpt"),
+                    StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
+                    StrategyPhaseConfig(strategy_type="cpt", dataset="cpt_data"),
+                ]
+            )
+        assert len(cfg.strategies) == 2
+        assert "reason=invalid_transition" in str(mock_warning.call_args_list)
+
+    def test_structural_strategy_chain_error_preserves_error_code_in_validation(self) -> None:
+        with pytest.raises(ValidationError, match=r"STRATEGY_CHAIN_DUPLICATE_DATASET"):
+            _training_cfg(
+                strategies=[
+                    StrategyPhaseConfig(strategy_type="sft", dataset="shared"),
+                    StrategyPhaseConfig(strategy_type="dpo", dataset="shared"),
                 ]
             )
 

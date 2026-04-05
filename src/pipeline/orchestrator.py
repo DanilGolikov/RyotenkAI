@@ -203,17 +203,18 @@ class PipelineOrchestrator:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
-        # Validate strategy chain EARLY (before any stages run)
+        # Check strategy chain EARLY (before any stages run)
         strategies = self.config.training.strategies
         if strategies:
-            is_valid, error_msg = validate_strategy_chain(strategies)
-            if not is_valid:
+            validation = validate_strategy_chain(strategies)
+            if validation.is_failure():
+                error = validation.unwrap_err()
                 chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
                 logger.error(f"Invalid strategy chain: {chain_str}")
-                logger.error(f"   Error: {error_msg}")
-                raise ValueError(f"Invalid strategy chain: {error_msg}")
+                logger.error(f"   Error: {error}")
+                raise ValueError(f"Invalid strategy chain: {error}")
             chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-            logger.info(f"Strategy chain validated: {chain_str}")
+            logger.info(f"Strategy chain checked: {chain_str}")
 
         # Initialize stages
         self.stages: list[PipelineStage] = self._init_stages()
@@ -321,7 +322,7 @@ class PipelineOrchestrator:
 
             os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "false"
 
-            manager = MLflowManager(config_copy)
+            manager = MLflowManager(config_copy, runtime_role="control_plane")
 
             # 3. Disable system metrics logging in MLflow client directly
             # Important: Call disable_system_metrics_logging() globally first
@@ -1265,20 +1266,50 @@ class PipelineOrchestrator:
 
     def _ensure_mlflow_preflight(self, *, state: PipelineState) -> None:
         """Fail fast when mandatory MLflow setup/connectivity is not available."""
-        tracking_uri = self.config.experiment_tracking.mlflow.tracking_uri
+        mlflow_cfg = self.config.experiment_tracking.mlflow
+        raw_tracking_uri = getattr(mlflow_cfg, "tracking_uri", None)
+        raw_local_tracking_uri = getattr(mlflow_cfg, "local_tracking_uri", None)
+        tracking_uri = (
+            self._mlflow_manager.get_runtime_tracking_uri()
+            if self._mlflow_manager is not None
+            else (raw_local_tracking_uri or raw_tracking_uri)
+        )
         if self._mlflow_manager is None or not self._mlflow_manager.is_active:
             raise LaunchPreparationError(
                 AppError(
-                    code="MLFLOW_SETUP_FAILED",
-                    message=f"MLflow setup failed: {tracking_uri}",
+                    code="MLFLOW_PREFLIGHT_SETUP_FAILED",
+                    message=(
+                        "MLflow setup failed "
+                        f"(effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
+                        f"raw_local_tracking_uri={raw_local_tracking_uri})"
+                    ),
+                    details={
+                        "effective_uri": tracking_uri,
+                        "raw_tracking_uri": raw_tracking_uri,
+                        "raw_local_tracking_uri": raw_local_tracking_uri,
+                    },
                 ),
                 state=state,
             )
         if not self._mlflow_manager.check_mlflow_connectivity():
+            gateway_error = self._mlflow_manager.get_last_connectivity_error()
+            error_code = gateway_error.code if gateway_error is not None else "MLFLOW_PREFLIGHT_UNREACHABLE"
+            error_message = (
+                f"MLflow not reachable (effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
+                f"raw_local_tracking_uri={raw_local_tracking_uri})"
+            )
+            if gateway_error is not None:
+                error_message = f"{error_message}: {gateway_error.message}"
             raise LaunchPreparationError(
                 AppError(
-                    code="MLFLOW_UNREACHABLE",
-                    message=f"MLflow not reachable: {tracking_uri}",
+                    code=error_code,
+                    message=error_message,
+                    details={
+                        "effective_uri": tracking_uri,
+                        "raw_tracking_uri": raw_tracking_uri,
+                        "raw_local_tracking_uri": raw_local_tracking_uri,
+                        "gateway_error": gateway_error.to_log_dict() if gateway_error is not None else None,
+                    },
                 ),
                 state=state,
             )

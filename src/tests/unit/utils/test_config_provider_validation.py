@@ -45,8 +45,6 @@ def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
         mlflow=MLflowConfig(
             tracking_uri="http://127.0.0.1:5002",
             experiment_name="test-exp",
-            log_artifacts=False,
-            log_model=False,
         )
     )
 

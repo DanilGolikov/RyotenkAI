@@ -119,7 +119,13 @@ def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.Monke
 
 
 def test_create_trainer_uses_reward_plugin_for_sapo(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tb, "build_reward_plugin_kwargs", lambda **_kw: {"reward_funcs": "PLUGIN_REWARD"})
+    from src.training.reward_plugins.factory import RewardPluginResult
+
+    monkeypatch.setattr(
+        tb,
+        "build_reward_plugin_result",
+        lambda **_kw: RewardPluginResult(config_kwargs={}, trainer_kwargs={"reward_funcs": "PLUGIN_REWARD"}),
+    )
 
     cfg = MagicMock()
     cfg.training.get_effective_optimizer.return_value = "adamw_torch"

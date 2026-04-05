@@ -26,7 +26,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import IMLflowGateway, NullMLflowGateway
+from src.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
 from src.training.mlflow.autolog import MLflowAutologManager
 from src.training.mlflow.dataset_logger import MLflowDatasetLogger
 from src.training.mlflow.domain_logger import MLflowDomainLogger
@@ -63,9 +65,12 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         "error": ("ERROR", 17),
     }
 
-    def __init__(self, config: PipelineConfig) -> None:
+    def __init__(self, config: PipelineConfig, *, runtime_role: MLflowRuntimeRole = "control_plane") -> None:
         self.config = config
         self._mlflow_config = config.experiment_tracking.mlflow
+        self._runtime_role: MLflowRuntimeRole = runtime_role
+        self._resolved_uris: ResolvedMLflowUris | None = None
+        self._environment: MLflowEnvironment | None = None
         self._mlflow: Any = None
         self._run: Any = None
         self._run_id: str | None = None
@@ -254,9 +259,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
 
     def get_trace_url(self, trace_id: str | None = None) -> str | None:
         self._autolog._mlflow = self._mlflow
-        tracking_uri = self._gateway.uri or (
-            self._mlflow_config.tracking_uri if self._mlflow_config else None
-        )
+        tracking_uri = self._gateway.uri or self.get_runtime_tracking_uri()
         self._autolog._tracking_uri = tracking_uri or None
         return self._autolog.get_trace_url(trace_id=trace_id)
 
@@ -549,7 +552,10 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
     # =========================================================================
 
     def cleanup(self) -> None:
-        """Reset all runtime state."""
+        """Reset all runtime state and restore process-wide MLflow env."""
+        if self._environment is not None:
+            self._environment.deactivate()
+            self._environment = None
         self._run = None
         self._run_id = None
         self._mlflow = None

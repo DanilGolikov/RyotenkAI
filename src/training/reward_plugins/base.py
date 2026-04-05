@@ -25,6 +25,21 @@ class RewardPlugin(BasePlugin, ABC):
     def _validate_params(self) -> None:
         return None
 
+    def build_config_kwargs(
+        self,
+        *,
+        train_dataset: Dataset,
+        phase_config: StrategyPhaseConfig,
+        pipeline_config: PipelineConfig,
+    ) -> dict[str, Any]:
+        """
+        Return extra kwargs for the TRL *Config constructor (e.g. reward_weights).
+
+        Override in subclasses that need to pass config-level params.
+        Default: no config overrides.
+        """
+        return {}
+
     @abstractmethod
     def build_trainer_kwargs(
         self,
@@ -34,7 +49,7 @@ class RewardPlugin(BasePlugin, ABC):
         pipeline_config: PipelineConfig,
     ) -> dict[str, Any]:
         """
-        Return extra kwargs for the trainer, e.g. reward_funcs / reward_weights.
+        Return extra kwargs for the TRL Trainer constructor (e.g. reward_funcs).
         """
 
 

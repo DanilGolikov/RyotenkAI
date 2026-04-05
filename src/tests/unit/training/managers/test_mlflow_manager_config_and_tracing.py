@@ -119,8 +119,6 @@ def _mk_cfg() -> PipelineConfig:
             mlflow=MLflowConfig(
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test",
-                log_artifacts=True,
-                log_model=True,
             )
         ),
     )

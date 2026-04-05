@@ -5,7 +5,7 @@ Comprehensive tests for validate_strategy_chain() function.
 Covers all valid/invalid transitions per VALID_STRATEGY_TRANSITIONS.
 
 Strategy Rules:
-- Valid start strategies: cpt, sft, orpo
+- Invalid ordering emits warnings but does not fail validation
 - Transitions:
   - cpt → [sft, cot]
   - sft → [cot, dpo, orpo]
@@ -13,6 +13,8 @@ Strategy Rules:
   - dpo → [] (terminal)
   - orpo → [] (terminal)
 """
+
+from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +38,24 @@ def make_chain(*strategy_types: str) -> list[StrategyPhaseConfig]:
     """
     if len(strategy_types) == 1:
         return [StrategyPhaseConfig(strategy_type=strategy_types[0], dataset="default")]
-    return [StrategyPhaseConfig(strategy_type=s, dataset=f"ds_{s}") for s in strategy_types]
+    return [StrategyPhaseConfig(strategy_type=s, dataset=f"ds_{idx}_{s}") for idx, s in enumerate(strategy_types)]
+
+
+def _warning_text(mock_warning) -> str:
+    return "\n".join(str(call.args[0]) for call in mock_warning.call_args_list)
+
+
+def _assert_ok(result) -> None:
+    assert result.is_success()
+    assert result.unwrap() is None
+
+
+def _assert_err(result, *, code: str | None = None) -> str:
+    assert result.is_failure()
+    err = result.unwrap_err()
+    if code is not None:
+        assert err.code == code
+    return str(err)
 
 
 # =============================================================================
@@ -54,23 +73,17 @@ class TestValidStrategyChains:
     def test_single_sft(self):
         """Single SFT is valid (most common case)."""
         chain = make_chain("sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_single_cpt(self):
         """Single CPT is valid (continued pre-training)."""
         chain = make_chain("cpt")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_single_orpo(self):
         """Single ORPO is valid (combined SFT + alignment)."""
         chain = make_chain("orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     # -------------------------------------------------------------------------
     # Two-phase valid chains
@@ -79,37 +92,27 @@ class TestValidStrategyChains:
     def test_sft_then_dpo(self):
         """SFT → DPO is valid (standard alignment pipeline)."""
         chain = make_chain("sft", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_sft_then_orpo(self):
         """SFT → ORPO is valid."""
         chain = make_chain("sft", "orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_sft_then_cot(self):
         """SFT → CoT is valid (reasoning enhancement)."""
         chain = make_chain("sft", "cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cpt_then_sft(self):
         """CPT → SFT is valid (pretrain then finetune)."""
         chain = make_chain("cpt", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cpt_then_cot(self):
         """CPT → CoT is valid."""
         chain = make_chain("cpt", "cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cot_then_dpo(self):
         """CoT → DPO is valid (reasoning then alignment)."""
@@ -118,16 +121,12 @@ class TestValidStrategyChains:
         # Wait - CoT is not a valid start strategy!
         # So we can't test cot → dpo directly without sft first
         chain = make_chain("sft", "cot", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cot_then_orpo(self):
         """SFT → CoT → ORPO is valid."""
         chain = make_chain("sft", "cot", "orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     # -------------------------------------------------------------------------
     # Three-phase valid chains
@@ -136,23 +135,17 @@ class TestValidStrategyChains:
     def test_sft_cot_dpo(self):
         """SFT → CoT → DPO: full reasoning + alignment pipeline."""
         chain = make_chain("sft", "cot", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cpt_sft_dpo(self):
         """CPT → SFT → DPO: pretrain, finetune, align."""
         chain = make_chain("cpt", "sft", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cpt_sft_cot(self):
         """CPT → SFT → CoT: pretrain, finetune, reason."""
         chain = make_chain("cpt", "sft", "cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     # -------------------------------------------------------------------------
     # Four-phase maximum chain
@@ -161,16 +154,12 @@ class TestValidStrategyChains:
     def test_cpt_sft_cot_dpo(self):
         """CPT → SFT → CoT → DPO: maximum pipeline depth."""
         chain = make_chain("cpt", "sft", "cot", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_cpt_sft_cot_orpo(self):
         """CPT → SFT → CoT → ORPO: maximum pipeline with ORPO."""
         chain = make_chain("cpt", "sft", "cot", "orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is True
-        assert error == ""
+        _assert_ok(validate_strategy_chain(chain))
 
 
 # =============================================================================
@@ -183,15 +172,13 @@ class TestInvalidChainsEmptyNone:
 
     def test_empty_chain(self):
         """Empty chain is invalid."""
-        is_valid, error = validate_strategy_chain([])
-        assert is_valid is False
+        error = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error.lower()
 
     def test_none_element_only(self):
         """Chain with only None element is invalid (after filtering)."""
         chain = [None]  # type: ignore
-        is_valid, _error = validate_strategy_chain(chain)  # type: ignore
-        assert is_valid is False
+        _ = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         # After filtering None, chain is empty
 
     def test_none_in_middle(self):
@@ -203,17 +190,13 @@ class TestInvalidChainsEmptyNone:
         ]
         # Current implementation: filters None and validates rest as [sft, dpo]
         # OR: rejects None immediately
-        is_valid, error = validate_strategy_chain(chain)  # type: ignore
-        # Accept either behavior - filtering Nones or rejecting them
-        if not is_valid:
-            assert "none" in error.lower() or "empty" in error.lower()
+        error = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        assert "none" in error.lower() or "empty" in error.lower()
 
     def test_multiple_nones(self):
         """Chain with multiple Nones should fail validation."""
         chain = [None, None, None]  # type: ignore
-        is_valid, error = validate_strategy_chain(chain)  # type: ignore
-        assert is_valid is False
-        # Either "empty" (after filtering) or "None" (if rejected)
+        error = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "empty" in error.lower() or "none" in error.lower()
 
 
@@ -223,29 +206,27 @@ class TestInvalidChainsEmptyNone:
 
 
 class TestInvalidChainsBadStart:
-    """Tests for invalid starting strategies."""
+    """Tests for invalid starting strategies (warning-only)."""
 
-    def test_dpo_cannot_start(self):
-        """DPO cannot be first strategy."""
-        chain = make_chain("dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
-        assert "dpo" in error.lower()
-
-    def test_cot_cannot_start(self):
-        """CoT cannot be first strategy (needs SFT/CPT first)."""
+    def test_cot_can_start_with_warning(self):
+        """CoT start should warn but not fail validation."""
         chain = make_chain("cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_start" in warning_text
+        assert "got=cot" in warning_text
 
-    def test_dpo_then_sft_invalid_start(self):
-        """DPO → SFT: invalid because DPO can't start."""
-        chain = make_chain("dpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
+    def test_cot_then_sft_warns_for_start_and_transition(self):
+        """Invalid start and transition should both be warning-only."""
+        chain = make_chain("cot", "sft")
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_start" in warning_text
+        assert "reason=invalid_transition" in warning_text
 
 
 # =============================================================================
@@ -254,66 +235,83 @@ class TestInvalidChainsBadStart:
 
 
 class TestInvalidChainsBadTransitions:
-    """Tests for invalid strategy transitions."""
+    """Tests for invalid strategy transitions (warning-only)."""
 
     def test_dpo_is_terminal(self):
-        """DPO → anything is invalid (DPO is terminal)."""
+        """DPO → anything should warn but not fail validation."""
         chain = make_chain("sft", "dpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
-        assert "dpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
+        assert "from=dpo" in warning_text
 
     def test_orpo_is_terminal(self):
-        """ORPO → anything is invalid (ORPO is terminal)."""
+        """ORPO → anything should warn but not fail validation."""
         chain = make_chain("orpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # ORPO is valid start but terminal, so orpo → sft is invalid
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
+        assert "from=orpo" in warning_text
 
     def test_cpt_to_dpo_invalid(self):
-        """CPT → DPO is invalid (must go through SFT)."""
+        """CPT → DPO should warn but not fail validation."""
         chain = make_chain("cpt", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
-        assert "cpt" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
+        assert "from=cpt" in warning_text
+        assert "to=dpo" in warning_text
 
     def test_cpt_to_orpo_invalid(self):
-        """CPT → ORPO is invalid."""
+        """CPT → ORPO should warn but not fail validation."""
         chain = make_chain("cpt", "orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
 
     def test_sft_to_sft_invalid(self):
-        """SFT → SFT is invalid (duplicate not in transitions)."""
+        """SFT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_cot_invalid(self):
-        """CoT → CoT is invalid."""
+        """CoT → CoT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_sft_invalid(self):
-        """CoT → SFT is invalid (can only go to DPO/ORPO)."""
+        """CoT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_cpt_invalid(self):
-        """CoT → CPT is invalid."""
+        """CoT → CPT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cpt")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "reason=invalid_transition" in warning_text
 
 
 # =============================================================================
@@ -352,8 +350,7 @@ class TestInvalidChainsUnknownTypes:
         try:
             chain = make_chain("SFT")
             # If we got here, Pydantic normalized it
-            is_valid, _error = validate_strategy_chain(chain)
-            assert is_valid is True  # "sft" is valid
+            _assert_ok(validate_strategy_chain(chain))  # "sft" is valid
         except ValidationError:
             # Pydantic rejected uppercase
             pass
@@ -369,33 +366,36 @@ class TestErrorMessageQuality:
 
     def test_empty_chain_error_is_clear(self):
         """Empty chain error should mention 'empty'."""
-        is_valid, error = validate_strategy_chain([])
-        assert is_valid is False
+        error = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error.lower() or "cannot be empty" in error.lower()
 
-    def test_invalid_start_shows_allowed(self):
-        """Invalid start error should show allowed strategies."""
-        chain = make_chain("dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # Error should mention what IS allowed
-        assert any(s in error.lower() for s in ["cpt", "sft", "orpo"])
+    def test_invalid_start_warning_shows_allowed(self):
+        """Invalid start warning should show allowed strategies."""
+        chain = make_chain("cot")
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert any(s in warning_text.lower() for s in ["cpt", "sft", "orpo"])
 
-    def test_invalid_transition_shows_valid_options(self):
-        """Invalid transition error should show valid options."""
+    def test_invalid_transition_warning_shows_valid_options(self):
+        """Invalid transition warning should show valid options."""
         chain = make_chain("sft", "sft")  # sft → sft invalid
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # Error should mention valid transitions from sft
-        assert "cot" in error.lower() or "dpo" in error.lower() or "orpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "valid=('cot', 'dpo', 'orpo', 'grpo', 'sapo')" in warning_text
 
-    def test_invalid_transition_shows_from_to(self):
-        """Error should show which transition was attempted."""
+    def test_invalid_transition_warning_shows_from_to(self):
+        """Warning should show which transition was attempted."""
         chain = make_chain("cpt", "dpo")  # cpt → dpo invalid
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "cpt" in error.lower()
-        assert "dpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            result = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        _assert_ok(result)
+        assert "from=cpt" in warning_text
+        assert "to=dpo" in warning_text
 
 
 # =============================================================================
@@ -410,8 +410,7 @@ class TestEdgeCases:
         """Very long valid chain should work."""
         # cpt → sft → cot → dpo (max valid length is 4 based on transitions)
         chain = make_chain("cpt", "sft", "cot", "dpo")
-        is_valid, _error = validate_strategy_chain(chain)
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_single_strategy_with_metadata(self):
         """Strategy with all metadata fields should validate."""
@@ -426,8 +425,7 @@ class TestEdgeCases:
                 ),
             )
         ]
-        is_valid, _error = validate_strategy_chain(chain)
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(chain))
 
     def test_mixed_metadata_strategies(self):
         """Chain with different metadata per strategy."""
@@ -443,8 +441,7 @@ class TestEdgeCases:
                 hyperparams=PhaseHyperparametersConfig(epochs=1, beta=0.1),
             ),
         ]
-        is_valid, _error = validate_strategy_chain(chain)
-        assert is_valid is True
+        _assert_ok(validate_strategy_chain(chain))
 
 
 # =============================================================================
@@ -460,7 +457,7 @@ class TestStrategyConstants:
         assert "sft" in VALID_START_STRATEGIES
         assert "cpt" in VALID_START_STRATEGIES
         assert "orpo" in VALID_START_STRATEGIES
-        assert "dpo" not in VALID_START_STRATEGIES
+        assert "dpo" in VALID_START_STRATEGIES
         assert "cot" not in VALID_START_STRATEGIES
 
     def test_dpo_is_terminal(self):

@@ -25,11 +25,11 @@ import pytest
 class TestStrategyChainValidation:
     """Tests for strategy chain validation."""
 
-    def test_invalid_chain_dpo_first_fails(self, mock_config):
+    def test_single_dpo_is_allowed(self, mock_config):
         """
-        Given: Chain starting with DPO (requires prior SFT)
+        Given: Chain starting with DPO
         When: Chain is validated
-        Then: Validation fails
+        Then: Validation passes
         """
         _ = mock_config  # Mark as used (required fixture for context)
         from src.utils.config import validate_strategy_chain
@@ -38,10 +38,8 @@ class TestStrategyChainValidation:
         dpo_phase = MagicMock()
         dpo_phase.strategy_type = "dpo"
 
-        is_valid, error = validate_strategy_chain([dpo_phase])
-
-        assert not is_valid
-        assert "dpo" in error.lower() or "DPO" in error
+        result = validate_strategy_chain([dpo_phase])
+        assert result.is_success()
 
     def test_valid_chain_sft_dpo_passes(self, mock_config):
         """
@@ -59,10 +57,8 @@ class TestStrategyChainValidation:
         dpo_phase = MagicMock()
         dpo_phase.strategy_type = "dpo"
 
-        is_valid, error = validate_strategy_chain([sft_phase, dpo_phase])
-
-        assert is_valid
-        assert error == ""
+        result = validate_strategy_chain([sft_phase, dpo_phase])
+        assert result.is_success()
 
     def test_valid_chain_cpt_sft_cot_passes(self, mock_config):
         """
@@ -83,10 +79,8 @@ class TestStrategyChainValidation:
         cot_phase = MagicMock()
         cot_phase.strategy_type = "cot"
 
-        is_valid, error = validate_strategy_chain([cpt_phase, sft_phase, cot_phase])
-
-        assert is_valid
-        assert error == ""
+        result = validate_strategy_chain([cpt_phase, sft_phase, cot_phase])
+        assert result.is_success()
 
     def test_single_sft_valid(self, mock_config):
         """
@@ -100,9 +94,7 @@ class TestStrategyChainValidation:
         sft_phase = MagicMock()
         sft_phase.strategy_type = "sft"
 
-        is_valid, _error = validate_strategy_chain([sft_phase])
-
-        assert is_valid
+        assert validate_strategy_chain([sft_phase]).is_success()
 
     def test_single_cpt_valid(self, mock_config):
         """
@@ -116,9 +108,7 @@ class TestStrategyChainValidation:
         cpt_phase = MagicMock()
         cpt_phase.strategy_type = "cpt"
 
-        is_valid, _error = validate_strategy_chain([cpt_phase])
-
-        assert is_valid
+        assert validate_strategy_chain([cpt_phase]).is_success()
 
 
 # =============================================================================

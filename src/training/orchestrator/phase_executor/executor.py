@@ -151,41 +151,43 @@ class PhaseExecutor:
                 )
             )
 
-        # 1. ADAPTER CACHE CHECK
-        dataset_fingerprint: str | None = None
-        if phase.adapter_cache.enabled:
-            dataset_fingerprint = self._compute_dataset_fingerprint_safe(phase_idx, phase)
-            if not upstream_retrained and dataset_fingerprint is not None:
-                cache_result = self._try_adapter_cache_hit(
-                    phase_idx, phase, model, buffer, dataset_fingerprint
-                )
-                if cache_result is not None:
-                    return cache_result
-            elif upstream_retrained:
-                logger.warning(
-                    f"[PE:ADAPTER_CACHE_MISS_FORCED] phase={phase_idx} "
-                    f"({phase.strategy_type}): upstream phase was retrained — skipping cache lookup"
-                )
-
-        # 2. MARK PHASE STARTED
-        buffer.mark_phase_started(phase_idx)
-        logger.debug(f"[PE:START] phase={phase_idx}, strategy={phase.strategy_type}")
-
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_start(
-                f"Phase {phase_idx} ({phase.strategy_type.upper()}) started",
-                category=CATEGORY_TRAINING,
-                source=f"PhaseExecutor:{phase_idx}",
-                phase_idx=phase_idx,
-                strategy_type=phase.strategy_type,
-            )
-
-        # 3. START MLFLOW NESTED RUN
+        # 1. START MLFLOW NESTED RUN (before cache check so cache hits are tracked)
         nested_run_ctx = self._mlflow_logger.start_nested_run(phase_idx, phase)
         phase_succeeded = False
 
         try:
             self._mlflow_logger.log_phase_start(phase_idx, phase)
+
+            # 2. ADAPTER CACHE CHECK
+            dataset_fingerprint: str | None = None
+            if phase.adapter_cache.enabled:
+                dataset_fingerprint = self._compute_dataset_fingerprint_safe(phase_idx, phase)
+                if not upstream_retrained and dataset_fingerprint is not None:
+                    cache_result = self._try_adapter_cache_hit(
+                        phase_idx, phase, model, buffer, dataset_fingerprint
+                    )
+                    if cache_result is not None:
+                        self._mlflow_logger.log_cache_hit(phase_idx, phase)
+                        phase_succeeded = cache_result.is_ok()
+                        return cache_result
+                elif upstream_retrained:
+                    logger.warning(
+                        f"[PE:ADAPTER_CACHE_MISS_FORCED] phase={phase_idx} "
+                        f"({phase.strategy_type}): upstream phase was retrained — skipping cache lookup"
+                    )
+
+            # 3. MARK PHASE STARTED
+            buffer.mark_phase_started(phase_idx)
+            logger.debug(f"[PE:START] phase={phase_idx}, strategy={phase.strategy_type}")
+
+            if self._mlflow_manager:
+                self._mlflow_manager.log_event_start(
+                    f"Phase {phase_idx} ({phase.strategy_type.upper()}) started",
+                    category=CATEGORY_TRAINING,
+                    source=f"PhaseExecutor:{phase_idx}",
+                    phase_idx=phase_idx,
+                    strategy_type=phase.strategy_type,
+                )
 
             # 4-12. TRAINING (includes dataset loading, trainer creation, training, checkpointing)
             run_result = self._training_runner.run(phase_idx, phase, model, buffer)
