@@ -37,7 +37,6 @@ def _mk_cfg(
     local_tracking_uri: str | None = None,
     system_metrics_callback_enabled: bool = False,
     run_description_file: str | None = None,
-    log_artifacts: bool = False,
 ) -> PipelineConfig:
     return PipelineConfig(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
@@ -84,8 +83,6 @@ def _mk_cfg(
                 tracking_uri=tracking_uri,
                 local_tracking_uri=local_tracking_uri,
                 experiment_name="test",
-                log_artifacts=log_artifacts,
-                log_model=False,
                 system_metrics_callback_enabled=system_metrics_callback_enabled,
                 run_description_file=run_description_file,
             )
@@ -633,12 +630,12 @@ class TestFinalSmallCoveragePush:
     def test_log_artifact_and_log_dict_early_returns_and_exceptions(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        # log_artifact disabled via config
-        mgr = MLflowManager(_mk_cfg(log_artifacts=False))
+        # log_artifact: missing file -> False
+        mgr = MLflowManager(_mk_cfg())
         assert mgr.log_artifact("x.txt") is False
 
-        # log_artifact enabled but no run_id/client -> False
-        mgr = MLflowManager(_mk_cfg(log_artifacts=True))
+        # log_artifact: no run_id / no client -> False
+        mgr = MLflowManager(_mk_cfg())
         mgr._mlflow = None
         mgr._run_id = None
         assert mgr.log_artifact("x.txt") is False
@@ -660,7 +657,7 @@ class TestFinalSmallCoveragePush:
         fake_mlflow.MlflowClient = _Client  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
 
-        mgr = MLflowManager(_mk_cfg(log_artifacts=True))
+        mgr = MLflowManager(_mk_cfg())
         mgr._mlflow = fake_mlflow
         mgr._run_id = "run_1"
 
@@ -675,7 +672,6 @@ class TestFinalSmallCoveragePush:
         assert mgr2.log_dict({"x": 1}, "x.json") is False
 
         # log_dict: exception -> False
-        mgr._mlflow_config.log_artifacts = True  # type: ignore[union-attr]
         assert mgr.log_dict({"x": 1}, "x.json") is False
 
     def test_log_dataset_early_return_and_log_dataset_input_success(self) -> None:

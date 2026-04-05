@@ -64,8 +64,6 @@ def _mk_experiment_tracking() -> ExperimentTrackingConfig:
         mlflow=MLflowConfig(
             tracking_uri="http://127.0.0.1:5002",
             experiment_name="test-exp",
-            log_artifacts=False,
-            log_model=False,
         )
     )
 
@@ -789,8 +787,6 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
         local_tracking_uri="http://localhost:5002",
         ca_bundle_path="certs/mlflow-ca.pem",
         experiment_name="test-exp",
-        log_artifacts=True,
-        log_model=False,
     )
     config = PipelineConfig(
         model=ModelConfig(name="gpt2", torch_dtype="bfloat16", trust_remote_code=False),
@@ -866,8 +862,6 @@ def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets:
         tracking_uri=None,
         local_tracking_uri="http://localhost:5002",
         experiment_name="test-exp",
-        log_artifacts=True,
-        log_model=False,
     )
     config = PipelineConfig(
         model=ModelConfig(name="gpt2", torch_dtype="bfloat16", trust_remote_code=False),

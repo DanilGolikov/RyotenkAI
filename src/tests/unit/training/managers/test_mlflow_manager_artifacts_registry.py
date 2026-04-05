@@ -31,8 +31,6 @@ from src.utils.config import (
 def _mk_cfg(
     *,
     tracking_uri: str = "http://127.0.0.1:5002",
-    log_artifacts: bool = True,
-    log_model: bool = True,
 ) -> PipelineConfig:
     return PipelineConfig(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
@@ -78,8 +76,6 @@ def _mk_cfg(
             mlflow=MLflowConfig(
                 tracking_uri=tracking_uri,
                 experiment_name="test",
-                log_artifacts=log_artifacts,
-                log_model=log_model,
             )
         ),
     )
@@ -247,7 +243,7 @@ def test_enable_and_disable_autolog_transformers_branch(monkeypatch: pytest.Monk
 
 def test_log_artifact_and_log_dict_and_log_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_mlflow, shared = _install_fake_mlflow(monkeypatch)
-    mgr = MLflowManager(_mk_cfg(log_artifacts=True))
+    mgr = MLflowManager(_mk_cfg())
     mgr._mlflow = fake_mlflow
     mgr._run_id = "run_1"
     mgr._run = object()
@@ -268,7 +264,7 @@ def test_log_artifact_and_log_dict_and_log_text(monkeypatch: pytest.MonkeyPatch,
 
 def test_log_artifact_missing_file_returns_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_mlflow, _shared = _install_fake_mlflow(monkeypatch)
-    mgr = MLflowManager(_mk_cfg(log_artifacts=True))
+    mgr = MLflowManager(_mk_cfg())
     mgr._mlflow = fake_mlflow
     mgr._run_id = "run_1"
     mgr._run = object()
@@ -278,7 +274,7 @@ def test_log_artifact_missing_file_returns_false(monkeypatch: pytest.MonkeyPatch
 
 def test_log_artifact_binary_file_returns_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_mlflow, _shared = _install_fake_mlflow(monkeypatch)
-    mgr = MLflowManager(_mk_cfg(log_artifacts=True))
+    mgr = MLflowManager(_mk_cfg())
     mgr._mlflow = fake_mlflow
     mgr._run_id = "run_1"
     mgr._run = object()
@@ -290,7 +286,7 @@ def test_log_artifact_binary_file_returns_false(monkeypatch: pytest.MonkeyPatch,
 
 def test_model_registry_register_alias_tags_and_promote(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_mlflow, _shared = _install_fake_mlflow(monkeypatch)
-    mgr = MLflowManager(_mk_cfg(log_model=True))
+    mgr = MLflowManager(_mk_cfg())
     mgr._mlflow = fake_mlflow
     mgr._run_id = "run_1"
 

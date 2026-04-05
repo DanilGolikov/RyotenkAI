@@ -775,7 +775,6 @@ class TestMLflowManagerEventLoggingExtension:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        mlflow_config.log_artifacts = True
         config.experiment_tracking.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
@@ -1233,7 +1232,6 @@ class TestMLflowManagerModelRegistry:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        mlflow_config.log_model = True
         config.experiment_tracking.mlflow = mlflow_config
         config.model.name = "test/model"
         return config

@@ -105,8 +105,6 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
             mlflow=MLflowConfig(
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test-exp",
-                log_artifacts=False,
-                log_model=False,
             )
         ),
     )
@@ -134,8 +132,6 @@ class TestMLflowConfig:
             tracking_uri=None,
             local_tracking_uri="http://localhost:5002",
             experiment_name="test-exp",
-            log_artifacts=False,
-            log_model=False,
         )
         assert cfg.local_tracking_uri == "http://localhost:5002"
         assert cfg.tracking_uri is None
@@ -146,8 +142,6 @@ class TestMLflowConfig:
                 tracking_uri=None,
                 local_tracking_uri=None,
                 experiment_name="test-exp",
-                log_artifacts=False,
-                log_model=False,
             )
 
 

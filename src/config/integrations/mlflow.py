@@ -31,8 +31,6 @@ class MLflowConfig(StrictBaseModel):
         description="Optional CA bundle path for HTTPS verification against MLflow",
     )
     experiment_name: str = Field(..., description="MLflow experiment name")
-    log_artifacts: bool = Field(..., description="Log artifacts to MLflow")
-    log_model: bool = Field(..., description="Log full model (large!)")
     run_description_file: str | None = Field(None, description="Path to run description .md file")
 
     # System metrics (GPU/CPU/RAM monitoring) - MLflow built-in

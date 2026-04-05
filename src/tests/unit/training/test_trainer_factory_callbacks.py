@@ -127,8 +127,6 @@ def _mk_cfg(*, callback_enabled: bool, callback_interval: int) -> PipelineConfig
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
-                log_artifacts=False,
-                log_model=False,
                 system_metrics_callback_enabled=callback_enabled,
                 system_metrics_callback_interval=callback_interval,
             )

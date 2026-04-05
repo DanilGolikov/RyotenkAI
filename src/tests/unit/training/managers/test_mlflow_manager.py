@@ -99,8 +99,6 @@ def _mk_cfg(
                 tracking_uri=tracking_uri,
                 local_tracking_uri=local_tracking_uri,
                 experiment_name="test",
-                log_artifacts=False,
-                log_model=False,
             )
         ),
     )
@@ -399,8 +397,6 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
-                log_artifacts=False,
-                log_model=False,
             )
         ),
     )
@@ -466,8 +462,6 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
-                log_artifacts=False,
-                log_model=False,
             )
         ),
     )

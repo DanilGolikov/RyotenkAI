@@ -33,8 +33,6 @@ def _cfg(
         local_tracking_uri=local_tracking_uri,
         ca_bundle_path=ca_bundle_path,
         experiment_name="test-exp",
-        log_artifacts=False,
-        log_model=False,
     )
 
 
