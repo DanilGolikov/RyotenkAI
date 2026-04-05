@@ -785,7 +785,9 @@ def test_install_dependencies_cloud_verify_fail_returns_err(base_config: Pipelin
 
 def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets):
     mlflow_cfg = MLflowConfig(
-        tracking_uri="http://127.0.0.1:5002",
+        tracking_uri="https://public.example.ts.net",
+        local_tracking_uri="http://localhost:5002",
+        ca_bundle_path="certs/mlflow-ca.pem",
         experiment_name="test-exp",
         log_artifacts=True,
         log_model=False,
@@ -851,10 +853,80 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
 
     create_cmd = recorded[0]
     assert 'export HF_TOKEN="hf_test_token"' in create_cmd
-    assert 'export MLFLOW_TRACKING_URI="http://127.0.0.1:5002"' in create_cmd
+    assert 'export MLFLOW_TRACKING_URI="https://public.example.ts.net"' in create_cmd
     assert 'export MLFLOW_PARENT_RUN_ID="parent_123"' in create_cmd
     assert 'export MLFLOW_HTTP_REQUEST_TIMEOUT="15"' in create_cmd
     assert 'export MLFLOW_HTTP_REQUEST_MAX_RETRIES="2"' in create_cmd
+    assert 'export REQUESTS_CA_BUNDLE="certs/mlflow-ca.pem"' in create_cmd
+    assert 'export SSL_CERT_FILE="certs/mlflow-ca.pem"' in create_cmd
+
+
+def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets: DummySecrets):
+    mlflow_cfg = MLflowConfig(
+        tracking_uri=None,
+        local_tracking_uri="http://localhost:5002",
+        experiment_name="test-exp",
+        log_artifacts=True,
+        log_model=False,
+    )
+    config = PipelineConfig(
+        model=ModelConfig(name="gpt2", torch_dtype="bfloat16", trust_remote_code=False),
+        providers={"single_node": SINGLE_NODE_PROVIDER_CFG},
+        training=TrainingOnlyConfig(
+            provider="single_node",
+            type="qlora",
+            qlora=LoraConfig(
+                r=8,
+                lora_alpha=16,
+                lora_dropout=0.05,
+                bias="none",
+                target_modules="all-linear",
+                use_dora=False,
+                use_rslora=False,
+                init_lora_weights="gaussian",
+            ),
+            hyperparams=GlobalHyperparametersConfig(
+                per_device_train_batch_size=1,
+                gradient_accumulation_steps=1,
+                learning_rate=2e-4,
+                warmup_ratio=0.0,
+                epochs=1,
+            ),
+        ),
+        datasets={
+            "default": DatasetConfig(
+                source_type="local",
+                source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=DATASET_CHAT_FIXTURE, eval=None)),
+            )
+        },
+        inference=InferenceConfig(
+            enabled=False,
+            provider="single_node",
+            engine="vllm",
+            engines=InferenceEnginesConfig(
+                vllm=InferenceVLLMEngineConfig(
+                    merge_image="test/merge:latest",
+                    serve_image="test/vllm:latest",
+                )
+            ),
+        ),
+        experiment_tracking=ExperimentTrackingConfig(mlflow=mlflow_cfg),
+    )
+    deployment = TrainingDeploymentManager(config=config, secrets=secrets)
+    deployment.set_workspace(workspace_path="/workspace")
+
+    ssh_client = MagicMock()
+    recorded: list[str] = []
+
+    def exec_side_effect(command: str, **kwargs: Any):
+        recorded.append(command)
+        return True, "", ""
+
+    ssh_client.exec_command.side_effect = exec_side_effect
+
+    result = deployment._create_env_file(ssh_client, context={})
+    assert result.is_ok()
+    assert 'export MLFLOW_TRACKING_URI="http://localhost:5002"' in recorded[0]
 
 
 def test_deploy_files_individual_fallback_failure_is_returned(

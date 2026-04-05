@@ -370,10 +370,21 @@ experiment_tracking:
   #   - MinIO: artifacts (models, plots, logs) via S3 API
   #   - MLflow Server: REST API with --serve-artifacts
   #
-  # Clients need ONLY tracking_uri - server handles MinIO credentials!
+  # URI contract:
+  #   - tracking_uri: primary URI for training/runtime and remote clients
+  #   - local_tracking_uri: optional URI for the local control plane/orchestrator
+  #   - If local_tracking_uri is omitted -> both control plane and training use tracking_uri
+  #   - If tracking_uri is omitted -> control plane uses local_tracking_uri, training falls back to it too
+  #
+  # Supported patterns:
+  #   - Local-only: tracking_uri: "http://localhost:5002"
+  #   - LAN: tracking_uri: "http://<mac-lan-ip>:5002" + local_tracking_uri: "http://localhost:5002"
+  #   - Tailscale/Internet: tracking_uri: "https://<host>.ts.net" + local_tracking_uri: "http://localhost:5002"
   # -------------------------------------------------------------------------
   mlflow:
     tracking_uri: "http://localhost:5002"
+    # local_tracking_uri: "http://localhost:5002"
+    # ca_bundle_path: "certs/mlflow-ca.pem"
     experiment_name: ryotenkai
     log_artifacts: true
     log_model: false

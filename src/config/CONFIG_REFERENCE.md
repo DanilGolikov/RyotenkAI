@@ -891,11 +891,13 @@ Rules:
 experiment_tracking:
   mlflow:                         # Optional — omit to disable MLflow entirely
     enabled: true
-    tracking_uri: "http://localhost:5002"
+    tracking_uri: "https://your-mlflow.example.com"   # Remote/LAN/runtime access
+    local_tracking_uri: "http://localhost:5002"       # Optional local control-plane override
     experiment_name: ryotenkai
     log_artifacts: true
     log_model: false
     # run_description_file: null
+    # ca_bundle_path: "certs/mlflow-ca.pem"
 
     system_metrics_sampling_interval: 5
     system_metrics_samples_before_logging: 1
@@ -913,7 +915,9 @@ experiment_tracking:
 | Parameter | Type | Default | Description |
 |----------|-----|--------------|----------|
 | `enabled` | bool | - | Enable MLflow |
-| `tracking_uri` | string | - | URI MLflow tracking server |
+| `tracking_uri` | string \| null | `null` | Primary MLflow URI for training/runtime and external clients |
+| `local_tracking_uri` | string \| null | `null` | Optional MLflow URI for the local control plane/orchestrator |
+| `ca_bundle_path` | string \| null | `null` | Optional CA bundle path for HTTPS verification against MLflow |
 | `experiment_name` | string | - | Experiment name in MLflow |
 | `log_artifacts` | bool | - | Log artifacts (files) |
 | `log_model` | bool | - | Log full model artifact (can be very large) |
@@ -922,6 +926,17 @@ experiment_tracking:
 | `system_metrics_samples_before_logging` | int | `1` | Samples to collect before logging |
 | `system_metrics_callback_enabled` | bool | `false` | Enable manual SystemMetricsCallback (may hang on some cloud images) |
 | `system_metrics_callback_interval` | int | `10` | Log system metrics every N training steps (if callback enabled) |
+
+Fallback rules:
+- At least one of `tracking_uri` or `local_tracking_uri` must be set.
+- Local control plane uses `local_tracking_uri` first, then falls back to `tracking_uri`.
+- Training/runtime uses `tracking_uri` first, then falls back to `local_tracking_uri`.
+- Both URIs must point to the same MLflow stack when both are provided.
+
+Common patterns:
+- Local-only: `tracking_uri: "http://localhost:5002"`
+- LAN: `tracking_uri: "http://<mac-lan-ip>:5002"` and `local_tracking_uri: "http://localhost:5002"`
+- Tailscale/Internet: `tracking_uri: "https://<host>.ts.net"` and `local_tracking_uri: "http://localhost:5002"`
 
 ### 7.2 HuggingFace Hub (`experiment_tracking.huggingface`)
 

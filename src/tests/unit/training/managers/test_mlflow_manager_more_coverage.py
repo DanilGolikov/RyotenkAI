@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import os
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.unit
 def _mk_cfg(
     *,
     tracking_uri: str = "http://127.0.0.1:5002",
+    local_tracking_uri: str | None = None,
     system_metrics_callback_enabled: bool = False,
     run_description_file: str | None = None,
     log_artifacts: bool = False,
@@ -80,6 +82,7 @@ def _mk_cfg(
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
                 tracking_uri=tracking_uri,
+                local_tracking_uri=local_tracking_uri,
                 experiment_name="test",
                 log_artifacts=log_artifacts,
                 log_model=False,
@@ -157,6 +160,21 @@ class TestSmallBranchesAndSetup:
         mgr = MLflowManager(_mk_cfg(system_metrics_callback_enabled=True))
         monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
         assert mgr.setup(disable_system_metrics=False) is True
+
+    def test_setup_sets_requests_ca_bundle_env_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_fake_mlflow(monkeypatch)
+        cfg = _mk_cfg()
+        cfg.experiment_tracking.mlflow.ca_bundle_path = "certs/mlflow-ca.pem"
+        mgr = MLflowManager(cfg)
+        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+        monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+
+        assert mgr.setup(disable_system_metrics=True) is True
+        assert mgr.get_runtime_tracking_uri() == "http://127.0.0.1:5002"
+        assert mgr.get_effective_remote_tracking_uri() == "http://127.0.0.1:5002"
+        assert os.environ["REQUESTS_CA_BUNDLE"] == "certs/mlflow-ca.pem"
+        assert os.environ["SSL_CERT_FILE"] == "certs/mlflow-ca.pem"
 
 
 class TestAutologFallbackAndDisable:
@@ -245,7 +263,9 @@ class TestTracingDecoratorAndUrls:
         assert mgr.get_trace_url(None) == "http://127.0.0.1:5002/#/traces/tid"
 
         # no tracking URI -> None
-        mgr = MLflowManager(_mk_cfg(tracking_uri=""))
+        mgr = MLflowManager(_mk_cfg())
+        mgr._gateway = SimpleNamespace(uri="")
+        mgr.get_runtime_tracking_uri = lambda: ""  # type: ignore[method-assign]
         mgr._mlflow = SimpleNamespace(get_current_active_span=lambda: None)
         assert mgr.get_trace_url(None) is None
 
@@ -318,21 +338,17 @@ class TestDescriptionAndConnectivityAndRuns:
         monkeypatch.setattr("pathlib.Path.exists", exists)
         assert mgr._load_description_file() is None
 
-    def test_normalize_tracking_uri_host_missing_and_private_ip_network_path(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+    def test_resolve_runtime_tracking_uri_remote_falls_back_to_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
-        # URI with missing host passes through unchanged
-        gw = MLflowGateway.__new__(MLflowGateway)
-        gw._uri = "http://:5002"
-        assert gw._normalize_uri("http://:5002") == "http://:5002"
-
-        # Private IP with unreachable localhost → returns original IP
-        gw2 = MLflowGateway.__new__(MLflowGateway)
-        gw2._uri = "http://192.168.1.10:5002"
-        monkeypatch.setattr(gw2, "_probe_uri", lambda uri, timeout: False)  # noqa: ARG005
-        assert gw2._normalize_uri("http://192.168.1.10:5002") == "http://192.168.1.10:5002"
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        resolved = resolve_mlflow_uris(
+            _mk_cfg(tracking_uri="", local_tracking_uri="http://localhost:5002").experiment_tracking.mlflow,
+            runtime_role="training",
+        )
+        assert resolved.effective_local_tracking_uri == "http://localhost:5002"
+        assert resolved.effective_remote_tracking_uri == "http://localhost:5002"
+        assert resolved.runtime_tracking_uri == "http://localhost:5002"
 
     def test_check_connectivity_success_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.request
@@ -350,8 +366,57 @@ class TestDescriptionAndConnectivityAndRuns:
 
         monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
 
-        gw = MLflowGateway("http://x", normalize=False)
+        gw = MLflowGateway("http://x")
         assert gw.check_connectivity(timeout=0.01) is True
+
+    def test_check_connectivity_https_uses_custom_ca_bundle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import ssl
+        import urllib.request
+
+        from src.infrastructure.mlflow.gateway import MLflowGateway
+
+        captured: dict[str, Any] = {}
+
+        class _Resp:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_create_default_context(*, cafile=None, **kwargs):
+            captured["cafile"] = cafile
+            return object()
+
+        def fake_urlopen(req, timeout, context):
+            captured["context"] = context
+            return _Resp()
+
+        monkeypatch.setattr(ssl, "create_default_context", fake_create_default_context)
+        monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+        gw = MLflowGateway("https://mlflow.example", ca_bundle_path="certs/mlflow-ca.pem")
+        assert gw.check_connectivity(timeout=0.01) is True
+        assert captured["cafile"] == "certs/mlflow-ca.pem"
+        assert captured["context"] is not None
+        assert gw.last_connectivity_error is None
+
+    def test_check_connectivity_ca_bundle_missing_sets_structured_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import ssl
+
+        from src.infrastructure.mlflow.gateway import MLflowGateway
+
+        def fake_create_default_context(*, cafile=None, **kwargs):
+            raise FileNotFoundError(cafile)
+
+        monkeypatch.setattr(ssl, "create_default_context", fake_create_default_context)
+
+        gw = MLflowGateway("https://mlflow.example", ca_bundle_path="missing-ca.pem")
+        assert gw.check_connectivity(timeout=0.01) is False
+        assert gw.last_connectivity_error is not None
+        assert gw.last_connectivity_error.code == "MLFLOW_TLS_CA_BUNDLE_INVALID"
 
     def test_start_run_exception_path_yields_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)

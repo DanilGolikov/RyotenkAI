@@ -74,7 +74,11 @@ def _inference_cfg_disabled() -> InferenceConfig:
     )
 
 
-def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002") -> PipelineConfig:
+def _mk_cfg(
+    *,
+    tracking_uri: str = "http://127.0.0.1:5002",
+    local_tracking_uri: str | None = None,
+) -> PipelineConfig:
     return PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
@@ -93,6 +97,7 @@ def _mk_cfg(*, tracking_uri: str = "http://127.0.0.1:5002") -> PipelineConfig:
         experiment_tracking=ExperimentTrackingConfig(
             mlflow=MLflowConfig(
                 tracking_uri=tracking_uri,
+                local_tracking_uri=local_tracking_uri,
                 experiment_name="test",
                 log_artifacts=False,
                 log_model=False,
@@ -109,24 +114,25 @@ def test_is_active_reflects_runtime_setup() -> None:
     assert mgr.is_active is True
 
 
-def test_normalize_tracking_uri_private_ip_switches_to_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.infrastructure.mlflow.gateway import MLflowGateway
+def test_resolve_runtime_tracking_uri_control_plane_prefers_local_tracking_uri() -> None:
+    from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
-    gw = MLflowGateway.__new__(MLflowGateway)
-    gw._uri = "http://192.168.1.10:5002"
-    monkeypatch.setattr(gw, "_probe_uri", lambda uri, timeout: uri.startswith("http://localhost"))
-    monkeypatch.setattr(gw, "check_connectivity", lambda timeout: True)
-
-    result = gw._normalize_uri("http://192.168.1.10:5002")
-    assert result == "http://localhost:5002"
+    cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
+    resolved = resolve_mlflow_uris(cfg.experiment_tracking.mlflow, runtime_role="control_plane")
+    assert resolved.effective_local_tracking_uri == "http://localhost:5002"
+    assert resolved.effective_remote_tracking_uri == "https://public.example"
+    assert resolved.runtime_tracking_uri == "http://localhost:5002"
 
 
-def test_normalize_tracking_uri_non_http_unchanged() -> None:
-    from src.infrastructure.mlflow.gateway import MLflowGateway
+def test_resolve_runtime_tracking_uri_training_prefers_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
-    gw = MLflowGateway.__new__(MLflowGateway)
-    gw._uri = "file:/tmp/mlruns"
-    assert gw._normalize_uri("file:/tmp/mlruns") == "file:/tmp/mlruns"
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "https://env.example")
+    cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
+    resolved = resolve_mlflow_uris(cfg.experiment_tracking.mlflow, runtime_role="training")
+    assert resolved.effective_local_tracking_uri == "http://localhost:5002"
+    assert resolved.effective_remote_tracking_uri == "https://public.example"
+    assert resolved.runtime_tracking_uri == "https://env.example"
 
 
 def test_check_connectivity_http_error_4xx_counts_as_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,7 +146,7 @@ def test_check_connectivity_http_error_4xx_counts_as_reachable(monkeypatch: pyte
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    gw = MLflowGateway("http://x", normalize=False)
+    gw = MLflowGateway("http://x")
     assert gw.check_connectivity(timeout=0.01) is True
 
 
@@ -151,8 +157,10 @@ def test_check_connectivity_exception_returns_false(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
 
-    gw = MLflowGateway("http://x", normalize=False)
+    gw = MLflowGateway("http://x")
     assert gw.check_connectivity(timeout=0.01) is False
+    assert gw.last_connectivity_error is not None
+    assert gw.last_connectivity_error.code == "MLFLOW_PREFLIGHT_CONNECTION_FAILED"
 
 
 def test_client_property_uses_tracking_uri_from_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,7 +180,7 @@ def test_client_property_uses_tracking_uri_from_gateway(monkeypatch: pytest.Monk
     mgr = MLflowManager(_mk_cfg(tracking_uri="http://127.0.0.1:5002"))
     mgr._mlflow = object()  # mark as initialized
     # _gateway is NullMLflowGateway initially; replace with a real one
-    mgr._gateway = MLflowGateway("http://127.0.0.1:5002", normalize=False)
+    mgr._gateway = MLflowGateway("http://127.0.0.1:5002")
 
     _ = mgr.client
     assert created["tracking_uri"] == "http://127.0.0.1:5002"

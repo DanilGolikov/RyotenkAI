@@ -15,33 +15,17 @@ Consumers:
 
 from __future__ import annotations
 
+import ssl
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Protocol
-from urllib.parse import urlparse
 
 from src.utils.logger import get_logger
+from src.utils.result import AppError, ConfigError
 
 logger = get_logger(__name__)
-
-# Default port used when URI has no explicit port
-_MLFLOW_PORT_DEFAULT = 5000
-
-# Private network prefixes for localhost-optimization
-_PRIVATE_PREFIXES: tuple[str, ...] = (
-    "192.168.",
-    "10.",
-    "172.16.",
-    "172.17.",
-    "172.18.",
-    "172.19.",
-    "172.2",
-    "172.30.",
-    "172.31.",
-)
-
 
 class IMLflowGateway(Protocol):
     """
@@ -53,7 +37,12 @@ class IMLflowGateway(Protocol):
 
     @property
     def uri(self) -> str:
-        """Resolved (possibly localhost-optimised) tracking URI."""
+        """Configured tracking URI."""
+        ...
+
+    @property
+    def last_connectivity_error(self) -> AppError | None:
+        """Last connectivity probe error, if any."""
         ...
 
     def get_client(self) -> Any:
@@ -102,20 +91,21 @@ class MLflowGateway:
     DEFAULT_CALL_TIMEOUT: float = 10.0
     DEFAULT_CONNECTIVITY_TIMEOUT: float = 5.0
 
-    def __init__(self, tracking_uri: str, *, normalize: bool = True) -> None:
+    def __init__(self, tracking_uri: str, *, ca_bundle_path: str | None = None) -> None:
         """
         Args:
-            tracking_uri: Raw tracking URI from config (may be a LAN IP).
-            normalize: If True, replace private-network IPs with localhost
-                       when the MLflow server runs on the same machine
-                       (avoids unnecessary LAN round-trips).
+            tracking_uri: Explicit tracking URI from config/runtime resolver.
+            ca_bundle_path: Optional CA bundle for HTTPS verification.
         """
-        if normalize:
-            self._uri = self._normalize_uri(tracking_uri)
-        else:
-            self._uri = tracking_uri
+        self._uri = tracking_uri
+        self._ca_bundle_path = ca_bundle_path
+        self._last_connectivity_error: AppError | None = None
 
-        logger.debug(f"[MLFLOW:GATEWAY] Initialized with URI={self._uri!r} (normalize={normalize})")
+        logger.debug(
+            "[MLFLOW:GATEWAY] Initialized with URI=%r (ca_bundle_path=%r)",
+            self._uri,
+            self._ca_bundle_path,
+        )
 
     # -------------------------------------------------------------------------
     # IMLflowGateway implementation
@@ -124,6 +114,10 @@ class MLflowGateway:
     @property
     def uri(self) -> str:
         return self._uri
+
+    @property
+    def last_connectivity_error(self) -> AppError | None:
+        return self._last_connectivity_error
 
     def get_client(self) -> Any:
         """
@@ -144,14 +138,14 @@ class MLflowGateway:
         mlflow.genai.load_prompt performs an HTTP request; without a timeout
         it can block indefinitely when the server is unreachable.
         """
-        import mlflow
-        import mlflow.genai
-
-        def _call() -> Any:
-            mlflow.set_tracking_uri(self._uri)
-            return mlflow.genai.load_prompt(name)
-
         try:
+            import mlflow
+            import mlflow.genai
+
+            def _call() -> Any:
+                mlflow.set_tracking_uri(self._uri)
+                return mlflow.genai.load_prompt(name)
+
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(_call)
                 return future.result(timeout=timeout)
@@ -170,67 +164,75 @@ class MLflowGateway:
         used before the MLflow module is imported.
         """
         if not self._uri or not self._uri.startswith("http"):
+            self._last_connectivity_error = None
             return True  # file:// or empty — assume available
 
         try:
+            context = self._build_ssl_context()
             request = urllib.request.Request(self._uri, method="HEAD")
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            urlopen_kwargs: dict[str, Any] = {"timeout": timeout}
+            if context is not None:
+                urlopen_kwargs["context"] = context
+            with urllib.request.urlopen(request, **urlopen_kwargs) as response:
+                self._last_connectivity_error = None
                 return response.status < 500
         except urllib.error.HTTPError as exc:
+            if exc.code >= 500:
+                self._last_connectivity_error = AppError(
+                    message=f"MLflow connectivity probe returned HTTP {exc.code} for {self._uri}",
+                    code="MLFLOW_PREFLIGHT_HTTP_ERROR",
+                    details={"status_code": exc.code, "tracking_uri": self._uri},
+                )
+            else:
+                self._last_connectivity_error = None
             return exc.code < 500  # 4xx means server is reachable
+        except ssl.SSLCertVerificationError as exc:
+            self._last_connectivity_error = AppError(
+                message=f"MLflow TLS certificate verification failed for {self._uri}: {exc}",
+                code="MLFLOW_TLS_CERT_VERIFY_FAILED",
+                details={"tracking_uri": self._uri},
+            )
+            logger.debug(f"[MLFLOW:GATEWAY] Connectivity check failed: {exc}")
+            return False
+        except FileNotFoundError as exc:
+            self._last_connectivity_error = ConfigError(
+                message=f"MLflow CA bundle file not found: {self._ca_bundle_path}",
+                code="MLFLOW_TLS_CA_BUNDLE_INVALID",
+                details={"tracking_uri": self._uri, "ca_bundle_path": self._ca_bundle_path},
+            )
+            logger.debug(f"[MLFLOW:GATEWAY] Connectivity check failed: {exc}")
+            return False
         except (OSError, TimeoutError, urllib.error.URLError) as exc:
+            self._last_connectivity_error = self._map_connectivity_error(exc)
             logger.debug(f"[MLFLOW:GATEWAY] Connectivity check failed: {exc}")
             return False
 
-    # -------------------------------------------------------------------------
-    # URI normalisation
-    # -------------------------------------------------------------------------
+    def _build_ssl_context(self) -> ssl.SSLContext | None:
+        if not self._uri.startswith("https://"):
+            return None
+        if self._ca_bundle_path:
+            return ssl.create_default_context(cafile=self._ca_bundle_path)
+        return ssl.create_default_context()
 
-    def _normalize_uri(self, uri: str) -> str:
-        """
-        Replace private-network IP with localhost when on the same machine.
-
-        Remote hosts keep the original IP (they can't reach localhost of the
-        machine running this code).
-        """
-        if not uri or not uri.startswith("http"):
-            return uri
-
-        try:
-            parsed = urlparse(uri)
-            host = parsed.hostname
-            port = parsed.port or _MLFLOW_PORT_DEFAULT
-
-            if not host:
-                return uri
-
-            if not any(host.startswith(prefix) for prefix in _PRIVATE_PREFIXES):
-                return uri
-
-            # Try localhost on the same port — if it responds, we're on the same machine
-            local_uri = f"http://localhost:{port}"
-            if self._probe_uri(local_uri, timeout=1.0):
-                logger.info(f"[MLFLOW:GATEWAY] Using localhost: {uri} → {local_uri}")
-                return local_uri
-
-            logger.debug(f"[MLFLOW:GATEWAY] Using network IP: {uri}")
-            return uri
-
-        except (ValueError, OSError) as exc:
-            logger.debug(f"[MLFLOW:GATEWAY] URI normalization failed: {exc}")
-            return uri
-
-    @staticmethod
-    def _probe_uri(uri: str, timeout: float) -> bool:
-        """Probe a specific URI (used internally during normalization)."""
-        try:
-            request = urllib.request.Request(uri, method="HEAD")
-            with urllib.request.urlopen(request, timeout=timeout) as resp:
-                return resp.status < 500
-        except urllib.error.HTTPError as exc:
-            return exc.code < 500
-        except (OSError, TimeoutError, urllib.error.URLError):
-            return False
+    def _map_connectivity_error(self, exc: OSError | TimeoutError | urllib.error.URLError) -> AppError:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            return AppError(
+                message=f"MLflow TLS certificate verification failed for {self._uri}: {reason}",
+                code="MLFLOW_TLS_CERT_VERIFY_FAILED",
+                details={"tracking_uri": self._uri},
+            )
+        if isinstance(reason, TimeoutError):
+            return AppError(
+                message=f"MLflow connectivity probe timed out for {self._uri}",
+                code="MLFLOW_PREFLIGHT_TIMEOUT",
+                details={"tracking_uri": self._uri},
+            )
+        return AppError(
+            message=f"MLflow connectivity probe failed for {self._uri}: {reason}",
+            code="MLFLOW_PREFLIGHT_CONNECTION_FAILED",
+            details={"tracking_uri": self._uri},
+        )
 
 
 class NullMLflowGateway:
@@ -244,6 +246,10 @@ class NullMLflowGateway:
     @property
     def uri(self) -> str:
         return ""
+
+    @property
+    def last_connectivity_error(self) -> AppError | None:
+        return None
 
     def get_client(self) -> None:
         return None

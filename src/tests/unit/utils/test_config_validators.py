@@ -128,6 +128,29 @@ class TestModelConfig:
             _ = ModelConfig(name="x")  # missing torch_dtype + trust_remote_code
 
 
+class TestMLflowConfig:
+    def test_local_tracking_uri_only_is_valid(self) -> None:
+        cfg = MLflowConfig(
+            tracking_uri=None,
+            local_tracking_uri="http://localhost:5002",
+            experiment_name="test-exp",
+            log_artifacts=False,
+            log_model=False,
+        )
+        assert cfg.local_tracking_uri == "http://localhost:5002"
+        assert cfg.tracking_uri is None
+
+    def test_mlflow_requires_at_least_one_tracking_uri(self) -> None:
+        with pytest.raises(ValidationError, match="At least one of 'tracking_uri' or 'local_tracking_uri' must be set"):
+            _ = MLflowConfig(
+                tracking_uri=None,
+                local_tracking_uri=None,
+                experiment_name="test-exp",
+                log_artifacts=False,
+                log_model=False,
+            )
+
+
 class TestLoraConfig:
     def test_bias_invalid_rejected(self) -> None:
         with pytest.raises(ValidationError, match="bias must be one of"):

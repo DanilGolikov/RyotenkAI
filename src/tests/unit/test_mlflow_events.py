@@ -461,6 +461,8 @@ class TestMLflowManagerSetup:
         config = MagicMock()
         mlflow_config = MagicMock()
         mlflow_config.tracking_uri = "http://localhost:5002"
+        mlflow_config.local_tracking_uri = None
+        mlflow_config.ca_bundle_path = None
         mlflow_config.experiment_name = "test_experiment"
         mlflow_config.system_metrics_callback_enabled = False
         mlflow_config.system_metrics_sampling_interval = 5.0
@@ -475,6 +477,8 @@ class TestMLflowManagerSetup:
         config = MagicMock()
         mlflow_config = MagicMock()
         mlflow_config.tracking_uri = "http://localhost:5002"
+        mlflow_config.local_tracking_uri = None
+        mlflow_config.ca_bundle_path = None
         mlflow_config.experiment_name = "test_experiment"
         mlflow_config.system_metrics_callback_enabled = False
         config.experiment_tracking.mlflow = mlflow_config
@@ -1518,12 +1522,11 @@ class TestMLflowManagerBoundaryCases:
 
         assert best_run is None
 
-    def test_normalize_tracking_uri_localhost(self, mlflow_manager: MLflowManager) -> None:
-        """Test URI normalization for localhost — gateway preserves localhost."""
+    def test_gateway_preserves_explicit_localhost_uri(self, mlflow_manager: MLflowManager) -> None:
+        """Explicit localhost URI is preserved without hidden normalization."""
         from src.infrastructure.mlflow.gateway import MLflowGateway
 
-        gw = MLflowGateway("http://localhost:5002", normalize=False)
-        # localhost is not a private network IP so it passes through unchanged
+        gw = MLflowGateway("http://localhost:5002")
         assert "localhost" in gw.uri or "127.0.0.1" in gw.uri
 
     def test_check_connectivity_timeout(self, mock_config: MagicMock) -> None:
@@ -1532,7 +1535,7 @@ class TestMLflowManagerBoundaryCases:
 
         from src.infrastructure.mlflow.gateway import MLflowGateway
 
-        gw = MLflowGateway("http://unreachable:5002", normalize=False)
+        gw = MLflowGateway("http://unreachable:5002")
 
         with patch("urllib.request.urlopen", side_effect=OSError("Timeout")):
             result = gw.check_connectivity(timeout=1.0)

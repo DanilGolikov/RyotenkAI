@@ -234,8 +234,11 @@ inference:
 # =============================================================================
 experiment_tracking:
   mlflow:
-    # TODO: Configure your MLflow server URL (see docker/mlflow/ to run locally)
+    # TODO: Configure the primary MLflow URL for training/runtime.
+    # Local control plane can optionally use local_tracking_uri when the main URI is public/LAN-only.
     tracking_uri: "http://localhost:5002"
+    # local_tracking_uri: "http://localhost:5002"
+    # ca_bundle_path: "certs/mlflow-ca.pem"
     experiment_name: "quickstart-qlora-sft"
     log_artifacts: true
     log_model: false
