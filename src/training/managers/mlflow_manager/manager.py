@@ -26,7 +26,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import IMLflowGateway, NullMLflowGateway
 from src.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
 from src.training.mlflow.autolog import MLflowAutologManager
@@ -70,7 +69,6 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self._mlflow_config = config.experiment_tracking.mlflow
         self._runtime_role: MLflowRuntimeRole = runtime_role
         self._resolved_uris: ResolvedMLflowUris | None = None
-        self._environment: MLflowEnvironment | None = None
         self._mlflow: Any = None
         self._run: Any = None
         self._run_id: str | None = None
@@ -552,10 +550,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
     # =========================================================================
 
     def cleanup(self) -> None:
-        """Reset all runtime state and restore process-wide MLflow env."""
-        if self._environment is not None:
-            self._environment.deactivate()
-            self._environment = None
+        """Reset all runtime state."""
         self._run = None
         self._run_id = None
         self._mlflow = None

@@ -386,6 +386,8 @@ experiment_tracking:
     # local_tracking_uri: "http://localhost:5002"
     # ca_bundle_path: "certs/mlflow-ca.pem"
     experiment_name: ryotenkai
+    log_artifacts: true
+    log_model: false
 
     # System metrics (GPU/CPU/RAM) - MLflow built-in monitoring
     system_metrics_sampling_interval: 5     # seconds (default: 10)

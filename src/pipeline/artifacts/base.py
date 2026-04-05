@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -225,19 +229,30 @@ def save_stage_artifact(
             )
             return
 
-        full_artifact_name = f"{artifact_path}/{artifact_name}" if artifact_path else artifact_name
-        ok = mlflow_mgr.log_dict(
-            envelope.to_dict(),
-            full_artifact_name,
-            run_id=run_id,
-        )
-        if ok:
-            logger.debug(
-                "[ARTIFACT] Wrote %s (status=%s, run=%s)",
-                full_artifact_name,
-                envelope.status,
-                run_id[:8],
+        payload = json.dumps(envelope.to_dict(), ensure_ascii=False, indent=2)
+
+        # Write to a temp dir with the exact artifact_name so MLflow stores it
+        # under the correct filename. NamedTemporaryFile adds a random prefix
+        # which becomes the artifact name in MLflow (tmp2u1d_xxx.json).
+        tmp_dir = Path(tempfile.mkdtemp())
+        tmp_path = tmp_dir / artifact_name
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            mlflow_mgr.log_artifact(
+                str(tmp_path),
+                artifact_path=artifact_path,
+                run_id=run_id,
             )
+            logger.debug(
+                "[ARTIFACT] Wrote %s/%s (status=%s)",
+                artifact_path or ".",
+                artifact_name,
+                envelope.status,
+            )
+        finally:
+            tmp_path.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                tmp_dir.rmdir()
 
     except Exception as exc:
         logger.warning(

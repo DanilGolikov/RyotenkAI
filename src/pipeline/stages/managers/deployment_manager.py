@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.constants import PROVIDER_SINGLE_NODE
+from src.config.datasets.constants import SOURCE_TYPE_LOCAL
+from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.pipeline.constants import (
     DEPLOYMENT_CONFIG_PATH,
     DEPLOYMENT_CONTAINER_NAME_MAX_LEN,
@@ -716,10 +718,12 @@ class TrainingDeploymentManager:
         # MLflow configuration for nested runs
         mlflow_config = self.config.experiment_tracking.mlflow
         if mlflow_config:
+            resolved_uris = resolve_mlflow_uris(mlflow_config, runtime_role="training")
+
             # Tracking URI - remote server needs to know where to send runs
-            if mlflow_config.tracking_uri:
-                env_vars["MLFLOW_TRACKING_URI"] = mlflow_config.tracking_uri
-                logger.info(f"📊 MLflow tracking URI: {mlflow_config.tracking_uri}")
+            if resolved_uris.effective_remote_tracking_uri:
+                env_vars["MLFLOW_TRACKING_URI"] = resolved_uris.effective_remote_tracking_uri
+                logger.info(f"📊 MLflow tracking URI: {resolved_uris.effective_remote_tracking_uri}")
 
             # Parent run ID for nested runs (experiment_name comes from synced config!)
             if context and context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID):
@@ -730,6 +734,11 @@ class TrainingDeploymentManager:
             env_vars["MLFLOW_HTTP_REQUEST_TIMEOUT"] = "15"
             env_vars["MLFLOW_HTTP_REQUEST_MAX_RETRIES"] = "2"
             logger.debug("📊 MLflow timeout: 15s, max retries: 2")
+
+            if mlflow_config.ca_bundle_path:
+                env_vars["REQUESTS_CA_BUNDLE"] = mlflow_config.ca_bundle_path
+                env_vars["SSL_CERT_FILE"] = mlflow_config.ca_bundle_path
+                logger.info(f"📊 MLflow CA bundle: {mlflow_config.ca_bundle_path}")
 
         env_content = "\n".join(f'export {k}="{v}"' for k, v in env_vars.items())
         env_path = f"{self._workspace}/.env"

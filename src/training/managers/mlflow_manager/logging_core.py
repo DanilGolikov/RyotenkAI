@@ -74,6 +74,9 @@ class MLflowLoggingMixin:
         run_id: str | None = None,
     ) -> bool:
         """Log artifact file to MLflow run via HTTP API."""
+        if not self._mlflow_config or not self._mlflow_config.log_artifacts:  # type: ignore[attr-defined]
+            return False
+
         target_run_id = self._get_active_run_id(run_id)  # type: ignore[attr-defined]
         if not target_run_id or self.client is None:  # type: ignore[attr-defined]
             return False

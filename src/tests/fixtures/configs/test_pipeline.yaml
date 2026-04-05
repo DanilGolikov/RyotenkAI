@@ -87,6 +87,8 @@ experiment_tracking:
   mlflow:
     tracking_uri: "http://localhost:5002"
     experiment_name: test
+    log_artifacts: false
+    log_model: false
   huggingface:
     enabled: false
     repo_id: test/test-model

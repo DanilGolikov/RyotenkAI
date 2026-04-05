@@ -240,6 +240,8 @@ experiment_tracking:
     # local_tracking_uri: "http://localhost:5002"
     # ca_bundle_path: "certs/mlflow-ca.pem"
     experiment_name: "quickstart-qlora-sft"
+    log_artifacts: true
+    log_model: false
     system_metrics_sampling_interval: 1
     system_metrics_samples_before_logging: 1
     system_metrics_callback_enabled: false

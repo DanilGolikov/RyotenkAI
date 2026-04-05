@@ -94,6 +94,8 @@ def full_config():
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5000",
                 experiment_name="test",
+                log_artifacts=False,
+                log_model=False,
             )
         ),
     )
@@ -330,6 +332,8 @@ experiment_tracking:
   mlflow:
     tracking_uri: "http://localhost:5000"
     experiment_name: "test"
+    log_artifacts: false
+    log_model: false
 """)
 
         container = TrainingContainer.from_config_path(str(config_file))
