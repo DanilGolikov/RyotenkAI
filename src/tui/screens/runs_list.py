@@ -780,6 +780,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             self.query_one("#runs-table", DataTable).focus()
 
     def action_new_run(self) -> None:
+        from src.tui.launch import MODE_NEW_RUN
         from src.tui.screens.launch_modal import LaunchModal
 
         suggested_run_dir, _created_at = build_run_directory(base_dir=self._runs_dir)
@@ -791,7 +792,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
 
         self._release_table_focus()
         self.app.push_screen(
-            LaunchModal(default_mode="new_run", default_run_dir=suggested_run_dir),
+            LaunchModal(default_mode=MODE_NEW_RUN, default_run_dir=suggested_run_dir),
             _on_submit,
         )
 

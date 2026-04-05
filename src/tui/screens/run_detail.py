@@ -243,6 +243,7 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
 
     def _populate_attempts(self, state: PipelineState) -> None:
         from src.pipeline.run_inspector import _STATUS_COLORS, _STATUS_ICONS, _fmt_duration
+        from src.tui.launch import MODE_FRESH
 
         table = self.query_one("#attempts-table", _AttemptsTable)
         table.clear()
@@ -252,7 +253,7 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
             icon = _STATUS_ICONS.get(attempt.status, "?")
             dur = _fmt_duration(attempt.started_at, attempt.completed_at)
             started = (attempt.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
-            action = attempt.restart_from_stage or attempt.effective_action or "fresh"
+            action = attempt.restart_from_stage or attempt.effective_action or MODE_FRESH
 
             table.add_row(
                 icon,

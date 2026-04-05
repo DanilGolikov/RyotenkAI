@@ -22,6 +22,11 @@ LaunchMode = Literal["new_run", "fresh", "resume", "restart"]
 LaunchLogLevel = Literal["INFO", "DEBUG"]
 LaunchStatus = Literal["launching", "running", "stopping", "completed", "failed", "interrupted"]
 
+MODE_NEW_RUN: LaunchMode = "new_run"
+MODE_FRESH: LaunchMode = "fresh"
+MODE_RESUME: LaunchMode = "resume"
+MODE_RESTART: LaunchMode = "restart"
+
 _OUTPUT_TAIL_MAX_LINES = 40
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -72,11 +77,11 @@ class LaunchRequest:
 
     def validate(self) -> LaunchRequest:
         normalized = self.normalized()
-        if normalized.mode in {"new_run", "fresh"} and normalized.config_path is None:
+        if normalized.mode in {MODE_NEW_RUN, MODE_FRESH} and normalized.config_path is None:
             raise ValueError("New run and fresh attempt require a config path.")
-        if normalized.mode == "restart" and not normalized.restart_from_stage:
+        if normalized.mode == MODE_RESTART and not normalized.restart_from_stage:
             raise ValueError("Restart launch requires a stage name.")
-        if normalized.mode != "restart" and normalized.restart_from_stage:
+        if normalized.mode != MODE_RESTART and normalized.restart_from_stage:
             raise ValueError("Restart stage can be set only for restart launches.")
         if normalized.log_level not in {"INFO", "DEBUG"}:
             raise ValueError("Launch log level must be INFO or DEBUG.")
@@ -144,9 +149,9 @@ def build_train_command(request: LaunchRequest, *, python_executable: str | None
     command = [python_executable or sys.executable, "-m", "src.main", "train", "--run-dir", str(normalized.run_dir)]
     if normalized.config_path is not None:
         command.extend(["--config", str(normalized.config_path)])
-    if normalized.mode == "resume":
+    if normalized.mode == MODE_RESUME:
         command.append("--resume")
-    elif normalized.mode == "restart":
+    elif normalized.mode == MODE_RESTART:
         command.extend(["--restart-from-stage", normalized.restart_from_stage or ""])
     return command
 
@@ -197,9 +202,9 @@ def pick_default_launch_mode(run_dir: Path) -> str:
     try:
         state = PipelineStateStore(run_dir.expanduser().resolve()).load()
     except Exception:
-        return "restart"
+        return MODE_RESTART
     resume_stage = _derive_resume_stage(state)
-    return "resume" if resume_stage is not None else "restart"
+    return MODE_RESUME if resume_stage is not None else MODE_RESTART
 
 
 def validate_resume_run(run_dir: Path, config_path: Path | None = None) -> tuple[Path, str]:
