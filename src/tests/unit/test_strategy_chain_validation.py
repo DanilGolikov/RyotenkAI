@@ -5,7 +5,7 @@ Comprehensive tests for validate_strategy_chain() function.
 Covers all valid/invalid transitions per VALID_STRATEGY_TRANSITIONS.
 
 Strategy Rules:
-- Valid start strategies: cpt, sft, orpo
+- Invalid ordering emits warnings but does not fail validation
 - Transitions:
   - cpt → [sft, cot]
   - sft → [cot, dpo, orpo]
@@ -13,6 +13,8 @@ Strategy Rules:
   - dpo → [] (terminal)
   - orpo → [] (terminal)
 """
+
+from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +38,11 @@ def make_chain(*strategy_types: str) -> list[StrategyPhaseConfig]:
     """
     if len(strategy_types) == 1:
         return [StrategyPhaseConfig(strategy_type=strategy_types[0], dataset="default")]
-    return [StrategyPhaseConfig(strategy_type=s, dataset=f"ds_{s}") for s in strategy_types]
+    return [StrategyPhaseConfig(strategy_type=s, dataset=f"ds_{idx}_{s}") for idx, s in enumerate(strategy_types)]
+
+
+def _warning_text(mock_warning) -> str:
+    return "\n".join(str(call.args[0]) for call in mock_warning.call_args_list)
 
 
 # =============================================================================
@@ -223,29 +229,29 @@ class TestInvalidChainsEmptyNone:
 
 
 class TestInvalidChainsBadStart:
-    """Tests for invalid starting strategies."""
+    """Tests for invalid starting strategies (warning-only)."""
 
-    def test_dpo_cannot_start(self):
-        """DPO cannot be first strategy."""
-        chain = make_chain("dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
-        assert "dpo" in error.lower()
-
-    def test_cot_cannot_start(self):
-        """CoT cannot be first strategy (needs SFT/CPT first)."""
+    def test_cot_can_start_with_warning(self):
+        """CoT start should warn but not fail validation."""
         chain = make_chain("cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_start" in warning_text
+        assert "got=cot" in warning_text
 
-    def test_dpo_then_sft_invalid_start(self):
-        """DPO → SFT: invalid because DPO can't start."""
-        chain = make_chain("dpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "must start with" in error.lower()
+    def test_cot_then_sft_warns_for_start_and_transition(self):
+        """Invalid start and transition should both be warning-only."""
+        chain = make_chain("cot", "sft")
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_start" in warning_text
+        assert "reason=invalid_transition" in warning_text
 
 
 # =============================================================================
@@ -254,66 +260,91 @@ class TestInvalidChainsBadStart:
 
 
 class TestInvalidChainsBadTransitions:
-    """Tests for invalid strategy transitions."""
+    """Tests for invalid strategy transitions (warning-only)."""
 
     def test_dpo_is_terminal(self):
-        """DPO → anything is invalid (DPO is terminal)."""
+        """DPO → anything should warn but not fail validation."""
         chain = make_chain("sft", "dpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
-        assert "dpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
+        assert "from=dpo" in warning_text
 
     def test_orpo_is_terminal(self):
-        """ORPO → anything is invalid (ORPO is terminal)."""
+        """ORPO → anything should warn but not fail validation."""
         chain = make_chain("orpo", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # ORPO is valid start but terminal, so orpo → sft is invalid
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
+        assert "from=orpo" in warning_text
 
     def test_cpt_to_dpo_invalid(self):
-        """CPT → DPO is invalid (must go through SFT)."""
+        """CPT → DPO should warn but not fail validation."""
         chain = make_chain("cpt", "dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
-        assert "cpt" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
+        assert "from=cpt" in warning_text
+        assert "to=dpo" in warning_text
 
     def test_cpt_to_orpo_invalid(self):
-        """CPT → ORPO is invalid."""
+        """CPT → ORPO should warn but not fail validation."""
         chain = make_chain("cpt", "orpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
 
     def test_sft_to_sft_invalid(self):
-        """SFT → SFT is invalid (duplicate not in transitions)."""
+        """SFT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_cot_invalid(self):
-        """CoT → CoT is invalid."""
+        """CoT → CoT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cot")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_sft_invalid(self):
-        """CoT → SFT is invalid (can only go to DPO/ORPO)."""
+        """CoT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "sft")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
 
     def test_cot_to_cpt_invalid(self):
-        """CoT → CPT is invalid."""
+        """CoT → CPT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cpt")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "invalid transition" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "reason=invalid_transition" in warning_text
 
 
 # =============================================================================
@@ -373,29 +404,36 @@ class TestErrorMessageQuality:
         assert is_valid is False
         assert "empty" in error.lower() or "cannot be empty" in error.lower()
 
-    def test_invalid_start_shows_allowed(self):
-        """Invalid start error should show allowed strategies."""
-        chain = make_chain("dpo")
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # Error should mention what IS allowed
-        assert any(s in error.lower() for s in ["cpt", "sft", "orpo"])
+    def test_invalid_start_warning_shows_allowed(self):
+        """Invalid start warning should show allowed strategies."""
+        chain = make_chain("cot")
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert any(s in warning_text.lower() for s in ["cpt", "sft", "orpo"])
 
-    def test_invalid_transition_shows_valid_options(self):
-        """Invalid transition error should show valid options."""
+    def test_invalid_transition_warning_shows_valid_options(self):
+        """Invalid transition warning should show valid options."""
         chain = make_chain("sft", "sft")  # sft → sft invalid
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        # Error should mention valid transitions from sft
-        assert "cot" in error.lower() or "dpo" in error.lower() or "orpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "valid=('cot', 'dpo', 'orpo', 'grpo', 'sapo')" in warning_text
 
-    def test_invalid_transition_shows_from_to(self):
-        """Error should show which transition was attempted."""
+    def test_invalid_transition_warning_shows_from_to(self):
+        """Warning should show which transition was attempted."""
         chain = make_chain("cpt", "dpo")  # cpt → dpo invalid
-        is_valid, error = validate_strategy_chain(chain)
-        assert is_valid is False
-        assert "cpt" in error.lower()
-        assert "dpo" in error.lower()
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error = validate_strategy_chain(chain)
+        warning_text = _warning_text(mock_warning)
+        assert is_valid is True
+        assert error == ""
+        assert "from=cpt" in warning_text
+        assert "to=dpo" in warning_text
 
 
 # =============================================================================
@@ -460,7 +498,7 @@ class TestStrategyConstants:
         assert "sft" in VALID_START_STRATEGIES
         assert "cpt" in VALID_START_STRATEGIES
         assert "orpo" in VALID_START_STRATEGIES
-        assert "dpo" not in VALID_START_STRATEGIES
+        assert "dpo" in VALID_START_STRATEGIES
         assert "cot" not in VALID_START_STRATEGIES
 
     def test_dpo_is_terminal(self):

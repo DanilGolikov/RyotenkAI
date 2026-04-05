@@ -35,7 +35,9 @@ VALID_STRATEGY_TRANSITIONS: MappingProxyType[str, tuple[str, ...]] = MappingProx
 )
 
 # Starting strategies (can be first in chain)
-VALID_START_STRATEGIES: tuple[str, ...] = (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_ORPO, STRATEGY_GRPO, STRATEGY_SAPO)
+# DPO is included: a pre-trained SFT checkpoint can be provided via model.name,
+# making a standalone DPO run valid (same pattern as GRPO/SAPO).
+VALID_START_STRATEGIES: tuple[str, ...] = (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_ORPO, STRATEGY_GRPO, STRATEGY_SAPO, STRATEGY_DPO)
 
 
 def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool, str]:
@@ -43,10 +45,10 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
     Validate a chain of training strategies.
 
     Rules:
-    - Chain must start with valid start strategy (cpt, sft, orpo)
-    - Each transition must be valid (e.g., DPO→SFT is invalid)
+    - Invalid start strategies and invalid transitions emit warnings only
     - Chain must not be empty
     - Chain cannot contain None values
+    - Datasets must still be unique across non-cached phases
     """
     # Local import to avoid heavy side-effects at module import time.
     from src.utils.logger import logger
@@ -66,8 +68,10 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
     # Check first strategy
     first = strategies[0].strategy_type
     if first not in VALID_START_STRATEGIES:
-        logger.debug(f"[CFG:CHAIN_INVALID] reason=invalid_start, got={first}, allowed={VALID_START_STRATEGIES}")
-        return False, f"Chain must start with {VALID_START_STRATEGIES}, got '{first}'"
+        logger.warning(
+            f"[CFG:CHAIN_WARNING] reason=invalid_start, got={first}, allowed={VALID_START_STRATEGIES}, "
+            f"chain={chain_str}"
+        )
 
     # Check transitions
     for i in range(len(strategies) - 1):
@@ -76,11 +80,9 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
         valid_next = VALID_STRATEGY_TRANSITIONS.get(current, ())
 
         if next_strategy not in valid_next:
-            logger.debug(
-                f"[CFG:CHAIN_INVALID] reason=invalid_transition, from={current}, to={next_strategy}, valid={valid_next}"
-            )
-            return False, (
-                f"Invalid transition: '{current}' → '{next_strategy}'. Valid transitions from '{current}': {valid_next}"
+            logger.warning(
+                f"[CFG:CHAIN_WARNING] reason=invalid_transition, from={current}, to={next_strategy}, "
+                f"valid={valid_next}, chain={chain_str}"
             )
 
     # Check dataset uniqueness across strategies
@@ -106,7 +108,7 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> tuple[bool
                 )
             seen_datasets[resolved] = phase.strategy_type
 
-    logger.debug(f"[CFG:CHAIN_VALIDATED] chain={chain_str}, phases={len(strategies)}")
+    logger.debug(f"[CFG:CHAIN_CHECKED] chain={chain_str}, phases={len(strategies)}")
     return True, ""
 
 

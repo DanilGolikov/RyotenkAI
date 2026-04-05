@@ -4,7 +4,7 @@ Complete reference for all RyotenkAI Pipeline configuration parameters.
 
 **Config file:** `src/config/pipeline_config.yaml`
 
-**Version:** 7.0 (Modular Config + Path Hardcoding + Centralized Validation)
+**Version:** 8.0 (Adapter Cache + MLflow optional + AdaLoRA total_step)
 
 ---
 
@@ -38,8 +38,7 @@ Complete reference for all RyotenkAI Pipeline configuration parameters.
 5. [Inference](#5-inference---inference-endpoint-deployment)
 6. [Evaluation](#6-evaluation---model-quality-evaluation)
 7. [Experiment Tracking](#7-experiment-tracking---mlflow--huggingface-hub)
-8. [Integration Test](#8-integration-test---integration-testing)
-9. [Quick Reference](#quick-reference)
+8. [Quick Reference](#quick-reference)
 
 ---
 
@@ -76,11 +75,11 @@ model:
 
 ```yaml
 training:
-  provider: single_node           # Provider selection
-  type: qlora                     # qlora, lora, adalora
+  provider: single_node
+  type: qlora                     # qlora, lora, or adalora
 
-  # ✅ v6.0 REQUIRED: LoRA config (8 fields REQUIRED)
-  lora:
+  # ✅ v6.0 REQUIRED: Adapter config block — name MUST match type
+  qlora:                          # ← use 'qlora:' when type: qlora
     # REQUIRED: Base LoRA (5 fields)
     r: 16
     lora_alpha: 32
@@ -125,6 +124,16 @@ training:
 | `provider` | string | - | **Required.** Provider name from the `providers` section |
 | `type` | string | `"qlora"` | **Training type:** `qlora`, `lora`, `adalora` |
 
+> **Each training type uses its own named config block:**
+>
+> | `type` | Config block | Description |
+> |--------|-------------|-------------|
+> | `qlora` | `training.qlora:` | 4-bit quantization + LoRA (recommended for memory efficiency) |
+> | `lora` | `training.lora:` | Full precision + LoRA |
+> | `adalora` | `training.adalora:` | Adaptive rank allocation |
+>
+> The block name **must match** the `type` value. For example, `type: qlora` requires `training.qlora:` — using `training.lora:` with `type: qlora` will fail validation.
+
 > **v6.x CHANGE:** `training.output_dir` was removed. The output folder is now created automatically inside the run workspace:
 > - `{run_workspace}/output/phase_<idx>_<strategy_type>/checkpoint-*`
 
@@ -156,6 +165,7 @@ training:
 | `bf16` | bool | `true` | Use bfloat16 |
 | `fp16` | bool | `false` | Use float16 |
 | `gradient_checkpointing` | bool | `true` | Gradient Checkpointing |
+| `neftune_noise_alpha` | float \| null | `null` | NEFTune noise alpha for embedding regularization (≥0, e.g. `5.0`) |
 | `logging_steps` | int | `10` | Log every N steps |
 | `save_steps` | int | `500` | Save a checkpoint every N steps |
 
@@ -200,14 +210,17 @@ strategies:
 
 > **v6.0 NOTE:** The SAPO validator enforces `max_prompt_length` and `max_completion_length` when `strategy_type=sapo`.
 
-### 2.3 LoRA Configuration (v6.0: 8 Fields REQUIRED)
+### 2.3 LoRA / QLoRA Configuration (v6.0: 8 Fields REQUIRED)
 
 > **v6.0 BREAKING CHANGE:** Base and advanced LoRA fields are now **required**. QLoRA quantization fields remain optional with best-practice defaults.
 
+> **Block name must match `type`:** use `qlora:` for `type: qlora`, `lora:` for `type: lora`.
+
 ```yaml
+# type: qlora — block key is 'qlora'
 training:
-  type: qlora                     # qlora, lora, or adalora
-  lora:
+  type: qlora
+  qlora:
     # ✅ v6.0 REQUIRED: Base LoRA (5 fields)
     r: 16                         # REQUIRED: Rank (1-256)
     lora_alpha: 32                # REQUIRED: Scaling (typically 2*r)
@@ -224,6 +237,21 @@ training:
     # bnb_4bit_quant_type: nf4
     # bnb_4bit_compute_dtype: bfloat16
     # bnb_4bit_use_double_quant: true
+
+---
+
+# type: lora — block key is 'lora' (same fields, no bnb_4bit_* needed)
+training:
+  type: lora
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: none
+    target_modules: all-linear
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
 ```
 
 #### LoRA Parameters:
@@ -258,7 +286,7 @@ training:
 ```yaml
 training:
   type: adalora
-  adalora:
+  adalora:                        # ← use 'adalora:' when type: adalora
     # ✅ v6.0 REQUIRED: AdaLoRA core (2 fields)
     init_r: 12                    # REQUIRED: Initial rank
     target_r: 8                   # REQUIRED: Target rank after pruning
@@ -283,13 +311,14 @@ training:
 |----------|-----|-------------|---------|----------|
 | `init_r` | int | **✅ REQUIRED** | - | Initial rank for all adapters |
 | `target_r` | int | **✅ REQUIRED** | - | Target average rank after pruning |
+| `total_step` | int | **✅ REQUIRED** | - | Total training steps (used for pruning schedule) |
 | `lora_alpha` | int | **✅ REQUIRED** | - | Scaling factor |
 | `lora_dropout` | float | **✅ REQUIRED** | - | Dropout |
 | `bias` | string | **✅ REQUIRED** | - | Bias type |
 | `target_modules` | string/list | **✅ REQUIRED** | - | Target modules |
 | `tinit` | int | Optional | `200` | Steps until pruning starts |
 | `tfinal` | int | Optional | `1000` | Step when pruning ends |
-| `delta_t` | int | Optional | `10` | Interval between pruning steps |
+| `delta_t` | int | Optional | `10` | Interval between pruning steps (YAML alias: `deltaT`) |
 | `beta1` | float | Optional | `0.85` | EMA coefficient for importance |
 | `beta2` | float | Optional | `0.85` | EMA coefficient for second moment |
 
@@ -308,6 +337,10 @@ strategies:
     hyperparams:
       epochs: 3
       learning_rate: 2e-4
+    adapter_cache:              # Optional: cache adapter on HF Hub
+      enabled: true
+      repo_id: "my-org/my-model-sft-cache"
+      private: true
 
   - strategy_type: dpo          # Phase 3: Alignment
     dataset: preferences
@@ -325,6 +358,47 @@ strategies:
 | `dpo` | Direct Preference Optimization | 5e-6 | chosen/rejected pairs |
 | `orpo` | Odds Ratio Preference Optimization | 1e-5 | chosen/rejected pairs |
 | `sapo` | Soft Adaptive Policy Optimization | 1e-6 | prompts (RL) |
+
+#### Strategy Phase Parameters
+
+| Parameter | Type | Default | Description |
+|----------|-----|---------|----------|
+| `strategy_type` | string | **REQUIRED** | One of the strategy types above |
+| `dataset` | string \| null | `null` | Dataset key from the `datasets` section |
+| `hyperparams` | object | `{}` | Phase-level hyperparameter overrides (all optional) |
+| `adapter_cache` | object | see §2.6 | LoRA adapter caching config (all optional, off by default) |
+
+### 2.6 Adapter Cache (`strategies[].adapter_cache`)
+
+> **New in v0.2.0.** Caches a trained LoRA adapter on HF Hub after the phase completes. On the next run, if the dataset fingerprint matches the cached tag, the phase is skipped and the cached adapter is reused directly — no GPU time wasted on redundant training.
+
+```yaml
+strategies:
+  - strategy_type: sft
+    dataset: my_data
+    adapter_cache:
+      enabled: true
+      repo_id: "my-org/my-model-sft-cache"   # REQUIRED when enabled: true
+      private: true
+```
+
+**Cache invalidation** is dataset-fingerprint based:
+- **Local files:** `sha256(path + mtime + size)` — changing the file automatically invalidates the cache.
+- **HF datasets:** `train_id + commit_sha` — a new dataset commit invalidates the cache.
+- **Cascade:** if an upstream phase retrains, all downstream phases in the chain are invalidated automatically.
+
+**Upload resilience:** uses `upload_large_folder` internally — resumable on connection drop. Upload failures are **soft-failed** (training result is preserved, error is logged to phase state).
+
+To disable the xet protocol (recommended for `huggingface_hub ≥ 0.30.0`), add to `secrets.env`:
+```
+HF_HUB_DISABLE_XET=1
+```
+
+| Parameter | Type | Default | Description |
+|----------|-----|---------|----------|
+| `enabled` | bool | `false` | Enable adapter caching for this phase |
+| `repo_id` | string \| null | `null` | Full HF Hub repo id (`username/repo-name`). **Required** when `enabled: true` |
+| `private` | bool | `true` | Create the repository as private |
 
 ---
 
@@ -810,11 +884,12 @@ All integrations live in one place: `experiment_tracking:`.
 
 Rules:
 - if the block is **omitted** → integration is off
-- if the block is **present** → inner fields are **validated strictly** (even when `enabled: false`)
+- if a sub-block (`mlflow` / `huggingface`) is **present** → its inner fields are **validated strictly** (even when `enabled: false`)
+- both `mlflow` and `huggingface` sub-blocks are **optional** — you can enable only one of them
 
 ```yaml
 experiment_tracking:
-  mlflow:
+  mlflow:                         # Optional — omit to disable MLflow entirely
     enabled: true
     tracking_uri: "http://localhost:5002"
     experiment_name: ryotenkai
@@ -827,7 +902,7 @@ experiment_tracking:
     system_metrics_callback_enabled: false
     system_metrics_callback_interval: 10
 
-  huggingface:
+  huggingface:                    # Optional — omit to disable HF Hub upload
     enabled: true
     repo_id: "<your-org>/ryotenkai-model"
     private: true
@@ -886,7 +961,7 @@ integration_test:
 
 ## Quick Reference
 
-### v7.0 Minimal Valid Config
+### v8.0 Minimal Valid Config
 
 ```yaml
 model:
@@ -897,9 +972,8 @@ model:
 training:
   provider: single_node
   type: qlora
-  
-  lora:
-    # ✅ REQUIRED: 8 fields
+
+  qlora:                   # ✅ block key matches type: qlora
     r: 16
     lora_alpha: 32
     lora_dropout: 0.05
@@ -951,10 +1025,19 @@ inference:
 
 ---
 
-**Document version:** 7.2
-**Updated:** March 9, 2026
+**Document version:** 8.0
+**Updated:** April 4, 2026
 
-### Changes in v7.2:
+### Changes in v8.0 (v0.2.0):
+
+- **`training.qlora:` / `training.lora:` / `training.adalora:`** → clarified that each `type` value requires its own named block (`qlora:` for `type: qlora`, `lora:` for `type: lora`, `adalora:` for `type: adalora`); all YAML examples and Quick Reference updated accordingly
+- **`strategies[].adapter_cache`** → new field per phase; full `AdapterCacheConfig` section added (§2.6)
+- **`experiment_tracking.mlflow`** → now **optional** sub-block; configs without MLflow are valid
+- **`adalora.total_step`** → documented as **REQUIRED** (was missing)
+- **`hyperparams.neftune_noise_alpha`** → documented optional field (NEFTune embedding regularization)
+- **`adalora.delta_t`** → YAML alias `deltaT` documented
+- **Integration Test section removed** (replaced by `evaluation` stage in v7.1)
+- Table of contents updated
 
 - **`providers.runpod.training.gpu_type`** → now **REQUIRED** (default `NVIDIA A40` removed — must be set explicitly)
 - **`providers.runpod.training.cloud_type`** → `COMMUNITY` recommended for cost (~20–30% cheaper than `SECURE`)

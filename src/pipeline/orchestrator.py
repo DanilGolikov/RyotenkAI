@@ -203,7 +203,7 @@ class PipelineOrchestrator:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
-        # Validate strategy chain EARLY (before any stages run)
+        # Check strategy chain EARLY (before any stages run)
         strategies = self.config.training.strategies
         if strategies:
             is_valid, error_msg = validate_strategy_chain(strategies)
@@ -213,7 +213,7 @@ class PipelineOrchestrator:
                 logger.error(f"   Error: {error_msg}")
                 raise ValueError(f"Invalid strategy chain: {error_msg}")
             chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-            logger.info(f"Strategy chain validated: {chain_str}")
+            logger.info(f"Strategy chain checked: {chain_str}")
 
         # Initialize stages
         self.stages: list[PipelineStage] = self._init_stages()

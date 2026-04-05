@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from unittest.mock import patch
 
 from src.utils.config import (
     AdaLoraConfig,
@@ -189,15 +190,16 @@ class TestTrainingOnlyConfig:
         with pytest.raises(ValidationError, match="requires 'training\\.adalora:'"):
             _ = _training_cfg(type="adalora", adalora=None)
 
-    def test_invalid_strategy_chain_rejected(self) -> None:
-        # sft -> cpt is invalid
-        with pytest.raises(ValidationError, match="Invalid transition"):
-            _ = _training_cfg(
+    def test_invalid_strategy_chain_warns_but_builds(self) -> None:
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            cfg = _training_cfg(
                 strategies=[
-                    StrategyPhaseConfig(strategy_type="sft"),
-                    StrategyPhaseConfig(strategy_type="cpt"),
+                    StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
+                    StrategyPhaseConfig(strategy_type="cpt", dataset="cpt_data"),
                 ]
             )
+        assert len(cfg.strategies) == 2
+        assert "reason=invalid_transition" in str(mock_warning.call_args_list)
 
     def test_pipeline_get_adapter_config_uses_matching_block(self) -> None:
         cfg = _pipeline_cfg(type="qlora")

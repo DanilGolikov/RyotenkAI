@@ -124,7 +124,7 @@ trainer.train()
 ### Step 1: Constants
 
 - `src/constants.py` — add `STRATEGY_MY = "my"` and include it in `ALL_STRATEGIES`
-- `src/config/training/strategies/transitions.py` — add to `VALID_STRATEGY_TRANSITIONS`, and `VALID_START_STRATEGIES` if needed
+- `src/config/training/strategies/transitions.py` — add to `VALID_STRATEGY_TRANSITIONS`, and `VALID_START_STRATEGIES` if needed; the map is used for diagnostics and warning logs
 - `src/constants.py` — add to `DEFAULT_LEARNING_RATES`, `DEFAULT_EPOCHS`, `DEFAULT_BATCH_SIZES`, `STRATEGY_DESCRIPTIONS`
 
 ### Step 2: Strategy class
@@ -204,7 +204,7 @@ If the strategy needs extra config fields — add them in `src/utils/config.py` 
 | `cpt/sft/cot/dpo/orpo/grpo/sapo.py` | Strategy implementations |
 | `base_rl.py` | `BaseRLStrategy` — shared RL logic (GRPO/SAPO) |
 | `src/constants.py` | Global `STRATEGY_*` constants and `ALL_STRATEGIES` |
-| `src/config/training/strategies/transitions.py` | Valid transitions between strategies |
+| `src/config/training/strategies/transitions.py` | Recommended transitions between strategies; invalid ordering emits warnings |
 | `../../trainer_builder.py` | `STRATEGY_TRAINERS`, `STRATEGY_CONFIGS`, `create_trainer()` |
 | `../../trainers/factory.py` | `TrainerFactory` — uses strategies + trainer_builder |
 | `../../orchestrator/strategy_orchestrator.py` | Training orchestrator — runs the strategy chain |

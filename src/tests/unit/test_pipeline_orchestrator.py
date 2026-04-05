@@ -185,15 +185,15 @@ class TestPipelineOrchestratorInitialization:
             mock_validate.assert_called_once_with([mock_strategy1, mock_strategy2])
             assert orchestrator.config is mock_config
 
-    def test_init_invalid_strategy_chain_raises_valueerror(
+    def test_init_critical_strategy_chain_error_raises_valueerror(
         self,
         mock_config_path: Path,
         mock_config: MagicMock,
         mock_secrets: MagicMock,
     ):
-        """Test that invalid strategy chain raises ValueError."""
+        """Critical strategy-chain errors should still raise ValueError."""
         mock_strategy = MagicMock()
-        mock_strategy.strategy_type = "invalid"
+        mock_strategy.strategy_type = "sft"
         mock_config.training.strategies = [mock_strategy]
 
         with (
@@ -203,7 +203,7 @@ class TestPipelineOrchestratorInitialization:
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
-            mock_validate.return_value = (False, "Invalid strategy type")
+            mock_validate.return_value = (False, "Duplicate dataset 'shared'")
 
             with pytest.raises(ValueError, match="Invalid strategy chain"):
                 PipelineOrchestrator(mock_config_path)

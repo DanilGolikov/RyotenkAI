@@ -18,8 +18,9 @@ Functions/Constants tested:
 - TrainingOnlyConfig.validate_chain()
 """
 
+from unittest.mock import patch
+
 import pytest
-from pydantic import ValidationError
 
 from src.utils.config import (
     VALID_START_STRATEGIES,
@@ -88,6 +89,10 @@ def _mk_phase(strategy_type: str, dataset: str | None = None) -> StrategyPhaseCo
     return StrategyPhaseConfig(strategy_type=strategy_type, **extra)
 
 
+def _warning_text(mock_warning) -> str:
+    return "\n".join(str(call.args[0]) for call in mock_warning.call_args_list)
+
+
 # =============================================================================
 # TEST: Constants
 # =============================================================================
@@ -140,9 +145,9 @@ class TestStrategyTransitionConstants:
         assert "orpo" in VALID_START_STRATEGIES
         assert "grpo" in VALID_START_STRATEGIES
         assert "sapo" in VALID_START_STRATEGIES
+        assert "dpo" in VALID_START_STRATEGIES
 
         # Must NOT contain these (not valid start)
-        assert "dpo" not in VALID_START_STRATEGIES
         assert "cot" not in VALID_START_STRATEGIES
 
 
@@ -154,7 +159,7 @@ class TestStrategyTransitionConstants:
 class TestValidSinglePhaseChains:
     """Test valid single-phase strategy chains."""
 
-    @pytest.mark.parametrize("strategy_type", ["cpt", "sft", "orpo", "grpo", "sapo"])
+    @pytest.mark.parametrize("strategy_type", ["cpt", "sft", "orpo", "grpo", "sapo", "dpo"])
     def test_single_phase_valid(self, strategy_type):
         """Single valid start strategy should pass."""
         strategies = [_mk_phase(strategy_type)]
@@ -164,24 +169,16 @@ class TestValidSinglePhaseChains:
         assert is_valid is True
         assert error_msg == ""
 
-    def test_single_phase_dpo_invalid(self):
-        """Single DPO (not a start strategy) should fail."""
-        strategies = [_mk_phase("dpo")]
-
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
-        assert "must start with" in error_msg
-        assert "dpo" in error_msg
-
-    def test_single_phase_cot_invalid(self):
-        """Single CoT (not a start strategy) should fail."""
+    def test_single_phase_cot_warns_but_passes(self):
+        """Single CoT should emit warning but still pass validation."""
         strategies = [_mk_phase("cot")]
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
-
-        assert is_valid is False
-        assert "must start with" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "reason=invalid_start" in warning_text
 
 
 class TestValidTwoPhaseChains:
@@ -307,82 +304,98 @@ class TestInvalidChains:
 
 
 class TestInvalidStartStrategies:
-    """Test chains with invalid start strategies."""
+    """Test chains with invalid start strategies (warning-only)."""
 
-    @pytest.mark.parametrize("invalid_start", ["dpo", "cot"])
-    def test_invalid_start_strategy(self, invalid_start):
-        """Invalid start strategy should fail."""
+    def test_invalid_start_strategy(self):
+        """Invalid start strategy should warn but still validate."""
+        invalid_start = "cot"
         strategies = [_mk_phase(invalid_start)]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert "must start with" in error_msg
-        assert invalid_start in error_msg
-        # Check that error includes list of valid starts
-        assert str(VALID_START_STRATEGIES) in error_msg or "cpt" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "reason=invalid_start" in warning_text
+        assert "got=cot" in warning_text
+        assert "cpt" in warning_text
 
 
 class TestInvalidTransitions:
-    """Test chains with invalid transitions."""
+    """Test chains with invalid transitions (warning-only)."""
 
     @pytest.mark.parametrize(
-        "chain,error_contains",
+        "chain,from_strategy,to_strategy",
         [
-            (["sft", "dpo", "sft"], "Invalid transition"),
-            (["orpo", "dpo"], "Invalid transition"),
-            (["cpt", "dpo"], "Invalid transition"),
-            (["sft", "sft"], "Invalid transition"),
-            (["sft", "dpo", "orpo"], "Invalid transition"),
-            (["sapo", "sft"], "Invalid transition"),
+            (["sft", "dpo", "sft"], "dpo", "sft"),
+            (["orpo", "dpo"], "orpo", "dpo"),
+            (["cpt", "dpo"], "cpt", "dpo"),
+            (["sft", "sft"], "sft", "sft"),
+            (["sft", "dpo", "orpo"], "dpo", "orpo"),
+            (["sapo", "sft"], "sapo", "sft"),
         ],
     )
-    def test_invalid_transition(self, chain, error_contains):
-        """Invalid transitions should fail with correct error."""
-        strategies = [_mk_phase(t, dataset=f"ds_{t}") for t in chain]
+    def test_invalid_transition(self, chain, from_strategy, to_strategy):
+        """Invalid transitions should warn but still pass validation."""
+        strategies = [_mk_phase(t, dataset=f"ds_{idx}_{t}") for idx, t in enumerate(chain)]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert error_contains in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "reason=invalid_transition" in warning_text
+        assert f"from={from_strategy}" in warning_text
+        assert f"to={to_strategy}" in warning_text
 
     def test_dpo_is_terminal_no_next(self):
-        """DPO cannot transition to anything."""
+        """DPO cannot transition to anything without warning."""
         strategies = [
             _mk_phase("sft", dataset="ds_sft"),
             _mk_phase("dpo", dataset="ds_dpo"),
             _mk_phase("sft", dataset="ds_sft2"),  # Invalid
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert "dpo" in error_msg
-        assert "[]" in error_msg or "()" in error_msg or "Valid transitions from 'dpo':" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "from=dpo" in warning_text
+        assert "valid=()" in warning_text
 
     def test_orpo_is_terminal_no_next(self):
-        """ORPO cannot transition to anything."""
+        """ORPO cannot transition to anything without warning."""
         strategies = [
             _mk_phase("orpo", dataset="ds_orpo"),
             _mk_phase("dpo", dataset="ds_dpo"),  # Invalid
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert "orpo" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "from=orpo" in warning_text
 
     def test_sapo_is_terminal_no_next(self):
-        """SAPO cannot transition to anything."""
+        """SAPO cannot transition to anything without warning."""
         strategies = [
             _mk_phase("sapo", dataset="ds_sapo"),
             _mk_phase("sft", dataset="ds_sft"),  # Invalid
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert "sapo" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "from=sapo" in warning_text
 
 
 # =============================================================================
@@ -407,36 +420,41 @@ class TestTrainingConfigIntegration:
         assert is_valid is True
         assert error_msg == ""
 
-    def test_training_config_invalid_chain_detected(self):
-        """TrainingOnlyConfig with invalid chain should fail-fast at load time."""
-        with pytest.raises(ValidationError) as exc_info:
-            _ = TrainingOnlyConfig(
+    def test_training_config_invalid_start_warns_but_builds(self):
+        """TrainingOnlyConfig should still build when ordering is only semantically invalid."""
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            config = TrainingOnlyConfig(
                 type="qlora",
                 qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
-                    _mk_phase("dpo", dataset="ds_dpo"),  # Invalid start
+                    _mk_phase("cot", dataset="ds_cot"),
                     _mk_phase("sft", dataset="ds_sft"),
                 ],
             )
+        warning_text = _warning_text(mock_warning)
 
-        assert "Chain must start" in str(exc_info.value)
+        assert config.strategies[0].strategy_type == "cot"
+        assert "reason=invalid_start" in warning_text
+        assert "reason=invalid_transition" in warning_text
 
-    def test_training_config_terminal_then_more(self):
-        """TrainingOnlyConfig with terminal then more should fail-fast at load time."""
-        with pytest.raises(ValidationError) as exc_info:
-            _ = TrainingOnlyConfig(
+    def test_training_config_terminal_then_more_warns_but_builds(self):
+        """Terminal strategy followed by another phase should only warn."""
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            config = TrainingOnlyConfig(
                 type="qlora",
                 qlora=_MIN_LORA,
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
                     _mk_phase("sft", dataset="ds_sft"),
                     _mk_phase("dpo", dataset="ds_dpo"),
-                    _mk_phase("orpo", dataset="ds_orpo"),  # Invalid: after terminal
+                    _mk_phase("orpo", dataset="ds_orpo"),
                 ],
             )
+        warning_text = _warning_text(mock_warning)
 
-        assert "Invalid transition" in str(exc_info.value)
+        assert len(config.strategies) == 3
+        assert "reason=invalid_transition" in warning_text
 
     def test_training_config_single_strategy(self):
         """TrainingOnlyConfig with single strategy should validate."""
@@ -502,14 +520,9 @@ class TestBoundaryCases:
     def test_all_terminal_strategies_can_be_standalone(self):
         """All terminal strategies should work as standalone."""
         for terminal in ["dpo", "orpo", "sapo"]:
-            if terminal in ["orpo", "sapo"]:
-                strategies = [_mk_phase(terminal)]
-                is_valid, _ = validate_strategy_chain(strategies)
-                assert is_valid is True
-            else:
-                strategies = [_mk_phase(terminal)]
-                is_valid, _ = validate_strategy_chain(strategies)
-                assert is_valid is False
+            strategies = [_mk_phase(terminal)]
+            is_valid, _ = validate_strategy_chain(strategies)
+            assert is_valid is True
 
     def test_cpt_then_sft_then_cot_then_dpo(self):
         """Full pipeline CPT → SFT → CoT → DPO should work."""
@@ -558,30 +571,36 @@ class TestBoundaryCases:
 class TestErrorMessages:
     """Test that error messages are helpful and informative."""
 
-    def test_error_message_includes_valid_transitions(self):
-        """Error should list valid transitions."""
+    def test_warning_message_includes_valid_transitions(self):
+        """Warning should list valid transitions."""
         strategies = [
             _mk_phase("cpt", dataset="ds_cpt"),
             _mk_phase("dpo", dataset="ds_dpo"),  # Invalid: CPT can't go to DPO
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        # Should mention what CPT CAN transition to
-        assert "sft" in error_msg or "cot" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "valid=('sft', 'cot')" in warning_text
 
-    def test_error_message_includes_strategy_names(self):
-        """Error should include the strategy names involved."""
+    def test_warning_message_includes_strategy_names(self):
+        """Warning should include the strategy names involved."""
         strategies = [
             _mk_phase("sft", dataset="ds_sft1"),
             _mk_phase("sft", dataset="ds_sft2"),  # Invalid: can't repeat
         ]
 
-        is_valid, error_msg = validate_strategy_chain(strategies)
+        with patch("src.utils.logger.logger.warning") as mock_warning:
+            is_valid, error_msg = validate_strategy_chain(strategies)
+        warning_text = _warning_text(mock_warning)
 
-        assert is_valid is False
-        assert "sft" in error_msg
+        assert is_valid is True
+        assert error_msg == ""
+        assert "from=sft" in warning_text
+        assert "to=sft" in warning_text
 
     def test_empty_chain_error_is_clear(self):
         """Empty chain error should be clear."""

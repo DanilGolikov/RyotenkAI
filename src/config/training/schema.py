@@ -107,9 +107,9 @@ class TrainingOnlyConfig(StrictBaseModel):
     @classmethod
     def validate_strategies_chain(cls, v: list[StrategyPhaseConfig]) -> list[StrategyPhaseConfig]:
         """
-        Fail-fast validation for strategy chain.
+        Fail-fast validation for critical strategy-chain issues.
 
-        This MUST run at config load time so we never construct an invalid TrainingOnlyConfig.
+        Invalid ordering is warning-only; structural issues must still fail at config load time.
         """
         ok, err = validate_strategy_chain(v)
         if not ok:
