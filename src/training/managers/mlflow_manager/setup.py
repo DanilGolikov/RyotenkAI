@@ -10,10 +10,10 @@ Responsibilities:
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.training.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
@@ -68,10 +68,11 @@ class MLflowSetupMixin:
                 ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
             )  # type: ignore[attr-defined]
             tracking_uri = self._gateway.uri  # type: ignore[attr-defined]
-            if self._mlflow_config.ca_bundle_path:  # type: ignore[attr-defined]
-                os.environ["REQUESTS_CA_BUNDLE"] = self._mlflow_config.ca_bundle_path  # type: ignore[attr-defined]
-                os.environ["SSL_CERT_FILE"] = self._mlflow_config.ca_bundle_path  # type: ignore[attr-defined]
-            mlflow.set_tracking_uri(tracking_uri)
+            self._environment = MLflowEnvironment(  # type: ignore[attr-defined]
+                tracking_uri,
+                ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
+            )
+            self._environment.activate()  # type: ignore[attr-defined]
             logger.info(
                 "MLflow tracking URI: %s (role=%s, raw=%s, local=%s, remote=%s)",
                 tracking_uri,
@@ -221,7 +222,6 @@ class MLflowSetupMixin:
     def _build_subcomponents(self) -> None:
         """Update mlflow-dependent subcomponents after successful setup."""
         assert self._mlflow_config is not None  # type: ignore[attr-defined]
-        log_model = getattr(self._mlflow_config, "log_model", True)  # type: ignore[attr-defined]
         experiment_name = getattr(self._mlflow_config, "experiment_name", None)  # type: ignore[attr-defined]
         tracking_uri = self._gateway.uri  # type: ignore[attr-defined]
 
@@ -231,7 +231,7 @@ class MLflowSetupMixin:
         self._analytics._experiment_name = experiment_name  # type: ignore[attr-defined]
         self._analytics._gateway = self._gateway  # type: ignore[attr-defined]
 
-        self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model)  # type: ignore[attr-defined]
+        self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model_enabled=False)  # type: ignore[attr-defined]
         self._dataset_logger = MLflowDatasetLogger(  # type: ignore[attr-defined]
             self._mlflow,  # type: ignore[attr-defined]
             self,  # type: ignore[arg-type]
