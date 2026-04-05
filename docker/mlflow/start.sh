@@ -19,12 +19,26 @@ cd "$(dirname "$0")" || exit 1
 COMPOSE_FILE="docker-compose.mlflow.yml"
 ENV_FILE=".env.mlflow"
 
-if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: Docker is not installed."
+    echo "Install it first: https://docs.docker.com/get-started/get-docker/"
+    exit 1
 fi
+
+if ! docker info >/dev/null 2>&1; then
+    echo "Error: Docker daemon is not running. Start Docker Desktop or the Docker service."
+    exit 1
+fi
+
+if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Error: $ENV_FILE not found. It should be in $(pwd)."
+    exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
 if [[ ! -f "$COMPOSE_FILE" ]]; then
     echo "Error: $COMPOSE_FILE not found"

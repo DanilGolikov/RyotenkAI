@@ -894,8 +894,6 @@ experiment_tracking:
     tracking_uri: "https://your-mlflow.example.com"   # Remote/LAN/runtime access
     local_tracking_uri: "http://localhost:5002"       # Optional local control-plane override
     experiment_name: ryotenkai
-    log_artifacts: true
-    log_model: false
     # run_description_file: null
     # ca_bundle_path: "certs/mlflow-ca.pem"
 
@@ -919,8 +917,6 @@ experiment_tracking:
 | `local_tracking_uri` | string \| null | `null` | Optional MLflow URI for the local control plane/orchestrator |
 | `ca_bundle_path` | string \| null | `null` | Optional CA bundle path for HTTPS verification against MLflow |
 | `experiment_name` | string | - | Experiment name in MLflow |
-| `log_artifacts` | bool | - | Log artifacts (files) |
-| `log_model` | bool | - | Log full model artifact (can be very large) |
 | `run_description_file` | string \| null | `null` | Path to `.md` run description file |
 | `system_metrics_sampling_interval` | int | `5` | System metrics sampling interval (sec) |
 | `system_metrics_samples_before_logging` | int | `1` | Samples to collect before logging |

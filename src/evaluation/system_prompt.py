@@ -114,13 +114,8 @@ class SystemPromptLoader:
 
         # Build a gateway from config (used by unit tests or callers without a pre-built gateway)
         from src.infrastructure.mlflow.gateway import MLflowGateway
-        from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
-        resolved_uris = resolve_mlflow_uris(mlflow_cfg, runtime_role="control_plane")
-        return MLflowGateway(
-            resolved_uris.effective_local_tracking_uri,
-            ca_bundle_path=mlflow_cfg.ca_bundle_path,
-        )
+        return MLflowGateway(mlflow_cfg.tracking_uri)
 
     @staticmethod
     def _from_file(path_str: str) -> SystemPromptResult | None:

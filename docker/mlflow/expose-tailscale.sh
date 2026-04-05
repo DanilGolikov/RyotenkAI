@@ -33,12 +33,15 @@ TAILSCALE_STATE_FILE="${TAILSCALE_STATE_FILE:-${TAILSCALE_STATE_DIR}/tailscaled.
 TAILSCALE_LOG_FILE="${TAILSCALE_LOG_FILE:-${TAILSCALE_STATE_DIR}/tailscaled.log}"
 TAILSCALE_PID_FILE="${TAILSCALE_PID_FILE:-${TAILSCALE_STATE_DIR}/tailscaled.pid}"
 
-if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
+if [[ ! -f "$ENV_FILE" ]]; then
+    echo "Error: $ENV_FILE not found. It should be in $(pwd)."
+    exit 1
 fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
 MLFLOW_PORT="${MLFLOW_PORT:-5002}"
 TAILSCALE_FUNNEL_HTTPS_PORT="${TAILSCALE_FUNNEL_HTTPS_PORT:-443}"
@@ -242,15 +245,14 @@ get_public_url() {
 ensure_stack_running_for_host() {
     local allowed_hosts="$1"
 
-    export MLFLOW_SERVER_ALLOWED_HOSTS="$allowed_hosts"
-
     if check_local_mlflow; then
-        echo "MLflow is already healthy locally; syncing compose config without rebuilding..."
+        echo "MLflow is already healthy locally; recreating with updated allowed-hosts..."
     else
         echo "Ensuring MLflow stack is running..."
     fi
 
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
+    MLFLOW_SERVER_ALLOWED_HOSTS="$allowed_hosts" \
+        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
     wait_for_local_mlflow
 }
 
@@ -321,7 +323,8 @@ case "$ACTION" in
         fi
 
         public_url="$(get_public_url "$dns_name")"
-        allowed_hosts="${dns_name},${dns_name}:${TAILSCALE_FUNNEL_HTTPS_PORT},localhost:,127.0.0.1:${MLFLOW_PORT}"
+        # Only external hosts — localhost invariant is enforced by entrypoint.mlflow.sh
+        allowed_hosts="${dns_name},${dns_name}:${TAILSCALE_FUNNEL_HTTPS_PORT}"
 
         ensure_stack_running_for_host "$allowed_hosts"
 
@@ -344,6 +347,8 @@ case "$ACTION" in
         select_tailscale_backend
         echo "Disabling Tailscale Funnel for MLflow..."
         tailscale_cli funnel --https="${TAILSCALE_FUNNEL_HTTPS_PORT}" "${LOCAL_TARGET}" off
+        echo "Restarting MLflow without external host restrictions..."
+        docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
         ;;
     status)
         require_command "tailscale" "https://tailscale.com/download"

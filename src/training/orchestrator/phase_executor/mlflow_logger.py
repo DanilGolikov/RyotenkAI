@@ -216,6 +216,21 @@ class MlflowPhaseLogger:
         self._mlflow_manager.log_params({"checkpoint_path": checkpoint_path})
         self._mlflow_manager.set_tags({TAG_PHASE_IDX: str(phase_idx), "status": "completed"})
 
+    def log_cache_hit(self, phase_idx: int, phase: StrategyPhaseConfig) -> None:
+        """Log adapter cache hit to MLflow nested run."""
+        if self._mlflow_manager is None:
+            return
+
+        self._mlflow_manager.set_tags(
+            {
+                TAG_PHASE_IDX: str(phase_idx),
+                TAG_STRATEGY_TYPE: phase.strategy_type,
+                "status": "cache_hit",
+                "adapter_cache.hit": "true",
+            }
+        )
+        self._mlflow_manager.log_params({"adapter_cache.hit": True})
+
     def log_error(self, phase_idx: int, error_type: str, error_msg: str) -> None:
         """Log error to MLflow."""
         if self._mlflow_manager is None:

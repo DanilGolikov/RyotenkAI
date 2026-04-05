@@ -2,7 +2,6 @@
 Main entry point for RyotenkAI CLI.
 """
 
-import atexit
 import json
 import os
 import signal
@@ -14,6 +13,7 @@ import click
 import typer
 
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
+from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.pipeline.restart_points import list_restart_points as _query_restart_points
 from src.utils.config import PipelineConfig, load_config
 from src.utils.logger import logger
@@ -23,40 +23,16 @@ from src.utils.logger import logger
 _current_orchestrator: object | None = None
 
 
-def _unregister_mlflow_atexit() -> None:
-    """
-    Unregister MLflow's atexit hook before sys.exit().
-
-    MLflow registers _safe_end_run via atexit.register() when mlflow.start_run()
-    is called. On sys.exit() this hook fires and calls MlflowClient().set_terminated(),
-    which performs an HTTP request with default timeouts (120s × 7 retries ≈ 14 min).
-    If the MLflow server is unreachable, the process hangs until all retries exhaust.
-
-    We unregister this hook here so that our own cleanup (already done by the
-    orchestrator's finally block) is not repeated and the process exits promptly.
-    """
-    try:
-        import mlflow.tracking.fluent as _fluent
-
-        atexit.unregister(_fluent._safe_end_run)
-        logger.debug("[SIGNAL] MLflow atexit hook unregistered")
-    except Exception:
-        pass  # mlflow may not be imported; safe to ignore
-
-
 def _signal_handler(signum: int, _frame: object) -> None:
     """
     Handle SIGINT/SIGTERM signals gracefully.
 
     Responsibilities:
-      1. Notify orchestrator about the signal (sets _shutdown_signal_name so
-         cleanup can adapt, e.g. skip GPU teardown on interrupt).
-      2. Unregister the MLflow atexit hook to prevent the process from hanging
-         after sys.exit() when the MLflow server is unreachable.
-      3. Start a hard-deadline timer: if cleanup is still running after 30 s,
-         force-exit with os._exit() to guarantee the process terminates.
-      4. Call sys.exit() — this triggers the orchestrator's finally block which
-         runs _cleanup_resources() exactly once (guarded by _cleanup_done flag).
+      1. Notify orchestrator about the signal.
+      2. Force-unregister MLflow atexit hook via MLflowEnvironment to prevent
+         the process from hanging when the MLflow server is unreachable.
+      3. Start a hard-deadline timer (30 s) then os._exit().
+      4. Call sys.exit() — triggers the orchestrator's finally block.
 
     NOTE: cleanup is intentionally NOT called here. The orchestrator's finally
     block is the single owner of cleanup to avoid double-cleanup races.
@@ -70,7 +46,7 @@ def _signal_handler(signum: int, _frame: object) -> None:
         if callable(notify):
             notify(signal_name=signal_name)
 
-    _unregister_mlflow_atexit()
+    MLflowEnvironment.force_unregister_atexit()
 
     exit_code = 130 if signum == signal.SIGINT else 143
 
@@ -299,6 +275,15 @@ def train(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
     finally:
+        if _current_orchestrator is not None:
+            mgr = getattr(_current_orchestrator, "_mlflow_manager", None)
+            env = getattr(mgr, "_environment", None) if mgr else None
+            if env is not None:
+                env.deactivate()
+            else:
+                MLflowEnvironment.force_unregister_atexit()
+        else:
+            MLflowEnvironment.force_unregister_atexit()
         _current_orchestrator = None
 
 

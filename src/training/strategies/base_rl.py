@@ -102,8 +102,13 @@ class BaseRLStrategy(TrainingStrategy, ABC):
         return config_kwargs
 
     # ------------------------------------------------------------------
-    # Trainer kwargs — reward_funcs are injected via RewardPlugin, not here
+    # Trainer kwargs — reward funcs are injected via RewardPlugin, not here
     # ------------------------------------------------------------------
+
+    def build_trainer_kwargs(self, config: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG002
+        if "reward_funcs" in kwargs:
+            return {"reward_funcs": kwargs["reward_funcs"]}
+        return {}
 
     # ------------------------------------------------------------------
     # Dataset contract — prompt column required (canonical TRL format)

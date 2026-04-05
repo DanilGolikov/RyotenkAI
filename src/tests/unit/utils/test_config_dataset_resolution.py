@@ -114,8 +114,6 @@ class TestGetDataset:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -134,8 +132,6 @@ class TestGetDataset:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -154,8 +150,6 @@ class TestGetDataset:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -181,8 +175,6 @@ class TestPrimaryDataset:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -201,8 +193,6 @@ class TestPrimaryDataset:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -232,8 +222,6 @@ class TestDatasetForStrategy:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -259,8 +247,6 @@ class TestDatasetForStrategy:
                 mlflow=MLflowConfig(
                     tracking_uri="http://localhost:5000",
                     experiment_name="test",
-                    log_artifacts=False,
-                    log_model=False,
                 )
             ),
         )
@@ -286,8 +272,6 @@ class TestValidateDatasets:
                     mlflow=MLflowConfig(
                         tracking_uri="http://localhost:5000",
                         experiment_name="test",
-                        log_artifacts=False,
-                        log_model=False,
                     )
                 ),
             )
