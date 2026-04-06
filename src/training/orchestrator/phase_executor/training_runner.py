@@ -12,8 +12,11 @@ Handles:
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from src.training.constants import (
     CATEGORY_TRAINING,
@@ -273,7 +276,10 @@ class PhaseTrainingRunner:
             f"train_phase_{phase_idx}", context_factory=extract_training_context
         )
         def protected_train(_self, _phase_idx, trainer, resume_checkpoint, __buffer):
-            trainer.train(resume_from_checkpoint=resume_checkpoint)
+            loggers = [logger] if logger.handlers else None
+            tqdm_logging = logging_redirect_tqdm(loggers=loggers) if loggers else nullcontext()
+            with tqdm_logging:
+                trainer.train(resume_from_checkpoint=resume_checkpoint)
             return trainer.model
 
         trained_model = protected_train(self, phase_idx, trainer, resume_checkpoint, _buffer)

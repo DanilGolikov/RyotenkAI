@@ -10,6 +10,7 @@ We keep everything heavy mocked (datasets/model/trainer), but use a *real* DataB
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -118,5 +119,85 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
     assert save_target.endswith("checkpoint-final")
 
     assert buffer.state.phases[0].status == PhaseStatus.COMPLETED
+
+
+def test_phase_executor_redirects_logging_through_tqdm_context(
+    tmp_path: Path, monkeypatch
+) -> None:
+    phase = StrategyPhaseConfig(
+        strategy_type="sft",
+        dataset="default",
+        hyperparams=PhaseHyperparametersConfig(epochs=1, learning_rate=1e-5),
+    )
+    buffer = DataBuffer(
+        base_output_dir=tmp_path / "checkpoints",
+        base_model_path="base-model",
+        run_id="run_test_tqdm_logging_redirect",
+    )
+    buffer.init_pipeline([phase], force=True)
+
+    memory_manager = MagicMock()
+
+    def _with_memory_protection(_name: str, **_kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+    memory_manager.with_memory_protection = _with_memory_protection
+
+    dataset_loader = MagicMock()
+    dataset_loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=5)), None))
+
+    trainer_factory = MagicMock()
+    trainer = MagicMock()
+    trainer.model = MagicMock(name="trained_model")
+    trainer.save_model = MagicMock()
+    trainer_factory.create_from_phase.return_value = trainer
+
+    metrics_collector = MagicMock()
+    metrics_collector.extract_from_trainer.return_value = {"train_loss": 0.123}
+
+    events: list[str] = []
+
+    @contextmanager
+    def _fake_logging_redirect_tqdm(*, loggers=None, tqdm_class=None):
+        assert loggers is not None
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    def _train(*args, **kwargs):
+        events.append("train")
+
+    trainer.train.side_effect = _train
+    monkeypatch.setattr(
+        "src.training.orchestrator.phase_executor.training_runner.logging_redirect_tqdm",
+        _fake_logging_redirect_tqdm,
+    )
+
+    executor = PhaseExecutor(
+        tokenizer=MagicMock(),
+        config=MagicMock(),
+        memory_manager=memory_manager,
+        dataset_loader=dataset_loader,
+        metrics_collector=metrics_collector,
+        strategy_factory=MagicMock(),
+        trainer_factory=trainer_factory,
+        shutdown_handler=None,
+        mlflow_manager=None,
+    )
+
+    result = executor.execute(
+        phase_idx=0,
+        phase=phase,
+        model=MagicMock(),
+        buffer=buffer,
+    )
+
+    assert result.is_ok()
+    assert events == ["enter", "train", "exit"]
 
 

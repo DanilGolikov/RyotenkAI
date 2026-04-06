@@ -77,9 +77,9 @@ def setup_logger(
     # Remove existing handlers
     base_logger.handlers.clear()
 
-    # Console handler: use sys.__stdout__ to avoid capturing streams being closed
-    # (pytest replaces sys.stdout during capture and can close it later).
-    console_handler = logging.StreamHandler(sys.__stdout__)
+    # Console handler: use sys.__stderr__ to avoid captured streams being closed
+    # and to share the same console stream as tqdm progress bars.
+    console_handler = logging.StreamHandler(sys.__stderr__)
     console_handler.setLevel(level)
 
     # Format: DATETIME  LOCATION  LEVEL - MESSAGE
