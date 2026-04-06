@@ -72,6 +72,11 @@ class GlobalHyperparametersConfig(StrictBaseModel):
     sapo_temperature_pos: float | None = Field(None, ge=0.0, description="Optional: SAPO positive temperature")
     sapo_temperature_neg: float | None = Field(None, ge=0.0, description="Optional: SAPO negative temperature")
     num_generations: int | None = Field(None, ge=1, description="Optional: Number of generations for GRPO/SAPO")
+    generation_batch_size: int | None = Field(
+        None,
+        ge=1,
+        description="Optional: Generation batch size for GRPO/SAPO throughput tuning",
+    )
     max_prompt_length: int | None = Field(None, ge=1, description="Optional: SAPO maximum prompt length")
     max_completion_length: int | None = Field(None, ge=1, description="Optional: SAPO maximum completion length")
 
@@ -109,6 +114,11 @@ class PhaseHyperparametersConfig(StrictBaseModel):
     sapo_temperature_pos: float | None = Field(None, ge=0.0, description="Strategy-specific: SAPO positive temperature")
     sapo_temperature_neg: float | None = Field(None, ge=0.0, description="Strategy-specific: SAPO negative temperature")
     num_generations: int | None = Field(None, ge=1, description="Strategy-specific: GRPO/SAPO generations")
+    generation_batch_size: int | None = Field(
+        None,
+        ge=1,
+        description="Strategy-specific: GRPO/SAPO generation batch size",
+    )
     max_prompt_length: int | None = Field(None, ge=1, description="Strategy-specific: SAPO max prompt length")
     max_completion_length: int | None = Field(None, ge=1, description="Strategy-specific: SAPO max completion length")
 
@@ -136,6 +146,7 @@ _DEFAULT_HYPERPARAMS: MappingProxyType[str, Any] = MappingProxyType(
         "sapo_temperature_pos": 1.0,
         "sapo_temperature_neg": 1.0,
         "num_generations": 4,
+        "generation_batch_size": None,
         "max_prompt_length": 1536,
         "max_completion_length": 512,
     }

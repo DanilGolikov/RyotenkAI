@@ -93,6 +93,8 @@ class BaseRLStrategy(TrainingStrategy, ABC):
         config_kwargs: dict[str, Any] = {}
         if hp.num_generations is not None:
             config_kwargs["num_generations"] = hp.num_generations
+        if hp.generation_batch_size is not None:
+            config_kwargs["generation_batch_size"] = hp.generation_batch_size
         if hp.max_prompt_length is not None:
             config_kwargs["max_prompt_length"] = hp.max_prompt_length
         if hp.max_completion_length is not None:

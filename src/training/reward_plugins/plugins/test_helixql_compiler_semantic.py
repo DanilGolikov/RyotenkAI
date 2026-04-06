@@ -2,7 +2,7 @@
 Tests for HelixQLCompilerSemanticRewardPlugin.
 
 Coverage:
-- _validate_params: no longer checks backend (always compile)
+- _validate_params: backend validation
 - build_config_kwargs: returns reward_weights with correct values and count
 - build_trainer_kwargs: missing required dataset fields
 - build_trainer_kwargs: returns reward_funcs only (no reward_weights)
@@ -79,6 +79,14 @@ class TestValidateParams:
         plugin = _make_plugin({"timeout_seconds": 30})  # noqa: WPS432
         assert plugin.params["timeout_seconds"] == 30  # noqa: WPS432
 
+    def test_semantic_only_backend_ok(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        assert plugin.params["validation_backend"] == "semantic_only"
+
+    def test_invalid_backend_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported validation_backend"):
+            _make_plugin({"validation_backend": "bad_backend"})
+
 
 # ---------------------------------------------------------------------------
 # build_config_kwargs
@@ -104,6 +112,12 @@ class TestBuildConfigKwargs:
         config_result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         trainer_result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         assert len(config_result["reward_weights"]) == len(trainer_result["reward_funcs"])
+
+    def test_semantic_only_returns_single_reward_weight(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        result = plugin.build_config_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert result["reward_weights"] == [1.0]
 
     def test_does_not_contain_reward_funcs(self) -> None:
         plugin = _make_plugin()
@@ -136,6 +150,13 @@ class TestBuildTrainerKwargs:
         result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         assert len(result["reward_funcs"]) == 2
         assert all(callable(f) for f in result["reward_funcs"])
+
+    def test_semantic_only_has_single_function(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        assert len(result["reward_funcs"]) == 1
+        assert result["reward_funcs"][0].__name__ == "semantic_reward"
 
     def test_missing_prompt_field_raises(self) -> None:
         plugin = _make_plugin()
@@ -273,6 +294,44 @@ class TestSemanticRewardFunction:
             reference_answer=["QUERY Get () => x <- N<User> RETURN x"],
         )
         assert scores == [0.0]
+
+    def test_semantic_only_does_not_require_compiler(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        ds = _make_dataset_with_features("prompt", "reference_answer")
+        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        semantic_reward = result["reward_funcs"][0]
+        scores = semantic_reward(
+            completions=["QUERY Get () => items <- N<User> RETURN items"],
+            prompt=["no schema here at all"],
+            reference_answer=["QUERY Get () => items <- N<User> RETURN items"],
+        )
+        assert scores == [1.0]
+
+    def test_semantic_only_falls_back_to_soft_similarity(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        ds = _make_dataset_with_features("prompt", "reference_answer")
+        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        semantic_reward = result["reward_funcs"][0]
+        scores = semantic_reward(
+            completions=["Get users from User node and return items"],
+            prompt=["schema prompt without strict constraints"],
+            reference_answer=["QUERY GetAllUsers () => items <- N<User> RETURN items"],
+        )
+        assert len(scores) == 1
+        assert scores[0] > 0.0
+
+    def test_semantic_only_random_text_stays_low(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        ds = _make_dataset_with_features("prompt", "reference_answer")
+        result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
+        semantic_reward = result["reward_funcs"][0]
+        scores = semantic_reward(
+            completions=["completely unrelated output"],
+            prompt=["schema prompt without strict constraints"],
+            reference_answer=["QUERY GetAllUsers () => items <- N<User> RETURN items"],
+        )
+        assert len(scores) == 1
+        assert 0.0 <= scores[0] < 0.5
 
 
 # ---------------------------------------------------------------------------

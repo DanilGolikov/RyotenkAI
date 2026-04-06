@@ -248,6 +248,7 @@ training:
   #       epochs: 1
   #       learning_rate: 1.0e-6
   #       num_generations: 4         # SAPO specific
+  #       generation_batch_size: 4   # Optional: rollout generation batch size for GRPO/SAPO
   #       max_prompt_length: 1024    # SAPO REQUIRED
   #       max_completion_length: 256 # SAPO REQUIRED
 
@@ -286,6 +287,7 @@ training:
     # max_length: 2048               # SFT/DPO/ORPO
     # packing: false                 # SFT only
     # beta: 0.1                      # DPO/ORPO
+    # generation_batch_size: 8       # GRPO/SAPO only: rollout generation throughput tuning
 
 # ============================================================================
 # PROVIDERS - GPU server registry

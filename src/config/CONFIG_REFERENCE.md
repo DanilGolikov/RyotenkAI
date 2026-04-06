@@ -4,7 +4,7 @@ Complete reference for all RyotenkAI Pipeline configuration parameters.
 
 **Config file:** `src/config/pipeline_config.yaml`
 
-**Version:** 8.0 (Adapter Cache + MLflow optional + AdaLoRA total_step)
+**Version:** 8.1 (GRPO/SAPO generation_batch_size + Adapter Cache + MLflow optional + AdaLoRA total_step)
 
 ---
 
@@ -205,10 +205,13 @@ strategies:
 | `max_prompt_length` | int | **REQUIRED** | Max prompt length |
 | `max_completion_length` | int | **REQUIRED** | Max generation length |
 | `num_generations` | int | `4` | Generations per prompt |
+| `generation_batch_size` | int | `null` | Optional rollout generation batch size for GRPO/SAPO throughput tuning |
 | `sapo_temperature_pos` | float | `1.0` | SAPO Positive Temperature |
 | `sapo_temperature_neg` | float | `1.0` | SAPO Negative Temperature |
 
 > **v6.0 NOTE:** The SAPO validator enforces `max_prompt_length` and `max_completion_length` when `strategy_type=sapo`.
+>
+> **v8.1 NOTE:** `generation_batch_size` is forwarded to `GRPOConfig` and is useful when tuning rollout throughput for `grpo` / `sapo`. A common smoke setup is `num_generations: 8` with `generation_batch_size: 8`.
 
 ### 2.3 LoRA / QLoRA Configuration (v6.0: 8 Fields REQUIRED)
 
@@ -890,7 +893,6 @@ Rules:
 ```yaml
 experiment_tracking:
   mlflow:                         # Optional — omit to disable MLflow entirely
-    enabled: true
     tracking_uri: "https://your-mlflow.example.com"   # Remote/LAN/runtime access
     local_tracking_uri: "http://localhost:5002"       # Optional local control-plane override
     experiment_name: ryotenkai
@@ -912,7 +914,6 @@ experiment_tracking:
 
 | Parameter | Type | Default | Description |
 |----------|-----|--------------|----------|
-| `enabled` | bool | - | Enable MLflow |
 | `tracking_uri` | string \| null | `null` | Primary MLflow URI for training/runtime and external clients |
 | `local_tracking_uri` | string \| null | `null` | Optional MLflow URI for the local control plane/orchestrator |
 | `ca_bundle_path` | string \| null | `null` | Optional CA bundle path for HTTPS verification against MLflow |
@@ -1036,9 +1037,13 @@ inference:
 
 ---
 
-**Document version:** 8.0
-**Updated:** April 4, 2026
+**Document version:** 8.1
+**Updated:** April 6, 2026
 
+### Changes in v8.1:
+
+- **`hyperparams.generation_batch_size`** → documented as an optional `GRPO` / `SAPO` throughput-tuning parameter
+- **`experiment_tracking.mlflow` examples** → removed stale `enabled: true`; MLflow is enabled by presence of the `mlflow:` block
 ### Changes in v8.0 (v0.2.0):
 
 - **`training.qlora:` / `training.lora:` / `training.adalora:`** → clarified that each `type` value requires its own named block (`qlora:` for `type: qlora`, `lora:` for `type: lora`, `adalora:` for `type: adalora`); all YAML examples and Quick Reference updated accordingly
