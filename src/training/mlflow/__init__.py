@@ -59,6 +59,14 @@ class IMLflowManager(Protocol):
         """Start a nested (child) run (context manager)."""
         ...
 
+    def get_runtime_tracking_uri(self) -> str:
+        """Get tracking URI used by the current runtime role."""
+        ...
+
+    def delete_run_tree(self, root_run_id: str) -> list[str]:
+        """Soft-delete a root MLflow run and all nested descendants."""
+        ...
+
     def log_params(self, params: dict[str, Any]) -> None:
         """Log parameters to current run."""
         ...

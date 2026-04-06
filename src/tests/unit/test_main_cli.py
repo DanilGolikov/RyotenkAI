@@ -292,6 +292,13 @@ def test_tui_command_restarts_after_exception_and_logs_error(cli_runner, tmp_pat
     assert "RuntimeError: boom" in log_content
     assert "tui crash #1" in log_content
 
+    tui_log = tmp_path / "runs" / "tui.log"
+    assert tui_log.exists()
+    tui_log_content = tui_log.read_text(encoding="utf-8")
+    assert "Starting TUI runtime" in tui_log_content
+    assert "TUI crashed and will be restarted" in tui_log_content
+    assert "TUI app exited normally" in tui_log_content
+
 
 def test_tui_command_rejects_unknown_log_level(cli_runner):
     result = cli_runner.invoke(app, ["tui", "--log-level", "TRACE"])

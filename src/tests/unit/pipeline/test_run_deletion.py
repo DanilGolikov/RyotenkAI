@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from src.pipeline.run_deletion import RunDeletionService
+from src.pipeline.run_deletion import RunDeletionMode, RunDeletionService
 from src.pipeline.state import PipelineStateStore
 
 
@@ -17,11 +17,8 @@ def _write_state(run_dir: Path, *, config_path: Path, root_mlflow_run_id: str | 
     )
 
 
-def _fake_config(*, with_gc: bool = True):
-    mlflow_cfg = SimpleNamespace(
-        gc_backend_store_uri="postgresql://mlflow:pass@localhost:5432/mlflow_db" if with_gc else None,
-        gc_artifacts_destination="s3://mlflow" if with_gc else None,
-    )
+def _fake_config():
+    mlflow_cfg = SimpleNamespace()
     return SimpleNamespace(experiment_tracking=SimpleNamespace(mlflow=mlflow_cfg))
 
 
@@ -49,14 +46,9 @@ def test_delete_target_removes_remote_then_local(tmp_path: Path) -> None:
         def cleanup(self) -> None:
             calls.append(("cleanup", None))
 
-    class _Gc:
-        def hard_delete_runs(self, run_ids: list[str], *, config) -> None:
-            calls.append(("gc", (list(run_ids), config.backend_store_uri, config.artifacts_destination, config.tracking_uri)))
-
     service = RunDeletionService(
-        config_loader=lambda _path: _fake_config(with_gc=True),
+        config_loader=lambda _path: _fake_config(),
         mlflow_manager_factory=lambda _config: _Manager(),
-        gc_adapter=_Gc(),
     )
 
     result = service.delete_target(run_dir)
@@ -67,12 +59,11 @@ def test_delete_target_removes_remote_then_local(tmp_path: Path) -> None:
     assert calls == [
         ("setup", {"timeout": 5.0, "max_retries": 1, "disable_system_metrics": True}),
         ("delete_run_tree", "root_1"),
-        ("gc", (["child_1", "root_1"], "postgresql://mlflow:pass@localhost:5432/mlflow_db", "s3://mlflow", "http://localhost:5002")),
         ("cleanup", None),
     ]
 
 
-def test_delete_target_is_fail_closed_when_gc_config_missing(tmp_path: Path) -> None:
+def test_delete_target_local_only_skips_mlflow_delete(tmp_path: Path) -> None:
     config_path = tmp_path / "cfg.yaml"
     config_path.write_text("stub", encoding="utf-8")
     run_dir = tmp_path / "run_1"
@@ -81,29 +72,26 @@ def test_delete_target_is_fail_closed_when_gc_config_missing(tmp_path: Path) -> 
 
     class _Manager:
         def setup(self, **kwargs) -> bool:
-            return True
+            raise AssertionError("setup should not be used for local-only delete")
 
         def delete_run_tree(self, root_run_id: str) -> list[str]:
-            return [root_run_id]
-
-        def get_runtime_tracking_uri(self) -> str:
-            return "http://localhost:5002"
+            raise AssertionError("delete_run_tree should not be used for local-only delete")
 
         def cleanup(self) -> None:
-            return None
+            raise AssertionError("cleanup should not be used for local-only delete")
 
     service = RunDeletionService(
-        config_loader=lambda _path: _fake_config(with_gc=False),
+        config_loader=lambda _path: _fake_config(),
         mlflow_manager_factory=lambda _config: _Manager(),
     )
 
-    result = service.delete_target(run_dir)
+    result = service.delete_target(run_dir, mode=RunDeletionMode.LOCAL_ONLY)
 
-    assert result.is_success is False
-    assert result.local_deleted is False
-    assert run_dir.exists()
-    assert len(result.issues) == 1
-    assert result.issues[0].phase == "mlflow_gc_config"
+    assert result.is_success is True
+    assert result.local_deleted is True
+    assert not run_dir.exists()
+    assert result.deleted_mlflow_run_ids == ()
+    assert result.issues == ()
 
 
 def test_delete_group_directory_handles_multiple_run_dirs(tmp_path: Path) -> None:
@@ -118,7 +106,7 @@ def test_delete_group_directory_handles_multiple_run_dirs(tmp_path: Path) -> Non
     _write_state(run_b, config_path=config_path, root_mlflow_run_id=None)
 
     service = RunDeletionService(
-        config_loader=lambda _path: _fake_config(with_gc=True),
+        config_loader=lambda _path: _fake_config(),
         mlflow_manager_factory=lambda _config: (_ for _ in ()).throw(AssertionError("manager should not be used")),
     )
 

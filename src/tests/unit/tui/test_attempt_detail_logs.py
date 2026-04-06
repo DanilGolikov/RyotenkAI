@@ -4,8 +4,13 @@ from textual.selection import Selection
 
 from src.tui.screens.attempt_detail import (
     AttemptDetailScreen,
+    _LOGS_END_SEPARATOR_ID,
+    _LOGS_START_SEPARATOR_ID,
     _LiveLog,
     _PipelineLogHighlighter,
+    _format_numbered_tab_title,
+    _make_log_tab_id,
+    _make_log_widget_id,
     _normalize_markdown_for_viewer,
 )
 
@@ -29,10 +34,11 @@ def test_attempt_detail_enables_word_wrap_by_default(tmp_path) -> None:
 
 def test_attempt_detail_wrap_action_is_contextual_to_logs_tab(tmp_path, monkeypatch) -> None:
     screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 1)
-    screen._log_files = {"Pipeline": tmp_path / "pipeline.log"}
+    log_tab_id = _make_log_tab_id("pipeline.log")
+    screen._log_files = {log_tab_id: tmp_path / "pipeline.log"}
 
     class DummyTabs:
-        active = "logs"
+        active = log_tab_id
 
     monkeypatch.setattr(screen, "query_one", lambda *args, **kwargs: DummyTabs())
     assert screen.check_action("toggle_log_wrap", ()) is True
@@ -45,12 +51,10 @@ def test_reload_current_log_preserves_viewport_when_not_following(tmp_path, monk
     screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 1)
     log_path = tmp_path / "pipeline.log"
     log_path.write_text("line 1\nline 2\n", encoding="utf-8")
-    screen._log_files = {"Pipeline": log_path}
+    log_tab_id = _make_log_tab_id("pipeline.log")
+    screen._log_files = {log_tab_id: log_path}
     screen._log_auto_follow = False
     screen._log_word_wrap_enabled = True
-
-    class DummySelect:
-        value = "Pipeline"
 
     class DummyWidget:
         scroll_offset = (12, 34)
@@ -60,10 +64,11 @@ def test_reload_current_log_preserves_viewport_when_not_following(tmp_path, monk
             self.scrolled_to = (x, y, animate, immediate)
 
     widget = DummyWidget()
+    monkeypatch.setattr(screen, "_active_log_tab_id", lambda: log_tab_id)
     monkeypatch.setattr(
         screen,
         "query_one",
-        lambda selector, *_args, **_kwargs: DummySelect() if selector == "#log-selector" else widget,
+        lambda selector, *_args, **_kwargs: widget if selector == f"#{_make_log_widget_id(log_tab_id)}" else None,
     )
     monkeypatch.setattr(screen, "_load_log_file", lambda path, widget_arg, reset_follow: None)
     monkeypatch.setattr(screen, "call_after_refresh", lambda callback: callback())
@@ -71,6 +76,68 @@ def test_reload_current_log_preserves_viewport_when_not_following(tmp_path, monk
     screen._reload_current_log(reset_follow=False, preserve_viewport=True)
 
     assert widget.scrolled_to == (0, 34, False, True)
+
+
+def test_discover_log_files_uses_filenames_and_keeps_known_logs_first(tmp_path) -> None:
+    attempt_dir = tmp_path / "runs" / "run_1" / "attempts" / "attempt_1"
+    attempt_dir.mkdir(parents=True)
+    (attempt_dir / "training.log").write_text("", encoding="utf-8")
+    (attempt_dir / "pipeline.log").write_text("", encoding="utf-8")
+    (attempt_dir / "custom_metrics.log").write_text("", encoding="utf-8")
+
+    screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 1)
+
+    assert list(screen._discover_log_files()) == ["pipeline.log", "training.log", "custom_metrics.log"]
+
+
+def test_format_numbered_tab_title_appends_index() -> None:
+    assert _format_numbered_tab_title("pipeline.log", 2) == "pipeline.log [2]"
+
+
+def test_sync_log_group_separators_adds_left_separator_for_logs_only(tmp_path, monkeypatch) -> None:
+    screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 1)
+    screen._log_files = {_make_log_tab_id("pipeline.log"): tmp_path / "pipeline.log"}
+    added: list[tuple[str, str | None, str | None]] = []
+
+    class DummyTabbedContent:
+        def add_pane(self, pane, *, before=None, after=None):
+            added.append((pane.id, before, after))
+
+        def remove_pane(self, pane_id):
+            raise AssertionError(f"unexpected remove_pane({pane_id})")
+
+        def get_pane(self, pane_id):
+            raise LookupError(pane_id)
+
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: DummyTabbedContent())
+
+    screen._sync_log_group_separators()
+
+    assert (_LOGS_START_SEPARATOR_ID, None, "details") in added
+
+
+def test_sync_log_group_separators_adds_right_separator_before_artifact_group(tmp_path, monkeypatch) -> None:
+    screen = AttemptDetailScreen(tmp_path / "runs" / "run_1", 1)
+    last_log_tab_id = _make_log_tab_id("training.log")
+    screen._log_files = {
+        _make_log_tab_id("pipeline.log"): tmp_path / "pipeline.log",
+        last_log_tab_id: tmp_path / "training.log",
+    }
+    screen._inference_tab_added = True
+    added: list[tuple[str, str | None, str | None]] = []
+
+    class DummyTabbedContent:
+        def add_pane(self, pane, *, before=None, after=None):
+            added.append((pane.id, before, after))
+
+        def remove_pane(self, pane_id):
+            pass
+
+    monkeypatch.setattr(screen, "query_one", lambda *_args, **_kwargs: DummyTabbedContent())
+
+    screen._sync_log_group_separators()
+
+    assert (_LOGS_END_SEPARATOR_ID, None, last_log_tab_id) in added
 
 
 def test_stop_live_updates_stops_timer_and_disables_polling(tmp_path) -> None:

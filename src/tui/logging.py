@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 _BASE_LOGGER_NAME = "ryotenkai.tui"
@@ -33,3 +35,22 @@ def get_tui_logger(name: str | None = None) -> logging.Logger:
     if not name:
         return logging.getLogger(_BASE_LOGGER_NAME)
     return logging.getLogger(f"{_BASE_LOGGER_NAME}.{name}")
+
+
+@contextlib.contextmanager
+def suppress_project_console_logging() -> Iterator[None]:
+    """Temporarily detach project console handlers while TUI owns the terminal."""
+    base_logger = logging.getLogger("ryotenkai")
+    removed_handlers = [
+        handler
+        for handler in list(base_logger.handlers)
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
+    ]
+    for handler in removed_handlers:
+        base_logger.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in removed_handlers:
+            if handler not in base_logger.handlers:
+                base_logger.addHandler(handler)

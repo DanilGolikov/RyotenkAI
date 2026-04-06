@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from textual.binding import Binding
@@ -12,15 +14,18 @@ from textual.widgets import DataTable, Footer, Header, Label, Static
 
 from src.pipeline.domain import build_run_directory
 from src.pipeline.run_inspector import ROOT_GROUP
+from src.pipeline.run_deletion import RunDeletionMode
+from src.tui.run_deletion_flow import DeleteAction, DeleteRequest, TuiDeleteController, format_delete_completion_message
 from src.tui.screens._mixins import _HelpMixin, _InterruptConfirmMixin
 from src.tui.table_utils import created_timestamp_sort_key, duration_sort_seconds, plain_sort_key
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from textual.app import ComposeResult
 
+    from src.pipeline.run_deletion import RunDeletionIssue, RunDeletionResult
     from src.tui.apps import RyotenkaiApp
+
+_TUI_LOG = logging.getLogger("ryotenkai.tui.runs_list")
 
 _STATUS_STYLE: dict[str, str] = {  # noqa: WPS407
     "completed": "bold green",
@@ -285,10 +290,11 @@ class _SortModal(ModalScreen[tuple[str, str] | None]):
         self.dismiss(None if self._sort_col is None else (self._sort_col, self._sort_dir))  # type: ignore[arg-type]
 
 
-class _DeleteConfirmModal(ModalScreen[bool]):
+class _DeleteConfirmModal(ModalScreen[DeleteAction]):
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("y", "confirm", "Yes — delete", show=True),
-        Binding("n", "cancel", "No — cancel", show=True),
+        Binding("enter", "delete_all", "Delete folder + MLflow", show=True),
+        Binding("y", "delete_local_only", "Delete folder only", show=True),
+        Binding("n", "cancel", "Cancel", show=True),
         Binding("escape", "cancel", "Cancel", show=False),
     ]
 
@@ -312,15 +318,20 @@ class _DeleteConfirmModal(ModalScreen[bool]):
         yield Static(
             f"[bold red]Delete run?[/bold red]\n\n"
             f"[dim]{self._run_name}[/dim]\n\n"
-            f"[yellow]This will permanently remove all files.[/yellow]\n\n"
-            f"  [bold]Y[/bold] — confirm delete    [bold]N / Esc[/bold] — cancel",
+            f"[yellow]Choose how to delete this item.[/yellow]\n\n"
+            f"  [bold]Enter[/bold] — delete folder and MLflow run\n"
+            f"  [bold]Y[/bold] — delete folder only\n"
+            f"  [bold]N / Esc[/bold] — cancel",
         )
 
-    def action_confirm(self) -> None:
-        self.dismiss(True)
+    def action_delete_all(self) -> None:
+        self.dismiss(DeleteAction.DELETE_ALL)
+
+    def action_delete_local_only(self) -> None:
+        self.dismiss(DeleteAction.DELETE_LOCAL_ONLY)
 
     def action_cancel(self) -> None:
-        self.dismiss(False)
+        self.dismiss(DeleteAction.CANCEL)
 
 
 class _ExitConfirmModal(ModalScreen[bool]):
@@ -399,6 +410,13 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         self._marked_keys: set[str] = set()
         self._mark_hold_start: float = 0.0
         self._mark_last_press: float = 0.0
+        self._delete_controller = TuiDeleteController(
+            self,
+            service_factory=self._run_deletion_service,
+            on_pending=self._handle_delete_pending,
+            on_success=self._handle_delete_success,
+            on_error=self._handle_delete_error,
+        )
 
     def _ryotenkai_app(self) -> RyotenkaiApp:
         from typing import cast
@@ -773,6 +791,78 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
                     dirs.append(run_dir)
         return dirs
 
+    def _run_deletion_service(self):
+        from src.pipeline.run_deletion import RunDeletionService
+
+        return RunDeletionService()
+
+    def _start_delete(self, targets: list[Path], *, mode: RunDeletionMode) -> None:
+        _TUI_LOG.info(
+            "Delete requested for %s target(s) in mode=%s: %s",
+            len(targets),
+            mode,
+            [str(target) for target in targets],
+        )
+        if not self._delete_controller.start_delete(targets, mode=mode):
+            self.notify("Delete is already in progress", severity="warning")
+
+    def _handle_delete_pending(self, request: DeleteRequest) -> None:
+        message = f"[yellow]Deleting {len(request.targets)} item(s)...[/yellow]"
+        if request.mode == RunDeletionMode.LOCAL_ONLY:
+            message = f"[yellow]Deleting {len(request.targets)} folder(s) only...[/yellow]"
+        self.query_one("#status-bar", Label).update(message)
+        self.refresh_bindings()
+
+    def _handle_delete_success(self, request: DeleteRequest, results: list["RunDeletionResult"]) -> None:
+        for result in results:
+            _TUI_LOG.info(
+                "Delete finished for %s (mode=%s, local_deleted=%s, run_dirs=%s, deleted_mlflow_run_ids=%s, issues=%s)",
+                result.target,
+                request.mode,
+                result.local_deleted,
+                [str(run_dir) for run_dir in result.run_dirs],
+                list(result.deleted_mlflow_run_ids),
+                [self._format_delete_issue(issue) for issue in result.issues],
+            )
+        self.refresh_bindings()
+        self._apply_delete_results(list(request.targets), results)
+        if not any(result.issues for result in results):
+            self.notify(format_delete_completion_message(request, results), severity="information")
+
+    def _handle_delete_error(self, request: DeleteRequest, error: Exception) -> None:
+        _TUI_LOG.exception(
+            "Delete worker failed for targets=%s mode=%s",
+            [str(target) for target in request.targets],
+            request.mode,
+            exc_info=error,
+        )
+        self.refresh_bindings()
+        self.query_one("#status-bar", Label).update(f"[red]Delete failed: {error}[/red]")
+
+    @staticmethod
+    def _format_delete_issue(issue: "RunDeletionIssue") -> str:
+        return f"{issue.run_dir.name}: {issue.phase}: {issue.message}"
+
+    def _apply_delete_results(self, targets: list[Path], results: list["RunDeletionResult"]) -> None:
+        self._marked_keys.clear()
+        for target in targets:
+            self._marked_keys.discard(_run_row_key_by_dir(target, self._rows))
+        self._load_rows()
+
+        issues = [issue for result in results for issue in result.issues]
+        if not issues:
+            return
+
+        first_issue = self._format_delete_issue(issues[0])
+        _TUI_LOG.warning(
+            "Delete completed with %s issue(s); first issue: %s",
+            len(issues),
+            first_issue,
+        )
+        self.query_one("#status-bar", Label).update(
+            f"[red]Delete failed for {len(issues)} item(s): {first_issue}[/red]",
+        )
+
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def _refocus_table(self) -> None:
@@ -883,41 +973,29 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
     def _confirm_delete_many(self, targets: list[Path]) -> None:
         label = f"{len(targets)} marked run{'s' if len(targets) != 1 else ''}"
 
-        def _on_confirm(confirmed: bool | None) -> None:
-            if not confirmed:
+        def _on_confirm(action: DeleteAction | None) -> None:
+            if action is None or action == DeleteAction.CANCEL:
                 return
-            import shutil
-
-            errors = []
-            for target in targets:
-                try:
-                    shutil.rmtree(target)
-                except Exception as exc:
-                    errors.append(str(exc))
-            self._marked_keys.clear()
-            self._load_rows()
-            if errors:
-                self.query_one("#status-bar", Label).update(
-                    f"[red]Deleted with {len(errors)} error(s)[/red]",
-                )
+            mode = action.to_mode()
+            if mode is None:
+                return
+            self._start_delete(targets, mode=mode)
 
         self.app.push_screen(_DeleteConfirmModal(label), _on_confirm)
 
     def _confirm_delete_path(self, target: "Path") -> None:
-        def _on_confirm(confirmed: bool | None) -> None:
-            if not confirmed:
+        def _on_confirm(action: DeleteAction | None) -> None:
+            if action is None or action == DeleteAction.CANCEL:
                 return
-            import shutil
-
-            try:
-                shutil.rmtree(target)
-            except Exception as exc:
-                self.query_one("#status-bar", Label).update(f"[red]Delete failed: {exc}[/red]")
+            mode = action.to_mode()
+            if mode is None:
                 return
-            self._marked_keys.discard(_run_row_key_by_dir(target, self._rows))
-            self._load_rows()
+            self._start_delete([target], mode=mode)
 
         self.app.push_screen(_DeleteConfirmModal(target.name), _on_confirm)
+
+    def on_worker_state_changed(self, event) -> None:
+        self._delete_controller.handle_worker_state_changed(event)
 
     def action_quit(self) -> None:
         def _on_confirm(confirmed: bool | None) -> None:
@@ -936,6 +1014,8 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         if action == "stop_selected_run":
             return self._selected_run_can_be_interrupted()
         if action == "delete_run":
+            if self._delete_controller.is_busy:
+                return False
             if self._current_run_dir() is not None:
                 return True
             return self._current_folder_path() is not None

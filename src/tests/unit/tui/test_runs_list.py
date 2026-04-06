@@ -1,8 +1,12 @@
 import pytest
 from types import SimpleNamespace
+from pathlib import Path
 
+from src.pipeline.run_deletion import RunDeletionMode
+from src.tui.run_deletion_flow import DeleteAction
 from src.tui.screens.runs_list import (
     RunsListScreen,
+    _DeleteConfirmModal,
     _ExitConfirmModal,
     _FOLDER_KEY_PREFIX,
     _default_created_sort_dir,
@@ -48,6 +52,22 @@ def test_exit_confirm_modal_actions_dismiss_expected_values(monkeypatch) -> None
     modal.action_confirm()
 
     assert dismissed == [False, True]
+
+
+def test_delete_confirm_modal_actions_dismiss_expected_values(monkeypatch) -> None:
+    modal = _DeleteConfirmModal("run_1")
+    dismissed: list[DeleteAction] = []
+    monkeypatch.setattr(modal, "dismiss", lambda value: dismissed.append(value))
+
+    modal.action_delete_local_only()
+    modal.action_delete_all()
+    modal.action_cancel()
+
+    assert dismissed == [
+        DeleteAction.DELETE_LOCAL_ONLY,
+        DeleteAction.DELETE_ALL,
+        DeleteAction.CANCEL,
+    ]
 
 
 def test_runs_list_quit_opens_exit_confirmation(monkeypatch, tmp_path) -> None:
@@ -300,6 +320,97 @@ def test_load_rows_single_group_no_headers(monkeypatch, tmp_path) -> None:
     assert screen._has_subfolders is False
     assert not any(k.startswith(_FOLDER_KEY_PREFIX) for k in table.row_keys)
     assert "(root)::run_a" in table.row_keys
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_mode"),
+    [
+        (DeleteAction.DELETE_ALL, RunDeletionMode.LOCAL_AND_MLFLOW),
+        (DeleteAction.DELETE_LOCAL_ONLY, RunDeletionMode.LOCAL_ONLY),
+    ],
+)
+def test_confirm_delete_path_starts_delete_with_selected_mode(monkeypatch, tmp_path, action, expected_mode) -> None:
+    pytest.importorskip("textual")
+
+    screen = RunsListScreen(tmp_path)
+    target = tmp_path / "run_1"
+    target.mkdir()
+    observed: list[tuple[list[Path], RunDeletionMode]] = []
+    status_updates: list[str] = []
+
+    class DummyLabel:
+        def update(self, value):
+            status_updates.append(value)
+
+    class DummyApp:
+        def push_screen(self, _screen_obj, callback):
+            callback(action)
+
+    monkeypatch.setattr(RunsListScreen, "app", property(lambda self: DummyApp()))
+    monkeypatch.setattr(screen, "_start_delete", lambda targets, mode: observed.append((targets, mode)))
+    monkeypatch.setattr(screen, "query_one", lambda selector, *_args, **_kwargs: DummyLabel() if selector == "#status-bar" else None)
+
+    screen._confirm_delete_path(target)
+
+    assert observed == [([target], expected_mode)]
+    assert status_updates == []
+
+
+def test_handle_delete_success_shows_single_notification(monkeypatch, tmp_path) -> None:
+    pytest.importorskip("textual")
+    from src.pipeline.run_deletion import RunDeletionResult
+    from src.tui.run_deletion_flow import DeleteRequest
+
+    screen = RunsListScreen(tmp_path)
+    target = tmp_path / "run_1"
+    notified: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(screen, "_apply_delete_results", lambda targets, results: None)
+    monkeypatch.setattr(screen, "refresh_bindings", lambda: None)
+    monkeypatch.setattr(screen, "notify", lambda message, severity="information": notified.append((message, severity)))
+
+    request = DeleteRequest(targets=(target,), mode=RunDeletionMode.LOCAL_AND_MLFLOW)
+    results = [
+        RunDeletionResult(
+            target=target,
+            run_dirs=(target,),
+            deleted_mlflow_run_ids=("root_1",),
+            local_deleted=True,
+            issues=(),
+        )
+    ]
+
+    screen._handle_delete_success(request, results)
+
+    assert notified == [("Deleted 1 folder(s) and 1 MLflow run(s).", "information")]
+
+
+def test_apply_delete_results_reports_first_issue(monkeypatch, tmp_path) -> None:
+    pytest.importorskip("textual")
+    from src.pipeline.run_deletion import RunDeletionIssue, RunDeletionResult
+
+    screen = RunsListScreen(tmp_path)
+    target = tmp_path / "run_1"
+    issue = RunDeletionIssue(run_dir=target, phase="mlflow_gc", message="boom")
+    result = RunDeletionResult(
+        target=target,
+        run_dirs=(target,),
+        deleted_mlflow_run_ids=("root_1",),
+        local_deleted=False,
+        issues=(issue,),
+    )
+    updates: list[str] = []
+
+    class DummyLabel:
+        def update(self, value):
+            updates.append(value)
+
+    monkeypatch.setattr(screen, "_load_rows", lambda: None)
+    monkeypatch.setattr(screen, "query_one", lambda selector, *_args, **_kwargs: DummyLabel() if selector == "#status-bar" else None)
+
+    screen._apply_delete_results([target], [result])
+
+    assert updates == ["[red]Delete failed for 1 item(s): run_1: mlflow_gc: boom[/red]"]
 
 
 def test_nested_folders_appear_as_tree(monkeypatch, tmp_path) -> None:

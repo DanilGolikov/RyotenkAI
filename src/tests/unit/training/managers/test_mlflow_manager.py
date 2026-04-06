@@ -298,6 +298,38 @@ def test_get_child_runs_returns_empty_when_search_empty() -> None:
     assert mgr.get_child_runs() == []
 
 
+def test_delete_run_tree_deletes_descendants_before_root() -> None:
+    mgr = MLflowManager(_mk_cfg())
+    deleted: list[str] = []
+
+    class _Run:
+        def __init__(self, run_id: str, experiment_id: str = "exp_1") -> None:
+            self.info = SimpleNamespace(run_id=run_id, experiment_id=experiment_id)
+
+    class _Client:
+        def get_run(self, run_id: str):
+            return _Run(run_id)
+
+        def search_runs(self, *, experiment_ids, filter_string):
+            _ = experiment_ids
+            if filter_string.endswith("'root'"):
+                return [_Run("child_a"), _Run("child_b")]
+            if filter_string.endswith("'child_a'"):
+                return [_Run("grandchild")]
+            return []
+
+        def delete_run(self, run_id: str) -> None:
+            deleted.append(run_id)
+
+    mgr._mlflow = object()
+    mgr._gateway = SimpleNamespace(get_client=lambda: _Client())
+
+    deleted_ids = mgr.delete_run_tree("root")
+
+    assert deleted_ids == ["grandchild", "child_b", "child_a", "root"]
+    assert deleted == ["grandchild", "child_b", "child_a", "root"]
+
+
 def test_log_dataset_info_builds_params_and_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr = MLflowManager(_mk_cfg())
     captured = {"params": None, "tags": None, "dict": None}

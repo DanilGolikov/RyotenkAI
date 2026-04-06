@@ -42,13 +42,12 @@ if TYPE_CHECKING:
     from src.tui.apps import RyotenkaiApp
 
 _TIMESTAMP_LEN = 19  # "YYYY-MM-DDTHH:MM:SS"
+_LOGS_START_SEPARATOR_ID = "logs-start-separator"
+_LOGS_END_SEPARATOR_ID = "logs-end-separator"
+_LOG_TAB_ID_PREFIX = "log-tab-"
+_LOG_WIDGET_ID_PREFIX = "log-content-"
 
-_LOG_CANDIDATES: list[tuple[str, str]] = [
-    ("pipeline.log", "Pipeline"),
-    ("training.log", "Training"),
-    ("inference.log", "Inference"),
-    ("eval.log", "Eval"),
-]
+_LOG_CANDIDATES: tuple[str, ...] = ("pipeline.log", "training.log", "inference.log", "eval.log")
 
 _ARTIFACT_RENDERERS: dict[str, str] = {
     ".md": "markdown",
@@ -70,6 +69,20 @@ def _resolve_attempt_config_path(raw_path: str | None) -> Path | None:
     if not raw_path:
         return None
     return Path(raw_path).expanduser().resolve()
+
+
+def _make_log_tab_id(filename: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", filename.lower()).strip("-")
+    return f"{_LOG_TAB_ID_PREFIX}{slug or 'log'}"
+
+
+def _make_log_widget_id(tab_id: str) -> str:
+    suffix = tab_id.removeprefix(_LOG_TAB_ID_PREFIX)
+    return f"{_LOG_WIDGET_ID_PREFIX}{suffix or 'log'}"
+
+
+def _format_numbered_tab_title(title: str, index: int) -> str:
+    return f"{title} [{index}]"
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,8 +304,6 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         Binding("w", "toggle_log_wrap", "Wrap", show=True),
         Binding("ctrl+e", "stop_run", "Stop", key_display="⌃e", show=True, priority=True),
         Binding("shift+c", "launch_chat", "Chat", show=False),
-        Binding("1", "show_tab('details')", "Details", show=False),
-        Binding("2", "show_tab('logs')", "Logs", show=False),
     ]
 
     def __init__(self, run_dir: Path, attempt_no: int) -> None:
@@ -303,7 +314,6 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         self._report_files: dict[str, Path] = {}
         self._eval_files: dict[str, Path] = {}
         self._chat_script: Path | None = None
-        self._tab_counter: int = 2  # Details=1, Logs=2 are static; dynamic start at 3
         self._report_tab_added = False
         self._eval_tab_added = False
         self._inference_tab_added = False
@@ -317,7 +327,6 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         self._log_auto_follow = True
         self._log_highlight_enabled = True
         self._log_word_wrap_enabled = True
-        self._log_option_labels: tuple[str, ...] = ()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -326,25 +335,18 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
                 yield Static(id="details-header")
                 yield _StagesTable(id="stages-table", cursor_type="row")
                 yield RichLog(id="stage-detail", highlight=False, markup=False, wrap=True, auto_scroll=False)
-            with TabPane("Logs [2]", id="logs"):
-                yield Select([], id="log-selector", prompt="Select log file…")
-                yield _LiveLog(
-                    id="log-content",
-                    highlight=self._log_highlight_enabled,
-                    auto_scroll=True,
-                    log_highlighter=_PipelineLogHighlighter(),
-                    word_wrap_enabled=self._log_word_wrap_enabled,
-                )
         yield Footer()
 
     def on_mount(self) -> None:
         self.app.sub_title = f"{self._run_dir.name} › attempt {self._attempt_no}"
         self._setup_stages_columns()
         self._attempt_status = self._load_details()
-        self._populate_log_selector()
+        self._sync_log_tabs()
         self._maybe_add_inference_tab()
-        self._maybe_add_eval_tab()
         self._maybe_add_report_tab()
+        self._maybe_add_eval_tab()
+        self._sync_log_group_separators()
+        self._renumber_primary_tabs()
         self.refresh_bindings()
         self._start_live_updates()
         self._focus_tabs_after_mount()
@@ -544,41 +546,159 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     # ── Logs ──────────────────────────────────────────────────────────────────
 
-    def _populate_log_selector(self) -> None:
+    def _discover_log_files(self) -> dict[str, Path]:
         attempt_dir = self._run_dir / "attempts" / f"attempt_{self._attempt_no}"
         log_files: dict[str, Path] = {}
 
-        for filename, label in _LOG_CANDIDATES:
+        for filename in _LOG_CANDIDATES:
             p = attempt_dir / filename
             if p.exists():
-                log_files[label] = p
+                log_files[p.name] = p
 
-        known = {fname for fname, _ in _LOG_CANDIDATES}
+        known = set(_LOG_CANDIDATES)
         if attempt_dir.exists():
             for p in sorted(attempt_dir.glob("*.log")):
                 if p.name not in known:
-                    log_files[p.stem.capitalize()] = p
+                    log_files[p.name] = p
 
-        self._log_files = log_files
-        selector = self.query_one("#log-selector", Select)
-        log_widget = self.query_one("#log-content", _LiveLog)
-        current_value = None if selector.value is Select.BLANK else str(selector.value)
-        option_labels = tuple(log_files)
+        return log_files
 
-        if not log_files:
-            self._log_option_labels = ()
-            log_widget.clear()
-            log_widget.write_line("No log files found.")
+    def _sync_log_tabs(self) -> None:
+        log_files = self._discover_log_files()
+        tabbed_content = self.query_one(TabbedContent)
+        existing_ids = set(self._log_files)
+        next_ids = {_make_log_tab_id(filename) for filename in log_files}
+
+        if log_files:
+            self._ensure_separator(_LOGS_START_SEPARATOR_ID, after="details")
+        else:
+            self._remove_pane_if_present(_LOGS_START_SEPARATOR_ID)
+
+        for pane_id in existing_ids - next_ids:
+            with contextlib.suppress(Exception):
+                tabbed_content.remove_pane(pane_id)
+            self._log_files.pop(pane_id, None)
+
+        anchor_id = _LOGS_START_SEPARATOR_ID if log_files else "details"
+        for filename, path in log_files.items():
+            pane_id = _make_log_tab_id(filename)
+            self._log_files[pane_id] = path
+            if pane_id not in existing_ids:
+                tabbed_content.add_pane(
+                    TabPane(
+                        filename,
+                        _LiveLog(
+                            id=_make_log_widget_id(pane_id),
+                            highlight=self._log_highlight_enabled,
+                            auto_scroll=True,
+                            log_highlighter=_PipelineLogHighlighter(),
+                            word_wrap_enabled=self._log_word_wrap_enabled,
+                        ),
+                        id=pane_id,
+                    ),
+                    after=anchor_id,
+                )
+            anchor_id = pane_id
+
+    def _artifact_tab_ids(self) -> list[str]:
+        artifact_tab_ids: list[str] = []
+        if self._inference_tab_added:
+            artifact_tab_ids.append("inference")
+        if self._report_tab_added:
+            artifact_tab_ids.append("report")
+        if self._eval_tab_added:
+            artifact_tab_ids.append("eval")
+        return artifact_tab_ids
+
+    def _sync_log_group_separators(
+        self,
+        *,
+        has_logs: bool | None = None,
+        has_artifacts: bool | None = None,
+    ) -> None:
+        tabbed_content = self.query_one(TabbedContent)
+        if has_logs is None:
+            has_logs = bool(self._log_files)
+        if has_artifacts is None:
+            has_artifacts = bool(self._artifact_tab_ids())
+
+        start_needed = has_logs
+        end_needed = has_logs and has_artifacts
+
+        if start_needed:
+            self._ensure_separator(_LOGS_START_SEPARATOR_ID, after="details")
+        else:
+            self._remove_pane_if_present(_LOGS_START_SEPARATOR_ID)
+
+        if end_needed:
+            anchor_id = next(reversed(self._log_files))
+            self._ensure_separator(_LOGS_END_SEPARATOR_ID, after=anchor_id)
+        else:
+            self._remove_pane_if_present(_LOGS_END_SEPARATOR_ID)
+
+    def _ensure_separator(self, pane_id: str, *, after: str) -> None:
+        tabbed_content = self.query_one(TabbedContent)
+        try:
+            tabbed_content.get_pane(pane_id)
             return
+        except Exception:
+            pass
+        with contextlib.suppress(Exception):
+            tabbed_content.add_pane(TabPane("|", Static(""), id=pane_id, disabled=True), after=after)
 
-        if option_labels != self._log_option_labels:
-            selector.set_options([(label, label) for label in log_files])
-            self._log_option_labels = option_labels
-        selected_label = current_value if current_value in log_files else next(iter(log_files))
-        if str(selector.value) != selected_label:
-            selector.value = selected_label
-        if current_value != selected_label:
-            self._load_log_file(self._log_files[selected_label], log_widget, reset_follow=True)
+    def _remove_pane_if_present(self, pane_id: str) -> None:
+        tabbed_content = self.query_one(TabbedContent)
+        try:
+            tabbed_content.get_pane(pane_id)
+        except Exception:
+            return
+        with contextlib.suppress(Exception):
+            tabbed_content.remove_pane(pane_id)
+
+    def _base_title_for_tab(self, pane_id: str) -> str | None:
+        if pane_id == "details":
+            return "Details"
+        if pane_id.startswith(_LOG_TAB_ID_PREFIX):
+            path = self._log_files.get(pane_id)
+            return path.name if path is not None else None
+        if pane_id == "inference":
+            return "Inference"
+        if pane_id == "report":
+            return "Report"
+        if pane_id == "eval":
+            return "Eval"
+        return None
+
+    def _renumber_primary_tabs(self) -> None:
+        with contextlib.suppress(Exception):
+            tabbed_content = self.query_one(TabbedContent)
+            ordered_ids = ["details", *self._log_files.keys(), *self._artifact_tab_ids()]
+            for index, pane_id in enumerate(ordered_ids, start=1):
+                base_title = self._base_title_for_tab(pane_id)
+                if base_title is None:
+                    continue
+                expected_title = _format_numbered_tab_title(base_title, index)
+                pane = tabbed_content.get_pane(pane_id)
+                if pane._title.plain != expected_title:
+                    pane._title = pane.render_str(expected_title)
+                tab = tabbed_content.get_tab(pane_id)
+                if tab.label_text != expected_title:
+                    tab.label = expected_title
+
+    def _active_log_tab_id(self) -> str | None:
+        with contextlib.suppress(Exception):
+            active_tab = self.query_one(TabbedContent).active
+            if active_tab in self._log_files:
+                return active_tab
+        return None
+
+    def _active_log_widget(self) -> _LiveLog | None:
+        pane_id = self._active_log_tab_id()
+        if pane_id is None:
+            return None
+        with contextlib.suppress(Exception):
+            return self.query_one(f"#{_make_log_widget_id(pane_id)}", _LiveLog)
+        return None
 
     # ── Inference tab (dynamic) ───────────────────────────────────────────────
 
@@ -828,13 +948,13 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     def _reload_current_log(self, *, reset_follow: bool = False, preserve_viewport: bool = False) -> None:
         with contextlib.suppress(Exception):
-            selector = self.query_one("#log-selector", Select)
-            if selector.value is Select.BLANK:
+            pane_id = self._active_log_tab_id()
+            if pane_id is None:
                 return
-            path = self._log_files.get(str(selector.value))
+            path = self._log_files.get(pane_id)
             if path is None:
                 return
-            widget = self.query_one("#log-content", _LiveLog)
+            widget = self.query_one(f"#{_make_log_widget_id(pane_id)}", _LiveLog)
             scroll_x, scroll_y = widget.scroll_offset
             should_stick_to_end = self._log_auto_follow and widget.is_vertical_scroll_end
             self._load_log_file(path, widget, reset_follow=reset_follow)
@@ -855,22 +975,23 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             if should_refresh_attempt:
                 prev_status = self._attempt_status
                 self._attempt_status = self._load_details()
-                self._populate_log_selector()
+                self._sync_log_tabs()
                 self._maybe_add_inference_tab()
-                self._maybe_add_eval_tab()
                 self._maybe_add_report_tab()
+                self._maybe_add_eval_tab()
+                self._sync_log_group_separators()
+                self._renumber_primary_tabs()
                 if prev_status != self._attempt_status:
                     self.refresh_bindings()
-            tabs = self.query_one(TabbedContent)
-            if tabs.active != "logs":
+            pane_id = self._active_log_tab_id()
+            if pane_id is None:
                 return
-            selector = self.query_one("#log-selector", Select)
-            if selector.value is Select.BLANK:
-                return
-            path = self._log_files.get(str(selector.value))
+            path = self._log_files.get(pane_id)
             if path is None:
                 return
-            log_widget = self.query_one("#log-content", _LiveLog)
+            log_widget = self._active_log_widget()
+            if log_widget is None:
+                return
             if self._log_auto_follow and self.focused is log_widget and not log_widget.is_vertical_scroll_end:
                 self._log_auto_follow = False
             elif not self._log_auto_follow and self.focused is log_widget and log_widget.is_vertical_scroll_end:
@@ -883,8 +1004,7 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             return
 
     def _next_tab_no(self) -> int:
-        self._tab_counter += 1
-        return self._tab_counter
+        return sum(1 for pane in self.query(TabPane) if not pane.disabled) + 1
 
     # ── Focus traversal ───────────────────────────────────────────────────────
 
@@ -892,7 +1012,8 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         """Tabs navigation (via mixin) + g/G scroll shortcuts on scrollable text viewers."""
         super().on_key(event)
         if isinstance(self.focused, RichLog | Log):
-            if self.focused.id == "log-content":
+            active_log_widget = self._active_log_widget()
+            if self.focused is active_log_widget and active_log_widget is not None:
                 if event.key in {"up", "pageup", "home"}:
                     self._log_auto_follow = False
                 elif (event.key in {"down", "pagedown"} and self.focused.is_vertical_scroll_end) or event.key in {
@@ -909,12 +1030,14 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         del event
-        if self.focused is self.query_one("#log-content", _LiveLog):
+        if self.focused is self._active_log_widget():
             self._log_auto_follow = False
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         del event
-        log_widget = self.query_one("#log-content", _LiveLog)
+        log_widget = self._active_log_widget()
+        if log_widget is None:
+            return
         if self.focused is log_widget and log_widget.is_vertical_scroll_end:
             self._log_auto_follow = True
 
@@ -931,18 +1054,6 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             with contextlib.suppress(Exception):
                 self.query_one("#stage-detail", RichLog).focus()
             event.stop()
-
-    @on(Select.Changed, "#log-selector")
-    def _log_selector_changed(self, event: Select.Changed) -> None:
-        if event.value is not Select.BLANK:
-            path = self._log_files.get(str(event.value))
-            if path:
-                log_widget = self.query_one("#log-content", _LiveLog)
-                self._load_log_file(path, log_widget, reset_follow=True)
-                # Only shift focus when the user manually changed the selector,
-                # not during programmatic initialisation (selector not focused then).
-                if self.focused is event.control:
-                    log_widget.focus()
 
     @on(Select.Changed, "#eval-selector")
     def _eval_selector_changed(self, event: Select.Changed) -> None:
@@ -968,7 +1079,12 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     @on(TabbedContent.TabActivated)
     def _tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        del event
+        pane_id = event.pane.id
+        if pane_id in self._log_files:
+            log_widget = self._active_log_widget()
+            path = self._log_files.get(pane_id)
+            if log_widget is not None and path is not None:
+                self._load_log_file(path, log_widget, reset_follow=True)
         self.refresh_bindings()
 
     # ── Actions ───────────────────────────────────────────────────────────────
@@ -1009,15 +1125,22 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     def action_toggle_log_highlight(self) -> None:
         self._log_highlight_enabled = not self._log_highlight_enabled
-        with contextlib.suppress(Exception):
-            self.query_one("#log-content", _LiveLog).set_highlighting(self._log_highlight_enabled)
+        for pane_id in self._log_files:
+            with contextlib.suppress(Exception):
+                self.query_one(f"#{_make_log_widget_id(pane_id)}", _LiveLog).set_highlighting(
+                    self._log_highlight_enabled
+                )
         state = "on" if self._log_highlight_enabled else "off"
         self.notify(f"Log highlighting {state}")
 
     def action_toggle_log_wrap(self) -> None:
         self._log_word_wrap_enabled = not self._log_word_wrap_enabled
-        with contextlib.suppress(Exception):
-            self.query_one("#log-content", _LiveLog).set_word_wrap(self._log_word_wrap_enabled, preserve_viewport=True)
+        for pane_id in self._log_files:
+            with contextlib.suppress(Exception):
+                self.query_one(f"#{_make_log_widget_id(pane_id)}", _LiveLog).set_word_wrap(
+                    self._log_word_wrap_enabled,
+                    preserve_viewport=True,
+                )
         state = "on" if self._log_word_wrap_enabled else "off"
         self.notify(f"Log word wrap {state}")
 
@@ -1039,12 +1162,10 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             return self._config_path is not None
         if action == "toggle_log_highlight":
             with contextlib.suppress(Exception):
-                tabs = self.query_one(TabbedContent)
-                return tabs.active == "logs" and bool(self._log_files)
+                return self._active_log_tab_id() is not None
             return False
         if action == "toggle_log_wrap":
             with contextlib.suppress(Exception):
-                tabs = self.query_one(TabbedContent)
-                return tabs.active == "logs" and bool(self._log_files)
+                return self._active_log_tab_id() is not None
             return False
         return True

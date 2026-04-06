@@ -547,6 +547,42 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self._analytics._gateway = self._gateway
         return self._analytics.get_run_data(self._run_id)
 
+    def delete_run_tree(self, root_run_id: str) -> list[str]:
+        """Soft-delete a root run and all descendants in child-first order."""
+        client = self.client
+        if client is None:
+            raise RuntimeError("MLflow client is unavailable")
+        if not root_run_id:
+            return []
+
+        root_run = client.get_run(root_run_id)
+        experiment_id = root_run.info.experiment_id
+        queue: list[tuple[str, int]] = [(root_run_id, 0)]
+        visited: set[str] = set()
+        run_ids_with_depth: list[tuple[str, int]] = []
+
+        while queue:
+            current_id, depth = queue.pop(0)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+            run_ids_with_depth.append((current_id, depth))
+            children = client.search_runs(
+                experiment_ids=[experiment_id],
+                filter_string=f"tags.`mlflow.parentRunId` = '{current_id}'",
+            )
+            for child in children:
+                child_id = child.info.run_id
+                if child_id not in visited:
+                    queue.append((child_id, depth + 1))
+
+        ordered_run_ids = [
+            run_id for run_id, _depth in sorted(run_ids_with_depth, key=lambda item: (item[1], item[0]), reverse=True)
+        ]
+        for run_id in ordered_run_ids:
+            client.delete_run(run_id)
+        return ordered_run_ids
+
     # =========================================================================
     # CLEANUP
     # =========================================================================

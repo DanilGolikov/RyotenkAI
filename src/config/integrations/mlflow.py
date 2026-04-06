@@ -52,7 +52,12 @@ class MLflowConfig(StrictBaseModel):
         10, ge=1, le=100, description="Log system metrics every N training steps (if callback enabled)"
     )
 
-    @field_validator("tracking_uri", "local_tracking_uri", "ca_bundle_path", mode="before")
+    @field_validator(
+        "tracking_uri",
+        "local_tracking_uri",
+        "ca_bundle_path",
+        mode="before",
+    )
     @classmethod
     def _normalize_optional_strings(cls, value: str | None) -> str | None:
         if value is None:

@@ -94,7 +94,7 @@ class _TabbedScreenMixin:
     def _activate_tab_by_index(self, tab_index: int) -> bool:
         from textual.widgets import TabPane, Tabs
 
-        panes = [pane.id for pane in self.query(TabPane) if pane.id]  # type: ignore[attr-defined]
+        panes = [pane.id for pane in self.query(TabPane) if pane.id and not pane.disabled]  # type: ignore[attr-defined]
         if not 0 <= tab_index < len(panes):
             return False
 

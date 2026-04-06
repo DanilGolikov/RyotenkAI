@@ -955,7 +955,12 @@ def ryotenkai_tui(
         raise typer.BadParameter("log level must be INFO or DEBUG", param_hint="--log-level")
 
     from src.tui.apps import RyotenkaiApp
-    from src.tui.runtime import TuiRuntimeConfig, default_errors_log_path, run_tui_with_restart
+    from src.tui.runtime import (
+        TuiRuntimeConfig,
+        default_errors_log_path,
+        default_tui_log_path,
+        run_tui_with_restart,
+    )
     from src.utils.logger import set_log_level
 
     set_log_level(normalized_log_level)
@@ -968,7 +973,10 @@ def ryotenkai_tui(
             initial_run_dir=resolved_run_dir,
             interval=interval,
         ),
-        config=TuiRuntimeConfig(errors_log_path=default_errors_log_path(runs_dir)),
+        config=TuiRuntimeConfig(
+            errors_log_path=default_errors_log_path(runs_dir),
+            tui_log_path=default_tui_log_path(runs_dir),
+        ),
     )
 
 
