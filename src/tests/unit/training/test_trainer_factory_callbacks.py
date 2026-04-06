@@ -156,7 +156,10 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
     )
 
     callbacks = trainer.kwargs.get("callbacks")
+    training_cfg = trainer.kwargs["args"]
     assert callbacks is not None
+    assert isinstance(training_cfg, DummyConfig)
+    assert training_cfg.kwargs["report_to"] == ["mlflow"]
     assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
     assert any(isinstance(cb, GPUMetricsCallback) for cb in callbacks)
     sys_cb = next(cb for cb in callbacks if isinstance(cb, SystemMetricsCallback))

@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.training.managers.mlflow_manager import MLflowManager
+from src.training.mlflow.resilient_transport import ResilientMLflowTransport
 from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
@@ -101,6 +102,40 @@ def _install_fake_mlflow(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     fake.autolog = lambda **kw: None  # type: ignore[attr-defined, ARG005]
     fake.end_run = lambda **kw: None  # type: ignore[attr-defined, ARG005]
     fake.log_metric = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.log_metrics = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.log_param = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.log_params = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.set_tag = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.set_tags = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.log_dict = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+    fake.log_text = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]
+
+    class FakeMlflowClient:
+        def log_batch(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def log_metric(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def log_param(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def log_params(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def set_tag(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def set_tags(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def log_dict(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+        def log_text(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
+            return None
+
+    fake.MlflowClient = FakeMlflowClient  # type: ignore[attr-defined]
 
     monkeypatch.setitem(sys.modules, "mlflow", fake)
     return fake
@@ -172,6 +207,114 @@ class TestSmallBranchesAndSetup:
         assert mgr.get_effective_remote_tracking_uri() == "http://127.0.0.1:5002"
         assert os.environ["REQUESTS_CA_BUNDLE"] == "certs/mlflow-ca.pem"
         assert os.environ["SSL_CERT_FILE"] == "certs/mlflow-ca.pem"
+
+
+class TestResilientTransportShim:
+    def test_setup_installs_shim_only_for_training_runtime(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        original = fake.log_metrics
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+
+        control_plane_mgr = MLflowManager(_mk_cfg(), runtime_role="control_plane")
+        assert control_plane_mgr.setup(disable_system_metrics=True) is True
+        assert fake.log_metrics is original
+        control_plane_mgr.cleanup()
+
+        training_mgr = MLflowManager(_mk_cfg(), runtime_role="training")
+        training_mgr._resilient_transport = ResilientMLflowTransport(warning_interval_s=0.0)
+        assert training_mgr.setup(disable_system_metrics=True) is True
+        assert fake.log_metrics is not original
+        training_mgr.cleanup()
+        assert fake.log_metrics is original
+
+    def test_transport_failures_open_breaker_and_skip_repeated_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+
+        calls = {"count": 0}
+
+        def failing_log_metrics(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+            calls["count"] += 1
+            raise RuntimeError(
+                "API request to https://mlflow.example/api/2.0/mlflow/runs/log-batch "
+                "failed with exception HTTPSConnectionPool(host='mlflow.example', port=443): "
+                "Max retries exceeded with url: /api/2.0/mlflow/runs/log-batch "
+                "(Caused by SSLError(SSLEOFError(8, '[SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred "
+                "in violation of protocol (_ssl.c:1010)')))"
+            )
+
+        fake.log_metrics = failing_log_metrics  # type: ignore[attr-defined]
+
+        mgr = MLflowManager(_mk_cfg(), runtime_role="training")
+        mgr._resilient_transport = ResilientMLflowTransport(
+            failure_threshold=2,
+            recovery_cooldown_s=999.0,
+            warning_interval_s=0.0,
+        )
+        assert mgr.setup(disable_system_metrics=True) is True
+
+        fake.log_metrics({"loss": 1.0}, step=1)  # type: ignore[attr-defined]
+        fake.log_metrics({"loss": 1.0}, step=2)  # type: ignore[attr-defined]
+        fake.log_metrics({"loss": 1.0}, step=3)  # type: ignore[attr-defined]
+
+        assert calls["count"] == 2
+        assert mgr._resilient_transport.breaker_state == "open"
+        mgr.cleanup()
+
+    def test_half_open_recovery_closes_breaker_again(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+
+        calls = {"count": 0}
+
+        def flaky_log_metric(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError(
+                    "API request to https://mlflow.example/api/2.0/mlflow/runs/log-metric "
+                    "failed with exception HTTPSConnectionPool(host='mlflow.example', port=443): "
+                    "Max retries exceeded with url: /api/2.0/mlflow/runs/log-metric"
+                )
+
+        fake.log_metric = flaky_log_metric  # type: ignore[attr-defined]
+
+        mgr = MLflowManager(_mk_cfg(), runtime_role="training")
+        mgr._resilient_transport = ResilientMLflowTransport(
+            failure_threshold=1,
+            recovery_cooldown_s=0.0,
+            warning_interval_s=0.0,
+        )
+        assert mgr.setup(disable_system_metrics=True) is True
+
+        fake.log_metric("loss", 1.0, step=1)  # type: ignore[attr-defined]
+        assert mgr._resilient_transport.breaker_state == "open"
+
+        fake.log_metric("loss", 0.5, step=2)  # type: ignore[attr-defined]
+        assert calls["count"] == 2
+        assert mgr._resilient_transport.breaker_state == "closed"
+        mgr.cleanup()
+
+    def test_non_transport_exception_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+
+        def bad_log_metric(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
+            raise ValueError("bad metric payload")
+
+        fake.log_metric = bad_log_metric  # type: ignore[attr-defined]
+
+        mgr = MLflowManager(_mk_cfg(), runtime_role="training")
+        mgr._resilient_transport = ResilientMLflowTransport(warning_interval_s=0.0)
+        assert mgr.setup(disable_system_metrics=True) is True
+
+        with pytest.raises(ValueError, match="bad metric payload"):
+            fake.log_metric("loss", 1.0, step=1)  # type: ignore[attr-defined]
+        mgr.cleanup()
 
 
 class TestAutologFallbackAndDisable:

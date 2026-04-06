@@ -34,6 +34,7 @@ from src.training.mlflow.dataset_logger import MLflowDatasetLogger
 from src.training.mlflow.domain_logger import MLflowDomainLogger
 from src.training.mlflow.event_log import MLflowEventLog
 from src.training.mlflow.model_registry import MLflowModelRegistry
+from src.training.mlflow.resilient_transport import ResilientMLflowTransport
 from src.training.mlflow.run_analytics import MLflowRunAnalytics
 from src.utils.logger import get_logger
 
@@ -92,6 +93,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             mlflow_module=None,
             tracking_uri=None,
         )
+        self._resilient_transport = ResilientMLflowTransport()
         self._registry: MLflowModelRegistry | None = None
         self._analytics: MLflowRunAnalytics = MLflowRunAnalytics(
             self._gateway,
@@ -589,6 +591,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
 
     def cleanup(self) -> None:
         """Reset all runtime state and restore process-wide MLflow env."""
+        self._resilient_transport.uninstall()
         if self._environment is not None:
             self._environment.deactivate()
             self._environment = None

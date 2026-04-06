@@ -125,6 +125,7 @@ class MLflowSetupMixin:
             else:
                 logger.debug("MLflow system metrics logging disabled for this process")
 
+            self._install_resilient_transport_if_needed(mlflow)
             self._build_subcomponents()
             return True
 
@@ -134,6 +135,7 @@ class MLflowSetupMixin:
             return False
         except Exception as e:
             logger.warning(f"MLflow setup failed: {e}")
+            self._resilient_transport.uninstall()  # type: ignore[attr-defined]
             self._mlflow = None  # type: ignore[attr-defined]
             return False
 
@@ -185,6 +187,14 @@ class MLflowSetupMixin:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _install_resilient_transport_if_needed(self, mlflow: Any) -> None:
+        tracking_uri = self.get_runtime_tracking_uri()  # type: ignore[attr-defined]
+        if self._runtime_role != "training":  # type: ignore[attr-defined]
+            return
+        if not tracking_uri.startswith("http"):
+            return
+        self._resilient_transport.install(mlflow)  # type: ignore[attr-defined]
 
     def _restore_deleted_experiments(self) -> None:
         """Restore soft-deleted experiments before setting the active one."""

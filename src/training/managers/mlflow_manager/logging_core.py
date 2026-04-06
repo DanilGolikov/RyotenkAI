@@ -14,7 +14,6 @@ Responsibilities:
 
 from __future__ import annotations
 
-import traceback
 from pathlib import Path
 from typing import Any
 
@@ -106,17 +105,17 @@ class MLflowLoggingMixin:
     ) -> bool:
         """Log dict as JSON artifact to specific run."""
         target_run_id = self._get_active_run_id(run_id)  # type: ignore[attr-defined]
-        if not target_run_id:
+        client = self.client  # type: ignore[attr-defined]
+        if not target_run_id or client is None:
             logger.debug(f"[MLFLOW:DICT] Skipped {artifact_file} - no active run")
             return False
 
         try:
-            self.client.log_dict(target_run_id, dictionary, artifact_file)  # type: ignore[attr-defined]
+            client.log_dict(target_run_id, dictionary, artifact_file)
             logger.debug(f"[MLFLOW:DICT] {artifact_file} -> run_id={target_run_id[:8]}...")
             return True
         except Exception as e:
-            logger.error(f"[MLFLOW:DICT] Failed to log {artifact_file}: {e}")
-            logger.error(f"[MLFLOW:DICT] Traceback:\n{traceback.format_exc()}")
+            logger.warning(f"[MLFLOW:DICT] Failed to log {artifact_file}: {e}")
             return False
 
     def log_text(
@@ -127,14 +126,15 @@ class MLflowLoggingMixin:
     ) -> bool:
         """Log text content as artifact to specific run."""
         target_run_id = self._get_active_run_id(run_id)  # type: ignore[attr-defined]
-        if not target_run_id:
+        client = self.client  # type: ignore[attr-defined]
+        if not target_run_id or client is None:
             return False
         try:
-            self.client.log_text(target_run_id, text, artifact_file)  # type: ignore[attr-defined]
+            client.log_text(target_run_id, text, artifact_file)
             logger.debug(f"[MLFLOW:TEXT] {artifact_file} -> run_id={target_run_id[:8]}...")
             return True
         except Exception as e:
-            logger.error(f"[MLFLOW:TEXT] Failed: {e}")
+            logger.warning(f"[MLFLOW:TEXT] Failed: {e}")
             return False
 
     # ------------------------------------------------------------------
