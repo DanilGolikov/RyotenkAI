@@ -1222,6 +1222,8 @@ class PipelineOrchestrator:
         self._mlflow_manager = self._setup_mlflow()
         if not self._mlflow_manager or not self._mlflow_manager.is_active:
             return
+        state.mlflow_runtime_tracking_uri = self._mlflow_manager.get_runtime_tracking_uri() or None
+        state.mlflow_ca_bundle_path = getattr(self.config.experiment_tracking.mlflow, "ca_bundle_path", None)
         try:
             import mlflow
 

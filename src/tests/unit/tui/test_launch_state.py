@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -118,9 +117,7 @@ def test_build_submittable_launch_request_resolves_resume_config(
 def test_build_submittable_launch_request_blocks_fresh_without_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    store = MagicMock()
-    store.exists.return_value = False
-    monkeypatch.setattr("src.tui.launch_state.PipelineStateStore", lambda _run_dir: store)
+    monkeypatch.setattr("src.tui.launch_state.run_state_exists", lambda _run_dir: False)
 
     with pytest.raises(ValueError, match="Fresh attempt requires an existing run directory"):
         build_submittable_launch_request(

@@ -111,6 +111,8 @@ class PipelineStateStore:
         late_stage_config_hash: str,
         model_dataset_config_hash: str = "",
         root_mlflow_run_id: str | None = None,
+        mlflow_runtime_tracking_uri: str | None = None,
+        mlflow_ca_bundle_path: str | None = None,
     ) -> PipelineState:
         state = PipelineState(
             schema_version=SCHEMA_VERSION,
@@ -123,6 +125,8 @@ class PipelineStateStore:
             late_stage_config_hash=late_stage_config_hash,
             model_dataset_config_hash=model_dataset_config_hash,
             root_mlflow_run_id=root_mlflow_run_id,
+            mlflow_runtime_tracking_uri=mlflow_runtime_tracking_uri,
+            mlflow_ca_bundle_path=mlflow_ca_bundle_path,
             attempts=[],
             current_output_lineage={},
         )

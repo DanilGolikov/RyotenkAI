@@ -177,6 +177,8 @@ class PipelineState:
     late_stage_config_hash: str
     model_dataset_config_hash: str = ""
     root_mlflow_run_id: str | None = None
+    mlflow_runtime_tracking_uri: str | None = None
+    mlflow_ca_bundle_path: str | None = None
     attempts: list[PipelineAttemptState] = field(default_factory=list)
     current_output_lineage: dict[str, StageLineageRef] = field(default_factory=dict)
 
@@ -192,6 +194,8 @@ class PipelineState:
             "late_stage_config_hash": self.late_stage_config_hash,
             "model_dataset_config_hash": self.model_dataset_config_hash,
             "root_mlflow_run_id": self.root_mlflow_run_id,
+            "mlflow_runtime_tracking_uri": self.mlflow_runtime_tracking_uri,
+            "mlflow_ca_bundle_path": self.mlflow_ca_bundle_path,
             "attempts": [attempt.to_dict() for attempt in self.attempts],
             "current_output_lineage": {
                 stage_name: lineage.to_dict() for stage_name, lineage in self.current_output_lineage.items()
@@ -218,6 +222,8 @@ class PipelineState:
             late_stage_config_hash=str(data.get("late_stage_config_hash", "")),
             model_dataset_config_hash=str(data.get("model_dataset_config_hash", "")),
             root_mlflow_run_id=data.get("root_mlflow_run_id"),
+            mlflow_runtime_tracking_uri=data.get("mlflow_runtime_tracking_uri"),
+            mlflow_ca_bundle_path=data.get("mlflow_ca_bundle_path"),
             attempts=attempts,
             current_output_lineage=current_output_lineage,
         )

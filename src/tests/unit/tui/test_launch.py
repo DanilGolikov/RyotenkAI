@@ -97,10 +97,10 @@ def test_build_train_command_for_restart(tmp_path: Path) -> None:
 
 
 def test_resolve_config_path_for_run_reads_state(tmp_path: Path, monkeypatch) -> None:
-    state = MagicMock(config_path=str(tmp_path / "configs" / "pipeline.yaml"))
-    store = MagicMock()
-    store.load.return_value = state
-    monkeypatch.setattr("src.tui.launch.PipelineStateStore", lambda _run_dir: store)
+    monkeypatch.setattr(
+        "src.tui.launch._resolve_config_path_for_run",
+        lambda run_dir, config_path=None: (tmp_path / "configs" / "pipeline.yaml").resolve(),
+    )
 
     result = resolve_config_path_for_run(tmp_path / "runs" / "existing")
 
@@ -108,15 +108,25 @@ def test_resolve_config_path_for_run_reads_state(tmp_path: Path, monkeypatch) ->
 
 
 def test_load_restart_point_options_uses_config_and_restart_api(tmp_path: Path, monkeypatch) -> None:
-    mock_config = MagicMock()
-    monkeypatch.setattr("src.tui.launch.resolve_config_path_for_run", lambda run_dir, config_path=None: tmp_path / "cfg.yaml")
-    monkeypatch.setattr("src.tui.launch.load_config", lambda _path: mock_config)
     monkeypatch.setattr(
-        "src.tui.launch.list_restart_points",
-        lambda run_dir, config: [
-            {"stage": "Inference Deployer", "available": True, "mode": "fresh_or_resume", "reason": "restart_allowed"},
-            {"stage": "Model Evaluator", "available": False, "mode": "live_runtime_only", "reason": "missing_inference_outputs"},
-        ],
+        "src.tui.launch._load_restart_point_options",
+        lambda run_dir, config_path=None: (
+            tmp_path / "cfg.yaml",
+            [
+                RestartPointOption(
+                    stage="Inference Deployer",
+                    available=True,
+                    mode="fresh_or_resume",
+                    reason="restart_allowed",
+                ),
+                RestartPointOption(
+                    stage="Model Evaluator",
+                    available=False,
+                    mode="live_runtime_only",
+                    reason="missing_inference_outputs",
+                ),
+            ],
+        ),
     )
 
     config_path, points = load_restart_point_options(tmp_path / "runs" / "existing")
@@ -151,14 +161,18 @@ def test_validate_resume_run_rejects_completed_latest_attempt(tmp_path: Path, mo
         stage_runs={"Dataset Validator": MagicMock(status="completed")},
     )
     state.attempts = [latest_attempt]
-    store = MagicMock()
-    store.load.return_value = state
 
-    monkeypatch.setattr("src.tui.launch.PipelineStateStore", lambda _run_dir: store)
-    monkeypatch.setattr("src.tui.launch.resolve_config_path_for_run", lambda run_dir, config_path=None: tmp_path / "cfg.yaml")
+    monkeypatch.setattr("src.tui.adapters.launch_backend.load_pipeline_state", lambda _run_dir: state)
+    monkeypatch.setattr(
+        "src.tui.adapters.launch_backend.resolve_config_path_for_run",
+        lambda run_dir, config_path=None: tmp_path / "cfg.yaml",
+    )
     mock_config = MagicMock()
-    monkeypatch.setattr("src.tui.launch.load_config", lambda _path: mock_config)
-    monkeypatch.setattr("src.tui.launch.compute_config_hashes", lambda _config: {"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"})
+    monkeypatch.setattr("src.tui.adapters.launch_backend.load_config", lambda _path: mock_config)
+    monkeypatch.setattr(
+        "src.tui.adapters.launch_backend.compute_config_hashes",
+        lambda _config: {"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
+    )
 
     with pytest.raises(ValueError, match="Nothing to resume"):
         validate_resume_run(tmp_path / "runs" / "existing")
@@ -322,7 +336,7 @@ def test_ryotenkai_app_opens_predicted_next_attempt_for_existing_run(tmp_path: P
     store.load.return_value = state
     opened: list[tuple[Path, int | None]] = []
 
-    monkeypatch.setattr("src.pipeline.state.PipelineStateStore", lambda _run_dir: store)
+    monkeypatch.setattr("src.tui.adapters.state.PipelineStateStore", lambda _run_dir: store)
     monkeypatch.setattr(app, "notify", lambda *args, **kwargs: None)
     monkeypatch.setattr(app, "open_attempt_for_run", lambda run_dir, attempt_no=None: opened.append((run_dir, attempt_no)))
     monkeypatch.setattr(app, "_run_launch_worker", lambda _request: object())
@@ -348,7 +362,7 @@ def test_ryotenkai_app_opens_first_attempt_for_new_run_without_state(tmp_path: P
         store.load.side_effect = FileNotFoundError("missing state")
         return store
 
-    monkeypatch.setattr("src.pipeline.state.PipelineStateStore", _missing_store)
+    monkeypatch.setattr("src.tui.adapters.state.PipelineStateStore", _missing_store)
     monkeypatch.setattr(app, "notify", lambda *args, **kwargs: None)
     monkeypatch.setattr(app, "open_attempt_for_run", lambda run_dir, attempt_no=None: opened.append((run_dir, attempt_no)))
     monkeypatch.setattr(app, "_run_launch_worker", lambda _request: object())
@@ -411,9 +425,8 @@ def test_ryotenkai_app_interrupts_active_launch(tmp_path: Path, monkeypatch) -> 
 
 
 def test_resolve_running_attempt_no_prefers_active_attempt_id() -> None:
-    pytest.importorskip("textual")
     from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
-    from src.tui.apps import _resolve_running_attempt_no
+    from src.tui.adapters.state import find_running_attempt_no
 
     running_attempt = PipelineAttemptState(
         attempt_id="attempt-2",
@@ -448,13 +461,12 @@ def test_resolve_running_attempt_no_prefers_active_attempt_id() -> None:
         attempts=[older_attempt, running_attempt],
     )
 
-    assert _resolve_running_attempt_no(state) == 2
+    assert find_running_attempt_no(state) == 2
 
 
 def test_resolve_running_attempt_no_falls_back_to_latest_running_attempt() -> None:
-    pytest.importorskip("textual")
     from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
-    from src.tui.apps import _resolve_running_attempt_no
+    from src.tui.adapters.state import find_running_attempt_no
 
     completed_attempt = PipelineAttemptState(
         attempt_id="attempt-1",
@@ -489,4 +501,4 @@ def test_resolve_running_attempt_no_falls_back_to_latest_running_attempt() -> No
         attempts=[completed_attempt, running_attempt],
     )
 
-    assert _resolve_running_attempt_no(state) == 3
+    assert find_running_attempt_no(state) == 3

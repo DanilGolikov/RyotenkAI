@@ -32,6 +32,8 @@ from textual.widgets import (
     Tabs,
 )
 
+from src.tui.adapters.presentation import STATUS_COLORS, STATUS_ICONS, format_duration, format_mode_label
+from src.tui.adapters.run_details import load_run_inspection, resolve_run_config_path
 from src.tui.live_logs import LiveLogTail
 from src.tui.screens._mixins import _HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
@@ -59,16 +61,13 @@ _ARTIFACT_RENDERERS: dict[str, str] = {
 }
 
 
+_resolve_attempt_config_path = resolve_run_config_path
+
+
 def _normalize_markdown_for_viewer(markdown: str) -> str:
     """Make single newlines render as visible line breaks in Textual markdown."""
     normalized = markdown.replace("\r\n", "\n")
     return re.sub(r"(?<!\n)\n(?!\n)", "  \n", normalized)
-
-
-def _resolve_attempt_config_path(raw_path: str | None) -> Path | None:
-    if not raw_path:
-        return None
-    return Path(raw_path).expanduser().resolve()
 
 
 def _make_log_tab_id(filename: str) -> str:
@@ -379,27 +378,18 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         table.add_column("Started", width=20, key="started")
 
     def _load_details(self) -> str | None:
-        from src.pipeline.run_inspector import (
-            _STATUS_COLORS,
-            _STATUS_ICONS,
-            RunInspector,
-            _fmt_duration,
-            _mode_label,
-        )
-        from src.pipeline.state import PipelineStateLoadError
-
         header = self.query_one("#details-header", Static)
         table = self.query_one("#stages-table", _StagesTable)
         selected_row = table.cursor_row if table.row_count > 0 else 0
 
         try:
-            data = RunInspector(self._run_dir).load(include_logs=False)
-        except (PipelineStateLoadError, Exception) as exc:
+            data = load_run_inspection(self._run_dir, include_logs=False)
+        except Exception as exc:
             self._config_path = None
             header.update(f"[bold red]Cannot load state:[/bold red] {exc}")
             return None
 
-        self._config_path = _resolve_attempt_config_path(data.state.config_path)
+        self._config_path = resolve_run_config_path(data.state.config_path)
 
         attempt = next(
             (a for a in data.state.attempts if a.attempt_no == self._attempt_no),
@@ -413,9 +403,9 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             return None
 
         # ── Attempt header ────────────────────────────────────────────────────
-        att_color = _STATUS_COLORS.get(attempt.status, "white")
-        att_icon = _STATUS_ICONS.get(attempt.status, "?")
-        att_dur = _fmt_duration(attempt.started_at, attempt.completed_at)
+        att_color = STATUS_COLORS.get(attempt.status, "white")
+        att_icon = STATUS_ICONS.get(attempt.status, "?")
+        att_dur = format_duration(attempt.started_at, attempt.completed_at)
         started = (attempt.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
         completed = (attempt.completed_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
         from src.tui.launch import MODE_FRESH
@@ -450,10 +440,10 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
                 table.add_row("—", stage_name, "[dim]pending[/dim]", "—", "—", "—", key=stage_name)
                 continue
 
-            s_icon = _STATUS_ICONS.get(sr.status, "?")
-            s_color = _STATUS_COLORS.get(sr.status, "white")
-            s_dur = _fmt_duration(sr.started_at, sr.completed_at)
-            mode = _mode_label(sr)
+            s_icon = STATUS_ICONS.get(sr.status, "?")
+            s_color = STATUS_COLORS.get(sr.status, "white")
+            s_dur = format_duration(sr.started_at, sr.completed_at)
+            mode = format_mode_label(sr)
             s_started = (sr.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
 
             table.add_row(
@@ -483,8 +473,6 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
         """
         from rich.text import Text
 
-        from src.pipeline.run_inspector import _STATUS_COLORS, _STATUS_ICONS, _fmt_duration, _mode_label
-
         panel = self.query_one("#stage-detail", RichLog)
         panel.clear()
 
@@ -500,10 +488,10 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
             panel.write(t)
             return
 
-        s_color = _STATUS_COLORS.get(sr.status, "white")
-        s_icon = _STATUS_ICONS.get(sr.status, "?")
-        s_dur = _fmt_duration(sr.started_at, sr.completed_at)
-        mode = _mode_label(sr)
+        s_color = STATUS_COLORS.get(sr.status, "white")
+        s_icon = STATUS_ICONS.get(sr.status, "?")
+        s_dur = format_duration(sr.started_at, sr.completed_at)
+        mode = format_mode_label(sr)
         started = (sr.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
         completed = (sr.completed_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
 

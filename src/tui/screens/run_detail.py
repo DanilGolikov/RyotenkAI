@@ -10,13 +10,14 @@ from textual.binding import Binding
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Header, Label, Static, TabbedContent, TabPane, Tabs
 
+from src.tui.adapters.presentation import STATUS_COLORS, STATUS_ICONS, effective_pipeline_status, format_duration
+from src.tui.adapters.run_details import diff_attempts, load_run_inspection, resolve_run_config_path
 from src.tui.screens._mixins import _HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 from src.tui.table_utils import duration_sort_seconds, integer_sort_key, plain_sort_key
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
 
-    from src.pipeline.state import PipelineState
     from src.tui.apps import RyotenkaiApp
 
 _TIMESTAMP_LEN = 16
@@ -29,12 +30,6 @@ _ATTEMPT_SORT_COLS: dict[str, str] = {
     "started": "Started",
 }
 _SORT_ICON = {"asc": " ↑", "desc": " ↓"}
-
-
-def _resolve_run_config_path(raw_path: str | None) -> Path | None:
-    if not raw_path:
-        return None
-    return Path(raw_path).expanduser().resolve()
 
 
 def _default_attempt_display_order(attempts: list[Any]) -> list[Any]:
@@ -215,13 +210,11 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
 
     # ── Data population ────────────────────────────────────────────────────────
 
-    def _populate_overview(self, state: PipelineState) -> None:
-        from src.pipeline.run_inspector import _STATUS_COLORS, _STATUS_ICONS, _fmt_duration, effective_pipeline_status
-
+    def _populate_overview(self, state: Any) -> None:
         pipeline_status = effective_pipeline_status(state)
-        color = _STATUS_COLORS.get(pipeline_status, "white")
-        icon = _STATUS_ICONS.get(pipeline_status, "?")
-        pipeline_dur = _fmt_duration(
+        color = STATUS_COLORS.get(pipeline_status, "white")
+        icon = STATUS_ICONS.get(pipeline_status, "?")
+        pipeline_dur = format_duration(
             state.attempts[0].started_at if state.attempts else None,
             state.attempts[-1].completed_at if state.attempts else None,
         )
@@ -241,17 +234,16 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
             ),
         )
 
-    def _populate_attempts(self, state: PipelineState) -> None:
-        from src.pipeline.run_inspector import _STATUS_COLORS, _STATUS_ICONS, _fmt_duration
+    def _populate_attempts(self, state: Any) -> None:
         from src.tui.launch import MODE_FRESH
 
         table = self.query_one("#attempts-table", _AttemptsTable)
         table.clear()
 
         for attempt in _default_attempt_display_order(state.attempts):
-            att_color = _STATUS_COLORS.get(attempt.status, "white")
-            icon = _STATUS_ICONS.get(attempt.status, "?")
-            dur = _fmt_duration(attempt.started_at, attempt.completed_at)
+            att_color = STATUS_COLORS.get(attempt.status, "white")
+            icon = STATUS_ICONS.get(attempt.status, "?")
+            dur = format_duration(attempt.started_at, attempt.completed_at)
             started = (attempt.started_at or "")[:_TIMESTAMP_LEN].replace("T", " ")
             action = attempt.restart_from_stage or attempt.effective_action or MODE_FRESH
 
@@ -270,14 +262,12 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
         self._refresh_attempt_header_labels()
 
     def _refresh_run_detail(self, *, preserve_cursor: bool = False) -> None:
-        from src.pipeline.run_inspector import RunInspector
-
         selected_attempt_no: int | None = None
         if preserve_cursor:
             selected_attempt_no = self._current_attempt_no()
 
         try:
-            data = RunInspector(self._run_dir).load(include_logs=False)
+            data = load_run_inspection(self._run_dir, include_logs=False)
         except Exception as exc:
             self._config_path = None
             self.query_one("#overview-content", Static).update(
@@ -285,7 +275,7 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
             )
             return
 
-        self._config_path = _resolve_run_config_path(data.state.config_path)
+        self._config_path = resolve_run_config_path(data.state.config_path)
         self._populate_overview(data.state)
         self._populate_attempts(data.state)
         self._populate_diff(data.state)
@@ -343,9 +333,7 @@ class RunDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin, Sc
             return
         self._refresh_run_detail(preserve_cursor=True)
 
-    def _populate_diff(self, state: PipelineState) -> None:
-        from src.pipeline.run_inspector import diff_attempts
-
+    def _populate_diff(self, state: Any) -> None:
         widget = self.query_one("#diff-content", Static)
 
         if len(state.attempts) < 2:  # noqa: WPS432

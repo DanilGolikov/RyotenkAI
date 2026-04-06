@@ -12,9 +12,9 @@ from textual.binding import Binding
 from textual.screen import ModalScreen, Screen
 from textual.widgets import DataTable, Footer, Header, Label, Static
 
-from src.pipeline.domain import build_run_directory
-from src.pipeline.run_inspector import ROOT_GROUP
-from src.pipeline.run_deletion import RunDeletionMode
+from src.tui.adapters.delete_backend import DeleteIssue, DeleteMode, DeleteResult, TuiDeleteBackend
+from src.tui.adapters.presentation import STATUS_ICONS
+from src.tui.adapters.run_catalog import ROOT_GROUP, build_suggested_run_dir, scan_runs_dir_grouped
 from src.tui.run_deletion_flow import DeleteAction, DeleteRequest, TuiDeleteController, format_delete_completion_message
 from src.tui.screens._mixins import _HelpMixin, _InterruptConfirmMixin
 from src.tui.table_utils import created_timestamp_sort_key, duration_sort_seconds, plain_sort_key
@@ -22,7 +22,6 @@ from src.tui.table_utils import created_timestamp_sort_key, duration_sort_second
 if TYPE_CHECKING:
     from textual.app import ComposeResult
 
-    from src.pipeline.run_deletion import RunDeletionIssue, RunDeletionResult
     from src.tui.apps import RyotenkaiApp
 
 _TUI_LOG = logging.getLogger("ryotenkai.tui.runs_list")
@@ -474,8 +473,6 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         self.refresh_bindings()
 
     def _scan_and_build_tree(self) -> None:
-        from src.pipeline.run_inspector import scan_runs_dir_grouped
-
         groups = scan_runs_dir_grouped(self._runs_dir)
         self._tree_root = _build_folder_tree(groups)
         self._has_subfolders = len(self._tree_root.children) > 0
@@ -563,12 +560,10 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
     def _render_run(self, entry: dict[str, Any]) -> tuple:
         from rich.text import Text
 
-        from src.pipeline.run_inspector import _STATUS_ICONS
-
         row = entry["row"]
         depth = entry["depth"]
         status = row.get("status", "unknown")
-        icon = _STATUS_ICONS.get(status, "?")
+        icon = STATUS_ICONS.get(status, "?")
         style = _STATUS_STYLE.get(status, "")
         marked = entry["key"] in self._marked_keys
         mark = "│ " if marked else ""
@@ -792,11 +787,9 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         return dirs
 
     def _run_deletion_service(self):
-        from src.pipeline.run_deletion import RunDeletionService
+        return TuiDeleteBackend()
 
-        return RunDeletionService()
-
-    def _start_delete(self, targets: list[Path], *, mode: RunDeletionMode) -> None:
+    def _start_delete(self, targets: list[Path], *, mode: DeleteMode) -> None:
         _TUI_LOG.info(
             "Delete requested for %s target(s) in mode=%s: %s",
             len(targets),
@@ -808,12 +801,12 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
 
     def _handle_delete_pending(self, request: DeleteRequest) -> None:
         message = f"[yellow]Deleting {len(request.targets)} item(s)...[/yellow]"
-        if request.mode == RunDeletionMode.LOCAL_ONLY:
+        if request.mode == DeleteMode.LOCAL_ONLY:
             message = f"[yellow]Deleting {len(request.targets)} folder(s) only...[/yellow]"
         self.query_one("#status-bar", Label).update(message)
         self.refresh_bindings()
 
-    def _handle_delete_success(self, request: DeleteRequest, results: list["RunDeletionResult"]) -> None:
+    def _handle_delete_success(self, request: DeleteRequest, results: list[DeleteResult]) -> None:
         for result in results:
             _TUI_LOG.info(
                 "Delete finished for %s (mode=%s, local_deleted=%s, run_dirs=%s, deleted_mlflow_run_ids=%s, issues=%s)",
@@ -825,9 +818,11 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
                 [self._format_delete_issue(issue) for issue in result.issues],
             )
         self.refresh_bindings()
-        self._apply_delete_results(list(request.targets), results)
-        if not any(result.issues for result in results):
-            self.notify(format_delete_completion_message(request, results), severity="information")
+        issues = self._apply_delete_results(list(request.targets), results)
+        if issues:
+            self.notify(self._format_delete_issue_notification(results, issues), severity="warning")
+            return
+        self.notify(format_delete_completion_message(request, results), severity="information")
 
     def _handle_delete_error(self, request: DeleteRequest, error: Exception) -> None:
         _TUI_LOG.exception(
@@ -837,13 +832,13 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             exc_info=error,
         )
         self.refresh_bindings()
-        self.query_one("#status-bar", Label).update(f"[red]Delete failed: {error}[/red]")
+        self.notify(f"Delete failed: {error}", severity="error")
 
     @staticmethod
-    def _format_delete_issue(issue: "RunDeletionIssue") -> str:
+    def _format_delete_issue(issue: DeleteIssue) -> str:
         return f"{issue.run_dir.name}: {issue.phase}: {issue.message}"
 
-    def _apply_delete_results(self, targets: list[Path], results: list["RunDeletionResult"]) -> None:
+    def _apply_delete_results(self, targets: list[Path], results: list[DeleteResult]) -> list[DeleteIssue]:
         self._marked_keys.clear()
         for target in targets:
             self._marked_keys.discard(_run_row_key_by_dir(target, self._rows))
@@ -851,7 +846,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
 
         issues = [issue for result in results for issue in result.issues]
         if not issues:
-            return
+            return []
 
         first_issue = self._format_delete_issue(issues[0])
         _TUI_LOG.warning(
@@ -859,9 +854,24 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             len(issues),
             first_issue,
         )
-        self.query_one("#status-bar", Label).update(
-            f"[red]Delete failed for {len(issues)} item(s): {first_issue}[/red]",
-        )
+        return issues
+
+    @staticmethod
+    def _format_delete_issue_notification(
+        results: list[DeleteResult],
+        issues: list[DeleteIssue],
+    ) -> str:
+        non_blocking_runtime_issues = [issue for issue in issues if issue.phase == "mlflow_runtime_contract"]
+        if non_blocking_runtime_issues and len(non_blocking_runtime_issues) == len(issues):
+            deleted_targets = sum(1 for result in results if result.local_deleted)
+            affected_runs = len(non_blocking_runtime_issues)
+            return (
+                f"Deleted {deleted_targets} folder(s). "
+                f"Skipped MLflow delete for {affected_runs} run(s): old pipeline_state has no MLflow URI."
+            )
+
+        first_issue = RunsListScreen._format_delete_issue(issues[0])
+        return f"Delete completed with {len(issues)} issue(s): {first_issue}"
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -873,7 +883,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
         from src.tui.launch import MODE_NEW_RUN
         from src.tui.screens.launch_modal import LaunchModal
 
-        suggested_run_dir, _created_at = build_run_directory(base_dir=self._runs_dir)
+        suggested_run_dir = build_suggested_run_dir(self._runs_dir)
 
         def _on_submit(result) -> None:
             if result is not None:
@@ -903,7 +913,7 @@ class RunsListScreen(_HelpMixin, _InterruptConfirmMixin, Screen):
             if not self._rows:
                 self.action_new_run()
             return
-        from src.tui.launch import pick_default_launch_mode
+        from src.tui.adapters.launch_backend import pick_default_launch_mode
         from src.tui.screens.launch_modal import LaunchModal
 
         def _on_submit(result) -> None:

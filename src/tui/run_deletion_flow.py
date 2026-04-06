@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from textual.worker import Worker, WorkerState
 
-from src.pipeline.run_deletion import RunDeletionMode, RunDeletionResult, RunDeletionService
+from src.tui.adapters.delete_backend import DeleteMode, DeleteResult, TuiDeleteBackend
 from src.tui.logging import suppress_project_console_logging
 
 if TYPE_CHECKING:
@@ -25,18 +25,18 @@ class DeleteAction(StrEnum):
     DELETE_LOCAL_ONLY = "delete_local_only"
     CANCEL = "cancel"
 
-    def to_mode(self) -> RunDeletionMode | None:
+    def to_mode(self) -> DeleteMode | None:
         if self == DeleteAction.DELETE_ALL:
-            return RunDeletionMode.LOCAL_AND_MLFLOW
+            return DeleteMode.LOCAL_AND_MLFLOW
         if self == DeleteAction.DELETE_LOCAL_ONLY:
-            return RunDeletionMode.LOCAL_ONLY
+            return DeleteMode.LOCAL_ONLY
         return None
 
 
 @dataclass(frozen=True, slots=True)
 class DeleteRequest:
     targets: tuple[Path, ...]
-    mode: RunDeletionMode
+    mode: DeleteMode
 
 
 class _DeleteWorkerHost(Protocol):
@@ -51,7 +51,7 @@ class _DeleteWorkerHost(Protocol):
         start: bool = True,
         exclusive: bool = False,
         thread: bool = False,
-    ) -> Worker[list[RunDeletionResult]]: ...
+    ) -> Worker[list[DeleteResult]]: ...
 
 
 class TuiDeleteController:
@@ -59,9 +59,9 @@ class TuiDeleteController:
         self,
         host: _DeleteWorkerHost,
         *,
-        service_factory: Callable[[], RunDeletionService] = RunDeletionService,
+        service_factory: Callable[[], TuiDeleteBackend] = TuiDeleteBackend,
         on_pending: Callable[[DeleteRequest], None] | None = None,
-        on_success: Callable[[DeleteRequest, list[RunDeletionResult]], None] | None = None,
+        on_success: Callable[[DeleteRequest, list[DeleteResult]], None] | None = None,
         on_error: Callable[[DeleteRequest, Exception], None] | None = None,
     ) -> None:
         self._host = host
@@ -69,13 +69,13 @@ class TuiDeleteController:
         self._on_pending = on_pending
         self._on_success = on_success
         self._on_error = on_error
-        self._workers: dict[Worker[list[RunDeletionResult]], DeleteRequest] = {}
+        self._workers: dict[Worker[list[DeleteResult]], DeleteRequest] = {}
 
     @property
     def is_busy(self) -> bool:
         return bool(self._workers)
 
-    def start_delete(self, targets: Sequence[Path], *, mode: RunDeletionMode) -> bool:
+    def start_delete(self, targets: Sequence[Path], *, mode: DeleteMode) -> bool:
         normalized_targets = tuple(target.expanduser().resolve() for target in targets)
         if not normalized_targets or self.is_busy:
             return False
@@ -115,17 +115,17 @@ class TuiDeleteController:
 
         return True
 
-    def _run_delete_request(self, request: DeleteRequest) -> list[RunDeletionResult]:
+    def _run_delete_request(self, request: DeleteRequest) -> list[DeleteResult]:
         with suppress_project_console_logging():
             service = self._service_factory()
             return [service.delete_target(target, mode=request.mode) for target in request.targets]
 
 
-def format_delete_completion_message(request: DeleteRequest, results: Sequence[RunDeletionResult]) -> str:
+def format_delete_completion_message(request: DeleteRequest, results: Sequence[DeleteResult]) -> str:
     deleted_targets = sum(1 for result in results if result.local_deleted)
     deleted_mlflow_runs = sum(len(result.deleted_mlflow_run_ids) for result in results)
 
-    if request.mode == RunDeletionMode.LOCAL_ONLY:
+    if request.mode == DeleteMode.LOCAL_ONLY:
         return f"Deleted {deleted_targets} folder(s). MLflow runs kept."
 
     if deleted_mlflow_runs:

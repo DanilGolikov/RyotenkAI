@@ -11,7 +11,7 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Select, Static
 
-from src.pipeline.domain import build_run_directory
+from src.tui.adapters.run_catalog import build_suggested_run_dir
 from src.tui.launch import (
     MODE_FRESH,
     MODE_NEW_RUN,
@@ -202,7 +202,7 @@ class LaunchModal(ModalScreen[LaunchRequest | None]):
         super().__init__()
         self._default_mode = default_mode
         self._default_config_path = default_config_path
-        generated_run_dir, _created_at = build_run_directory(base_dir=Path("runs"))
+        generated_run_dir = build_suggested_run_dir(Path("runs"))
         self._context_run_dir = default_run_dir if default_mode != MODE_NEW_RUN else None
         self._new_run_dir = (
             default_run_dir if default_mode == MODE_NEW_RUN and default_run_dir is not None else generated_run_dir

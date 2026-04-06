@@ -66,3 +66,22 @@ def test_run_detail_browse_config_opens_structured_browser(monkeypatch, tmp_path
 
     assert len(pushed) == 1
     assert isinstance(pushed[0], StructuredConfigBrowser)
+
+
+def test_refresh_run_detail_resolves_config_path_from_loaded_state(monkeypatch, tmp_path) -> None:
+    screen = RunDetailScreen(tmp_path / "runs" / "run_1")
+    config_path = tmp_path / "config.yaml"
+    state = SimpleNamespace(config_path=str(config_path), attempts=[])
+
+    monkeypatch.setattr(
+        "src.tui.screens.run_detail.load_run_inspection",
+        lambda run_dir, include_logs=False: SimpleNamespace(state=state),
+    )
+    monkeypatch.setattr(screen, "_populate_overview", lambda _state: None)
+    monkeypatch.setattr(screen, "_populate_attempts", lambda _state: None)
+    monkeypatch.setattr(screen, "_populate_diff", lambda _state: None)
+    monkeypatch.setattr(screen, "refresh_bindings", lambda: None)
+
+    screen._refresh_run_detail()
+
+    assert screen._config_path == config_path.resolve()

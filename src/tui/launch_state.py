@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.pipeline.state import PipelineStateStore
+from src.tui.adapters.state import run_state_exists
 from src.tui.launch import (
     MODE_FRESH,
     MODE_NEW_RUN,
@@ -84,7 +84,7 @@ def prepare_launch_mode_state(mode: str, run_dir: Path | None, config_path: Path
         )
 
     if mode == MODE_FRESH:
-        if run_dir is None or not PipelineStateStore(run_dir.expanduser().resolve()).exists():
+        if run_dir is None or not run_state_exists(run_dir):
             info_markup = "[yellow]Fresh attempt requires an existing run with pipeline_state.json.[/yellow]"
             return LaunchModeState(mode_title="fresh attempt", info_markup=info_markup)
         info_markup = (
@@ -166,7 +166,7 @@ def build_submittable_launch_request(
         log_level=log_level,  # type: ignore[arg-type]
     ).validate()
 
-    if mode == MODE_FRESH and not PipelineStateStore(run_dir.expanduser().resolve()).exists():
+    if mode == MODE_FRESH and not run_state_exists(run_dir):
         raise ValueError("Fresh attempt requires an existing run directory with pipeline_state.json.")
 
     return request, resolved_config_path

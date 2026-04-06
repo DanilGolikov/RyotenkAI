@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -12,7 +11,12 @@ from textual.app import App, ComposeResult
 from textual.widgets import Label
 from textual.worker import Worker, WorkerState
 
-from src.pipeline.state import PipelineState, StageRunState
+from src.tui.adapters.app_state import (
+    predict_attempt_for_launch,
+    resolve_attempt_to_open,
+    resolve_interrupt_pid,
+    running_attempt_for_run,
+)
 from src.tui.launch import (
     ActiveLaunch,
     LaunchRequest,
@@ -29,26 +33,6 @@ _DEFAULT_INTERVAL = 5.0
 _ACTIVE_LAUNCH_STATUSES = {"launching", "running", "stopping"}
 _DEFAULT_NOTIFICATION_TIMEOUT = 3.0
 _NOTIFICATION_TIMEOUT_MULTIPLIER = 3.0
-
-
-def _resolve_next_attempt_no(state: PipelineState) -> int:
-    """Return the next attempt number that a new launch should create."""
-    if not state.attempts:
-        return 1
-    return max(attempt.attempt_no for attempt in state.attempts) + 1
-
-
-def _resolve_running_attempt_no(state: PipelineState) -> int | None:
-    """Return the currently running attempt number, if any."""
-    if state.active_attempt_id:
-        for attempt in state.attempts:
-            if attempt.attempt_id == state.active_attempt_id and attempt.status == StageRunState.STATUS_RUNNING:
-                return attempt.attempt_no
-    for attempt in reversed(state.attempts):
-        if attempt.status == StageRunState.STATUS_RUNNING:
-            return attempt.attempt_no
-    return None
-
 
 class RyotenkaiApp(App):
     """Interactive TUI for pipeline run inspection.
@@ -108,48 +92,18 @@ class RyotenkaiApp(App):
             return None
         return launch
 
-    def _read_run_lock_pid(self, run_dir: Path) -> int | None:
-        lock_path = run_dir.expanduser().resolve() / "run.lock"
-        try:
-            raw = lock_path.read_text(encoding="utf-8").strip()
-        except OSError:
-            return None
-        if not raw:
-            return None
-        first_line = raw.splitlines()[0].strip()
-        candidate = first_line.split("=", maxsplit=1)[-1].strip()
-        try:
-            return int(candidate)
-        except ValueError:
-            return None
-
     def _resolve_interrupt_pid(self, run_dir: Path) -> int | None:
         launch = self.get_active_launch_for_run(run_dir)
-        if launch is not None and launch.pid is not None and launch.status in {"launching", "running", "stopping"}:
-            return launch.pid
-        pid = self._read_run_lock_pid(run_dir)
-        if pid is None:
-            return None
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return None
-        except OSError:
-            return None
-        return pid
+        launch_pid = None
+        if launch is not None and launch.status in {"launching", "running", "stopping"}:
+            launch_pid = launch.pid
+        return resolve_interrupt_pid(run_dir, launch_pid)
 
     def can_interrupt_run(self, run_dir: Path) -> bool:
         return self._resolve_interrupt_pid(run_dir) is not None
 
     def _predict_launched_attempt_no(self, run_dir: Path) -> int:
-        from src.pipeline.state import PipelineStateStore
-
-        resolved_run_dir = run_dir.expanduser().resolve()
-        try:
-            state = PipelineStateStore(resolved_run_dir).load()
-        except Exception:
-            return 1
-        return _resolve_next_attempt_no(state)
+        return predict_attempt_for_launch(run_dir)
 
     def start_launch(self, request: LaunchRequest) -> bool:
         normalized = request.validate()
@@ -167,31 +121,14 @@ class RyotenkaiApp(App):
         return True
 
     def open_attempt_for_run(self, run_dir: Path, attempt_no: int | None = None) -> None:
-        from src.pipeline.state import PipelineStateStore
         from src.tui.screens.attempt_detail import AttemptDetailScreen
 
         resolved_run_dir = run_dir.expanduser().resolve()
-        resolved_attempt_no = attempt_no
-        if resolved_attempt_no is None:
-            try:
-                state = PipelineStateStore(resolved_run_dir).load()
-                if state.attempts:
-                    resolved_attempt_no = state.attempts[-1].attempt_no
-            except Exception:
-                resolved_attempt_no = None
-        if resolved_attempt_no is None:
-            resolved_attempt_no = 1
+        resolved_attempt_no = resolve_attempt_to_open(resolved_run_dir, attempt_no)
         self.push_screen(AttemptDetailScreen(resolved_run_dir, resolved_attempt_no))
 
     def _get_running_attempt_no(self, run_dir: Path) -> int | None:
-        from src.pipeline.state import PipelineStateStore
-
-        resolved_run_dir = run_dir.expanduser().resolve()
-        try:
-            state = PipelineStateStore(resolved_run_dir).load()
-        except Exception:
-            return None
-        return _resolve_running_attempt_no(state)
+        return running_attempt_for_run(run_dir)
 
     def can_open_running_attempt_for_run(self, run_dir: Path) -> bool:
         return self._get_running_attempt_no(run_dir) is not None
