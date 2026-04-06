@@ -162,15 +162,15 @@ def test_validate_resume_run_rejects_completed_latest_attempt(tmp_path: Path, mo
     )
     state.attempts = [latest_attempt]
 
-    monkeypatch.setattr("src.tui.adapters.launch_backend.load_pipeline_state", lambda _run_dir: state)
+    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.tui.adapters.launch_backend.resolve_config_path_for_run",
+        "src.pipeline.launch_queries.resolve_config_path_for_run",
         lambda run_dir, config_path=None: tmp_path / "cfg.yaml",
     )
     mock_config = MagicMock()
-    monkeypatch.setattr("src.tui.adapters.launch_backend.load_config", lambda _path: mock_config)
+    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: mock_config)
     monkeypatch.setattr(
-        "src.tui.adapters.launch_backend.compute_config_hashes",
+        "src.pipeline.launch_queries.compute_config_hashes",
         lambda _config: {"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
     )
 

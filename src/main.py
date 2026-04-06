@@ -13,8 +13,14 @@ from pathlib import Path
 import click
 import typer
 
+from src.cli.run_rendering import (
+    RunInspectionRenderer,
+    render_run_diff_lines,
+    render_run_status_snapshot,
+    render_runs_list_lines,
+)
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.pipeline.restart_points import list_restart_points as _query_restart_points
+from src.pipeline.launch_queries import load_restart_point_options
 from src.utils.config import PipelineConfig, load_config
 from src.utils.logger import logger
 
@@ -357,15 +363,13 @@ def list_restart_points_cmd(
         ryotenkai list-restart-points runs/my-run --config config.yaml
     """
     try:
-        resolved_config = _resolve_config(config, run_dir)
-        cfg = load_config(resolved_config)
-        points = _query_restart_points(run_dir, cfg)
+        _, points = load_restart_point_options(run_dir, _resolve_config(config, run_dir))
 
         typer.echo(f"{'#':>3}  {'Stage':<30} {'Available':<10} {'Mode':<12} Reason")
         typer.echo("-" * 80)
         for idx, item in enumerate(points, start=1):
-            avail = "yes" if item["available"] else "no"
-            typer.echo(f"{idx:>3}  {item['stage']!s:<30} {avail:<10} {item['mode']!s:<12} {item['reason']}")
+            avail = "yes" if item.available else "no"
+            typer.echo(f"{idx:>3}  {item.stage:<30} {avail:<10} {item.mode:<12} {item.reason}")
         typer.echo("\nUse # or stage name with --restart-from-stage")
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
@@ -507,7 +511,7 @@ def inspect_run(
         ryotenkai inspect-run runs/run_20260319_030619_x9so8 --logs
         ryotenkai inspect-run runs/run_20260319_030619_x9so8 -v --logs
     """
-    from src.pipeline.run_inspector import RunInspectionRenderer, RunInspector
+    from src.pipeline.run_queries import RunInspector
 
     try:
         inspector = RunInspector(run_dir)
@@ -533,27 +537,11 @@ def runs_list(
         ryotenkai runs-list
         ryotenkai runs-list /path/to/runs
     """
-    from src.pipeline.run_inspector import scan_runs_dir
+    from src.pipeline.run_queries import scan_runs_dir
 
     rows = scan_runs_dir(runs_dir)
-    if not rows:
-        typer.echo(f"No runs found in {runs_dir}")
-        return
-
-    typer.echo(f"Runs in {runs_dir}/\n")
-    fmt = "{:<32} {:<13} {:>4}  {:<10} {}"
-    typer.echo(fmt.format("Run ID", "Status", "Att", "Duration", "Config"))
-    typer.echo("-" * 78)
-    for row in rows:
-        typer.echo(
-            fmt.format(
-                row["run_id"],
-                row["status"],
-                str(row["attempts"]),
-                row["duration"] or "-",
-                row["config"],
-            )
-        )
+    for line in render_runs_list_lines(runs_dir, rows):
+        typer.echo(line)
 
 
 @app.command(name="logs")
@@ -630,7 +618,7 @@ def run_diff(
         ryotenkai run-diff runs/run_xxx
         ryotenkai run-diff runs/run_xxx --attempt 1 --attempt 3
     """
-    from src.pipeline.run_inspector import diff_attempts
+    from src.pipeline.run_queries import diff_attempts
     from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     run_path = run_dir.expanduser().resolve()
@@ -661,22 +649,8 @@ def run_diff(
     if not diff["found_a"] or not diff["found_b"]:
         typer.echo(f"Attempt {attempt_a} or {attempt_b} not found in state.", err=True)
         raise typer.Exit(1)
-
-    no_change = not diff["training_critical_changed"] and not diff["late_stage_changed"]
-    typer.echo(f"\nConfig diff: attempt {attempt_a} -> attempt {attempt_b}\n")
-
-    if no_change:
-        typer.echo("No config changes between attempts.")
-        return
-
-    if diff["training_critical_changed"]:
-        typer.echo("training + model + datasets  [critical — blocks restart from early stages]")
-        typer.echo(f"  A: {diff['hash_a_critical'][:10]}...")
-        typer.echo(f"  B: {diff['hash_b_critical'][:10]}...")
-    if diff["late_stage_changed"]:
-        typer.echo("inference + evaluation  [late_stage — restart allowed]")
-        typer.echo(f"  A: {diff['hash_a_late'][:10]}...")
-        typer.echo(f"  B: {diff['hash_b_late'][:10]}...")
+    for line in render_run_diff_lines(diff, attempt_a, attempt_b):
+        typer.echo(line)
 
 
 @app.command(name="run-status")
@@ -694,8 +668,7 @@ def run_status(
     """
     import time
 
-    from src.pipeline.run_inspector import _STATUS_ICONS, _fmt_duration
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore, StageRunState
+    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     run_path = run_dir.expanduser().resolve()
     store = PipelineStateStore(run_path)
@@ -706,26 +679,8 @@ def run_status(
         except (PipelineStateLoadError, Exception) as exc:
             typer.echo(f"Error reading state: {exc}")
             return
-
-        current_attempt = state.attempts[-1] if state.attempts else None
-        header = f"Run: {run_path.name}  status: {state.pipeline_status}"
-        if current_attempt:
-            header += f"  attempt {current_attempt.attempt_no}/{len(state.attempts)}"
-        typer.echo(header)
-        typer.echo("-" * 60)
-
-        if current_attempt:
-            for stage_name in current_attempt.enabled_stage_names or list(current_attempt.stage_runs):
-                sr = current_attempt.stage_runs.get(stage_name)
-                if sr is None:
-                    typer.echo(f"  {'':3} {stage_name:<28} pending")
-                    continue
-                icon = _STATUS_ICONS.get(sr.status, "?")
-                duration = _fmt_duration(sr.started_at, sr.completed_at)
-                running_marker = " <--" if sr.status == StageRunState.STATUS_RUNNING else ""
-                typer.echo(f"  {icon:3} {sr.stage_name:<28} {sr.status:<13} {duration}{running_marker}")
-
-        typer.echo("")
+        for line in render_run_status_snapshot(run_path.name, state):
+            typer.echo(line)
 
     try:
         while True:

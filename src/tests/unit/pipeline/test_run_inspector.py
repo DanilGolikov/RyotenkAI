@@ -22,16 +22,19 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from src.cli.run_rendering import RunInspectionRenderer, format_duration
 from src.main import app
 from src.pipeline.domain import RunContext
-from src.pipeline.run_inspector import (
+from src.pipeline.run_queries import (
     ROOT_GROUP,
-    RunInspectionRenderer,
     RunInspector,
-    _fmt_duration,
+    RunSummaryRow,
+    build_run_summary_row,
     diff_attempts,
+    effective_pipeline_status,
     scan_runs_dir,
     scan_runs_dir_grouped,
+    tail_lines,
 )
 from src.pipeline.state import (
     PipelineState,
@@ -111,33 +114,40 @@ def _make_state(
 
 
 def test_fmt_duration_hours() -> None:
-    result = _fmt_duration("2026-03-19T03:06:00+00:00", "2026-03-19T05:20:03+00:00")
+    result = format_duration("2026-03-19T03:06:00+00:00", "2026-03-19T05:20:03+00:00")
     assert "h" in result
     assert "m" in result
 
 
 def test_fmt_duration_minutes_only() -> None:
-    result = _fmt_duration("2026-03-19T03:06:00+00:00", "2026-03-19T03:12:30+00:00")
+    result = format_duration("2026-03-19T03:06:00+00:00", "2026-03-19T03:12:30+00:00")
     assert "m" in result
     assert "h" not in result
 
 
 def test_fmt_duration_seconds_only() -> None:
-    result = _fmt_duration("2026-03-19T03:06:00+00:00", "2026-03-19T03:06:45+00:00")
+    result = format_duration("2026-03-19T03:06:00+00:00", "2026-03-19T03:06:45+00:00")
     assert "45s" in result
 
 
 def test_fmt_duration_missing_start_returns_empty() -> None:
-    assert _fmt_duration(None, "2026-03-19T03:06:00+00:00") == ""
+    assert format_duration(None, "2026-03-19T03:06:00+00:00") == ""
 
 
 def test_fmt_duration_missing_end_uses_now() -> None:
-    result = _fmt_duration("2026-03-19T03:06:00+00:00", None)
+    result = format_duration("2026-03-19T03:06:00+00:00", None)
     assert isinstance(result, str)
 
 
 def test_fmt_duration_invalid_timestamps_returns_empty() -> None:
-    assert _fmt_duration("not-a-date", "also-not") == ""
+    assert format_duration("not-a-date", "also-not") == ""
+
+
+def test_tail_lines_zero_limit_returns_empty(tmp_path: Path) -> None:
+    log_path = tmp_path / "pipeline.log"
+    log_path.write_text("line 1\nline 2\n", encoding="utf-8")
+
+    assert tail_lines(log_path, limit=0) == []
 
 
 # =============================================================================
@@ -253,11 +263,63 @@ def test_renderer_empty_attempts(tmp_path: Path) -> None:
         late_stage_config_hash="h2",
     )
 
-    from src.pipeline.run_inspector import RunInspectionData
+    from src.pipeline.run_queries import RunInspectionData
 
     data = RunInspectionData(run_dir=run_dir, state=state, log_tails={})
     renderer = RunInspectionRenderer()
     renderer.render(data)  # no attempts → must not crash
+
+
+def test_effective_pipeline_status_prefers_latest_attempt_status(tmp_path: Path) -> None:
+    _, state = _make_state(tmp_path, run_id="run_effective_status")
+    state.pipeline_status = StageRunState.STATUS_RUNNING
+    state.attempts[-1].status = StageRunState.STATUS_FAILED
+
+    assert effective_pipeline_status(state) == StageRunState.STATUS_FAILED
+
+
+def test_effective_pipeline_status_falls_back_to_root_when_latest_status_empty(tmp_path: Path) -> None:
+    _, state = _make_state(tmp_path, run_id="run_effective_status_fallback")
+    state.pipeline_status = StageRunState.STATUS_RUNNING
+    state.attempts[-1].status = ""
+
+    assert effective_pipeline_status(state) == StageRunState.STATUS_RUNNING
+
+
+def test_run_summary_row_alias_contract_and_unknown_key() -> None:
+    row = RunSummaryRow(
+        run_id="run_alias",
+        run_dir=Path("/tmp/run_alias"),
+        created_at="2026-03-30 00:00",
+        created_ts=123.0,
+        status="completed",
+        attempts=2,
+        config_name="pipeline.yaml",
+        mlflow_run_id="mlflow-123",
+        started_at="2026-03-30T00:00:00+00:00",
+        completed_at="2026-03-30T00:01:00+00:00",
+        error=None,
+    )
+
+    assert "config" in row
+    assert "config_name" in row
+    assert row["config"] == row["config_name"] == "pipeline.yaml"
+    assert row["run_id"] == "run_alias"
+
+    with pytest.raises(KeyError):
+        _ = row["missing"]
+
+
+def test_build_run_summary_row_preserves_group_and_mlflow_id(tmp_path: Path) -> None:
+    store, state = _make_state(tmp_path, run_id="run_grouped")
+    state.root_mlflow_run_id = "mlflow-root-123"
+    store.save(state)
+
+    row = build_run_summary_row(store.run_directory, group="nested/group")
+
+    assert row.group == "nested/group"
+    assert row.mlflow_run_id == "mlflow-root-123"
+    assert row["group"] == "nested/group"
 
 
 # =============================================================================

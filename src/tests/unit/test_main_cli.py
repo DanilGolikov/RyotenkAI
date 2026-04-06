@@ -186,11 +186,14 @@ def test_train_command_with_manual_restart(cli_runner, mock_pipeline_orchestrato
 
 def test_list_restart_points_command(cli_runner, tmp_path):
     """list-restart-points is standalone and does not need full orchestrator init."""
-    from src.pipeline.restart_points import list_restart_points as lrp
-
     mock_points = [
-        {"stage": "Dataset Validator", "available": True, "mode": "fresh_only", "reason": "restart_allowed"},
-        {"stage": "Inference Deployer", "available": False, "mode": "fresh_or_resume", "reason": "missing_model_retriever_outputs"},
+        types.SimpleNamespace(stage="Dataset Validator", available=True, mode="fresh_only", reason="restart_allowed"),
+        types.SimpleNamespace(
+            stage="Inference Deployer",
+            available=False,
+            mode="fresh_or_resume",
+            reason="missing_model_retriever_outputs",
+        ),
     ]
 
     config_file = tmp_path / "config.yaml"
@@ -199,11 +202,9 @@ def test_list_restart_points_command(cli_runner, tmp_path):
     run_dir.mkdir()
 
     with (
-        patch("src.main.load_config") as mock_load_cfg,
-        patch("src.main._query_restart_points", return_value=mock_points),
+        patch("src.main.load_restart_point_options", return_value=(config_file, mock_points)),
         patch("src.main._resolve_config", return_value=config_file),
     ):
-        mock_load_cfg.return_value = MagicMock()
         result = cli_runner.invoke(app, ["list-restart-points", str(run_dir)])
 
     assert result.exit_code == 0
