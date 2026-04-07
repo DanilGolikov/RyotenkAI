@@ -267,7 +267,8 @@ def test_deploy_success_no_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert res.is_success()
     info = res.unwrap()
     assert info.resource_id == "pod-123"
-    assert "8000" in info.endpoint_url
+    assert info.endpoint_url == "http://127.0.0.1:8000/v1"
+    assert info.health_url == "http://127.0.0.1:8000/v1/models"
     assert p._pod_id == "pod-123"
 
 
@@ -742,6 +743,24 @@ def test_ensure_pod_with_network_volume_includes_volume_id(tmp_path: Path) -> No
     assert api.created_pod_payloads[0]["networkVolumeId"] == "vol-abc"
 
 
+def test_ensure_pod_uses_deterministic_name_for_volume(tmp_path: Path) -> None:
+    api = StubApi(
+        list_pods_results=[Ok([]), Ok([])],  # type: ignore[call-arg]
+        create_pod_results=[Ok({"id": "pod-vol-new"})],  # type: ignore[call-arg]
+    )
+    p = _mk_provider(api=api)
+
+    res = p._ensure_pod(network_volume_id="vol-abc", key_path=tmp_path / "key")
+
+    assert res.is_success()
+    pod_id, pod_name = res.unwrap()
+    payload = api.created_pod_payloads[0]
+    assert pod_id == "pod-vol-new"
+    assert payload["name"] == pod_name
+    assert payload["name"].startswith(f"{p._pod_cfg.name_prefix}-")
+    assert "ephemeral" not in payload["name"]
+
+
 def test_ensure_pod_without_volume_uses_volume_in_gb(tmp_path: Path) -> None:
     api = StubApi(
         list_pods_results=[Ok([])],  # type: ignore[call-arg]
@@ -756,6 +775,21 @@ def test_ensure_pod_without_volume_uses_volume_in_gb(tmp_path: Path) -> None:
     assert "volumeInGb" in payload
 
 
+def test_ensure_pod_without_volume_uses_ephemeral_name(tmp_path: Path) -> None:
+    api = StubApi(
+        list_pods_results=[Ok([]), Ok([])],  # type: ignore[call-arg]
+        create_pod_results=[Ok({"id": "pod-ephemeral"})],  # type: ignore[call-arg]
+    )
+    p = _mk_provider(api=api)
+
+    res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
+
+    assert res.is_success()
+    _, pod_name = res.unwrap()
+    assert pod_name.endswith("-ephemeral")
+    assert api.created_pod_payloads[0]["name"] == pod_name
+
+
 def test_ensure_pod_pod_without_id_returns_err() -> None:
     api = StubApi(
         list_pods_results=[Ok([{"desiredStatus": "EXITED"}])]  # type: ignore[call-arg]  # no "id" field
@@ -764,6 +798,22 @@ def test_ensure_pod_pod_without_id_returns_err() -> None:
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
     assert res.is_failure()
     assert res.unwrap_err().code == "RUNPOD_POD_NO_ID"
+
+
+def test_ensure_pod_create_success_without_id_but_relist_finds_pod(tmp_path: Path) -> None:
+    api = StubApi(
+        list_pods_results=[
+            Ok([]),  # type: ignore[call-arg]
+            Ok([{"id": "pod-after-relist", "desiredStatus": "RUNNING"}]),  # type: ignore[call-arg]
+        ],
+        create_pod_results=[Ok({"desiredStatus": "RUNNING"})],  # type: ignore[call-arg]
+    )
+    p = _mk_provider(api=api)
+
+    res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
+
+    assert res.is_success()
+    assert res.unwrap()[0] == "pod-after-relist"
 
 
 # ---------------------------------------------------------------------------
@@ -859,3 +909,94 @@ def test_ensure_network_volume_list_failure_returns_err() -> None:
     res = p._ensure_network_volume()
     assert res.is_failure()
     assert res.unwrap_err().code == "RUNPOD_VOLUME_LIST_FAILED"
+
+
+def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
+    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+
+    api = StubApi(
+        list_network_volumes_results=[
+            Ok(  # type: ignore[call-arg]
+                [
+                    {"id": "vol-123", "name": "my-vol", "dataCenterId": "US-KS-2"},
+                    {"id": "vol-999", "name": "my-vol", "dataCenterId": "EU-RO-1"},
+                ]
+            )
+        ]
+    )
+    p = _mk_provider(api=api)
+    p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
+
+    res = p._ensure_network_volume()
+
+    assert res.is_success()
+    assert res.unwrap() == "vol-123"
+    assert p._network_volume_meta == {"id": "vol-123", "name": "my-vol", "dataCenterId": "US-KS-2"}
+
+
+def test_ensure_network_volume_returns_ambiguous_when_multiple_name_matches() -> None:
+    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+
+    api = StubApi(
+        list_network_volumes_results=[
+            Ok(  # type: ignore[call-arg]
+                [
+                    {"id": "vol-1", "name": "my-vol", "dataCenterId": "US-KS-2"},
+                    {"id": "vol-2", "name": "my-vol", "dataCenterId": "US-KS-2"},
+                ]
+            )
+        ]
+    )
+    p = _mk_provider(api=api)
+    p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
+
+    res = p._ensure_network_volume()
+
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_VOLUME_AMBIGUOUS"
+
+
+def test_ensure_network_volume_missing_data_center_returns_err_before_create() -> None:
+    api = StubApi(list_network_volumes_results=[Ok([])])  # type: ignore[call-arg]
+    p = _mk_provider(api=api)
+    p._volume_cfg = SimpleNamespace(id=None, name="my-vol", size_gb=50, data_center_id=None)
+
+    res = p._ensure_network_volume()
+
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_VOLUME_DATA_CENTER_MISSING"
+
+
+def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_err() -> None:
+    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+
+    api = StubApi(
+        list_network_volumes_results=[Ok([{"name": "my-vol", "dataCenterId": "US-KS-2"}])]  # type: ignore[call-arg]
+    )
+    p = _mk_provider(api=api)
+    p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
+
+    res = p._ensure_network_volume()
+
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_VOLUME_NO_ID"
+
+
+def test_ensure_network_volume_create_success_without_id_but_relist_finds_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    api = StubApi(
+        list_network_volumes_results=[
+            Ok([]),  # type: ignore[call-arg]
+            Ok([{"id": "vol-after", "name": "my-vol", "dataCenterId": "US-KS-2"}]),  # type: ignore[call-arg]
+        ],
+        create_network_volume_results=[Ok({"name": "my-vol"})],  # type: ignore[call-arg]
+    )
+    p = _mk_provider(api=api)
+    p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
+
+    res = p._ensure_network_volume()
+
+    assert res.is_success()
+    assert res.unwrap() == "vol-after"

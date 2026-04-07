@@ -780,6 +780,7 @@ class TestSAPOStrategy:
         """
         hp = MagicMock()
         hp.num_generations = None
+        hp.generation_batch_size = None
         hp.max_prompt_length = None
         hp.max_completion_length = None
         hp.beta = None

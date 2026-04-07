@@ -1153,7 +1153,8 @@ class TestProviderIntegration:
         from src.providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
 
         provider = object.__new__(RunPodPodInferenceProvider)
-        provider._api = MagicMock()  # non-None so the first guard passes
+        provider._pod_control = MagicMock()  # non-None so the first guard passes
+        provider._api = MagicMock()
         provider._pod_id = "pod_abc123"  # non-empty so the second guard passes
         provider._adapter_ref = ""  # empty → must fail with a clear message
 

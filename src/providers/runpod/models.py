@@ -54,46 +54,6 @@ class PodSnapshot:
             port_count=len(ports),
         )
 
-    @classmethod
-    def from_runpodctl(cls, payload: dict[str, Any]) -> PodSnapshot:
-        """Parse a runpodctl JSON response into a typed snapshot.
-
-        Handles nested wrappers (``{"pod": {...}}``, ``{"data": {"pod": {...}}}``)
-        and the non-standard port mapping formats that runpodctl may return.
-        """
-        source = payload
-        if isinstance(payload.get("pod"), dict):
-            source = payload["pod"]
-        elif isinstance(payload.get("data"), dict) and isinstance(payload["data"].get("pod"), dict):
-            source = payload["data"]["pod"]
-
-        pod_id = str(source.get("id") or "")
-        status = source.get("desiredStatus") or source.get("status")
-
-        runtime = source.get("runtime")
-        if isinstance(runtime, dict) and isinstance(runtime.get("ports"), list):
-            uptime = int(runtime.get("uptimeInSeconds") or 0)
-            ports_list: list[dict[str, Any]] = runtime["ports"]
-            return cls(
-                pod_id=pod_id,
-                status=status,
-                uptime_seconds=uptime,
-                ssh_endpoint=_extract_ssh_endpoint(ports_list),
-                port_count=len(ports_list),
-            )
-
-        public_ip = str(source.get("publicIp") or "").strip()
-        raw_ports = source.get("portMappings") or source.get("ports") or []
-        normalized = _normalize_runpodctl_ports(raw_ports, public_ip)
-        uptime = int(source.get("uptimeInSeconds") or 0)
-        return cls(
-            pod_id=pod_id,
-            status=status,
-            uptime_seconds=uptime,
-            ssh_endpoint=_extract_ssh_endpoint(normalized),
-            port_count=len(normalized),
-        )
-
 
 def _extract_ssh_endpoint(ports: list[dict[str, Any]]) -> SshEndpoint | None:
     """Find the first automation-grade SSH endpoint (exposed TCP on container port 22)."""
@@ -113,68 +73,6 @@ def _extract_ssh_endpoint(ports: list[dict[str, Any]]) -> SshEndpoint | None:
             return SshEndpoint(host=host, port=public_port)
 
     return None
-
-
-def _normalize_runpodctl_ports(raw: Any, public_ip: str) -> list[dict[str, Any]]:
-    """Normalize runpodctl port formats into the canonical GraphQL-like shape."""
-    ports: list[dict[str, Any]] = []
-
-    if isinstance(raw, dict):
-        for key, value in raw.items():
-            private_port: int | None = None
-            if isinstance(key, int):
-                private_port = key
-            elif isinstance(key, str):
-                digits = "".join(ch for ch in key if ch.isdigit())
-                if digits:
-                    private_port = int(digits)
-            if private_port is None:
-                continue
-
-            public_port: int | None = None
-            if isinstance(value, dict):
-                candidate = value.get("hostPort") or value.get("publicPort") or value.get("port")
-                try:
-                    public_port = int(candidate)
-                except Exception:
-                    public_port = None
-            else:
-                try:
-                    public_port = int(value)
-                except Exception:
-                    public_port = None
-
-            if public_port is not None:
-                ports.append(
-                    {
-                        "ip": public_ip,
-                        "privatePort": private_port,
-                        "publicPort": public_port,
-                        "isIpPublic": bool(public_ip),
-                    }
-                )
-
-    elif isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            cport = (
-                item.get("containerPort") or item.get("internalPort") or item.get("privatePort") or item.get("port")
-            )
-            hport = item.get("hostPort") or item.get("externalPort") or item.get("publicPort")
-            try:
-                ports.append(
-                    {
-                        "ip": str(item.get("ip") or public_ip or "").strip(),
-                        "privatePort": int(cport),
-                        "publicPort": int(hport),
-                        "isIpPublic": True,
-                    }
-                )
-            except Exception:
-                continue
-
-    return ports
 
 
 @dataclass(frozen=True, slots=True)

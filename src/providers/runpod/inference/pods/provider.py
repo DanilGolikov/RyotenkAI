@@ -33,7 +33,6 @@ from src.utils.logger import logger
 from src.utils.result import Err, InferenceError, Ok, Result
 
 from ...pod_control import RunPodInferencePodControl
-from ...runpodctl_client import RunPodCtlClient
 from .api_client import RunPodPodsRESTClient
 from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
@@ -168,10 +167,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
         api_key_str = str(api_key)
         self._api = RunPodPodsRESTClient(api_key=api_key_str)
-        self._pod_control = RunPodInferencePodControl(
-            runpodctl=RunPodCtlClient(api_key=api_key_str),
-            api=self._api,
-        )
+        self._pod_control = RunPodInferencePodControl(api=self._api)
 
         # Fail-fast: SSH key path must exist locally (used later by scripts).
         key_path = Path(str(self._provider_cfg.connect.ssh.key_path)).expanduser()
@@ -492,21 +488,25 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         6. Wait for /v1/models health
         7. Return live endpoint URL
         """
-        if self._pod_control is None:
+        pod_control = getattr(self, "_pod_control", None)
+        pod_id = getattr(self, "_pod_id", None)
+        adapter_ref = getattr(self, "_adapter_ref", None)
+
+        if pod_control is None:
             return Err(
                 InferenceError(
                     message="runpod_pods: activate_for_eval called before deploy() — API client not initialized",
                     code="RUNPOD_NOT_DEPLOYED",
                 )
             )
-        if not self._pod_id:
+        if not pod_id:
             return Err(
                 InferenceError(
                     message="runpod_pods: activate_for_eval called before deploy() — pod_id not set",
                     code="RUNPOD_NOT_DEPLOYED",
                 )
             )
-        if not (self._adapter_ref and self._adapter_ref.strip()):
+        if not (isinstance(adapter_ref, str) and adapter_ref.strip()):
             return Err(
                 InferenceError(
                     message=(
@@ -523,8 +523,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         from src.providers.runpod.inference.pods import pod_session
 
         session_res = pod_session.activate(
-            api=self._pod_control,
-            pod_id=self._pod_id,
+            api=pod_control,
+            pod_id=pod_id,
             **params,
         )
         if session_res.is_failure():
@@ -549,18 +549,22 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         provisioned (e.g. Ctrl+C between deploy() and activate_for_eval()), the
         pod is deleted directly via API to avoid ongoing GPU billing.
         """
-        if self._pod_control is None:
+        pod_control = getattr(self, "_pod_control", None)
+        pod_id = getattr(self, "_pod_id", None)
+        eval_session = getattr(self, "_eval_session", None)
+
+        if pod_control is None:
             # deploy() was never called — nothing to clean up.
             return Ok(None)
 
-        if self._eval_session is None:
+        if eval_session is None:
             # activate_for_eval() was not called, but a pod may already exist.
-            if self._pod_id:
+            if pod_id:
                 logger.info(
                     "[CLEANUP] activate_for_eval was not called but pod %s exists — deleting to avoid billing.",
-                    self._pod_id,
+                    pod_id,
                 )
-                del_res = self._pod_control.delete_pod(pod_id=self._pod_id)
+                del_res = pod_control.delete_pod(pod_id=pod_id)
                 if del_res.is_failure():
                     del_err = del_res.unwrap_err()
                     return Err(
@@ -577,8 +581,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         from src.providers.runpod.inference.pods import pod_session
 
         result = pod_session.deactivate(
-            api=self._pod_control,
-            state=self._eval_session,
+            api=pod_control,
+            state=eval_session,
             key_path=key_path,
         )
         self._eval_session = None

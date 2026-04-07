@@ -25,7 +25,7 @@ class PodLifecycleManager:
     """Manages pod lifecycle (waiting, health checking).
 
     Operates exclusively on typed ``PodSnapshot`` objects, with no knowledge
-    of the underlying data source (GraphQL, runpodctl, etc.).
+    of the underlying transport or API client.
     """
 
     def __init__(self, api_client: _PodQueryControl):

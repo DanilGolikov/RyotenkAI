@@ -1,14 +1,14 @@
 """
 RunPod control layer.
 
-Training backend policy (pure GraphQL API):
-- create_pod: GraphQL API (dockerArgs required for SSH bootstrap)
-- query_pod: GraphQL API
-- terminate_pod: GraphQL API
-- get_ssh_info: GraphQL API via query_pod + PodSnapshot parsing
+Training backend policy:
+- create_pod: SDK-backed API
+- query_pod: SDK-backed API
+- terminate_pod: SDK-backed API
+- get_ssh_info: SDK-backed API via query_pod + PodSnapshot parsing
 
-Inference backend policy (runpodctl-first with REST fallback):
-- start/stop/delete: runpodctl-first, fallback to REST API
+Inference backend policy:
+- start/stop/delete/get: SDK-backed Pod API
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ _TRANSIENT_MARKERS = (
 
 if TYPE_CHECKING:
     from src.config.providers.runpod import RunPodProviderConfig
-    from src.providers.runpod.runpodctl_client import RunPodCtlClient
 
 
 class _TrainingApiProtocol(Protocol):
@@ -72,11 +71,7 @@ class _InferenceApiProtocol(Protocol):
 
 
 class RunPodTrainingPodControl:
-    """Pure GraphQL API control for training pods.
-
-    All operations go through the GraphQL API directly.
-    ``query_pod_snapshot`` adds typed ``PodSnapshot`` on top of the raw API response.
-    """
+    """SDK-backed control for training pods."""
 
     def __init__(self, *, api: _TrainingApiProtocol):
         self._api = api
@@ -147,34 +142,21 @@ class RunPodTrainingPodControl:
 
 
 class RunPodInferencePodControl:
-    """runpodctl-first control for inference pod start/stop/delete operations."""
+    """SDK-backed control for inference pod start/stop/delete operations."""
 
-    def __init__(self, *, runpodctl: RunPodCtlClient, api: _InferenceApiProtocol):
-        self._runpodctl = runpodctl
+    def __init__(self, *, api: _InferenceApiProtocol):
         self._api = api
 
     def start_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        cli_result = self._runpodctl.start_pod(pod_id)
-        if cli_result.is_success():
-            return Ok(None)
-        logger.warning("[RUNPODCTL] start pod failed, falling back to REST API: %s", cli_result.unwrap_err())
         return self._api.start_pod(pod_id=pod_id)
 
     def get_pod(self, *, pod_id: str) -> Result[dict[str, Any], ProviderError]:
         return self._api.get_pod(pod_id=pod_id)
 
     def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        cli_result = self._runpodctl.stop_pod(pod_id)
-        if cli_result.is_success():
-            return Ok(None)
-        logger.warning("[RUNPODCTL] stop pod failed, falling back to REST API: %s", cli_result.unwrap_err())
         return self._api.stop_pod(pod_id=pod_id)
 
     def delete_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        cli_result = self._runpodctl.remove_pod(pod_id)
-        if cli_result.is_success():
-            return Ok(None)
-        logger.warning("[RUNPODCTL] remove pod failed, falling back to REST API: %s", cli_result.unwrap_err())
         return self._api.delete_pod(pod_id=pod_id)
 
 
