@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  English |
-  <a href="i18n/README.ru.md">Русский</a> |
-  <a href="i18n/README.ja.md">日本語</a> |
-  <a href="i18n/README.zh-CN.md">简体中文</a> |
-  <a href="i18n/README.ko.md">한국어</a> |
-  <a href="i18n/README.es.md">Español</a> |
-  <a href="i18n/README.he.md">עברית</a>
+  🇬🇧 English |
+  <a href="i18n/README.ru.md">🇷🇺 Русский</a> |
+  <a href="i18n/README.ja.md">🇯🇵 日本語</a> |
+  <a href="i18n/README.zh-CN.md">🇨🇳 简体中文</a> |
+  <a href="i18n/README.ko.md">🇰🇷 한국어</a> |
+  <a href="i18n/README.es.md">🇪🇸 Español</a> |
+  <a href="i18n/README.he.md">🇮🇱 עברית</a>
 </p>
 
 <p align="center">
