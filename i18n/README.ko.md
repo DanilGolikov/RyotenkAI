@@ -28,6 +28,10 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/QqDM2DbY">
+    <img src="https://img.shields.io/badge/Discord-커뮤니티%20참여-5865F2?logo=discord&logoColor=white" alt="Discord 참여">
+  </a>
+  <br>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/PyTorch-2.5-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
   <img src="https://img.shields.io/badge/%F0%9F%A4%97_Transformers-4.x-FFD21E" alt="Transformers">
@@ -586,6 +590,12 @@ ryotenkai/
 ├── Makefile             # 개발용 명령
 └── pyproject.toml       # 패키지 메타데이터와 tool 설정
 ```
+
+## 커뮤니티
+
+지원, roadmap 논의, config 공유, fine-tuning workflow 대화를 원하면 Discord 서버에 참여하세요:
+
+[discord.gg/QqDM2DbY](https://discord.gg/QqDM2DbY)
 
 ## 기여하기
 

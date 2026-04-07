@@ -28,6 +28,10 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/QqDM2DbY">
+    <img src="https://img.shields.io/badge/Discord-加入社区-5865F2?logo=discord&logoColor=white" alt="加入 Discord">
+  </a>
+  <br>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/PyTorch-2.5-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
   <img src="https://img.shields.io/badge/%F0%9F%A4%97_Transformers-4.x-FFD21E" alt="Transformers">
@@ -586,6 +590,12 @@ ryotenkai/
 ├── Makefile             # 开发命令
 └── pyproject.toml       # 包元数据与工具配置
 ```
+
+## 社区
+
+如果你想获得支持、讨论 roadmap、分享配置或交流 fine-tuning workflow，欢迎加入 Discord 服务器：
+
+[discord.gg/QqDM2DbY](https://discord.gg/QqDM2DbY)
 
 ## 贡献
 

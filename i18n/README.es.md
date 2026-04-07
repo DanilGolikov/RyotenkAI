@@ -28,6 +28,10 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/QqDM2DbY">
+    <img src="https://img.shields.io/badge/Discord-Unirse%20a%20la%20comunidad-5865F2?logo=discord&logoColor=white" alt="Unirse a Discord">
+  </a>
+  <br>
   <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+">
   <img src="https://img.shields.io/badge/PyTorch-2.5-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch">
   <img src="https://img.shields.io/badge/%F0%9F%A4%97_Transformers-4.x-FFD21E" alt="Transformers">
@@ -586,6 +590,12 @@ ryotenkai/
 ├── Makefile             # Comandos de desarrollo
 └── pyproject.toml       # Metadatos del paquete y configuracion de herramientas
 ```
+
+## Comunidad
+
+Unete al servidor de Discord para soporte, conversacion sobre roadmap, compartir configuraciones y hablar sobre workflows de fine-tuning:
+
+[discord.gg/QqDM2DbY](https://discord.gg/QqDM2DbY)
 
 ## Contribuir
 
