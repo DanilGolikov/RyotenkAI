@@ -12,7 +12,7 @@ class RunPodSSHConfig(StrictBaseModel):
         ...,
         description=(
             "REQUIRED: Path to SSH private key used for RunPod pod access. "
-            "RyotenkAI uses runpodctl-first for pod control/file transport, "
+            "RyotenkAI uses the RunPod SDK for pod lifecycle, "
             "then uses direct SSH over exposed TCP for runtime operations inside the pod."
         ),
     )

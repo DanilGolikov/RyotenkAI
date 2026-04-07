@@ -16,22 +16,6 @@ pytestmark = pytest.mark.unit
 
 
 @dataclass
-class FakeRunpodctl:
-    remove_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    start_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    stop_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-
-    def remove_pod(self, pod_id: str):
-        return self.remove_result
-
-    def start_pod(self, pod_id: str):
-        return self.start_result
-
-    def stop_pod(self, pod_id: str):
-        return self.stop_result
-
-
-@dataclass
 class FakeTrainingApi:
     create_result: Result[dict[str, Any], ProviderError] = Ok({"pod_id": "pod-api"})  # type: ignore[call-arg]
     query_result: Result[dict[str, Any], ProviderError] = Ok(  # type: ignore[call-arg]
@@ -245,25 +229,51 @@ def test_create_exhausts_retries_on_persistent_transient_error(monkeypatch) -> N
     assert api.call_count == 3
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Rate Limit exceeded by upstream",
+        "Gateway returned 503 for create pod",
+        "Gateway returned 502 for create pod",
+        "Operation TIMEOUT while creating pod",
+    ],
+)
+def test_create_retries_on_additional_transient_markers(monkeypatch, message: str) -> None:
+    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    transient = Err(ProviderError(message=message, code="RUNPOD_GRAPHQL_ERROR"))
+    success = Ok({"pod_id": "pod-ok"})  # type: ignore[call-arg]
+    api = _CountingTrainingApi(results=[transient, success])
+    control = RunPodTrainingPodControl(api=api)
+
+    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
+
+    assert res.is_success()
+    assert api.call_count == 2
+
+
+def test_create_returns_last_error_instance_after_retry_exhaustion(monkeypatch) -> None:
+    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    first = Err(ProviderError(message="timeout", code="RUNPOD_GRAPHQL_ERROR"))
+    second_err = ProviderError(message="503 unavailable", code="RUNPOD_GRAPHQL_ERROR")
+    second = Err(second_err)
+    third_err = ProviderError(message="rate limit", code="RUNPOD_GRAPHQL_ERROR")
+    third = Err(third_err)
+    api = _CountingTrainingApi(results=[first, second, third])
+    control = RunPodTrainingPodControl(api=api)
+
+    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
+
+    assert res.is_failure()
+    assert res.unwrap_err() is third_err
+
+
 # ---------------------------------------------------------------------------
-# Inference pod control (runpodctl-first with REST fallback)
+# Inference pod control (SDK-backed Pod API)
 # ---------------------------------------------------------------------------
 
 
-def test_inference_control_falls_back_for_all_ops() -> None:
-    ctl = FakeRunpodctl(
-        start_result=Err(ProviderError(message="no cli", code="RUNPODCTL_NOT_AVAILABLE")),
-        stop_result=Err(ProviderError(message="no cli", code="RUNPODCTL_NOT_AVAILABLE")),
-        remove_result=Err(ProviderError(message="no cli", code="RUNPODCTL_NOT_AVAILABLE")),
-    )
-    control = RunPodInferencePodControl(runpodctl=ctl, api=FakeInferenceApi())
-    assert control.start_pod(pod_id="pod-1").is_success()
-    assert control.stop_pod(pod_id="pod-1").is_success()
-    assert control.delete_pod(pod_id="pod-1").is_success()
-
-
-def test_inference_control_uses_runpodctl_when_successful() -> None:
-    control = RunPodInferencePodControl(runpodctl=FakeRunpodctl(), api=FakeInferenceApi())
+def test_inference_control_delegates_to_api() -> None:
+    control = RunPodInferencePodControl(api=FakeInferenceApi())
     assert control.start_pod(pod_id="pod-1").is_success()
     assert control.stop_pod(pod_id="pod-1").is_success()
     assert control.delete_pod(pod_id="pod-1").is_success()
@@ -271,7 +281,22 @@ def test_inference_control_uses_runpodctl_when_successful() -> None:
 
 def test_inference_control_get_pod_passthrough() -> None:
     api = FakeInferenceApi(get_result=Ok({"id": "pod-xyz", "desiredStatus": "RUNNING"}))  # type: ignore[call-arg]
-    control = RunPodInferencePodControl(runpodctl=FakeRunpodctl(), api=api)
+    control = RunPodInferencePodControl(api=api)
     res = control.get_pod(pod_id="pod-xyz")
     assert res.is_success()
     assert res.unwrap()["id"] == "pod-xyz"
+
+
+def test_inference_control_propagates_api_errors() -> None:
+    api = FakeInferenceApi(
+        start_result=Err(ProviderError(message="start failed", code="RUNPOD_SDK_CALL_FAILED")),
+        stop_result=Err(ProviderError(message="stop failed", code="RUNPOD_SDK_CALL_FAILED")),
+        delete_result=Err(ProviderError(message="delete failed", code="RUNPOD_SDK_CALL_FAILED")),
+        get_result=Err(ProviderError(message="get failed", code="RUNPOD_SDK_CALL_FAILED")),
+    )
+    control = RunPodInferencePodControl(api=api)
+
+    assert control.start_pod(pod_id="pod-1").unwrap_err().message == "start failed"
+    assert control.stop_pod(pod_id="pod-1").unwrap_err().message == "stop failed"
+    assert control.delete_pod(pod_id="pod-1").unwrap_err().message == "delete failed"
+    assert control.get_pod(pod_id="pod-1").unwrap_err().message == "get failed"

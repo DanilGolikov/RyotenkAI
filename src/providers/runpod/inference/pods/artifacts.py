@@ -73,11 +73,15 @@ import shlex
 import ssl
 import subprocess
 import time
+import contextlib
+import io
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+import runpod
 
 RUNTIME: dict[str, Any] = {}
 
@@ -231,12 +235,15 @@ def _http_json(
     raise RuntimeError(f"RunPod request failed: {method} {url}: {last_exc!s}") from None
 
 
-def _runpod_headers(api_key: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
+def _runpod_sdk_call(api_key: str, fn_name: str, *args, **kwargs):
+    prev_api_key = getattr(runpod, "api_key", None)
+    try:
+        runpod.api_key = api_key
+        fn = getattr(runpod, fn_name)
+        with contextlib.redirect_stdout(io.StringIO()):
+            return fn(*args, **kwargs)
+    finally:
+        runpod.api_key = prev_api_key
 
 
 _NO_CAPACITY_PHRASES = (
@@ -253,39 +260,106 @@ def _is_no_capacity_error(exc: Exception) -> bool:
 
 
 def _runpod_list_pods(*, rest_api_base_url: str, api_key: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-    qs = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}, doseq=True)
-    url = rest_api_base_url.rstrip("/") + "/pods"
-    if qs:
-        url = url + "?" + qs
-    out = _http_json(url=url, method="GET", headers=_runpod_headers(api_key), timeout=30)
-    return out if isinstance(out, list) else []
+    _ = rest_api_base_url
+    out = _runpod_sdk_call(api_key, "get_pods")
+    pods = out if isinstance(out, list) else []
+    if not params:
+        return pods
+
+    def _matches(pod: dict[str, Any]) -> bool:
+        for key, expected in params.items():
+            if expected is None:
+                continue
+            if key == "computeType":
+                actual = pod.get("computeType")
+                if actual is not None and str(actual) != str(expected):
+                    return False
+                continue
+            actual = pod.get(key)
+            if actual is None or str(actual) != str(expected):
+                return False
+        return True
+
+    return [pod for pod in pods if isinstance(pod, dict) and _matches(pod)]
 
 
 def _runpod_get_pod(*, rest_api_base_url: str, api_key: str, pod_id: str) -> dict[str, Any]:
-    url = rest_api_base_url.rstrip("/") + f"/pods/{pod_id}"
-    out = _http_json(url=url, method="GET", headers=_runpod_headers(api_key), timeout=30)
+    _ = rest_api_base_url
+    out = _runpod_sdk_call(api_key, "get_pod", pod_id)
     return out if isinstance(out, dict) else {}
 
 
 def _runpod_create_pod(*, rest_api_base_url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    url = rest_api_base_url.rstrip("/") + "/pods"
-    out = _http_json(url=url, method="POST", headers=_runpod_headers(api_key), payload=payload, timeout=120)
-    return out if isinstance(out, dict) else {}
+    _ = rest_api_base_url
+
+    ports = payload.get("ports")
+    if isinstance(ports, list):
+        ports = ",".join(str(item).strip() for item in ports if str(item).strip()) or None
+
+    base_kwargs: dict[str, Any] = {
+        "name": str(payload.get("name") or "").strip(),
+        "image_name": str(payload.get("imageName") or "").strip(),
+        "cloud_type": str(payload.get("cloudType") or "ALL").strip() or "ALL",
+        "support_public_ip": bool(payload.get("supportPublicIp", True)),
+        "start_ssh": bool(payload.get("startSsh", True)),
+        "data_center_id": payload.get("dataCenterId"),
+        "country_code": payload.get("countryCode"),
+        "gpu_count": int(payload.get("gpuCount") or 1),
+        "volume_in_gb": int(payload.get("volumeInGb") or 0),
+        "container_disk_in_gb": payload.get("containerDiskInGb"),
+        "min_vcpu_count": int(payload.get("minVcpuCount") or 1),
+        "min_memory_in_gb": int(payload.get("minMemoryInGb") or 1),
+        "docker_args": str(payload.get("dockerArgs") or "").strip(),
+        "ports": ports,
+        "volume_mount_path": str(payload.get("volumeMountPath") or "/runpod-volume").strip() or "/runpod-volume",
+        "env": payload.get("env"),
+        "template_id": payload.get("templateId"),
+        "network_volume_id": payload.get("networkVolumeId"),
+        "allowed_cuda_versions": payload.get("allowedCudaVersions"),
+        "min_download": payload.get("minDownloadMbps"),
+        "min_upload": payload.get("minUploadMbps"),
+        "instance_id": payload.get("instanceId"),
+    }
+    base_kwargs = {key: value for key, value in base_kwargs.items() if value is not None}
+
+    gpu_type_ids = [str(item).strip() for item in payload.get("gpuTypeIds") or [] if str(item).strip()]
+    if not gpu_type_ids:
+        out = _runpod_sdk_call(api_key, "create_pod", **base_kwargs)
+        return out if isinstance(out, dict) else {}
+
+    last_exc: Exception | None = None
+    for gpu_type_id in gpu_type_ids:
+        try:
+            out = _runpod_sdk_call(api_key, "create_pod", gpu_type_id=gpu_type_id, **base_kwargs)
+            return out if isinstance(out, dict) else {}
+        except Exception as exc:
+            last_exc = exc
+            if not _is_no_capacity_error(exc):
+                raise
+    if last_exc is not None:
+        raise last_exc
+    return {}
 
 
 def _runpod_start_pod(*, rest_api_base_url: str, api_key: str, pod_id: str) -> None:
-    url = rest_api_base_url.rstrip("/") + f"/pods/{pod_id}/start"
-    _ = _http_json(url=url, method="POST", headers=_runpod_headers(api_key), payload=None, timeout=60)
+    _ = rest_api_base_url
+    pod = _runpod_get_pod(rest_api_base_url="", api_key=api_key, pod_id=pod_id)
+    gpu_count_raw = pod.get("gpuCount")
+    try:
+        gpu_count = int(gpu_count_raw) if gpu_count_raw is not None else 1
+    except Exception:
+        gpu_count = 1
+    _runpod_sdk_call(api_key, "resume_pod", pod_id, gpu_count)
 
 
 def _runpod_stop_pod(*, rest_api_base_url: str, api_key: str, pod_id: str) -> None:
-    url = rest_api_base_url.rstrip("/") + f"/pods/{pod_id}/stop"
-    _ = _http_json(url=url, method="POST", headers=_runpod_headers(api_key), payload=None, timeout=60)
+    _ = rest_api_base_url
+    _runpod_sdk_call(api_key, "stop_pod", pod_id)
 
 
 def _runpod_delete_pod(*, rest_api_base_url: str, api_key: str, pod_id: str) -> None:
-    url = rest_api_base_url.rstrip("/") + f"/pods/{pod_id}"
-    _ = _http_json(url=url, method="DELETE", headers=_runpod_headers(api_key), payload=None, timeout=60)
+    _ = rest_api_base_url
+    _runpod_sdk_call(api_key, "terminate_pod", pod_id)
 
 
 def _wait_for_pod_ssh_ready(*, rest_api_base_url: str, api_key: str, pod_id: str, timeout_seconds: int) -> tuple[str, int]:

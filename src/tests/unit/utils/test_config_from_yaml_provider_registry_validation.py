@@ -75,8 +75,6 @@ experiment_tracking:
   mlflow:
     tracking_uri: http://127.0.0.1:5002
     experiment_name: test-exp
-    log_artifacts: false
-    log_model: false
 """,
     )
 
@@ -143,8 +141,6 @@ experiment_tracking:
   mlflow:
     tracking_uri: http://127.0.0.1:5002
     experiment_name: test-exp
-    log_artifacts: false
-    log_model: false
 """,
     )
 
@@ -216,8 +212,6 @@ experiment_tracking:
   mlflow:
     tracking_uri: http://127.0.0.1:5002
     experiment_name: test-exp
-    log_artifacts: false
-    log_model: false
 """,
     )
 

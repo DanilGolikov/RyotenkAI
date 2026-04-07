@@ -100,60 +100,45 @@ class TestPodSnapshotFromGraphql:
         )
         assert snap.ssh_endpoint is None
 
-
-class TestPodSnapshotFromRunpodctl:
-    def test_rest_like_shape_with_port_mapping_dict(self) -> None:
-        snap = PodSnapshot.from_runpodctl(
+    def test_non_integer_public_port_is_ignored(self) -> None:
+        snap = PodSnapshot.from_graphql(
             {
-                "id": "pod-1",
-                "status": "RUNNING",
-                "publicIp": "1.2.3.4",
-                "portMappings": {"22": 31111, "8000/http": 32000},
+                "id": "pod-8",
+                "desiredStatus": "RUNNING",
+                "runtime": {
+                    "uptimeInSeconds": 10,
+                    "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": "2222", "isIpPublic": True}],
+                },
             }
         )
-        assert snap.pod_id == "pod-1"
-        assert snap.status == "RUNNING"
-        assert snap.port_count == 2
-        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=31111)
+        assert snap.ssh_endpoint is None
+        assert snap.is_ready is False
 
-    def test_rest_like_shape_with_list_port_mappings(self) -> None:
-        snap = PodSnapshot.from_runpodctl(
+    def test_missing_is_ip_public_is_treated_as_non_blocking(self) -> None:
+        snap = PodSnapshot.from_graphql(
             {
-                "id": "pod-1",
-                "status": "RUNNING",
-                "publicIp": "1.2.3.4",
-                "portMappings": [{"containerPort": 22, "hostPort": 31111}],
+                "id": "pod-9",
+                "desiredStatus": "RUNNING",
+                "runtime": {
+                    "uptimeInSeconds": 10,
+                    "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 2222}],
+                },
             }
         )
-        assert snap.port_count == 1
-        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=31111)
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=2222)
+        assert snap.is_ready is True
 
-    def test_graphql_shape_passthrough(self) -> None:
-        data = {
-            "id": "pod-1",
-            "desiredStatus": "RUNNING",
-            "runtime": {
-                "uptimeInSeconds": 5,
-                "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345}],
-            },
-        }
-        snap = PodSnapshot.from_runpodctl(data)
-        assert snap.pod_id == "pod-1"
-        assert snap.status == "RUNNING"
-        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=12345)
-
-    def test_nested_pod_wrapper(self) -> None:
-        snap = PodSnapshot.from_runpodctl(
-            {"pod": {"id": "pod-1", "desiredStatus": "RUNNING", "runtime": {"ports": []}}}
+    def test_runtime_ports_non_list_is_ignored(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-10",
+                "desiredStatus": "RUNNING",
+                "runtime": {"uptimeInSeconds": 10, "ports": {"22/tcp": 2222}},
+            }
         )
-        assert snap.pod_id == "pod-1"
-
-    def test_data_pod_wrapper(self) -> None:
-        snap = PodSnapshot.from_runpodctl(
-            {"data": {"pod": {"id": "pod-2", "status": "STARTING", "runtime": {"ports": []}}}}
-        )
-        assert snap.pod_id == "pod-2"
-        assert snap.status == "STARTING"
+        assert snap.port_count == 0
+        assert snap.ssh_endpoint is None
+        assert snap.is_ready is False
 
 
 class TestReadSshPublicKey:

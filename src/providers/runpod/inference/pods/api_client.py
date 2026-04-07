@@ -1,8 +1,9 @@
 """
-RunPod REST API client for Pods + Network Volumes.
+RunPod client for inference Pods + legacy Network Volumes.
 
 Scope:
-- Low-level HTTP requests with retries and timeouts
+- Pod lifecycle via official Python SDK
+- Legacy network volume operations via REST
 - No business logic (no naming, no lifecycle policy decisions)
 """
 
@@ -24,6 +25,7 @@ from src.providers.constants import (
     TIMEOUT_REQUEST_LONG,
     TIMEOUT_REQUEST_SHORT,
 )
+from src.providers.runpod.sdk_adapter import RunPodSDKClient
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
@@ -33,7 +35,7 @@ _UNEXPECTED_RESPONSE_CODE = "RUNPOD_UNEXPECTED_RESPONSE"
 
 
 class RunPodPodsRESTClient:
-    """REST client for `https://rest.runpod.io/v1` (Pods + Network Volumes)."""
+    """SDK-backed Pod client + REST-backed legacy Network Volume client."""
 
     def __init__(self, *, api_key: str, api_base_url: str = RUNPOD_REST_API_BASE_URL):
         self.api_base = str(api_base_url).rstrip("/")
@@ -41,6 +43,7 @@ class RunPodPodsRESTClient:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        self._sdk = RunPodSDKClient(api_key=api_key)
 
         self.session = requests.Session()
         retry_strategy = Retry(
@@ -158,68 +161,26 @@ class RunPodPodsRESTClient:
         )
 
     # ---------------------------------------------------------------------
-    # Pods
+    # Pods (SDK-backed)
     # ---------------------------------------------------------------------
 
     def list_pods(self, *, params: dict[str, Any] | None = None) -> Result[list[dict[str, Any]], ProviderError]:
-        res = self._request_json(HTTP_GET, "/pods", params=params, timeout_seconds=TIMEOUT_REQUEST_DEFAULT)
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
-        if isinstance(val, list):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected pods response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
-        )
+        return self._sdk.list_pods(params=params)
 
     def get_pod(self, *, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        res = self._request_json(HTTP_GET, f"/pods/{pod_id}", timeout_seconds=TIMEOUT_REQUEST_DEFAULT)
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
-        if isinstance(val, dict):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected get_pod response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
-        )
+        return self._sdk.get_pod(pod_id=pod_id)
 
     def create_pod(self, *, payload: dict[str, Any]) -> Result[dict[str, Any], ProviderError]:
-        res = self._request_json(HTTP_POST, "/pods", payload=payload, timeout_seconds=TIMEOUT_REQUEST_LONG)
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
-        if isinstance(val, dict):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected create_pod response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
-        )
+        return self._sdk.create_pod_from_payload(payload=payload)
 
     def start_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        res = self._request_json(HTTP_POST, f"/pods/{pod_id}/start", timeout_seconds=TIMEOUT_REQUEST_SHORT)
-        if res.is_failure():
-            return Err(res.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+        return self._sdk.start_pod(pod_id=pod_id)
 
     def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        res = self._request_json(HTTP_POST, f"/pods/{pod_id}/stop", timeout_seconds=TIMEOUT_REQUEST_SHORT)
-        if res.is_failure():
-            return Err(res.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+        return self._sdk.stop_pod(pod_id=pod_id)
 
     def delete_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        res = self._request_json("DELETE", f"/pods/{pod_id}", timeout_seconds=TIMEOUT_REQUEST_SHORT)
-        if res.is_failure():
-            return Err(res.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+        return self._sdk.delete_pod(pod_id=pod_id)
 
 
 __all__ = [

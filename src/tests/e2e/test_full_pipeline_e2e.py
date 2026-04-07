@@ -60,6 +60,16 @@ def mock_orchestrator_with_stages(mock_config, mock_stages):
         return orchestrator
 
 
+@pytest.fixture(autouse=True)
+def bypass_mlflow_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2E flow tests mock pipeline stages, so MLflow connectivity is out of scope here."""
+    monkeypatch.setattr(
+        PipelineOrchestrator,
+        "_ensure_mlflow_preflight",
+        lambda self, *, state: None,
+    )
+
+
 # =============================================================================
 # TEST CLASS: Full Pipeline E2E
 # =============================================================================

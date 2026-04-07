@@ -1,7 +1,5 @@
 """
-RunPod API Client - Pure GraphQL API wrapper.
-
-Handles all GraphQL interactions with RunPod API.
+RunPod training client backed by the official Python SDK.
 """
 
 from __future__ import annotations
@@ -9,43 +7,22 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
-from src.providers.constants import (
-    HTTP_STATUS_OK,
-    KEY_ERRORS,
-    KEY_QUERY,
-    RETRY_BACKOFF_FACTOR,
-    RETRY_TOTAL_ATTEMPTS,
-    TIMEOUT_REQUEST_DEFAULT,
-)
 from src.providers.runpod.models import PodSnapshot, read_ssh_public_key
+from src.providers.runpod.sdk_adapter import RunPodSDKClient
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
-_API_REQUEST_FAILED_CODE = "RUNPOD_API_REQUEST_FAILED"
 _POD_ID_KEY = "pod_id"
 
 _POD_NAME_MAX_LEN_UI = 80
-_QUERY_TIMEOUT = 10
 _VOLUME_MOUNT = "/workspace"
 
 if TYPE_CHECKING:
     from src.providers.runpod.training.config import RunPodProviderConfig
 
 
-def _esc_graphql(v: str) -> str:
-    """Escape a string value for inline GraphQL string literals."""
-    return v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "").replace("\r", "")
-
-
 def build_ssh_bootstrap_cmd() -> str:
-    """Shell command that ensures sshd is running inside a RunPod container.
-
-    Follows RunPod docs: https://docs.runpod.io/pods/configuration/use-ssh
-    """
+    """Shell command that ensures sshd is running inside a RunPod container."""
     return (
         "bash -c '"
         "set -e; "
@@ -64,103 +41,47 @@ def build_ssh_bootstrap_cmd() -> str:
     )
 
 
-def build_pod_launch_mutation(
+def build_pod_launch_kwargs(
     config: RunPodProviderConfig,
     pod_name: str | None,
     public_key: str | None,
-) -> str:
-    """Build the GraphQL ``podFindAndDeployOnDemand`` mutation string."""
-    env_items: list[tuple[str, str]] = []
-    if public_key:
-        env_items.append(("PUBLIC_KEY", public_key))
-
-    if env_items:
-        env_graphql = "[" + ", ".join(f'{{key: "{_esc_graphql(k)}", value: "{_esc_graphql(v)}"}}' for k, v in env_items) + "]"
-    else:
-        env_graphql = "[]"
-
+) -> dict[str, Any]:
+    """Build SDK kwargs for ``runpod.create_pod``."""
     train_cfg = config.training
     name_val = (pod_name or f"ryotenkai-training-{int(time.time())}").replace('"', "").strip()
     if len(name_val) > _POD_NAME_MAX_LEN_UI:
         name_val = name_val[:_POD_NAME_MAX_LEN_UI]
 
-    docker_args = build_ssh_bootstrap_cmd()
+    env: dict[str, str] = {}
+    if public_key:
+        env["PUBLIC_KEY"] = public_key
 
-    return f"""
-    mutation {{
-        podFindAndDeployOnDemand(input: {{
-            cloudType: {train_cfg.cloud_type}
-            gpuTypeId: "{train_cfg.gpu_type}"
-            gpuCount: 1
-            name: "{name_val}"
-            imageName: "{train_cfg.image_name}"
-            dockerArgs: "{_esc_graphql(docker_args)}"
-            containerDiskInGb: {train_cfg.container_disk_gb}
-            volumeInGb: {train_cfg.volume_disk_gb}
-            ports: "{train_cfg.ports}"
-            volumeMountPath: "{_VOLUME_MOUNT}"
-            startSsh: true
-            startJupyter: false
-            env: {env_graphql}
-        }}) {{
-            id
-            desiredStatus
-            imageName
-            gpuCount
-            vcpuCount
-            memoryInGb
-            costPerHr
-            machine {{
-                podHostId
-            }}
-        }}
-    }}
-    """
+    return {
+        "name": name_val,
+        "image_name": train_cfg.image_name,
+        "gpu_type_id": train_cfg.gpu_type,
+        "cloud_type": train_cfg.cloud_type,
+        "support_public_ip": True,
+        "start_ssh": True,
+        "gpu_count": 1,
+        "volume_in_gb": train_cfg.volume_disk_gb,
+        "container_disk_in_gb": train_cfg.container_disk_gb,
+        "docker_args": build_ssh_bootstrap_cmd(),
+        "ports": train_cfg.ports,
+        "volume_mount_path": _VOLUME_MOUNT,
+        "env": env or None,
+        "template_id": train_cfg.template_id,
+    }
 
 
 class RunPodAPIClient:
-    """
-    Pure GraphQL API client for RunPod.
-
-    Responsibilities:
-    - Create pods via GraphQL mutations
-    - Query pod status via GraphQL queries
-    - Terminate pods via GraphQL mutations
-
-    Does NOT handle:
-    - Business logic
-    - SSH operations
-    - File uploads
-    - Training setup
-    """
+    """Training pod lifecycle client backed by ``runpod`` SDK."""
 
     def __init__(self, api_base_url: str, api_key: str):
-        """
-        Initialize RunPod API client.
-
-        Args:
-            api_base_url: RunPod API base URL (e.g., "https://api.runpod.io")
-            api_key: RunPod API key
-        """
         self.api_base = api_base_url
         self.api_key = api_key
-        self.headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-
-        # Configure session with automatic retry logic
-        self.session = requests.Session()
-        retry_strategy = Retry(
-            total=RETRY_TOTAL_ATTEMPTS,
-            backoff_factor=RETRY_BACKOFF_FACTOR,
-            status_forcelist=[429, 500, 502, 503, 504],  # retry on these HTTP codes
-            allowed_methods=["POST", "GET"],  # retry POST for GraphQL mutations
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("https://", adapter)
-
-        logger.debug(f"🔗 RunPodAPIClient initialized: {api_base_url} (retry: 3 attempts, backoff: 2.0s)")
+        self._sdk = RunPodSDKClient(api_key=api_key)
+        logger.debug(f"🔗 RunPodAPIClient initialized via SDK: {api_base_url}")
 
     def create_pod(
         self,
@@ -168,45 +89,25 @@ class RunPodAPIClient:
         *,
         pod_name: str | None = None,
     ) -> Result[dict[str, Any], ProviderError]:
-        """Create a new RunPod pod using GraphQL API."""
-        logger.info("📦 Creating RunPod pod via GraphQL API...")
+        """Create a new RunPod training pod using the SDK."""
+        logger.info("📦 Creating RunPod pod via RunPod SDK...")
 
         public_key = read_ssh_public_key(config.connect.ssh.key_path)
-        mutation = build_pod_launch_mutation(config, pod_name, public_key)
+        sdk_kwargs = build_pod_launch_kwargs(config, pod_name, public_key)
 
         train_cfg = config.training
         logger.debug(f"[RUNPOD:CONFIG] image_name={train_cfg.image_name}, template_id={train_cfg.template_id}")
         logger.info(f"📦 Using Docker image: {train_cfg.image_name}")
 
-        try:
-            response = self.session.post(
-                f"{self.api_base}/graphql",
-                headers=self.headers,
-                json={KEY_QUERY: mutation},
-                timeout=TIMEOUT_REQUEST_DEFAULT,
-            )
+        result = self._sdk.create_pod(**sdk_kwargs)
+        if result.is_failure():
+            return Err(result.unwrap_err())  # type: ignore[union-attr]
 
-            logger.debug(f"[RUNPOD:RESPONSE] status={response.status_code}")
-            if response.status_code != HTTP_STATUS_OK:
-                logger.error(f"Response body: {response.text}")
+        pod_data = result.unwrap()
+        if not pod_data or not pod_data.get("id"):
+            return Err(ProviderError(message=f"Failed to create pod: {pod_data}", code="RUNPOD_POD_DATA_MISSING"))
 
-            response.raise_for_status()
-            result = response.json()
-
-            if KEY_ERRORS in result:
-                error_msg = result[KEY_ERRORS][0].get("message", "Unknown GraphQL error")
-                logger.error(f"GraphQL error: {error_msg}")
-                return Err(ProviderError(message=f"Failed to create pod: {error_msg}", code="RUNPOD_GRAPHQL_ERROR"))
-
-            pod_data = result.get("data", {}).get("podFindAndDeployOnDemand")
-            if not pod_data or not pod_data.get("id"):
-                return Err(ProviderError(message=f"Failed to create pod: {result}", code="RUNPOD_POD_DATA_MISSING"))
-
-            return Ok(self._log_and_build_create_result(pod_data, train_cfg))
-
-        except requests.RequestException as e:
-            logger.error(f"RunPod API error: {e}")
-            return Err(ProviderError(message=f"Failed to create pod: {e}", code=_API_REQUEST_FAILED_CODE))
+        return Ok(self._log_and_build_create_result(pod_data, train_cfg))
 
     @staticmethod
     def _log_and_build_create_result(pod_data: dict[str, Any], train_cfg: Any) -> dict[str, Any]:
@@ -242,153 +143,53 @@ class RunPodAPIClient:
         }
 
     def query_pod(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        """
-        Query pod status using GraphQL API.
-
-        Args:
-            pod_id: Pod ID to query
-
-        Returns:
-            Result with pod data (id, desiredStatus, runtime) or structured provider error
-        """
-        query = f"""
-        query {{
-            pod(input: {{podId: "{pod_id}"}}) {{
-                id
-                desiredStatus
-                runtime {{
-                    uptimeInSeconds
-                    ports {{
-                        ip
-                        isIpPublic
-                        privatePort
-                        publicPort
-                    }}
-                }}
-            }}
-        }}
-        """
-
-        logger.debug("[RUNPOD:REQUEST] POST /graphql (query_pod)")
-
-        try:
-            response = self.session.post(
-                f"{self.api_base}/graphql",
-                headers=self.headers,
-                json={KEY_QUERY: query},
-                timeout=_QUERY_TIMEOUT,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            if KEY_ERRORS in result:
-                error_msg = result[KEY_ERRORS][0].get("message", "Unknown error")
-                return Err(ProviderError(message=f"GraphQL error: {error_msg}", code="RUNPOD_GRAPHQL_ERROR"))
-
-            pod_data = result.get("data", {}).get("pod")
-            if not pod_data:
-                return Err(
-                    ProviderError(
-                        message="No pod data received", code="RUNPOD_POD_DATA_MISSING", details={_POD_ID_KEY: pod_id}
-                    )
-                )
-
-            return Ok(pod_data)
-
-        except requests.RequestException as e:
+        """Query pod status using the SDK."""
+        result = self._sdk.get_pod(pod_id=pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()  # type: ignore[union-attr]
             return Err(
                 ProviderError(
-                    message=f"Failed to query pod: {e}", code=_API_REQUEST_FAILED_CODE, details={_POD_ID_KEY: pod_id}
-                )
-            )
-
-    def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]:
-        """
-        Terminate (delete) pod using GraphQL API.
-
-        Args:
-            pod_id: Pod ID to terminate
-
-        Returns:
-            Result with None on success or structured provider error
-        """
-        logger.info(f"🗑️ Terminating pod {pod_id}...")
-
-        mutation = f"""
-        mutation {{
-            podTerminate(input: {{podId: "{pod_id}"}})
-        }}
-        """
-
-        try:
-            response = self.session.post(
-                f"{self.api_base}/graphql",
-                headers=self.headers,
-                json={KEY_QUERY: mutation},
-                timeout=_QUERY_TIMEOUT,
-            )
-            response.raise_for_status()
-
-            logger.info(f"✅ Pod {pod_id} terminated")
-            return Ok(None)
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to terminate pod {pod_id}: {e}")
-            return Err(
-                ProviderError(
-                    message=f"Failed to terminate pod: {e}",
-                    code=_API_REQUEST_FAILED_CODE,
+                    message=f"Failed to query pod: {err.message}",
+                    code=err.code,
                     details={_POD_ID_KEY: pod_id},
                 )
             )
 
-    def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        """
-        Get SSH connection info for a pod.
-
-        Args:
-            pod_id: Pod ID
-
-        Returns:
-            Result with SSH info (host, port) or structured provider error
-        """
-        query = f"""
-        query {{
-            pod(input: {{podId: "{pod_id}"}}) {{
-                id
-                runtime {{
-                    ports {{
-                        ip
-                        privatePort
-                        publicPort
-                    }}
-                }}
-            }}
-        }}
-        """
-
-        try:
-            response = self.session.post(
-                f"{self.api_base}/graphql",
-                headers=self.headers,
-                json={KEY_QUERY: query},
-                timeout=_QUERY_TIMEOUT,
-            )
-            response.raise_for_status()
-            result = response.json()
-
-            pod_data = result.get("data", {}).get("pod")
-            ssh_info = self.extract_exposed_ssh_info(pod_data, pod_id=pod_id)
-            if ssh_info.is_failure():
-                return Err(ssh_info.unwrap_err())  # type: ignore[union-attr]
-            return Ok(ssh_info.unwrap())
-
-        except requests.RequestException as e:
+        pod_data = result.unwrap()
+        if not pod_data:
             return Err(
                 ProviderError(
-                    message=f"Failed to get SSH info: {e}", code=_API_REQUEST_FAILED_CODE, details={_POD_ID_KEY: pod_id}
+                    message="No pod data received", code="RUNPOD_POD_DATA_MISSING", details={_POD_ID_KEY: pod_id}
                 )
             )
+        return Ok(pod_data)
+
+    def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]:
+        """Terminate (delete) pod using the SDK."""
+        logger.info(f"🗑️ Terminating pod {pod_id}...")
+        result = self._sdk.delete_pod(pod_id=pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()  # type: ignore[union-attr]
+            logger.error(f"Failed to terminate pod {pod_id}: {err}")
+            return Err(
+                ProviderError(
+                    message=f"Failed to terminate pod: {err.message}",
+                    code=err.code,
+                    details={_POD_ID_KEY: pod_id},
+                )
+            )
+        logger.info(f"✅ Pod {pod_id} terminated")
+        return Ok(None)
+
+    def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
+        """Get SSH connection info for a pod."""
+        pod_result = self.query_pod(pod_id)
+        if pod_result.is_failure():
+            return Err(pod_result.unwrap_err())  # type: ignore[union-attr]
+        ssh_info = self.extract_exposed_ssh_info(pod_result.unwrap(), pod_id=pod_id)
+        if ssh_info.is_failure():
+            return Err(ssh_info.unwrap_err())  # type: ignore[union-attr]
+        return Ok(ssh_info.unwrap())
 
     @staticmethod
     def extract_exposed_ssh_info(
@@ -396,11 +197,7 @@ class RunPodAPIClient:
         *,
         pod_id: str | None = None,
     ) -> Result[dict[str, Any], ProviderError]:
-        """Extract automation-grade SSH endpoint from RunPod pod data.
-
-        Delegates to ``PodSnapshot.from_graphql`` for parsing, then converts
-        the typed ``SshEndpoint`` back to the dict format expected by callers.
-        """
+        """Extract automation-grade SSH endpoint from RunPod pod data."""
         details = {_POD_ID_KEY: pod_id} if pod_id else None
 
         if not pod_data or not pod_data.get("runtime"):
@@ -425,4 +222,4 @@ class RunPodAPIClient:
         )
 
 
-__all__ = ["RunPodAPIClient"]
+__all__ = ["RunPodAPIClient", "build_pod_launch_kwargs", "build_ssh_bootstrap_cmd"]

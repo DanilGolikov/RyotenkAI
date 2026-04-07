@@ -588,7 +588,7 @@ providers:
 **Important:**
 - Workspace inside the pod is **hardcoded** to `/workspace` (not configurable).
 - RunPod API base URL is **not configurable** (runtime constant `RUNPOD_API_BASE_URL`).
-- RyotenkAI uses **`runpodctl-first`** for pod control and batch file transfer where possible, with fallback to direct RunPod API/REST.
+- RyotenkAI uses the official **RunPod Python SDK** for pod lifecycle operations.
 - Runtime operations **inside** the pod still use **direct SSH over exposed TCP** (training start, health checks, tunnels, merge/vLLM).
 - Legacy keys `providers.runpod.type` and `providers.runpod.api_base_url` were removed; if present, the validator requires removing them.
 
@@ -729,7 +729,7 @@ inference:
 
 - `single_node`: SSH + Docker(vLLM) on one machine. Endpoint access is usually via SSH tunnel.
 - `runpod_serverless`: RunPod Serverless vLLM endpoint. The pipeline **prepares the endpoint and stops it (workers=0)**, while `chat_inference.py` **sets workers=1**, waits for readiness, and starts chat. LoRA (if any) is picked up at worker start via `LORA_MODULES`.
-- `runpod`: RunPod Pods. The pipeline uses **runpodctl-first** for safe pod control where possible, but still relies on **direct SSH** for runtime work inside the pod. It prepares the Pod and parks it (stopped); interactive scripts (`chat_inference.py` / `stop_inference.py`) control start/stop and the SSH tunnel. Network Volume is optional: without it the pod is created in any available datacenter with the requested GPU (higher availability), but `/workspace` storage is lost when the pod is deleted.
+- `runpod`: RunPod Pods. The pipeline uses the **RunPod Python SDK** for pod lifecycle, and **direct SSH** for runtime work inside the pod. It prepares the Pod and parks it (stopped); interactive scripts (`chat_inference.py` / `stop_inference.py`) control start/stop and the SSH tunnel. Network Volume is optional: without it the pod is created in any available datacenter with the requested GPU (higher availability), but `/workspace` storage is lost when the pod is deleted.
 
 ### Inference Parameters:
 

@@ -326,7 +326,7 @@ class TestSaveStageArtifact:
         }
         env = _make_envelope()
         save_stage_artifact(context, env, "test.json")
-        mock_mgr.log_artifact.assert_not_called()
+        mock_mgr.log_dict.assert_not_called()
 
     def test_no_run_id_is_silent(self) -> None:
         """MLflowManager present but run_id missing → does not write artifact."""
@@ -338,10 +338,10 @@ class TestSaveStageArtifact:
         context = {PipelineContextKeys.MLFLOW_MANAGER: mock_mgr}  # no run_id
         env = _make_envelope()
         save_stage_artifact(context, env, "test.json")
-        mock_mgr.log_artifact.assert_not_called()
+        mock_mgr.log_dict.assert_not_called()
 
-    def test_mlflow_write_and_cleanup_temp_file(self, tmp_path: Path) -> None:
-        """Happy path: log_artifact called; temp file removed after write."""
+    def test_mlflow_write_logs_dict_payload(self, tmp_path: Path) -> None:
+        """Happy path: envelope dict is written via MLflowManager.log_dict()."""
         from src.pipeline.stages.constants import PipelineContextKeys
         from src.training.managers.mlflow_manager import MLflowManager
 
@@ -350,10 +350,11 @@ class TestSaveStageArtifact:
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
 
-        def capture_log(path: str, *, artifact_path: str = "", run_id: str = "") -> None:
-            logged_args.append((path, artifact_path, run_id))
+        def capture_log(payload: dict[str, Any], artifact_file: str, *, run_id: str = "") -> bool:
+            logged_args.append((payload, artifact_file, run_id))
+            return True
 
-        mock_mgr.log_artifact.side_effect = capture_log
+        mock_mgr.log_dict.side_effect = capture_log
 
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
@@ -362,22 +363,19 @@ class TestSaveStageArtifact:
         env = _make_envelope(data={"score": 0.99})
         save_stage_artifact(context, env, "my_artifact.json")
 
-        assert mock_mgr.log_artifact.call_count == 1
-        call_path = logged_args[0][0]
-        # The file passed to log_artifact MUST have the exact artifact name
-        # (no random prefix from NamedTemporaryFile).
-        assert Path(call_path).name == "my_artifact.json"
-        # temp file should be deleted after log
-        assert not Path(call_path).exists()
+        assert mock_mgr.log_dict.call_count == 1
+        assert logged_args[0][0] == env.to_dict()
+        assert logged_args[0][1] == "my_artifact.json"
+        assert logged_args[0][2] == "run_abc"
 
-    def test_exception_in_log_artifact_does_not_propagate(self) -> None:
-        """Dependency error: exception in log_artifact is swallowed (best-effort)."""
+    def test_exception_in_log_dict_does_not_propagate(self) -> None:
+        """Dependency error: exception in log_dict is swallowed (best-effort)."""
         from src.pipeline.stages.constants import PipelineContextKeys
         from src.training.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
-        mock_mgr.log_artifact.side_effect = RuntimeError("MLflow server down")
+        mock_mgr.log_dict.side_effect = RuntimeError("MLflow server down")
 
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
@@ -388,22 +386,25 @@ class TestSaveStageArtifact:
         save_stage_artifact(context, env, "test.json")
 
     def test_artifact_path_passed_through(self) -> None:
-        """artifact_path argument forwarded to log_artifact."""
+        """artifact_path is prefixed into the target artifact file for log_dict."""
         from src.pipeline.stages.constants import PipelineContextKeys
         from src.training.managers.mlflow_manager import MLflowManager
 
-        logged_kwargs: list[dict[str, Any]] = []
+        logged_args: list[tuple[dict[str, Any], str, str]] = []
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
-        mock_mgr.log_artifact.side_effect = lambda path, **kw: logged_kwargs.append(kw)
+        mock_mgr.log_dict.side_effect = (
+            lambda payload, artifact_file, *, run_id="": logged_args.append((payload, artifact_file, run_id)) or True
+        )
 
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
         }
         save_stage_artifact(context, _make_envelope(), "eval.json", artifact_path="evaluation")
-        assert logged_kwargs[0]["artifact_path"] == "evaluation"
+        assert logged_args[0][1] == "evaluation/eval.json"
+        assert logged_args[0][2] == "rid"
 
     def test_empty_run_id_string_is_skipped(self) -> None:
         """Boundary: run_id == '' → does not write artifact."""
@@ -417,7 +418,7 @@ class TestSaveStageArtifact:
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "",
         }
         save_stage_artifact(context, _make_envelope(), "test.json")
-        mock_mgr.log_artifact.assert_not_called()
+        mock_mgr.log_dict.assert_not_called()
 
 
 # =============================================================================
@@ -626,19 +627,22 @@ class TestArtifactRegressions:
         assert env.duration_seconds == 100.0
 
     def test_save_stage_artifact_json_payload_matches_envelope(self) -> None:
-        """Regression: written JSON payload matches envelope.to_dict()."""
+        """Regression: payload sent to MLflow matches envelope.to_dict()."""
         from src.pipeline.stages.constants import PipelineContextKeys
         from src.training.managers.mlflow_manager import MLflowManager
 
-        written_payloads: list[str] = []
+        written_payloads: list[dict[str, Any]] = []
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
 
-        def capture(path: str, **kwargs: Any) -> None:
-            written_payloads.append(Path(path).read_text(encoding="utf-8"))
+        def capture(payload: dict[str, Any], artifact_file: str, **kwargs: Any) -> bool:
+            _ = artifact_file
+            _ = kwargs
+            written_payloads.append(payload)
+            return True
 
-        mock_mgr.log_artifact.side_effect = capture
+        mock_mgr.log_dict.side_effect = capture
 
         context = {
             PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
@@ -648,5 +652,4 @@ class TestArtifactRegressions:
         save_stage_artifact(context, env, "results.json")
 
         assert len(written_payloads) == 1
-        parsed = json.loads(written_payloads[0])
-        assert parsed == env.to_dict()
+        assert written_payloads[0] == env.to_dict()

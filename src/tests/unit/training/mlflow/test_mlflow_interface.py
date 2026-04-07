@@ -119,6 +119,13 @@ class _ConcreteManager:
     def log_oom_recovery(self, operation, attempt, max_attempts) -> None:
         pass
 
+    def get_runtime_tracking_uri(self) -> str:
+        return "http://localhost:5002"
+
+    def delete_run_tree(self, root_run_id: str) -> list[str]:
+        _ = root_run_id
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Exports
