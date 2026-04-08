@@ -361,6 +361,8 @@ def _wait_for_ssh(
     """
     deadline = time.time() + timeout_sec
     last_preview = ""
+    _INFO_INTERVAL_SEC = 30
+    last_info_ts = 0.0
 
     while time.time() < deadline:
         get_res = api.get_pod(pod_id=pod_id)
@@ -385,13 +387,20 @@ def _wait_for_ssh(
                 return Ok((public_ip, int(ssh_port)))
 
         remaining = int(max(0, deadline - time.time()))
+        elapsed = int(timeout_sec - remaining)
         preview = (
             f"status={status or '∅'} ip={public_ip or '∅'} "
             f"ssh_port={ssh_port or '∅'} tcp={'OK' if tcp_ok else 'NO' if tcp_ok is False else '∅'}"
         )
+
+        now = time.time()
         if preview != last_preview:
-            logger.debug("[EVAL] SSH wait: %s (remaining %ds)", preview, remaining)
+            logger.info("[EVAL] SSH wait: %s (elapsed %ds/%ds)", preview, elapsed, timeout_sec)
             last_preview = preview
+            last_info_ts = now
+        elif now - last_info_ts >= _INFO_INTERVAL_SEC:
+            logger.info("[EVAL] SSH wait: %s (elapsed %ds/%ds)", preview, elapsed, timeout_sec)
+            last_info_ts = now
 
         time.sleep(_POLL_INTERVAL_SEC)
 

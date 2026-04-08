@@ -304,16 +304,24 @@ class EvaluationRunner:
         return samples
 
     # Keys extracted explicitly — everything else goes into metadata.
-    _RESERVED_FIELDS: frozenset[str] = frozenset({"question", "expected_answer", "answer", "context", "messages"})
+    _RESERVED_FIELDS: frozenset[str] = frozenset({
+        "question", "prompt", "expected_answer", "answer",
+        "completion", "reference_answer", "context", "messages",
+    })
+
+    # Alias mapping: dataset field → canonical eval field.
+    _QUESTION_ALIASES: tuple[str, ...] = ("question", "prompt")
+    _ANSWER_ALIASES: tuple[str, ...] = ("expected_answer", "answer", "completion", "reference_answer")
 
     @staticmethod
     def _extract_row_fields(row: dict[str, Any]) -> tuple[str, str | None, dict[str, Any]]:
         """
         Extract (question, expected_answer, metadata) from a dataset row.
 
-        Supports two formats:
+        Supports three formats:
         1. Flat: {"question": "...", "expected_answer": "...", <extra fields>}
-        2. Messages: {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
+        2. Prompt-completion: {"prompt": "...", "completion": "...", <extra fields>}
+        3. Messages: {"messages": [{"role": "user", ...}, {"role": "assistant", ...}]}
 
         All keys not in _RESERVED_FIELDS are collected into the metadata dict
         and passed through to plugins via EvalSample.metadata.
@@ -321,11 +329,17 @@ class EvaluationRunner:
         question: str = ""
         expected_answer: str | None = None
 
-        if "question" in row:
-            question = str(row.get("question") or "")
-            expected_answer = row.get("expected_answer") or row.get("answer") or None
-            if expected_answer is not None:
-                expected_answer = str(expected_answer)
+        for alias in EvaluationRunner._QUESTION_ALIASES:
+            if alias in row:
+                question = str(row.get(alias) or "")
+                break
+
+        if question:
+            for alias in EvaluationRunner._ANSWER_ALIASES:
+                val = row.get(alias)
+                if val is not None:
+                    expected_answer = str(val)
+                    break
 
         elif "messages" in row:
             messages = row.get("messages") or []
