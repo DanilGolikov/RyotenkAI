@@ -4,10 +4,12 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from src.training.reward_plugins.discovery import ensure_reward_plugins_discovered
 from src.training.reward_plugins.registry import RewardPluginRegistry
+from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
+    from src.training.reward_plugins.base import RewardPlugin
     from src.utils.config import PipelineConfig, StrategyPhaseConfig
 
 
@@ -16,6 +18,7 @@ class RewardPluginResult(NamedTuple):
 
     config_kwargs: dict[str, Any]
     trainer_kwargs: dict[str, Any]
+    plugin: RewardPlugin | None = None
 
 
 def build_reward_plugin_result(
@@ -24,7 +27,10 @@ def build_reward_plugin_result(
     phase_config: StrategyPhaseConfig,
     pipeline_config: PipelineConfig,
 ) -> RewardPluginResult:
-    """Instantiate the reward plugin and return config-level and trainer-level kwargs separately.
+    """Instantiate the reward plugin, run its setup, and return kwargs.
+
+    Lifecycle: create → setup() → build_config_kwargs / build_trainer_kwargs.
+    The caller is responsible for calling ``plugin.teardown()`` after training.
 
     config_kwargs  → merged into the TRL *Config constructor (e.g. reward_weights).
     trainer_kwargs → merged into the TRL Trainer constructor (e.g. reward_funcs).
@@ -42,6 +48,11 @@ def build_reward_plugin_result(
     ensure_reward_plugins_discovered()
 
     plugin = RewardPluginRegistry.create(plugin_name, reward_params)
+
+    logger.info("[REWARD_PLUGIN] Running setup for %r ...", plugin_name)
+    plugin.setup()
+    logger.info("[REWARD_PLUGIN] Setup complete for %r", plugin_name)
+
     return RewardPluginResult(
         config_kwargs=plugin.build_config_kwargs(
             train_dataset=train_dataset,
@@ -53,6 +64,7 @@ def build_reward_plugin_result(
             phase_config=phase_config,
             pipeline_config=pipeline_config,
         ),
+        plugin=plugin,
     )
 
 

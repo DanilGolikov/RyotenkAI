@@ -394,3 +394,77 @@ class TestCoerceColumn:
     def test_zero_size_returns_empty_list(self) -> None:
         result = _coerce_column({}, "key", 0)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# setup() lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestSetupLifecycle:
+    def test_setup_skipped_for_semantic_only_backend(self) -> None:
+        plugin = _make_plugin({"validation_backend": "semantic_only"})
+        plugin.setup()  # should be no-op, no exception
+
+    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
+    def test_setup_skipped_when_helix_already_on_path(self, _mock: Any) -> None:
+        plugin = _make_plugin({"validation_backend": "compile"})
+        plugin.setup()  # should skip install
+
+    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
+    def test_setup_idempotent(self, _mock: Any) -> None:
+        plugin = _make_plugin({"validation_backend": "compile"})
+        plugin.setup()
+        plugin.setup()  # second call is safe
+
+    def test_teardown_noop_by_default(self) -> None:
+        plugin = _make_plugin()
+        plugin.teardown()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# build_reward_plugin_result calls setup()
+# ---------------------------------------------------------------------------
+
+
+class TestFactoryCallsSetup:
+    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
+    def test_build_reward_plugin_result_calls_setup(self, _mock: Any) -> None:
+        from src.training.reward_plugins.factory import build_reward_plugin_result
+
+        phase_config = MagicMock()
+        phase_config.params = {
+            "reward_plugin": "helixql_compiler_semantic",
+            "reward_params": {"validation_backend": "semantic_only"},
+        }
+        phase_config.strategy_type = "grpo"
+
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+
+        result = build_reward_plugin_result(
+            train_dataset=ds,
+            phase_config=phase_config,
+            pipeline_config=MagicMock(),
+        )
+        assert result.plugin is not None
+        assert result.plugin.name == "helixql_compiler_semantic"
+
+    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
+    def test_result_plugin_has_teardown(self, _mock: Any) -> None:
+        from src.training.reward_plugins.factory import build_reward_plugin_result
+
+        phase_config = MagicMock()
+        phase_config.params = {
+            "reward_plugin": "helixql_compiler_semantic",
+            "reward_params": {"validation_backend": "semantic_only"},
+        }
+        phase_config.strategy_type = "grpo"
+
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+
+        result = build_reward_plugin_result(
+            train_dataset=ds,
+            phase_config=phase_config,
+            pipeline_config=MagicMock(),
+        )
+        result.plugin.teardown()  # should not raise

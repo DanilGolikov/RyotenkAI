@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import os
+import platform
+import shutil
+import stat
+import subprocess
 from difflib import SequenceMatcher
-import re
+from pathlib import Path
 from typing import Any
+from urllib.request import urlopen, Request
+import re
 
 from src.training.reward_plugins.base import RewardPlugin
 from src.training.reward_plugins.registry import RewardPluginRegistry
 from src.utils.domains.helixql import extract_query_text, extract_schema_block, semantic_match_details
 from src.utils.domains.helixql_cli import HelixCompiler
+from src.utils.logger import logger
 
 _DEFAULT_TIMEOUT_SECONDS = 10
 _BACKEND_COMPILE = "compile"
@@ -15,6 +23,69 @@ _BACKEND_SEMANTIC_ONLY = "semantic_only"
 _SUPPORTED_BACKENDS = frozenset({_BACKEND_COMPILE, _BACKEND_SEMANTIC_ONLY})
 _QUERY_PREFIX_RE = re.compile(r"^\s*QUERY\b", flags=re.IGNORECASE)
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+_HELIX_GITHUB_REPO = "HelixDB/helix-db"
+_HELIX_INSTALL_DIR = Path("/usr/local/bin")
+_HELIX_FALLBACK_DIR = Path.home() / ".local" / "bin"
+
+
+def _resolve_helix_asset_name() -> str:
+    """Map current platform to the GitHub release asset name."""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "linux":
+        if machine in ("x86_64", "amd64"):
+            return "helix-x86_64-unknown-linux-gnu"
+        if machine in ("aarch64", "arm64"):
+            return "helix-aarch64-unknown-linux-gnu"
+    elif system == "darwin":
+        if machine in ("x86_64", "amd64"):
+            return "helix-x86_64-apple-darwin"
+        if machine in ("aarch64", "arm64"):
+            return "helix-aarch64-apple-darwin"
+
+    raise RuntimeError(f"No pre-built helix binary for {system}/{machine}")
+
+
+def _install_helix_cli(*, version: str = "latest") -> Path:
+    """Download helix CLI from GitHub releases and install it.
+
+    Returns the path to the installed binary.
+    """
+    asset_name = _resolve_helix_asset_name()
+
+    if version == "latest":
+        download_url = (
+            f"https://github.com/{_HELIX_GITHUB_REPO}/releases/latest/download/{asset_name}"
+        )
+    else:
+        download_url = (
+            f"https://github.com/{_HELIX_GITHUB_REPO}/releases/download/{version}/{asset_name}"
+        )
+
+    install_dir = _HELIX_INSTALL_DIR if os.access(_HELIX_INSTALL_DIR, os.W_OK) else _HELIX_FALLBACK_DIR
+    install_dir.mkdir(parents=True, exist_ok=True)
+    target = install_dir / "helix"
+
+    logger.info("[HELIX_SETUP] Downloading %s → %s", download_url, target)
+    req = Request(download_url, headers={"User-Agent": "RyotenkAI-RewardPlugin/1.0"})
+    with urlopen(req, timeout=120) as resp:  # noqa: S310
+        data = resp.read()
+
+    target.write_bytes(data)
+    target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    try:
+        result = subprocess.run(
+            [str(target), "--version"], capture_output=True, text=True, timeout=10
+        )
+        ver = result.stdout.strip() or result.stderr.strip()
+        logger.info("[HELIX_SETUP] Installed: %s", ver)
+    except Exception as exc:
+        logger.warning("[HELIX_SETUP] Installed binary but version check failed: %s", exc)
+
+    return target
 
 
 @RewardPluginRegistry.register
@@ -32,6 +103,32 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
         if backend not in _SUPPORTED_BACKENDS:
             raise ValueError(
                 f"Unsupported validation_backend={backend!r}. Expected one of {sorted(_SUPPORTED_BACKENDS)}"
+            )
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def setup(self) -> None:
+        if self._backend() != _BACKEND_COMPILE:
+            return
+
+        if shutil.which("helix") is not None:
+            logger.info("[HELIX_SETUP] helix CLI already on PATH — skipping install")
+            return
+
+        logger.info("[HELIX_SETUP] helix CLI not found — installing from GitHub releases ...")
+        installed_path = _install_helix_cli()
+
+        if shutil.which("helix") is None:
+            bin_dir = str(installed_path.parent)
+            os.environ["PATH"] = f"{bin_dir}:{os.environ.get('PATH', '')}"
+            logger.info("[HELIX_SETUP] Added %s to PATH", bin_dir)
+
+        if shutil.which("helix") is None:
+            raise RuntimeError(
+                f"helix CLI installed to {installed_path} but still not found on PATH. "
+                "Check permissions and PATH configuration."
             )
 
     def _backend(self) -> str:

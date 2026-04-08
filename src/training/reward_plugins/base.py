@@ -16,6 +16,9 @@ class RewardPlugin(BasePlugin, ABC):
     Generic reward plugin contract for GRPO/SAPO-like trainers.
 
     name / priority / version — inherited from BasePlugin.
+
+    Lifecycle:
+        __init__(params) → setup() → build_config_kwargs / build_trainer_kwargs → [training] → teardown()
     """
 
     def __init__(self, params: dict[str, Any]):
@@ -24,6 +27,22 @@ class RewardPlugin(BasePlugin, ABC):
 
     def _validate_params(self) -> None:
         return None
+
+    def setup(self) -> None:
+        """Prepare the runtime environment before training starts.
+
+        Called once after instantiation, before ``build_config_kwargs`` /
+        ``build_trainer_kwargs``.  Override to install external tools,
+        warm up caches, etc.  Must be **idempotent** — safe to call
+        multiple times.
+        """
+
+    def teardown(self) -> None:
+        """Clean up after training completes (success or failure).
+
+        Called once in a ``finally`` block after the training loop.
+        Override for resource cleanup (temp dirs, background processes).
+        """
 
     def build_config_kwargs(
         self,

@@ -193,6 +193,7 @@ class PhaseTrainingRunner:
             return self.handle_error(buffer, phase_idx, "Unexpected", e)
 
         finally:
+            self._teardown_reward_plugin()
             self._current_trainer = None
             self._current_output_dir = None
 
@@ -204,6 +205,16 @@ class PhaseTrainingRunner:
         if self.shutdown_handler is not None:
             return self.shutdown_handler.should_stop()
         return False
+
+    def _teardown_reward_plugin(self) -> None:
+        plugin = getattr(self.trainer_factory, "reward_plugin", None)
+        if plugin is None:
+            return
+        try:
+            logger.debug("[PE:TEARDOWN] Running reward plugin teardown ...")
+            plugin.teardown()
+        except Exception:
+            logger.warning("[PE:TEARDOWN] Reward plugin teardown failed (non-fatal)", exc_info=True)
 
     def _create_trainer(
         self,

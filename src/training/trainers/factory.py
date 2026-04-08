@@ -78,6 +78,12 @@ class TrainerFactory:
     def __init__(self) -> None:
         """Initialize TrainerFactory."""
         logger.debug("[TF:INIT] TrainerFactory initialized (Generic)")
+        self._reward_plugin: Any | None = None
+
+    @property
+    def reward_plugin(self) -> Any | None:
+        """Last reward plugin created during :meth:`create`. Available for teardown."""
+        return self._reward_plugin
 
     def create(
         self,
@@ -157,6 +163,7 @@ class TrainerFactory:
         # reward_weights (and any future config-level plugin params) must reach the
         # config constructor directly — not via setattr after the fact.
         reward_result = None
+        self._reward_plugin = None
         if strategy.requires_reward_plugin:
             if phase_config is None:
                 raise ValueError(
@@ -167,6 +174,7 @@ class TrainerFactory:
                 phase_config=phase_config,
                 pipeline_config=config,
             )
+            self._reward_plugin = reward_result.plugin
             config_kwargs.update(reward_result.config_kwargs)
 
         # Enable evaluation only when eval_dataset is provided
