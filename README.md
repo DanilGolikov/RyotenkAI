@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo_final.png" alt="RyotenkAI" width="400">
+  <img src="docs/logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
