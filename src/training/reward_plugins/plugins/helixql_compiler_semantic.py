@@ -291,10 +291,25 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
                 scores.append(1.0 if result.ok else -1.0)
             return scores
 
+        _debug_logged = [False]
+
         def semantic_reward(completions: Any, **kwargs: Any) -> list[float]:
             outputs = [extract_query_text(item) for item in completions]
             prompts = _coerce_column(kwargs, "prompt", len(outputs))
             references = _coerce_column(kwargs, "reference_answer", len(outputs))
+
+            if not _debug_logged[0]:
+                _debug_logged[0] = True
+                logger.info(
+                    "[REWARD_DEBUG] kwargs_keys=%s completions_type=%s n_outputs=%d "
+                    "ref_sample=%r out_sample=%r prompt_sample=%r",
+                    sorted(kwargs.keys()),
+                    type(completions).__name__,
+                    len(outputs),
+                    references[0][:100] if references else "EMPTY",
+                    outputs[0][:100] if outputs else "EMPTY",
+                    prompts[0][:100] if prompts else "EMPTY",
+                )
 
             scores: list[float] = []
             for idx, output in enumerate(outputs):
