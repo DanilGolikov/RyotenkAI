@@ -275,7 +275,7 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
 
         def compiler_reward(completions: Any, **kwargs: Any) -> list[float]:
             outputs = [extract_query_text(item) for item in completions]
-            prompts = _coerce_column(kwargs, "prompt", len(outputs))
+            prompts = _coerce_column(kwargs, "prompts", len(outputs)) or _coerce_column(kwargs, "prompt", len(outputs))
             schemas = _coerce_column(kwargs, "schema_context", len(outputs))
 
             scores: list[float] = []
@@ -295,19 +295,22 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
 
         def semantic_reward(completions: Any, **kwargs: Any) -> list[float]:
             outputs = [extract_query_text(item) for item in completions]
-            prompts = _coerce_column(kwargs, "prompt", len(outputs))
+            prompts = _coerce_column(kwargs, "prompts", len(outputs)) or _coerce_column(kwargs, "prompt", len(outputs))
             references = _coerce_column(kwargs, "reference_answer", len(outputs))
 
             if not _debug_logged[0]:
                 _debug_logged[0] = True
+                raw_comp_0 = completions[0] if completions else "NO_COMPLETIONS"
                 logger.info(
-                    "[REWARD_DEBUG] kwargs_keys=%s completions_type=%s n_outputs=%d "
-                    "ref_sample=%r out_sample=%r prompt_sample=%r",
+                    "[REWARD_DEBUG] kwargs_keys=%s comp_type=%s comp_item_type=%s n=%d "
+                    "raw_comp_0=%r out_0=%r ref_0=%r prompt_0=%r",
                     sorted(kwargs.keys()),
                     type(completions).__name__,
+                    type(raw_comp_0).__name__,
                     len(outputs),
-                    references[0][:100] if references else "EMPTY",
+                    repr(raw_comp_0)[:200],
                     outputs[0][:100] if outputs else "EMPTY",
+                    references[0][:100] if references else "EMPTY",
                     prompts[0][:100] if prompts else "EMPTY",
                 )
 

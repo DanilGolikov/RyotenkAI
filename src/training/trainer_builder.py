@@ -390,6 +390,26 @@ def create_trainer(
         extra_config_kwargs=reward_result.config_kwargs if reward_result is not None else None,
     )
 
+    # Convert string prompts to conversational format so TRL applies chat template.
+    # Without this, models fine-tuned with chat template (e.g. Qwen2.5) generate EOS
+    # immediately because the raw text prompt lacks the expected template tokens.
+    if (
+        strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO)
+        and "prompt" in train_dataset.column_names
+        and isinstance(train_dataset[0]["prompt"], str)
+        and getattr(tokenizer, "chat_template", None)
+    ):
+        train_dataset = train_dataset.map(
+            lambda x: {"prompt": [{"role": "user", "content": x["prompt"]}]},
+            desc="Converting prompts to conversational format",
+        )
+        if eval_dataset is not None and "prompt" in eval_dataset.column_names:
+            eval_dataset = eval_dataset.map(
+                lambda x: {"prompt": [{"role": "user", "content": x["prompt"]}]},
+                desc="Converting eval prompts to conversational format",
+            )
+        logger.info("[TRAINER:%s] Converted string prompts to conversational format for chat template", strategy_type.upper())
+
     trainer_kwargs: dict[str, Any] = {
         "model": model,
         "args": training_args,
