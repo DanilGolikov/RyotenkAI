@@ -30,6 +30,7 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from src.providers.runpod.inference.pods.constants import POD_MERGE_SCRIPT
+from src.providers.runpod.models import PodSnapshot
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
@@ -57,9 +58,6 @@ _SSH_SHORT_TIMEOUT_SEC = 30
 
 # SSH exec timeout for merge
 _SSH_MERGE_TIMEOUT_SEC = _MERGE_TIMEOUT_SEC
-
-# SSH port inside pod containers
-_SSH_CONTAINER_PORT = 22  # noqa: WPS432
 
 # Truncation limits for error messages in logs
 _STDERR_SNIPPET_LEN = 500  # noqa: WPS432
@@ -358,6 +356,9 @@ def _wait_for_ssh(
     """
     Poll RunPod API until pod is RUNNING with a public IP + SSH port mapping
     and the SSH port is accepting TCP connections.
+
+    Uses ``PodSnapshot.from_graphql`` to parse the SDK response — the same
+    parsing logic that the training side relies on (``runtime.ports``).
     """
     deadline = time.time() + timeout_sec
     last_preview = ""
@@ -370,21 +371,22 @@ def _wait_for_ssh(
             time.sleep(_POLL_INTERVAL_SEC)
             continue
 
-        pod = get_res.unwrap()
-        status = str(pod.get("desiredStatus") or "")
-        public_ip = str(pod.get("publicIp") or "").strip()
-        ssh_port: int | None = _parse_ssh_port(pod.get("portMappings") or {})
+        snapshot = PodSnapshot.from_graphql(get_res.unwrap())
+        status = snapshot.status or ""
+        ssh_ep = snapshot.ssh_endpoint
+        public_ip = ssh_ep.host if ssh_ep else ""
+        ssh_port = ssh_ep.port if ssh_ep else 0
 
         tcp_ok: bool | None = None
-        if status == "RUNNING" and public_ip and ssh_port:
+        if status == "RUNNING" and ssh_ep:
             try:
-                with socket.create_connection((public_ip, int(ssh_port)), timeout=3):
+                with socket.create_connection((public_ip, ssh_port), timeout=3):
                     tcp_ok = True
             except Exception:
                 tcp_ok = False
 
             if tcp_ok:
-                return Ok((public_ip, int(ssh_port)))
+                return Ok((public_ip, ssh_port))
 
         remaining = int(max(0, deadline - time.time()))
         elapsed = int(timeout_sec - remaining)
@@ -410,35 +412,6 @@ def _wait_for_ssh(
             code="POD_SSH_READY_TIMEOUT",
         )
     )
-
-
-def _parse_ssh_port(mappings: Any) -> int | None:
-    """Extract host SSH port from RunPod portMappings (dict or list shape)."""
-    if isinstance(mappings, dict):
-        for key in ("22", 22, "22/tcp", "tcp/22"):
-            if key not in mappings:
-                continue
-            v = mappings[key]
-            if isinstance(v, dict):
-                v = v.get("hostPort") or v.get("publicPort") or v.get("port")
-            try:
-                return int(v)  # type: ignore[arg-type]
-            except Exception:
-                continue
-    elif isinstance(mappings, list):
-        for item in mappings:
-            if not isinstance(item, dict):
-                continue
-            cport = item.get("containerPort") or item.get("internalPort") or item.get("port")
-            hport = item.get("hostPort") or item.get("externalPort") or item.get("publicPort")
-            if cport is None or hport is None:
-                continue
-            try:
-                if int(cport) == _SSH_CONTAINER_PORT:
-                    return int(hport)
-            except Exception:
-                continue
-    return None
 
 
 def _open_tunnel(
