@@ -294,7 +294,6 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
         def semantic_reward(completions: Any, **kwargs: Any) -> list[float]:
             outputs = [extract_query_text(item) for item in completions]
             prompts = _coerce_column(kwargs, "prompt", len(outputs))
-            schemas = _coerce_column(kwargs, "schema_context", len(outputs))
             references = _coerce_column(kwargs, "reference_answer", len(outputs))
 
             scores: list[float] = []
@@ -302,18 +301,6 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
                 if not output.strip():
                     scores.append(0.0)
                     continue
-                if backend == _BACKEND_COMPILE:
-                    schema_text = schemas[idx] or extract_schema_block(prompts[idx])
-                    if not schema_text.strip():
-                        scores.append(0.0)
-                        continue
-                    if compiler is None:
-                        scores.append(0.0)
-                        continue
-                    result = compiler.validate(schema=schema_text, query=output)
-                    if not result.ok:
-                        scores.append(0.0)
-                        continue
                 if backend == _BACKEND_SEMANTIC_ONLY:
                     scores.append(
                         self._semantic_only_score(output=output, reference=references[idx], prompt=prompts[idx])
