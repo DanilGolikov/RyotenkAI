@@ -92,6 +92,16 @@ def _install_helix_via_cargo() -> Path:
     if not cargo_bin:
         raise RuntimeError("cargo not found on PATH after rustup install")
 
+    # Install build dependencies required by helix-cli (OpenSSL, pkg-config)
+    if shutil.which("apt-get"):
+        logger.info("[HELIX_SETUP] Installing build dependencies (pkg-config, libssl-dev) ...")
+        deps_proc = subprocess.run(
+            ["sh", "-c", "apt-get update -qq && apt-get install -y -qq pkg-config libssl-dev"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if deps_proc.returncode != 0:
+            logger.warning("[HELIX_SETUP] apt-get deps install failed (non-fatal): %s", deps_proc.stderr.strip()[-300:])
+
     logger.info("[HELIX_SETUP] Building helix-cli from source (this may take several minutes) ...")
     build_proc = subprocess.run(
         [cargo_bin, "install", "--git", f"https://github.com/{_HELIX_GITHUB_REPO}", "helix-cli"],
