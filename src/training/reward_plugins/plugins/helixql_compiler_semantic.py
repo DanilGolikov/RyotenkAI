@@ -163,6 +163,8 @@ def _install_helix_cli(*, version: str = "latest") -> Path:
         return target
 
     logger.warning("[HELIX_SETUP] Pre-built binary unusable (likely GLIBC mismatch), falling back to cargo build ...")
+    target.unlink(missing_ok=True)
+    logger.info("[HELIX_SETUP] Removed broken pre-built binary at %s", target)
     return _install_helix_via_cargo()
 
 
