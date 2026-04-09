@@ -107,6 +107,11 @@ class RunPodAPIClient:
         if not pod_data or not pod_data.get("id"):
             return Err(ProviderError(message=f"Failed to create pod: {pod_data}", code="RUNPOD_POD_DATA_MISSING"))
 
+        pod_id = str(pod_data["id"])
+        enriched = self._sdk.get_pod(pod_id=pod_id)
+        if enriched.is_ok() and enriched.unwrap():
+            pod_data = enriched.unwrap()
+
         return Ok(self._log_and_build_create_result(pod_data, train_cfg))
 
     @staticmethod
