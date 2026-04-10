@@ -580,10 +580,11 @@ class TestMonitorTraining:
         monitor._log_manager = mock_log_manager_instance
         monitor._workspace_path = "/workspace"
 
-        # Mock methods
+        # Mock methods — SSH is connected but process is genuinely dead
         with patch.object(monitor, "_is_training_alive", return_value=False):
             with patch.object(monitor, "_check_marker", return_value=False):
-                result = monitor._monitor_training(mock_ssh_client, {})
+                with patch.object(monitor, "_ssh_is_connected", return_value=True):
+                    result = monitor._monitor_training(mock_ssh_client, {})
 
         assert result.is_err()
         assert "Training process died without completion marker" in str(result.unwrap_err())
@@ -632,8 +633,8 @@ class TestMonitorTraining:
                     False,  # TRAINING_FAILED
                     True,  # Attempt 1: TRAINING_COMPLETE - FOUND!
                 ]
-
-                result = monitor._monitor_training(mock_ssh_client, context)
+                with patch.object(monitor, "_download_metrics_buffer", return_value=None):
+                    result = monitor._monitor_training(mock_ssh_client, context)
 
         assert result.is_ok()
         data = result.unwrap()
@@ -1335,3 +1336,169 @@ class TestParseMemInfoRam:
 
         # Check log download (if condition on line 285-286)
         mock_log_manager_instance.download_on_error.assert_called_once()
+
+
+# =============================================================================
+# STATIC PARSING & BUFFER DOWNLOAD TESTS
+# =============================================================================
+
+
+class TestStaticParsingAndBufferDownload:
+    """Tests for _parse_cgroup_ram, _parse_meminfo_ram, and _download_metrics_buffer."""
+
+    # ----- _parse_cgroup_ram tests -----
+
+    def test_parse_cgroup_ram_v2_valid(self):
+        cgroup_out = "memory.max=33285996544\nmemory.current=1073741824"
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is not None
+        total_gb, used_gb = result
+        assert abs(total_gb - 33285996544 / (1024**3)) < 0.01
+        assert abs(used_gb - 1073741824 / (1024**3)) < 0.01
+
+    def test_parse_cgroup_ram_v1_valid(self):
+        cgroup_out = "memory.limit_in_bytes=33285996544\nmemory.usage_in_bytes=1073741824"
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is not None
+        total_gb, used_gb = result
+        assert abs(total_gb - 33285996544 / (1024**3)) < 0.01
+        assert abs(used_gb - 1073741824 / (1024**3)) < 0.01
+
+    def test_parse_cgroup_ram_v2_preferred_over_v1(self):
+        cgroup_out = (
+            "memory.max=33285996544\n"
+            "memory.current=2147483648\n"
+            "memory.limit_in_bytes=16000000000\n"
+            "memory.usage_in_bytes=500000000\n"
+        )
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is not None
+        total_gb, used_gb = result
+        # Should use v2 values, not v1
+        assert abs(total_gb - 33285996544 / (1024**3)) < 0.01
+        assert abs(used_gb - 2147483648 / (1024**3)) < 0.01
+
+    def test_parse_cgroup_ram_v2_unlimited_falls_to_v1(self):
+        cgroup_out = (
+            "memory.max=max\n"
+            "memory.current=1073741824\n"
+            "memory.limit_in_bytes=33285996544\n"
+            "memory.usage_in_bytes=1073741824\n"
+        )
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is not None
+        total_gb, used_gb = result
+        # Should fall through to v1
+        assert abs(total_gb - 33285996544 / (1024**3)) < 0.01
+
+    def test_parse_cgroup_ram_v2_unlimited_no_v1_returns_none(self):
+        cgroup_out = "memory.max=max\nmemory.current=1073741824"
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is None
+
+    def test_parse_cgroup_ram_v1_unlimited_returns_none(self):
+        # 9223372036854771712 is the typical cgroup v1 "no limit" value (~8 EiB)
+        cgroup_out = (
+            "memory.limit_in_bytes=9223372036854771712\n"
+            "memory.usage_in_bytes=1073741824"
+        )
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is None
+
+    def test_parse_cgroup_ram_empty_string(self):
+        assert TrainingMonitor._parse_cgroup_ram("") is None
+
+    def test_parse_cgroup_ram_garbage_input(self):
+        assert TrainingMonitor._parse_cgroup_ram("foo=bar\nbaz=qux") is None
+
+    def test_parse_cgroup_ram_used_capped_at_total(self):
+        # used > total should be capped
+        cgroup_out = "memory.max=1073741824\nmemory.current=2147483648"
+        result = TrainingMonitor._parse_cgroup_ram(cgroup_out)
+        assert result is not None
+        total_gb, used_gb = result
+        assert used_gb <= total_gb
+
+    # ----- _parse_meminfo_ram tests -----
+
+    def test_parse_meminfo_ram_valid_full(self):
+        meminfo = "MemTotal:       32768000 kB\nMemAvailable:   16384000 kB\n"
+        result = TrainingMonitor._parse_meminfo_ram(meminfo)
+        assert result is not None
+        total_gb, used_gb = result
+        assert abs(total_gb - 32768000 / (1024 * 1024)) < 0.01
+        assert abs(used_gb - (32768000 - 16384000) / (1024 * 1024)) < 0.01
+
+    def test_parse_meminfo_ram_memfree_fallback(self):
+        meminfo = "MemTotal:       32768000 kB\nMemFree:        8192000 kB\n"
+        result = TrainingMonitor._parse_meminfo_ram(meminfo)
+        assert result is not None
+        total_gb, used_gb = result
+        assert abs(used_gb - (32768000 - 8192000) / (1024 * 1024)) < 0.01
+
+    def test_parse_meminfo_ram_missing_memtotal(self):
+        meminfo = "MemAvailable:   16384000 kB\nMemFree:        8192000 kB\n"
+        assert TrainingMonitor._parse_meminfo_ram(meminfo) is None
+
+    def test_parse_meminfo_ram_malformed(self):
+        assert TrainingMonitor._parse_meminfo_ram("totally garbage data\nno colons") is None
+
+    def test_parse_meminfo_ram_empty(self):
+        assert TrainingMonitor._parse_meminfo_ram("") is None
+
+    # ----- _download_metrics_buffer tests -----
+
+    def test_download_metrics_buffer_file_not_on_pod(self, mock_config, mock_callbacks, mock_ssh_client):
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+        with patch.object(monitor, "_check_marker", return_value=False):
+            result = monitor._download_metrics_buffer(mock_ssh_client)
+        assert result is None
+
+    def test_download_metrics_buffer_read_fails(self, mock_config, mock_callbacks, mock_ssh_client):
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+        mock_ssh_client.exec_command.return_value = (False, "", "error")
+        with patch.object(monitor, "_check_marker", return_value=True):
+            result = monitor._download_metrics_buffer(mock_ssh_client)
+        assert result is None
+
+    def test_download_metrics_buffer_read_empty(self, mock_config, mock_callbacks, mock_ssh_client):
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+        mock_ssh_client.exec_command.return_value = (True, "  ", "")
+        with patch.object(monitor, "_check_marker", return_value=True):
+            result = monitor._download_metrics_buffer(mock_ssh_client)
+        assert result is None
+
+    def test_download_metrics_buffer_success(self, mock_config, mock_callbacks, mock_ssh_client, tmp_path):
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+        mock_ssh_client.exec_command.return_value = (True, '{"loss":0.5}\n', "")
+
+        mock_log_mgr = MagicMock()
+        mock_log_mgr.local_path = str(tmp_path / "logs" / "training.log")
+        monitor._log_manager = mock_log_mgr
+
+        with patch.object(monitor, "_check_marker", return_value=True):
+            result = monitor._download_metrics_buffer(mock_ssh_client)
+
+        assert result is not None
+        assert result.endswith("metrics_buffer.jsonl")
+        from pathlib import Path
+        assert Path(result).read_text() == '{"loss":0.5}\n'
+
+    def test_download_metrics_buffer_write_oserror(self, mock_config, mock_callbacks, mock_ssh_client):
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+        mock_ssh_client.exec_command.return_value = (True, '{"loss":0.5}\n', "")
+
+        mock_log_mgr = MagicMock()
+        mock_log_mgr.local_path = "/some/path/training.log"
+        monitor._log_manager = mock_log_mgr
+
+        with patch.object(monitor, "_check_marker", return_value=True):
+            with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+                with patch("pathlib.Path.mkdir"):
+                    result = monitor._download_metrics_buffer(mock_ssh_client)
+        assert result is None

@@ -23,9 +23,6 @@ from src.constants import PROVIDER_RUNPOD
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.artifacts import (
     StageArtifactCollector,
-    ValidationArtifactData,
-    ValidationDatasetData,
-    ValidationPluginData,
 )
 from src.pipeline.artifacts.base import utc_now_iso
 from src.pipeline.constants import (
@@ -68,6 +65,15 @@ from src.pipeline.state import (
     hash_payload,
     update_lineage,
 )
+from src.pipeline.state.transitioner import (
+    finalize_attempt_state,
+    mark_stage_completed,
+    mark_stage_failed,
+    mark_stage_interrupted,
+    mark_stage_running,
+    mark_stage_skipped,
+)
+from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 from src.reports import ExperimentReportGenerator
 from src.training.managers.mlflow_manager import MLflowManager
 from src.config.runtime import RuntimeSettings, load_runtime_settings
@@ -91,9 +97,6 @@ _KEY_UPLOAD_DURATION = "upload_duration_seconds"
 # HTTP status thresholds for health checks
 _HTTP_OK_MIN = 200
 _HTTP_ERROR_MIN = 400
-_VALIDATION_STATUS_FAILED = "failed"
-_VALIDATION_STATUS_PASSED = "passed"
-_VALIDATION_ARTIFACT_REF = "dataset_validator_results.json"
 
 
 class LaunchPreparationError(Exception):
@@ -216,10 +219,6 @@ class PipelineOrchestrator:
             chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
             logger.info(f"Strategy chain checked: {chain_str}")
 
-        # Initialize stages
-        self.stages: list[PipelineStage] = self._init_stages()
-        logger.info(f"Initialized {len(self.stages)} pipeline stages")
-
         # Pipeline context (shared data between stages)
         # Include config_path so deployment knows which config to upload
         self.context: dict[str, Any] = {
@@ -237,12 +236,15 @@ class PipelineOrchestrator:
 
         # Stage artifact collectors — one per stage, keyed by StageNames value
         self._collectors: dict[str, StageArtifactCollector] = self._init_collectors()
-        # Per-path accumulator for DatasetValidator plugin results
-        # key: dataset_path, value: ValidationDatasetData being built
-        self._validation_accumulator: dict[str, ValidationDatasetData] = {}
-        # Validation plugin descriptions captured on start callback.
-        # key: (dataset_path, plugin_id) -> description
-        self._validation_plugin_descriptions: dict[tuple[str, str], str] = {}
+        # Validation artifact accumulation (extracted from orchestrator)
+        self._validation_artifact_mgr = ValidationArtifactManager(
+            collectors=self._collectors,
+            context=self.context,
+        )
+
+        # Initialize stages (after context + collectors, since stages may reference validation mgr)
+        self.stages: list[PipelineStage] = self._init_stages()
+        logger.info(f"Initialized {len(self.stages)} pipeline stages")
 
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""
@@ -253,20 +255,21 @@ class PipelineOrchestrator:
         from src.pipeline.stages.dataset_validator import DatasetValidatorEventCallbacks
 
         # Create callbacks for DatasetValidator (MLflow integration)
+        vam = self._validation_artifact_mgr
         validator_callbacks = DatasetValidatorEventCallbacks(
-            on_dataset_scheduled=self._on_dataset_scheduled,
-            on_dataset_loaded=self._on_dataset_loaded,
-            on_validation_completed=self._on_validation_completed,
-            on_validation_failed=self._on_validation_failed,
-            on_plugin_start=self._on_plugin_start,
-            on_plugin_complete=self._on_plugin_complete,
-            on_plugin_failed=self._on_plugin_failed,
+            on_dataset_scheduled=vam.on_dataset_scheduled,
+            on_dataset_loaded=vam.on_dataset_loaded,
+            on_validation_completed=vam.on_validation_completed,
+            on_validation_failed=vam.on_validation_failed,
+            on_plugin_start=vam.on_plugin_start,
+            on_plugin_complete=vam.on_plugin_complete,
+            on_plugin_failed=vam.on_plugin_failed,
         )
 
         stages: list[PipelineStage] = [
             DatasetValidator(self.config, secrets=self.secrets, callbacks=validator_callbacks),
             GPUDeployer(self.config, self.secrets),  # Universal provider-based deployer
-            TrainingMonitor(self.config),
+            TrainingMonitor(self.config, secrets=self.secrets),
             ModelRetriever(self.config, self.secrets),
             InferenceDeployer(self.config, self.secrets),
             ModelEvaluator(self.config, self.secrets),
@@ -531,7 +534,7 @@ class PipelineOrchestrator:
                         self._mlflow_manager.log_stage_failed(stage_name=stage_name, stage_idx=i, error=str(stage_err))
                     if collector and not collector.is_flushed:
                         if stage_name == StageNames.DATASET_VALIDATOR:
-                            self._flush_validation_artifact(
+                            self._validation_artifact_mgr.flush_validation_artifact(
                                 started_at=current_stage_started_at,
                                 duration_seconds=stage_duration,
                             )
@@ -548,7 +551,7 @@ class PipelineOrchestrator:
                         error=str(stage_err),
                         failure_kind=getattr(stage_err, "code", "STAGE_FAILED"),
                         outputs=(
-                            self._build_dataset_validation_state_outputs(error=str(stage_err))
+                            self._validation_artifact_mgr.build_dataset_validation_state_outputs(error=str(stage_err))
                             if stage_name == StageNames.DATASET_VALIDATOR
                             else None
                         ),
@@ -585,7 +588,7 @@ class PipelineOrchestrator:
 
                 if collector and not collector.is_flushed:
                     if stage_name == StageNames.DATASET_VALIDATOR:
-                        self._flush_validation_artifact(
+                        self._validation_artifact_mgr.flush_validation_artifact(
                             started_at=current_stage_started_at,
                             duration_seconds=stage_duration,
                         )
@@ -1064,7 +1067,7 @@ class PipelineOrchestrator:
         if not isinstance(stage_ctx, dict):
             return {}
         if stage_name == StageNames.DATASET_VALIDATOR:
-            return self._build_dataset_validation_state_outputs(stage_ctx=stage_ctx)
+            return self._validation_artifact_mgr.build_dataset_validation_state_outputs(stage_ctx=stage_ctx)
         if stage_name == StageNames.GPU_DEPLOYER:
             keys: tuple[str, ...] = (
                 "resource_id",
@@ -1118,98 +1121,13 @@ class PipelineOrchestrator:
             return str(stage_ctx.get("reason", "evaluation_skipped"))
         return None
 
-    def _mark_stage_running(self, *, attempt: PipelineAttemptState, stage_name: str, started_at: str) -> None:
-        attempt.stage_runs[stage_name] = StageRunState(
-            stage_name=stage_name,
-            status=StageRunState.STATUS_RUNNING,
-            execution_mode=StageRunState.MODE_EXECUTED,
-            started_at=started_at,
-        )
-
-    def _mark_stage_completed(
-        self,
-        *,
-        attempt: PipelineAttemptState,
-        stage_name: str,
-        outputs: dict[str, Any],
-    ) -> None:
-        stage_state = attempt.stage_runs.get(stage_name) or StageRunState(stage_name=stage_name)
-        stage_state.status = StageRunState.STATUS_COMPLETED
-        stage_state.execution_mode = StageRunState.MODE_EXECUTED
-        stage_state.outputs = dict(outputs)
-        stage_state.completed_at = utc_now_iso()
-        stage_state.error = None
-        stage_state.failure_kind = None
-        stage_state.skip_reason = None
-        attempt.stage_runs[stage_name] = stage_state
-
-    def _mark_stage_failed(
-        self,
-        *,
-        attempt: PipelineAttemptState,
-        stage_name: str,
-        error: str,
-        failure_kind: str,
-        outputs: dict[str, Any] | None = None,
-    ) -> None:
-        stage_state = attempt.stage_runs.get(stage_name) or StageRunState(stage_name=stage_name)
-        stage_state.status = StageRunState.STATUS_FAILED
-        stage_state.execution_mode = StageRunState.MODE_EXECUTED
-        stage_state.outputs = dict(outputs or {})
-        stage_state.error = error
-        stage_state.failure_kind = failure_kind
-        stage_state.completed_at = utc_now_iso()
-        attempt.stage_runs[stage_name] = stage_state
-        attempt.status = StageRunState.STATUS_FAILED
-        attempt.completed_at = utc_now_iso()
-        attempt.error = error
-
-    def _mark_stage_skipped(
-        self,
-        *,
-        attempt: PipelineAttemptState,
-        stage_name: str,
-        reason: str,
-        outputs: dict[str, Any] | None = None,
-    ) -> None:
-        attempt.stage_runs[stage_name] = StageRunState(
-            stage_name=stage_name,
-            status=StageRunState.STATUS_SKIPPED,
-            execution_mode=StageRunState.MODE_SKIPPED,
-            outputs=dict(outputs or {}),
-            skip_reason=reason,
-            started_at=utc_now_iso(),
-            completed_at=utc_now_iso(),
-        )
-
-    def _mark_stage_interrupted(
-        self,
-        *,
-        attempt: PipelineAttemptState,
-        stage_name: str,
-        started_at: str,
-    ) -> None:
-        attempt.stage_runs[stage_name] = StageRunState(
-            stage_name=stage_name,
-            status=StageRunState.STATUS_INTERRUPTED,
-            execution_mode=StageRunState.MODE_EXECUTED,
-            started_at=started_at,
-            completed_at=utc_now_iso(),
-        )
-
-    def _finalize_attempt_state(
-        self,
-        *,
-        state: PipelineState,
-        attempt: PipelineAttemptState,
-        status: str,
-        completed_at: str | None = None,
-    ) -> None:
-        attempt.status = status
-        attempt.completed_at = completed_at or attempt.completed_at or utc_now_iso()
-        state.pipeline_status = status
-        if state.active_attempt_id == attempt.attempt_id:
-            state.active_attempt_id = None
+    # Stage state transitions — delegated to src.pipeline.state.transitioner
+    _mark_stage_running = staticmethod(mark_stage_running)  # type: ignore[assignment]
+    _mark_stage_completed = staticmethod(mark_stage_completed)  # type: ignore[assignment]
+    _mark_stage_failed = staticmethod(mark_stage_failed)  # type: ignore[assignment]
+    _mark_stage_skipped = staticmethod(mark_stage_skipped)  # type: ignore[assignment]
+    _mark_stage_interrupted = staticmethod(mark_stage_interrupted)  # type: ignore[assignment]
+    _finalize_attempt_state = staticmethod(finalize_attempt_state)  # type: ignore[assignment]
 
     def _save_state(self) -> None:
         if self._state_store is None or self._pipeline_state is None:
@@ -2069,190 +1987,6 @@ class PipelineOrchestrator:
 
         except Exception as e:
             logger.warning(f"[REPORT] Failed to generate report: {e}")
-
-    # =========================================================================
-    # DATASET VALIDATOR CALLBACKS (NEW: Plugin System)
-    # =========================================================================
-
-    def _on_dataset_scheduled(self, dataset_name: str, dataset_path: str, _validation_mode: str) -> None:
-        """Callback: dataset scheduled for validation — initialize accumulator entry."""
-        acc: ValidationDatasetData = {
-            "name": dataset_name,  # noqa: WPS226
-            "path": dataset_path,
-            "sample_count": None,
-            "status": "scheduled",  # noqa: WPS226
-            "critical_failures": 0,
-            "plugins": [],
-        }
-        self._validation_accumulator[dataset_path] = acc
-
-    def _on_dataset_loaded(
-        self, _dataset_name: str, dataset_path: str, sample_count: int, critical_failures: int
-    ) -> None:
-        """Callback: dataset loaded — update accumulator with sample count."""
-        entry = self._validation_accumulator.get(dataset_path)
-        if entry:
-            entry["sample_count"] = sample_count
-            entry["critical_failures"] = critical_failures
-
-    def _on_validation_completed(
-        self, _dataset_name: str, dataset_path: str, _metrics: dict, _warnings: list[str]
-    ) -> None:
-        """Callback: validation completed successfully — mark dataset as passed."""
-        entry = self._validation_accumulator.get(dataset_path)
-        if entry:
-            entry["status"] = _STATUS_PASSED
-
-    def _on_validation_failed(self, _dataset_name: str, dataset_path: str, _errors: list[str]) -> None:
-        """Callback: validation failed — mark dataset as failed."""
-        entry = self._validation_accumulator.get(dataset_path)
-        if entry:
-            entry["status"] = _STATUS_FAILED
-
-    def _on_plugin_start(
-        self,
-        _dataset_name: str,
-        dataset_path: str,
-        plugin_id: str,
-        _plugin_name: str,
-        description: str,
-    ) -> None:
-        """Callback: validation plugin started — cache plugin description for artifact writing."""
-        self._validation_plugin_descriptions[(dataset_path, plugin_id)] = description
-
-    def _on_plugin_complete(
-        self,
-        _dataset_name: str,
-        dataset_path: str,
-        plugin_id: str,
-        plugin_name: str,
-        params: dict,
-        thresholds: dict,
-        metrics: dict,
-        duration_ms: float,
-    ) -> None:
-        """Callback: validation plugin completed — append to accumulator."""
-        description = self._validation_plugin_descriptions.pop((dataset_path, plugin_id), "")
-        plugin_data: ValidationPluginData = {
-            "id": plugin_id,  # noqa: WPS226
-            "plugin_name": plugin_name,  # noqa: WPS226
-            "passed": True,
-            "duration_ms": duration_ms,
-            "description": description,
-            "metrics": metrics,  # noqa: WPS226
-            "params": params,
-            "thresholds": thresholds,
-            "errors": [],
-            "recommendations": [],
-        }
-        entry = self._validation_accumulator.get(dataset_path)
-        if entry:
-            entry["plugins"].append(plugin_data)
-
-    def _on_plugin_failed(
-        self,
-        _dataset_name: str,
-        dataset_path: str,
-        plugin_id: str,
-        plugin_name: str,
-        params: dict,
-        thresholds: dict,
-        metrics: dict,
-        duration_ms: float,
-        errors: list[str],
-        recommendations: list[str],
-    ) -> None:
-        """Callback: validation plugin failed — append to accumulator."""
-        description = self._validation_plugin_descriptions.pop((dataset_path, plugin_id), "")
-        plugin_data: ValidationPluginData = {
-            "id": plugin_id,  # noqa: WPS226
-            "plugin_name": plugin_name,  # noqa: WPS226
-            "passed": False,
-            "duration_ms": duration_ms,
-            "description": description,
-            "metrics": metrics,  # noqa: WPS226
-            "params": params,
-            "thresholds": thresholds,
-            "errors": errors,
-            "recommendations": recommendations,
-        }
-        entry = self._validation_accumulator.get(dataset_path)
-        if entry:
-            entry["plugins"].append(plugin_data)
-
-    def _flush_validation_artifact(self, started_at: str, duration_seconds: float) -> None:
-        """Write dataset_validator_results.json from accumulated data.
-
-        Called after DatasetValidator stage finishes (success or failure).
-        The orchestrator's main loop calls flush_ok/flush_error AFTER this
-        method has already been called via the validation-completed callback.
-        We piggy-back on the final state to write the artifact.
-        """
-        collector = self._collectors.get(StageNames.DATASET_VALIDATOR)
-        if not collector or collector.is_flushed:
-            return
-
-        datasets: list[ValidationDatasetData] = list(self._validation_accumulator.values())
-        artifact_data: ValidationArtifactData = {"datasets": datasets}
-        collector.put(**artifact_data)
-
-        all_passed = all(d.get("status") in {_STATUS_PASSED, "scheduled"} for d in datasets)  # noqa: WPS226
-        if all_passed:
-            collector.flush_ok(
-                started_at=started_at,
-                duration_seconds=duration_seconds,
-                context=self.context,
-            )
-        else:
-            failed = [d["name"] for d in datasets if d.get("status") == _STATUS_FAILED]  # noqa: WPS226
-            collector.flush_error(
-                error=f"Dataset validation failed: {', '.join(failed)}",
-                started_at=started_at,
-                duration_seconds=duration_seconds,
-                context=self.context,
-            )
-
-    def _build_dataset_validation_state_outputs(
-        self,
-        *,
-        stage_ctx: dict[str, Any] | None = None,
-        error: str | None = None,
-    ) -> dict[str, Any]:
-        datasets = list(self._validation_accumulator.values())
-        failed_datasets = [dataset["name"] for dataset in datasets if dataset.get("status") == _STATUS_FAILED]
-        passed_count = sum(1 for dataset in datasets if dataset.get("status") == _STATUS_PASSED)
-        outputs: dict[str, Any] = {
-            "validation_artifact_ref": _VALIDATION_ARTIFACT_REF,
-        }
-
-        if datasets:
-            outputs.update(
-                {
-                    "datasets_validated": len(datasets),
-                    "datasets_passed": passed_count,
-                    "datasets_failed": len(failed_datasets),
-                }
-            )
-            if failed_datasets:
-                outputs["failed_datasets"] = failed_datasets
-
-        if stage_ctx is not None:
-            validation_status = stage_ctx.get("validation_status")
-            if isinstance(validation_status, str) and validation_status:
-                outputs["validation_status"] = validation_status
-            warnings = stage_ctx.get("warnings")
-            if isinstance(warnings, list):
-                outputs["validation_warning_count"] = len(warnings)
-            message = stage_ctx.get("message")
-            if message:
-                outputs["validation_message"] = str(message)
-        elif error is not None:
-            outputs["validation_status"] = _VALIDATION_STATUS_FAILED
-            outputs["validation_message"] = error
-
-        if "validation_status" not in outputs:
-            outputs["validation_status"] = _VALIDATION_STATUS_FAILED if failed_datasets else _VALIDATION_STATUS_PASSED
-        return outputs
 
     def get_stage_by_name(self, name: str) -> PipelineStage | None:
         """Get a stage by its name."""

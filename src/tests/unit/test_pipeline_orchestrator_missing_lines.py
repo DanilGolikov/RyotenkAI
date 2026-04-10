@@ -490,18 +490,18 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         mlflow_mock = MagicMock()
         orch._mlflow_manager = mlflow_mock
 
-        orch._on_dataset_scheduled("ds", "/tmp/x", "plugin")
+        orch._validation_artifact_mgr.on_dataset_scheduled("ds", "/tmp/x", "plugin")
         # After scheduled — accumulator has entry
-        assert "/tmp/x" in orch._validation_accumulator
-        entry = orch._validation_accumulator["/tmp/x"]
+        assert "/tmp/x" in orch._validation_artifact_mgr._validation_accumulator
+        entry = orch._validation_artifact_mgr._validation_accumulator["/tmp/x"]
         assert entry["name"] == "ds"
         assert entry["status"] == "scheduled"
 
-        orch._on_dataset_loaded("ds", "/tmp/x", 10, 0)
+        orch._validation_artifact_mgr.on_dataset_loaded("ds", "/tmp/x", 10, 0)
         assert entry["sample_count"] == 10
 
-        orch._on_plugin_start("ds", "/tmp/x", "p_main", "p", "desc")  # no-op
-        orch._on_plugin_complete(
+        orch._validation_artifact_mgr.on_plugin_start("ds", "/tmp/x", "p_main", "p", "desc")  # no-op
+        orch._validation_artifact_mgr.on_plugin_complete(
             "ds",
             "/tmp/x",
             "p_main",
@@ -517,11 +517,11 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         assert entry["plugins"][0]["plugin_name"] == "p"
         assert entry["plugins"][0]["description"] == "desc"
 
-        orch._on_validation_completed("ds", "/tmp/x", {"a": 1}, ["w"])
+        orch._validation_artifact_mgr.on_validation_completed("ds", "/tmp/x", {"a": 1}, ["w"])
         assert entry["status"] == "passed"
 
-        orch._on_plugin_start("ds", "/tmp/x", "p_main", "p", "desc failed")
-        orch._on_plugin_failed(
+        orch._validation_artifact_mgr.on_plugin_start("ds", "/tmp/x", "p_main", "p", "desc failed")
+        orch._validation_artifact_mgr.on_plugin_failed(
             "ds", "/tmp/x", "p_main", "p", {"x": 1}, {}, {"m": 2}, 123.4, ["e"], ["r"]
         )
         assert len(entry["plugins"]) == 2
@@ -529,7 +529,7 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         assert entry["plugins"][1]["description"] == "desc failed"
         assert entry["plugins"][1]["duration_ms"] == 123.4
 
-        orch._on_validation_failed("ds", "/tmp/x", ["e"])
+        orch._validation_artifact_mgr.on_validation_failed("ds", "/tmp/x", ["e"])
         assert entry["status"] == "failed"
 
         # MLflow is NOT called by callbacks anymore — all goes to accumulator
@@ -540,11 +540,11 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         orch = _mk_orchestrator(
             config_path=tmp_path / "cfg.yaml", config=_mk_config(), secrets=_mk_secrets(), stages=[]
         )
-        orch._on_dataset_scheduled("ds1", "/tmp/a", "plugin")
-        orch._on_dataset_scheduled("ds2", "/tmp/b", "plugin")
-        assert len(orch._validation_accumulator) == 2
-        assert orch._validation_accumulator["/tmp/a"]["name"] == "ds1"
-        assert orch._validation_accumulator["/tmp/b"]["name"] == "ds2"
+        orch._validation_artifact_mgr.on_dataset_scheduled("ds1", "/tmp/a", "plugin")
+        orch._validation_artifact_mgr.on_dataset_scheduled("ds2", "/tmp/b", "plugin")
+        assert len(orch._validation_artifact_mgr._validation_accumulator) == 2
+        assert orch._validation_artifact_mgr._validation_accumulator["/tmp/a"]["name"] == "ds1"
+        assert orch._validation_artifact_mgr._validation_accumulator["/tmp/b"]["name"] == "ds2"
 
     def test_dataset_validator_on_dataset_loaded_ignores_missing_path(self, tmp_path: Path) -> None:
         """Boundary: _on_dataset_loaded for unknown path does not error."""
@@ -552,7 +552,7 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
             config_path=tmp_path / "cfg.yaml", config=_mk_config(), secrets=_mk_secrets(), stages=[]
         )
         # path not in accumulator — should be a no-op
-        orch._on_dataset_loaded("ds", "/nonexistent", 5, 0)  # must not raise
+        orch._validation_artifact_mgr.on_dataset_loaded("ds", "/nonexistent", 5, 0)  # must not raise
 
     def test_run_pipeline_exit_codes(self) -> None:
         with patch("src.pipeline.orchestrator.PipelineOrchestrator") as MockOrch:
@@ -804,34 +804,34 @@ class TestFlushValidationArtifact:
         """Positive: all datasets passed → collector.flush_ok."""
 
         orch = self._mk(tmp_path)
-        orch._validation_accumulator = {
+        orch._validation_artifact_mgr._validation_accumulator = {
             "/tmp/a": {"name": "ds1", "path": "/tmp/a", "sample_count": 10,
                        "status": "passed", "critical_failures": 0, "plugins": []},
         }
         collector = orch._collectors[StageNames.DATASET_VALIDATOR]
-        orch._flush_validation_artifact(started_at="t", duration_seconds=1.0)
+        orch._validation_artifact_mgr.flush_validation_artifact(started_at="t", duration_seconds=1.0)
         assert collector.is_flushed
         assert collector._is_flushed
 
     def test_any_failed_flushes_error(self, tmp_path: Path) -> None:
         """Positive: at least one dataset failed → collector.flush_error."""
         orch = self._mk(tmp_path)
-        orch._validation_accumulator = {
+        orch._validation_artifact_mgr._validation_accumulator = {
             "/tmp/a": {"name": "ds1", "path": "/tmp/a", "sample_count": 10,
                        "status": "passed", "critical_failures": 0, "plugins": []},
             "/tmp/b": {"name": "ds2", "path": "/tmp/b", "sample_count": 5,
                        "status": "failed", "critical_failures": 1, "plugins": []},
         }
         collector = orch._collectors[StageNames.DATASET_VALIDATOR]
-        orch._flush_validation_artifact(started_at="t", duration_seconds=2.0)
+        orch._validation_artifact_mgr.flush_validation_artifact(started_at="t", duration_seconds=2.0)
         assert collector.is_flushed
 
     def test_empty_accumulator_passes(self, tmp_path: Path) -> None:
         """Boundary: empty accumulator → flush_ok (nothing to check)."""
         orch = self._mk(tmp_path)
-        orch._validation_accumulator = {}
+        orch._validation_artifact_mgr._validation_accumulator = {}
         collector = orch._collectors[StageNames.DATASET_VALIDATOR]
-        orch._flush_validation_artifact(started_at="t", duration_seconds=0.0)
+        orch._validation_artifact_mgr.flush_validation_artifact(started_at="t", duration_seconds=0.0)
         assert collector.is_flushed
 
     def test_already_flushed_collector_is_noop(self, tmp_path: Path) -> None:
@@ -842,18 +842,18 @@ class TestFlushValidationArtifact:
         assert collector.is_flushed
 
         # Call again — should be no-op
-        orch._flush_validation_artifact(started_at="t", duration_seconds=1.0)
+        orch._validation_artifact_mgr.flush_validation_artifact(started_at="t", duration_seconds=1.0)
         assert collector.is_flushed  # still flushed, no error
 
     def test_scheduled_status_treated_as_passed(self, tmp_path: Path) -> None:
         """Boundary: status='scheduled' (not loaded) → treated as passed (not failed)."""
         orch = self._mk(tmp_path)
-        orch._validation_accumulator = {
+        orch._validation_artifact_mgr._validation_accumulator = {
             "/tmp/x": {"name": "ds", "path": "/tmp/x", "sample_count": None,
                        "status": "scheduled", "critical_failures": 0, "plugins": []},
         }
         collector = orch._collectors[StageNames.DATASET_VALIDATOR]
-        orch._flush_validation_artifact(started_at="t", duration_seconds=0.0)
+        orch._validation_artifact_mgr.flush_validation_artifact(started_at="t", duration_seconds=0.0)
         assert collector.is_flushed
         # 'scheduled' treated as passed → flush_ok, no error
 
@@ -891,4 +891,4 @@ class TestInitCollectors:
         orch = _mk_orchestrator(
             config_path=tmp_path / "cfg.yaml", config=_mk_config(), secrets=_mk_secrets(), stages=[]
         )
-        assert orch._validation_accumulator == {}
+        assert orch._validation_artifact_mgr._validation_accumulator == {}

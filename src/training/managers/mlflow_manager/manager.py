@@ -84,11 +84,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             self,  # type: ignore[arg-type]
             self._event_log,
         )
-        self._dataset_logger: MLflowDatasetLogger = MLflowDatasetLogger(
-            mlflow_module=None,
-            primitives=self,  # type: ignore[arg-type]
-            has_active_run=lambda: self._run is not None,
-        )
+        self._dataset_logger: MLflowDatasetLogger = self._make_dataset_logger(mlflow_module=None)
         self._autolog: MLflowAutologManager = MLflowAutologManager(
             mlflow_module=None,
             tracking_uri=None,
@@ -100,6 +96,23 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             None,
             experiment_name=None,
             event_log=self._event_log,
+        )
+
+    # =========================================================================
+    # FACTORY HELPERS
+    # =========================================================================
+
+    def _make_dataset_logger(self, *, mlflow_module: Any = None) -> MLflowDatasetLogger:
+        """Create an MLflowDatasetLogger bound to this manager.
+
+        Centralises construction so that __init__, _build_subcomponents, and
+        cleanup all use the same parameter shape.  A change to the
+        MLflowDatasetLogger constructor signature only needs to be updated here.
+        """
+        return MLflowDatasetLogger(
+            mlflow_module=mlflow_module,
+            primitives=self,  # type: ignore[arg-type]
+            has_active_run=lambda: self._run is not None,
         )
 
     # =========================================================================
@@ -604,11 +617,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self._registry = None
         self._analytics._mlflow = None
         self._analytics._experiment_name = None
-        self._dataset_logger = MLflowDatasetLogger(
-            mlflow_module=None,
-            primitives=self,  # type: ignore[arg-type]
-            has_active_run=lambda: self._run is not None,
-        )
+        self._dataset_logger = self._make_dataset_logger(mlflow_module=None)
 
 
 def get_mlflow_manager(config: PipelineConfig) -> MLflowManager:

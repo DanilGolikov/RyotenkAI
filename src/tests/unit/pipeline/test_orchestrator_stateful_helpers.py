@@ -248,7 +248,7 @@ def test_build_dataset_validation_state_outputs_compacts_summary(tmp_path: Path)
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
-    orchestrator._validation_accumulator = {
+    orchestrator._validation_artifact_mgr._validation_accumulator = {
         "/data/train.jsonl": {
             "name": "default",
             "path": "/data/train.jsonl",
@@ -259,7 +259,7 @@ def test_build_dataset_validation_state_outputs_compacts_summary(tmp_path: Path)
         }
     }
 
-    outputs = orchestrator._build_dataset_validation_state_outputs(
+    outputs = orchestrator._validation_artifact_mgr.build_dataset_validation_state_outputs(
         stage_ctx={
             "validation_status": "failed",
             "warnings": ["w1", "w2"],

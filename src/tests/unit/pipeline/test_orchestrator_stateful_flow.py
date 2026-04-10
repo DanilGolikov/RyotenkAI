@@ -418,7 +418,7 @@ def test_stateful_dataset_validation_failure_persists_compact_outputs(tmp_path: 
         stage_behaviors=_make_stage_behaviors(fail_stage=StageNames.DATASET_VALIDATOR),
         calls=calls,
     )
-    orchestrator._validation_accumulator = {
+    orchestrator._validation_artifact_mgr._validation_accumulator = {
         "/data/train.jsonl": {
             "name": "default",
             "path": "/data/train.jsonl",

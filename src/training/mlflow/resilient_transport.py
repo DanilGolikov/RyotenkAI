@@ -138,7 +138,12 @@ class MLflowTransportCircuitBreaker:
 
 
 class ResilientMLflowTransport:
-    """Installs best-effort wrappers around MLflow fluent and client logging APIs."""
+    """Installs best-effort wrappers around MLflow fluent and client logging APIs.
+
+    When a MetricsBuffer is attached, metrics are buffered to disk instead of
+    being silently dropped while the circuit breaker is open. Buffered metrics
+    are flushed automatically when connectivity recovers.
+    """
 
     def __init__(
         self,
@@ -155,6 +160,12 @@ class ResilientMLflowTransport:
         self._last_warning_at: dict[str, float] = {}
         self._module: Any = None
         self._originals: dict[tuple[str, str], Any] = {}
+        self._buffer: Any | None = None  # Optional MetricsBuffer
+
+    def attach_buffer(self, buffer: Any) -> None:
+        """Attach a MetricsBuffer for offline metric storage."""
+        self._buffer = buffer
+        logger.info("Metrics buffer attached: %s", getattr(buffer, "path", "unknown"))
 
     @property
     def breaker_state(self) -> str:
@@ -206,6 +217,43 @@ class ResilientMLflowTransport:
         self._originals[key] = original
         setattr(target, method_name, self._make_wrapper(method_name, original))
 
+    def _buffer_metric_call(self, operation: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        """Try to buffer a metric call when circuit is open."""
+        if self._buffer is None:
+            return
+        try:
+            if operation == "log_metric":
+                # mlflow.log_metric(key, value, step=None, timestamp=None, ...)
+                key = args[0] if len(args) > 0 else kwargs.get("key")
+                value = args[1] if len(args) > 1 else kwargs.get("value")
+                step = args[2] if len(args) > 2 else kwargs.get("step", 0)
+                if key is not None and value is not None:
+                    self._buffer.write_metric(str(key), float(value), int(step or 0))
+            elif operation == "log_metrics":
+                # mlflow.log_metrics(metrics, step=None, ...)
+                metrics = args[0] if len(args) > 0 else kwargs.get("metrics", {})
+                step = args[1] if len(args) > 1 else kwargs.get("step", 0)
+                if isinstance(metrics, dict):
+                    self._buffer.write_metrics(metrics, int(step or 0))
+        except Exception:
+            pass  # Buffer is best-effort
+
+    def _flush_buffer(self, original: Callable[..., Any], operation: str) -> None:
+        """Flush buffered metrics on circuit recovery. Best-effort."""
+        if self._buffer is None or self._buffer.count == 0:
+            return
+        if operation not in ("log_metric", "log_metrics"):
+            return
+        # Use the original (unpatched) log_metric to flush
+        log_metric_original = self._originals.get(("module", "log_metric"))
+        if log_metric_original is None:
+            log_metric_original = original if operation == "log_metric" else None
+        if log_metric_original is not None:
+            try:
+                self._buffer.flush(log_metric_original)
+            except Exception as e:
+                logger.debug("[BUFFER] Flush error: %s", e)
+
     def _make_wrapper(self, operation: str, original: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(original)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
@@ -214,6 +262,7 @@ class ResilientMLflowTransport:
                     operation,
                     f"[MLFLOW:DEGRADED] skip op={operation} state=open reason=circuit_breaker_open",
                 )
+                self._buffer_metric_call(operation, args, kwargs)
                 return None
 
             try:
@@ -228,9 +277,11 @@ class ResilientMLflowTransport:
                     f"op={operation} state={self._breaker.state} failures={self._breaker.consecutive_failures} "
                     f"reason={type(exc).__name__}: {exc}",
                 )
+                self._buffer_metric_call(operation, args, kwargs)
                 return None
 
             self._breaker.record_success()
+            self._flush_buffer(original, operation)
             return result
 
         return wrapped

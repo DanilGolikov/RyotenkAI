@@ -40,6 +40,7 @@ _TRAINING_FAILED_MARKER = "TRAINING_FAILED"
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from src.config.secrets.model import Secrets
     from src.utils.config import PipelineConfig
 
 
@@ -88,9 +89,16 @@ class TrainingMonitor(PipelineStage):
     Works with any provider (RunPod, SingleNode, etc.)
     """
 
+    # Pod status polling constants for _ensure_pod_running
+    _POD_READY_POLL_INTERVAL = 5  # seconds between pod status checks
+    _POD_READY_TIMEOUT = 300  # max seconds to wait for pod to become ready
+    _SSH_RECONNECT_MAX_FAILURES = 6  # consecutive SSH failures before checking pod API
+    _SSH_RECONNECT_BACKOFF_BASE = 10  # seconds — base sleep between SSH retries
+
     def __init__(
         self,
         config: PipelineConfig,
+        secrets: Secrets | None = None,
         callbacks: TrainingMonitorEventCallbacks | None = None,
     ):
         super().__init__(config, StageNames.TRAINING_MONITOR)
@@ -113,10 +121,112 @@ class TrainingMonitor(PipelineStage):
         self.log_download_interval = TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL
         _ = provider_cfg  # retained for future use
 
+        self._secrets = secrets
         self._log_manager: LogManager | None = None
         self._workspace_path: str = "/workspace"  # Default, updated in execute()
         self._callbacks = callbacks or TrainingMonitorEventCallbacks()
         self._training_start_time: float = 0.0  # Track training start for duration
+
+    def _ensure_pod_running(self, deployer_context: dict[str, Any]) -> Result[dict[str, str | int], AppError]:
+        """Ensure RunPod pod is running. Start it if stopped.
+
+        Returns updated SSH connection info (host/port may change after pod restart).
+        For non-RunPod providers, returns current connection info unchanged.
+        """
+        provider_name = deployer_context.get("provider_name", "")
+        resource_id = deployer_context.get("resource_id")
+
+        if provider_name != "runpod" or not resource_id:
+            return Ok({
+                "ssh_host": deployer_context.get("ssh_host"),
+                "ssh_port": deployer_context.get("ssh_port"),
+            })
+
+        if not self._secrets or not self._secrets.runpod_api_key:
+            logger.warning("[MONITOR] No RunPod API key — skipping pod status check")
+            return Ok({
+                "ssh_host": deployer_context.get("ssh_host"),
+                "ssh_port": deployer_context.get("ssh_port"),
+            })
+
+        from src.providers.runpod.models import PodSnapshot
+        from src.providers.runpod.sdk_adapter import RunPodSDKClient
+
+        sdk = RunPodSDKClient(api_key=self._secrets.runpod_api_key)
+        pod_result = sdk.get_pod(pod_id=resource_id)
+        if pod_result.is_failure():
+            logger.warning("[MONITOR] Failed to query pod status: %s", pod_result.unwrap_err().message)
+            return Ok({
+                "ssh_host": deployer_context.get("ssh_host"),
+                "ssh_port": deployer_context.get("ssh_port"),
+            })
+
+        snapshot = PodSnapshot.from_graphql(pod_result.unwrap())
+        logger.info("[MONITOR] Pod %s status: %s", resource_id, snapshot.status)
+
+        if snapshot.is_terminal:
+            return Err(TrainingError(
+                message=f"Pod {resource_id} is in terminal state: {snapshot.status}",
+                code="POD_TERMINATED",
+            ))
+
+        if snapshot.is_ready:
+            endpoint = snapshot.ssh_endpoint
+            return Ok({
+                "ssh_host": endpoint.host if endpoint else deployer_context.get("ssh_host"),
+                "ssh_port": endpoint.port if endpoint else deployer_context.get("ssh_port"),
+            })
+
+        # Pod is STOPPED or transitioning — start it
+        logger.info("[MONITOR] Pod is %s — starting...", snapshot.status)
+        start_result = sdk.start_pod(pod_id=resource_id)
+        if start_result.is_failure():
+            return Err(TrainingError(
+                message=f"Failed to start pod {resource_id}: {start_result.unwrap_err().message}",
+                code="POD_START_FAILED",
+            ))
+
+        # Poll until pod is ready (SSH endpoint available)
+        deadline = time.time() + self._POD_READY_TIMEOUT
+        while time.time() < deadline:
+            time.sleep(self._POD_READY_POLL_INTERVAL)
+            poll_result = sdk.get_pod(pod_id=resource_id)
+            if poll_result.is_failure():
+                logger.debug("[MONITOR] Pod poll failed, retrying...")
+                continue
+            snapshot = PodSnapshot.from_graphql(poll_result.unwrap())
+            if snapshot.is_ready:
+                endpoint = snapshot.ssh_endpoint
+                logger.info("[MONITOR] Pod ready — SSH at %s:%s", endpoint.host, endpoint.port)
+                return Ok({"ssh_host": endpoint.host, "ssh_port": endpoint.port})
+            if snapshot.is_terminal:
+                return Err(TrainingError(
+                    message=f"Pod entered terminal state while starting: {snapshot.status}",
+                    code="POD_TERMINATED",
+                ))
+            logger.debug("[MONITOR] Waiting for pod... status=%s", snapshot.status)
+
+        return Err(TrainingError(
+            message=f"Pod {resource_id} did not become ready within {self._POD_READY_TIMEOUT}s",
+            code="POD_START_TIMEOUT",
+        ))
+
+    def _create_ssh_client(self, deployer_context: dict[str, Any], ssh_host: Any, ssh_port: Any) -> SSHClient:
+        """Create an SSHClient from deployer context and resolved host/port."""
+        if not isinstance(ssh_port, int):
+            ssh_port = int(ssh_port) if ssh_port else TRAINING_MONITOR_SSH_PORT
+
+        ssh_key_path = deployer_context.get("ssh_key_path")
+        ssh_user = deployer_context.get("ssh_user", "root")
+        is_alias_mode = deployer_context.get("is_alias_mode", False)
+        effective_username = None if is_alias_mode else ssh_user
+
+        return SSHClient(
+            host=str(ssh_host),
+            port=ssh_port,
+            username=effective_username,
+            key_path=str(ssh_key_path) if ssh_key_path else "",
+        )
 
     def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
         """Monitor training on any provider (RunPod, SingleNode, etc.)."""
@@ -126,9 +236,6 @@ class TrainingMonitor(PipelineStage):
         resource_id = deployer_context.get("resource_id")  # pod_id for RunPod, run_dir for SingleNode
         ssh_host = deployer_context.get("ssh_host")
         ssh_port = deployer_context.get("ssh_port")
-        ssh_key_path = deployer_context.get("ssh_key_path")
-        ssh_user = deployer_context.get("ssh_user", "root")
-        is_alias_mode = deployer_context.get("is_alias_mode", False)
         workspace_path = deployer_context.get("workspace_path")
         provider_info = deployer_context.get("provider_info", {})
 
@@ -145,21 +252,18 @@ class TrainingMonitor(PipelineStage):
                 )
             )
 
+        # Ensure pod is running (RunPod: check API, start if stopped after sleep)
+        pod_result = self._ensure_pod_running(deployer_context)
+        if pod_result.is_failure():
+            return pod_result  # type: ignore[return-value]
+        conn_info = pod_result.unwrap()
+        ssh_host = conn_info["ssh_host"]
+        ssh_port = conn_info["ssh_port"]
+
         logger.info(f"[MONITOR] Monitoring training: {resource_id or 'unknown'}")
         logger.info(f"Checking every {self.check_interval}s...")
 
-        # Initialize SSH client
-        if not isinstance(ssh_port, int):
-            ssh_port = int(ssh_port) if ssh_port else TRAINING_MONITOR_SSH_PORT
-
-        # For alias mode, username should be None (SSH will use ~/.ssh/config)
-        effective_username = None if is_alias_mode else ssh_user
-        ssh_client = SSHClient(
-            host=str(ssh_host),
-            port=ssh_port,
-            username=effective_username,
-            key_path=str(ssh_key_path) if ssh_key_path else "",
-        )
+        ssh_client = self._create_ssh_client(deployer_context, ssh_host, ssh_port)
 
         try:
             # Store workspace path for marker checks
@@ -192,13 +296,55 @@ class TrainingMonitor(PipelineStage):
             if self._callbacks.on_training_started:
                 self._callbacks.on_training_started()
 
-            # Monitor training
-            return self._monitor_training(ssh_client, context)
+            # Monitor training with SSH resilience
+            return self._monitor_training_resilient(ssh_client, deployer_context, context)
         finally:
             try:
                 ssh_client.close_master()
             except Exception as e:
                 logger.debug(f"[MONITOR] Failed to close SSH ControlMaster: {e}")
+
+    def _monitor_training_resilient(
+        self,
+        ssh_client: SSHClient,
+        deployer_context: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Result[dict[str, Any], AppError]:
+        """Monitor training with SSH resilience.
+
+        Wraps _monitor_training with reconnection logic for laptop sleep scenarios:
+        1. Try normal monitoring
+        2. On SSH failure (SSHDisconnected): check pod status via API
+        3. If pod stopped → start → reconnect → check markers
+        4. If pod running → reconnect SSH → resume
+        """
+        while True:
+            result = self._monitor_training(ssh_client, context)
+
+            # If monitoring completed (success or definitive failure), return
+            if result.is_success():
+                return result
+            err = result.unwrap_err()
+            if err.code != "SSH_DISCONNECTED":
+                return result
+
+            # SSH disconnected — likely laptop sleep. Try to recover.
+            logger.warning("[MONITOR] SSH connection lost — attempting recovery...")
+            try:
+                ssh_client.close_master()
+            except Exception:
+                pass
+
+            pod_result = self._ensure_pod_running(deployer_context)
+            if pod_result.is_failure():
+                return pod_result  # type: ignore[return-value]
+
+            conn_info = pod_result.unwrap()
+            ssh_client = self._create_ssh_client(
+                deployer_context, conn_info["ssh_host"], conn_info["ssh_port"],
+            )
+            self._log_manager = LogManager(ssh_client, remote_path=f"{self._workspace_path}/training.log")
+            logger.info("[MONITOR] SSH reconnected — resuming monitoring")
 
     def _wait_for_training_start(self, ssh_client: SSHClient, timeout: int = 120) -> bool:
         """Wait for training process to start (or already complete)."""
@@ -270,15 +416,22 @@ class TrainingMonitor(PipelineStage):
             if self._log_manager:
                 self._log_manager.download(silent=False)
             self._display_last_log_lines()
+
+            # Download metrics buffer from pod (if any metrics were buffered offline)
+            buffer_local_path = self._download_metrics_buffer(ssh_client)
+
             # Fire callback
             if self._callbacks.on_training_completed:
                 self._callbacks.on_training_completed(elapsed_seconds)
-            return Ok(
-                self.update_context(
-                    context,
-                    {"status": "completed", "training_duration_seconds": elapsed_seconds},
-                )
-            )
+
+            result_data: dict[str, Any] = {
+                "status": "completed",
+                "training_duration_seconds": elapsed_seconds,
+            }
+            if buffer_local_path:
+                result_data["metrics_buffer_path"] = str(buffer_local_path)
+
+            return Ok(self.update_context(context, result_data))
 
         def build_failed_result(elapsed_seconds: float, error_msg: str) -> Result[dict[str, Any], AppError]:
             logger.error(f"Training failed: {error_msg}")
@@ -349,7 +502,16 @@ class TrainingMonitor(PipelineStage):
 
                     logger.debug(f"   Attempt {attempt + 1}/5: marker not found yet...")
 
-                # Still no marker after retries - this is a real failure
+                # Before concluding process died, verify SSH is actually working.
+                # If SSH itself is down (laptop sleep), this is a disconnect, not a crash.
+                if not self._ssh_is_connected(ssh_client):
+                    logger.warning("[MONITOR] SSH connection lost — signaling reconnect")
+                    return Err(TrainingError(
+                        message="SSH connection lost during monitoring",
+                        code="SSH_DISCONNECTED",
+                    ))
+
+                # SSH is working but no markers — real process death
                 logger.error("Training process died without completion marker")
                 if self._log_manager:
                     self._log_manager.download_on_error("Process died without marker")
@@ -373,6 +535,12 @@ class TrainingMonitor(PipelineStage):
 
             # Wait before next check
             time.sleep(self.check_interval)
+
+    @staticmethod
+    def _ssh_is_connected(ssh_client: SSHClient) -> bool:
+        """Quick SSH connectivity probe. Returns False if the connection is dead."""
+        success, stdout, _ = ssh_client.exec_command(command="echo ok", silent=True, timeout=10)
+        return success and "ok" in stdout
 
     @staticmethod
     def _is_training_alive(ssh_client: SSHClient, timeout_seconds: int = 10) -> bool:
@@ -553,6 +721,35 @@ class TrainingMonitor(PipelineStage):
             timeout=timeout_seconds,
         )
         return content.strip() if success else "Unknown error"
+
+    def _download_metrics_buffer(self, ssh_client: SSHClient) -> str | None:
+        """Download metrics_buffer.jsonl from pod if it exists. Returns local path or None."""
+        workspace = self._workspace_path
+        remote_path = f"{workspace}/metrics_buffer.jsonl"
+
+        # Check if buffer exists on pod
+        if not self._check_marker(ssh_client, "metrics_buffer.jsonl"):
+            return None
+
+        # Read file content via SSH (small file, <1MB typically)
+        success, content, _ = ssh_client.exec_command(
+            command=f"cat {remote_path}", silent=True, timeout=30,
+        )
+        if not success or not content.strip():
+            return None
+
+        from pathlib import Path
+
+        local_dir = Path(self._log_manager.local_path).parent if self._log_manager else Path(".")
+        local_path = local_dir / "metrics_buffer.jsonl"
+        try:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            local_path.write_text(content, encoding="utf-8")
+            logger.info("[MONITOR] Downloaded metrics buffer (%d bytes): %s", len(content), local_path)
+            return str(local_path)
+        except OSError as e:
+            logger.warning("[MONITOR] Failed to save metrics buffer: %s", e)
+            return None
 
     def _display_last_log_lines(self, n: int = 30) -> None:
         """Display last N lines from remote training log."""

@@ -468,3 +468,75 @@ class TestFactoryCallsSetup:
             pipeline_config=MagicMock(),
         )
         result.plugin.teardown()  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Reward function signature contract
+# ---------------------------------------------------------------------------
+
+
+class TestRewardFunctionContract:
+    """Contract tests ensuring reward function signatures stay compatible with GRPO/SAPO trainer."""
+
+    @staticmethod
+    def _get_funcs_and_weights(
+        params: dict[str, Any] | None = None,
+    ) -> tuple[list[Any], list[float]]:
+        plugin = _make_plugin(params)
+        ds = _make_dataset_with_features("prompt", "reference_answer", "schema_context")
+        mock_cfg = MagicMock()
+        trainer_result = plugin.build_trainer_kwargs(
+            train_dataset=ds, phase_config=mock_cfg, pipeline_config=mock_cfg,
+        )
+        config_result = plugin.build_config_kwargs(
+            train_dataset=ds, phase_config=mock_cfg, pipeline_config=mock_cfg,
+        )
+        return trainer_result["reward_funcs"], config_result["reward_weights"]
+
+    def test_reward_funcs_and_weights_same_length(self) -> None:
+        """reward_funcs and reward_weights must always be the same length."""
+        funcs, weights = self._get_funcs_and_weights()
+        assert len(funcs) == len(weights)
+
+    def test_reward_funcs_and_weights_same_length_semantic_only(self) -> None:
+        funcs, weights = self._get_funcs_and_weights({"validation_backend": "semantic_only"})
+        assert len(funcs) == len(weights)
+
+    def test_each_reward_function_accepts_completions_and_kwargs(self) -> None:
+        """Each reward function must accept (completions, ..., **kwargs) signature."""
+        import inspect
+
+        funcs, _ = self._get_funcs_and_weights()
+        for fn in funcs:
+            sig = inspect.signature(fn)
+            params = list(sig.parameters.keys())
+            assert params[0] == "completions", (
+                f"{fn.__name__}: first param must be 'completions', got '{params[0]}'"
+            )
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            assert has_var_keyword, f"{fn.__name__}: must accept **kwargs"
+
+    def test_each_reward_function_accepts_completions_and_kwargs_semantic_only(self) -> None:
+        import inspect
+
+        funcs, _ = self._get_funcs_and_weights({"validation_backend": "semantic_only"})
+        for fn in funcs:
+            sig = inspect.signature(fn)
+            params = list(sig.parameters.keys())
+            assert params[0] == "completions", (
+                f"{fn.__name__}: first param must be 'completions', got '{params[0]}'"
+            )
+            has_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
+            )
+            assert has_var_keyword, f"{fn.__name__}: must accept **kwargs"
+
+    def test_reward_functions_have_meaningful_names(self) -> None:
+        """Reward functions should have descriptive __name__ (not generic lambda)."""
+        funcs, _ = self._get_funcs_and_weights()
+        for fn in funcs:
+            assert fn.__name__ != "<lambda>", "Reward function should not be an unnamed lambda"

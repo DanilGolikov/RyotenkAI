@@ -826,3 +826,113 @@ class TestFinalSmallCoveragePush:
         mgr._mlflow = SimpleNamespace(log_input=MagicMock())
         mgr._run = object()
         assert mgr.log_dataset_input(dataset="ds") is True
+
+
+class TestBuildSubcomponentsAndSetupWiring:
+    """Verify _build_subcomponents() wires all mlflow-dependent attributes after setup()."""
+
+    def test_subcomponents_wired_after_successful_setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        monkeypatch.setattr(
+            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            lambda self, timeout: True,
+        )
+        mgr = MLflowManager(_mk_cfg())
+        assert mgr.setup(disable_system_metrics=True) is True
+
+        # Autolog wired
+        assert mgr._autolog._mlflow is fake
+        assert mgr._autolog._tracking_uri is not None
+
+        # Analytics wired
+        assert mgr._analytics._mlflow is fake
+        assert mgr._analytics._experiment_name == "test"
+        assert mgr._analytics._gateway is mgr._gateway
+
+        # Registry created
+        from src.training.mlflow.model_registry import MLflowModelRegistry
+        assert isinstance(mgr._registry, MLflowModelRegistry)
+
+        # Dataset logger recreated with mlflow module
+        from src.training.mlflow.dataset_logger import MLflowDatasetLogger
+        assert isinstance(mgr._dataset_logger, MLflowDatasetLogger)
+
+        # Domain logger recreated
+        from src.training.mlflow.domain_logger import MLflowDomainLogger
+        assert isinstance(mgr._domain_logger, MLflowDomainLogger)
+
+    def test_resilient_transport_skipped_for_control_plane(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        original_log_metrics = fake.log_metrics
+        monkeypatch.setattr(
+            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            lambda self, timeout: True,
+        )
+        mgr = MLflowManager(_mk_cfg(), runtime_role="control_plane")
+        assert mgr.setup(disable_system_metrics=True) is True
+        # Transport should NOT be installed — methods remain original
+        assert fake.log_metrics is original_log_metrics
+        mgr.cleanup()
+
+    def test_resilient_transport_skipped_for_local_tracking_uri(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        fake = _install_fake_mlflow(monkeypatch)
+        original_log_metrics = fake.log_metrics
+        # Use file-based tracking URI (no http prefix)
+        mgr = MLflowManager(_mk_cfg(tracking_uri="file:///tmp/mlruns"), runtime_role="training")
+        monkeypatch.setattr(
+            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            lambda self, timeout: True,
+        )
+        # For file:// URIs, setup doesn't do connectivity check, so it should succeed
+        assert mgr.setup(disable_system_metrics=True) is True
+        # Transport not installed because URI doesn't start with "http"
+        assert fake.log_metrics is original_log_metrics
+        mgr.cleanup()
+
+    def test_connectivity_retry_exhaustion_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_fake_mlflow(monkeypatch)
+        monkeypatch.setattr(
+            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            lambda self, timeout: False,
+        )
+        mgr = MLflowManager(_mk_cfg())
+        assert mgr.setup(max_retries=2, disable_system_metrics=True) is False
+        assert mgr.is_active is False
+
+    def test_connectivity_retry_succeeds_on_second_attempt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install_fake_mlflow(monkeypatch)
+        attempts = {"count": 0}
+
+        def flaky_connectivity(self, timeout):
+            attempts["count"] += 1
+            return attempts["count"] >= 2  # Fails first, succeeds second
+
+        monkeypatch.setattr(
+            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            flaky_connectivity,
+        )
+        mgr = MLflowManager(_mk_cfg())
+        assert mgr.setup(max_retries=3, disable_system_metrics=True) is True
+        assert attempts["count"] == 2
+
+    def test_uri_resolution_lazy_init(self) -> None:
+        mgr = MLflowManager(_mk_cfg(tracking_uri="http://127.0.0.1:5002"))
+        assert mgr._resolved_uris is None
+        uri = mgr.get_runtime_tracking_uri()
+        assert uri == "http://127.0.0.1:5002"
+        assert mgr._resolved_uris is not None
+
+    def test_get_effective_uris(self) -> None:
+        mgr = MLflowManager(_mk_cfg(tracking_uri="http://127.0.0.1:5002"))
+        local = mgr.get_effective_local_tracking_uri()
+        remote = mgr.get_effective_remote_tracking_uri()
+        assert local  # non-empty
+        assert remote  # non-empty
+
+    def test_get_raw_uris(self) -> None:
+        mgr = MLflowManager(_mk_cfg(
+            tracking_uri="http://mlflow.example:5002",
+            local_tracking_uri="http://localhost:5002",
+        ))
+        assert mgr.get_raw_tracking_uri() == "http://mlflow.example:5002"
+        assert mgr.get_raw_local_tracking_uri() == "http://localhost:5002"

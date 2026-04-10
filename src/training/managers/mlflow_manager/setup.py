@@ -18,7 +18,6 @@ from src.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.training.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
 from src.training.mlflow.autolog import MLflowAutologManager
-from src.training.mlflow.dataset_logger import MLflowDatasetLogger
 from src.training.mlflow.domain_logger import MLflowDomainLogger
 from src.training.mlflow.model_registry import MLflowModelRegistry
 from src.utils.logger import get_logger
@@ -196,6 +195,20 @@ class MLflowSetupMixin:
             return
         self._resilient_transport.install(mlflow)  # type: ignore[attr-defined]
 
+        # Attach metrics buffer for offline buffering during circuit-breaker-open periods
+        try:
+            import os
+
+            from src.training.mlflow.metrics_buffer import MetricsBuffer
+
+            workspace = os.environ.get("WORKSPACE_PATH", "/workspace")
+            buffer = MetricsBuffer(buffer_dir=workspace)
+            self._resilient_transport.attach_buffer(buffer)  # type: ignore[attr-defined]
+        except Exception as e:
+            from src.utils.logger import get_logger
+
+            get_logger(__name__).debug("Metrics buffer not attached: %s", e)
+
     def _restore_deleted_experiments(self) -> None:
         """Restore soft-deleted experiments before setting the active one."""
         try:
@@ -242,11 +255,7 @@ class MLflowSetupMixin:
         self._analytics._gateway = self._gateway  # type: ignore[attr-defined]
 
         self._registry = MLflowModelRegistry(self._gateway, self._mlflow, log_model_enabled=False)  # type: ignore[attr-defined]
-        self._dataset_logger = MLflowDatasetLogger(  # type: ignore[attr-defined]
-            self._mlflow,  # type: ignore[attr-defined]
-            self,  # type: ignore[arg-type]
-            has_active_run=lambda: self._run is not None,  # type: ignore[attr-defined]
-        )
+        self._dataset_logger = self._make_dataset_logger(mlflow_module=self._mlflow)  # type: ignore[attr-defined]
         self._domain_logger = MLflowDomainLogger(  # type: ignore[attr-defined]
             self,  # type: ignore[arg-type]
             self._event_log,  # type: ignore[attr-defined]
