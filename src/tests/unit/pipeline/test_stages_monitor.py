@@ -354,9 +354,11 @@ class TestWaitForTrainingStart:
         # First attempt: no training.log yet
         # Second attempt: training.log exists + training process running (via _is_training_alive)
         mock_ssh_client.exec_command.side_effect = [
+            (True, "", ""),  # pipeline heartbeat touch (iter 1)
             (False, "", ""),  # TRAINING_COMPLETE check - not exists
             (False, "", ""),  # TRAINING_FAILED check - not exists
             (False, "", ""),  # training.log check - not exists yet
+            (True, "", ""),  # pipeline heartbeat touch (iter 2)
             (False, "", ""),  # TRAINING_COMPLETE check
             (False, "", ""),  # TRAINING_FAILED check
             (True, "Some log content", ""),  # training.log exists
@@ -379,6 +381,7 @@ class TestWaitForTrainingStart:
         mock_time.return_value = 0
 
         mock_ssh_client.exec_command.side_effect = [
+            (True, "", ""),  # pipeline heartbeat touch
             (False, "", ""),  # TRAINING_COMPLETE check - not exists
             (False, "", ""),  # TRAINING_FAILED check - not exists
             (True, "Some log content", ""),  # training.log exists
@@ -419,6 +422,7 @@ class TestWaitForTrainingStart:
 
         # TRAINING_COMPLETE marker already exists
         mock_ssh_client.exec_command.side_effect = [
+            (True, "", ""),  # pipeline heartbeat touch
             (True, "EXISTS", ""),  # TRAINING_COMPLETE check - found immediately!
         ]
 
@@ -438,6 +442,7 @@ class TestWaitForTrainingStart:
 
         # TRAINING_FAILED marker already exists
         mock_ssh_client.exec_command.side_effect = [
+            (True, "", ""),  # pipeline heartbeat touch
             (False, "", ""),  # TRAINING_COMPLETE check - not found
             (True, "EXISTS", ""),  # TRAINING_FAILED check - found!
         ]

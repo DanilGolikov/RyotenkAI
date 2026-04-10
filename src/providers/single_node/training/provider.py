@@ -18,8 +18,9 @@ from src.providers.training.interfaces import (
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
+    TrainingScriptHooks,
 )
-from src.utils.result import Err, Ok, ProviderError, Result
+from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
 from .config import SingleNodeConfig
@@ -450,6 +451,15 @@ class SingleNodeProvider(IGPUProvider):
     def get_resource_info(self) -> None:
         """Local provider has no dynamic resource metadata."""
         return None
+
+    def prepare_training_script_hooks(
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any],
+    ) -> Result[TrainingScriptHooks, AppError]:
+        """Single-node has no cloud lifecycle concerns — empty hooks."""
+        del ssh_client, context
+        return Ok(TrainingScriptHooks.empty())
 
     def get_ssh_client(self) -> SSHClient | None:
         """Get SSH client for direct operations."""

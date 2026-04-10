@@ -41,11 +41,13 @@ from src.pipeline.constants import (
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
 from src.pipeline.stages.constants import PipelineContextKeys
+from src.providers.training.interfaces import TrainingScriptHooks
 from src.utils.docker import docker_is_container_running, ensure_docker_image
 from src.utils.logger import logger
 from src.utils.result import AppError, ConfigError, Err, Failure, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
+    from src.providers.training.interfaces import IGPUProvider
     from src.utils.config import PipelineConfig, Secrets
     from src.utils.ssh_client import SSHClient
 
@@ -694,10 +696,17 @@ class TrainingDeploymentManager:
     # =========================================================================
 
     def _create_env_file(
-        self, ssh_client: SSHClient, context: dict[str, Any] | None = None
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any] | None = None,
+        extra_env_vars: dict[str, str] | None = None,
     ) -> Result[str, ProviderError]:
         """
         Create .env file on remote server with training environment variables.
+
+        ``extra_env_vars`` carries provider-specific variables contributed via
+        ``IGPUProvider.prepare_training_script_hooks`` (e.g., RunPod auto-stop
+        credentials). They are merged LAST and override any built-in keys.
         """
         # Environment variables
         # Experiment tracking goes to MLflow (report_to=["mlflow"] in TrainingArguments)
@@ -740,6 +749,10 @@ class TrainingDeploymentManager:
                 env_vars["SSL_CERT_FILE"] = mlflow_config.ca_bundle_path
                 logger.info(f"📊 MLflow CA bundle: {mlflow_config.ca_bundle_path}")
 
+        # Provider-specific extras merged last so they can override defaults.
+        if extra_env_vars:
+            env_vars.update(extra_env_vars)
+
         env_content = "\n".join(f'export {k}="{v}"' for k, v in env_vars.items())
         env_path = f"{self._workspace}/.env"
 
@@ -762,22 +775,36 @@ class TrainingDeploymentManager:
         logger.info(f"✅ Created .env file ({len(env_vars)} vars)")
         return Ok(env_path)
 
-    def start_training(self, ssh_client: SSHClient, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def start_training(
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any],
+        provider: IGPUProvider | None = None,
+    ) -> Result[dict[str, Any], AppError]:
         """
         Start training process on remote.
 
         Docker-only:
         - single_node: starts a Docker container on the host and runs training inside it
         - cloud providers (RunPod): runs training inside the already-running pod container
+
+        ``provider`` is required for cloud providers (carries lifecycle hooks
+        such as the RunPod watchdog). Passing ``None`` is equivalent to a
+        provider with no customizations — used by tests and single_node.
         """
         logger.info("Starting training in background...")
 
         if self._is_single_node_provider():
             return self._start_training_docker(ssh_client, context)
 
-        return self._start_training_cloud(ssh_client, context)
+        return self._start_training_cloud(ssh_client, context, provider)
 
-    def _start_training_cloud(self, ssh_client: SSHClient, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def _start_training_cloud(
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any],
+        provider: IGPUProvider | None,
+    ) -> Result[dict[str, Any], AppError]:
         """
         Start training inside the current environment (cloud pods).
 
@@ -785,8 +812,17 @@ class TrainingDeploymentManager:
         - SSH is connected inside the pod container
         - Docker is not required/expected inside the container
         """
-        # Step 1: Create .env file
-        env_result = self._create_env_file(ssh_client, context)
+        # Step 1: ask provider for customizations (env vars, pre/post python hooks).
+        if provider is not None:
+            hooks_result = provider.prepare_training_script_hooks(ssh_client, context)
+            if hooks_result.is_err():
+                return Err(hooks_result.unwrap_err())  # type: ignore[union-attr]
+            hooks = hooks_result.unwrap()
+        else:
+            hooks = TrainingScriptHooks.empty()
+
+        # Step 2: Create .env file (merging provider-contributed env vars).
+        env_result = self._create_env_file(ssh_client, context, extra_env_vars=hooks.env_vars)
         if env_result.is_err():
             return Err(env_result.unwrap_err())  # type: ignore[union-attr]  # already ProviderError
 
@@ -801,6 +837,9 @@ class TrainingDeploymentManager:
         # Create start script and run via nohup (SSH returns immediately)
         start_script = f"{self._workspace}/start_training.sh"
         module_args = f"-m src.training.run_training --config {remote_config_path}"
+
+        pre_python = hooks.pre_python
+        post_python = hooks.post_python
 
         script_content = f"""#!/bin/bash
 set -euo pipefail
@@ -820,6 +859,8 @@ else
   echo "PYTHON_NOT_FOUND"
   exit 127
 fi
+
+{pre_python}
 set +e
 "$PY_BIN" {module_args}
 exit_code=$?
@@ -832,6 +873,8 @@ if [ $exit_code -ne 0 ]; then
     echo "Training failed early. See training.log." > {self._workspace}/TRAINING_FAILED || true
   fi
 fi
+
+{post_python}
 
 exit $exit_code
 """

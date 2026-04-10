@@ -11,14 +11,15 @@ Design principles:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from src.pipeline.domain import RunContext
     from src.providers.runpod.models import PodResourceInfo
-    from src.utils.result import ProviderError, Result
+    from src.utils.result import AppError, ProviderError, Result
+    from src.utils.ssh_client import SSHClient
 
 
 class ProviderStatus(Enum):
@@ -107,6 +108,39 @@ class ProviderCapabilities:
     # Constraints (from GPU info or config)
     gpu_name: str | None = None
     gpu_vram_gb: float | None = None
+
+
+@dataclass(frozen=True)
+class TrainingScriptHooks:
+    """
+    Provider-specific customizations for the training launch script.
+
+    Returned by ``IGPUProvider.prepare_training_script_hooks`` so the generic
+    ``TrainingDeploymentManager`` can stay provider-agnostic — it simply
+    merges env vars into ``.env`` and splices bash snippets around the
+    Python invocation inside the generated ``start_training.sh``.
+
+    Attributes:
+        env_vars: Extra environment variables to append to the pod's .env file
+            (e.g., API keys, pod IDs). Merged AFTER generic env vars so
+            provider values take precedence.
+        pre_python: Bash code injected **before** the Python training process
+            is launched. Typical use: spawn detached sidecar processes
+            (watchdog, telemetry). Must not block — sidecars should be
+            detached via ``setsid nohup ... & disown``.
+        post_python: Bash code injected **after** ``exit_code=$?`` capture.
+            Has access to ``$exit_code``. Typical use: graceful provider
+            cleanup (stop pod, release resources).
+    """
+
+    env_vars: dict[str, str] = field(default_factory=dict)
+    pre_python: str = ""
+    post_python: str = ""
+
+    @classmethod
+    def empty(cls) -> TrainingScriptHooks:
+        """Return hooks with no customizations — default for providers with nothing to inject."""
+        return cls()
 
 
 @runtime_checkable
@@ -213,6 +247,35 @@ class IGPUProvider(Protocol):
 
         Returns:
             ProviderCapabilities with provider info
+        """
+        ...
+
+    def prepare_training_script_hooks(
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any],
+    ) -> Result[TrainingScriptHooks, AppError]:
+        """
+        Prepare provider-specific customizations for the training launch script.
+
+        Called by ``TrainingDeploymentManager`` after SSH is connected and
+        before ``start_training.sh`` is generated. Providers may:
+            - Upload auxiliary scripts to the pod (e.g., watchdog, stop helpers).
+            - Return env vars to merge into the ``.env`` file.
+            - Return bash snippets to inject before/after the Python invocation.
+
+        Default behavior (for providers with nothing to contribute): return
+        ``Ok(TrainingScriptHooks.empty())``.
+
+        Args:
+            ssh_client: Connected SSH client to the pod/server.
+            context: Pipeline context dict (may include ``resource_id``,
+                ``workspace``, etc.).
+
+        Returns:
+            Ok(TrainingScriptHooks): Customizations to apply.
+            Err(AppError): Upload or configuration failure — deployment
+                manager will abort training launch.
         """
         ...
 

@@ -278,7 +278,7 @@ class GPUDeployer(PipelineStage):
 
         # Step 7: Start training
         logger.info("Starting training...")
-        training_result = self.deployment.start_training(ssh_client, context)
+        training_result = self.deployment.start_training(ssh_client, context, provider=self._provider)
 
         if training_result.is_failure():
             logger.error("Training start failed, disconnecting...")

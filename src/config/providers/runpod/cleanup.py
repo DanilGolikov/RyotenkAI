@@ -22,6 +22,16 @@ class RunPodCleanupConfig(StrictBaseModel):
             "Saves GPU cost when inference or evaluation stages are enabled."
         ),
     )
+    auto_stop_after_training: bool = Field(
+        True,
+        description=(
+            "Automatically stop the pod (not terminate) after training completes. "
+            "The pod calls RunPod API to stop itself, releasing the GPU and stopping billing. "
+            "Container disk and volume data are preserved for ModelRetriever. "
+            "Requires RUNPOD_API_KEY to be available. "
+            "When keep_pod_on_error=true and training fails, the pod is NOT stopped."
+        ),
+    )
 
 
 __all__ = [

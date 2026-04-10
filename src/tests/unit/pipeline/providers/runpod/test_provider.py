@@ -421,3 +421,115 @@ def test_get_capabilities_uses_detected_gpu_info() -> None:
     )
     caps = p.get_capabilities()
     assert caps.gpu_name == "A100"
+
+
+# ---------------------------------------------------------------------------
+# prepare_training_script_hooks — watchdog / auto-stop integration
+# ---------------------------------------------------------------------------
+
+
+class _RecordingSSH:
+    """Minimal SSH client that records exec_command calls and returns success."""
+
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    def exec_command(
+        self,
+        command: str,
+        timeout: int = 30,
+        silent: bool = False,
+        background: bool = False,
+    ):
+        _ = timeout, silent, background
+        self.commands.append(command)
+        return True, "", ""
+
+
+def test_prepare_hooks_disabled_when_auto_stop_off() -> None:
+    p = _mk_provider(cfg_overrides={"cleanup": {"auto_stop_after_training": False}})
+    p._pod_id = "pod-xyz"
+    ssh = _RecordingSSH()
+
+    result = p.prepare_training_script_hooks(ssh, context={"resource_id": "pod-xyz"})  # type: ignore[arg-type]
+
+    assert result.is_success()
+    hooks = result.unwrap()
+    assert hooks.env_vars == {}
+    assert hooks.pre_python == ""
+    assert hooks.post_python == ""
+    assert ssh.commands == []  # nothing uploaded
+
+
+def test_prepare_hooks_skipped_without_resource_id() -> None:
+    p = _mk_provider(cfg_overrides={"cleanup": {"auto_stop_after_training": True}})
+    p._pod_id = None
+    ssh = _RecordingSSH()
+
+    result = p.prepare_training_script_hooks(ssh, context={})  # type: ignore[arg-type]
+
+    assert result.is_success()
+    assert result.unwrap().env_vars == {}
+    assert ssh.commands == []
+
+
+def test_prepare_hooks_skipped_without_api_key() -> None:
+    p = _mk_provider(cfg_overrides={"cleanup": {"auto_stop_after_training": True}})
+    p._pod_id = "pod-xyz"
+    p._api_key = ""  # simulate missing key
+    ssh = _RecordingSSH()
+
+    result = p.prepare_training_script_hooks(ssh, context={"resource_id": "pod-xyz"})  # type: ignore[arg-type]
+
+    assert result.is_success()
+    assert result.unwrap().env_vars == {}
+
+
+def test_prepare_hooks_uploads_resources_and_returns_full_hooks() -> None:
+    p = _mk_provider(
+        cfg_overrides={"cleanup": {"auto_stop_after_training": True, "keep_pod_on_error": True}}
+    )
+    p._pod_id = "pod-abc"
+    p._api_key = "rk-secret"
+    ssh = _RecordingSSH()
+
+    result = p.prepare_training_script_hooks(ssh, context={"resource_id": "pod-abc"})  # type: ignore[arg-type]
+
+    assert result.is_success()
+    hooks = result.unwrap()
+
+    # Env vars
+    assert hooks.env_vars["RUNPOD_API_KEY"] == "rk-secret"
+    assert hooks.env_vars["RUNPOD_POD_ID"] == "pod-abc"
+    assert hooks.env_vars["RUNPOD_AUTO_STOP"] == "true"
+    assert hooks.env_vars["RUNPOD_KEEP_ON_ERROR"] == "true"
+    assert "WATCHDOG_WORKSPACE" in hooks.env_vars
+
+    # Pre-python: launches detached watchdog, verifies heartbeat
+    assert "setsid nohup bash" in hooks.pre_python
+    assert "watchdog.sh" in hooks.pre_python
+    assert ".watchdog_heartbeat" in hooks.pre_python
+
+    # Post-python: sources helper + calls _runpod_stop_pod
+    assert "runpod_stop_pod.sh" in hooks.post_python
+    assert "_runpod_stop_pod" in hooks.post_python
+
+    # Both resource files were uploaded + chmod +x applied
+    joined = "\n".join(ssh.commands)
+    assert "runpod_stop_pod.sh" in joined
+    assert "watchdog.sh" in joined
+    assert "chmod +x" in joined
+    # Script bodies uploaded via quoted heredoc (no shell expansion)
+    assert "RUNPOD_RESOURCE_EOF" in joined
+
+
+def test_prepare_hooks_keep_on_error_false_flag() -> None:
+    p = _mk_provider(
+        cfg_overrides={"cleanup": {"auto_stop_after_training": True, "keep_pod_on_error": False}}
+    )
+    p._pod_id = "pod-abc"
+    p._api_key = "rk-secret"
+    ssh = _RecordingSSH()
+
+    hooks = p.prepare_training_script_hooks(ssh, context={"resource_id": "pod-abc"}).unwrap()  # type: ignore[arg-type]
+    assert hooks.env_vars["RUNPOD_KEEP_ON_ERROR"] == "false"

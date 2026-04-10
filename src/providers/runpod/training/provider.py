@@ -17,8 +17,9 @@ from src.providers.training.interfaces import (
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
+    TrainingScriptHooks,
 )
-from src.utils.result import Err, Ok, ProviderError, Result
+from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
 from ..models import PodResourceInfo
@@ -479,6 +480,128 @@ class RunPodProvider(IGPUProvider):
     def get_base_workspace(self) -> str:
         """Base workspace root inside pod (for shared venv/caches)."""
         return "/workspace"
+
+    def prepare_training_script_hooks(
+        self,
+        ssh_client: SSHClient,
+        context: dict[str, Any],
+    ) -> Result[TrainingScriptHooks, AppError]:
+        """
+        Prepare RunPod-specific customizations for the training launch script:
+          - Env vars for auto-stop (API key, pod ID, flags).
+          - Upload ``runpod_stop_pod.sh`` (shared helper) and ``watchdog.sh``
+            (independent safety-net) to the run workspace.
+          - ``pre_python`` hook: launch detached watchdog via ``setsid nohup``.
+          - ``post_python`` hook: source helper and call ``_runpod_stop_pod``
+            (happy-path, runs inline before script exits).
+
+        If ``cleanup.auto_stop_after_training`` is disabled — return empty
+        hooks (watchdog + stop_pod are only meaningful when auto-stop is on).
+        """
+        cleanup = self._config.cleanup
+
+        if not cleanup.auto_stop_after_training:
+            logger.info("[PROVIDER:HOOKS] auto_stop_after_training disabled — skipping watchdog")
+            return Ok(TrainingScriptHooks.empty())
+
+        resource_id = context.get("resource_id") or self._pod_id
+        if not resource_id:
+            logger.warning("[PROVIDER:HOOKS] resource_id (pod_id) unknown — skipping watchdog")
+            return Ok(TrainingScriptHooks.empty())
+
+        if not self._api_key:
+            logger.warning("[PROVIDER:HOOKS] RunPod API key missing — skipping watchdog")
+            return Ok(TrainingScriptHooks.empty())
+
+        workspace = (
+            self._ssh_connection_info.workspace_path if self._ssh_connection_info else self.get_base_workspace()
+        )
+
+        upload_result = self._upload_watchdog_resources(ssh_client, workspace)
+        if upload_result.is_err():
+            return Err(upload_result.unwrap_err())  # type: ignore[union-attr]
+
+        env_vars = {
+            "RUNPOD_API_KEY": self._api_key,
+            "RUNPOD_POD_ID": str(resource_id),
+            "RUNPOD_AUTO_STOP": "true",
+            "RUNPOD_KEEP_ON_ERROR": "true" if cleanup.keep_pod_on_error else "false",
+            "WATCHDOG_WORKSPACE": workspace,
+        }
+
+        pre_python = self._build_pre_python_hook(workspace)
+        post_python = self._build_post_python_hook(workspace)
+
+        logger.info(f"[PROVIDER:HOOKS] Watchdog + auto-stop enabled for pod {resource_id}")
+        return Ok(TrainingScriptHooks(env_vars=env_vars, pre_python=pre_python, post_python=post_python))
+
+    @staticmethod
+    def _upload_watchdog_resources(ssh_client: SSHClient, workspace: str) -> Result[None, AppError]:
+        """Read bash resources from package and upload them into the pod workspace."""
+        from importlib import resources
+
+        try:
+            files = resources.files("src.providers.runpod.training.resources")
+            stop_pod_src = (files / "runpod_stop_pod.sh").read_text(encoding="utf-8")
+            watchdog_src = (files / "watchdog.sh").read_text(encoding="utf-8")
+        except (FileNotFoundError, ModuleNotFoundError, OSError) as exc:
+            return Err(
+                ProviderError(
+                    message=f"Failed to load RunPod watchdog resources: {exc}",
+                    code="RUNPOD_WATCHDOG_RESOURCE_MISSING",
+                )
+            )
+
+        stop_pod_path = f"{workspace}/runpod_stop_pod.sh"
+        watchdog_path = f"{workspace}/watchdog.sh"
+
+        for remote_path, content in ((stop_pod_path, stop_pod_src), (watchdog_path, watchdog_src)):
+            # Use quoted heredoc so bash does NOT expand anything inside the script body.
+            create_cmd = f"cat > {remote_path} << 'RUNPOD_RESOURCE_EOF'\n{content}\nRUNPOD_RESOURCE_EOF"
+            success, _, stderr = ssh_client.exec_command(command=create_cmd, background=False, timeout=30)
+            if not success:
+                return Err(
+                    ProviderError(
+                        message=f"Failed to upload {remote_path}: {stderr}",
+                        code="RUNPOD_WATCHDOG_UPLOAD_FAILED",
+                    )
+                )
+            ssh_client.exec_command(
+                command=f"chmod +x {remote_path}",
+                background=False,
+                timeout=10,
+                silent=True,
+            )
+
+        logger.info(f"✅ Uploaded watchdog resources to {workspace}")
+        return Ok(None)
+
+    @staticmethod
+    def _build_pre_python_hook(workspace: str) -> str:
+        """Bash snippet: launch detached watchdog BEFORE python invocation."""
+        return f"""# --- RunPod watchdog (safety-net for pod auto-stop) ---
+setsid nohup bash {workspace}/watchdog.sh </dev/null >>{workspace}/watchdog.log 2>&1 &
+disown || true
+# Wait up to 10s for watchdog to show signs of life (heartbeat file)
+for _i in 1 2 3 4 5; do
+  [ -f {workspace}/.watchdog_heartbeat ] && break
+  sleep 2
+done
+if [ ! -f {workspace}/.watchdog_heartbeat ]; then
+  echo "[WATCHDOG] WARNING: watchdog did not start within 10s — training continues without safety-net" >&2
+fi
+"""
+
+    @staticmethod
+    def _build_post_python_hook(workspace: str) -> str:
+        """Bash snippet: happy-path pod stop AFTER python exit_code is captured."""
+        return f"""# --- RunPod happy-path pod stop ---
+if [ -f {workspace}/runpod_stop_pod.sh ]; then
+  # shellcheck source=/dev/null
+  source {workspace}/runpod_stop_pod.sh
+  _runpod_stop_pod || true
+fi
+"""
 
     def __repr__(self) -> str:
         status = self._status.value

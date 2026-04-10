@@ -354,6 +354,9 @@ class TrainingMonitor(PipelineStage):
         while time.time() - start_time < timeout:
             poll_cmd_timeout_seconds = min(10, max(3, int(self.check_interval)))
 
+            # Signal to RunPod watchdog that pipeline is still active.
+            self._touch_pipeline_heartbeat(ssh_client)
+
             # First check if training already completed (fast training scenario)
             if self._check_marker(ssh_client, "TRAINING_COMPLETE", timeout_seconds=poll_cmd_timeout_seconds):
                 logger.info("Training already completed (fast training scenario)")
@@ -472,6 +475,9 @@ class TrainingMonitor(PipelineStage):
 
         while True:
             elapsed = time.time() - start_time
+
+            # Signal to RunPod watchdog that pipeline is still active.
+            self._touch_pipeline_heartbeat(ssh_client)
 
             marker_result = check_markers(elapsed)
             if marker_result is not None:
@@ -701,6 +707,32 @@ class TrainingMonitor(PipelineStage):
             "ram_used_gb": ram_used_gb,
             "ram_total_gb": ram_total_gb,
         }
+
+    def _touch_pipeline_heartbeat(self, ssh_client: SSHClient) -> None:
+        """
+        Touch ``<workspace>/.pipeline_heartbeat`` on the pod.
+
+        Signals to the RunPod watchdog (``watchdog.sh``) that the pipeline
+        is actively monitoring. While this file is fresh (< ~10 min by default),
+        the watchdog stays dormant and does NOT run GPU-idle detection or
+        stop the pod. As soon as the pipeline goes away (closed laptop,
+        crashed host, etc.), the heartbeat grows stale and the watchdog
+        activates its safety-net logic.
+
+        Best-effort: failures are swallowed — heartbeat is an advisory signal,
+        not a hard dependency. For single-node / on-prem, the touch is a
+        harmless no-op on a local filesystem path.
+        """
+        try:
+            ssh_client.exec_command(
+                command=f"touch {self._workspace_path}/.pipeline_heartbeat",
+                silent=True,
+                background=False,
+                timeout=5,
+            )
+        except Exception as exc:
+            # Heartbeat must never break monitoring — swallow all errors.
+            logger.debug(f"[MONITOR] pipeline heartbeat touch failed: {exc}")
 
     def _check_marker(self, ssh_client: SSHClient, marker_name: str, *, timeout_seconds: int = 10) -> bool:
         """Check if marker file exists."""
