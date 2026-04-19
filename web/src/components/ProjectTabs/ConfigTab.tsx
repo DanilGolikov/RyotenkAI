@@ -7,6 +7,7 @@ import {
 import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
+import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
@@ -107,6 +108,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
           value={formValue}
           onChange={applyFormChange}
           hashPrefix="project"
+          groupRenderers={{ providers: ProviderPickerField }}
         />
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>

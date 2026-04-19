@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FieldRenderer } from './FieldRenderer'
+import type { GroupRendererProps } from './ProviderPickerField'
 import { TocRail, type GroupValidity } from './TocRail'
 
 export interface ConfigBuilderProps {
@@ -11,6 +12,8 @@ export interface ConfigBuilderProps {
   groupValidity?: Partial<Record<string, GroupValidity>>
   /** Which hash namespace to sync (so multiple builders can coexist). */
   hashPrefix?: string
+  /** Per-top-level-group custom renderers (e.g. providers → ProviderPickerField). */
+  groupRenderers?: Partial<Record<string, React.ComponentType<GroupRendererProps>>>
 }
 
 function readInitialGroup(keys: string[], hashPrefix: string): string {
@@ -31,6 +34,7 @@ export function ConfigBuilder({
   onChange,
   groupValidity,
   hashPrefix = '',
+  groupRenderers,
 }: ConfigBuilderProps) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
   const topRequired = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
@@ -73,25 +77,44 @@ export function ConfigBuilder({
         validity={groupValidity}
       />
 
-      <section
-        id={`cfg-${activeKey}`}
-        className="min-w-0 scroll-mt-24"
-      >
-        <FieldRenderer
+      <section id={`cfg-${activeKey}`} className="min-w-0 scroll-mt-24">
+        {renderActive()}
+      </section>
+    </div>
+  )
+
+  function renderActive() {
+    const Custom = groupRenderers?.[activeKey]
+    const setKey = (next: unknown) => {
+      const copy = { ...value }
+      if (next === undefined) delete copy[activeKey]
+      else copy[activeKey] = next
+      onChange(copy)
+    }
+    if (Custom) {
+      return (
+        <Custom
           root={schema}
           node={activeNode}
           value={value?.[activeKey]}
           labelKey={activeKey}
           required={topRequired.has(activeKey)}
-          depth={0}
-          onChange={(next) => {
-            const copy = { ...value }
-            if (next === undefined) delete copy[activeKey]
-            else copy[activeKey] = next
-            onChange(copy)
-          }}
+          onChange={setKey}
+          rootValue={value}
+          onRootChange={onChange}
         />
-      </section>
-    </div>
-  )
+      )
+    }
+    return (
+      <FieldRenderer
+        root={schema}
+        node={activeNode}
+        value={value?.[activeKey]}
+        labelKey={activeKey}
+        required={topRequired.has(activeKey)}
+        depth={0}
+        onChange={setKey}
+      />
+    )
+  }
 }
