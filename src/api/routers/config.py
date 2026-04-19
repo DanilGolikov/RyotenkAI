@@ -50,3 +50,37 @@ def schema() -> dict:
     from src.config.pipeline.schema import PipelineConfig
 
     return PipelineConfig.model_json_schema()
+
+
+class ConfigPreset(BaseModel):
+    name: str
+    description: str = ""
+    yaml: str
+
+
+class ConfigPresetsResponse(BaseModel):
+    presets: list[ConfigPreset] = Field(default_factory=list)
+
+
+@router.get("/presets", response_model=ConfigPresetsResponse)
+def presets() -> ConfigPresetsResponse:
+    """Return curated starter configs from ``configs/presets/*.yaml``."""
+    presets_dir = Path("configs/presets").expanduser().resolve()
+    items: list[ConfigPreset] = []
+    if presets_dir.is_dir():
+        for path in sorted(presets_dir.glob("*.yaml")):
+            text = path.read_text(encoding="utf-8")
+            # Extract a short description from leading `# ` comments.
+            description_lines: list[str] = []
+            for line in text.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    description_lines.append(stripped.lstrip("# ").rstrip())
+                elif stripped:
+                    break
+            description = " ".join(description_lines).strip()
+            # Drop the leading "Preset: " prefix if the user followed the convention.
+            if description.lower().startswith("preset:"):
+                description = description.split(":", 1)[1].strip()
+            items.append(ConfigPreset(name=path.stem, description=description, yaml=text))
+    return ConfigPresetsResponse(presets=items)

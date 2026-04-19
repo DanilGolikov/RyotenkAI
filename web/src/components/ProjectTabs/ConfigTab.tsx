@@ -7,6 +7,8 @@ import {
 import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
+import { DiffBadge } from '../ConfigBuilder/DiffBadge'
+import { PresetDropdown } from '../ConfigBuilder/PresetDropdown'
 import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
 import { ValidationBanner } from '../ConfigBuilder/ValidationBanner'
 import { deriveGroupValidity } from '../ConfigBuilder/validationMap'
@@ -26,6 +28,10 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   const [formValue, setFormValue] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
   const [yamlParseError, setYamlParseError] = useState<string | null>(null)
+  const [presetBaseline, setPresetBaseline] = useState<{
+    name: string
+    value: Record<string, unknown>
+  } | null>(null)
 
   useEffect(() => {
     if (configQuery.data && !dirty) {
@@ -115,7 +121,28 @@ export function ConfigTab({ projectId }: { projectId: string }) {
             YAML
           </button>
         </div>
-        <span className="ml-auto text-2xs text-ink-3">{statusLine}</span>
+        <div className="ml-auto flex items-center gap-2">
+          {presetBaseline && (
+            <DiffBadge
+              presetName={presetBaseline.name}
+              baseline={presetBaseline.value}
+              current={formValue}
+              onClear={() => setPresetBaseline(null)}
+            />
+          )}
+          <PresetDropdown
+            dirty={dirty}
+            onLoad={(preset) => {
+              const parsed = safeYamlParse(preset.yaml) ?? {}
+              setYamlText(preset.yaml)
+              setFormValue(parsed)
+              setDirty(true)
+              setYamlParseError(null)
+              setPresetBaseline({ name: preset.name, value: parsed })
+            }}
+          />
+          <span className="text-2xs text-ink-3">{statusLine}</span>
+        </div>
       </div>
 
       <ValidationBanner

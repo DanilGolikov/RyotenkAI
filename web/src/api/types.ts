@@ -313,3 +313,15 @@ export interface CreateProviderRequest {
   path?: string
   description?: string
 }
+
+// ───────── Config presets ─────────
+
+export interface ConfigPreset {
+  name: string
+  description: string
+  yaml: string
+}
+
+export interface ConfigPresetsResponse {
+  presets: ConfigPreset[]
+}
