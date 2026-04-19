@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
+import { FieldAnchor } from './FieldAnchor'
 import { FormGroup } from './FormGroup'
 import { UnionField } from './UnionField'
 import { detectKind, getDefault, resolveRef, titleOrKey } from './schemaUtils'
@@ -14,6 +15,8 @@ type FieldProps = {
   labelKey: string
   required?: boolean
   depth?: number
+  path?: string
+  hashPrefix?: string
 }
 
 function LabelledRow({
@@ -45,14 +48,22 @@ function LabelledRow({
 
 export function FieldRenderer(props: FieldProps) {
   const { root, node: rawNode, value, onChange, labelKey, required, depth = 0 } = props
+  const path = props.path ?? labelKey
+  const hashPrefix = props.hashPrefix ?? ''
   const node = resolveRef(root, rawNode)
   const kind = detectKind(node)
   const label = titleOrKey(node, labelKey)
   const description = typeof node.description === 'string' ? node.description : undefined
   const fallback = value === undefined ? getDefault(node) : value
 
+  const wrapAnchor = (el: React.ReactNode) => (
+    <FieldAnchor path={path} hashPrefix={hashPrefix}>
+      {el}
+    </FieldAnchor>
+  )
+
   if (kind === 'boolean') {
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <label className="inline-flex items-center gap-2 text-xs">
           <input
@@ -69,7 +80,7 @@ export function FieldRenderer(props: FieldProps) {
 
   if (kind === 'enum') {
     const options = collectEnumOptions(node)
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <select
           value={fallback === undefined || fallback === null ? '' : String(fallback)}
@@ -83,12 +94,12 @@ export function FieldRenderer(props: FieldProps) {
             </option>
           ))}
         </select>
-      </LabelledRow>
+      </LabelledRow>,
     )
   }
 
   if (kind === 'number' || kind === 'integer') {
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <input
           type="number"
@@ -103,12 +114,12 @@ export function FieldRenderer(props: FieldProps) {
           }}
           className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
         />
-      </LabelledRow>
+      </LabelledRow>,
     )
   }
 
   if (kind === 'string') {
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <input
           type="text"
@@ -116,7 +127,7 @@ export function FieldRenderer(props: FieldProps) {
           onChange={(e) => onChange(e.target.value)}
           className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
         />
-      </LabelledRow>
+      </LabelledRow>,
     )
   }
 
@@ -126,7 +137,7 @@ export function FieldRenderer(props: FieldProps) {
       .map((b) => resolveRef(root, b))
       .filter((b) => (Array.isArray(b.type) ? b.type[0] : b.type) === 'object' || b.properties)
     if (objectBranches.length >= 1) {
-      return (
+      return wrapAnchor(
         <UnionField
           root={root}
           branches={rawBranches}
@@ -141,16 +152,17 @@ export function FieldRenderer(props: FieldProps) {
               value={fallback}
               onChange={onChange}
               depth={depth + 1}
+              pathPrefix={path}
+              hashPrefix={hashPrefix}
             />
           )}
-        />
+        />,
       )
     }
-    // Fall through if branches aren't object-like.
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <AdvancedJsonPreview value={fallback} />
-      </LabelledRow>
+      </LabelledRow>,
     )
   }
 
@@ -177,11 +189,13 @@ export function FieldRenderer(props: FieldProps) {
             value={fallback}
             onChange={onChange}
             depth={depth + 1}
+            pathPrefix={path}
+            hashPrefix={hashPrefix}
           />
         </FormGroup>
       )
     }
-    return (
+    return wrapAnchor(
       <div className="space-y-2 pl-3 border-l border-line-1">
         <div className="text-2xs text-ink-2 font-medium">{label}</div>
         {description && <div className="text-[0.65rem] text-ink-4">{description}</div>}
@@ -191,16 +205,18 @@ export function FieldRenderer(props: FieldProps) {
           value={fallback}
           onChange={onChange}
           depth={depth + 1}
+          pathPrefix={path}
+          hashPrefix={hashPrefix}
         />
-      </div>
+      </div>,
     )
   }
 
   if (kind === 'array' || kind === 'unknown') {
-    return (
+    return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <AdvancedJsonPreview value={fallback} />
-      </LabelledRow>
+      </LabelledRow>,
     )
   }
 
@@ -218,12 +234,16 @@ function ObjectFields({
   value,
   onChange,
   depth,
+  pathPrefix = '',
+  hashPrefix = '',
 }: {
   root: PipelineJsonSchema
   node: JsonSchemaNode
   value: unknown
   onChange: Setter
   depth: number
+  pathPrefix?: string
+  hashPrefix?: string
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
@@ -254,6 +274,8 @@ function ObjectFields({
       labelKey={key}
       required={requiredSet.has(key)}
       depth={depth}
+      path={pathPrefix ? `${pathPrefix}.${key}` : key}
+      hashPrefix={hashPrefix}
     />
   )
 

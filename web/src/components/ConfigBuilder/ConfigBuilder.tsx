@@ -29,6 +29,15 @@ function readInitialGroup(keys: string[], hashPrefix: string): string {
   return keys.includes(group) ? group : keys[0] ?? ''
 }
 
+function readDottedTrailer(hashPrefix: string): string | null {
+  if (typeof window === 'undefined' || !window.location.hash) return null
+  const raw = window.location.hash.slice(1)
+  const prefix = hashPrefix ? `${hashPrefix}:` : ''
+  if (prefix && !raw.startsWith(prefix)) return null
+  const tail = prefix ? raw.slice(prefix.length) : raw
+  return tail.includes('.') ? tail : null
+}
+
 export function ConfigBuilder({
   schema,
   value,
@@ -47,8 +56,18 @@ export function ConfigBuilder({
   useEffect(() => {
     function onHash() {
       setActive(readInitialGroup(keys, hashPrefix))
+      // If the hash has a dotted trailer like "training.lora.r", try to scroll
+      // to the matching FieldAnchor once the group is mounted.
+      const trailer = readDottedTrailer(hashPrefix)
+      if (trailer) {
+        setTimeout(() => {
+          const anchor = document.querySelector(`[data-field-path="${CSS.escape(trailer)}"]`)
+          if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }, 100)
+      }
     }
     window.addEventListener('hashchange', onHash)
+    onHash()
     return () => window.removeEventListener('hashchange', onHash)
   }, [keys, hashPrefix])
 
@@ -116,6 +135,8 @@ export function ConfigBuilder({
         required={topRequired.has(activeKey)}
         depth={0}
         onChange={setKey}
+        path={activeKey}
+        hashPrefix={hashPrefix}
       />
     )
   }
