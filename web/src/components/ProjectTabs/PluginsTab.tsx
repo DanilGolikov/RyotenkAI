@@ -9,9 +9,10 @@ import type { PluginKind, PluginManifest } from '../../api/types'
 import { dumpYaml } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
-const TOGGLEABLE_KINDS: { id: Exclude<PluginKind, 'reward'>; label: string; help: string }[] = [
+const TOGGLEABLE_KINDS: { id: PluginKind; label: string; help: string }[] = [
   { id: 'validation', label: 'Validation', help: 'Dataset pre-flight checks.' },
   { id: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.' },
+  { id: 'reward', label: 'Reward', help: 'Reward function for GRPO / SAPO strategies. Only one can be active at a time — it applies to every GRPO/SAPO strategy in this project.' },
 ]
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -26,11 +27,38 @@ type AttachedEntry = { id: string; plugin: string }
  *   For the on/off toggle we treat "attached" as "present on *any* dataset".
  * - evaluation plugins live under evaluation.evaluators.plugins[].
  */
+function grpoStrategyIndices(parsed: Record<string, unknown>): number[] {
+  const training = isRecord(parsed.training) ? parsed.training : {}
+  const strategies = Array.isArray((training as Record<string, unknown>).strategies)
+    ? ((training as Record<string, unknown>).strategies as unknown[])
+    : []
+  const out: number[] = []
+  strategies.forEach((s, idx) => {
+    if (!isRecord(s)) return
+    const t = typeof s.strategy_type === 'string' ? s.strategy_type.toLowerCase() : ''
+    if (t === 'grpo' || t === 'sapo') out.push(idx)
+  })
+  return out
+}
+
 function attachedPluginsByKind(
-  kind: 'validation' | 'evaluation',
+  kind: PluginKind,
   parsed: Record<string, unknown>,
 ): Record<string, AttachedEntry> {
   const out: Record<string, AttachedEntry> = {}
+  if (kind === 'reward') {
+    const training = isRecord(parsed.training) ? parsed.training : {}
+    const strategies = Array.isArray((training as Record<string, unknown>).strategies)
+      ? ((training as Record<string, unknown>).strategies as unknown[])
+      : []
+    for (const s of strategies) {
+      if (!isRecord(s)) continue
+      const params = isRecord(s.params) ? s.params : {}
+      const name = typeof params.reward_plugin === 'string' ? params.reward_plugin : ''
+      if (name) out[name] = { id: name, plugin: name }
+    }
+    return out
+  }
   if (kind === 'evaluation') {
     const evalCfg = isRecord(parsed.evaluation) ? parsed.evaluation : {}
     const evaluators = isRecord((evalCfg as Record<string, unknown>).evaluators)
@@ -66,13 +94,35 @@ function attachedPluginsByKind(
 }
 
 function withAttachmentToggled(
-  kind: 'validation' | 'evaluation',
+  kind: PluginKind,
   parsed: Record<string, unknown>,
   plugin: PluginManifest,
   enable: boolean,
 ): Record<string, unknown> {
   const next = structuredClone(parsed) as Record<string, unknown>
   const uniqueId = plugin.id  // keep it simple — one entry per plugin kind
+
+  if (kind === 'reward') {
+    const training = (isRecord(next.training) ? next.training : {}) as Record<string, unknown>
+    if (!isRecord(next.training)) next.training = training
+    const strategies = Array.isArray(training.strategies)
+      ? (training.strategies as unknown[])
+      : []
+    training.strategies = strategies.map((s) => {
+      if (!isRecord(s)) return s
+      const t = typeof s.strategy_type === 'string' ? s.strategy_type.toLowerCase() : ''
+      if (t !== 'grpo' && t !== 'sapo') return s
+      const params = isRecord(s.params) ? { ...s.params } : {}
+      if (enable) {
+        params.reward_plugin = plugin.id
+        Object.assign(params, plugin.suggested_params ?? {})
+      } else if (params.reward_plugin === plugin.id) {
+        delete params.reward_plugin
+      }
+      return { ...s, params }
+    })
+    return next
+  }
 
   if (kind === 'evaluation') {
     const evalCfg = (isRecord(next.evaluation) ? next.evaluation : {}) as Record<string, unknown>
@@ -130,8 +180,7 @@ interface Props {
 }
 
 export function PluginsTab({ projectId }: Props) {
-  const [activeKind, setActiveKind] =
-    useState<'validation' | 'evaluation'>('evaluation')
+  const [activeKind, setActiveKind] = useState<PluginKind>('evaluation')
   const configQuery = useProjectConfig(projectId)
   const pluginsQuery = usePlugins(activeKind)
   const saveMut = useSaveProjectConfig(projectId)
@@ -143,8 +192,19 @@ export function PluginsTab({ projectId }: Props) {
     [activeKind, parsed],
   )
 
+  const grpoCount = useMemo(() => grpoStrategyIndices(parsed).length, [parsed])
+
   async function togglePlugin(plugin: PluginManifest, enable: boolean) {
-    const next = withAttachmentToggled(activeKind, parsed, plugin, enable)
+    let patched = parsed
+    // Reward is radio-style: turning a plugin on first clears the others.
+    if (activeKind === 'reward' && enable) {
+      for (const otherName of Object.keys(attached)) {
+        if (otherName === plugin.id) continue
+        const stub = { ...plugin, id: otherName }
+        patched = withAttachmentToggled('reward', patched, stub, false)
+      }
+    }
+    const next = withAttachmentToggled(activeKind, patched, plugin, enable)
     const yamlText = dumpYaml(next)
     await saveMut.mutateAsync(yamlText)
   }
@@ -183,6 +243,16 @@ export function PluginsTab({ projectId }: Props) {
         {TOGGLEABLE_KINDS.find((k) => k.id === activeKind)?.help}{' '}
         <span className="text-ink-4">Toggle adds the plugin to your project config with its suggested params.</span>
       </div>
+      {activeKind === 'reward' && grpoCount === 0 && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 text-warn text-2xs px-3 py-2">
+          No GRPO or SAPO strategy found in <span className="font-mono">training.strategies[]</span>. Enabling a reward plugin writes nothing until you add one.
+        </div>
+      )}
+      {activeKind === 'reward' && grpoCount > 0 && (
+        <div className="text-2xs text-ink-3">
+          Will apply to {grpoCount} GRPO/SAPO strateg{grpoCount === 1 ? 'y' : 'ies'} in this project.
+        </div>
+      )}
 
       {pluginsQuery.isLoading ? (
         <div className="flex items-center gap-2 text-sm text-ink-3">
