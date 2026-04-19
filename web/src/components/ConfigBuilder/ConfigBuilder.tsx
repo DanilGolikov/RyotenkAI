@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FieldRenderer } from './FieldRenderer'
 import { FieldSearchOmniBox } from './FieldSearchOmniBox'
+import { GroupSubtabs } from './GroupSubtabs'
 import type { GroupRendererProps } from './ProviderPickerField'
-import { TocRail, type GroupValidity } from './TocRail'
+import type { GroupValidity } from './TocRail'
 
 export interface ConfigBuilderProps {
   schema: PipelineJsonSchema
@@ -89,8 +90,8 @@ export function ConfigBuilder({
   const activeNode = topProps[activeKey]
 
   return (
-    <div className="grid grid-cols-[220px_1fr] gap-6">
-      <TocRail
+    <div className="space-y-3">
+      <GroupSubtabs
         schema={schema}
         active={activeKey}
         onSelect={selectGroup}
