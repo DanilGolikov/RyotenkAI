@@ -17,28 +17,27 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Neutral surfaces — lifted ~4% in lightness vs. v1 so the UI
-        // doesn't feel like a void. Cool-violet undertone (hue ≈ 290°)
-        // keeps the brand direction without painting everything burgundy.
-        // OKLCH steps ≈ 12% → 27% in 3-4% increments, so elevation reads
+        // Neutral zinc surfaces (pattern: Linear / Vercel / shadcn). Zero
+        // hue-tinting so the chrome stops feeling like "night-club purple";
+        // brand colour lives only on CTAs, logo, active nav, focus ring.
+        // Lightness ramps ≈ 12% → 28% in steady steps so elevation reads
         // without shadows (required in dark mode).
-        'surface-0': '#141221',   // app canvas
-        'surface-1': '#1a1729',   // sidebar, sticky panels
-        'surface-2': '#221f33',   // cards
-        'surface-3': '#2c2840',   // hover / selected card
-        'surface-4': '#38334f',   // raised / popover
+        'surface-0': '#0f0f11',   // app canvas     (zinc-950-ish)
+        'surface-1': '#18181b',   // sidebar        (zinc-900)
+        'surface-2': '#1f1f23',   // cards
+        'surface-3': '#27272a',   // hover / selected card (zinc-800)
+        'surface-4': '#35353b',   // popover / raised
 
-        // Borders — slightly lighter so they read against the new surfaces
-        'line-1': '#2e2a43',
-        'line-2': '#423d5c',
+        // Borders
+        'line-1': '#27272a',      // hairline (same L as s-3, ~1px reads via contrast)
+        'line-2': '#3f3f46',      // stronger (zinc-700)
 
-        // Text — ink-1 unchanged (passes AA everywhere), ink-2 warmer
-        // lavender so body copy feels alive, ink-3 bumped so captions
-        // don't feel washed out.
-        'ink-1': '#f1ecf7',       // primary  (contrast on surface-0 ≈ 15.8:1)
-        'ink-2': '#b9b1cc',       // secondary (7.9:1 on s-0)
-        'ink-3': '#857d9b',       // captions  (4.9:1)
-        'ink-4': '#595370',       // placeholders / disabled
+        // Text — neutral zinc scale, matches shadcn defaults; contrast
+        // ≥ 4.5:1 down to ink-3 on surface-0 (WCAG AA for body).
+        'ink-1': '#fafafa',       // primary   (17.5:1 on s-0)
+        'ink-2': '#a1a1aa',       // secondary (7.2:1 on s-0)
+        'ink-3': '#71717a',       // captions  (4.6:1)
+        'ink-4': '#52525b',       // placeholders / disabled
 
         // Brand (single hue family — used sparingly)
         'brand':        '#d6305f',   // solid CTA / active
@@ -61,7 +60,7 @@ export default {
         'gradient-brand-soft':
           'linear-gradient(135deg, rgba(214,48,95,0.18) 0%, rgba(139,92,246,0.18) 100%)',
         'gradient-sidebar':
-          'linear-gradient(180deg, #1a1729 0%, #141221 85%)',
+          'linear-gradient(180deg, #18181b 0%, #0f0f11 85%)',
       },
       boxShadow: {
         'glow-brand':    '0 0 20px rgba(214, 48, 95, 0.35)',

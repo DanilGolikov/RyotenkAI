@@ -12,15 +12,16 @@ html, body, #root {
 
 body {
   margin: 0;
-  background: #141221;
-  color: #f1ecf7;
+  background: #0f0f11;
+  color: #fafafa;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Ambient backdrop — keeps the app from feeling like a void, very subtle
-   so it doesn't fight content contrast. */
+/* Ambient backdrop — a whisper of brand in the top-left corner so the
+   UI doesn't feel clinical, but the bulk of the chrome stays neutral
+   zinc. Anything stronger reintroduces "purple night" mood. */
 #root {
   position: relative;
   isolation: isolate;
@@ -32,23 +33,22 @@ body {
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(circle at 8% -10%,  rgba(214, 48, 95, 0.10), transparent 50%),
-    radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.08), transparent 55%);
+    radial-gradient(circle at 6% -8%, rgba(214, 48, 95, 0.07), transparent 42%);
 }
 
-/* Selection + scrollbar stay neutral — brand is reserved for signal. */
+/* Selection stays brand-tinted (it's a deliberate signal). */
 ::selection {
   background: rgba(214, 48, 95, 0.30);
   color: #ffffff;
 }
 * {
   scrollbar-width: thin;
-  scrollbar-color: #423d5c transparent;
+  scrollbar-color: #3f3f46 transparent;
 }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #423d5c; border-radius: 999px; }
-*::-webkit-scrollbar-thumb:hover { background: #595370; }
+*::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #52525b; }
 
 :focus-visible {
   outline: 2px solid #ea4a78;
@@ -72,14 +72,14 @@ body {
   .card-raised {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card;
   }
-  /* Single "hero" variant — a noticeable gradient glow so this one card
-     feels primary. Opacity bumped from v1 (0.08/0.05 → 0.14/0.10) so the
-     tint actually reads on the lifted surface. */
+  /* Single "hero" variant — the ONE card allowed to wear brand colour.
+     On neutral zinc the gradient now pops — opacity stays moderate
+     (0.14/0.10) to lead the eye without reintroducing purple ambience. */
   .card-hero {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card relative overflow-hidden;
     background-image:
       linear-gradient(180deg, rgba(214,48,95,0.14), rgba(139,92,246,0.10) 55%, transparent),
-      linear-gradient(#221f33, #221f33);
+      linear-gradient(#1f1f23, #1f1f23);
   }
 
   /* ---------- Buttons ---------- */
@@ -109,13 +109,13 @@ body {
     @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.07);
-    color: #b9b1cc;
+    color: #a1a1aa;
   }
   .pill-ok     { color: #5ee694; background: rgba(74,222,128,0.10);  border-color: rgba(74,222,128,0.22); }
   .pill-warn   { color: #ffb43a; background: rgba(245,165,36,0.10);  border-color: rgba(245,165,36,0.22); }
   .pill-err    { color: #ff8a8a; background: rgba(248,113,113,0.10); border-color: rgba(248,113,113,0.28); }
   .pill-info   { color: #7ab8ff; background: rgba(96,165,250,0.10);  border-color: rgba(96,165,250,0.28); }
-  .pill-idle   { color: #a097b5; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+  .pill-idle   { color: #a1a1aa; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
   .pill-skip   { color: #b9a4ff; background: rgba(161,133,248,0.10); border-color: rgba(161,133,248,0.26); }
 
   /* ---------- Sidebar nav (subtle inset accent only when active) ---------- */
