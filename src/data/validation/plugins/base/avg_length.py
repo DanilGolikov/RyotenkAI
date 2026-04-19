@@ -7,7 +7,7 @@ Checks average text length of samples.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.data.validation.base import ValidationPlugin, ValidationResult
 from src.data.validation.registry import ValidationPluginRegistry
@@ -41,6 +41,24 @@ class AvgLengthValidator(ValidationPlugin):
     priority = 20
     expensive = False
     supports_streaming = True
+
+    MANIFEST: ClassVar[dict[str, Any]] = {
+        "description": "Checks that the average text length falls within expected bounds.",
+        "category": "basic",
+        "stability": "stable",
+        "params_schema": {
+            "sample_size": {"type": "integer", "min": 1, "default": 10_000},
+        },
+        "thresholds_schema": {
+            "min": {"type": "integer", "min": 0, "default": _DEFAULT_MIN_LENGTH},
+            "max": {"type": "integer", "min": 1, "default": _DEFAULT_MAX_LENGTH},
+        },
+        "suggested_params": {"sample_size": 10_000},
+        "suggested_thresholds": {
+            "min": _DEFAULT_MIN_LENGTH,
+            "max": _DEFAULT_MAX_LENGTH,
+        },
+    }
 
     @classmethod
     def get_description(cls) -> str:

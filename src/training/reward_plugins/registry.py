@@ -47,6 +47,11 @@ class RewardPluginRegistry:
         return dict(cls._registry)
 
     @classmethod
+    def list_manifests(cls) -> list[dict[str, Any]]:
+        """Return normalised manifest dicts for every registered plugin."""
+        return [plugin_cls.get_manifest() for plugin_cls in cls._registry.values()]
+
+    @classmethod
     def clear(cls) -> None:
         cls._registry.clear()
 

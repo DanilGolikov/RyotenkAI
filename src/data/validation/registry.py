@@ -101,6 +101,11 @@ class ValidationPluginRegistry:
         return list(cls._plugins.keys())
 
     @classmethod
+    def list_manifests(cls) -> list[dict[str, Any]]:
+        """Return normalised manifest dicts for every registered plugin."""
+        return [plugin_cls.get_manifest() for plugin_cls in cls._plugins.values()]
+
+    @classmethod
     def clear(cls) -> None:
         """Clear all registered plugins (for testing)."""
         cls._plugins.clear()

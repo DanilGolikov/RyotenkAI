@@ -7,7 +7,7 @@ import stat
 import subprocess
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from urllib.request import urlopen, Request
 import re
 
@@ -173,6 +173,29 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
     """Domain plugin for HelixQL GRPO/SAPO reward."""
 
     name = "helixql_compiler_semantic"
+
+    MANIFEST: ClassVar[dict[str, Any]] = {
+        "description": (
+            "Domain reward for HelixQL GRPO/SAPO: compiles generated queries against "
+            "the schema and scores semantic similarity to the reference answer."
+        ),
+        "category": "semantic",
+        "stability": "stable",
+        "params_schema": {
+            "validation_backend": {
+                "type": "enum",
+                "options": ["compile", "semantic_only"],
+                "default": "compile",
+            },
+            "timeout_seconds": {"type": "integer", "min": 1, "max": 120, "default": 10},
+        },
+        "thresholds_schema": {},
+        "suggested_params": {
+            "validation_backend": "compile",
+            "timeout_seconds": 10,
+        },
+        "suggested_thresholds": {},
+    }
 
     def __init__(self, params: dict[str, Any]):
         self._compiler: HelixCompiler | None = None

@@ -7,7 +7,7 @@ Checks if dataset has minimum number of samples.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.data.validation.base import ValidationPlugin, ValidationResult
 from src.data.validation.registry import ValidationPluginRegistry
@@ -38,6 +38,24 @@ class MinSamplesValidator(ValidationPlugin):
     priority = 10  # Run early (basic check)
     expensive = False
     supports_streaming = True
+
+    MANIFEST: ClassVar[dict[str, Any]] = {
+        "description": "Checks that the dataset has at least N examples.",
+        "category": "basic",
+        "stability": "stable",
+        "params_schema": {
+            "sample_size": {
+                "type": "integer",
+                "min": 1,
+                "default": _DEFAULT_SAMPLE_SIZE,
+            },
+        },
+        "thresholds_schema": {
+            "threshold": {"type": "integer", "min": 1, "default": 100},
+        },
+        "suggested_params": {"sample_size": _DEFAULT_SAMPLE_SIZE},
+        "suggested_thresholds": {"threshold": 100},
+    }
 
     @classmethod
     def get_description(cls) -> str:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
 from src.evaluation.plugins.registry import EvaluatorPluginRegistry
@@ -13,6 +13,21 @@ class HelixQLSemanticMatchPlugin(EvaluatorPlugin):
     name = "helixql_semantic_match"
     priority = 20
     requires_expected_answer = True
+
+    MANIFEST: ClassVar[dict[str, Any]] = {
+        "description": (
+            "Compares the model's HelixQL answer to the expected answer using a "
+            "deterministic semantic score (sequence ratio + token jaccard + hard-eval hits)."
+        ),
+        "category": "semantic",
+        "stability": "stable",
+        "params_schema": {},
+        "thresholds_schema": {
+            "min_mean_score": {"type": "float", "min": 0.0, "max": 1.0, "default": 0.7},
+        },
+        "suggested_params": {},
+        "suggested_thresholds": {"min_mean_score": 0.7},
+    }
 
     @classmethod
     def get_description(cls) -> str:

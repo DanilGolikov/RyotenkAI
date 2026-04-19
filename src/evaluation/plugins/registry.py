@@ -15,7 +15,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from .base import EvaluatorPlugin
@@ -70,6 +70,11 @@ class EvaluatorPluginRegistry:
     def get_all(cls) -> dict[str, type[EvaluatorPlugin]]:
         """Return a copy of the full registry."""
         return dict(cls._registry)
+
+    @classmethod
+    def list_manifests(cls) -> list[dict[str, Any]]:
+        """Return normalised manifest dicts for every registered plugin."""
+        return [plugin_cls.get_manifest() for plugin_cls in cls._registry.values()]
 
     @classmethod
     def is_registered(cls, name: str) -> bool:
