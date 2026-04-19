@@ -246,6 +246,7 @@ export interface ConfigVersion {
   filename: string
   created_at: string
   size_bytes: number
+  is_favorite?: boolean
 }
 
 export interface ConfigVersionsResponse {

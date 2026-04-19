@@ -13,6 +13,8 @@ from src.api.schemas.project import (
     ProjectSummary,
     SaveConfigRequest,
     SaveConfigResponse,
+    ToggleFavoriteRequest,
+    ToggleFavoriteResponse,
 )
 from src.api.services import project_service
 from src.api.services.project_service import ProjectServiceError
@@ -140,3 +142,22 @@ def restore_version(
     except ProjectServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SaveConfigResponse(ok=True, snapshot_filename=snapshot)
+
+
+@router.put(
+    "/{project_id}/config/versions/{filename}/favorite",
+    response_model=ToggleFavoriteResponse,
+)
+def toggle_favorite(
+    project_id: str,
+    filename: str,
+    body: ToggleFavoriteRequest,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> ToggleFavoriteResponse:
+    try:
+        favorites = project_service.set_favorite(
+            registry, project_id, filename, favorite=body.favorite
+        )
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ToggleFavoriteResponse(favorite_versions=favorites)

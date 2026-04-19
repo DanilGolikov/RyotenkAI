@@ -98,6 +98,7 @@ class ProjectStore:
         if not self.exists():
             raise ProjectStoreError(f"project not found at {self.root}")
         raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        favorites = raw.get("favorite_versions") or []
         return ProjectMetadata(
             schema_version=int(raw.get("schema_version", PROJECT_SCHEMA_VERSION)),
             id=str(raw["id"]),
@@ -105,6 +106,7 @@ class ProjectStore:
             description=str(raw.get("description", "")),
             created_at=str(raw.get("created_at", "")),
             updated_at=str(raw.get("updated_at", "")),
+            favorite_versions=[str(v) for v in favorites if isinstance(v, str)],
         )
 
     def touch(self) -> None:
@@ -178,6 +180,32 @@ class ProjectStore:
         """
         content = self.read_version(filename)
         return self.save_config(content)
+
+    # ---------- Favorites --------------------------------------------------
+
+    def toggle_favorite_version(self, filename: str, *, pinned: bool) -> list[str]:
+        """Add / remove ``filename`` from the project's favorite versions.
+
+        Raises ``ProjectStoreError`` if the snapshot does not exist.
+        Returns the updated list.
+        """
+        if not self.exists():
+            raise ProjectStoreError(f"project not found at {self.root}")
+        if "/" in filename or ".." in filename:
+            raise ProjectStoreError(f"invalid version filename: {filename!r}")
+        if not (self.history_dir / filename).is_file():
+            raise ProjectStoreError(f"version not found: {filename}")
+        metadata = self.load()
+        favs = list(metadata.favorite_versions)
+        if pinned:
+            if filename not in favs:
+                favs.append(filename)
+        else:
+            favs = [f for f in favs if f != filename]
+        metadata.favorite_versions = favs
+        metadata.updated_at = utc_now_iso()
+        atomic_write_json(self.metadata_path, metadata.to_dict())
+        return favs
 
     # ---------- Cleanup -----------------------------------------------------
 

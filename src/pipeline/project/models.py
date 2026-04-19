@@ -16,6 +16,7 @@ class ProjectMetadata:
     description: str
     created_at: str
     updated_at: str
+    favorite_versions: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -25,6 +26,7 @@ class ProjectMetadata:
             "description": self.description,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "favorite_versions": list(self.favorite_versions),
         }
 
 

@@ -59,10 +59,19 @@ class ConfigVersion(BaseModel):
     filename: str
     created_at: str
     size_bytes: int
+    is_favorite: bool = False
 
 
 class ConfigVersionsResponse(BaseModel):
     versions: list[ConfigVersion]
+
+
+class ToggleFavoriteRequest(BaseModel):
+    favorite: bool
+
+
+class ToggleFavoriteResponse(BaseModel):
+    favorite_versions: list[str]
 
 
 class ConfigVersionDetail(BaseModel):
@@ -85,4 +94,6 @@ __all__ = [
     "ProjectSummary",
     "SaveConfigRequest",
     "SaveConfigResponse",
+    "ToggleFavoriteRequest",
+    "ToggleFavoriteResponse",
 ]

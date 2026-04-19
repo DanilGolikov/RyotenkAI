@@ -177,6 +177,42 @@ def test_config_schema_endpoint(client: TestClient) -> None:
         assert key in props, f"missing {key} from config schema"
 
 
+def test_favorite_versions_toggle(client: TestClient) -> None:
+    _create(client, name="Fav", id="fav")
+    # two saves → one snapshot in history
+    client.put("/api/v1/projects/fav/config", json={"yaml": "model: v1\n"})
+    client.put("/api/v1/projects/fav/config", json={"yaml": "model: v2\n"})
+    versions = client.get("/api/v1/projects/fav/config/versions").json()["versions"]
+    assert versions and not versions[0]["is_favorite"]
+    target = versions[0]["filename"]
+
+    pinned = client.put(
+        f"/api/v1/projects/fav/config/versions/{target}/favorite",
+        json={"favorite": True},
+    )
+    assert pinned.status_code == 200
+    assert pinned.json()["favorite_versions"] == [target]
+
+    after = client.get("/api/v1/projects/fav/config/versions").json()["versions"]
+    assert after[0]["filename"] == target
+    assert after[0]["is_favorite"] is True
+
+    unpinned = client.put(
+        f"/api/v1/projects/fav/config/versions/{target}/favorite",
+        json={"favorite": False},
+    )
+    assert unpinned.json()["favorite_versions"] == []
+
+
+def test_favorite_rejects_unknown_filename(client: TestClient) -> None:
+    _create(client, name="FavX", id="favx")
+    resp = client.put(
+        "/api/v1/projects/favx/config/versions/bogus.yaml/favorite",
+        json={"favorite": True},
+    )
+    assert resp.status_code == 404
+
+
 def test_registry_file_is_written(client: TestClient, projects_root: Path) -> None:
     _create(client, name="Persisted", id="persisted")
     registry_file = projects_root / "projects.json"

@@ -8,10 +8,16 @@ import type {
 import { YamlView } from './YamlView'
 import { Spinner } from './ui'
 
+interface FavoriteHandler {
+  onToggle: (filename: string, nextFavorite: boolean) => void
+  pending: boolean
+}
+
 interface Props {
   versionsQuery: UseQueryResult<ConfigVersionsResponse>
   useReadVersion: (filename: string | null) => UseQueryResult<ConfigVersionDetail>
   restoreMutation: UseMutationResult<SaveConfigResponse, unknown, string>
+  favorite?: FavoriteHandler
   emptyHint?: string
 }
 
@@ -19,6 +25,7 @@ export function ConfigVersionsPanel({
   versionsQuery,
   useReadVersion,
   restoreMutation,
+  favorite,
   emptyHint = 'No snapshots yet. Each save creates one automatically.',
 }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
@@ -39,26 +46,51 @@ export function ConfigVersionsPanel({
   if (versions.length === 0) return <div className="text-xs text-ink-3">{emptyHint}</div>
 
   return (
-    <div className="grid grid-cols-[260px_1fr] gap-4">
-      <div className="space-y-1 max-h-[480px] overflow-y-auto pr-2">
+    <div className="grid grid-cols-[280px_1fr] gap-4">
+      <div className="space-y-1 max-h-[520px] overflow-y-auto pr-2">
         {versions.map((v) => {
           const active = selected === v.filename
+          const fav = !!v.is_favorite
           return (
-            <button
+            <div
               key={v.filename}
-              onClick={() => setSelected(v.filename)}
               className={[
-                'w-full text-left rounded-md px-3 py-2 text-xs border transition',
+                'rounded-md px-3 py-2 text-xs border transition flex items-start gap-2',
                 active
                   ? 'border-brand bg-surface-2 text-ink-1'
+                  : fav
+                  ? 'border-warn/60 hover:border-warn text-ink-2'
                   : 'border-line-1 hover:border-line-2 text-ink-2',
               ].join(' ')}
             >
-              <div className="font-mono text-ink-1 text-2xs truncate">{v.filename}</div>
-              <div className="text-ink-3 text-[0.65rem] mt-0.5">
-                {v.created_at} · {v.size_bytes} bytes
-              </div>
-            </button>
+              {favorite && (
+                <button
+                  type="button"
+                  disabled={favorite.pending}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    favorite.onToggle(v.filename, !fav)
+                  }}
+                  title={fav ? 'Unpin from favorites' : 'Pin as favorite'}
+                  className={[
+                    'shrink-0 text-base leading-none transition',
+                    fav ? 'text-warn' : 'text-ink-4 hover:text-warn',
+                  ].join(' ')}
+                >
+                  {fav ? '★' : '☆'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelected(v.filename)}
+                className="flex-1 min-w-0 text-left"
+              >
+                <div className="font-mono text-ink-1 text-2xs truncate">{v.filename}</div>
+                <div className="text-ink-3 text-[0.65rem] mt-0.5">
+                  {v.created_at} · {v.size_bytes} bytes
+                </div>
+              </button>
+            </div>
           )
         })}
       </div>

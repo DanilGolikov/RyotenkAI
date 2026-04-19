@@ -121,3 +121,18 @@ export function useDeleteProject() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.projects() }),
   })
 }
+
+export function useToggleFavoriteVersion(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ filename, favorite }: { filename: string; favorite: boolean }) =>
+      api.put<{ favorite_versions: string[] }>(
+        `/projects/${encodeURIComponent(projectId)}/config/versions/${encodeURIComponent(filename)}/favorite`,
+        { favorite },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.projectConfigVersions(projectId) })
+      qc.invalidateQueries({ queryKey: qk.project(projectId) })
+    },
+  })
+}

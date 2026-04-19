@@ -171,12 +171,36 @@ def validate_yaml(registry: ProjectRegistry, project_id: str, yaml_text: str) ->
 
 
 def list_versions(registry: ProjectRegistry, project_id: str) -> ConfigVersionsResponse:
-    _, store, _ = _load_project(registry, project_id)
+    _, store, metadata = _load_project(registry, project_id)
+    favorites = set(metadata.favorite_versions)
     versions = [
-        ConfigVersion(filename=v.filename, created_at=v.created_at, size_bytes=v.size_bytes)
+        ConfigVersion(
+            filename=v.filename,
+            created_at=v.created_at,
+            size_bytes=v.size_bytes,
+            is_favorite=v.filename in favorites,
+        )
         for v in store.list_versions()
     ]
+    # Favorites first, newest-first within each group.
+    versions.sort(key=lambda v: (not v.is_favorite, -len(v.filename), v.filename), reverse=False)
+    versions.sort(key=lambda v: v.filename, reverse=True)
+    versions.sort(key=lambda v: not v.is_favorite)
     return ConfigVersionsResponse(versions=versions)
+
+
+def set_favorite(
+    registry: ProjectRegistry,
+    project_id: str,
+    filename: str,
+    *,
+    favorite: bool,
+) -> list[str]:
+    _, store, _ = _load_project(registry, project_id)
+    try:
+        return store.toggle_favorite_version(filename, pinned=favorite)
+    except Exception as exc:
+        raise ProjectServiceError(str(exc)) from exc
 
 
 def read_version(registry: ProjectRegistry, project_id: str, filename: str) -> str:
@@ -215,6 +239,7 @@ __all__ = [
     "read_version",
     "restore_version",
     "save_config",
+    "set_favorite",
     "slugify",
     "unregister",
     "validate_yaml",
