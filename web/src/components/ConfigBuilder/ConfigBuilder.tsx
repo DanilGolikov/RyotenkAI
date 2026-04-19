@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FieldRenderer } from './FieldRenderer'
+import { FieldSearchOmniBox } from './FieldSearchOmniBox'
 import type { GroupRendererProps } from './ProviderPickerField'
 import { TocRail, type GroupValidity } from './TocRail'
 
@@ -80,6 +81,7 @@ export function ConfigBuilder({
       <section id={`cfg-${activeKey}`} className="min-w-0 scroll-mt-24">
         {renderActive()}
       </section>
+      <FieldSearchOmniBox schema={schema} hashPrefix={hashPrefix} />
     </div>
   )
 
