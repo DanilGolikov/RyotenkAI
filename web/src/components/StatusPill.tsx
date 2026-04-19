@@ -26,7 +26,7 @@ const ICON_PROPS = {
   viewBox: '0 0 16 16',
   fill: 'none',
   stroke: 'currentColor',
-  strokeWidth: 2,
+  strokeWidth: 2.4,
   strokeLinecap: 'round' as const,
   strokeLinejoin: 'round' as const,
   'aria-hidden': true,
@@ -38,7 +38,7 @@ function StatusIcon({ status, className }: { status: Status; className: string }
       // check-mark circle
       return (
         <svg className={className} {...ICON_PROPS}>
-          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.18" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.3" stroke="none" />
           <path d="M5.2 8.2l2 2 3.6-4" />
         </svg>
       )
@@ -46,7 +46,7 @@ function StatusIcon({ status, className }: { status: Status; className: string }
       // x circle
       return (
         <svg className={className} {...ICON_PROPS}>
-          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.18" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.3" stroke="none" />
           <path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" />
         </svg>
       )
@@ -54,7 +54,7 @@ function StatusIcon({ status, className }: { status: Status; className: string }
       // play triangle (pulses via parent dot)
       return (
         <svg className={`${className} animate-pulse`} {...ICON_PROPS}>
-          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.22" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.32" stroke="none" />
           <path d="M6.6 5.4l4 2.6-4 2.6z" fill="currentColor" stroke="none" />
         </svg>
       )
@@ -62,7 +62,7 @@ function StatusIcon({ status, className }: { status: Status; className: string }
       // pause bars
       return (
         <svg className={className} {...ICON_PROPS}>
-          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.18" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.3" stroke="none" />
           <path d="M6.5 5.5v5M9.5 5.5v5" />
         </svg>
       )
@@ -70,7 +70,7 @@ function StatusIcon({ status, className }: { status: Status; className: string }
       // skip-forward
       return (
         <svg className={className} {...ICON_PROPS}>
-          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.18" stroke="none" />
+          <circle cx="8" cy="8" r="6.5" fill="currentColor" opacity="0.3" stroke="none" />
           <path d="M5.5 5.5l3.2 2.5-3.2 2.5z" fill="currentColor" stroke="none" />
           <path d="M10.5 5.5v5" />
         </svg>
