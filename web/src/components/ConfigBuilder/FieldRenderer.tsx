@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FormGroup } from './FormGroup'
+import { UnionField } from './UnionField'
 import { detectKind, getDefault, resolveRef, titleOrKey } from './schemaUtils'
 
 type Setter = (value: unknown) => void
@@ -94,7 +96,10 @@ export function FieldRenderer(props: FieldProps) {
           value={fallback === undefined || fallback === null ? '' : String(fallback)}
           onChange={(e) => {
             if (e.target.value === '') onChange(undefined)
-            else onChange(kind === 'integer' ? Number.parseInt(e.target.value, 10) : Number(e.target.value))
+            else
+              onChange(
+                kind === 'integer' ? Number.parseInt(e.target.value, 10) : Number(e.target.value),
+              )
           }}
           className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
         />
@@ -115,11 +120,42 @@ export function FieldRenderer(props: FieldProps) {
     )
   }
 
+  if (kind === 'union') {
+    const rawBranches = (node.anyOf ?? node.oneOf ?? []) as JsonSchemaNode[]
+    const objectBranches = rawBranches
+      .map((b) => resolveRef(root, b))
+      .filter((b) => (Array.isArray(b.type) ? b.type[0] : b.type) === 'object' || b.properties)
+    if (objectBranches.length >= 1) {
+      return (
+        <UnionField
+          root={root}
+          branches={rawBranches}
+          value={fallback}
+          onChange={onChange}
+          label={label}
+          required={required}
+          renderBranch={(branch) => (
+            <ObjectFields
+              root={root}
+              node={branch}
+              value={fallback}
+              onChange={onChange}
+              depth={depth + 1}
+            />
+          )}
+        />
+      )
+    }
+    // Fall through if branches aren't object-like.
+    return (
+      <LabelledRow label={label} description={description} required={required}>
+        <AdvancedJsonPreview value={fallback} />
+      </LabelledRow>
+    )
+  }
+
   if (kind === 'object') {
-    const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
-    const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
-    const currentValue = (isPlainRecord(fallback) ? fallback : {}) as Record<string, unknown>
-    const fields = Object.keys(props)
+    const fields = Object.keys(node.properties ?? {})
     if (fields.length === 0) {
       return (
         <LabelledRow label={label} description={description} required={required}>
@@ -129,24 +165,19 @@ export function FieldRenderer(props: FieldProps) {
     }
     if (depth === 0) {
       return (
-        <FormGroup title={label} description={description} required={required} defaultOpen={required || requiredSet.size > 0}>
-          {fields.map((key) => (
-            <FieldRenderer
-              key={key}
-              root={root}
-              node={props[key]}
-              value={currentValue[key]}
-              onChange={(next) => {
-                const copy = { ...currentValue }
-                if (next === undefined) delete copy[key]
-                else copy[key] = next
-                onChange(copy)
-              }}
-              labelKey={key}
-              required={requiredSet.has(key)}
-              depth={depth + 1}
-            />
-          ))}
+        <FormGroup
+          title={label}
+          description={description}
+          required={required}
+          defaultOpen={true}
+        >
+          <ObjectFields
+            root={root}
+            node={node}
+            value={fallback}
+            onChange={onChange}
+            depth={depth + 1}
+          />
         </FormGroup>
       )
     }
@@ -154,28 +185,18 @@ export function FieldRenderer(props: FieldProps) {
       <div className="space-y-2 pl-3 border-l border-line-1">
         <div className="text-2xs text-ink-2 font-medium">{label}</div>
         {description && <div className="text-[0.65rem] text-ink-4">{description}</div>}
-        {fields.map((key) => (
-          <FieldRenderer
-            key={key}
-            root={root}
-            node={props[key]}
-            value={currentValue[key]}
-            onChange={(next) => {
-              const copy = { ...currentValue }
-              if (next === undefined) delete copy[key]
-              else copy[key] = next
-              onChange(copy)
-            }}
-            labelKey={key}
-            required={requiredSet.has(key)}
-            depth={depth + 1}
-          />
-        ))}
+        <ObjectFields
+          root={root}
+          node={node}
+          value={fallback}
+          onChange={onChange}
+          depth={depth + 1}
+        />
       </div>
     )
   }
 
-  if (kind === 'array' || kind === 'union' || kind === 'unknown') {
+  if (kind === 'array' || kind === 'unknown') {
     return (
       <LabelledRow label={label} description={description} required={required}>
         <AdvancedJsonPreview value={fallback} />
@@ -184,6 +205,77 @@ export function FieldRenderer(props: FieldProps) {
   }
 
   return null
+}
+
+/**
+ * Renders an object's properties, sorting required fields before optional
+ * ones. At depth >= 1 all optional fields are folded behind a
+ * "Show <N> advanced" toggle (off by default).
+ */
+function ObjectFields({
+  root,
+  node,
+  value,
+  onChange,
+  depth,
+}: {
+  root: PipelineJsonSchema
+  node: JsonSchemaNode
+  value: unknown
+  onChange: Setter
+  depth: number
+}) {
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
+  const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
+  const currentValue = isPlainRecord(value) ? (value as Record<string, unknown>) : {}
+
+  const requiredFields: string[] = []
+  const optionalFields: string[] = []
+  for (const key of Object.keys(props)) {
+    if (requiredSet.has(key)) requiredFields.push(key)
+    else optionalFields.push(key)
+  }
+
+  function setKey(key: string, next: unknown) {
+    const copy = { ...currentValue }
+    if (next === undefined) delete copy[key]
+    else copy[key] = next
+    onChange(copy)
+  }
+
+  const renderField = (key: string) => (
+    <FieldRenderer
+      key={key}
+      root={root}
+      node={props[key]}
+      value={currentValue[key]}
+      onChange={(next) => setKey(key, next)}
+      labelKey={key}
+      required={requiredSet.has(key)}
+      depth={depth}
+    />
+  )
+
+  return (
+    <div className="space-y-3">
+      {requiredFields.map(renderField)}
+      {optionalFields.length > 0 && (
+        <div className="pt-1 border-t border-line-1/60 space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-[0.65rem] uppercase tracking-wide text-ink-3 hover:text-ink-1 transition flex items-center gap-1"
+          >
+            <span className={showAdvanced ? 'rotate-90' : ''}>▶</span>
+            {showAdvanced ? 'Hide' : 'Show'} {optionalFields.length} optional field
+            {optionalFields.length === 1 ? '' : 's'}
+          </button>
+          {showAdvanced && <div className="space-y-3">{optionalFields.map(renderField)}</div>}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function AdvancedJsonPreview({ value }: { value: unknown }) {

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import yaml from 'js-yaml'
 import {
   useProviderConfig,
   useProviderTypes,
@@ -9,26 +8,10 @@ import {
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import type { PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
+import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
 type ViewMode = 'form' | 'yaml'
-
-function safeYamlParse(text: string): Record<string, unknown> | null {
-  if (!text.trim()) return {}
-  try {
-    const parsed = yaml.load(text)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function dumpYaml(value: Record<string, unknown>): string {
-  return yaml.dump(value, { lineWidth: 120, noRefs: true, sortKeys: false })
-}
 
 export function ProviderConfigTab({
   providerId,
@@ -129,7 +112,12 @@ export function ProviderConfigTab({
       </div>
 
       {view === 'form' && schema ? (
-        <ConfigBuilder schema={schema} value={formValue} onChange={applyFormChange} />
+        <ConfigBuilder
+          schema={schema}
+          value={formValue}
+          onChange={applyFormChange}
+          hashPrefix={`provider:${providerId}`}
+        />
       ) : view === 'form' && !schema ? (
         <div className="text-xs text-warn">
           No schema registered for provider type <span className="font-mono">{providerType}</span>.

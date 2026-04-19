@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import yaml from 'js-yaml'
 import {
   useProjectConfig,
   useSaveProjectConfig,
@@ -8,26 +7,10 @@ import {
 import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
+import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
 type ViewMode = 'form' | 'yaml'
-
-function safeYamlParse(text: string): Record<string, unknown> | null {
-  if (!text.trim()) return {}
-  try {
-    const parsed = yaml.load(text)
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-function dumpYaml(value: Record<string, unknown>): string {
-  return yaml.dump(value, { lineWidth: 120, noRefs: true, sortKeys: false })
-}
 
 export function ConfigTab({ projectId }: { projectId: string }) {
   const configQuery = useProjectConfig(projectId)
@@ -123,6 +106,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
           schema={schemaQuery.data}
           value={formValue}
           onChange={applyFormChange}
+          hashPrefix="project"
         />
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
