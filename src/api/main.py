@@ -16,6 +16,7 @@ from src.api.routers import (
     logs,
     plugins,
     projects,
+    providers,
     reports,
     runs,
 )
@@ -46,6 +47,7 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         launch.router,
         plugins.router,
         projects.router,
+        providers.router,
         reports.router,
         runs.router,
     ]

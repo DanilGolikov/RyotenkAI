@@ -1,17 +1,14 @@
-"""On-disk layout for a single project.
+"""On-disk layout for a single provider workspace.
 
 Layout::
 
-    <project_root>/
-      project.json
-      configs/
-        current.yaml
-        history/
-          2026-04-19T10-30-45Z.yaml
-      runs/
+    <provider_root>/
+      provider.json
+      current.yaml
+      history/
+        2026-04-19T10-30-45Z.yaml
 
-Writes are atomic (temp-file replace) and each ``save_config`` call snapshots
-the previous ``current.yaml`` into ``configs/history/`` before overwriting.
+Same atomic-write + snapshot-per-save contract as ``src/pipeline/project/store.py``.
 """
 
 from __future__ import annotations
@@ -27,17 +24,20 @@ from src.pipeline._fs import (
     unique_snapshot_path,
     utc_now_iso,
 )
-from src.pipeline.project.models import ProjectConfigVersion, ProjectMetadata
+from src.pipeline.settings.providers.models import (
+    ProviderConfigVersion,
+    ProviderMetadata,
+)
 
-PROJECT_SCHEMA_VERSION = 1
+PROVIDER_SCHEMA_VERSION = 1
 
 
-class ProjectStoreError(RuntimeError):
-    """Raised for recoverable project-store issues."""
+class ProviderStoreError(RuntimeError):
+    """Raised for recoverable provider-store issues."""
 
 
-class ProjectStore:
-    """File-backed store for a single project workspace."""
+class ProviderStore:
+    """File-backed store for a single reusable provider configuration."""
 
     def __init__(self, root: Path):
         self.root = Path(root).expanduser().resolve()
@@ -46,69 +46,66 @@ class ProjectStore:
 
     @property
     def metadata_path(self) -> Path:
-        return self.root / "project.json"
-
-    @property
-    def configs_dir(self) -> Path:
-        return self.root / "configs"
+        return self.root / "provider.json"
 
     @property
     def current_config_path(self) -> Path:
-        return self.configs_dir / "current.yaml"
+        return self.root / "current.yaml"
 
     @property
     def history_dir(self) -> Path:
-        return self.configs_dir / "history"
-
-    @property
-    def runs_dir(self) -> Path:
-        return self.root / "runs"
+        return self.root / "history"
 
     # ---------- Lifecycle --------------------------------------------------
 
     def exists(self) -> bool:
         return self.metadata_path.is_file()
 
-    def create(self, *, id: str, name: str, description: str = "") -> ProjectMetadata:
+    def create(
+        self,
+        *,
+        id: str,
+        name: str,
+        type: str,
+        description: str = "",
+    ) -> ProviderMetadata:
         if self.exists():
-            raise ProjectStoreError(f"project already exists at {self.root}")
+            raise ProviderStoreError(f"provider already exists at {self.root}")
 
         self.root.mkdir(parents=True, exist_ok=True)
-        self.configs_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
-        self.runs_dir.mkdir(parents=True, exist_ok=True)
 
         now = utc_now_iso()
-        metadata = ProjectMetadata(
-            schema_version=PROJECT_SCHEMA_VERSION,
+        metadata = ProviderMetadata(
+            schema_version=PROVIDER_SCHEMA_VERSION,
             id=id,
             name=name,
+            type=type,
             description=description,
             created_at=now,
             updated_at=now,
         )
         atomic_write_json(self.metadata_path, metadata.to_dict())
 
-        # Seed empty config so the first GET has something to hand back.
         if not self.current_config_path.exists():
             atomic_write_text(self.current_config_path, "")
         return metadata
 
-    def load(self) -> ProjectMetadata:
+    def load(self) -> ProviderMetadata:
         if not self.exists():
-            raise ProjectStoreError(f"project not found at {self.root}")
+            raise ProviderStoreError(f"provider not found at {self.root}")
         raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))
-        return ProjectMetadata(
-            schema_version=int(raw.get("schema_version", PROJECT_SCHEMA_VERSION)),
+        return ProviderMetadata(
+            schema_version=int(raw.get("schema_version", PROVIDER_SCHEMA_VERSION)),
             id=str(raw["id"]),
             name=str(raw.get("name", raw["id"])),
+            type=str(raw.get("type", "")),
             description=str(raw.get("description", "")),
             created_at=str(raw.get("created_at", "")),
             updated_at=str(raw.get("updated_at", "")),
         )
 
     def touch(self) -> None:
-        """Bump ``updated_at`` in metadata."""
         if not self.exists():
             return
         metadata = self.load()
@@ -123,13 +120,6 @@ class ProjectStore:
         return ""
 
     def save_config(self, yaml_text: str) -> str | None:
-        """Write ``yaml_text`` to ``configs/current.yaml`` atomically.
-
-        If a previous ``current.yaml`` existed, its contents are first copied
-        into ``configs/history/<iso>.yaml``. Returns the filename of the
-        snapshot (or ``None`` if there was no prior config).
-        """
-        self.configs_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
 
         snapshot_name: str | None = None
@@ -144,47 +134,44 @@ class ProjectStore:
         self.touch()
         return snapshot_name
 
-    def list_versions(self) -> list[ProjectConfigVersion]:
+    def list_versions(self) -> list[ProviderConfigVersion]:
         if not self.history_dir.is_dir():
             return []
-        entries: list[ProjectConfigVersion] = []
+        entries: list[ProviderConfigVersion] = []
         for path in sorted(self.history_dir.glob("*.yaml")):
             stat = path.stat()
             entries.append(
-                ProjectConfigVersion(
+                ProviderConfigVersion(
                     filename=path.name,
                     created_at=created_at_from_filename(path.name),
                     size_bytes=stat.st_size,
                     path=path,
                 )
             )
-        # Newest first
         entries.sort(key=lambda v: v.filename, reverse=True)
         return entries
 
     def read_version(self, filename: str) -> str:
         if "/" in filename or ".." in filename:
-            raise ProjectStoreError(f"invalid version filename: {filename!r}")
+            raise ProviderStoreError(f"invalid version filename: {filename!r}")
         path = self.history_dir / filename
         if not path.is_file():
-            raise ProjectStoreError(f"version not found: {filename}")
+            raise ProviderStoreError(f"version not found: {filename}")
         return path.read_text(encoding="utf-8")
 
     def restore_version(self, filename: str) -> str | None:
-        """Copy a history snapshot into ``current.yaml``.
-
-        First snapshots the current config, then overwrites. Returns the
-        filename of the new snapshot (or ``None`` if current was empty).
-        """
         content = self.read_version(filename)
         return self.save_config(content)
 
-    # ---------- Cleanup -----------------------------------------------------
+    # ---------- Cleanup ----------------------------------------------------
 
     def remove(self) -> None:
-        """Delete the entire project directory. Use with caution."""
         if self.root.is_dir():
             shutil.rmtree(self.root)
 
 
-__all__ = ["PROJECT_SCHEMA_VERSION", "ProjectStore", "ProjectStoreError"]
+__all__ = [
+    "PROVIDER_SCHEMA_VERSION",
+    "ProviderStore",
+    "ProviderStoreError",
+]

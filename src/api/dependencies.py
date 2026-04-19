@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException
 
 from src.api.config import ApiSettings
 from src.pipeline.project import ProjectRegistry
+from src.pipeline.settings.providers import ProviderRegistry
 from src.pipeline.state import PipelineStateStore
 
 
@@ -45,3 +46,8 @@ def get_state_store(run_dir: Path = Depends(resolve_run_dir)) -> PipelineStateSt
 
 def get_project_registry(settings: ApiSettings = Depends(get_settings)) -> ProjectRegistry:
     return ProjectRegistry(settings.projects_root_resolved)
+
+
+def get_provider_registry(settings: ApiSettings = Depends(get_settings)) -> ProviderRegistry:
+    """Reusable provider registry. Shares the same workspace root as projects."""
+    return ProviderRegistry(settings.projects_root_resolved)
