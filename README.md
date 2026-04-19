@@ -494,6 +494,7 @@ Build locally or push to Docker Hub. See [`docker/training/README.md`](docker/tr
 | `ryotenkai run-status <run_dir>` | Live monitoring of a running pipeline |
 | `ryotenkai run-diff <run_dir>` | Compare config between attempts |
 | `ryotenkai report <run_dir>` | Generate MLflow experiment report |
+| `ryotenkai serve` | Run the web backend (FastAPI) for the browser UI |
 | `ryotenkai version` | Show version information |
 
 ---
@@ -526,6 +527,26 @@ ryotenkai tui <run_dir>  # open a specific run
 </p>
 
 The TUI provides tabs for **Details**, **Logs**, **Inference**, **Eval**, and **Report** — everything needed to understand a training run without leaving the terminal.
+
+---
+
+## Web UI
+
+Browser-based control plane for the pipeline. The FastAPI backend and React frontend are sibling clients to the same file-based state store used by the CLI and TUI — they don't wrap the CLI via subprocess.
+
+```bash
+# Backend
+ryotenkai serve --runs-dir runs --port 8000      # OpenAPI at :8000/docs
+
+# Frontend (dev)
+cd web && npm install && npm run dev             # Vite on :5173, proxies /api to :8000
+
+# Frontend (prod — served by FastAPI)
+cd web && npm run build
+cd .. && ryotenkai serve                         # mounts web/dist at /
+```
+
+See [docs/web-ui.md](docs/web-ui.md) for the full HTTP/WebSocket contract and architecture notes.
 
 ---
 

@@ -1,0 +1,7 @@
+node_modules
+dist
+.vite
+*.log
+
+# runtime (pids + logs from web/scripts/*)
+.run/

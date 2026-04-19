@@ -1,4 +1,4 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down
+.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart
 
 PYTHON := python3
 
@@ -32,6 +32,17 @@ help:
 	@echo "Infrastructure:"
 	@echo "  make docker-mlflow-up   - Start MLflow stack"
 	@echo "  make docker-mlflow-down - Stop MLflow stack"
+	@echo ""
+	@echo "Web UI:"
+	@echo "  make web-install        - Install frontend npm deps"
+	@echo "  make web-build          - Build frontend (web/dist)"
+	@echo "  make web-start          - Start backend + frontend (detached)"
+	@echo "  make web-stop           - Stop backend + frontend"
+	@echo "  make web-restart        - Restart backend + frontend"
+	@echo "  make web-status         - Show backend + frontend status"
+	@echo "  make web-logs           - Tail backend + frontend logs"
+	@echo "  make web-backend-start  - Start only backend"
+	@echo "  make web-frontend-start - Start only frontend"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean          - Clean temp files"
@@ -112,6 +123,55 @@ docker-mlflow-up:
 
 docker-mlflow-down:
 	bash docker/mlflow/start.sh stop
+
+# ============================================
+# Web UI (FastAPI backend + React/Vite frontend)
+# ============================================
+# All commands are delegated to web/scripts/*.sh so the same logic works when
+# invoked from outside make (e.g. shell aliases, IDE run configs).
+
+web-install:
+	cd web && npm install
+
+web-build:
+	cd web && npm run build
+
+web-start:
+	bash web/scripts/start.sh all
+
+web-stop:
+	bash web/scripts/stop.sh all
+
+web-restart:
+	bash web/scripts/restart.sh all
+
+web-status:
+	bash web/scripts/status.sh
+
+web-logs:
+	@echo "--- backend (web/.run/backend.log) ---"
+	@tail -n 50 web/.run/backend.log 2>/dev/null || echo "(not running)"
+	@echo ""
+	@echo "--- frontend (web/.run/frontend.log) ---"
+	@tail -n 50 web/.run/frontend.log 2>/dev/null || echo "(not running)"
+
+web-backend-start:
+	bash web/scripts/start.sh backend
+
+web-backend-stop:
+	bash web/scripts/stop.sh backend
+
+web-backend-restart:
+	bash web/scripts/restart.sh backend
+
+web-frontend-start:
+	bash web/scripts/start.sh frontend
+
+web-frontend-stop:
+	bash web/scripts/stop.sh frontend
+
+web-frontend-restart:
+	bash web/scripts/restart.sh frontend
 
 # ============================================
 # Utilities

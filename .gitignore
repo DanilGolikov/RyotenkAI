@@ -34,6 +34,11 @@ ENV/
 *.swo
 *~
 
+# Web frontend
+node_modules/
+web/dist/
+web/.vite/
+
 # Secrets and environment files
 .env
 config/.env

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.pipeline.state import PipelineStateStore
-from src.tui.adapters.delete_backend import DeleteMode, TuiDeleteBackend
+from src.pipeline.deletion import DeleteMode, RunDeleter as TuiDeleteBackend
 
 
 def _write_state(

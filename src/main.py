@@ -935,6 +935,32 @@ def ryotenkai_tui(
     )
 
 
+@app.command(name="serve")
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind host (use 0.0.0.0 for remote access)"),
+    port: int = typer.Option(8000, "--port", help="Bind port"),
+    runs_dir: Path = typer.Option(Path("runs"), "--runs-dir", help="Runs directory served by the API"),
+    cors_origins: str = typer.Option(
+        "http://localhost:5173",
+        "--cors-origins",
+        help="Comma-separated CORS origins (Vite dev server by default)",
+    ),
+    reload: bool = typer.Option(False, "--reload", help="Dev auto-reload"),
+    log_level: str = typer.Option("info", "--log-level", help="uvicorn log level"),
+):
+    """Run the FastAPI web backend (CLI/TUI/web share the runs/ directory)."""
+    from src.api.cli import run_server
+
+    run_server(
+        host=host,
+        port=port,
+        runs_dir=runs_dir,
+        cors_origins=[origin.strip() for origin in cors_origins.split(",") if origin.strip()],
+        reload=reload,
+        log_level=log_level,
+    )
+
+
 @app.command()
 def version():
     """Show version information."""

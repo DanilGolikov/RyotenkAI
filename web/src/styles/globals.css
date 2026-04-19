@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.status-dot {
+  @apply inline-block w-2 h-2 rounded-full mr-2;
+}
+.status-completed { @apply bg-emerald-500; }
+.status-failed { @apply bg-rose-500; }
+.status-running { @apply bg-cyan-400 animate-pulse; }
+.status-interrupted { @apply bg-amber-400; }
+.status-stale { @apply bg-gray-500; }
+.status-skipped { @apply bg-blue-400; }
+.status-pending { @apply bg-gray-600; }
+.status-unknown { @apply bg-gray-500; }
