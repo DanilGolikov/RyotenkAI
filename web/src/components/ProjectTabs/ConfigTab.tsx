@@ -12,6 +12,7 @@ import { PresetDropdown } from '../ConfigBuilder/PresetDropdown'
 import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
 import { ValidationBanner } from '../ConfigBuilder/ValidationBanner'
 import { deriveGroupValidity } from '../ConfigBuilder/validationMap'
+import { YamlView } from '../YamlView'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
@@ -24,6 +25,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   const validateMut = useValidateProjectConfig(projectId)
 
   const [view, setView] = useState<ViewMode>('form')
+  const [yamlEditing, setYamlEditing] = useState(false)
   const [yamlText, setYamlText] = useState<string>('')
   const [formValue, setFormValue] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
@@ -163,15 +165,35 @@ export function ConfigTab({ projectId }: { projectId: string }) {
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
       ) : (
-        <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
-          <textarea
-            value={yamlText}
-            onChange={(e) => applyYamlChange(e.target.value)}
-            spellCheck={false}
-            rows={24}
-            className="w-full bg-surface-0 text-ink-1 font-mono text-xs px-4 py-3 focus:outline-none resize-y"
-            placeholder="# paste or build your pipeline config here"
-          />
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-2xs">
+            <button
+              type="button"
+              onClick={() => setYamlEditing((v) => !v)}
+              className="rounded-md border border-line-1 px-2 py-1 text-ink-3 hover:text-ink-1 hover:border-line-2"
+            >
+              {yamlEditing ? 'Preview' : 'Edit'}
+            </button>
+            {yamlEditing && (
+              <span className="text-ink-4">
+                Hitting "Save" below writes the raw text. Switch to Preview for syntax highlighting.
+              </span>
+            )}
+          </div>
+          {yamlEditing ? (
+            <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
+              <textarea
+                value={yamlText}
+                onChange={(e) => applyYamlChange(e.target.value)}
+                spellCheck={false}
+                rows={24}
+                className="w-full bg-surface-0 text-ink-1 font-mono text-xs px-4 py-3 focus:outline-none resize-y"
+                placeholder="# paste or build your pipeline config here"
+              />
+            </div>
+          ) : (
+            <YamlView text={yamlText} maxHeight="max-h-[640px]" />
+          )}
         </div>
       )}
 

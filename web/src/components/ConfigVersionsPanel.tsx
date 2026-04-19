@@ -5,6 +5,7 @@ import type {
   ConfigVersionsResponse,
   SaveConfigResponse,
 } from '../api/types'
+import { YamlView } from './YamlView'
 import { Spinner } from './ui'
 
 interface Props {
@@ -73,9 +74,7 @@ export function ConfigVersionsPanel({
           <div className="text-sm text-err">{(detailQuery.error as Error).message}</div>
         ) : (
           <div className="space-y-2">
-            <pre className="bg-surface-0 border border-line-1 rounded-md p-3 text-xs font-mono text-ink-1 overflow-auto max-h-[460px]">
-              {detailQuery.data?.yaml}
-            </pre>
+            <YamlView text={detailQuery.data?.yaml ?? ''} maxHeight="max-h-[460px]" />
             <div className="flex items-center justify-end gap-2">
               {restoreMutation.error ? (
                 <span className="text-err text-2xs">

@@ -1,56 +1,76 @@
 # Preset: QLoRA on 7B via RunPod
-# Baseline for running QLoRA fine-tuning of a 7B model on a RunPod A40.
-# Assumes you've configured a "runpod" provider under Settings → Providers
-# (or inlined it here) and have HF_TOKEN + RUNPOD_API_KEY in the env.
+# Baseline for QLoRA fine-tuning of a 7B model on a RunPod A40. Assumes
+# HF_TOKEN and RUNPOD_API_KEY are set in the env and you've populated
+# local dataset paths.
 model:
   name: "Qwen/Qwen2.5-7B-Instruct"
   torch_dtype: bfloat16
-  trust_remote_code: true
-
-providers:
-  runpod:
-    type: runpod
-    connect:
-      ssh:
-        key_path: ~/.ssh/id_ed25519_runpod
-    cleanup:
-      auto_delete_pod: true
-      keep_pod_on_error: false
-      on_interrupt: true
-    training:
-      gpu_type: "NVIDIA A40"
-      image_name: "ryotenkai/ryotenkai-training-runtime:latest"
-      container_disk_gb: 100
-      volume_disk_gb: 20
-    inference: {}
-
-datasets:
-  default:
-    name: default
-    source_type: local
-    source_local:
-      format: jsonl
-      local_paths:
-        train: ./datasets/train.jsonl
+  trust_remote_code: false
 
 training:
   provider: runpod
-  type: qlora
+  type: "qlora"
+
+  qlora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: none
+    target_modules: "all-linear"
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
+
   hyperparams:
     per_device_train_batch_size: 2
     gradient_accumulation_steps: 8
     learning_rate: 1.0e-4
     warmup_ratio: 0.03
     epochs: 2
-  lora:
-    r: 16
-    lora_alpha: 32
-    lora_dropout: 0.05
-    target_modules:
-      - q_proj
-      - k_proj
-      - v_proj
-      - o_proj
+    logging_steps: 10
+    save_steps: 200
+    bf16: true
+    fp16: false
+    gradient_checkpointing: true
+
   strategies:
-    - strategy_type: sft
-      dataset: default
+    - strategy_type: "sft"
+      dataset: "default"
+      hyperparams:
+        max_length: 2048
+        packing: false
+
+datasets:
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        train: "./datasets/train.jsonl"
+
+providers:
+  runpod:
+    connect:
+      ssh:
+        key_path: "~/.ssh/id_ed25519_runpod"
+    cleanup:
+      auto_delete_pod: true
+      keep_pod_on_error: false
+      on_interrupt: true
+    training:
+      gpu_type: "NVIDIA A40"
+      cloud_type: "COMMUNITY"
+      image_name: "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+      container_disk_gb: 100
+      volume_disk_gb: 20
+    inference:
+      pod:
+        name_prefix: "ryotenkai-vllm"
+        image_name: "ryotenkai/inference-vllm:v1.0.0"
+        gpu_type_ids:
+          - "NVIDIA A40"
+        gpu_count: 1
+        ports: ["22/tcp"]
+        container_disk_gb: 50
+        volume_disk_gb: 50
+      serve:
+        port: 8000
