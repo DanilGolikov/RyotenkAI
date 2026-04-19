@@ -18,4 +18,11 @@ export const qk = {
   projectConfigVersion: (id: string, filename: string) =>
     ['projects', id, 'config', 'versions', filename] as const,
   plugins: (kind: string) => ['plugins', kind] as const,
+  providers: () => ['providers'] as const,
+  provider: (id: string) => ['providers', id] as const,
+  providerTypes: () => ['providers', 'types'] as const,
+  providerConfig: (id: string) => ['providers', id, 'config'] as const,
+  providerConfigVersions: (id: string) => ['providers', id, 'config', 'versions'] as const,
+  providerConfigVersion: (id: string, filename: string) =>
+    ['providers', id, 'config', 'versions', filename] as const,
 }

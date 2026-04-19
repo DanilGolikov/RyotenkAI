@@ -279,3 +279,37 @@ export interface PluginListResponse {
   kind: PluginKind
   plugins: PluginManifest[]
 }
+
+// ───────── Providers (reusable workspaces) ─────────
+
+export interface ProviderTypeInfo {
+  id: string
+  label: string
+  json_schema: Record<string, unknown>
+}
+
+export interface ProviderTypesResponse {
+  types: ProviderTypeInfo[]
+}
+
+export interface ProviderSummary {
+  id: string
+  name: string
+  type: string
+  path: string
+  created_at: string
+  description: string
+}
+
+export interface ProviderDetail extends ProviderSummary {
+  updated_at: string
+  current_config_yaml: string
+}
+
+export interface CreateProviderRequest {
+  name: string
+  type: string
+  id?: string
+  path?: string
+  description?: string
+}

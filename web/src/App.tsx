@@ -6,6 +6,9 @@ import { RunsWorkspace } from './pages/RunsWorkspace'
 import { LaunchPage } from './pages/LaunchPage'
 import { ProjectsPage } from './pages/Projects'
 import { ProjectDetailPage } from './pages/ProjectDetail'
+import { SettingsPage } from './pages/Settings'
+import { ProvidersPage } from './pages/Providers'
+import { ProviderDetailPage } from './pages/ProviderDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +35,11 @@ export default function App() {
             <Route path="launch" element={<LaunchPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:id/*" element={<ProjectDetailPage />} />
+            <Route path="settings" element={<SettingsPage />}>
+              <Route index element={<Navigate to="providers" replace />} />
+              <Route path="providers" element={<ProvidersPage />} />
+              <Route path="providers/:id/*" element={<ProviderDetailPage />} />
+            </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
