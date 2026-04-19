@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import { useSidebarCollapsed } from '../hooks/useSidebarCollapsed'
 
 type Item = { to: string; label: string; icon: ReactNode; end?: boolean }
 
@@ -38,47 +39,119 @@ const items: Item[] = [
   },
 ]
 
+const ChevronLeft = (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M15 6l-6 6 6 6" />
+  </svg>
+)
+
+const ChevronRight = (
+  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M9 6l6 6-6 6" />
+  </svg>
+)
+
 export function Sidebar() {
+  const { collapsed, toggle } = useSidebarCollapsed()
+
   return (
-    <aside className="w-[240px] shrink-0 bg-gradient-sidebar border-r border-line-1 flex flex-col">
-      <div className="px-5 py-5 flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded bg-gradient-brand shadow-glow-brand" />
-        <div className="leading-tight">
-          <div className="text-sm font-semibold">
-            <span className="gradient-text">Ryotenk</span>
-            <span className="text-ink-1">AI</span>
+    <aside
+      data-collapsed={collapsed}
+      className={[
+        'shrink-0 bg-gradient-sidebar border-r border-line-1 flex flex-col',
+        'transition-[width] duration-150 ease-out',
+        collapsed ? 'w-[60px]' : 'w-[240px]',
+      ].join(' ')}
+    >
+      {/* Brand */}
+      <div
+        className={[
+          'py-5 flex items-center gap-2.5',
+          collapsed ? 'px-3 justify-center' : 'px-5',
+        ].join(' ')}
+      >
+        <div
+          aria-label="RyotenkAI"
+          className="w-7 h-7 shrink-0 rounded bg-gradient-brand shadow-glow-brand"
+        />
+        {!collapsed && (
+          <div className="leading-tight min-w-0">
+            <div className="text-sm font-semibold">
+              <span className="text-ink-1">Ryotenk</span>
+              <span className="gradient-text">AI</span>
+            </div>
+            <div className="text-2xs text-ink-3">pipeline control plane</div>
           </div>
-          <div className="text-2xs text-ink-3">pipeline control plane</div>
-        </div>
+        )}
       </div>
 
-      <nav className="flex-1 px-3 space-y-0.5">
+      {/* Nav */}
+      <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} space-y-0.5`}>
         {items.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) => [isActive ? 'nav-item nav-item-active' : 'nav-item'].join(' ')}
+            title={collapsed ? item.label : undefined}
+            className={({ isActive }) =>
+              [
+                isActive ? 'nav-item nav-item-active' : 'nav-item',
+                collapsed ? 'justify-center px-0 py-2.5' : '',
+              ].join(' ')
+            }
           >
             {({ isActive }) => (
               <>
                 <span className={isActive ? 'text-brand' : 'text-ink-3'}>{item.icon}</span>
-                <span>{item.label}</span>
+                {!collapsed && <span>{item.label}</span>}
               </>
             )}
           </NavLink>
         ))}
       </nav>
 
-      <div className="px-4 pb-4 text-2xs text-ink-3 space-y-1">
-        <div className="flex justify-between">
-          <span>docs</span>
-          <a href="/docs" target="_blank" rel="noreferrer" className="text-ink-2 hover:text-ink-1">OpenAPI</a>
-        </div>
-        <div className="flex justify-between">
-          <span>hotkey</span>
-          <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd></span>
-        </div>
+      {/* Footer: collapse toggle + meta when expanded */}
+      <div className={`pb-4 ${collapsed ? 'px-2' : 'px-4'} space-y-2`}>
+        {!collapsed && (
+          <div className="text-2xs text-ink-3 space-y-1">
+            <div className="flex justify-between">
+              <span>docs</span>
+              <a
+                href="/docs"
+                target="_blank"
+                rel="noreferrer"
+                className="text-ink-2 hover:text-ink-1"
+              >
+                OpenAPI
+              </a>
+            </div>
+            <div className="flex justify-between">
+              <span>palette</span>
+              <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd></span>
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={toggle}
+          title={collapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          className={[
+            'w-full flex items-center rounded-md text-2xs text-ink-3',
+            'border border-line-1 bg-surface-1 hover:text-ink-1 hover:border-line-2 transition',
+            collapsed ? 'justify-center py-2' : 'justify-between px-2.5 py-1.5',
+          ].join(' ')}
+        >
+          {collapsed ? (
+            ChevronRight
+          ) : (
+            <>
+              <span className="flex items-center gap-1.5">{ChevronLeft}Collapse</span>
+              <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">B</kbd></span>
+            </>
+          )}
+        </button>
       </div>
     </aside>
   )
