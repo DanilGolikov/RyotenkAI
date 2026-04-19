@@ -1,4 +1,5 @@
 import type { Status } from '../api/types'
+import { STATUS_LABELS } from '../lib/statusConstants'
 
 const PILL_CLS: Record<Status, string> = {
   completed:   'pill pill-ok',
@@ -11,15 +12,17 @@ const PILL_CLS: Record<Status, string> = {
   unknown:     'pill pill-idle',
 }
 
-const LABEL: Record<Status, string> = {
-  completed: 'completed',
-  running: 'running',
-  failed: 'failed',
-  interrupted: 'interrupted',
-  stale: 'stale',
-  skipped: 'skipped',
-  pending: 'pending',
-  unknown: 'unknown',
+// Tailwind utility map for status accents (for consumers that need
+// semantic text colour outside of `.pill-*`, e.g. StageTimeline status text).
+export const STATUS_TEXT_CLASS: Record<Status, string> = {
+  completed:   'text-ok',
+  running:     'text-info',
+  failed:      'text-err',
+  interrupted: 'text-warn',
+  stale:       'text-ink-3',
+  skipped:     'text-brand-alt',
+  pending:     'text-ink-3',
+  unknown:     'text-ink-3',
 }
 
 const ICON_PROPS = {
@@ -102,9 +105,9 @@ export function StatusPill({
   compact?: boolean
 }) {
   return (
-    <span className={PILL_CLS[status]} title={compact ? LABEL[status] : undefined}>
+    <span className={PILL_CLS[status]} title={compact ? STATUS_LABELS[status] : undefined}>
       <StatusIcon status={status} className="w-3 h-3" />
-      {!compact && LABEL[status]}
+      {!compact && STATUS_LABELS[status]}
     </span>
   )
 }

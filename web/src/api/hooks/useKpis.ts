@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useRuns } from './useRuns'
 import type { RunSummary } from '../types'
+import { TERMINAL_STATUSES } from '../../lib/statusConstants'
 
 export interface Kpi {
   // Core counts
@@ -23,8 +24,6 @@ export interface Kpi {
   successRate: number | null
   avgDurationSec: number | null
 }
-
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'interrupted', 'stale'])
 
 function flatten(groups: Record<string, RunSummary[]>): RunSummary[] {
   const rows: RunSummary[] = []
