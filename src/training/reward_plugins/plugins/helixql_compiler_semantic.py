@@ -291,28 +291,51 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
                 scores.append(1.0 if result.ok else -1.0)
             return scores
 
-        _debug_logged = [False]
+        _debug_count = [0]
+        _debug_limit = 3
 
         def semantic_reward(completions: Any, **kwargs: Any) -> list[float]:
             outputs = [extract_query_text(item) for item in completions]
             prompts = _coerce_column(kwargs, "prompts", len(outputs)) or _coerce_column(kwargs, "prompt", len(outputs))
             references = _coerce_column(kwargs, "reference_answer", len(outputs))
 
-            if not _debug_logged[0]:
-                _debug_logged[0] = True
-                raw_comp_0 = completions[0] if completions else "NO_COMPLETIONS"
-                logger.info(
-                    "[REWARD_DEBUG] kwargs_keys=%s comp_type=%s comp_item_type=%s n=%d "
-                    "raw_comp_0=%r out_0=%r ref_0=%r prompt_0=%r",
-                    sorted(kwargs.keys()),
-                    type(completions).__name__,
-                    type(raw_comp_0).__name__,
-                    len(outputs),
-                    repr(raw_comp_0)[:200],
-                    outputs[0][:100] if outputs else "EMPTY",
-                    references[0][:100] if references else "EMPTY",
-                    prompts[0][:100] if prompts else "EMPTY",
-                )
+            if _debug_count[0] < _debug_limit and completions:
+                remaining = _debug_limit - _debug_count[0]
+                n_log = min(remaining, len(completions))
+                if _debug_count[0] == 0:
+                    logger.info(
+                        "[REWARD_DEBUG] kwargs_keys=%s comp_type=%s comp_item_type=%s n=%d",
+                        sorted(kwargs.keys()),
+                        type(completions).__name__,
+                        type(completions[0]).__name__,
+                        len(outputs),
+                    )
+                for i in range(n_log):
+                    _debug_count[0] += 1
+                    logger.info(
+                        "[REWARD_DEBUG %d/%d] raw=%s",
+                        _debug_count[0],
+                        _debug_limit,
+                        repr(completions[i]),
+                    )
+                    logger.info(
+                        "[REWARD_DEBUG %d/%d] out=%s",
+                        _debug_count[0],
+                        _debug_limit,
+                        outputs[i] if i < len(outputs) else "EMPTY",
+                    )
+                    logger.info(
+                        "[REWARD_DEBUG %d/%d] ref=%s",
+                        _debug_count[0],
+                        _debug_limit,
+                        references[i] if references and i < len(references) else "EMPTY",
+                    )
+                    logger.info(
+                        "[REWARD_DEBUG %d/%d] prompt=%s",
+                        _debug_count[0],
+                        _debug_limit,
+                        prompts[i] if prompts and i < len(prompts) else "EMPTY",
+                    )
 
             scores: list[float] = []
             for idx, output in enumerate(outputs):
