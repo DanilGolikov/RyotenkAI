@@ -12,17 +12,132 @@ html, body, #root {
 
 body {
   margin: 0;
+  background: #0c0610;
+  color: #f5eef8;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-.status-dot {
-  @apply inline-block w-2 h-2 rounded-full mr-2;
+::selection {
+  background: rgba(198, 48, 107, 0.38);
+  color: #f5eef8;
 }
-.status-completed { @apply bg-emerald-500; }
-.status-failed { @apply bg-rose-500; }
-.status-running { @apply bg-cyan-400 animate-pulse; }
-.status-interrupted { @apply bg-amber-400; }
-.status-stale { @apply bg-gray-500; }
-.status-skipped { @apply bg-blue-400; }
-.status-pending { @apply bg-gray-600; }
-.status-unknown { @apply bg-gray-500; }
+
+/* Subtle top-left radial glow on the app canvas so the burgundy→violet
+ * identity reads even when panels are dark. */
+#root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(198, 48, 107, 0.10), transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.08), transparent 45%);
+  z-index: 0;
+}
+
+/* Scrollbar: thin, brand-tinted */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a2646 transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #3a2646; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #5028ae; }
+
+/* Focus ring: bright enough against burgundy (WCAG non-text 3:1) */
+:focus-visible {
+  outline: 2px solid #e25690;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@layer components {
+  .gradient-text {
+    background: linear-gradient(135deg, #e25690 0%, #a185f8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .gradient-border {
+    position: relative;
+    isolation: isolate;
+  }
+  .gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(198,48,107,0.6), rgba(139,92,246,0.6));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .card {
+    @apply bg-surface-2 border border-line-1 rounded-lg shadow-card;
+    position: relative;
+  }
+  .card-raised {
+    @apply bg-surface-2 border border-line-2 rounded-lg shadow-card;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium text-white;
+    background-image: linear-gradient(135deg, #c6306b 0%, #8b5cf6 100%);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 4px 14px rgba(198,48,107,0.35);
+    transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
+  }
+  .btn-primary:hover   { filter: brightness(1.08); box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 6px 20px rgba(198,48,107,0.48); }
+  .btn-primary:active  { transform: translateY(1px); }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-ink-dim border border-line-2 hover:text-ink hover:border-violet-400 hover:bg-surface-3 transition;
+  }
+  .btn-danger-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-status-err border border-status-err/40 hover:bg-status-err/10 transition;
+  }
+
+  .kbd {
+    @apply inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded text-2xs font-mono text-ink-dim bg-surface-3 border border-line-2;
+  }
+
+  /* Horizontal stage timeline segment */
+  .stage-seg {
+    @apply relative flex-1 h-2 rounded-full bg-surface-3 overflow-hidden;
+  }
+  .stage-seg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: inherit;
+  }
+
+  /* Status pill: subtle tint + matching dot */
+  .pill {
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium border;
+  }
+  .pill-ok      { @apply text-status-ok   bg-status-ok/10   border-status-ok/25; }
+  .pill-warn    { @apply text-status-warn bg-status-warn/10 border-status-warn/25; }
+  .pill-err     { @apply text-status-err  bg-status-err/10  border-status-err/25; }
+  .pill-run     { @apply text-status-run  bg-status-run/10  border-status-run/30; }
+  .pill-idle    { @apply text-ink-mute    bg-surface-3      border-line-2; }
+  .pill-skip    { @apply text-violet-300  bg-violet-500/10  border-violet-500/30; }
+}
+
+/* Utility: live-running dot */
+.live-dot {
+  width: 10px; height: 10px; border-radius: 999px;
+  background: #38bdf8;
+  position: relative;
+}
+.live-dot::after {
+  content: ''; position: absolute; inset: -4px; border-radius: 999px;
+  animation: pulse_ring 1.6s ease-out infinite;
+}

@@ -1,9 +1,9 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Layout } from './components/Layout'
-import { RunsList } from './pages/RunsList'
-import { RunDetail } from './pages/RunDetail'
-import { AttemptDetail } from './pages/AttemptDetail'
+import { AppShell } from './components/AppShell'
+import { Overview } from './pages/Overview'
+import { RunsWorkspace } from './pages/RunsWorkspace'
+import { LaunchPage } from './pages/LaunchPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,10 +19,15 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route element={<Layout />}>
-            <Route index element={<RunsList />} />
-            <Route path="runs/:runId" element={<RunDetail />} />
-            <Route path="runs/:runId/attempts/:attemptNo" element={<AttemptDetail />} />
+          <Route element={<AppShell />}>
+            <Route index element={<Overview />} />
+            <Route path="runs" element={<RunsWorkspace />}>
+              <Route path=":runId" element={<RunsWorkspace />} />
+              <Route path=":runId/attempts/:attemptNo" element={<RunsWorkspace />} />
+            </Route>
+            <Route path="runs/:runId" element={<RunsWorkspace />} />
+            <Route path="runs/:runId/attempts/:attemptNo" element={<RunsWorkspace />} />
+            <Route path="launch" element={<LaunchPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

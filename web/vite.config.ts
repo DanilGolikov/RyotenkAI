@@ -2,8 +2,13 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
-// In dev, Vite serves on 5173 and proxies /api + /ws to the FastAPI backend on 8000.
-// In prod, `ryotenkai serve` mounts web/dist/ so there is no proxy.
+// Dev: Vite serves the SPA and proxies /api (incl. WebSockets) to the backend.
+// Override backend address via RYOTENKAI_API_HOST / RYOTENKAI_API_PORT env vars.
+// Prod: `ryotenkai serve` mounts web/dist/ — no proxy needed.
+const apiHost = process.env.RYOTENKAI_API_HOST ?? '127.0.0.1'
+const apiPort = process.env.RYOTENKAI_API_PORT ?? '8000'
+const webPort = Number(process.env.RYOTENKAI_WEB_PORT ?? '5173')
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -12,10 +17,10 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: webPort,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8000',
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         ws: true,
       },
