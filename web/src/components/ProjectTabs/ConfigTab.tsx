@@ -1,60 +1,143 @@
 import { useEffect, useMemo, useState } from 'react'
+import yaml from 'js-yaml'
 import {
   useProjectConfig,
   useSaveProjectConfig,
   useValidateProjectConfig,
 } from '../../api/hooks/useProjects'
+import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
+import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import { Spinner } from '../ui'
 
+type ViewMode = 'form' | 'yaml'
+
+function safeYamlParse(text: string): Record<string, unknown> | null {
+  if (!text.trim()) return {}
+  try {
+    const parsed = yaml.load(text)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function dumpYaml(value: Record<string, unknown>): string {
+  return yaml.dump(value, { lineWidth: 120, noRefs: true, sortKeys: false })
+}
+
 export function ConfigTab({ projectId }: { projectId: string }) {
-  const { data, isLoading, error } = useProjectConfig(projectId)
+  const configQuery = useProjectConfig(projectId)
+  const schemaQuery = useConfigSchema()
   const saveMut = useSaveProjectConfig(projectId)
   const validateMut = useValidateProjectConfig(projectId)
 
+  const [view, setView] = useState<ViewMode>('form')
   const [yamlText, setYamlText] = useState<string>('')
+  const [formValue, setFormValue] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
+  const [yamlParseError, setYamlParseError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (data && !dirty) setYamlText(data.yaml)
-  }, [data, dirty])
+    if (configQuery.data && !dirty) {
+      const text = configQuery.data.yaml
+      setYamlText(text)
+      const parsed = safeYamlParse(text)
+      setFormValue(parsed ?? {})
+    }
+  }, [configQuery.data, dirty])
 
   const validationResult: ConfigValidationResult | undefined = validateMut.data
 
   const statusLine = useMemo(() => {
     if (saveMut.isPending) return 'Saving…'
     if (validateMut.isPending) return 'Validating…'
+    if (yamlParseError && view === 'form') return 'YAML has a parse error — form hidden'
     if (dirty) return 'Unsaved changes'
     if (saveMut.isSuccess) return 'Saved'
     return ''
-  }, [saveMut.isPending, saveMut.isSuccess, validateMut.isPending, dirty])
+  }, [saveMut.isPending, saveMut.isSuccess, validateMut.isPending, dirty, yamlParseError, view])
 
-  if (isLoading) {
+  function applyFormChange(next: Record<string, unknown>) {
+    setFormValue(next)
+    setYamlText(dumpYaml(next))
+    setDirty(true)
+    setYamlParseError(null)
+  }
+
+  function applyYamlChange(next: string) {
+    setYamlText(next)
+    setDirty(true)
+    const parsed = safeYamlParse(next)
+    if (parsed == null) {
+      setYamlParseError('YAML is not a mapping. Form view is disabled until it parses.')
+    } else {
+      setFormValue(parsed)
+      setYamlParseError(null)
+    }
+  }
+
+  if (configQuery.isLoading || schemaQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-ink-3">
         <Spinner /> loading config
       </div>
     )
   }
-  if (error) {
-    return <div className="text-sm text-err">{(error as Error).message}</div>
+  if (configQuery.error) {
+    return <div className="text-sm text-err">{(configQuery.error as Error).message}</div>
   }
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
-        <textarea
-          value={yamlText}
-          onChange={(e) => {
-            setYamlText(e.target.value)
-            setDirty(true)
-          }}
-          spellCheck={false}
-          rows={24}
-          className="w-full bg-surface-0 text-ink-1 font-mono text-xs px-4 py-3 focus:outline-none resize-y"
-          placeholder="# paste or build your pipeline config here"
-        />
+      <div className="flex items-center gap-2">
+        <div className="inline-flex rounded-md border border-line-1 overflow-hidden text-2xs">
+          <button
+            type="button"
+            onClick={() => setView('form')}
+            disabled={!!yamlParseError}
+            className={`px-3 py-1.5 transition ${
+              view === 'form' ? 'bg-surface-2 text-ink-1' : 'text-ink-3 hover:text-ink-1 hover:bg-surface-2/60'
+            } disabled:opacity-40`}
+          >
+            Form
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('yaml')}
+            className={`px-3 py-1.5 transition ${
+              view === 'yaml' ? 'bg-surface-2 text-ink-1' : 'text-ink-3 hover:text-ink-1 hover:bg-surface-2/60'
+            }`}
+          >
+            YAML
+          </button>
+        </div>
+        <span className="ml-auto text-2xs text-ink-3">{statusLine}</span>
       </div>
+
+      {view === 'form' && schemaQuery.data ? (
+        <ConfigBuilder
+          schema={schemaQuery.data}
+          value={formValue}
+          onChange={applyFormChange}
+        />
+      ) : view === 'form' && schemaQuery.error ? (
+        <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
+      ) : (
+        <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
+          <textarea
+            value={yamlText}
+            onChange={(e) => applyYamlChange(e.target.value)}
+            spellCheck={false}
+            rows={24}
+            className="w-full bg-surface-0 text-ink-1 font-mono text-xs px-4 py-3 focus:outline-none resize-y"
+            placeholder="# paste or build your pipeline config here"
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-2 text-xs">
         <button
@@ -76,7 +159,6 @@ export function ConfigTab({ projectId }: { projectId: string }) {
         >
           {saveMut.isPending ? 'Saving…' : 'Save'}
         </button>
-        <span className="text-ink-3 ml-auto">{statusLine}</span>
       </div>
 
       {validationResult && (
@@ -106,6 +188,12 @@ export function ConfigTab({ projectId }: { projectId: string }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {yamlParseError && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 text-warn text-xs px-3 py-2">
+          {yamlParseError}
         </div>
       )}
 
