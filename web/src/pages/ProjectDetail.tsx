@@ -73,7 +73,7 @@ export function ProjectDetailPage() {
             <Route path="config" element={<ConfigTab projectId={project.id} />} />
             <Route path="versions" element={<VersionsTab projectId={project.id} />} />
             <Route path="runs" element={<RunsTab projectId={project.id} />} />
-            <Route path="plugins" element={<PluginsTab />} />
+            <Route path="plugins" element={<PluginsTab projectId={project.id} />} />
             <Route path="*" element={<Navigate to="config" replace />} />
           </Routes>
         </div>
