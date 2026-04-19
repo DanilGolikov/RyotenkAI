@@ -31,8 +31,8 @@ export function LogDock({
       <div className="flex items-center justify-between px-3 py-2 border-b border-line-1 gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`live-dot ${connected ? '' : 'opacity-30'}`} />
-          <span className="text-xs text-ink-dim">Live logs</span>
-          <span className="text-2xs text-ink-mute font-mono truncate">/ {file}</span>
+          <span className="text-xs text-ink-2">Live logs</span>
+          <span className="text-2xs text-ink-3 font-mono truncate">/ {file}</span>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           {FILES.map((name) => (
@@ -43,18 +43,18 @@ export function LogDock({
               className={[
                 'px-2 py-0.5 rounded text-2xs font-mono transition border',
                 file === name
-                  ? 'bg-gradient-brand text-white border-transparent shadow-glow-burgundy'
-                  : 'border-line-2 text-ink-mute hover:text-ink hover:border-violet-400',
+                  ? 'bg-surface-3 text-ink-1 border-line-2'
+                  : 'bg-transparent border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2',
               ].join(' ')}
             >
               {name}
             </button>
           ))}
-          {error && <span className="text-2xs text-status-err">error</span>}
-          <label className="flex items-center gap-1 text-2xs text-ink-mute cursor-pointer">
+          {error && <span className="text-2xs text-err">error</span>}
+          <label className="flex items-center gap-1 text-2xs text-ink-3 cursor-pointer ml-1">
             <input
               type="checkbox"
-              className="accent-burgundy"
+              className="accent-brand"
               checked={autoScroll}
               onChange={(event) => setAutoScroll(event.target.checked)}
             />
@@ -63,7 +63,7 @@ export function LogDock({
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}
-            className="text-2xs text-ink-mute hover:text-ink px-1"
+            className="text-2xs text-ink-3 hover:text-ink-1 px-1"
             aria-label={collapsed ? 'expand' : 'collapse'}
           >
             {collapsed ? '▴' : '▾'}
@@ -78,10 +78,10 @@ export function LogDock({
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
             if (!atBottom && autoScroll) setAutoScroll(false)
           }}
-          className="flex-1 overflow-auto font-mono text-[11.5px] leading-relaxed px-3 py-2 whitespace-pre text-ink-dim bg-surface-1"
+          className="flex-1 overflow-auto font-mono text-[11.5px] leading-relaxed px-3 py-2 whitespace-pre text-ink-2 bg-surface-1"
         >
           {lines.length === 0
-            ? <div className="text-ink-faint">waiting for output…</div>
+            ? <div className="text-ink-4">waiting for output…</div>
             : lines.map((line, idx) => <div key={`${idx}:${line.slice(0, 16)}`}>{line}</div>)}
         </div>
       )}

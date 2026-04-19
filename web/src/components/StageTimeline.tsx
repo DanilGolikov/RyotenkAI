@@ -1,15 +1,27 @@
 import type { StageRun, Status } from '../api/types'
 import { formatDuration } from '../lib/format'
 
+// Segment fills — semantic only. No brand colour here.
 const SEG_BG: Record<Status, string> = {
-  completed:   'bg-status-ok/60',
-  running:     'bg-status-run/80',
-  failed:      'bg-status-err/80',
-  interrupted: 'bg-status-warn/70',
-  skipped:     'bg-violet-500/50',
-  stale:       'bg-ink-faint/40',
-  pending:     'bg-surface-4',
-  unknown:     'bg-surface-4',
+  completed:   'bg-ok/50',
+  running:     'bg-info/70',
+  failed:      'bg-err/65',
+  interrupted: 'bg-warn/60',
+  skipped:     'bg-brand-alt/40',
+  stale:       'bg-idle/40',
+  pending:     'bg-surface-3',
+  unknown:     'bg-surface-3',
+}
+
+const DOT_BG: Record<Status, string> = {
+  completed:   'bg-ok',
+  running:     'bg-info',
+  failed:      'bg-err',
+  interrupted: 'bg-warn',
+  skipped:     'bg-brand-alt',
+  stale:       'bg-idle',
+  pending:     'bg-idle',
+  unknown:     'bg-idle',
 }
 
 export function StageTimeline({
@@ -24,7 +36,7 @@ export function StageTimeline({
   if (!stages.length) return null
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-stretch gap-[3px]">
         {stages.map((stage) => {
           const isRunning = stage.status === 'running'
@@ -36,34 +48,33 @@ export function StageTimeline({
               onClick={() => onSelect?.(stage.stage_name)}
               title={`${stage.stage_name} · ${stage.status}`}
               className={[
-                'group relative flex-1 h-8 rounded-md overflow-hidden transition',
-                'border',
-                isSelected ? 'border-burgundy-400 ring-2 ring-burgundy-400/40' : 'border-line-1 hover:border-violet-400',
+                'group relative flex-1 h-8 rounded-md overflow-hidden transition border',
+                isSelected ? 'border-brand' : 'border-line-1 hover:border-line-2',
               ].join(' ')}
             >
               <div className={`absolute inset-0 ${SEG_BG[stage.status]}`}>
                 {isRunning && (
-                  <div className="absolute inset-0 bg-gradient-brand opacity-50 animate-pulse" />
+                  <div className="absolute inset-0 bg-info/30 animate-pulse" />
                 )}
               </div>
-              <div className="relative flex items-center h-full px-2 text-2xs text-ink/90">
+              <div className="relative flex items-center h-full px-2 text-2xs text-ink-1/90">
                 <span className="truncate">{stage.stage_name}</span>
               </div>
             </button>
           )
         })}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-ink-mute">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-2xs text-ink-3">
         {stages.map((stage) => (
           <div key={`leg:${stage.stage_name}`} className="flex items-center gap-1.5">
-            <span className={`w-1.5 h-1.5 rounded-full ${SEG_BG[stage.status]}`} />
-            <span className="text-ink-dim">{stage.stage_name}</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[stage.status]}`} />
+            <span className="text-ink-2">{stage.stage_name}</span>
             <span>· {stage.status}</span>
             {stage.duration_seconds != null && (
-              <span className="text-ink-faint">· {formatDuration(stage.duration_seconds)}</span>
+              <span className="text-ink-4">· {formatDuration(stage.duration_seconds)}</span>
             )}
             {stage.mode_label && stage.mode_label !== 'executed' && (
-              <span className="text-violet-300">· {stage.mode_label}</span>
+              <span className="text-brand-alt">· {stage.mode_label}</span>
             )}
           </div>
         ))}

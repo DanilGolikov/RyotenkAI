@@ -18,7 +18,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => cmdk.setOpen(true)}
-          className="flex-1 max-w-[520px] h-9 px-3 flex items-center gap-2 rounded-md text-sm text-ink-mute bg-surface-2 border border-line-2 hover:border-violet-400 hover:text-ink transition"
+          className="flex-1 max-w-[520px] h-9 px-3 flex items-center gap-2 rounded-md text-sm text-ink-3 bg-surface-1 border border-line-2 hover:border-ink-3 hover:text-ink-1 transition"
         >
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
@@ -30,14 +30,14 @@ export function TopBar() {
           </span>
         </button>
 
-        <div className="ml-auto flex items-center gap-4 text-2xs text-ink-mute">
+        <div className="ml-auto flex items-center gap-4 text-2xs text-ink-3">
           {health && (
             <div className="flex items-center gap-2">
-              <span className={`w-1.5 h-1.5 rounded-full ${health.status === 'ok' ? 'bg-status-ok' : 'bg-status-err'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${health.status === 'ok' ? 'bg-ok' : 'bg-err'}`} />
               <span className="font-mono truncate max-w-[360px]">{health.runs_dir}</span>
             </div>
           )}
-          <span className="text-ink-faint font-mono">{health?.version ?? ''}</span>
+          <span className="text-ink-4 font-mono">{health?.version ?? ''}</span>
         </div>
       </div>
     </header>

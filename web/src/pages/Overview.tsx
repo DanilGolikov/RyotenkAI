@@ -14,7 +14,7 @@ export function Overview() {
     <div className="p-5 space-y-5 max-w-[1400px]">
       <section className="space-y-1">
         <h1 className="text-2xl font-semibold gradient-text">Overview</h1>
-        <p className="text-xs text-ink-mute">
+        <p className="text-xs text-ink-3">
           Pipeline fleet at a glance — live activity, recent history, and health.
         </p>
       </section>
@@ -22,7 +22,7 @@ export function Overview() {
       <KpiStrip />
 
       {error ? (
-        <div className="text-xs text-status-err bg-status-err/10 border border-status-err/30 px-3 py-2 rounded">
+        <div className="text-xs text-err bg-err/10 border border-err/30 px-3 py-2 rounded">
           {(error as Error).message}
         </div>
       ) : null}
@@ -32,9 +32,9 @@ export function Overview() {
           <SectionHeader
             title="Live runs"
             subtitle={activeRuns.length === 0 ? 'nothing running right now' : `${activeRuns.length} active`}
-            action={<Link to="/runs" className="text-2xs text-violet-300 hover:text-violet-400">all runs →</Link>}
+            action={<Link to="/runs" className="text-2xs text-brand-alt hover:text-brand-alt">all runs →</Link>}
           />
-          {isLoading && <div className="text-sm text-ink-mute flex gap-2 items-center"><Spinner /> loading</div>}
+          {isLoading && <div className="text-sm text-ink-3 flex gap-2 items-center"><Spinner /> loading</div>}
           {!isLoading && activeRuns.length === 0 && (
             <EmptyState
               title="Idle"
@@ -64,9 +64,9 @@ export function Overview() {
           <SectionHeader
             title="Recent"
             subtitle="most recent runs across all groups"
-            action={<Link to="/runs" className="text-2xs text-violet-300 hover:text-violet-400">open runs →</Link>}
+            action={<Link to="/runs" className="text-2xs text-brand-alt hover:text-brand-alt">open runs →</Link>}
           />
-          {isLoading && <div className="text-sm text-ink-mute flex gap-2 items-center"><Spinner /> loading</div>}
+          {isLoading && <div className="text-sm text-ink-3 flex gap-2 items-center"><Spinner /> loading</div>}
           {!isLoading && recentRuns.length === 0 && <EmptyState title="No history yet" />}
           <ul className="space-y-1.5">
             {recentRuns.map((run) => (

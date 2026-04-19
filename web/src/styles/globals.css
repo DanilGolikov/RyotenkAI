@@ -12,132 +12,116 @@ html, body, #root {
 
 body {
   margin: 0;
-  background: #0c0610;
-  color: #f5eef8;
+  background: #0e0c12;
+  color: #eeeaf3;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Selection + scrollbar stay neutral — brand is reserved for signal. */
 ::selection {
-  background: rgba(198, 48, 107, 0.38);
-  color: #f5eef8;
+  background: rgba(214, 48, 95, 0.28);
+  color: #ffffff;
 }
-
-/* Subtle top-left radial glow on the app canvas so the burgundy→violet
- * identity reads even when panels are dark. */
-#root::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 8% 0%, rgba(198, 48, 107, 0.10), transparent 55%),
-    radial-gradient(circle at 100% 100%, rgba(139, 92, 246, 0.08), transparent 45%);
-  z-index: 0;
-}
-
-/* Scrollbar: thin, brand-tinted */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #3a2646 transparent;
+  scrollbar-color: #363244 transparent;
 }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #3a2646; border-radius: 999px; }
-*::-webkit-scrollbar-thumb:hover { background: #5028ae; }
+*::-webkit-scrollbar-thumb { background: #363244; border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: #4a4556; }
 
-/* Focus ring: bright enough against burgundy (WCAG non-text 3:1) */
 :focus-visible {
-  outline: 2px solid #e25690;
+  outline: 2px solid #ea4a78;
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 @layer components {
+  /* ---------- Text ---------- */
   .gradient-text {
-    background: linear-gradient(135deg, #e25690 0%, #a185f8 100%);
+    background: linear-gradient(135deg, #ea4a78 0%, #a185f8 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
-  .gradient-border {
-    position: relative;
-    isolation: isolate;
-  }
-  .gradient-border::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(135deg, rgba(198,48,107,0.6), rgba(139,92,246,0.6));
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-            mask-composite: exclude;
-    pointer-events: none;
-    z-index: 0;
-  }
 
+  /* ---------- Surfaces ---------- */
   .card {
     @apply bg-surface-2 border border-line-1 rounded-lg shadow-card;
-    position: relative;
   }
   .card-raised {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card;
   }
+  /* Single "hero" variant — a restrained gradient glow, used sparingly
+     (e.g. Overview's primary KPI card). Everything else stays neutral. */
+  .card-hero {
+    @apply bg-surface-2 border border-line-2 rounded-lg shadow-card relative overflow-hidden;
+    background-image:
+      linear-gradient(180deg, rgba(214,48,95,0.08), rgba(139,92,246,0.05) 55%, transparent),
+      linear-gradient(#1c1a23, #1c1a23);
+  }
 
+  /* ---------- Buttons ---------- */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium text-white;
-    background-image: linear-gradient(135deg, #c6306b 0%, #8b5cf6 100%);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.1) inset, 0 4px 14px rgba(198,48,107,0.35);
-    transition: transform .08s ease, box-shadow .15s ease, filter .15s ease;
+    background-image: linear-gradient(135deg, #d6305f 0%, #8b5cf6 100%);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 3px 10px rgba(214,48,95,0.28);
+    transition: transform .08s ease, filter .15s ease;
   }
-  .btn-primary:hover   { filter: brightness(1.08); box-shadow: 0 1px 0 rgba(255,255,255,0.12) inset, 0 6px 20px rgba(198,48,107,0.48); }
+  .btn-primary:hover   { filter: brightness(1.08); }
   .btn-primary:active  { transform: translateY(1px); }
-  .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 
   .btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-ink-dim border border-line-2 hover:text-ink hover:border-violet-400 hover:bg-surface-3 transition;
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-ink-2 border border-line-2 bg-transparent hover:text-ink-1 hover:border-ink-3 hover:bg-surface-3 transition;
   }
   .btn-danger-ghost {
-    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-status-err border border-status-err/40 hover:bg-status-err/10 transition;
+    @apply inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm text-err border border-err/35 bg-transparent hover:bg-err/10 transition;
   }
 
   .kbd {
-    @apply inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded text-2xs font-mono text-ink-dim bg-surface-3 border border-line-2;
+    @apply inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded text-2xs font-mono text-ink-2 bg-surface-3 border border-line-2;
   }
 
-  /* Horizontal stage timeline segment */
-  .stage-seg {
-    @apply relative flex-1 h-2 rounded-full bg-surface-3 overflow-hidden;
-  }
-  .stage-seg::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: inherit;
-  }
-
-  /* Status pill: subtle tint + matching dot */
+  /* ---------- Status pills — muted, no glow ---------- */
   .pill {
-    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium border;
+    @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    color: #a59eb4;
   }
-  .pill-ok      { @apply text-status-ok   bg-status-ok/10   border-status-ok/25; }
-  .pill-warn    { @apply text-status-warn bg-status-warn/10 border-status-warn/25; }
-  .pill-err     { @apply text-status-err  bg-status-err/10  border-status-err/25; }
-  .pill-run     { @apply text-status-run  bg-status-run/10  border-status-run/30; }
-  .pill-idle    { @apply text-ink-mute    bg-surface-3      border-line-2; }
-  .pill-skip    { @apply text-violet-300  bg-violet-500/10  border-violet-500/30; }
+  .pill-ok     { color: #4ade80; background: rgba(74,222,128,0.08);  border-color: rgba(74,222,128,0.18); }
+  .pill-warn   { color: #f5a524; background: rgba(245,165,36,0.08);  border-color: rgba(245,165,36,0.18); }
+  .pill-err    { color: #f87171; background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.22); }
+  .pill-info   { color: #60a5fa; background: rgba(96,165,250,0.08);  border-color: rgba(96,165,250,0.22); }
+  .pill-idle   { color: #8d8799; background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
+  .pill-skip   { color: #a185f8; background: rgba(161,133,248,0.08); border-color: rgba(161,133,248,0.22); }
+
+  /* ---------- Sidebar nav (subtle inset accent only when active) ---------- */
+  .nav-item {
+    @apply flex items-center gap-2.5 px-3 py-2 rounded-md text-sm text-ink-2 hover:text-ink-1 hover:bg-surface-2 transition;
+  }
+  .nav-item-active {
+    @apply text-ink-1 bg-surface-2;
+    box-shadow: inset 2px 0 0 #d6305f;
+  }
+
+  /* ---------- Inputs ---------- */
+  .input {
+    @apply w-full bg-surface-1 border border-line-2 rounded-md px-3 py-2 text-sm text-ink-1 placeholder:text-ink-4 focus:border-brand focus:outline-none transition;
+  }
 }
 
-/* Utility: live-running dot */
+/* Live-running dot — the ONE place where sky-blue reads as "happening now" */
 .live-dot {
-  width: 10px; height: 10px; border-radius: 999px;
-  background: #38bdf8;
+  width: 8px; height: 8px; border-radius: 999px;
+  background: #60a5fa;
   position: relative;
 }
 .live-dot::after {
-  content: ''; position: absolute; inset: -4px; border-radius: 999px;
+  content: ''; position: absolute; inset: -3px; border-radius: 999px;
   animation: pulse_ring 1.6s ease-out infinite;
 }

@@ -24,7 +24,7 @@ export function SectionHeader({
     <div className="flex items-end justify-between gap-4 mb-3">
       <div>
         <h2 className="text-sm font-medium text-ink">{title}</h2>
-        {subtitle && <div className="text-2xs text-ink-mute mt-0.5">{subtitle}</div>}
+        {subtitle && <div className="text-2xs text-ink-3 mt-0.5">{subtitle}</div>}
       </div>
       {action}
     </div>
@@ -42,8 +42,8 @@ export function EmptyState({
 }) {
   return (
     <div className="px-6 py-12 text-center">
-      <div className="text-ink-dim text-sm">{title}</div>
-      {hint && <div className="text-ink-mute text-xs mt-1">{hint}</div>}
+      <div className="text-ink-2 text-sm">{title}</div>
+      {hint && <div className="text-ink-3 text-xs mt-1">{hint}</div>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )
@@ -53,7 +53,7 @@ export function Spinner() {
   return (
     <span
       aria-hidden
-      className="inline-block w-3.5 h-3.5 rounded-full border-2 border-violet-400/30 border-t-violet-400 animate-spin"
+      className="inline-block w-3.5 h-3.5 rounded-full border-2 border-line-2/30 border-t-brand animate-spin"
     />
   )
 }

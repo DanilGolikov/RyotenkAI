@@ -70,7 +70,7 @@ export function RunsWorkspace() {
         {selectedRunId ? (
           <RunDetailPanel runId={selectedRunId} />
         ) : (
-          <div className="h-full flex items-center justify-center text-ink-mute text-sm">
+          <div className="h-full flex items-center justify-center text-ink-3 text-sm">
             {runsLoading ? 'loading runs…' : 'no run selected'}
           </div>
         )}
@@ -113,7 +113,7 @@ function RunsPanel({
           value={filter}
           onChange={(event) => onFilter(event.target.value)}
           placeholder="filter runs…"
-          className="w-full bg-surface-2 border border-line-2 rounded-md px-3 py-1.5 text-sm placeholder:text-ink-faint focus:border-burgundy-400 focus:outline-none"
+          className="w-full bg-surface-2 border border-line-2 rounded-md px-3 py-1.5 text-sm placeholder:text-ink-4 focus:border-brand focus:outline-none"
         />
         <div className="flex gap-1.5 flex-wrap">
           {filters.map((f) => (
@@ -124,8 +124,8 @@ function RunsPanel({
               className={[
                 'px-2 py-0.5 rounded-full text-2xs border transition',
                 statusFilter === f.id
-                  ? 'bg-gradient-brand text-white border-transparent'
-                  : 'border-line-2 text-ink-mute hover:text-ink hover:border-violet-400',
+                  ? 'bg-surface-3 text-ink-1 border-line-2'
+                  : 'bg-transparent border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2',
               ].join(' ')}
             >
               {f.label}
@@ -135,7 +135,7 @@ function RunsPanel({
       </div>
       <div className="flex-1 overflow-auto p-2 space-y-1.5">
         {loading && runs.length === 0 && (
-          <div className="text-sm text-ink-mute p-4 flex items-center gap-2"><Spinner /> loading</div>
+          <div className="text-sm text-ink-3 p-4 flex items-center gap-2"><Spinner /> loading</div>
         )}
         {!loading && runs.length === 0 && (
           <EmptyState title="no runs match" hint="adjust filters or start one from Launch" />
@@ -170,12 +170,12 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center text-ink-mute text-sm">
+      <div className="h-full flex items-center justify-center text-ink-3 text-sm">
         <Spinner /> loading {runId}
       </div>
     )
   }
-  if (error) return <div className="p-6 text-status-err text-sm">{(error as Error).message}</div>
+  if (error) return <div className="p-6 text-err text-sm">{(error as Error).message}</div>
   if (!run) return null
 
   const mlflowHref =
@@ -191,11 +191,11 @@ function RunDetailPanel({ runId }: { runId: string }) {
             <StatusPill status={run.status} />
             <h1 className="text-xl font-semibold text-ink truncate">{run.logical_run_id}</h1>
           </div>
-          <div className="mt-1 text-xs text-ink-mute flex gap-4 flex-wrap">
-            <span>config: <span className="font-mono text-ink-dim">{run.config_path || '—'}</span></span>
-            <span>attempts: <span className="text-ink-dim">{run.attempts.length}</span></span>
+          <div className="mt-1 text-xs text-ink-3 flex gap-4 flex-wrap">
+            <span>config: <span className="font-mono text-ink-2">{run.config_path || '—'}</span></span>
+            <span>attempts: <span className="text-ink-2">{run.attempts.length}</span></span>
             {run.is_locked && run.lock_pid != null && (
-              <span className="text-status-run">pid {run.lock_pid}</span>
+              <span className="text-info">pid {run.lock_pid}</span>
             )}
           </div>
         </div>
@@ -254,16 +254,16 @@ function RunDetailPanel({ runId }: { runId: string }) {
                   className={[
                     'min-w-[150px] shrink-0 text-left p-3 rounded-md border transition',
                     active
-                      ? 'border-burgundy-400/70 bg-surface-3 shadow-glow-burgundy'
-                      : 'border-line-1 bg-surface-2 hover:border-violet-400 hover:bg-surface-3',
+                      ? 'border-brand/70 bg-surface-3 shadow-glow-brand'
+                      : 'border-line-1 bg-surface-2 hover:border-line-2 hover:bg-surface-3',
                   ].join(' ')}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-ink-mute">#{attempt.attempt_no}</span>
+                    <span className="text-xs text-ink-3">#{attempt.attempt_no}</span>
                     <StatusPill status={attempt.status} compact />
                   </div>
-                  <div className="text-2xs text-ink-mute mt-1">{attempt.effective_action}</div>
-                  <div className="text-2xs text-ink-faint mt-2">
+                  <div className="text-2xs text-ink-3 mt-1">{attempt.effective_action}</div>
+                  <div className="text-2xs text-ink-4 mt-2">
                     {formatDateTime(attempt.started_at)}
                     {attempt.completed_at && (
                       <> · {formatDuration(
@@ -324,19 +324,19 @@ function AttemptSection({ runId, attemptNo }: { runId: string; attemptNo: number
             <div className="flex items-center gap-2">
               <StatusPill status={selected.status} compact />
               <span className="font-medium text-ink">{selected.stage_name}</span>
-              {selected.mode_label && <span className="text-violet-300">· {selected.mode_label}</span>}
+              {selected.mode_label && <span className="text-brand-alt">· {selected.mode_label}</span>}
               {selected.duration_seconds != null && (
-                <span className="text-ink-mute">· {formatDuration(selected.duration_seconds)}</span>
+                <span className="text-ink-3">· {formatDuration(selected.duration_seconds)}</span>
               )}
             </div>
             {selected.started_at && (
-              <div className="text-ink-mute">started {formatDateTime(selected.started_at)}</div>
+              <div className="text-ink-3">started {formatDateTime(selected.started_at)}</div>
             )}
             {selected.completed_at && (
-              <div className="text-ink-mute">finished {formatDateTime(selected.completed_at)}</div>
+              <div className="text-ink-3">finished {formatDateTime(selected.completed_at)}</div>
             )}
             {selected.error && (
-              <div className="text-status-err font-mono whitespace-pre-wrap mt-1">{selected.error}</div>
+              <div className="text-err font-mono whitespace-pre-wrap mt-1">{selected.error}</div>
             )}
           </div>
         )}

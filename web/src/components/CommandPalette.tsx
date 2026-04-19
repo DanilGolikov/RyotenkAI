@@ -102,7 +102,7 @@ export function CommandPalette() {
         className="w-full max-w-xl mx-4 rounded-xl bg-surface-1 border border-line-2 shadow-card overflow-hidden"
       >
         <div className="flex items-center gap-2 px-4 h-12 border-b border-line-1">
-          <svg className="w-4 h-4 text-ink-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg className="w-4 h-4 text-ink-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="7" />
             <path d="M21 21l-4.3-4.3" />
           </svg>
@@ -111,7 +111,7 @@ export function CommandPalette() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search runs, go to page, launch…"
-            className="flex-1 bg-transparent outline-none text-sm placeholder:text-ink-faint"
+            className="flex-1 bg-transparent outline-none text-sm placeholder:text-ink-4"
             onKeyDown={(event) => {
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
@@ -129,7 +129,7 @@ export function CommandPalette() {
         </div>
         <ul className="max-h-[50vh] overflow-auto py-2">
           {results.length === 0 && (
-            <li className="px-4 py-6 text-center text-sm text-ink-mute">no matches</li>
+            <li className="px-4 py-6 text-center text-sm text-ink-3">no matches</li>
           )}
           {results.map((item, idx) => (
             <li key={`${item.kind}:${item.id}`}>
@@ -138,18 +138,18 @@ export function CommandPalette() {
                 onClick={() => activate(idx)}
                 onMouseEnter={() => setCursor(idx)}
                 className={`w-full flex items-center gap-3 px-4 py-2 text-left text-sm ${
-                  idx === cursor ? 'bg-surface-3 text-ink' : 'text-ink-dim'
+                  idx === cursor ? 'bg-surface-3 text-ink' : 'text-ink-2'
                 }`}
               >
                 <span className={`w-1.5 h-5 rounded ${idx === cursor ? 'bg-gradient-brand' : 'bg-transparent'}`} />
                 <span className="flex-1 truncate">{item.label}</span>
                 {item.kind === 'run' && <StatusPill status={item.status} compact />}
-                <span className="text-ink-faint text-xs truncate max-w-[40%]">{item.subtitle}</span>
+                <span className="text-ink-4 text-xs truncate max-w-[40%]">{item.subtitle}</span>
               </button>
             </li>
           ))}
         </ul>
-        <div className="px-4 py-2 text-2xs text-ink-mute border-t border-line-1 flex gap-4">
+        <div className="px-4 py-2 text-2xs text-ink-3 border-t border-line-1 flex gap-4">
           <span className="flex gap-1 items-center"><kbd className="kbd">↑</kbd><kbd className="kbd">↓</kbd> navigate</span>
           <span className="flex gap-1 items-center"><kbd className="kbd">↵</kbd> open</span>
           <span className="flex gap-1 items-center"><kbd className="kbd">esc</kbd> close</span>

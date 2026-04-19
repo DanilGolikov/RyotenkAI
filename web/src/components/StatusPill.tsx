@@ -2,7 +2,7 @@ import type { Status } from '../api/types'
 
 const CLS: Record<Status, string> = {
   completed:   'pill pill-ok',
-  running:     'pill pill-run',
+  running:     'pill pill-info',
   failed:      'pill pill-err',
   interrupted: 'pill pill-warn',
   stale:       'pill pill-idle',
@@ -23,14 +23,14 @@ const LABEL: Record<Status, string> = {
 }
 
 const DOT: Record<Status, string> = {
-  completed:   'bg-status-ok',
-  running:     'bg-status-run',
-  failed:      'bg-status-err',
-  interrupted: 'bg-status-warn',
-  stale:       'bg-ink-faint',
-  skipped:     'bg-violet-400',
-  pending:     'bg-ink-faint',
-  unknown:     'bg-ink-faint',
+  completed:   'bg-ok',
+  running:     'bg-info',
+  failed:      'bg-err',
+  interrupted: 'bg-warn',
+  stale:       'bg-idle',
+  skipped:     'bg-brand-alt',
+  pending:     'bg-idle',
+  unknown:     'bg-idle',
 }
 
 export function StatusPill({

@@ -68,10 +68,10 @@ export function LaunchModal({
         className="w-full max-w-2xl rounded-xl border border-line-2 bg-surface-1 shadow-card overflow-hidden"
       >
         <div className="px-5 py-4 bg-gradient-brand-soft border-b border-line-1 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-gradient-brand shadow-glow-burgundy" />
+          <div className="w-8 h-8 rounded-md bg-gradient-brand shadow-glow-brand" />
           <div>
             <div className="text-sm font-semibold">Launch pipeline</div>
-            <div className="text-2xs text-ink-mute">{runId}</div>
+            <div className="text-2xs text-ink-3">{runId}</div>
           </div>
         </div>
 
@@ -87,34 +87,34 @@ export function LaunchModal({
                   className={[
                     'rounded-md px-3 py-2 text-left transition border',
                     active
-                      ? 'bg-gradient-brand text-white border-transparent shadow-glow-burgundy'
-                      : 'bg-surface-2 border-line-2 text-ink-dim hover:text-ink hover:border-violet-400',
+                      ? 'bg-gradient-brand text-white border-transparent shadow-glow-brand'
+                      : 'bg-surface-2 border-line-2 text-ink-2 hover:text-ink hover:border-line-2',
                   ].join(' ')}
                 >
                   <div className="text-xs font-medium">{m.label}</div>
-                  <div className={`text-2xs mt-0.5 ${active ? 'text-white/80' : 'text-ink-mute'}`}>{m.hint}</div>
+                  <div className={`text-2xs mt-0.5 ${active ? 'text-white/80' : 'text-ink-3'}`}>{m.hint}</div>
                 </button>
               )
             })}
           </div>
 
           <label className="block">
-            <span className="text-2xs uppercase tracking-wider text-ink-mute">Config path</span>
+            <span className="text-2xs uppercase tracking-wider text-ink-3">Config path</span>
             <input
               value={configPath}
               onChange={(event) => setConfigPath(event.target.value)}
               placeholder="config/pipeline.yaml"
-              className="w-full mt-1 bg-surface-2 border border-line-2 rounded-md px-3 py-2 text-sm font-mono text-ink focus:border-burgundy-400 focus:outline-none"
+              className="w-full mt-1 bg-surface-2 border border-line-2 rounded-md px-3 py-2 text-sm font-mono text-ink focus:border-brand focus:outline-none"
             />
           </label>
 
           {mode === 'restart' && (
             <label className="block">
-              <span className="text-2xs uppercase tracking-wider text-ink-mute">Restart from stage</span>
+              <span className="text-2xs uppercase tracking-wider text-ink-3">Restart from stage</span>
               <select
                 value={restartStage}
                 onChange={(event) => setRestartStage(event.target.value)}
-                className="w-full mt-1 bg-surface-2 border border-line-2 rounded-md px-3 py-2 text-sm text-ink focus:border-burgundy-400 focus:outline-none"
+                className="w-full mt-1 bg-surface-2 border border-line-2 rounded-md px-3 py-2 text-sm text-ink focus:border-brand focus:outline-none"
               >
                 <option value="">— select stage —</option>
                 {availablePoints.map((p) => (
@@ -134,7 +134,7 @@ export function LaunchModal({
           )}
 
           <label className="block">
-            <span className="text-2xs uppercase tracking-wider text-ink-mute">Log level</span>
+            <span className="text-2xs uppercase tracking-wider text-ink-3">Log level</span>
             <div className="mt-1 grid grid-cols-2 gap-2 max-w-[220px]">
               {(['INFO', 'DEBUG'] as const).map((lvl) => (
                 <button
@@ -144,8 +144,8 @@ export function LaunchModal({
                   className={[
                     'px-3 py-1.5 rounded-md text-xs font-mono border transition',
                     logLevel === lvl
-                      ? 'bg-surface-3 border-burgundy-400 text-ink'
-                      : 'bg-surface-2 border-line-2 text-ink-mute hover:text-ink',
+                      ? 'bg-surface-3 border-brand text-ink'
+                      : 'bg-surface-2 border-line-2 text-ink-3 hover:text-ink',
                   ].join(' ')}
                 >
                   {lvl}
@@ -155,7 +155,7 @@ export function LaunchModal({
           </label>
 
           {launchMut.error && (
-            <div className="text-xs text-status-err bg-status-err/10 border border-status-err/30 px-3 py-2 rounded">
+            <div className="text-xs text-err bg-err/10 border border-err/30 px-3 py-2 rounded">
               {(launchMut.error as Error).message}
             </div>
           )}

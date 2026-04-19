@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--host", "--port", "5173"],
+      "cwd": "web",
+      "port": 5173,
+      "env": {
+        "RYOTENKAI_API_HOST": "127.0.0.1",
+        "RYOTENKAI_API_PORT": "8000"
+      }
+    },
+    {
+      "name": "web-backend",
+      "runtimeExecutable": ".venv/bin/python",
+      "runtimeArgs": ["-m", "src.main", "serve", "--host", "127.0.0.1", "--port", "8000", "--runs-dir", "runs", "--cors-origins", "http://localhost:5173"],
+      "port": 8000
+    }
+  ]
+}

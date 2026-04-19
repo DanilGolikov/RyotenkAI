@@ -41,14 +41,14 @@ const items: Item[] = [
 export function Sidebar() {
   return (
     <aside className="w-[240px] shrink-0 bg-gradient-sidebar border-r border-line-1 flex flex-col">
-      <div className="px-5 py-5 flex items-center gap-2">
-        <div className="w-7 h-7 rounded bg-gradient-brand shadow-glow-burgundy" />
+      <div className="px-5 py-5 flex items-center gap-2.5">
+        <div className="w-7 h-7 rounded bg-gradient-brand shadow-glow-brand" />
         <div className="leading-tight">
           <div className="text-sm font-semibold">
             <span className="gradient-text">Ryotenk</span>
-            <span className="text-ink">AI</span>
+            <span className="text-ink-1">AI</span>
           </div>
-          <div className="text-2xs text-ink-mute">pipeline control plane</div>
+          <div className="text-2xs text-ink-3">pipeline control plane</div>
         </div>
       </div>
 
@@ -58,26 +58,11 @@ export function Sidebar() {
             key={item.to}
             to={item.to}
             end={item.end}
-            className={({ isActive }) =>
-              [
-                'flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition',
-                isActive
-                  ? 'bg-surface-3 text-ink shadow-inner'
-                  : 'text-ink-dim hover:text-ink hover:bg-surface-2',
-              ].join(' ')
-            }
+            className={({ isActive }) => [isActive ? 'nav-item nav-item-active' : 'nav-item'].join(' ')}
           >
             {({ isActive }) => (
               <>
-                <span
-                  className={
-                    isActive
-                      ? 'text-burgundy-400'
-                      : 'text-ink-mute group-hover:text-violet-400'
-                  }
-                >
-                  {item.icon}
-                </span>
+                <span className={isActive ? 'text-brand' : 'text-ink-3'}>{item.icon}</span>
                 <span>{item.label}</span>
               </>
             )}
@@ -85,10 +70,10 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="px-4 pb-4 text-2xs text-ink-mute space-y-1">
+      <div className="px-4 pb-4 text-2xs text-ink-3 space-y-1">
         <div className="flex justify-between">
           <span>docs</span>
-          <a href="/docs" target="_blank" rel="noreferrer" className="text-violet-300 hover:text-violet-400">OpenAPI</a>
+          <a href="/docs" target="_blank" rel="noreferrer" className="text-ink-2 hover:text-ink-1">OpenAPI</a>
         </div>
         <div className="flex justify-between">
           <span>hotkey</span>

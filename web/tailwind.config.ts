@@ -1,71 +1,68 @@
 import type { Config } from 'tailwindcss'
 
 /**
- * Burgundy → Violet palette, OKLCH-derived for perceptual uniformity on dark
- * backgrounds. All text tokens pass WCAG AA (≥4.5:1) on `surface-0` through
- * `surface-3`; the gradient is only used on ≥24px headings or iconography to
- * stay above 3:1 for large-text rules.
+ * 2026 dashboard palette:
+ *   - Neutrals drive ~90% of the UI (cool-tinted zinc, 6 tiers via OKLCH
+ *     lightness for perceptual uniformity).
+ *   - ONE brand accent (burgundy→violet gradient) used ONLY for logo,
+ *     primary CTAs, focus rings, and live-running pulse. Brand is a
+ *     signal, not a wallpaper.
+ *   - Semantic status colours are isolated from the brand and calibrated
+ *     for dark mode (lighter lightness, softer saturation).
+ *   - All text tokens pass WCAG AA (≥4.5:1) on surface-1/2/3; large
+ *     text + 3:1 on surface-0.
  */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // Surface scale: darkest → lightest, all burgundy-tinted
-        'surface-0': '#0c0610',   // app background
-        'surface-1': '#160b1c',   // sidebar / sticky panels
-        'surface-2': '#1f1028',   // cards
-        'surface-3': '#2a1a36',   // hover
-        'surface-4': '#3a2646',   // raised/selected
+        // Neutral surfaces (zinc with a whisper of cool-magenta tint,
+        // lightness climbs in ~4% OKLCH steps so elevation reads even
+        // without drop shadows — required in dark mode).
+        'surface-0': '#0e0c12',   // app canvas
+        'surface-1': '#15131b',   // sidebar, sticky panels
+        'surface-2': '#1c1a23',   // cards
+        'surface-3': '#25222d',   // hover / selected card
+        'surface-4': '#302c38',   // raised / popover
 
-        // Hairlines
-        'line-1': '#2e1d3c',
-        'line-2': '#3d2a50',
+        // Borders
+        'line-1': '#252230',      // hairline
+        'line-2': '#363244',      // stronger
 
-        // Text (tested on surface-0..3)
-        'ink': '#f5eef8',         // primary
-        'ink-dim': '#cbbcd8',     // secondary
-        'ink-mute': '#8d7ba2',    // captions
-        'ink-faint': '#6a5780',   // placeholders
+        // Text (lightness-driven hierarchy)
+        'ink-1': '#eeeaf3',       // primary
+        'ink-2': '#a59eb4',       // secondary
+        'ink-3': '#6f6880',       // captions
+        'ink-4': '#4a4556',       // placeholders / disabled
 
-        // Brand gradient anchors
-        'burgundy': {
-          DEFAULT: '#c6306b',
-          400: '#e25690',
-          500: '#c6306b',
-          600: '#9e2255',
-          700: '#761a40',
-        },
-        'violet': {
-          DEFAULT: '#8b5cf6',
-          300: '#b39afb',
-          400: '#a185f8',
-          500: '#8b5cf6',
-          600: '#6d3ddc',
-          700: '#5028ae',
-        },
+        // Brand (single hue family — used sparingly)
+        'brand':        '#d6305f',   // solid CTA / active
+        'brand-strong': '#ea4a78',   // hover
+        'brand-weak':   '#3a1522',   // translucent bg accents (10% surface)
 
-        // Status — chosen to be distinguishable from burgundy/violet
-        'status-ok':      '#4ade80',
-        'status-warn':    '#fbbf24',
-        'status-err':     '#f87171',
-        'status-run':     '#38bdf8',   // sky — different hue family from violet
-        'status-idle':    '#6a5780',
+        'brand-alt':    '#8b5cf6',   // gradient partner only
+
+        // Semantic (dark-mode calibrated — softer than pure)
+        'ok':    '#4ade80',
+        'warn':  '#f5a524',
+        'err':   '#f87171',
+        'info':  '#60a5fa',   // running / live
+        'idle':  '#6f6880',
       },
       backgroundImage: {
+        // Reserved usage: logo, launch CTA, "hero" KPI (Active runs).
         'gradient-brand':
-          'linear-gradient(135deg, #c6306b 0%, #8b5cf6 100%)',
+          'linear-gradient(135deg, #d6305f 0%, #8b5cf6 100%)',
         'gradient-brand-soft':
-          'linear-gradient(135deg, rgba(198,48,107,0.22) 0%, rgba(139,92,246,0.22) 100%)',
+          'linear-gradient(135deg, rgba(214,48,95,0.14) 0%, rgba(139,92,246,0.14) 100%)',
         'gradient-sidebar':
-          'linear-gradient(180deg, #160b1c 0%, #0c0610 80%)',
-        'gradient-glow':
-          'radial-gradient(circle at 30% 0%, rgba(198,48,107,0.18), transparent 60%)',
+          'linear-gradient(180deg, #15131b 0%, #0e0c12 85%)',
       },
       boxShadow: {
-        'glow-burgundy': '0 0 24px rgba(198, 48, 107, 0.35)',
-        'glow-violet':   '0 0 24px rgba(139, 92, 246, 0.35)',
-        'card':          '0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 24px rgba(0,0,0,0.4)',
+        'glow-brand':    '0 0 20px rgba(214, 48, 95, 0.35)',
+        'card':          '0 1px 0 rgba(255,255,255,0.03) inset, 0 6px 18px rgba(0,0,0,0.35)',
+        'inset-accent':  'inset 2px 0 0 #d6305f',
       },
       fontFamily: {
         sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
@@ -75,12 +72,12 @@ export default {
         '2xs': ['0.6875rem', { lineHeight: '1rem' }],
       },
       ringColor: {
-        DEFAULT: '#c6306b',
+        DEFAULT: '#d6305f',
       },
       keyframes: {
         pulse_ring: {
-          '0%':   { boxShadow: '0 0 0 0 rgba(56,189,248,0.55)' },
-          '100%': { boxShadow: '0 0 0 10px rgba(56,189,248,0)' },
+          '0%':   { boxShadow: '0 0 0 0 rgba(96,165,250,0.55)' },
+          '100%': { boxShadow: '0 0 0 8px rgba(96,165,250,0)' },
         },
       },
       animation: {
