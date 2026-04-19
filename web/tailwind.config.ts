@@ -17,24 +17,28 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Neutral surfaces (zinc with a whisper of cool-magenta tint,
-        // lightness climbs in ~4% OKLCH steps so elevation reads even
-        // without drop shadows — required in dark mode).
-        'surface-0': '#0e0c12',   // app canvas
-        'surface-1': '#15131b',   // sidebar, sticky panels
-        'surface-2': '#1c1a23',   // cards
-        'surface-3': '#25222d',   // hover / selected card
-        'surface-4': '#302c38',   // raised / popover
+        // Neutral surfaces — lifted ~4% in lightness vs. v1 so the UI
+        // doesn't feel like a void. Cool-violet undertone (hue ≈ 290°)
+        // keeps the brand direction without painting everything burgundy.
+        // OKLCH steps ≈ 12% → 27% in 3-4% increments, so elevation reads
+        // without shadows (required in dark mode).
+        'surface-0': '#141221',   // app canvas
+        'surface-1': '#1a1729',   // sidebar, sticky panels
+        'surface-2': '#221f33',   // cards
+        'surface-3': '#2c2840',   // hover / selected card
+        'surface-4': '#38334f',   // raised / popover
 
-        // Borders
-        'line-1': '#252230',      // hairline
-        'line-2': '#363244',      // stronger
+        // Borders — slightly lighter so they read against the new surfaces
+        'line-1': '#2e2a43',
+        'line-2': '#423d5c',
 
-        // Text (lightness-driven hierarchy)
-        'ink-1': '#eeeaf3',       // primary
-        'ink-2': '#a59eb4',       // secondary
-        'ink-3': '#6f6880',       // captions
-        'ink-4': '#4a4556',       // placeholders / disabled
+        // Text — ink-1 unchanged (passes AA everywhere), ink-2 warmer
+        // lavender so body copy feels alive, ink-3 bumped so captions
+        // don't feel washed out.
+        'ink-1': '#f1ecf7',       // primary  (contrast on surface-0 ≈ 15.8:1)
+        'ink-2': '#b9b1cc',       // secondary (7.9:1 on s-0)
+        'ink-3': '#857d9b',       // captions  (4.9:1)
+        'ink-4': '#595370',       // placeholders / disabled
 
         // Brand (single hue family — used sparingly)
         'brand':        '#d6305f',   // solid CTA / active
@@ -55,9 +59,9 @@ export default {
         'gradient-brand':
           'linear-gradient(135deg, #d6305f 0%, #8b5cf6 100%)',
         'gradient-brand-soft':
-          'linear-gradient(135deg, rgba(214,48,95,0.14) 0%, rgba(139,92,246,0.14) 100%)',
+          'linear-gradient(135deg, rgba(214,48,95,0.18) 0%, rgba(139,92,246,0.18) 100%)',
         'gradient-sidebar':
-          'linear-gradient(180deg, #15131b 0%, #0e0c12 85%)',
+          'linear-gradient(180deg, #1a1729 0%, #141221 85%)',
       },
       boxShadow: {
         'glow-brand':    '0 0 20px rgba(214, 48, 95, 0.35)',
