@@ -8,6 +8,8 @@ import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
+import { ValidationBanner } from '../ConfigBuilder/ValidationBanner'
+import { deriveGroupValidity } from '../ConfigBuilder/validationMap'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
@@ -35,6 +37,20 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   }, [configQuery.data, dirty])
 
   const validationResult: ConfigValidationResult | undefined = validateMut.data
+
+  // Debounced auto-validate on any change (form or yaml).
+  useEffect(() => {
+    if (!dirty) return
+    const handle = window.setTimeout(() => {
+      validateMut.mutate(yamlText)
+    }, 900)
+    return () => window.clearTimeout(handle)
+  }, [yamlText, dirty])
+
+  const groupValidity = useMemo(
+    () => (validationResult ? deriveGroupValidity(validationResult.checks) : {}),
+    [validationResult],
+  )
 
   const statusLine = useMemo(() => {
     if (saveMut.isPending) return 'Saving…'
@@ -102,6 +118,12 @@ export function ConfigTab({ projectId }: { projectId: string }) {
         <span className="ml-auto text-2xs text-ink-3">{statusLine}</span>
       </div>
 
+      <ValidationBanner
+        result={validationResult ?? null}
+        isValidating={validateMut.isPending}
+        hashPrefix="project"
+      />
+
       {view === 'form' && schemaQuery.data ? (
         <ConfigBuilder
           schema={schemaQuery.data}
@@ -109,6 +131,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
           onChange={applyFormChange}
           hashPrefix="project"
           groupRenderers={{ providers: ProviderPickerField }}
+          groupValidity={groupValidity}
         />
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
@@ -146,36 +169,6 @@ export function ConfigTab({ projectId }: { projectId: string }) {
           {saveMut.isPending ? 'Saving…' : 'Save'}
         </button>
       </div>
-
-      {validationResult && (
-        <div className="rounded-md border border-line-1 bg-surface-1 p-3 space-y-1.5">
-          <div
-            className={`text-xs font-medium ${
-              validationResult.ok ? 'text-ok' : 'text-err'
-            }`}
-          >
-            {validationResult.ok ? 'Configuration looks valid' : 'Configuration has issues'}
-          </div>
-          {validationResult.checks.map((c, idx) => (
-            <div key={idx} className="flex items-start gap-2 text-2xs">
-              <span
-                className={[
-                  'w-1.5 h-1.5 mt-1.5 rounded-full shrink-0',
-                  c.status === 'ok'
-                    ? 'bg-ok'
-                    : c.status === 'warn'
-                    ? 'bg-warn'
-                    : 'bg-err',
-                ].join(' ')}
-              />
-              <div className="min-w-0">
-                <div className="text-ink-1">{c.label}</div>
-                {c.detail && <div className="text-ink-3 font-mono truncate">{c.detail}</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {yamlParseError && (
         <div className="rounded-md border border-warn/40 bg-warn/10 text-warn text-xs px-3 py-2">
