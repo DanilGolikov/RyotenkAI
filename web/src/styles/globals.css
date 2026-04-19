@@ -107,16 +107,17 @@ body {
   /* ---------- Status pills — muted, no glow ---------- */
   .pill {
     @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    color: #a1a1aa;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #d4d4d8;
   }
-  .pill-ok     { color: #5ee694; background: rgba(74,222,128,0.10);  border-color: rgba(74,222,128,0.22); }
-  .pill-warn   { color: #ffb43a; background: rgba(245,165,36,0.10);  border-color: rgba(245,165,36,0.22); }
-  .pill-err    { color: #ff8a8a; background: rgba(248,113,113,0.10); border-color: rgba(248,113,113,0.28); }
-  .pill-info   { color: #7ab8ff; background: rgba(96,165,250,0.10);  border-color: rgba(96,165,250,0.28); }
-  .pill-idle   { color: #a1a1aa; background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
-  .pill-skip   { color: #b9a4ff; background: rgba(161,133,248,0.10); border-color: rgba(161,133,248,0.26); }
+  /* Brighter ink + slightly bolder tint so pills read at-a-glance. */
+  .pill-ok     { color: #86efac; background: rgba(74,222,128,0.16);  border-color: rgba(74,222,128,0.40); }
+  .pill-warn   { color: #fcd34d; background: rgba(245,165,36,0.16);  border-color: rgba(245,165,36,0.40); }
+  .pill-err    { color: #fca5a5; background: rgba(248,113,113,0.18); border-color: rgba(248,113,113,0.48); }
+  .pill-info   { color: #93c5fd; background: rgba(96,165,250,0.16);  border-color: rgba(96,165,250,0.45); }
+  .pill-idle   { color: #a1a1aa; background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.12); }
+  .pill-skip   { color: #c4b5fd; background: rgba(161,133,248,0.16); border-color: rgba(161,133,248,0.42); }
 
   /* ---------- Sidebar nav (subtle inset accent only when active) ---------- */
   .nav-item {
