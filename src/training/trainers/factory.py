@@ -269,9 +269,40 @@ class TrainerFactory:
         if hasattr(config.training, "type") and config.training.type in ("qlora", "lora", "adalora"):
             from src.training.trainer_builder import create_peft_config
 
-            peft_config = create_peft_config(config)
-            if peft_config is not None:
-                trainer_kwargs["peft_config"] = peft_config
+            # PEFT double-apply guard. When a model is loaded from a HF checkpoint
+            # that was previously published as a PEFT adapter (e.g. SFT checkpoints
+            # uploaded with ``adapter_config.json``), the loader returns a
+            # ``PeftModel`` already carrying ``peft_config``. Passing another
+            # ``peft_config`` to TRL causes ``get_peft_model`` to be called on
+            # an already-wrapped model, which corrupts the ``requires_grad``
+            # mask and yields ``Trainable parameters: 0 (0.00%)`` — silent no-op.
+            #
+            # We check ``isinstance(model, PeftModel)`` specifically, NOT
+            # ``hasattr(model, "base_model")`` — plain ``PreTrainedModel``
+            # instances expose a ``base_model`` property too (e.g. LlamaModel
+            # inside ``LlamaForCausalLM``), so an attribute-based check would
+            # false-positive on every fresh QLoRA run and silently disable
+            # adapter injection.
+            try:
+                from peft import PeftModel
+                model_already_peft = isinstance(model, PeftModel)
+            except ImportError:
+                # peft not installed → definitely not a PeftModel
+                model_already_peft = False
+
+            if model_already_peft:
+                logger.warning(
+                    "[TF:PEFT_GUARD] Model is already a PeftModel (loaded from "
+                    "a checkpoint with adapter_config.json). Skipping "
+                    "peft_config in trainer_kwargs to avoid double-apply "
+                    "(which would zero out trainable params). If this is a "
+                    "fresh run, either merge the adapter at publish time or "
+                    "reload the checkpoint as a base model.",
+                )
+            else:
+                peft_config = create_peft_config(config)
+                if peft_config is not None:
+                    trainer_kwargs["peft_config"] = peft_config
 
         if eval_dataset is not None:
             trainer_kwargs["eval_dataset"] = eval_dataset
