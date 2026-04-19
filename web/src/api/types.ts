@@ -204,3 +204,78 @@ export interface HealthStatus {
   runs_dir_readable: boolean
   version: string
 }
+
+// ───────── Projects ─────────
+
+export interface ProjectSummary {
+  id: string
+  name: string
+  path: string
+  created_at: string
+  description: string
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  description: string
+  updated_at: string
+  current_config_yaml: string
+}
+
+export interface CreateProjectRequest {
+  name: string
+  id?: string
+  path?: string
+  description?: string
+}
+
+export interface SaveConfigRequest {
+  yaml: string
+}
+
+export interface SaveConfigResponse {
+  ok: boolean
+  snapshot_filename: string | null
+}
+
+export interface ConfigResponse {
+  yaml: string
+  parsed_json: Record<string, unknown> | null
+}
+
+export interface ConfigVersion {
+  filename: string
+  created_at: string
+  size_bytes: number
+}
+
+export interface ConfigVersionsResponse {
+  versions: ConfigVersion[]
+}
+
+export interface ConfigVersionDetail {
+  filename: string
+  yaml: string
+}
+
+// ───────── Plugins ─────────
+
+export type PluginKind = 'reward' | 'validation' | 'evaluation'
+
+export interface PluginManifest {
+  id: string
+  name: string
+  version: string
+  priority: number
+  description: string
+  category: string
+  stability: string
+  params_schema: Record<string, unknown>
+  thresholds_schema: Record<string, unknown>
+  suggested_params: Record<string, unknown>
+  suggested_thresholds: Record<string, unknown>
+}
+
+export interface PluginListResponse {
+  kind: PluginKind
+  plugins: PluginManifest[]
+}

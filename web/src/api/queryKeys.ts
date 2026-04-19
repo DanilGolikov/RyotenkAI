@@ -10,4 +10,12 @@ export const qk = {
     ['runs', runId, 'attempts', attemptNo, 'logs', file, offset] as const,
   report: (runId: string) => ['runs', runId, 'report'] as const,
   configTemplates: () => ['config', 'default'] as const,
+  configSchema: () => ['config', 'schema'] as const,
+  projects: () => ['projects'] as const,
+  project: (id: string) => ['projects', id] as const,
+  projectConfig: (id: string) => ['projects', id, 'config'] as const,
+  projectConfigVersions: (id: string) => ['projects', id, 'config', 'versions'] as const,
+  projectConfigVersion: (id: string, filename: string) =>
+    ['projects', id, 'config', 'versions', filename] as const,
+  plugins: (kind: string) => ['plugins', kind] as const,
 }

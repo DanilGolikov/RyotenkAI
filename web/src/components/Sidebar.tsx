@@ -37,6 +37,15 @@ const items: Item[] = [
       </svg>
     ),
   },
+  {
+    to: '/projects',
+    label: 'Projects',
+    icon: (
+      <svg className={ICON_CLS} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M3 7l3-3h5l2 2h8v13H3z" />
+      </svg>
+    ),
+  },
 ]
 
 const ChevronLeft = (

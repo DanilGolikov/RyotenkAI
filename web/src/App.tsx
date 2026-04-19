@@ -4,6 +4,8 @@ import { AppShell } from './components/AppShell'
 import { Overview } from './pages/Overview'
 import { RunsWorkspace } from './pages/RunsWorkspace'
 import { LaunchPage } from './pages/LaunchPage'
+import { ProjectsPage } from './pages/Projects'
+import { ProjectDetailPage } from './pages/ProjectDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +30,8 @@ export default function App() {
             <Route path="runs/:runId" element={<RunsWorkspace />} />
             <Route path="runs/:runId/attempts/:attemptNo" element={<RunsWorkspace />} />
             <Route path="launch" element={<LaunchPage />} />
+            <Route path="projects" element={<ProjectsPage />} />
+            <Route path="projects/:id/*" element={<ProjectDetailPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
