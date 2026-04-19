@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import Depends, HTTPException
 
 from src.api.config import ApiSettings
+from src.pipeline.project import ProjectRegistry
 from src.pipeline.state import PipelineStateStore
 
 
@@ -40,3 +41,7 @@ def resolve_run_dir(run_id: str, runs_dir: Path = Depends(get_runs_dir)) -> Path
 
 def get_state_store(run_dir: Path = Depends(resolve_run_dir)) -> PipelineStateStore:
     return PipelineStateStore(run_dir)
+
+
+def get_project_registry(settings: ApiSettings = Depends(get_settings)) -> ProjectRegistry:
+    return ProjectRegistry(settings.projects_root_resolved)

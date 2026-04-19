@@ -15,6 +15,9 @@ class ApiSettings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     runs_dir: Path = Field(default_factory=lambda: Path("runs"))
+    # Project workspaces live here by default (~/.ryotenkai/). Individual
+    # projects can override their own path at create time.
+    projects_root: Path = Field(default_factory=lambda: Path.home() / ".ryotenkai")
     # NoDecode tells pydantic-settings not to try JSON-decode the raw env value,
     # so our validator can turn a comma-separated string into list[str].
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -36,3 +39,7 @@ class ApiSettings(BaseSettings):
     @property
     def runs_dir_resolved(self) -> Path:
         return self.runs_dir.expanduser().resolve()
+
+    @property
+    def projects_root_resolved(self) -> Path:
+        return self.projects_root.expanduser().resolve()

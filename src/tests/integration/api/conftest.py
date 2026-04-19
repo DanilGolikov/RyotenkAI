@@ -26,9 +26,17 @@ def runs_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings(runs_dir: Path) -> ApiSettings:
+def projects_root(tmp_path: Path) -> Path:
+    target = tmp_path / "ryotenkai_home"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
+@pytest.fixture
+def settings(runs_dir: Path, projects_root: Path) -> ApiSettings:
     return ApiSettings(
         runs_dir=runs_dir,
+        projects_root=projects_root,
         serve_spa=False,
         cors_origins=["http://localhost:5173"],
     )

@@ -9,7 +9,16 @@ from fastapi.staticfiles import StaticFiles
 from src.api.config import ApiSettings
 from src.api.dependencies import get_settings
 from src.api.exceptions import install_exception_handlers
-from src.api.routers import attempts, config as config_router, launch, logs, plugins, reports, runs
+from src.api.routers import (
+    attempts,
+    config as config_router,
+    launch,
+    logs,
+    plugins,
+    projects,
+    reports,
+    runs,
+)
 from src.api.routers.health import router as health_router
 from src.api.ws.log_stream import router as ws_router
 
@@ -36,6 +45,7 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         logs.router,
         launch.router,
         plugins.router,
+        projects.router,
         reports.router,
         runs.router,
     ]

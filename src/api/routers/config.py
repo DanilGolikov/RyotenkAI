@@ -42,3 +42,11 @@ def default(runs_dir: Path = Depends(get_runs_dir)) -> DefaultConfigResponse:
         for path in sorted(examples_dir.glob("*.yaml")):
             templates.append(ConfigTemplate(name=path.name, path=str(path)))
     return DefaultConfigResponse(runs_dir=str(runs_dir), config_templates=templates)
+
+
+@router.get("/schema", response_model=dict)
+def schema() -> dict:
+    """Return the full PipelineConfig JSON schema for the UI builder."""
+    from src.config.pipeline.schema import PipelineConfig
+
+    return PipelineConfig.model_json_schema()
