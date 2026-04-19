@@ -103,19 +103,21 @@ body {
     @apply inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded text-2xs font-mono text-ink-2 bg-surface-3 border border-line-2;
   }
 
-  /* ---------- Status pills (icon + tint, shape + colour) ---------- */
+  /* ---------- Status pills (minimal — glyph carries the meaning) ---------- */
   .pill {
     @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium;
-    background: rgba(255, 255, 255, 0.06);
+    background: transparent;
     border: 1px solid rgba(255, 255, 255, 0.10);
     color: #d4d4d8;
   }
-  .pill-ok     { color: #4ade80; background: rgba(74,222,128,0.22);  border-color: rgba(74,222,128,0.58); }
-  .pill-warn   { color: #fbbf24; background: rgba(245,158,11,0.22);  border-color: rgba(245,158,11,0.58); }
-  .pill-err    { color: #f87171; background: rgba(248,113,113,0.24); border-color: rgba(248,113,113,0.65); }
-  .pill-info   { color: #60a5fa; background: rgba(96,165,250,0.22);  border-color: rgba(96,165,250,0.62); }
-  .pill-idle   { color: #a1a1aa; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); }
-  .pill-skip   { color: #a78bfa; background: rgba(161,133,248,0.22); border-color: rgba(161,133,248,0.56); }
+  /* Whisper of tint (≈8% α) so the hue still registers, but the pill
+     no longer "glows" — colour reads from the icon + text. */
+  .pill-ok     { color: #4ade80; background: rgba(74,222,128,0.08);  border-color: rgba(74,222,128,0.32); }
+  .pill-warn   { color: #fbbf24; background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.32); }
+  .pill-err    { color: #f87171; background: rgba(248,113,113,0.09); border-color: rgba(248,113,113,0.38); }
+  .pill-info   { color: #60a5fa; background: rgba(96,165,250,0.08);  border-color: rgba(96,165,250,0.36); }
+  .pill-idle   { color: #a1a1aa; background: transparent;             border-color: rgba(255,255,255,0.12); }
+  .pill-skip   { color: #a78bfa; background: rgba(161,133,248,0.08); border-color: rgba(161,133,248,0.32); }
 
   /* ---------- Sidebar nav ---------- */
   .nav-item {
