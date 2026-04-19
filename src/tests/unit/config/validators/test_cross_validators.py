@@ -260,14 +260,14 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         assert "invalid for SingleNodeConfig" in err
 
     def test_negative_single_node_generic_exception(self) -> None:
+        from src.config.providers.registry import PROVIDER_TYPES
+
         cfg = DummyPipelineCfg(
             providers={"single_node": {}},
             training=DummyTraining(provider="single_node", strategies=[]),
             datasets={"default": object()},
         )
-        mock_sn = MagicMock()
-        mock_sn.SingleNodeConfig.side_effect = OSError("disk error")
-        with patch.dict(sys.modules, {"src.config.providers.single_node": mock_sn}):
+        with patch.object(PROVIDER_TYPES["single_node"], "schema", MagicMock(side_effect=OSError("disk error"))):
             err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_SINGLE_NODE_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "invalid for SingleNodeConfig" in err
         assert "disk error" in err
@@ -283,14 +283,14 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         assert "invalid for RunPodProviderConfig" in err
 
     def test_negative_runpod_generic_exception(self) -> None:
+        from src.config.providers.registry import PROVIDER_TYPES
+
         cfg = DummyPipelineCfg(
             providers={"runpod": {}},
             training=DummyTraining(provider="runpod", strategies=[]),
             datasets={"default": object()},
         )
-        mock_rp = MagicMock()
-        mock_rp.RunPodProviderConfig.side_effect = OSError("network error")
-        with patch.dict(sys.modules, {"src.config.providers.runpod": mock_rp}):
+        with patch.object(PROVIDER_TYPES["runpod"], "schema", MagicMock(side_effect=OSError("network error"))):
             err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_RUNPOD_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "invalid for RunPodProviderConfig" in err
         assert "network error" in err

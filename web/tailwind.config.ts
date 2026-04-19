@@ -15,17 +15,17 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Surfaces — zinc, but starting ~L 18% (v2 was 12%) so the app
-        // looks like "soft charcoal", not a void.
-        'surface-0': '#18181b',   // app canvas    (zinc-900)
-        'surface-1': '#1e1e22',   // sidebar
-        'surface-2': '#27272a',   // cards         (zinc-800)
-        'surface-3': '#323238',   // hover / selected
-        'surface-4': '#3f3f46',   // popover       (zinc-700)
+        // Surfaces — zinc, lifted ~2-3% L so the UI reads brighter without
+        // going washed-out. Canvas ~ L 22% (up from 18%).
+        'surface-0': '#1d1d21',   // app canvas    (+ 2% L)
+        'surface-1': '#24242a',   // sidebar
+        'surface-2': '#2d2d33',   // cards
+        'surface-3': '#3a3a42',   // hover / selected
+        'surface-4': '#484851',   // popover
 
-        // Borders stronger so they read on the lifted surfaces
-        'line-1': '#2f2f34',
-        'line-2': '#4a4a52',
+        // Borders — bumped to stay readable on brighter surfaces
+        'line-1': '#3a3a42',
+        'line-2': '#585862',
 
         // Text — ink-2 bumped to zinc-300 so body copy stays crisp
         // against the now-lighter surface-2.
@@ -34,13 +34,13 @@ export default {
         'ink-3': '#a1a1aa',       // captions  (zinc-400)
         'ink-4': '#71717a',       // placeholders / disabled
 
-        // Brand — burgundy → violet, slightly brighter + punchier vs v1
-        // so the gradient reads as vibrant signal rather than moody.
-        'brand':        '#e63570',   // primary CTA / active (↑ hue+chroma)
-        'brand-strong': '#f25088',   // hover
-        'brand-weak':   '#3d1526',   // translucent bg
+        // Brand — burgundy → violet, brighter + punchier so the gradient
+        // reads as vibrant signal rather than moody.
+        'brand':        '#ed487f',   // primary CTA / active (↑ L + chroma)
+        'brand-strong': '#f76398',   // hover
+        'brand-weak':   '#44182b',   // translucent bg
 
-        'brand-alt':    '#a78bfa',   // violet-400 (↑ lightness)
+        'brand-alt':    '#b8a1fb',   // violet-300 (↑ lightness)
 
         // Semantic status — running/live lives on SKY so it never merges
         // with the burgundy brand. ok/warn/err tuned for dark mode.

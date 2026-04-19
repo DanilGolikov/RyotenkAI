@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any, cast
 
+from src.config.providers.registry import PROVIDER_TYPES
 from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 
 from .constants import ERR_FALLBACK_LOC, ERR_FALLBACK_MSG, ERR_KEY_LOC, ERR_KEY_MSG
@@ -28,6 +29,41 @@ def _config_error(message: str, code: str) -> Result[None, ConfigError]:
     from src.utils.result import ConfigError, Err
 
     return Err(ConfigError(message=message, code=code))
+
+
+def _validate_provider_schema(
+    *,
+    provider_cfg: dict[str, Any],
+    schema_cls: type,
+    code: str,
+    context: str,
+) -> Result[None, ConfigError] | None:
+    """Common helper: run Pydantic schema validation against a provider dict.
+
+    Returns ``None`` on success (so callers can chain to ``Ok``), or a
+    ``Result.Err`` with the shared error-formatting style used throughout
+    this module when validation fails.
+    """
+    from pydantic import ValidationError
+
+    from src.utils.result import Ok
+
+    del Ok  # imported for side effect — Ok is returned by callers
+    try:
+        schema_cls(**provider_cfg)
+    except ValidationError as e:
+        errors = e.errors()
+        if errors:
+            err0 = errors[0]
+            loc = ".".join(str(p) for p in cast("tuple[Any, ...]", err0.get(ERR_KEY_LOC) or ())) or ERR_FALLBACK_LOC
+            msg = str(err0.get(ERR_KEY_MSG) or "").strip() or ERR_FALLBACK_MSG
+        else:
+            loc = ERR_FALLBACK_LOC
+            msg = str(e).strip() or ERR_FALLBACK_MSG
+        return _config_error(f"{context}. First error at {loc}: {msg}", code)
+    except Exception as e:
+        return _config_error(f"{context}: {e!s}", code)
+    return None
 
 
 def validate_pipeline_providers_config(cfg: PipelineConfig) -> Result[None, ConfigError]:
@@ -65,69 +101,19 @@ def validate_pipeline_providers_config(cfg: PipelineConfig) -> Result[None, Conf
     active = cfg.training.provider
     provider_cfg = cfg.providers[active]
 
-    if active == PROVIDER_SINGLE_NODE:
-        try:
-            from pydantic import ValidationError
-
-            from src.config.providers.single_node import SingleNodeConfig
-
-            _ = SingleNodeConfig(**provider_cfg)
-        except ValidationError as e:
-            errors = e.errors()
-            if errors:
-                err0 = errors[0]
-                loc = ".".join(str(p) for p in cast("tuple[Any, ...]", err0.get(ERR_KEY_LOC) or ())) or ERR_FALLBACK_LOC  # noqa: WPS226
-                msg = str(err0.get(ERR_KEY_MSG) or "").strip() or ERR_FALLBACK_MSG
-            else:
-                loc = ERR_FALLBACK_LOC
-                msg = str(e).strip() or ERR_FALLBACK_MSG
-            return _config_error(
-                (
-                    f"training.provider={PROVIDER_SINGLE_NODE!r} but providers.{PROVIDER_SINGLE_NODE} is invalid for "
-                    f"SingleNodeConfig. First error at {loc}: {msg}"
-                ),
-                "CONFIG_SINGLE_NODE_PROVIDER_INVALID",
-            )
-        except Exception as e:
-            return _config_error(
-                (
-                    f"training.provider={PROVIDER_SINGLE_NODE!r} but providers.{PROVIDER_SINGLE_NODE} is invalid for "
-                    f"SingleNodeConfig: {e!s}"
-                ),
-                "CONFIG_SINGLE_NODE_PROVIDER_INVALID",
-            )
-
-    if active == PROVIDER_RUNPOD:
-        try:
-            from pydantic import ValidationError
-
-            from src.config.providers.runpod import RunPodProviderConfig
-
-            _ = RunPodProviderConfig(**provider_cfg)
-        except ValidationError as e:
-            errors = e.errors()
-            if errors:
-                err0 = errors[0]
-                loc = ".".join(str(p) for p in cast("tuple[Any, ...]", err0.get(ERR_KEY_LOC) or ())) or ERR_FALLBACK_LOC  # noqa: WPS226
-                msg = str(err0.get(ERR_KEY_MSG) or "").strip() or ERR_FALLBACK_MSG
-            else:
-                loc = ERR_FALLBACK_LOC
-                msg = str(e).strip() or ERR_FALLBACK_MSG
-            return _config_error(
-                (
-                    f"training.provider={PROVIDER_RUNPOD!r} but providers.{PROVIDER_RUNPOD} is invalid for "
-                    f"RunPodProviderConfig. First error at {loc}: {msg}"
-                ),
-                "CONFIG_RUNPOD_PROVIDER_INVALID",
-            )
-        except Exception as e:
-            return _config_error(
-                (
-                    f"training.provider={PROVIDER_RUNPOD!r} but providers.{PROVIDER_RUNPOD} is invalid for "
-                    f"RunPodProviderConfig: {e!s}"
-                ),
-                "CONFIG_RUNPOD_PROVIDER_INVALID",
-            )
+    provider_type = PROVIDER_TYPES.get(active)
+    if provider_type is not None:
+        err = _validate_provider_schema(
+            provider_cfg=provider_cfg,
+            schema_cls=provider_type.schema,
+            code=provider_type.training_error_code,
+            context=(
+                f"training.provider={active!r} but providers.{active} is invalid for "
+                f"{provider_type.schema_name}"
+            ),
+        )
+        if err is not None:
+            return err
 
     return Ok(None)
 
@@ -249,108 +235,48 @@ def validate_pipeline_inference_provider_config(cfg: PipelineConfig) -> Result[N
     if provider not in {PROVIDER_SINGLE_NODE, PROVIDER_RUNPOD}:
         return Ok(None)
 
-    if provider == PROVIDER_SINGLE_NODE:
-        if PROVIDER_SINGLE_NODE not in cfg.providers:
-            available = list(cfg.providers.keys())
-            return _config_error(
-                (
-                    f"inference.enabled=true but providers.{PROVIDER_SINGLE_NODE} is missing. "
-                    f"Inference provider {PROVIDER_SINGLE_NODE!r} requires providers.{PROVIDER_SINGLE_NODE} "
-                    f"config (connect/training/inference). Available providers: {available}"
-                ),
-                "CONFIG_INFERENCE_PROVIDER_MISSING",
-            )
-
-        provider_cfg = cfg.providers[PROVIDER_SINGLE_NODE]
-        try:
-            from pydantic import ValidationError
-
-            from src.config.providers.single_node import SingleNodeConfig
-
-            # Schema-only validation (no I/O).
-            _ = SingleNodeConfig(**provider_cfg)
-        except ValidationError as e:
-            errors = e.errors()
-            if errors:
-                err0 = errors[0]
-                loc = ".".join(str(p) for p in cast("tuple[Any, ...]", err0.get(ERR_KEY_LOC) or ())) or ERR_FALLBACK_LOC  # noqa: WPS226
-                msg = str(err0.get(ERR_KEY_MSG) or "").strip() or ERR_FALLBACK_MSG
-            else:
-                loc = ERR_FALLBACK_LOC
-                msg = str(e).strip() or ERR_FALLBACK_MSG
-            return _config_error(
-                (
-                    f"inference.enabled=true but providers.{PROVIDER_SINGLE_NODE} is invalid for SingleNodeConfig. "
-                    f"First error at {loc}: {msg}"
-                ),
-                "CONFIG_INFERENCE_SINGLE_NODE_INVALID",
-            )
-        except Exception as e:
-            return _config_error(
-                (
-                    f"inference.enabled=true but providers.{PROVIDER_SINGLE_NODE} is invalid for SingleNodeConfig: "
-                    f"{e!s}"
-                ),
-                "CONFIG_INFERENCE_SINGLE_NODE_INVALID",
-            )
-
+    provider_type = PROVIDER_TYPES.get(provider)
+    if provider_type is None:
         return Ok(None)
 
+    if provider not in cfg.providers:
+        available = list(cfg.providers.keys())
+        return _config_error(
+            (
+                f"inference.enabled=true but providers.{provider} is missing. "
+                f"Inference provider {provider!r} requires providers.{provider} config. "
+                f"Available providers: {available}"
+            ),
+            "CONFIG_INFERENCE_PROVIDER_MISSING",
+        )
+
+    provider_cfg = cfg.providers[provider]
+    schema_err = _validate_provider_schema(
+        provider_cfg=provider_cfg,
+        schema_cls=provider_type.schema,
+        code=provider_type.inference_error_code,
+        context=(
+            f"inference.enabled=true but providers.{provider} is invalid for "
+            f"{provider_type.schema_name}"
+        ),
+    )
+    if schema_err is not None:
+        return schema_err
+
+    # Provider-specific additional checks beyond schema validation.
     if provider == PROVIDER_RUNPOD:
-        if PROVIDER_RUNPOD not in cfg.providers:
-            available = list(cfg.providers.keys())
+        from src.config.providers.runpod import RunPodProviderConfig
+
+        parsed = RunPodProviderConfig(**provider_cfg)
+        if parsed.inference.pod is None:
             return _config_error(
                 (
-                    f"inference.enabled=true but providers.{PROVIDER_RUNPOD} is missing. "
-                    f"Inference provider {PROVIDER_RUNPOD!r} requires providers.{PROVIDER_RUNPOD} config. "
-                    f"Available providers: {available}"
+                    "inference.enabled=true but providers.runpod.inference.pod is missing. "
+                    "RunPod inference requires at least: providers.runpod.connect.ssh.key_path, "
+                    "providers.runpod.inference.pod (volume is optional)."
                 ),
-                "CONFIG_INFERENCE_PROVIDER_MISSING",
+                "CONFIG_RUNPOD_INFERENCE_POD_MISSING",
             )
-
-        provider_cfg = cfg.providers[PROVIDER_RUNPOD]
-        try:
-            from pydantic import ValidationError
-
-            from src.config.providers.runpod import RunPodProviderConfig
-
-            # Schema-only validation (no I/O).
-            parsed = RunPodProviderConfig(**provider_cfg)
-            if parsed.inference.pod is None:
-                return _config_error(
-                    (
-                        "inference.enabled=true but providers.runpod.inference.pod is missing. "
-                        "RunPod inference requires at least: providers.runpod.connect.ssh.key_path, "
-                        "providers.runpod.inference.pod (volume is optional)."
-                    ),
-                    "CONFIG_RUNPOD_INFERENCE_POD_MISSING",
-                )
-        except ValidationError as e:
-            errors = e.errors()
-            if errors:
-                err0 = errors[0]
-                loc = ".".join(str(p) for p in cast("tuple[Any, ...]", err0.get(ERR_KEY_LOC) or ())) or ERR_FALLBACK_LOC  # noqa: WPS226
-                msg = str(err0.get(ERR_KEY_MSG) or "").strip() or ERR_FALLBACK_MSG
-            else:
-                loc = ERR_FALLBACK_LOC
-                msg = str(e).strip() or ERR_FALLBACK_MSG
-            return _config_error(
-                (
-                    f"inference.enabled=true but providers.{PROVIDER_RUNPOD} is invalid for RunPodProviderConfig. "
-                    f"First error at {loc}: {msg}"
-                ),
-                "CONFIG_INFERENCE_RUNPOD_INVALID",
-            )
-        except Exception as e:
-            return _config_error(
-                (
-                    f"inference.enabled=true but providers.{PROVIDER_RUNPOD} is invalid for RunPodProviderConfig: "
-                    f"{e!s}"
-                ),
-                "CONFIG_INFERENCE_RUNPOD_INVALID",
-            )
-
-        return Ok(None)
 
     return Ok(None)
 
