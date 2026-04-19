@@ -576,8 +576,87 @@ def run_training(
 train_v2 = run_training
 
 
+def _install_crash_observability() -> None:
+    """
+    Install faulthandler + atexit logging flush so silent deaths leave a trace.
+
+    Why this exists
+    ---------------
+    On remote training (RunPod), training crashes have repeatedly left zero
+    evidence in ``training.log``: no Python traceback, no error message, just
+    a truncated progress bar. Three failure modes bypass normal logging:
+
+    1. **Native crash** (SEGV/ABRT/BUS/FPE/ILL) from a C extension
+       (bitsandbytes, flash-attn, torch, CUDA kernels). Python never gets a
+       chance to raise — only the OS knows.
+    2. **Signal kill** (SIGTERM from OOM-killer-adjacent actors, SIGKILL from
+       cgroup, driver-initiated aborts).
+    3. **Block-buffered stderr** on ``exec >file 2>&1`` shell redirect. Any
+       tail of stderr that wasn't flushed before the crash is simply lost.
+
+    What we install
+    ---------------
+    - ``faulthandler.enable(file=..., all_threads=True)``: CPython's built-in
+      native-crash handler. On fatal signals it writes Python + C stack frames
+      of *all* threads directly via ``write(2)`` — it survives a Python
+      runtime crash because it doesn't go through the logging stack.
+
+      We try a persistent sibling file (``training.faulthandler.log`` next to
+      ``training.log``) so the monitor can fetch it post-mortem. Path is taken
+      from ``PYTHONFAULTHANDLER_PATH`` env var (set by the bash wrapper in
+      ``deployment_manager._start_training_cloud``). If opening the file
+      fails, we fall back to stderr — ``faulthandler`` remains active either
+      way.
+
+    - ``atexit`` flush of all logging handlers: on *any* normal exit path
+      (including ``sys.exit``, ``return``, or a Python exception that reaches
+      ``main()``), ensure the tail of ``training.log`` is written to disk
+      before Python tears down. Prevents "last 5 log lines lost" on crash.
+
+    Best-effort: this function never raises. Observability must never
+    prevent training from starting.
+    """
+    import atexit
+    import faulthandler
+
+    fault_log_path = os.environ.get("PYTHONFAULTHANDLER_PATH", "training.faulthandler.log")
+    try:
+        # Line-buffered so each write hits disk as it happens. Kept open for the
+        # lifetime of the process — faulthandler writes to this fd on SIGSEGV.
+        fault_log = Path(fault_log_path).open("w", buffering=1)  # noqa: SIM115
+        faulthandler.enable(file=fault_log, all_threads=True)
+        logger.debug(f"[RUN_TRAINING:OBSERVABILITY] faulthandler enabled → {fault_log_path}")
+    except OSError as exc:
+        # Fall back to stderr — still captures native crashes.
+        with contextlib.suppress(Exception):  # pragma: no cover — faulthandler is stdlib
+            faulthandler.enable(all_threads=True)
+        logger.warning(
+            f"[RUN_TRAINING:OBSERVABILITY] could not open {fault_log_path} "
+            f"({exc}); faulthandler redirected to stderr",
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] faulthandler.enable failed: {exc}")
+
+    def _flush_logging_handlers() -> None:
+        """Flush every handler attached to the training logger on exit."""
+        with contextlib.suppress(Exception):
+            for handler in list(logger.handlers):
+                with contextlib.suppress(Exception):
+                    handler.flush()
+
+    try:
+        atexit.register(_flush_logging_handlers)
+    except Exception as exc:  # pragma: no cover
+        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] atexit.register failed: {exc}")
+
+
 def main() -> int:
     """CLI entry point."""
+    # Crash observability MUST be installed before argparse / any heavy import
+    # that may itself segfault (bitsandbytes, flash-attn). See
+    # _install_crash_observability() docstring.
+    _install_crash_observability()
+
     parser = argparse.ArgumentParser(
         description="Multi-Phase LLM Training with StrategyOrchestrator",
         formatter_class=argparse.RawDescriptionHelpFormatter,

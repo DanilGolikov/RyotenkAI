@@ -114,3 +114,4 @@ docker/training/build_and_push.log
 
 # repowise API keys (local)
 /.repowise/
+/.mcp.json

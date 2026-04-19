@@ -517,7 +517,11 @@ class TrainingMonitor(PipelineStage):
                         code="SSH_DISCONNECTED",
                     ))
 
-                # SSH is working but no markers — real process death
+                # SSH is working but no markers — real process death.
+                # Collect remote diagnostics BEFORE downloading training.log so
+                # that OOM-kills / watchdog stops / missing markers are visible
+                # in pipeline.log regardless of what training.log contains.
+                self._collect_death_diagnostics(ssh_client)
                 logger.error("Training process died without completion marker")
                 if self._log_manager:
                     self._log_manager.download_on_error("Process died without marker")
@@ -733,6 +737,116 @@ class TrainingMonitor(PipelineStage):
         except Exception as exc:
             # Heartbeat must never break monitoring — swallow all errors.
             logger.debug(f"[MONITOR] pipeline heartbeat touch failed: {exc}")
+
+    def _collect_death_diagnostics(self, ssh_client: SSHClient) -> None:
+        """
+        Collect post-mortem diagnostics from the pod after a silent process death.
+
+        Called once from the TRAINING_PROCESS_DIED path, right before the
+        training.log download. Runs nine independent, non-blocking SSH probes
+        — ordered from most informative to most auxiliary. Each is wrapped in
+        try/except: diagnostics must never block the main error path.
+
+        Probes (in order):
+
+        1. ``exit_code`` — ``TRAINING_EXIT_CODE`` file written by the bash
+           wrapper after ``python`` returns. Tells us cleanly whether the
+           process exited normally, with an error, or was killed by a signal.
+        2. ``faulthandler`` — tail of ``training.faulthandler.log`` written by
+           CPython's ``faulthandler`` module on native crashes (SEGV, ABRT,
+           BUS, FPE, ILL). Contains Python + C stack frames of all threads at
+           the moment of the crash.
+        3. ``training_log_tail`` — last ~30 lines of ``training.log`` — just
+           enough to see the final error/traceback without flooding
+           ``pipeline.log``.
+        4. ``training_failed_marker`` — content of ``TRAINING_FAILED`` marker
+           if the bash wrapper created it with exit-code/signal context.
+        5. ``dmesg_tail`` — last 80 kernel messages (no filter) to catch
+           segfaults, cgroup kills, nvidia driver events.
+        6. ``dmesg_oom`` — OOM/kill/memory events (definitive for kernel OOM).
+        7. ``dmesg_nvidia`` — NVRM/XID/nvidia driver events (GPU fault).
+        8. ``nvidia_smi`` — current GPU state to confirm idle/active.
+        9. ``workspace_markers`` — lists any ``TRAINING_*`` / watchdog stop
+           markers that may have appeared out-of-band.
+
+        All output is logged under the ``[MONITOR:POSTMORTEM]`` prefix for
+        easy grepping.
+        """
+        workspace = self._workspace_path
+
+        probes: list[tuple[str, str, int]] = [
+            (
+                "exit_code",
+                f"cat {workspace}/TRAINING_EXIT_CODE 2>/dev/null",
+                5,
+            ),
+            (
+                "faulthandler",
+                f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null",
+                5,
+            ),
+            (
+                "training_log_tail",
+                # tail first (O(1) on size) → then filter tqdm progress bars /
+                # blank lines → then take last 30. Avoids scanning a multi-GB
+                # training.log when only the tail matters.
+                f"tail -n 500 {workspace}/training.log 2>/dev/null"
+                " | grep -v -E '^\\s*$|^\\s*[0-9]+%\\|'"
+                " | tail -n 30",
+                10,
+            ),
+            (
+                "training_failed_marker",
+                f"cat {workspace}/TRAINING_FAILED 2>/dev/null",
+                5,
+            ),
+            ("dmesg_tail", "dmesg -T 2>/dev/null | tail -80", 5),
+            (
+                "dmesg_oom",
+                "dmesg -T 2>/dev/null | grep -iE 'oom|kill|memory' | tail -40",
+                5,
+            ),
+            (
+                "dmesg_nvidia",
+                "dmesg -T 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -40",
+                5,
+            ),
+            (
+                "nvidia_smi",
+                "nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu "
+                "--format=csv,noheader",
+                5,
+            ),
+            (
+                "workspace_markers",
+                f"ls -la {workspace}/TRAINING_* {workspace}/STOPPED_BY_WATCHDOG 2>/dev/null",
+                5,
+            ),
+        ]
+
+        # Labels considered "crash-defining" — log at WARNING level to make
+        # the pipeline.log tail jump out when scrolled.
+        warn_labels = {"dmesg_oom", "dmesg_nvidia", "faulthandler", "exit_code"}
+
+        logger.warning("[MONITOR:POSTMORTEM] Collecting remote diagnostics ...")
+        for label, command, timeout in probes:
+            try:
+                success, stdout, stderr = ssh_client.exec_command(
+                    command=command,
+                    silent=True,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                logger.warning(f"[MONITOR:POSTMORTEM] {label} probe raised: {exc}")
+                continue
+
+            body = (stdout or "").strip() or (stderr or "").strip()
+            if not body:
+                logger.info(f"[MONITOR:POSTMORTEM] {label}: <empty>")
+                continue
+
+            level = logger.warning if label in warn_labels else logger.info
+            level(f"[MONITOR:POSTMORTEM] {label} (success={success}):\n{body}")
 
     def _check_marker(self, ssh_client: SSHClient, marker_name: str, *, timeout_seconds: int = 10) -> bool:
         """Check if marker file exists."""

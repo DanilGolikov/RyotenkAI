@@ -1,340 +1,338 @@
-# RunPod Pod Lifecycle: Watchdog Safety-Net + Architecture Cleanup
+# Silent Training Death: Observability Hardening + PEFT Double-Apply Fix
 
 ## Context
 
-Feature B (Pod Auto-Stop, уже в main) положила RunPod-специфичную bash-функцию
-`_ryotenkai_stop_pod()` прямо внутрь generic `start_training.sh`, который
-генерируется в `src/pipeline/stages/managers/deployment_manager.py:848-884`.
-Это работает для happy-path (Python завершился → bash вызывает podStop), но:
+Четвёртый подряд GRPO пилот (`run_20260410_144204/attempt_4`) снова умер молча.
+Симптомы **ровно те же**, что и в `run_20260410_130601`, но теперь с новым
+набором улик — предыдущий пакет мер (grad checkpointing, halve bs, halve gen_bs,
+`_collect_death_diagnostics`) дожил до step 52/432 вместо step 8, но **причину
+смерти мы всё ещё не видим**. Это блокер. Пользователь прямо сказал:
+«особо важно изучи проблему почему ошибка не логгируется в логи».
 
-1. **Архитектурный долг**: RunPod-логика протекла в generic слой. Deployment
-   manager проверяет `provider_name == "runpod"` строкой вместо использования
-   провайдера как абстракции. Нарушение SRP и DIP.
-2. **Дыра в safety-net**: `_ryotenkai_stop_pod` вызывается **только** если
-   bash-скрипт завершился нормально. Не покрыто: SIGKILL, kernel panic, OOM
-   killer, hang Python, отказ пользователя от pipeline (закрыл ноутбук и не
-   вернулся), неудача всех 3 retry curl'а.
-3. **Риск денег**: pod простаивает и тарифицируется, если пользователь отошёл
-   от панели, а happy-path не сработал.
+### Что видно (факты)
 
-**Цель этой фичи** — сделать две связанные вещи:
+Из `runs/run_20260410_144204/attempts/attempt_4/`:
 
-- **Refactor**: вынести весь RunPod pod-lifecycle код из `deployment_manager.py`
-  в `src/providers/runpod/` через новый hook в `IGPUProvider` протоколе.
-  Deployment manager становится provider-agnostic.
-- **Watchdog**: добавить независимый bash-скрипт на pod'е, который гарантирует
-  остановку pod'а после любого логического конца training'а, но **только если
-  pipeline неактивен** — пока pipeline активно мониторит через SSH, watchdog
-  остаётся в спящем режиме.
+| Сигнал | Значение | Вывод |
+|---|---|---|
+| `training.log` последняя строка | `12%  52/432 [05:01<22:22, 3.53s/it]` | обрыв посреди прогресс-бара |
+| Python traceback | **отсутствует** | Python exception НЕ долетел до logger'а |
+| TRL метрики (`{'loss': ..., 'reward': ...}`) | **отсутствуют** | `logging_steps=10` дошли до 52 — должно было быть 5 логов, нет ни одного |
+| `[MONITOR:POSTMORTEM] dmesg_oom` | `<empty>` | kernel НЕ убивал процесс (нет OOM-kill) |
+| `[MONITOR:POSTMORTEM] nvidia_smi` | `10562 MiB, 24564 MiB, 20%` | VRAM был стабильно 43% — **не ресурсы** |
+| `[MONITOR:POSTMORTEM] workspace_markers` | `<empty>` | Ни `TRAINING_COMPLETED`, ни `TRAINING_FAILED` не создан |
+| MONITOR ALIVE | VRAM 10.3/24 GB, GPU 18–24% на протяжении 5+ минут | Тренировка реально шла |
+| `Trainable parameters: 0 (0.00%)` + warning `Already found a peft_config attribute` | См. training.log стр. 83, 174–177 | **PEFT применяется дважды** |
+| REWARD_DEBUG 1–3 | сэмпл 1 = пустая строка, сэмпл 2 = испаноязычная галлюцинация, сэмпл 3 = английская проза | Модель не генерит HelixQL → reward = −1 константа → advantage = 0 (отдельная корректностная проблема) |
 
-Принципы: SOLID, KISS, YAGNI, boy scout rule. Обратная совместимость не нужна.
+### Что мы НЕ знаем (и должны узнать)
 
-## Idea Evaluation
+1. **Что именно убило процесс.** Не OOM, не Python exception, не watchdog.
+   Остаются: native C crash (segfault в bnb/flash-attn/torch), `abort()` из
+   CUDA kernel, SIGTERM из неясного источника, Python exit без traceback.
+2. **Почему TRL не логгировал `logs` dict** на шагах 10/20/30/40/50.
+3. **Связаны ли PEFT-double-apply + 0 trainable params с молчаливой смертью.**
 
-### Сильные стороны
+### Почему мы слепые
 
-- **Независимость процесса**: watchdog стартует через `setsid nohup ... & disown`,
-  переживает SIGKILL родительского bash, kernel panic ловится только max-lifetime'ом.
-- **Pipeline heartbeat gate**: главная защита от false positives. TrainingMonitor
-  уже опрашивает pod каждые 5с (Feature A) — достаточно `touch` одного файла
-  на каждой итерации. Пока pipeline активен, watchdog дремлет.
-- **Чистая архитектура через hook**: никакой RunPod-специфики в
-  `deployment_manager.py`. Новые провайдеры (Lambda, Vast.ai) смогут внедрять
-  свои hook'и без модификации generic слоя.
-- **Фиксирует существующий антипаттерн** одновременно с добавлением фичи.
-- **Инфраструктура уже есть**: `nvidia-smi`, `curl`, доступ к `/workspace`,
-  `RUNPOD_API_KEY`.
+Проблема **на трёх уровнях**, ни один не закрыт:
 
-### Риски и митигации
-
-| # | Риск | Митигация |
-|---|------|-----------|
-| 1 | **False positive: watchdog убил здоровый pod во время нормального training** (пауза между eval batch'ами даёт провал util). | (a) Pipeline heartbeat gate: пока pipeline мониторит, watchdog не трогает idle detection вообще. (b) Двойной порог `util<5% И mem_pct<30%` одновременно — реально работающий Python держит веса в VRAM. (c) 20 минут непрерывного idle. (d) Startup grace 5 минут. |
-| 2 | **Watchdog сам упал** (bash-ошибка) — safety-net отсутствует. | `set -uo pipefail`, heartbeat-файл `/workspace/.watchdog_heartbeat` обновляется каждый tick; `start_training.sh` проверяет heartbeat через 10с и логирует предупреждение если watchdog не стартовал; watchdog.sh проходит через shellcheck в CI. |
-| 3 | **Race с happy-path**: оба вызывают `podStop` API одновременно. | `podStop` идемпотентен. Повторный вызов вернёт ошибку "уже остановлен" — ловим и выходим. |
-| 4 | **API key leak** в логи. | Никогда не `set -x`. curl без `-v`. stderr curl не попадает в log напрямую. |
-| 5 | **Watchdog переживёт legitimate pipeline resume** (laptop sleep → wake → pipeline снова опрашивает pod). | Heartbeat gate: pipeline при resume начнёт снова писать heartbeat → watchdog уйдёт в сон. Если laptop спит дольше `PIPELINE_HEARTBEAT_STALE=10 мин`, watchdog активируется — но видит, что Python реально работает (GPU не idle), и не стопает. Если же training сам упал за время sleep'а, watchdog правильно остановит pod. |
-| 6 | **Pod жив вечно** (watchdog сам завис). | Hard max lifetime 48h — безусловный стоп. |
-| 7 | **`RUNPOD_KEEP_ON_ERROR=true`** — пользователь отлаживает упавший run. | Watchdog видит `TRAINING_FAILED` + флаг → не стопает, продолжает heartbeat до max lifetime. |
-| 8 | **Watchdog не запустился** (ошибка в скрипте). | Проверка `.watchdog_heartbeat` в `start_training.sh` в течение 10с после setsid; лог-warning если не стартовал. Training идёт дальше — watchdog это safety-net, не блокер. |
-| 9 | **Watchdog потребляет ресурсы training'а**. | Цикл: 30с sleep, одна `nvidia-smi` (ms), `stat` на 3 файла, `touch` heartbeat. CPU/IO пренебрежимы по сравнению с training'ом. |
-
-**Вердикт**: идея качественная, митигации покрывают все выявленные риски.
-Pipeline heartbeat gate — ключевой инсайт, который полностью решает проблему
-"не мешать активному run'у".
-
-## Architecture
-
-### Current state (проблемный)
-
+**Уровень 1: Shell-wrapper (`deployment_manager.py:844-880`).**
+```bash
+exec >{log_file} 2>&1
+...
+"$PY_BIN" {module_args}
+exit_code=$?
 ```
-deployment_manager.py (generic)
-├── _create_env_file()  ← вбивает RUNPOD_* env vars (строки 718-728)
-└── _start_training_cloud()
-    └── f-string script_content с RunPod _ryotenkai_stop_pod() (строки 848-884)
+Нет `PYTHONUNBUFFERED=1`, нет `PYTHONFAULTHANDLER=1`, нет `stdbuf`. Block-
+буферизация файла означает: если процесс упал до flush'а, хвост stderr
+теряется. Exit-код есть в shell-переменной, но в файл **не записывается** —
+есть только условное создание `TRAINING_FAILED` с шаблонным текстом
+«Training failed early». Это неинформативно.
+
+**Уровень 2: Python entry (`src/training/run_training.py:579-657`).**
+```python
+def main() -> int:
+    ...
+    try:
+        output_path = run_training(...)
+        return 0
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        return 1
 ```
+- **Нет `faulthandler.enable()`** — native crash (SIGSEGV, SIGABRT, SIGBUS)
+  не оставляет ни Python, ни C stacktrace.
+- `except Exception` ловит только Python-исключения; native crash падает
+  мимо.
+- Нет `atexit` flush'а logging handlers.
+- `notifier.notify_failed()` вызывается только внутри `except Exception` в
+  `run_training()` (стр. 516–521). Native crash его миновал → нет маркера.
 
-### Target state (чистый)
+**Уровень 3: Monitor postmortem (`training_monitor.py:741-794`).**
+Текущие probe'ы (добавлены в прошлой сессии):
+1. `dmesg -T | grep -i oom` ← был пуст, бесполезно
+2. `nvidia-smi` ← был пуст (процесс уже мёртв)
+3. `ls TRAINING_* STOPPED_BY_WATCHDOG` ← был пуст
 
+**Не хватает**:
+- `tail -n 200 training.log` (чтобы видеть хвост перед обрывом не только в
+  UI, но и в postmortem-секции pipeline.log с явными метками)
+- `cat TRAINING_EXIT_CODE` (которого пока нет, см. фикс уровня 1)
+- `cat training.faulthandler.log` (которого пока нет, см. фикс уровня 2)
+- `dmesg -T | tail -80` (без фильтра `oom` — видеть все kernel-события:
+  segfaults, cgroup kills, nvidia driver errors)
+- Recent dmesg NVRM/XID errors (`grep -iE 'nvrm|xid|nvidia'`)
+
+### Вторичная проблема: PEFT double-apply → 0 trainable params
+
+Training log:
 ```
-deployment_manager.py (generic, provider-agnostic)
-└── _start_training_cloud(ssh_client, context, provider: IGPUProvider)
-    ├── hooks = provider.prepare_training_script_hooks(ssh_client, context)
-    ├── merge hooks.env_vars into .env
-    └── build script_content:
-        {hooks.pre_python}     ← RunPod: запуск watchdog
-        python -m ...
-        {hooks.post_python}    ← RunPod: вызов _runpod_stop_pod (happy path)
-
-src/providers/training/interfaces.py
-├── @dataclass TrainingScriptHooks
-│   ├── env_vars: dict[str, str]
-│   ├── pre_python: str       # bash перед вызовом Python
-│   └── post_python: str      # bash после exit_code capture
-└── IGPUProvider protocol
-    └── prepare_training_script_hooks(ssh_client, context) -> Result[TrainingScriptHooks]
-
-src/providers/runpod/training/provider.py
-└── prepare_training_script_hooks():
-    ├── проверяет cleanup.auto_stop_after_training
-    ├── uploads resources/runpod_stop_pod.sh через ssh_client
-    ├── uploads resources/watchdog.sh через ssh_client
-    ├── returns hooks:
-    │   - env_vars: RUNPOD_API_KEY, RUNPOD_POD_ID, RUNPOD_AUTO_STOP, RUNPOD_KEEP_ON_ERROR
-    │   - pre_python: "setsid nohup bash /workspace/watchdog.sh ... & disown"
-    │   - post_python: "source /workspace/runpod_stop_pod.sh && _runpod_stop_pod"
-
-src/providers/runpod/training/resources/  (NEW)
-├── watchdog.sh           # независимый safety-net процесс
-└── runpod_stop_pod.sh    # функция _runpod_stop_pod, shared между watchdog и happy-path
-
-src/providers/training/single_node/provider.py
-└── prepare_training_script_hooks() → Ok(empty hooks)  # single_node ничего не делает
-
-src/pipeline/stages/gpu_deployer.py
-└── self.deployment.start_training(ssh_client, context, provider=self._provider)
-
-src/pipeline/stages/training_monitor.py  (Feature A — уже модифицирован)
-└── в _monitor_training_resilient polling loop (каждые 5с):
-    ssh_client.exec_command(f"touch {workspace}/.pipeline_heartbeat", silent=True)
+trainer_builder:117 INFO - PEFT target_modules: all-linear
+trainer_builder:186 INFO - LoRA config created: r=16, alpha=32, type=qlora
+peft/mapping_func.py:72: UserWarning: You are trying to modify a model with PEFT for a second time.
+peft/tuners_utils.py:285: UserWarning: Already found a `peft_config` attribute in the model.
 ```
 
-### Pipeline heartbeat gate (ключевая идея)
-
-Watchdog имеет два режима:
-
-1. **Dormant** (pipeline активен): `/workspace/.pipeline_heartbeat` свежее
-   `PIPELINE_HEARTBEAT_STALE=600` секунд → watchdog только обновляет свой
-   heartbeat и спит. **Ничего не проверяет, никого не трогает.**
-
-2. **Active** (pipeline отсутствует): heartbeat старее 10 минут → watchdog
-   начинает проверять маркеры и GPU idle. Активируется:
-   - Пользователь закрыл ноутбук навсегда.
-   - Pipeline упал на host-стороне.
-   - Training завершился и pipeline ушёл (happy-path должен был отработать,
-     но если нет — watchdog добивает).
-
-Reactivation: если pipeline возвращается (resume после sleep), он снова
-начинает `touch`'ать heartbeat → watchdog автоматически уходит в dormant.
-
-### Watchdog поведение (в active режиме)
-
+Источник — `src/training/trainers/factory.py:269-274`:
+```python
+if hasattr(config.training, "type") and config.training.type in ("qlora", "lora", "adalora"):
+    peft_config = create_peft_config(config)
+    if peft_config is not None:
+        trainer_kwargs["peft_config"] = peft_config
 ```
-loop:
-  touch .watchdog_heartbeat
-  uptime = now - start_ts
-  if uptime > MAX_LIFETIME: stop("MAX_LIFETIME")
 
-  if pipeline_heartbeat fresh: idle_since=0; sleep; continue  # dormant
+Это добавляет `peft_config` безусловно. Если модель уже обёрнута PEFT
+(например, `Tranium/helixql-research-sft-pilot-1.5b` — SFT-чекпоинт, который
+может публиковаться с `adapter_config.json`), TRL пытается применить
+адаптер поверх существующего, что ломает `requires_grad` маску и даёт 0
+trainable params. Это **не причина молчаливой смерти**, но это означает, что
+даже если бы процесс дожил, обучение всё равно было бы no-op. Починить
+обязательно перед следующим раном.
 
-  # Active mode
-  if TRAINING_COMPLETE or TRAINING_FAILED:
-    if TRAINING_FAILED and RUNPOD_KEEP_ON_ERROR: sleep; continue  # debug mode
-    sleep LOGICAL_END_GRACE (60s)
-    stop("LOGICAL_END")
+---
 
-  if uptime > STARTUP_GRACE (5min):
-    util, mem_pct = nvidia-smi  (max across GPUs)
-    if util<5 and mem_pct<30:
-      idle_since = idle_since or now
-      if (now - idle_since) > IDLE_THRESHOLD (20min):
-        stop("GPU_IDLE")
+## Цели
+
+1. **Гарантировать, что любая следующая смерть (native crash, signal,
+   Python exception) оставит читаемый след** либо в `training.log`, либо в
+   сиблинг-файле, который монитор заберёт перед cleanup'ом.
+2. Починить PEFT double-apply, чтобы у LoRA-адаптера были ненулевые
+   trainable params.
+3. Не ломать существующие happy-path'ы (SFT pilot уже отработал нормально).
+
+Отдельной целью **НЕ является**: починить reward-константу и галлюцинации
+модели. Это отдельная ветка работы (prompt builder / system prompt для
+GRPO-пути). Откроем после того, как увидим реальную причину смерти.
+
+---
+
+## План изменений
+
+### Fix 1: Shell wrapper — unbuffered Python + exit code + fault log path
+**Файл**: `src/pipeline/stages/managers/deployment_manager.py`
+**Метод**: `_start_training_cloud`, секция `script_content` (стр. ~844–880)
+
+**Изменения в сгенерированном bash-скрипте**:
+1. После `exec >{log_file} 2>&1` добавить экспорт env vars:
+   ```bash
+   export PYTHONUNBUFFERED=1
+   export PYTHONFAULTHANDLER=1
+   export PYTHONFAULTHANDLER_PATH={workspace}/training.faulthandler.log
+   ```
+   `PYTHONFAULTHANDLER=1` активирует `faulthandler` автоматически, но пишет
+   в stderr. Мы также передадим путь через env var и явно активируем в
+   Python (Fix 2).
+2. Записывать exit-код ПОСЛЕ `python`:
+   ```bash
+   echo "$exit_code $(date -Iseconds)" > {workspace}/TRAINING_EXIT_CODE
+   ```
+3. Улучшить ранний `TRAINING_FAILED`:
+   ```bash
+   if [ $exit_code -ne 0 ] && [ ! -f {workspace}/TRAINING_FAILED ] \
+        && [ ! -f {workspace}/TRAINING_COMPLETE ]; then
+     {
+       echo "exit_code=$exit_code"
+       echo "timestamp=$(date -Iseconds)"
+       echo "signal_name=$(kill -l $((exit_code - 128)) 2>/dev/null || echo unknown)"
+       echo "--- last 50 lines of training.log ---"
+       tail -n 50 {workspace}/training.log 2>/dev/null || true
+     } > {workspace}/TRAINING_FAILED || true
+   fi
+   ```
+
+Это дёшево, не ломает существующую логику (условие `! -f TRAINING_FAILED`
+сохранено), но даёт постmortem'у явный exit-код и сигнал.
+
+### Fix 2: Python entry — faulthandler + atexit flush
+**Файл**: `src/training/run_training.py`
+**Метод**: `main()` (стр. 579)
+
+1. В самом начале `main()` (до `argparse`):
+   ```python
+   import atexit
+   import faulthandler
+
+   # Persistent fault log — survives native crashes (SEGV, ABRT, BUS, FPE).
+   _fault_log_path = os.environ.get(
+       "PYTHONFAULTHANDLER_PATH",
+       "training.faulthandler.log",
+   )
+   try:
+       _fault_log = open(_fault_log_path, "w", buffering=1)
+       faulthandler.enable(file=_fault_log, all_threads=True)
+   except OSError:
+       faulthandler.enable(all_threads=True)  # fallback: stderr
+
+   # Emergency flush of all logging handlers on any exit path.
+   def _flush_logging() -> None:
+       for h in list(logger.handlers):
+           try:
+               h.flush()
+           except Exception:
+               pass
+   atexit.register(_flush_logging)
+   ```
+2. Ничего не менять в `run_training()` — существующая try/except/finally
+   цепочка корректна для Python-исключений.
+
+`faulthandler.enable(file=..., all_threads=True)` — штатный способ
+захватить SIGSEGV/SIGFPE/SIGABRT/SIGBUS/SIGILL с Python-стеком ВСЕХ потоков.
+Запись идёт напрямую через `write(2)` → переживает Python runtime crash.
+
+### Fix 3: Monitor postmortem — собрать все новые артефакты
+**Файл**: `src/pipeline/stages/training_monitor.py`
+**Метод**: `_collect_death_diagnostics` (стр. 741)
+
+Расширить список `probes` (порядок важен — от самого информативного к
+вспомогательному):
+
+```python
+probes: list[tuple[str, str, int]] = [
+    ("exit_code", f"cat {workspace}/TRAINING_EXIT_CODE 2>/dev/null", 5),
+    ("faulthandler", f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
+    ("training_log_tail", f"tail -n 120 {workspace}/training.log 2>/dev/null", 10),
+    ("training_failed_marker", f"cat {workspace}/TRAINING_FAILED 2>/dev/null", 5),
+    ("dmesg_tail", "dmesg -T 2>/dev/null | tail -80", 5),
+    ("dmesg_oom", "dmesg -T 2>/dev/null | grep -iE 'oom|kill|memory' | tail -40", 5),
+    ("dmesg_nvidia", "dmesg -T 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -40", 5),
+    ("nvidia_smi", "nvidia-smi --query-gpu=memory.used,memory.total,utilization.gpu --format=csv,noheader", 5),
+    ("workspace_markers", f"ls -la {workspace}/TRAINING_* {workspace}/STOPPED_BY_WATCHDOG 2>/dev/null", 5),
+]
+```
+
+Каждый probe уже обёрнут в try/except внутри метода — это контракт
+«diagnostics must never block main error path», не ломаем.
+
+Также в докстринге метода обновить описание: теперь это 9 probes,
+первыми идут exit-код и faulthandler.
+
+### Fix 4: PEFT double-apply guard
+**Файл**: `src/training/trainers/factory.py` (стр. 269–274)
+
+Перед добавлением `peft_config` проверить, не обёрнута ли модель уже:
+
+```python
+if hasattr(config.training, "type") and config.training.type in ("qlora", "lora", "adalora"):
+    from src.training.trainer_builder import create_peft_config
+
+    model_already_peft = hasattr(model, "peft_config") or hasattr(model, "base_model")
+    if model_already_peft:
+        logger.warning(
+            "[TF:PEFT_GUARD] Model already has PEFT adapter "
+            "(peft_config=%s, base_model=%s). Skipping peft_config to avoid "
+            "double-apply. If this is a resume/adapter-cache path this is "
+            "expected; if this is a fresh run from a HF SFT checkpoint, the "
+            "checkpoint was uploaded with adapter_config.json and should be "
+            "merged or reloaded as base.",
+            hasattr(model, "peft_config"),
+            hasattr(model, "base_model"),
+        )
     else:
-      idle_since = 0
-
-  sleep POLL_INTERVAL (30s)
+        peft_config = create_peft_config(config)
+        if peft_config is not None:
+            trainer_kwargs["peft_config"] = peft_config
 ```
 
-`stop(reason)` пишет `/workspace/STOPPED_BY_WATCHDOG` с reason/timestamp/
-uptime/метриками, потом вызывает `_runpod_stop_pod` (та же функция, что и
-happy path — через sourced `runpod_stop_pod.sh`).
+Это **не** магическим образом возвращает trainable params — но это
+**фиксирует контракт** и даёт чёткое предупреждение. Настоящая починка
+(если SFT-чекпоинт действительно уже peft) идёт отдельно: либо мерджить
+адаптер при публикации SFT на HF, либо в loader распознавать и раскрывать.
+Для текущего ран-а `Trainable parameters: 0` — это именно то, что сейчас
+тихо наблюдалось и делало обучение no-op.
 
-## Critical files
+---
 
-### New files
+## Критические файлы
 
-- **`src/providers/runpod/training/resources/watchdog.sh`** — независимый
-  safety-net, ~100 строк bash. Константы в голове файла: `POLL_INTERVAL=30`,
-  `STARTUP_GRACE=300`, `PIPELINE_HEARTBEAT_STALE=600`, `IDLE_THRESHOLD=1200`,
-  `IDLE_UTIL_MAX=5`, `IDLE_MEM_MAX_PCT=30`, `LOGICAL_END_GRACE=60`,
-  `MAX_LIFETIME=172800`. Структура цикла описана выше.
+| Файл | Что меняем | Риск |
+|---|---|---|
+| `src/pipeline/stages/managers/deployment_manager.py` | bash-скрипт в `_start_training_cloud` | низкий — bash остаётся `set -euo pipefail`, новые строки идемпотентны |
+| `src/training/run_training.py` | `main()` — faulthandler + atexit | очень низкий — только добавление, ничего не удаляем |
+| `src/pipeline/stages/training_monitor.py` | `_collect_death_diagnostics` — расширить probes | очень низкий — каждый probe уже в try/except |
+| `src/training/trainers/factory.py` | PEFT double-apply guard | средний — меняет поведение для случаев, где модель пришла уже обёрнутой; раньше тихо ломалось, теперь явно предупреждает и пропускает |
 
-- **`src/providers/runpod/training/resources/runpod_stop_pod.sh`** — shared
-  bash функция `_runpod_stop_pod()` (~30 строк). Вся curl/GraphQL/retry логика
-  из текущего `_ryotenkai_stop_pod` в `deployment_manager.py:853-883`
-  переезжает сюда **без изменения поведения**. Source'ится из watchdog.sh и
-  из `post_python` hook.
+**НЕ трогаем**:
+- `grpo_pilot.yaml` / `sapo_pilot.yaml` / `dpo_pilot.yaml` — конфиги уже
+  обновлены в прошлой сессии (`cloud_type ALL`, grad_checkpointing, halved
+  bs/gen_bs, max_prompt 512, max_completion 192).
+- Reward plugin / chat-template — отдельная работа после того, как увидим
+  реальную причину смерти.
+- Watchdog / runpod_stop_pod.sh — работают.
 
-- **`src/providers/runpod/training/resources/__init__.py`** — пустой marker для
-  importlib.resources доступа.
+---
 
-### Modified files
+## Верификация
 
-- **`src/providers/training/interfaces.py`** — добавить `TrainingScriptHooks`
-  dataclass и метод `prepare_training_script_hooks(ssh_client, context)` в
-  `IGPUProvider` Protocol. Default реализация в single_node provider возвращает
-  `Ok(TrainingScriptHooks(env_vars={}, pre_python="", post_python=""))`.
+### Unit
+1. `src/tests/unit/pipeline/test_stages_monitor.py::TestCollectDeathDiagnostics`
+   — обновить ожидание количества probe'ов (3 → 9), добавить проверки на
+   новые labels (`exit_code`, `faulthandler`, `training_log_tail`).
+2. `src/tests/unit/pipeline/managers/test_deployment_manager.py` — если
+   есть тест генерации `script_content`, обновить чтобы покрыть новые
+   строки (`TRAINING_EXIT_CODE`, env exports). Если теста нет — не
+   создаём (не ломаем scope).
+3. `src/tests/unit/training/test_run_training.py` (или аналогичный) —
+   smoke-тест, что `main()` не падает на `faulthandler.enable` даже если
+   `open(_fault_log_path, "w")` выбрасывает (проверить fallback на stderr).
+4. `src/tests/unit/training/trainers/test_factory.py` — тест на PEFT
+   guard: если `model.peft_config` уже выставлен, `peft_config` не
+   добавляется в `trainer_kwargs`.
 
-- **`src/providers/runpod/training/provider.py`** — реализовать
-  `prepare_training_script_hooks()`:
-  - Читает `cleanup = self._config.cleanup` (`src/config/providers/runpod/cleanup.py`).
-  - Если `not cleanup.auto_stop_after_training` — возвращает empty hooks.
-  - Использует `importlib.resources.files("src.providers.runpod.training.resources")`
-    для чтения `runpod_stop_pod.sh` и `watchdog.sh` как текста.
-  - Через `ssh_client.exec_command` (here-doc) создаёт оба файла на pod'е
-    в `/workspace/` + `chmod +x`.
-  - Возвращает hooks:
-    - `env_vars`: `RUNPOD_API_KEY`, `RUNPOD_POD_ID`, `RUNPOD_AUTO_STOP=true`,
-      `RUNPOD_KEEP_ON_ERROR={true|false}`.
-    - `pre_python`: `setsid nohup bash /workspace/watchdog.sh >/workspace/watchdog.log 2>&1 </dev/null & disown` + 10-секундная проверка heartbeat.
-    - `post_python`: `source /workspace/runpod_stop_pod.sh && _runpod_stop_pod || true` (не падает если source не нашёл — safety-net сработает).
+Прогон: `pytest src/tests/unit/pipeline/test_stages_monitor.py src/tests/unit/training/trainers/ -x`
 
-- **`src/providers/training/single_node/provider.py`** — добавить тривиальную
-  реализацию `prepare_training_script_hooks()` возвращающую empty hooks.
+### Lint / Typecheck
+- `ruff check src/pipeline/stages/managers/deployment_manager.py src/training/run_training.py src/pipeline/stages/training_monitor.py src/training/trainers/factory.py`
+- `ruff format --check` тех же файлов
+- `mypy src/pipeline/stages/training_monitor.py src/training/run_training.py src/training/trainers/factory.py` (deployment_manager.py исторически шумит, не трогаем если не добавили type issues)
 
-- **`src/pipeline/stages/managers/deployment_manager.py`**:
-  - `_create_env_file`: **удалить** RunPod-специфичный блок (строки 718-728).
-    Вместо этого принимать `extra_env_vars: dict[str, str]` параметром и
-    мержить их в `env_vars`.
-  - `_start_training_cloud`: принимать `provider: IGPUProvider` параметром.
-    Вызывать `hooks = provider.prepare_training_script_hooks(ssh_client, context)`.
-    Мержить `hooks.env_vars` в `.env`. В `script_content` f-string:
-    - **удалить** `_ryotenkai_stop_pod` функцию и её вызов (строки 848-884).
-    - Добавить `{hooks.pre_python}` **перед** блоком выбора PY_BIN.
-    - Добавить `{hooks.post_python}` **после** `exit_code=$?`, перед
-      генерацией TRAINING_FAILED marker (чтобы post_python видел `exit_code`).
-  - `start_training(ssh_client, context)` → `start_training(ssh_client, context, provider)`.
+### End-to-end
+Следующий GRPO pilot запуск. Критерии приёмки:
 
-- **`src/pipeline/stages/gpu_deployer.py`** — при вызове
-  `self.deployment.start_training(ssh_client, context)` (строка ~220) передать
-  `provider=self._provider`.
+1. **Если умрёт снова молча**, в `pipeline.log` секции
+   `[MONITOR:POSTMORTEM]` должны быть НЕ пустыми как минимум:
+   - `exit_code` — с числом и timestamp'ом
+   - `faulthandler` — если был native crash
+   - `training_log_tail` — хвост файла
+   - `dmesg_tail` — kernel события
+2. **Если умрёт из-за Python exception**, `training.log` должен содержать
+   traceback (прилетает через `logger.exception` + atexit flush).
+3. **Если PEFT-guard сработает**, в `training.log` должно быть
+   `[TF:PEFT_GUARD]` warning и `Trainable parameters > 0`.
 
-- **`src/pipeline/stages/training_monitor.py`** (Feature A уже модифицирован,
-  добавим heartbeat):
-  - В polling loop `_monitor_training_resilient` / `_monitor_training`,
-    перед `_check_marker`, добавить вызов:
-    `ssh_client.exec_command(f"touch {workspace}/.pipeline_heartbeat", silent=True, background=False, timeout=2)`.
-  - Silent=True чтобы не засорять логи; короткий timeout чтобы не блокировать
-    polling при лагах SSH.
-  - Выполняется только для cloud-провайдеров (проверка через `provider_name
-    == "runpod"` в context, или всегда — `touch` на несуществующий путь просто
-    молча отработает; YAGNI).
+Без end-to-end верификации (без реального RunPod pod'а) мы не узнаем,
+правда ли fault handler переживёт конкретный crash. Но faulthandler —
+штатный механизм CPython, рассчитанный ровно на этот сценарий; доверяем
+стандартной библиотеке.
 
-### Tests to update
+---
 
-- **`src/tests/unit/pipeline/test_stages_monitor.py`** — существующие тесты
-  уже используют мок `ssh_client.exec_command`. Новый `touch` вызов не должен
-  ломать тесты, но нужно проверить: если мок строгий (assert_called_with),
-  добавить expectation на `touch`. Если свободный — пройдёт.
+## Последовательность исполнения
 
-- **`src/tests/unit/pipeline/test_stages_deployer.py`** (если есть) — проверить
-  что `start_training` вызывается с `provider=...` параметром.
-
-- **`src/tests/unit/providers/runpod/test_training_provider.py`** (создать если
-  нет) — unit тест для `prepare_training_script_hooks`:
-  - Mock SSH client, проверить что оба файла uploaded.
-  - Проверить содержимое hooks (env_vars содержат нужные ключи, pre/post
-    python содержат ожидаемые команды).
-  - Проверить что при `auto_stop_after_training=False` возвращается empty hooks.
-
-- **`src/tests/unit/providers/training/test_interfaces.py`** — обновить мок-провайдер
-  если он реализует IGPUProvider, добавить заглушку метода.
-
-- **Shellcheck**: прогнать `shellcheck watchdog.sh runpod_stop_pod.sh` локально
-  перед коммитом. Добавить в CI если есть pre-commit hook для bash.
-
-## Что НЕ делаем (YAGNI)
-
-- Не делаем Python-версию watchdog — bash достаточен, меньше зависимостей.
-- Не выносим константы watchdog в pydantic config — hardcoded в bash. Если
-  когда-нибудь понадобится tuning, вынесем позже.
-- Не делаем generic "pipeline heartbeat" абстракцию — это одна строчка `touch`
-  в monitor'е и одна проверка `stat` в bash.
-- Не меняем интерфейс `SSHClient` — используем existing `exec_command`.
-- Не удаляем `runs_active_pods.json` registry в `cleanup_manager.py` — это
-  отдельная фича (host-side cleanup), не пересекается.
-- Не трогаем Feature A изменения в `training_monitor.py` кроме добавления
-  одного `touch` вызова.
-
-## Verification
-
-### Unit tests
-```bash
-pytest src/tests/unit/providers/runpod/test_training_provider.py -v
-pytest src/tests/unit/pipeline/test_stages_monitor.py -v
-pytest src/tests/unit/pipeline/test_stages_deployer.py -v
-```
-
-### Static checks
-```bash
-shellcheck src/providers/runpod/training/resources/watchdog.sh
-shellcheck src/providers/runpod/training/resources/runpod_stop_pod.sh
-ruff check .
-mypy src/providers/ src/pipeline/stages/managers/deployment_manager.py
-```
-
-### Manual E2E on real RunPod
-
-Мини-конфиг: 10 training steps, мелкая модель, `auto_stop_after_training=true`.
-
-1. **Happy path (pipeline активен, training завершился нормально)**:
-   - Запустить pipeline. Дождаться TRAINING_COMPLETE.
-   - Ожидаемо: `post_python` hook → `_runpod_stop_pod` → pod stopped.
-   - `watchdog.log` показывает "pipeline heartbeat active, dormant" на
-     протяжении всего run'а.
-   - Pod остановлен быстро (в течение <1 мин после Python exit).
-
-2. **Pipeline отсутствует, training зависает**:
-   - Запустить pipeline, дождаться что watchdog стартовал.
-   - Убить pipeline на host'е: `pkill -9 -f "python -m src.main"`.
-   - Остановить heartbeat'ы (через ~10 мин heartbeat становится stale).
-   - Замочить training Python процесс через `kill -STOP` на pod'е
-     (GPU освобождается, процесс alive но не работает).
-   - Ожидаемо: через ~25 мин (5 grace + 20 idle) watchdog стопает pod с
-     `STOPPED_BY_WATCHDOG=GPU_IDLE`.
-
-3. **Pipeline sleep scenario (resume возможен)**:
-   - Запустить pipeline, дождаться нескольких heartbeat'ов.
-   - Закрыть ноутбук на 3 минуты (heartbeat свежий), открыть. Pipeline резюмит
-     (Feature A).
-   - Ожидаемо: watchdog всё время dormant, pod НЕ остановлен.
-   - Проверить `watchdog.log`: только heartbeat-тики, ни одной проверки GPU.
-
-4. **Debug mode**:
-   - Конфиг `keep_pod_on_error=true`. Заведомо падающее training.
-   - Убить pipeline на host'е после падения.
-   - Ожидаемо: watchdog видит TRAINING_FAILED + RUNPOD_KEEP_ON_ERROR=true →
-     НЕ стопает pod. Pod жив до ручного стопа или 48h max lifetime.
-
-5. **SIGKILL bash (жёсткий)**:
-   - Запустить pipeline и training.
-   - На pod'е: `kill -9 $(pgrep -f start_training.sh)`. Bash мёртв, Python
-     мёртв, GPU освобождён.
-   - Убить pipeline на host'е (чтобы heartbeat стал stale).
-   - Ожидаемо: watchdog через ~25 мин стопает с `GPU_IDLE`.
-   - Проверить `ps -ef | grep watchdog` — watchdog всё ещё жив после смерти
-     родителя (setsid + nohup работает).
-
-6. **Architecture validation**:
-   - `grep -rn "runpod\|RUNPOD" src/pipeline/stages/managers/deployment_manager.py`
-     должен вернуть **пустой результат**. Весь RunPod-код ушёл в провайдер.
+1. Fix 3 (monitor probes) + его unit-тесты — самый изолированный.
+2. Fix 2 (faulthandler в run_training) + unit smoke.
+3. Fix 1 (deployment_manager bash) — самый «грязный», делаем после чтобы
+   не пересобирать тестовое окружение дважды.
+4. Fix 4 (PEFT guard) + unit — независимый.
+5. Прогнать ruff/mypy/pytest на затронутых файлах.
+6. Коммит. Следующий ран — с реальным pod'ом, с глазами.

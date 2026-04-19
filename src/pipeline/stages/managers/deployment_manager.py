@@ -846,6 +846,18 @@ set -euo pipefail
 cd {self._workspace}
 . {env_file}
 exec >{log_file} 2>&1
+
+# --- Crash observability env vars (see src/training/run_training.py:_install_crash_observability) ---
+# PYTHONUNBUFFERED=1  → disable Python stdout/stderr block buffering so the tail of
+#                       training.log is on disk even if the process dies mid-step.
+# PYTHONFAULTHANDLER=1 → activate faulthandler early (before any user import) so native
+#                       crashes in C extensions (bitsandbytes, flash-attn, CUDA kernels)
+#                       leave a Python + C stack trace.
+# PYTHONFAULTHANDLER_PATH → sibling file that monitor can tail post-mortem.
+export PYTHONUNBUFFERED=1
+export PYTHONFAULTHANDLER=1
+export PYTHONFAULTHANDLER_PATH={self._workspace}/training.faulthandler.log
+
 PY_BIN=""
 if command -v python3 >/dev/null 2>&1; then
   PY_BIN=python3
@@ -866,12 +878,29 @@ set +e
 exit_code=$?
 set -e
 
-# If the Python process crashed before notifiers were initialized (e.g. import error),
-# we may have no marker files. Create a minimal TRAINING_FAILED marker for monitoring.
-if [ $exit_code -ne 0 ]; then
-  if [ ! -f {self._workspace}/TRAINING_FAILED ] && [ ! -f {self._workspace}/TRAINING_COMPLETE ]; then
-    echo "Training failed early. See training.log." > {self._workspace}/TRAINING_FAILED || true
-  fi
+# Persist exit code so the monitor's post-mortem probe can distinguish
+# signal-kill (128+N) from normal Python exceptions (1).
+echo "$exit_code $(date -Iseconds 2>/dev/null || date)" > {self._workspace}/TRAINING_EXIT_CODE || true
+
+# If the Python process crashed before notifiers were initialized (e.g. import error
+# or native SEGV), there may be no in-Python marker. Create an enriched
+# TRAINING_FAILED marker with exit-code, signal name, and the last 50 lines of
+# training.log so the monitor can surface something meaningful.
+# NB (python side): this block lives inside a Python f-string - the {{ and }}
+# pairs below are escapes that render as single literal braces for the bash
+# group command. Keep them doubled.
+if [ $exit_code -ne 0 ] && [ ! -f {self._workspace}/TRAINING_FAILED ] && [ ! -f {self._workspace}/TRAINING_COMPLETE ]; then
+  {{
+    echo "exit_code=$exit_code"
+    echo "timestamp=$(date -Iseconds 2>/dev/null || date)"
+    if [ $exit_code -gt 128 ]; then
+      signal_no=$((exit_code - 128))
+      signal_name=$(kill -l $signal_no 2>/dev/null || echo "signal-$signal_no")
+      echo "signal=$signal_name (signal_no=$signal_no)"
+    fi
+    echo "--- last 50 lines of training.log ---"
+    tail -n 50 {log_file} 2>/dev/null || echo "(training.log unreadable)"
+  }} > {self._workspace}/TRAINING_FAILED || true
 fi
 
 {post_python}

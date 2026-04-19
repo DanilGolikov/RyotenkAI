@@ -1507,3 +1507,82 @@ class TestStaticParsingAndBufferDownload:
                 with patch("pathlib.Path.mkdir"):
                     result = monitor._download_metrics_buffer(mock_ssh_client)
         assert result is None
+
+
+class TestCollectDeathDiagnostics:
+    """Unit tests for _collect_death_diagnostics post-mortem probe."""
+
+    # Nine probes are collected post-mortem — ordered from most informative
+    # (exit_code, faulthandler) to most auxiliary (workspace_markers).
+    EXPECTED_PROBE_COUNT = 9
+
+    def test_collect_runs_all_probes_and_logs(self, mock_config, mock_callbacks, mock_ssh_client):
+        """All nine probes execute and their stdout is routed through the logger."""
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+
+        mock_ssh_client.exec_command.side_effect = [
+            (True, "139 2026-04-10T06:15:00+00:00", ""),                               # exit_code
+            (True, "Fatal Python error: Segmentation fault\n  File train.py", ""),    # faulthandler
+            (True, "epoch 1/3 step 52/432 loss=NaN", ""),                              # training_log_tail
+            (False, "", "no such file"),                                               # training_failed_marker
+            (True, "[  123.45] general protection fault", ""),                         # dmesg_tail
+            (True, "[  123.45] Out of memory: Kill process 4242 (python)", ""),       # dmesg_oom
+            (True, "[  123.45] NVRM: Xid (PCI:0000:00:05): 79", ""),                  # dmesg_nvidia
+            (True, "20480 MiB, 24564 MiB, 87 %", ""),                                  # nvidia_smi
+            (True, "-rw-r--r-- 1 root root 0 /workspace/TRAINING_FAILED", ""),        # workspace_markers
+        ]
+
+        monitor._collect_death_diagnostics(mock_ssh_client)
+
+        assert mock_ssh_client.exec_command.call_count == self.EXPECTED_PROBE_COUNT
+        commands = [call.kwargs["command"] for call in mock_ssh_client.exec_command.call_args_list]
+
+        # New high-signal probes (must exist).
+        assert any("TRAINING_EXIT_CODE" in c for c in commands), "exit_code probe missing"
+        assert any("training.faulthandler.log" in c for c in commands), "faulthandler probe missing"
+        assert any("tail" in c and "training.log" in c for c in commands), "training_log_tail probe missing"
+        assert any("cat" in c and "TRAINING_FAILED" in c for c in commands), "training_failed_marker probe missing"
+
+        # Kernel / driver probes.
+        assert any("dmesg" in c and "tail -80" in c for c in commands), "dmesg_tail probe missing"
+        assert any("dmesg" in c and "oom" in c.lower() for c in commands), "dmesg_oom probe missing"
+        assert any("dmesg" in c and "nvrm" in c.lower() for c in commands), "dmesg_nvidia probe missing"
+
+        # Pre-existing probes preserved.
+        assert any("nvidia-smi" in c for c in commands), "nvidia_smi probe missing"
+        assert any("TRAINING_" in c and "STOPPED_BY_WATCHDOG" in c for c in commands), "workspace_markers probe missing"
+
+    def test_collect_never_blocks_on_exceptions(self, mock_config, mock_callbacks, mock_ssh_client):
+        """Every probe raising must not propagate — diagnostics are best-effort."""
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+
+        mock_ssh_client.exec_command.side_effect = RuntimeError("ssh dead")
+
+        # Must not raise.
+        monitor._collect_death_diagnostics(mock_ssh_client)
+
+        assert mock_ssh_client.exec_command.call_count == self.EXPECTED_PROBE_COUNT
+
+    def test_collect_handles_empty_output(self, mock_config, mock_callbacks, mock_ssh_client):
+        """Empty stdout/stderr → still logs, still processes all probes, no crash."""
+        monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
+        monitor._workspace_path = "/workspace"
+
+        # Mix of empty, whitespace, and failed probes across all nine slots.
+        mock_ssh_client.exec_command.side_effect = [
+            (True, "", ""),
+            (True, "   \n", ""),
+            (False, "", "not found"),
+            (True, "", ""),
+            (True, "  ", ""),
+            (False, "", ""),
+            (True, "", "stderr only"),
+            (True, "", ""),
+            (False, "", "no such file"),
+        ]
+
+        monitor._collect_death_diagnostics(mock_ssh_client)
+
+        assert mock_ssh_client.exec_command.call_count == self.EXPECTED_PROBE_COUNT
