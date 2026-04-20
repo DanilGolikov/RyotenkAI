@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FieldAnchor } from './FieldAnchor'
-import { FormGroup } from './FormGroup'
+import { HelpTooltip } from './HelpTooltip'
 import { UnionField } from './UnionField'
 import { detectKind, getDefault, resolveRef, titleOrKey } from './schemaUtils'
 
@@ -32,16 +32,14 @@ function LabelledRow({
 }) {
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <label className="text-2xs text-ink-2">
+      <div className="flex items-center gap-2 mb-1.5">
+        <label className="text-xs text-ink-1 font-medium">
           {label}
           {required && <span className="ml-1 text-brand">*</span>}
         </label>
+        <HelpTooltip text={description} />
       </div>
-      <div className="mt-1">{children}</div>
-      {description && (
-        <div className="text-[0.65rem] text-ink-4 mt-0.5 leading-snug">{description}</div>
-      )}
+      {children}
     </div>
   )
 }
@@ -85,7 +83,7 @@ export function FieldRenderer(props: FieldProps) {
         <select
           value={fallback === undefined || fallback === null ? '' : String(fallback)}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
+          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
         >
           <option value="">—</option>
           {options.map((opt) => (
@@ -112,7 +110,7 @@ export function FieldRenderer(props: FieldProps) {
                 kind === 'integer' ? Number.parseInt(e.target.value, 10) : Number(e.target.value),
               )
           }}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
+          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
         />
       </LabelledRow>,
     )
@@ -125,7 +123,7 @@ export function FieldRenderer(props: FieldProps) {
           type="text"
           value={typeof fallback === 'string' ? fallback : ''}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-brand"
+          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
         />
       </LabelledRow>,
     )
@@ -176,13 +174,15 @@ export function FieldRenderer(props: FieldProps) {
       )
     }
     if (depth === 0) {
+      // Flat render: the active subtab already owns the frame, no need for
+      // a nested collapsible card inside it.
       return (
-        <FormGroup
-          title={label}
-          description={description}
-          required={required}
-          defaultOpen={true}
-        >
+        <div className="space-y-5">
+          <header className="flex items-center gap-2">
+            <h3 className="text-base font-semibold text-ink-1">{label}</h3>
+            {required && <span className="text-[0.65rem] text-brand uppercase tracking-wide">required</span>}
+            <HelpTooltip text={description} />
+          </header>
           <ObjectFields
             root={root}
             node={node}
@@ -192,13 +192,15 @@ export function FieldRenderer(props: FieldProps) {
             pathPrefix={path}
             hashPrefix={hashPrefix}
           />
-        </FormGroup>
+        </div>
       )
     }
     return wrapAnchor(
-      <div className="space-y-2 pl-3 border-l border-line-1">
-        <div className="text-2xs text-ink-2 font-medium">{label}</div>
-        {description && <div className="text-[0.65rem] text-ink-4">{description}</div>}
+      <div className="space-y-3 pl-3 border-l border-line-1">
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-ink-2 font-medium">{label}</div>
+          <HelpTooltip text={description} />
+        </div>
         <ObjectFields
           root={root}
           node={node}
@@ -280,20 +282,20 @@ function ObjectFields({
   )
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {requiredFields.map(renderField)}
       {optionalFields.length > 0 && (
-        <div className="pt-1 border-t border-line-1/60 space-y-3">
+        <div className="space-y-4">
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className="text-[0.65rem] uppercase tracking-wide text-ink-3 hover:text-ink-1 transition flex items-center gap-1"
+            className="text-2xs text-ink-3 hover:text-ink-1 transition flex items-center gap-1.5"
           >
-            <span className={showAdvanced ? 'rotate-90' : ''}>▶</span>
+            <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▸</span>
             {showAdvanced ? 'Hide' : 'Show'} {optionalFields.length} optional field
             {optionalFields.length === 1 ? '' : 's'}
           </button>
-          {showAdvanced && <div className="space-y-3">{optionalFields.map(renderField)}</div>}
+          {showAdvanced && <div className="space-y-4">{optionalFields.map(renderField)}</div>}
         </div>
       )}
     </div>
