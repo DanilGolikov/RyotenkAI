@@ -33,11 +33,7 @@ class StubAPI:
 
 @dataclass
 class StubCleanup:
-    registered: list[tuple[str, str]] = field(default_factory=list)
     cleaned: list[str] = field(default_factory=list)
-
-    def register_pod(self, pod_id: str, *, api_base: str) -> None:
-        self.registered.append((pod_id, api_base))
 
     def cleanup_pod(self, pod_id: str) -> Result[None, ProviderError]:
         self.cleaned.append(pod_id)
@@ -110,11 +106,6 @@ def test_connect_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ssh.user == "root"
     assert ssh.key_path == __file__
     assert p.get_status() == ProviderStatus.CONNECTED
-
-    cleanup: StubCleanup = p._cleanup_manager
-    assert cleanup.registered
-    assert cleanup.registered[0][0] == "pod-1"
-    assert cleanup.registered[0][1] == "https://api.runpod.io"
 
 
 def test_disconnect_keeps_pod_when_marked_error_and_keep_pod_on_error_true() -> None:

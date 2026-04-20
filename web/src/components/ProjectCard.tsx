@@ -15,7 +15,11 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
     setModalOpen(true)
   }
 
+  // Modal is a sibling of the Link (not a descendant), otherwise the
+  // browser's native <a> click handler captures clicks inside the modal
+  // and navigates to the project before onClick handlers can stop it.
   return (
+    <>
     <Link
       to={`/projects/${encodeURIComponent(project.id)}`}
       className="group relative block rounded-lg border border-line-1 bg-surface-1 overflow-hidden hover:border-brand/60 hover:bg-surface-2 transition shadow-card"
@@ -66,21 +70,22 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
           {project.path}
         </div>
       </div>
-      {modalOpen && (
-        <DeleteProjectModal
-          project={project}
-          onClose={() => setModalOpen(false)}
-          onConfirm={async (deleteFiles) => {
-            try {
-              await del.mutateAsync({ projectId: project.id, deleteFiles })
-              setModalOpen(false)
-            } catch (exc) {
-              window.alert((exc as Error).message || 'Failed to delete project.')
-            }
-          }}
-          pending={del.isPending}
-        />
-      )}
     </Link>
+    {modalOpen && (
+      <DeleteProjectModal
+        project={project}
+        onClose={() => setModalOpen(false)}
+        onConfirm={async (deleteFiles) => {
+          try {
+            await del.mutateAsync({ projectId: project.id, deleteFiles })
+            setModalOpen(false)
+          } catch (exc) {
+            window.alert((exc as Error).message || 'Failed to delete project.')
+          }
+        }}
+        pending={del.isPending}
+      />
+    )}
+    </>
   )
 }

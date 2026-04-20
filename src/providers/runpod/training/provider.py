@@ -276,7 +276,6 @@ class RunPodProvider(IGPUProvider):
 
             pod_id = resource_info.pod_id
             self._pod_id = pod_id  # kept for SIGINT safety in connect()
-            self._cleanup_manager.register_pod(pod_id=pod_id, api_base=RUNPOD_API_BASE_URL)
             logger.info(f"✅ Pod created: {pod_id}")
 
             ready_result = self._lifecycle.wait_for_ready(pod_id)

@@ -36,6 +36,7 @@ export function DeleteProjectModal({ project, onClose, onConfirm, pending }: Pro
       className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
       onClick={(e) => {
         e.stopPropagation()
+        e.preventDefault()
         if (!pending) onClose()
       }}
     >
@@ -43,7 +44,10 @@ export function DeleteProjectModal({ project, onClose, onConfirm, pending }: Pro
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-project-title"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          e.preventDefault()
+        }}
         className="w-full max-w-md rounded-lg border border-line-2 bg-surface-1 shadow-card overflow-hidden"
       >
         <div className="px-5 py-4 border-b border-line-1 flex items-center gap-3">

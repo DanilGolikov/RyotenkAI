@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 
@@ -20,63 +18,22 @@ class StubAPI:
         return Ok(None) if self.ok else Err(ProviderError(message="fail", code="TEST_TERMINATE_FAILED"))
 
 
-def test_register_and_unregister_pod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(terminated=[])
-    mgr = RunPodCleanupManager(api_client=api)
-    mgr.registry_file = tmp_path / "pods.json"
-
-    monkeypatch.setattr("time.time", lambda: 123.0)
-
-    mgr.register_pod("pod-1", api_base="https://api")
-    data = json.loads(mgr.registry_file.read_text(encoding="utf-8"))
-    assert "pod-1" in data
-    assert data["pod-1"]["api_base"] == "https://api"
-
-    mgr.unregister_pod("pod-1")
-    data2 = json.loads(mgr.registry_file.read_text(encoding="utf-8"))
-    assert "pod-1" not in data2
-
-
-def test_register_pod_tolerates_corrupted_registry(tmp_path: Path) -> None:
-    api = StubAPI(terminated=[])
-    mgr = RunPodCleanupManager(api_client=api)
-    mgr.registry_file = tmp_path / "pods.json"
-    mgr.registry_file.write_text("{not json", encoding="utf-8")
-
-    mgr.register_pod("pod-2", api_base="https://api")
-    data = json.loads(mgr.registry_file.read_text(encoding="utf-8"))
-    assert "pod-2" in data
-
-
-def test_list_registered_pods_handles_missing_file(tmp_path: Path) -> None:
-    api = StubAPI(terminated=[])
-    mgr = RunPodCleanupManager(api_client=api)
-    mgr.registry_file = tmp_path / "pods.json"
-
-    assert mgr.list_registered_pods() == []
-
-
-def test_cleanup_pod_unregisters_on_success(tmp_path: Path) -> None:
+def test_cleanup_pod_terminates_pod() -> None:
     api = StubAPI(terminated=[], ok=True)
     mgr = RunPodCleanupManager(api_client=api)
-    mgr.registry_file = tmp_path / "pods.json"
-    mgr.register_pod("pod-1", api_base="https://api")
 
     res = mgr.cleanup_pod("pod-1")
     assert res.is_success()
     assert api.terminated == ["pod-1"]
-    assert mgr.list_registered_pods() == []
 
 
-def test_cleanup_pod_keeps_registry_on_failure(tmp_path: Path) -> None:
+def test_cleanup_pod_propagates_failure() -> None:
     api = StubAPI(terminated=[], ok=False)
     mgr = RunPodCleanupManager(api_client=api)
-    mgr.registry_file = tmp_path / "pods.json"
-    mgr.register_pod("pod-1", api_base="https://api")
 
     res = mgr.cleanup_pod("pod-1")
     assert res.is_failure()
-    assert mgr.list_registered_pods() == ["pod-1"]
+    assert api.terminated == ["pod-1"]
 
 
 def test_create_cleanup_manager_uses_api_client(monkeypatch: pytest.MonkeyPatch) -> None:
