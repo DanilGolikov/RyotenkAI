@@ -1,4 +1,4 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart
+.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync
 
 PYTHON := python3
 
@@ -172,6 +172,24 @@ web-frontend-stop:
 
 web-frontend-restart:
 	bash web/scripts/restart.sh frontend
+
+# ============================================
+# API codegen (OpenAPI → TypeScript)
+# ============================================
+
+# Dump the live FastAPI OpenAPI spec to a checked-in snapshot so codegen
+# is offline-safe and CI can fail on drift without a running backend.
+web-openapi-dump:
+	$(PYTHON) -m src.api.openapi_dump > web/src/api/openapi.json
+
+# Regenerate web/src/api/schema.d.ts from the checked-in spec.
+gen-api: web-openapi-dump
+	cd web && npm run gen:api
+
+# CI drift guard: regenerate and fail if the working tree differs. Commit
+# the updated openapi.json + schema.d.ts alongside your backend changes.
+verify-api-sync: gen-api
+	git diff --exit-code -- web/src/api/openapi.json web/src/api/schema.d.ts
 
 # ============================================
 # Utilities

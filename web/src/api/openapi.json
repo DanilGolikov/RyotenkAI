@@ -1,0 +1,3679 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "RyotenkAI Web API",
+    "description": "Sibling client to the RyotenkAI file-based pipeline state store. Equal citizen with CLI and TUI — reads pipeline_state.json directly, launches pipeline runs as detached subprocesses.",
+    "version": "v0.1.0"
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "summary": "Health",
+        "operationId": "health-health",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/validate": {
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Validate",
+        "operationId": "config-validate",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/default": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Default",
+        "operationId": "config-default",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DefaultConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/schema": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Schema",
+        "description": "Return the full PipelineConfig JSON schema for the UI builder.",
+        "operationId": "config-schema",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Config-Schema"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/presets": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Presets",
+        "description": "Return curated starter configs from ``configs/presets/*.yaml``.",
+        "operationId": "config-presets",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigPresetsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/attempts/{attempt_no}": {
+      "get": {
+        "tags": [
+          "attempts"
+        ],
+        "summary": "Get Attempt",
+        "operationId": "attempts-get_attempt",
+        "parameters": [
+          {
+            "name": "attempt_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt No"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/attempts/{attempt_no}/stages": {
+      "get": {
+        "tags": [
+          "attempts"
+        ],
+        "summary": "Get Stages",
+        "operationId": "attempts-get_stages",
+        "parameters": [
+          {
+            "name": "attempt_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt No"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/attempts/{attempt_no}/logs": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Get Log Chunk",
+        "operationId": "logs-get_log_chunk",
+        "parameters": [
+          {
+            "name": "attempt_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt No"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "file",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "pipeline.log",
+              "title": "File"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "max_bytes",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Max Bytes"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogChunk"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/attempts/{attempt_no}/logs/files": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "List Files",
+        "operationId": "logs-list_files",
+        "parameters": [
+          {
+            "name": "attempt_no",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt No"
+            }
+          },
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LogFileInfo"
+                  },
+                  "title": "Response Logs-List Files"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/restart-points": {
+      "get": {
+        "tags": [
+          "launch"
+        ],
+        "summary": "Restart Points",
+        "operationId": "launch-restart_points",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "config_path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Config Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestartPointsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/default-launch-mode": {
+      "get": {
+        "tags": [
+          "launch"
+        ],
+        "summary": "Default Launch Mode",
+        "operationId": "launch-default_launch_mode",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Launch-Default Launch Mode"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/launch": {
+      "post": {
+        "tags": [
+          "launch"
+        ],
+        "summary": "Launch",
+        "operationId": "launch-launch",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchRequestSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/interrupt": {
+      "post": {
+        "tags": [
+          "launch"
+        ],
+        "summary": "Interrupt",
+        "operationId": "launch-interrupt",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InterruptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{kind}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List Plugins",
+        "operationId": "plugins-list_plugins",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": [
+                "reward",
+                "validation",
+                "evaluation"
+              ],
+              "type": "string",
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Projects",
+        "operationId": "projects-list_projects",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Projects-List Projects"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create Project",
+        "operationId": "projects-create_project",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Get Project",
+        "operationId": "projects-get_project",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete Project",
+        "description": "Unregister a project (does not delete files on disk).",
+        "operationId": "projects-delete_project",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Get Config",
+        "operationId": "projects-get_config",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Save Config",
+        "operationId": "projects-save_config",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config/validate": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Validate Config",
+        "operationId": "projects-validate_config",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config/versions": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Versions",
+        "operationId": "projects-list_versions",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigVersionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config/versions/{filename}": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Read Version",
+        "operationId": "projects-read_version",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigVersionDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config/versions/{filename}/restore": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Restore Version",
+        "operationId": "projects-restore_version",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/config/versions/{filename}/favorite": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Toggle Favorite",
+        "operationId": "projects-toggle_favorite",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToggleFavoriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToggleFavoriteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/types": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "List Types",
+        "operationId": "providers-list_types",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTypesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "List Providers",
+        "operationId": "providers-list_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderSummary"
+                  },
+                  "type": "array",
+                  "title": "Response Providers-List Providers"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Create Provider",
+        "operationId": "providers-create_provider",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProviderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Get Provider",
+        "operationId": "providers-get_provider",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Delete Provider",
+        "operationId": "providers-delete_provider",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}/config": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Get Config",
+        "operationId": "providers-get_config",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Save Config",
+        "operationId": "providers-save_config",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderSaveConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSaveConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}/config/validate": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Validate Config",
+        "operationId": "providers-validate_config",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderSaveConfigRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}/config/versions": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "List Versions",
+        "operationId": "providers-list_versions",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConfigVersionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}/config/versions/{filename}": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Read Version",
+        "operationId": "providers-read_version",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConfigVersionDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider_id}/config/versions/{filename}/restore": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Restore Version",
+        "operationId": "providers-restore_version",
+        "parameters": [
+          {
+            "name": "provider_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderSaveConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/report": {
+      "get": {
+        "tags": [
+          "reports"
+        ],
+        "summary": "Get Report",
+        "operationId": "reports-get_report",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "regenerate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Regenerate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "List Runs",
+        "operationId": "runs-list_runs",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunsListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Create Run",
+        "operationId": "runs-create_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Get Run",
+        "operationId": "runs-get_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "runs"
+        ],
+        "summary": "Delete Run",
+        "operationId": "runs-delete_run",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "local_and_mlflow",
+              "title": "Mode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteResultSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AttemptDetail": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "title": "Attempt Id"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "title": "Attempt No"
+          },
+          "runtime_name": {
+            "type": "string",
+            "title": "Runtime Name"
+          },
+          "requested_action": {
+            "type": "string",
+            "title": "Requested Action"
+          },
+          "effective_action": {
+            "type": "string",
+            "title": "Effective Action"
+          },
+          "restart_from_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restart From Stage"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Icon"
+          },
+          "status_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Color"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "training_critical_config_hash": {
+            "type": "string",
+            "title": "Training Critical Config Hash",
+            "default": ""
+          },
+          "late_stage_config_hash": {
+            "type": "string",
+            "title": "Late Stage Config Hash",
+            "default": ""
+          },
+          "model_dataset_config_hash": {
+            "type": "string",
+            "title": "Model Dataset Config Hash",
+            "default": ""
+          },
+          "root_mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Mlflow Run Id"
+          },
+          "pipeline_attempt_mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pipeline Attempt Mlflow Run Id"
+          },
+          "training_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Training Run Id"
+          },
+          "enabled_stage_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Enabled Stage Names"
+          },
+          "stage_runs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StageRun"
+            },
+            "type": "object",
+            "title": "Stage Runs"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "attempt_no",
+          "runtime_name",
+          "requested_action",
+          "effective_action",
+          "status",
+          "started_at"
+        ],
+        "title": "AttemptDetail"
+      },
+      "ConfigCheck": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "warn",
+              "fail"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "status"
+        ],
+        "title": "ConfigCheck"
+      },
+      "ConfigPreset": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "yaml"
+        ],
+        "title": "ConfigPreset"
+      },
+      "ConfigPresetsResponse": {
+        "properties": {
+          "presets": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigPreset"
+            },
+            "type": "array",
+            "title": "Presets"
+          }
+        },
+        "type": "object",
+        "title": "ConfigPresetsResponse"
+      },
+      "ConfigResponse": {
+        "properties": {
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          },
+          "parsed_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "yaml"
+        ],
+        "title": "ConfigResponse"
+      },
+      "ConfigTemplate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "ConfigTemplate"
+      },
+      "ConfigValidateRequest": {
+        "properties": {
+          "config_path": {
+            "type": "string",
+            "title": "Config Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config_path"
+        ],
+        "title": "ConfigValidateRequest"
+      },
+      "ConfigValidationResult": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "config_path": {
+            "type": "string",
+            "title": "Config Path"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigCheck"
+            },
+            "type": "array",
+            "title": "Checks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "config_path"
+        ],
+        "title": "ConfigValidationResult"
+      },
+      "ConfigVersion": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "is_favorite": {
+            "type": "boolean",
+            "title": "Is Favorite",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "created_at",
+          "size_bytes"
+        ],
+        "title": "ConfigVersion"
+      },
+      "ConfigVersionDetail": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "yaml"
+        ],
+        "title": "ConfigVersionDetail"
+      },
+      "ConfigVersionsResponse": {
+        "properties": {
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigVersion"
+            },
+            "type": "array",
+            "title": "Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "versions"
+        ],
+        "title": "ConfigVersionsResponse"
+      },
+      "CreateProjectRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Slug used on disk. Derived from name when omitted."
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "Absolute path; when omitted the project lives under ~/.ryotenkai/projects/<id>/."
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "CreateProjectRequest"
+      },
+      "CreateProviderRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Type"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "Slug used on disk. Derived from name when omitted."
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path",
+            "description": "Absolute path; when omitted the provider lives under ~/.ryotenkai/providers/<id>/."
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "CreateProviderRequest"
+      },
+      "CreateRunRequest": {
+        "properties": {
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id",
+            "description": "Explicit run id; auto-suggested when omitted"
+          },
+          "subgroup": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subgroup",
+            "description": "Optional subgroup relative to runs_dir"
+          }
+        },
+        "type": "object",
+        "title": "CreateRunRequest"
+      },
+      "DefaultConfigResponse": {
+        "properties": {
+          "runs_dir": {
+            "type": "string",
+            "title": "Runs Dir"
+          },
+          "config_templates": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigTemplate"
+            },
+            "type": "array",
+            "title": "Config Templates"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runs_dir"
+        ],
+        "title": "DefaultConfigResponse"
+      },
+      "DeleteIssueSchema": {
+        "properties": {
+          "run_dir": {
+            "type": "string",
+            "title": "Run Dir"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_dir",
+          "phase",
+          "message"
+        ],
+        "title": "DeleteIssueSchema"
+      },
+      "DeleteResultSchema": {
+        "properties": {
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "run_dirs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Run Dirs"
+          },
+          "deleted_mlflow_run_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Deleted Mlflow Run Ids"
+          },
+          "local_deleted": {
+            "type": "boolean",
+            "title": "Local Deleted"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/DeleteIssueSchema"
+            },
+            "type": "array",
+            "title": "Issues"
+          },
+          "is_success": {
+            "type": "boolean",
+            "title": "Is Success"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target",
+          "local_deleted",
+          "is_success"
+        ],
+        "title": "DeleteResultSchema"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status"
+          },
+          "runs_dir": {
+            "type": "string",
+            "title": "Runs Dir"
+          },
+          "runs_dir_readable": {
+            "type": "boolean",
+            "title": "Runs Dir Readable"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "v0.1.0"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "runs_dir",
+          "runs_dir_readable"
+        ],
+        "title": "HealthStatus"
+      },
+      "InterruptResponse": {
+        "properties": {
+          "interrupted": {
+            "type": "boolean",
+            "title": "Interrupted"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "interrupted"
+        ],
+        "title": "InterruptResponse"
+      },
+      "LaunchRequestSchema": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "new_run",
+              "fresh",
+              "resume",
+              "restart"
+            ],
+            "title": "Mode"
+          },
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Path"
+          },
+          "restart_from_stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restart From Stage"
+          },
+          "log_level": {
+            "type": "string",
+            "enum": [
+              "INFO",
+              "DEBUG"
+            ],
+            "title": "Log Level",
+            "default": "INFO"
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "LaunchRequestSchema"
+      },
+      "LaunchResponse": {
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "title": "Pid"
+          },
+          "launched_at": {
+            "type": "string",
+            "title": "Launched At"
+          },
+          "command": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Command"
+          },
+          "launcher_log": {
+            "type": "string",
+            "title": "Launcher Log"
+          },
+          "run_dir": {
+            "type": "string",
+            "title": "Run Dir"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pid",
+          "launched_at",
+          "command",
+          "launcher_log",
+          "run_dir"
+        ],
+        "title": "LaunchResponse"
+      },
+      "LineageRefSchema": {
+        "properties": {
+          "attempt_id": {
+            "type": "string",
+            "title": "Attempt Id"
+          },
+          "stage_name": {
+            "type": "string",
+            "title": "Stage Name"
+          },
+          "outputs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Outputs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "stage_name"
+        ],
+        "title": "LineageRefSchema"
+      },
+      "LogChunk": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "title": "File"
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Offset"
+          },
+          "next_offset": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Next Offset"
+          },
+          "eof": {
+            "type": "boolean",
+            "title": "Eof"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file",
+          "offset",
+          "next_offset",
+          "eof",
+          "content"
+        ],
+        "title": "LogChunk"
+      },
+      "LogFileInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "exists": {
+            "type": "boolean",
+            "title": "Exists"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "path",
+          "size_bytes",
+          "exists"
+        ],
+        "title": "LogFileInfo"
+      },
+      "PluginListResponse": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reward",
+              "validation",
+              "evaluation"
+            ],
+            "title": "Kind"
+          },
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/PluginManifest"
+            },
+            "type": "array",
+            "title": "Plugins"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "plugins"
+        ],
+        "title": "PluginListResponse"
+      },
+      "PluginManifest": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": "1.0.0"
+          },
+          "priority": {
+            "type": "integer",
+            "title": "Priority",
+            "default": 50
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          },
+          "stability": {
+            "type": "string",
+            "title": "Stability",
+            "default": "stable"
+          },
+          "params_schema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params Schema"
+          },
+          "thresholds_schema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Thresholds Schema"
+          },
+          "suggested_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Suggested Params"
+          },
+          "suggested_thresholds": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Suggested Thresholds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "PluginManifest",
+        "description": "Normalised manifest surfaced to the web UI (Grafana-style)."
+      },
+      "ProjectDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "current_config_yaml": {
+            "type": "string",
+            "title": "Current Config Yaml",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "description",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProjectDetail"
+      },
+      "ProjectSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "path",
+          "created_at"
+        ],
+        "title": "ProjectSummary"
+      },
+      "ProviderConfigResponse": {
+        "properties": {
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          },
+          "parsed_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parsed Json"
+          }
+        },
+        "type": "object",
+        "required": [
+          "yaml"
+        ],
+        "title": "ProviderConfigResponse"
+      },
+      "ProviderConfigVersion": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "created_at",
+          "size_bytes"
+        ],
+        "title": "ProviderConfigVersion"
+      },
+      "ProviderConfigVersionDetail": {
+        "properties": {
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "filename",
+          "yaml"
+        ],
+        "title": "ProviderConfigVersionDetail"
+      },
+      "ProviderConfigVersionsResponse": {
+        "properties": {
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderConfigVersion"
+            },
+            "type": "array",
+            "title": "Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "versions"
+        ],
+        "title": "ProviderConfigVersionsResponse"
+      },
+      "ProviderDetail": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          },
+          "current_config_yaml": {
+            "type": "string",
+            "title": "Current Config Yaml",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "path",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ProviderDetail"
+      },
+      "ProviderSaveConfigRequest": {
+        "properties": {
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "yaml"
+        ],
+        "title": "ProviderSaveConfigRequest"
+      },
+      "ProviderSaveConfigResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "snapshot_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Filename"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "ProviderSaveConfigResponse"
+      },
+      "ProviderSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "type",
+          "path",
+          "created_at"
+        ],
+        "title": "ProviderSummary"
+      },
+      "ProviderTypeInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "json_schema": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Json Schema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "json_schema"
+        ],
+        "title": "ProviderTypeInfo"
+      },
+      "ProviderTypesResponse": {
+        "properties": {
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderTypeInfo"
+            },
+            "type": "array",
+            "title": "Types"
+          }
+        },
+        "type": "object",
+        "required": [
+          "types"
+        ],
+        "title": "ProviderTypesResponse"
+      },
+      "ReportResponse": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "markdown": {
+            "type": "string",
+            "title": "Markdown"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "regenerated": {
+            "type": "boolean",
+            "title": "Regenerated",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "markdown",
+          "generated_at"
+        ],
+        "title": "ReportResponse"
+      },
+      "RestartPoint": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "title": "Stage"
+          },
+          "available": {
+            "type": "boolean",
+            "title": "Available"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "available",
+          "mode",
+          "reason"
+        ],
+        "title": "RestartPoint"
+      },
+      "RestartPointsResponse": {
+        "properties": {
+          "config_path": {
+            "type": "string",
+            "title": "Config Path"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/RestartPoint"
+            },
+            "type": "array",
+            "title": "Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config_path"
+        ],
+        "title": "RestartPointsResponse"
+      },
+      "RunDetail": {
+        "properties": {
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
+          },
+          "logical_run_id": {
+            "type": "string",
+            "title": "Logical Run Id"
+          },
+          "run_directory": {
+            "type": "string",
+            "title": "Run Directory"
+          },
+          "config_path": {
+            "type": "string",
+            "title": "Config Path"
+          },
+          "config_abspath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Abspath"
+          },
+          "active_attempt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Attempt Id"
+          },
+          "pipeline_status": {
+            "type": "string",
+            "title": "Pipeline Status"
+          },
+          "training_critical_config_hash": {
+            "type": "string",
+            "title": "Training Critical Config Hash",
+            "default": ""
+          },
+          "late_stage_config_hash": {
+            "type": "string",
+            "title": "Late Stage Config Hash",
+            "default": ""
+          },
+          "model_dataset_config_hash": {
+            "type": "string",
+            "title": "Model Dataset Config Hash",
+            "default": ""
+          },
+          "root_mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Mlflow Run Id"
+          },
+          "mlflow_runtime_tracking_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Runtime Tracking Uri"
+          },
+          "mlflow_ca_bundle_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Ca Bundle Path"
+          },
+          "attempts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Attempts"
+          },
+          "current_output_lineage": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LineageRefSchema"
+            },
+            "type": "object",
+            "title": "Current Output Lineage"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Icon"
+          },
+          "status_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Color"
+          },
+          "running_attempt_no": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Running Attempt No"
+          },
+          "next_attempt_no": {
+            "type": "integer",
+            "title": "Next Attempt No",
+            "default": 1
+          },
+          "is_locked": {
+            "type": "boolean",
+            "title": "Is Locked",
+            "default": false
+          },
+          "lock_pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Pid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "schema_version",
+          "logical_run_id",
+          "run_directory",
+          "config_path",
+          "pipeline_status",
+          "status"
+        ],
+        "title": "RunDetail"
+      },
+      "RunSummary": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "run_dir": {
+            "type": "string",
+            "title": "Run Dir"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "created_ts": {
+            "type": "number",
+            "title": "Created Ts"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Icon"
+          },
+          "status_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Color"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "config_name": {
+            "type": "string",
+            "title": "Config Name"
+          },
+          "mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Run Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "default": "(root)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "run_dir",
+          "created_at",
+          "created_ts",
+          "status",
+          "attempts",
+          "config_name"
+        ],
+        "title": "RunSummary"
+      },
+      "RunsListResponse": {
+        "properties": {
+          "runs_dir": {
+            "type": "string",
+            "title": "Runs Dir"
+          },
+          "groups": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/RunSummary"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "runs_dir"
+        ],
+        "title": "RunsListResponse"
+      },
+      "SaveConfigRequest": {
+        "properties": {
+          "yaml": {
+            "type": "string",
+            "title": "Yaml"
+          }
+        },
+        "type": "object",
+        "required": [
+          "yaml"
+        ],
+        "title": "SaveConfigRequest"
+      },
+      "SaveConfigResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "snapshot_filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Filename"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "SaveConfigResponse"
+      },
+      "StageRun": {
+        "properties": {
+          "stage_name": {
+            "type": "string",
+            "title": "Stage Name"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "status_icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Icon"
+          },
+          "status_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Color"
+          },
+          "execution_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Mode"
+          },
+          "mode_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Label"
+          },
+          "outputs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Outputs"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Kind"
+          },
+          "reuse_from": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reuse From"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage_name",
+          "status"
+        ],
+        "title": "StageRun"
+      },
+      "StagesResponse": {
+        "properties": {
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/StageRun"
+            },
+            "type": "array",
+            "title": "Stages"
+          }
+        },
+        "type": "object",
+        "title": "StagesResponse"
+      },
+      "ToggleFavoriteRequest": {
+        "properties": {
+          "favorite": {
+            "type": "boolean",
+            "title": "Favorite"
+          }
+        },
+        "type": "object",
+        "required": [
+          "favorite"
+        ],
+        "title": "ToggleFavoriteRequest"
+      },
+      "ToggleFavoriteResponse": {
+        "properties": {
+          "favorite_versions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Favorite Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "favorite_versions"
+        ],
+        "title": "ToggleFavoriteResponse"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
