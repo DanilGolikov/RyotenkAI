@@ -21,9 +21,11 @@ type FieldProps = {
 }
 
 /**
- * Dense label-left row. Stays grid on ≥640px so short inputs
- * (numbers, enums) don't balloon to the full row; stacks on narrow
- * viewports so it still reads on mobile.
+ * Dense label-left row with a hairline divider + subtle row hover.
+ * Labels are intentionally muted (zinc-400) so input values pop — the
+ * brightness delta is what lets the eye scan boundaries in a long form.
+ * Hairlines come from `divide-y divide-white/[0.06]` on the surrounding
+ * ObjectFields container.
  */
 function LabelledRow({
   label,
@@ -37,11 +39,11 @@ function LabelledRow({
   children: React.ReactNode
 }) {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
-      <div className="flex items-center gap-2 min-w-0 pt-2 sm:pt-0">
-        <label className="text-xs text-ink-1 font-medium truncate">
+    <div className="group/row -mx-3 px-3 py-2 rounded-md transition-colors hover:bg-white/[0.02] grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <label className="text-xs text-ink-3 truncate">
           {label}
-          {required && <span className="ml-1 text-brand">*</span>}
+          {required && <span className="ml-1 text-ink-4">*</span>}
         </label>
         <HelpTooltip text={description} />
       </div>
@@ -411,20 +413,24 @@ function ObjectFields({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-white/[0.06]">
       {requiredFields.map(renderField)}
       {optionalFields.length > 0 && (
-        <div className="space-y-4">
+        <div className="divide-y divide-white/[0.06]">
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className="text-2xs text-ink-3 hover:text-ink-1 transition flex items-center gap-1.5"
+            className="text-2xs text-ink-3 hover:text-ink-1 transition flex items-center gap-1.5 py-2"
           >
             <span className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}>▸</span>
             {showAdvanced ? 'Hide' : 'Show'} {optionalFields.length} optional field
             {optionalFields.length === 1 ? '' : 's'}
           </button>
-          {showAdvanced && <div className="space-y-4">{optionalFields.map(renderField)}</div>}
+          {showAdvanced && (
+            <div className="divide-y divide-white/[0.06]">
+              {optionalFields.map(renderField)}
+            </div>
+          )}
         </div>
       )}
     </div>
