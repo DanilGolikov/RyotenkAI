@@ -1,5 +1,5 @@
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
-import { resolveRef, titleOrKey } from './schemaUtils'
+import { orderTopLevelKeys, resolveRef, titleOrKey } from './schemaUtils'
 
 export type GroupValidity = 'ok' | 'warn' | 'err' | 'idle'
 
@@ -23,7 +23,7 @@ export function TocRail({
 }) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
   const required = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
-  const keys = Object.keys(topProps)
+  const keys = orderTopLevelKeys(Object.keys(topProps))
 
   return (
     <nav className="sticky top-4 space-y-0.5 pr-2">

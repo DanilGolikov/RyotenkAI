@@ -60,3 +60,29 @@ export function titleOrKey(node: JsonSchemaNode, key: string): string {
 export function getDefault(node: JsonSchemaNode): unknown {
   return Object.prototype.hasOwnProperty.call(node ?? {}, 'default') ? node.default : undefined
 }
+
+/**
+ * Preferred ordering for PipelineConfig top-level groups in the UI. Keys
+ * not listed here fall through alphabetically at the end so unknown
+ * future groups still render. Applied by ConfigBuilder + GroupSubtabs +
+ * TocRail via {@link orderTopLevelKeys}.
+ */
+const TOP_LEVEL_ORDER = [
+  'model',
+  'training',
+  'inference',
+  'evaluation',
+  'experiment_tracking',
+  'datasets',
+  'providers',
+]
+
+export function orderTopLevelKeys(keys: string[]): string[] {
+  const index = new Map(TOP_LEVEL_ORDER.map((k, i) => [k, i]))
+  return [...keys].sort((a, b) => {
+    const ai = index.get(a) ?? TOP_LEVEL_ORDER.length
+    const bi = index.get(b) ?? TOP_LEVEL_ORDER.length
+    if (ai !== bi) return ai - bi
+    return a.localeCompare(b)
+  })
+}

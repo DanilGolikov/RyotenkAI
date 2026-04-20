@@ -4,6 +4,7 @@ import { FieldRenderer } from './FieldRenderer'
 import { FieldSearchOmniBox } from './FieldSearchOmniBox'
 import { GroupSubtabs } from './GroupSubtabs'
 import type { GroupRendererProps } from './ProviderPickerField'
+import { orderTopLevelKeys } from './schemaUtils'
 import type { GroupValidity } from './TocRail'
 
 export interface ConfigBuilderProps {
@@ -49,7 +50,7 @@ export function ConfigBuilder({
 }: ConfigBuilderProps) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
   const topRequired = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
-  const keys = useMemo(() => Object.keys(topProps), [topProps])
+  const keys = useMemo(() => orderTopLevelKeys(Object.keys(topProps)), [topProps])
 
   const [active, setActive] = useState<string>(() => readInitialGroup(keys, hashPrefix))
 

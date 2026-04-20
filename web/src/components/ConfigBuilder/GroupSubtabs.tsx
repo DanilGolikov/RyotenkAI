@@ -1,5 +1,5 @@
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
-import { resolveRef, titleOrKey } from './schemaUtils'
+import { orderTopLevelKeys, resolveRef, titleOrKey } from './schemaUtils'
 import type { GroupValidity } from './TocRail'
 
 const DOT_CLS: Record<GroupValidity, string> = {
@@ -27,7 +27,7 @@ export function GroupSubtabs({
 }) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
   const required = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
-  const keys = Object.keys(topProps)
+  const keys = orderTopLevelKeys(Object.keys(topProps))
 
   return (
     <div className="sticky top-0 z-10 -mx-1 px-1 pb-2 pt-1 bg-surface-1/90 backdrop-blur border-b border-line-1 overflow-x-auto">
