@@ -34,7 +34,7 @@ export function ProjectDetailPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-4">
+    <div className="px-6 py-6 space-y-4">
       <Card padding="p-0">
         <div className="px-5 py-4 border-b border-line-1 bg-gradient-brand-soft">
           <div className="text-lg font-semibold text-ink-1">{project.name}</div>

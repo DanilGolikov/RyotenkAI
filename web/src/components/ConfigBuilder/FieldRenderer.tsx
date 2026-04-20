@@ -275,11 +275,19 @@ function ObjectFields({
   // names. If detected, hide the non-matching siblings in the UI (keep
   // them in the value so switching back is lossless).
   const discriminator = detectDiscriminator(root, props)
-  const activeBranch = discriminator
-    ? (typeof currentValue[discriminator.enumKey] === 'string'
-        ? (currentValue[discriminator.enumKey] as string)
-        : undefined)
-    : undefined
+  const activeBranch: string | undefined = (() => {
+    if (!discriminator) return undefined
+    const fromValue = currentValue[discriminator.enumKey]
+    if (typeof fromValue === 'string' && discriminator.siblings.has(fromValue)) {
+      return fromValue
+    }
+    // Fall back to the schema default so the UI doesn't hide *every*
+    // sibling while the value is still empty.
+    const resolved = resolveRef(root, props[discriminator.enumKey])
+    const fromDefault = typeof resolved.default === 'string' ? resolved.default : undefined
+    if (fromDefault && discriminator.siblings.has(fromDefault)) return fromDefault
+    return discriminator.enumValues[0]
+  })()
   const hiddenSiblings = new Set<string>()
   if (discriminator) {
     for (const name of discriminator.siblings) {
@@ -294,8 +302,10 @@ function ObjectFields({
     if (requiredSet.has(key)) requiredFields.push(key)
     else optionalFields.push(key)
   }
-  // Reorder: when a discriminator is present, surface the enum key and
-  // its active branch first so the user doesn't have to hunt.
+  // When a discriminator is present, its enum key and the active branch
+  // are both optional but conceptually structural — surface them at the
+  // *top* of the optional bucket so they're found easily, while keeping
+  // genuine required fields (e.g. training.hyperparams) first overall.
   if (discriminator && activeBranch && discriminator.siblings.has(activeBranch)) {
     const bump = (arr: string[], key: string) => {
       const i = arr.indexOf(key)
@@ -304,13 +314,10 @@ function ObjectFields({
         arr.unshift(key)
       }
     }
-    // Put branch first, then discriminator, so on render both are top-of-list.
-    // (unshift reverses insertion order — see below: push discriminator *after*
-    //  the branch so it ends up first.)
-    for (const arr of [requiredFields, optionalFields]) {
-      bump(arr, activeBranch)
-      bump(arr, discriminator.enumKey)
-    }
+    // Push branch first, then discriminator — with unshift that puts the
+    // discriminator at index 0 and the branch at index 1.
+    bump(optionalFields, activeBranch)
+    bump(optionalFields, discriminator.enumKey)
   }
 
   function setKey(key: string, next: unknown) {

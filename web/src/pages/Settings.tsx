@@ -8,7 +8,7 @@ const SUBTABS: { to: string; label: string; disabled?: boolean; hint?: string }[
 
 export function SettingsPage() {
   return (
-    <div className="max-w-6xl mx-auto p-6 grid grid-cols-[200px_1fr] gap-6">
+    <div className="px-6 py-6 grid grid-cols-[200px_1fr] gap-6">
       <aside className="space-y-0.5">
         <div className="text-2xs uppercase tracking-wide text-ink-3 px-2 mb-1">Settings</div>
         {SUBTABS.map((t) =>
