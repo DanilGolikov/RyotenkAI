@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
+import { ArrayField } from './ArrayField'
 import { FieldAnchor } from './FieldAnchor'
 import { HelpTooltip } from './HelpTooltip'
 import { UnionField } from './UnionField'
@@ -214,7 +215,23 @@ export function FieldRenderer(props: FieldProps) {
     )
   }
 
-  if (kind === 'array' || kind === 'unknown') {
+  if (kind === 'array') {
+    return (
+      <ArrayField
+        root={root}
+        node={node}
+        value={fallback}
+        onChange={onChange}
+        label={label}
+        description={description}
+        required={required}
+        path={path}
+        hashPrefix={hashPrefix}
+      />
+    )
+  }
+
+  if (kind === 'unknown') {
     return wrapAnchor(
       <LabelledRow label={label} description={description} required={required}>
         <AdvancedJsonPreview value={fallback} />
