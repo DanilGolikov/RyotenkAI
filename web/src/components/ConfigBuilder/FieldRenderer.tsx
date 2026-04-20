@@ -41,9 +41,9 @@ function LabelledRow({
   return (
     <div className="group/row -mx-3 px-3 py-2 rounded-md transition-colors hover:bg-white/[0.02] grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
       <div className="flex items-center gap-1.5 min-w-0">
-        <label className="text-xs text-ink-3 truncate">
+        <label className="text-xs text-brand-alt/85 truncate">
           {label}
-          {required && <span className="ml-1 text-ink-4">*</span>}
+          {required && <span className="ml-1 text-brand">*</span>}
         </label>
         <HelpTooltip text={description} />
       </div>
@@ -53,8 +53,10 @@ function LabelledRow({
 }
 
 // Dense input baseline: 32px height, 13px text, monospace for values.
+// Subtle brand-alt (violet) tint on the border + background so inputs
+// read as inputs even in a dense row, without going loud.
 const INPUT_BASE =
-  'h-8 rounded-md bg-surface-2 border border-line-1 px-2.5 text-[13px] font-mono focus:outline-none focus:border-brand'
+  'h-8 rounded-md bg-brand-alt/[0.04] border border-brand-alt/25 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand focus:bg-brand-alt/[0.08] hover:border-brand-alt/45 transition-colors'
 
 const WIDE_NAME_RE = /(path|url|uri|dir|file|repo|image|endpoint|bucket|model|name|prefix|suffix|volume|description|prompt|tracking_uri)/i
 
