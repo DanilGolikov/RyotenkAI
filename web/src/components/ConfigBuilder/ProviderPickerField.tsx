@@ -231,13 +231,7 @@ export function ProviderPickerField({
       {pickOpen === 'settings' && (
         <div className="rounded-md border border-line-1 bg-surface-0 p-3 space-y-2">
           {registered.length === 0 ? (
-            <div className="text-2xs text-ink-3">
-              No providers registered yet — create one in{' '}
-              <a href="/settings/providers" className="text-brand">
-                Settings
-              </a>
-              .
-            </div>
+            <div className="text-2xs text-ink-3">No providers registered yet.</div>
           ) : (
             registered.map((p) => {
               const already = attachedIds.includes(p.id)
@@ -261,6 +255,12 @@ export function ProviderPickerField({
               )
             })
           )}
+          <a
+            href="/settings/providers#new"
+            className="block rounded-md border border-dashed border-brand-alt/60 bg-brand-alt/5 px-3 py-2 text-xs text-brand-alt hover:bg-brand-alt/10 transition"
+          >
+            + Create new provider in Settings →
+          </a>
         </div>
       )}
 

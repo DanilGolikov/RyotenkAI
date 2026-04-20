@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useProviders } from '../api/hooks/useProviders'
 import { NewProviderModal } from '../components/NewProviderModal'
 import { ProviderCard } from '../components/ProviderCard'
@@ -7,6 +7,15 @@ import { Card, EmptyState, SectionHeader, Spinner } from '../components/ui'
 export function ProvidersPage() {
   const { data, isLoading, error } = useProviders()
   const [modalOpen, setModalOpen] = useState(false)
+
+  // Deep-link: navigating with #new (from ProviderPickerField "Create in
+  // Settings →") auto-opens the modal, then clears the hash.
+  useEffect(() => {
+    if (window.location.hash === '#new') {
+      setModalOpen(true)
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+  }, [])
 
   const newProviderBtn = (
     <button
