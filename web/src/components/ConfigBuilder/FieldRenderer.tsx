@@ -20,6 +20,11 @@ type FieldProps = {
   hashPrefix?: string
 }
 
+/**
+ * Dense label-left row. Stays grid on ≥640px so short inputs
+ * (numbers, enums) don't balloon to the full row; stacks on narrow
+ * viewports so it still reads on mobile.
+ */
 function LabelledRow({
   label,
   description,
@@ -32,17 +37,38 @@ function LabelledRow({
   children: React.ReactNode
 }) {
   return (
-    <div>
-      <div className="flex items-center gap-2 mb-1.5">
-        <label className="text-xs text-ink-1 font-medium">
+    <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
+      <div className="flex items-center gap-2 min-w-0 pt-2 sm:pt-0">
+        <label className="text-xs text-ink-1 font-medium truncate">
           {label}
           {required && <span className="ml-1 text-brand">*</span>}
         </label>
         <HelpTooltip text={description} />
       </div>
-      {children}
+      <div className="min-w-0">{children}</div>
     </div>
   )
+}
+
+// Dense input baseline: 32px height, 13px text, monospace for values.
+const INPUT_BASE =
+  'h-8 rounded-md bg-surface-2 border border-line-1 px-2.5 text-[13px] font-mono focus:outline-none focus:border-brand'
+
+const WIDE_NAME_RE = /(path|url|uri|dir|file|repo|image|endpoint|bucket|model|name|prefix|suffix|volume|description|prompt|tracking_uri)/i
+
+/**
+ * Choose an input width for a string field. Short semantic names (name,
+ * slug, id) get a medium 320px input; paths/URLs/secrets and anything
+ * that tends to hold long values go full-width up to ~640px. Keeps
+ * short fields from ballooning on wide screens.
+ */
+function stringWidthClass(key: string, node: JsonSchemaNode): string {
+  const format = typeof node.format === 'string' ? node.format : ''
+  if (format === 'uri' || format === 'path' || format === 'email') {
+    return 'w-full max-w-[640px]'
+  }
+  if (WIDE_NAME_RE.test(key)) return 'w-full max-w-[640px]'
+  return 'w-80'
 }
 
 export function FieldRenderer(props: FieldProps) {
@@ -84,7 +110,7 @@ export function FieldRenderer(props: FieldProps) {
         <select
           value={fallback === undefined || fallback === null ? '' : String(fallback)}
           onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
+          className={`${INPUT_BASE} w-auto min-w-[160px] pr-7`}
         >
           <option value="">—</option>
           {options.map((opt) => (
@@ -111,7 +137,7 @@ export function FieldRenderer(props: FieldProps) {
                 kind === 'integer' ? Number.parseInt(e.target.value, 10) : Number(e.target.value),
               )
           }}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
+          className={`${INPUT_BASE} w-32`}
         />
       </LabelledRow>,
     )
@@ -124,7 +150,7 @@ export function FieldRenderer(props: FieldProps) {
           type="text"
           value={typeof fallback === 'string' ? fallback : ''}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
+          className={`${INPUT_BASE} ${stringWidthClass(labelKey, node)}`}
         />
       </LabelledRow>,
     )
@@ -353,7 +379,7 @@ function ObjectFields({
             <select
               value={fallback}
               onChange={(e) => setKey(key, e.target.value || undefined)}
-              className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
+              className={`${INPUT_BASE} w-auto min-w-[160px] pr-7`}
             >
               {!discriminator.enumValues.includes(fallback) && (
                 <option value="">—</option>
