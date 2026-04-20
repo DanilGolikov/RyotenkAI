@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from src.api.config import ApiSettings
@@ -24,6 +25,17 @@ from src.api.routers.health import router as health_router
 from src.api.ws.log_stream import router as ws_router
 
 API_V1_PREFIX = "/api/v1"
+
+
+def _stable_operation_id(route: APIRoute) -> str:
+    """Produce stable, readable ``operationId`` values for the OpenAPI spec.
+
+    FastAPI's default ``<func>_<path>_<method>`` is noisy and changes any
+    time the function is renamed or the path shifts. We anchor on
+    ``<tag>-<func>`` instead, which keeps codegen output stable.
+    """
+    tag = route.tags[0] if route.tags else "api"
+    return f"{tag}-{route.name}"
 
 
 def configure_app(app: FastAPI, settings: ApiSettings) -> None:
@@ -78,6 +90,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
             "Equal citizen with CLI and TUI — reads pipeline_state.json directly, "
             "launches pipeline runs as detached subprocesses."
         ),
+        generate_unique_id_function=_stable_operation_id,
     )
     app.state.settings = effective_settings
     configure_app(app, effective_settings)

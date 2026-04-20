@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.api.dependencies import get_runs_dir
+from src.api.schemas.config_preset import ConfigPreset, ConfigPresetsResponse
 from src.api.schemas.config_validate import ConfigValidationResult
 from src.api.services import config_service
 
@@ -50,16 +51,6 @@ def schema() -> dict:
     from src.config.pipeline.schema import PipelineConfig
 
     return PipelineConfig.model_json_schema()
-
-
-class ConfigPreset(BaseModel):
-    name: str
-    description: str = ""
-    yaml: str
-
-
-class ConfigPresetsResponse(BaseModel):
-    presets: list[ConfigPreset] = Field(default_factory=list)
 
 
 @router.get("/presets", response_model=ConfigPresetsResponse)
