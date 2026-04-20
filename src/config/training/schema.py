@@ -11,7 +11,7 @@ from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
 
 # NOTE: Runtime import is required for Pydantic field type.
 from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
-from .lora import AdaLoraConfig, LoraConfig  # noqa: TC001
+from .lora import AdaLoraConfig, LoraConfig, QloraConfig  # noqa: TC001
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class TrainingOnlyConfig(StrictBaseModel):
     - type: "qlora" | "lora" | "adalora"
     - hyperparams: GlobalHyperparametersConfig (global defaults)
     - lora: LoraConfig    (use when type='lora')
-    - qlora: LoraConfig   (use when type='qlora', same structure, enables 4-bit quantization)
+    - qlora: QloraConfig  (use when type='qlora', LoRA + bnb_4bit_* quantization)
     - adalora: AdaLoraConfig (use when type='adalora')
     - provider: Reference to provider from providers registry
 
@@ -70,9 +70,9 @@ class TrainingOnlyConfig(StrictBaseModel):
         None,
         description="LoRA config (use when type='lora')",
     )
-    qlora: LoraConfig | None = Field(
+    qlora: QloraConfig | None = Field(
         None,
-        description="QLoRA config (use when type='qlora'). Same structure as lora, uses bnb_4bit_* settings.",
+        description="QLoRA config (use when type='qlora'). Extends LoRA with bnb_4bit_* quantization settings.",
     )
     adalora: AdaLoraConfig | None = Field(
         None,
@@ -146,13 +146,13 @@ class TrainingOnlyConfig(StrictBaseModel):
             return self.hyperparams.optim
         return "paged_adamw_8bit" if self.type == TRAINING_TYPE_QLORA else "adamw_torch"
 
-    def get_adapter_config(self) -> LoraConfig | AdaLoraConfig:
+    def get_adapter_config(self) -> LoraConfig | QloraConfig | AdaLoraConfig:
         """
         Get the adapter config matching the training type.
 
         Returns:
-            LoraConfig for type="lora"   (from lora: block)
-            LoraConfig for type="qlora"  (from qlora: block)
+            LoraConfig for type="lora"   (from lora: block, no bnb_* fields)
+            QloraConfig for type="qlora" (from qlora: block, adds bnb_4bit_*)
             AdaLoraConfig for type="adalora" (from adalora: block)
         """
         if self.type == TRAINING_TYPE_ADALORA:

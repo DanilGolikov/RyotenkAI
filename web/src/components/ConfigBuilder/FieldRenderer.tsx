@@ -3,8 +3,46 @@ import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConf
 import { ArrayField } from './ArrayField'
 import { FieldAnchor } from './FieldAnchor'
 import { HelpTooltip } from './HelpTooltip'
+import { HFModelField } from './HFModelField'
+import { InferenceProviderField } from './InferenceProviderField'
+import { SelectField } from './SelectField'
+import { TrainingProviderField } from './TrainingProviderField'
 import { UnionField } from './UnionField'
-import { detectKind, getDefault, resolveRef, titleOrKey } from './schemaUtils'
+import { useFieldStatus, useValidationCtx } from './ValidationContext'
+import type { FieldStatus } from './ValidationContext'
+
+/**
+ * Per-path custom components for fields that can't be described by the
+ * generic schema-driven renderer (e.g. ones that need live Settings
+ * data). Keyed by dotted path; numeric array indices are normalised to
+ * ``*`` via the same path-normaliser used for FIELD_OVERRIDES.
+ */
+type CustomFieldProps = {
+  value: unknown
+  onChange: (next: unknown) => void
+  /** Forwarded focus/blur so the validation context can track which
+   *  field is currently being edited. Custom renderers can wire these
+   *  into their main focusable element (input / trigger). */
+  onFocus?: () => void
+  onBlur?: () => void
+}
+const CUSTOM_FIELD_RENDERERS: Record<
+  string,
+  React.ComponentType<CustomFieldProps>
+> = {
+  'training.provider': TrainingProviderField,
+  'inference.provider': InferenceProviderField,
+  'model.name': HFModelField,
+}
+import {
+  detectKind,
+  getDefault,
+  getDiscriminatorOverride,
+  getFieldOverride,
+  getRequiredOverride,
+  resolveRef,
+  titleOrKey,
+} from './schemaUtils'
 
 type Setter = (value: unknown) => void
 
@@ -24,39 +62,114 @@ type FieldProps = {
  * Dense label-left row with a hairline divider + subtle row hover.
  * Labels are intentionally muted (zinc-400) so input values pop — the
  * brightness delta is what lets the eye scan boundaries in a long form.
- * Hairlines come from `divide-y divide-white/[0.06]` on the surrounding
+ * Hairlines come from `space-y-2` on the surrounding
  * ObjectFields container.
  */
+// Visual rules (after iteration with design):
+//   - idle / ok / editing → no bar. Focus ring on the input already
+//     signals "you're here" via the existing `focus:border-brand` inside
+//     INPUT_BASE; we mirror that onto the label pill so both halves of
+//     the row light up together.
+//   - error → red bar under the input + matching red border on the label
+//     pill + inline message below.
+const STATUS_BORDER: Record<FieldStatus['state'], string> = {
+  idle: '',
+  editing: '',
+  ok: '',
+  // Apply ring to the DIRECT CHILD (input / SelectField trigger / etc.),
+  // not the wrapper — the wrapper fills the whole grid cell, so a ring on
+  // it spans the full pane while the actual input may be narrow. Arbitrary
+  // variant [&>*] lets us reach only the one rendered input element.
+  error: '[&>*]:rounded [&>*]:ring-1 [&>*]:ring-err/70',
+}
+
+const LABEL_PILL_BORDER: Record<FieldStatus['state'], string> = {
+  idle: 'border-line-1',
+  editing: 'border-brand',
+  ok: 'border-line-1',
+  error: 'border-err',
+}
+
 function LabelledRow({
   label,
   description,
   required,
+  path,
+  value,
+  suppressBar,
   children,
 }: {
   label: string
   description?: string
   required?: boolean
+  path?: string
+  value?: unknown
+  /** Skip the input-side status bar. Used for checkboxes where a bar
+   *  under a 16×16 box reads as a glitch. */
+  suppressBar?: boolean
   children: React.ReactNode
 }) {
+  const status = useFieldStatus(path ?? '', Boolean(required), value)
+  const bar = path && !suppressBar ? STATUS_BORDER[status.state] : STATUS_BORDER.idle
+  const labelBorder = path ? LABEL_PILL_BORDER[status.state] : LABEL_PILL_BORDER.idle
   return (
-    <div className="group/row -mx-3 px-3 py-2 rounded-md transition-colors hover:bg-white/[0.02] grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
-      <div className="flex items-center gap-1.5 min-w-0">
-        <label className="text-xs text-brand-alt/85 truncate">
-          {label}
-          {required && <span className="ml-1 text-brand">*</span>}
-        </label>
-        <HelpTooltip text={description} />
+    <div className="group/row py-1.5">
+      <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
+        <div
+          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} px-2.5 h-8 transition-colors`}
+        >
+          {/* Required marker lives in a fixed-width slot on the left so
+              every row aligns to the same column, regardless of label
+              length. Pattern borrowed from Ant Design; absent rows get
+              an invisible placeholder to preserve the grid. */}
+          <span
+            aria-hidden={!required}
+            className={`inline-flex w-2 shrink-0 text-brand text-xs leading-none ${required ? '' : 'invisible'}`}
+          >
+            *
+          </span>
+          <label className="flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate">
+            {label}
+            {required && <span className="sr-only"> (required)</span>}
+          </label>
+          <HelpTooltip text={description} />
+        </div>
+        <div className={`w-full min-w-0 ${bar} transition-colors`}>{children}</div>
       </div>
-      <div className="min-w-0">{children}</div>
+      {status.state === 'error' && status.message && (
+        <div className="mt-1 ml-0 sm:ml-[236px] text-[0.65rem] text-err font-mono break-words">
+          {status.message}
+        </div>
+      )}
     </div>
   )
 }
 
+/**
+ * Focus/blur wiring for a single input. Reports focus entry/exit to the
+ * validation context so the field can flip yellow while edited + red
+ * once the user moves on from a required-but-empty field. Blur also
+ * triggers a server re-validate (debounced inside the provider).
+ */
+function useFieldHandlers(path: string) {
+  const ctx = useValidationCtx()
+  if (!ctx) return {}
+  return {
+    onFocus: () => ctx.setFocusedPath(path),
+    onBlur: () => {
+      ctx.setFocusedPath(null)
+      ctx.markDirty(path)
+      ctx.requestValidate()
+    },
+  } as const
+}
+
 // Dense input baseline: 32px height, 13px text, monospace for values.
-// Subtle brand-alt (violet) tint on the border + background so inputs
-// read as inputs even in a dense row, without going loud.
+// Grafana-flat: neutral surface-1 bg + hairline line-1 border. Focus
+// lifts to brand border (pink) without any coloured background, so the
+// form reads as chrome rather than decoration.
 const INPUT_BASE =
-  'h-8 rounded-md bg-brand-alt/[0.04] border border-brand-alt/25 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand focus:bg-brand-alt/[0.08] hover:border-brand-alt/45 transition-colors'
+  'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors placeholder:text-ink-4 placeholder:italic'
 
 const WIDE_NAME_RE = /(path|url|uri|dir|file|repo|image|endpoint|bucket|model|name|prefix|suffix|volume|description|prompt|tracking_uri)/i
 
@@ -79,7 +192,13 @@ export function FieldRenderer(props: FieldProps) {
   const { root, node: rawNode, value, onChange, labelKey, required, depth = 0 } = props
   const path = props.path ?? labelKey
   const hashPrefix = props.hashPrefix ?? ''
-  const node = resolveRef(root, rawNode)
+  const rawResolved = resolveRef(root, rawNode)
+  // Unwrap nullable scalars: Pydantic ``Optional[str]`` comes through as
+  // ``anyOf: [{type:'string'}, {type:'null'}]``, which detectKind sees as
+  // a union and the union branch then falls back to the JSON preview.
+  // Drop the null branch and keep the scalar so it renders as its own
+  // kind. ``undefined`` means "not set" and already round-trips fine.
+  const node = unwrapNullableScalar(root, rawResolved)
   const kind = detectKind(node)
   const label = titleOrKey(node, labelKey)
   const description = typeof node.description === 'string' ? node.description : undefined
@@ -90,18 +209,67 @@ export function FieldRenderer(props: FieldProps) {
       {el}
     </FieldAnchor>
   )
+  const focusHandlers = useFieldHandlers(path)
+
+  const normalizedPath = path
+    .split('.')
+    .map((seg) => (/^\d+$/.test(seg) ? '*' : seg))
+    .join('.')
+  const Custom = CUSTOM_FIELD_RENDERERS[normalizedPath]
+  if (Custom) {
+    return wrapAnchor(
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
+        <Custom value={fallback} onChange={onChange} {...focusHandlers} />
+      </LabelledRow>,
+    )
+  }
+
+  const fieldOverride = getFieldOverride(path)
+  if (fieldOverride?.comingSoon) {
+    return wrapAnchor(
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
+        <div className="h-8 inline-flex items-center gap-2 px-2.5 rounded-md border border-dashed border-line-1 bg-surface-0/40 text-xs text-ink-3 italic">
+          <span>{fieldOverride.comingSoon}</span>
+          <span className="not-italic text-[0.55rem] uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-alt/15 text-brand-alt">
+            soon
+          </span>
+        </div>
+      </LabelledRow>,
+    )
+  }
+  if (fieldOverride?.enumValues) {
+    const current = typeof value === 'string' ? value : ''
+    const needsEmpty = !fieldOverride.enumValues.includes(current)
+    const schemaDefault = getDefault(node)
+    const placeholder =
+      typeof schemaDefault === 'string' ? schemaDefault : '—'
+    return wrapAnchor(
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
+        <SelectField
+          value={current}
+          options={fieldOverride.enumValues.map((v) => ({ value: v }))}
+          onChange={(next) => onChange(next === '' ? undefined : next)}
+          allowEmpty={needsEmpty}
+          placeholder={placeholder}
+          {...focusHandlers}
+        />
+      </LabelledRow>,
+    )
+  }
 
   if (kind === 'boolean') {
+    const checked = Boolean(fallback)
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
-        <label className="inline-flex items-center gap-2 text-xs">
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback} suppressBar>
+        <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
           <input
             type="checkbox"
-            checked={Boolean(fallback)}
+            checked={checked}
             onChange={(e) => onChange(e.target.checked)}
-            className="accent-brand"
+            {...focusHandlers}
+            className="h-4 w-4 rounded-[2px] border border-line-2 bg-surface-1 accent-brand hover:border-ink-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand transition-colors"
           />
-          <span className="text-ink-2">{String(Boolean(fallback))}</span>
+          <span className="font-mono text-ink-2">{String(checked)}</span>
         </label>
       </LabelledRow>
     )
@@ -109,31 +277,42 @@ export function FieldRenderer(props: FieldProps) {
 
   if (kind === 'enum') {
     const options = collectEnumOptions(node)
+    // Show user-set value, or empty + schema default as greyed placeholder
+    // when the user hasn't picked anything yet. Undefined still serializes
+    // as "absent" — Pydantic fills in the default on load.
+    const current = typeof value === 'string' ? value : ''
+    const schemaDefault = getDefault(node)
+    const placeholder =
+      schemaDefault !== undefined && schemaDefault !== null
+        ? String(schemaDefault)
+        : '—'
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
-        <select
-          value={fallback === undefined || fallback === null ? '' : String(fallback)}
-          onChange={(e) => onChange(e.target.value === '' ? undefined : e.target.value)}
-          className={`${INPUT_BASE} w-auto min-w-[160px] pr-7`}
-        >
-          <option value="">—</option>
-          {options.map((opt) => (
-            <option key={String(opt)} value={String(opt)}>
-              {String(opt)}
-            </option>
-          ))}
-        </select>
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
+        <SelectField
+          value={current}
+          options={options.map((opt) => ({ value: String(opt) }))}
+          onChange={(next) => onChange(next === '' ? undefined : next)}
+          allowEmpty
+          placeholder={placeholder}
+          {...focusHandlers}
+        />
       </LabelledRow>,
     )
   }
 
   if (kind === 'number' || kind === 'integer') {
+    const schemaDefault = getDefault(node)
+    const placeholder =
+      schemaDefault !== undefined && schemaDefault !== null
+        ? String(schemaDefault)
+        : undefined
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
         <input
           type="number"
           step={kind === 'integer' ? 1 : 'any'}
-          value={fallback === undefined || fallback === null ? '' : String(fallback)}
+          value={value === undefined || value === null ? '' : String(value)}
+          placeholder={placeholder}
           onChange={(e) => {
             if (e.target.value === '') onChange(undefined)
             else
@@ -141,6 +320,7 @@ export function FieldRenderer(props: FieldProps) {
                 kind === 'integer' ? Number.parseInt(e.target.value, 10) : Number(e.target.value),
               )
           }}
+          {...focusHandlers}
           className={`${INPUT_BASE} w-32`}
         />
       </LabelledRow>,
@@ -148,12 +328,17 @@ export function FieldRenderer(props: FieldProps) {
   }
 
   if (kind === 'string') {
+    const schemaDefault = getDefault(node)
+    const placeholder =
+      typeof schemaDefault === 'string' ? schemaDefault : undefined
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
         <input
           type="text"
-          value={typeof fallback === 'string' ? fallback : ''}
+          value={typeof value === 'string' ? value : ''}
+          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
+          {...focusHandlers}
           className={`${INPUT_BASE} ${stringWidthClass(labelKey, node)}`}
         />
       </LabelledRow>,
@@ -189,7 +374,7 @@ export function FieldRenderer(props: FieldProps) {
       )
     }
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
         <AdvancedJsonPreview value={fallback} />
       </LabelledRow>,
     )
@@ -199,7 +384,7 @@ export function FieldRenderer(props: FieldProps) {
     const fields = Object.keys(node.properties ?? {})
     if (fields.length === 0) {
       return (
-        <LabelledRow label={label} description={description} required={required}>
+        <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
           <AdvancedJsonPreview value={fallback} />
         </LabelledRow>
       )
@@ -209,9 +394,8 @@ export function FieldRenderer(props: FieldProps) {
       // a nested collapsible card inside it.
       return (
         <div className="space-y-5">
-          <header className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-ink-1">{label}</h3>
-            {required && <span className="text-[0.65rem] text-brand uppercase tracking-wide">required</span>}
+          <header className="flex items-center gap-2 pb-3 border-b border-line-1">
+            <h3 className="text-lg font-semibold text-ink-1">{label}</h3>
             <HelpTooltip text={description} />
           </header>
           <ObjectFields
@@ -227,11 +411,11 @@ export function FieldRenderer(props: FieldProps) {
       )
     }
     return wrapAnchor(
-      <div className="space-y-3 pl-3 border-l border-line-1">
-        <div className="flex items-center gap-2">
-          <div className="text-xs text-ink-2 font-medium">{label}</div>
-          <HelpTooltip text={description} />
-        </div>
+      <CollapsibleCard
+        label={label}
+        description={description}
+        required={required}
+      >
         <ObjectFields
           root={root}
           node={node}
@@ -241,7 +425,7 @@ export function FieldRenderer(props: FieldProps) {
           pathPrefix={path}
           hashPrefix={hashPrefix}
         />
-      </div>,
+      </CollapsibleCard>,
     )
   }
 
@@ -263,7 +447,7 @@ export function FieldRenderer(props: FieldProps) {
 
   if (kind === 'unknown') {
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required}>
+      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
         <AdvancedJsonPreview value={fallback} />
       </LabelledRow>,
     )
@@ -277,7 +461,7 @@ export function FieldRenderer(props: FieldProps) {
  * ones. At depth >= 1 all optional fields are folded behind a
  * "Show <N> advanced" toggle (off by default).
  */
-function ObjectFields({
+export function ObjectFields({
   root,
   node,
   value,
@@ -296,15 +480,20 @@ function ObjectFields({
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
-  const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
   const currentValue = isPlainRecord(value) ? (value as Record<string, unknown>) : {}
+  const override = getRequiredOverride(pathPrefix, currentValue)
+  const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
+  override?.requires?.forEach((k) => requiredSet.add(k))
+  override?.optional?.forEach((k) => requiredSet.delete(k))
+  const alwaysVisibleSet = new Set<string>(override?.alwaysVisible ?? [])
+  const fieldOrder = override?.fieldOrder
 
   // Discriminator detection: look for an enum-typed property whose values
   // exactly match sibling property names. E.g. training.type ∈
   // {qlora,lora,adalora} alongside sibling object fields of the same
   // names. If detected, hide the non-matching siblings in the UI (keep
   // them in the value so switching back is lossless).
-  const discriminator = detectDiscriminator(root, props)
+  const discriminator = detectDiscriminator(root, props, pathPrefix)
   const activeBranch: string | undefined = (() => {
     if (!discriminator) return undefined
     const fromValue = currentValue[discriminator.enumKey]
@@ -325,29 +514,44 @@ function ObjectFields({
     }
   }
 
-  const requiredFields: string[] = []
+  // When a discriminator is present, the active branch is conceptually
+  // required: without it the form is incomplete. Pin it into requiredSet
+  // so it shows up with an asterisk next to the enum key.
+  if (discriminator && activeBranch && discriminator.siblings.has(activeBranch)) {
+    requiredSet.add(activeBranch)
+  }
+
+  const orderedKeys = fieldOrder
+    ? orderByHint(Object.keys(props), fieldOrder)
+    : Object.keys(props)
+  // Pinned bucket = required ∪ alwaysVisible. fieldOrder controls the
+  // exact interleaving so an alwaysVisible field (e.g. hyperparams) can
+  // sit above a required one (e.g. strategies) when the override says
+  // so. Asterisks still come purely from requiredSet membership.
+  const pinnedFields: string[] = []
   const optionalFields: string[] = []
-  for (const key of Object.keys(props)) {
+  const hiddenFromOverride = new Set<string>(override?.hidden ?? [])
+  for (const key of orderedKeys) {
     if (hiddenSiblings.has(key)) continue
-    if (requiredSet.has(key)) requiredFields.push(key)
+    if (hiddenFromOverride.has(key)) continue
+    if (requiredSet.has(key) || alwaysVisibleSet.has(key)) pinnedFields.push(key)
     else optionalFields.push(key)
   }
-  // When a discriminator is present, its enum key and the active branch
-  // are both optional but conceptually structural — surface them at the
-  // *top* of the optional bucket so they're found easily, while keeping
-  // genuine required fields (e.g. training.hyperparams) first overall.
+  // Place the active discriminator branch right after ``provider`` when
+  // it's present (training's preferred layout), else right after the
+  // enum key. fieldOrder can't express this because it doesn't know
+  // which branch is active at config time.
   if (discriminator && activeBranch && discriminator.siblings.has(activeBranch)) {
-    const bump = (arr: string[], key: string) => {
-      const i = arr.indexOf(key)
-      if (i > 0) {
-        arr.splice(i, 1)
-        arr.unshift(key)
-      }
+    const branchIdx = pinnedFields.indexOf(activeBranch)
+    const anchorKey = pinnedFields.includes('provider')
+      ? 'provider'
+      : discriminator.enumKey
+    const anchorIdx = pinnedFields.indexOf(anchorKey)
+    if (branchIdx >= 0 && anchorIdx >= 0 && branchIdx !== anchorIdx + 1) {
+      pinnedFields.splice(branchIdx, 1)
+      const reInsertAt = pinnedFields.indexOf(anchorKey) + 1
+      pinnedFields.splice(reInsertAt, 0, activeBranch)
     }
-    // Push branch first, then discriminator — with unshift that puts the
-    // discriminator at index 0 and the branch at index 1.
-    bump(optionalFields, activeBranch)
-    bump(optionalFields, discriminator.enumKey)
   }
 
   function setKey(key: string, next: unknown) {
@@ -373,27 +577,23 @@ function ObjectFields({
             : typeof resolved.default === 'string'
             ? (resolved.default as string)
             : ''
+        const needsEmpty = !discriminator.enumValues.includes(fallback)
+        const fieldPath = pathPrefix ? `${pathPrefix}.${key}` : key
         return (
           <LabelledRow
             key={key}
             label={label}
             description={desc}
             required={requiredSet.has(key)}
+            path={fieldPath}
+            value={fallback}
           >
-            <select
+            <SelectField
               value={fallback}
-              onChange={(e) => setKey(key, e.target.value || undefined)}
-              className={`${INPUT_BASE} w-auto min-w-[160px] pr-7`}
-            >
-              {!discriminator.enumValues.includes(fallback) && (
-                <option value="">—</option>
-              )}
-              {discriminator.enumValues.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+              options={discriminator.enumValues.map((v) => ({ value: v }))}
+              onChange={(next) => setKey(key, next || undefined)}
+              allowEmpty={needsEmpty}
+            />
           </LabelledRow>
         )
       }
@@ -414,11 +614,38 @@ function ObjectFields({
     )
   }
 
+  // Vertical rhythm rule:
+  //   - flat schema (only scalar rows, no nested cards) → tight 4px
+  //   - schema mixing cards + rows → 8px so cards read as distinct
+  //     sections
+  // Keyed off *visible* child kinds so a flat tab (e.g. Model: name,
+  // torch_dtype, trust_remote_code) stays dense, while Training keeps
+  // breathing room between its lora/hyperparams/strategies cards.
+  // Detect card-shaped children via the same nullable-unwrap path the
+  // renderer uses — otherwise an ``Optional[str]`` (anyOf [string,null])
+  // looks like a "union" card and inflates the gap for flat tabs like
+  // Model where every field is a scalar.
+  const hasCardChild = [...pinnedFields, ...optionalFields].some((key) => {
+    const n = unwrapNullableScalar(root, resolveRef(root, props[key]))
+    const k = detectKind(n)
+    return k === 'object' || k === 'array' || k === 'union'
+  })
+  const gap = hasCardChild ? 'space-y-1.5' : 'space-y-0.5'
+
+  if (override?.expandOptional) {
+    return (
+      <div className={gap}>
+        {pinnedFields.map(renderField)}
+        {optionalFields.map(renderField)}
+      </div>
+    )
+  }
+
   return (
-    <div className="divide-y divide-white/[0.06]">
-      {requiredFields.map(renderField)}
+    <div className={gap}>
+      {pinnedFields.map(renderField)}
       {optionalFields.length > 0 && (
-        <div className="divide-y divide-white/[0.06]">
+        <div className={gap}>
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
@@ -429,12 +656,98 @@ function ObjectFields({
             {optionalFields.length === 1 ? '' : 's'}
           </button>
           {showAdvanced && (
-            <div className="divide-y divide-white/[0.06]">
+            <div className={gap}>
               {optionalFields.map(renderField)}
             </div>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function orderByHint(keys: string[], hint: string[]): string[] {
+  const index = new Map(hint.map((k, i) => [k, i]))
+  return [...keys].sort((a, b) => {
+    const ai = index.get(a) ?? hint.length + keys.indexOf(a)
+    const bi = index.get(b) ?? hint.length + keys.indexOf(b)
+    return ai - bi
+  })
+}
+
+function unwrapNullableScalar(root: PipelineJsonSchema, node: JsonSchemaNode): JsonSchemaNode {
+  if (!Array.isArray(node.anyOf) || node.anyOf.length < 2) return node
+  const resolved = node.anyOf.map((b) => resolveRef(root, b))
+  const nonNull = resolved.filter((b) => (Array.isArray(b.type) ? b.type[0] : b.type) !== 'null')
+  const hasNull = resolved.some((b) => (Array.isArray(b.type) ? b.type[0] : b.type) === 'null')
+  if (!hasNull || nonNull.length !== 1) return node
+  // Preserve the outer ``title``/``description``/``default`` so labels
+  // and help text don't disappear when unwrapping.
+  return { ...nonNull[0], title: node.title ?? nonNull[0].title, description: node.description ?? nonNull[0].description, default: node.default ?? nonNull[0].default, anyOf: undefined }
+}
+
+/**
+ * Section card with a click-to-collapse header. Defaults to expanded
+ * so first-time users see all fields; once collapsed, only the header
+ * row (label + ? + chevron) stays visible and the values are still
+ * preserved in the form state.
+ */
+function CollapsibleCard({
+  label,
+  description,
+  required,
+  defaultOpen = false,
+  children,
+}: {
+  label: string
+  description?: string
+  required?: boolean
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="relative rounded border border-line-1 bg-surface-2">
+      {open && (
+        <div
+          aria-hidden
+          className="absolute left-0 inset-y-1 w-0.5 bg-gradient-brand rounded-full pointer-events-none"
+        />
+      )}
+      <div
+        role="button"
+        tabIndex={-1}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('[data-no-toggle]')) return
+          setOpen((v) => !v)
+        }}
+        className="flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:bg-surface-3/40 transition-colors"
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setOpen((v) => !v)
+          }}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-left"
+        >
+          <span
+            aria-hidden
+            className={`text-ink-3 text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}
+          >
+            ▸
+          </span>
+          <span className="text-xs text-ink-1 font-medium">
+            {label}
+            {required && <span className="ml-1 text-brand">*</span>}
+          </span>
+        </button>
+        <span data-no-toggle>
+          <HelpTooltip text={description} />
+        </span>
+      </div>
+      {open && <div className="px-4 pb-3 pt-1 space-y-3">{children}</div>}
     </div>
   )
 }
@@ -484,8 +797,24 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function detectDiscriminator(
   root: PipelineJsonSchema,
   props: Record<string, JsonSchemaNode>,
+  pathPrefix: string,
 ): { enumKey: string; siblings: Set<string>; enumValues: string[] } | null {
   const keys = Object.keys(props)
+
+  // Path override: when the soft-discriminator heuristic would otherwise
+  // over-match (e.g. training.type is plain ``str`` and every object
+  // sibling looks like a branch), we pin the enumKey/values explicitly.
+  const forced = getDiscriminatorOverride(pathPrefix)
+  if (forced && keys.includes(forced.enumKey)) {
+    const matching = forced.values.filter((v) => keys.includes(v) && v !== forced.enumKey)
+    if (matching.length >= 2) {
+      return {
+        enumKey: forced.enumKey,
+        siblings: new Set(matching),
+        enumValues: forced.values,
+      }
+    }
+  }
   const objectLikeSiblings = (self: string): string[] =>
     keys.filter((k) => {
       if (k === self) return false

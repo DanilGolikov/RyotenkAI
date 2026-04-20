@@ -265,6 +265,7 @@ def spawn_launch_detached(
     request: LaunchRequest,
     *,
     python_executable: str | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[int, tuple[str, ...], Path]:
     """Spawn the training subprocess without waiting.
 
@@ -273,11 +274,19 @@ def spawn_launch_detached(
     pipeline and return immediately. The subprocess remains attached to the
     detached session it was started in, so the caller process can die without
     orphaning it in a bad way (the orchestrator owns run.lock).
+
+    ``extra_env`` (e.g. project-scoped env.json overrides) is merged on top of
+    the parent process env — project values win over server-wide defaults so
+    users can override ambient creds per-experiment.
     """
     normalized = request.validate()
     command = tuple(build_train_command(normalized, python_executable=python_executable))
     process_env = os.environ.copy()
     process_env["LOG_LEVEL"] = normalized.log_level
+    if extra_env:
+        for k, v in extra_env.items():
+            if v != "":
+                process_env[k] = v
     normalized.run_dir.mkdir(parents=True, exist_ok=True)
     launcher_log_path = _launcher_log_path(normalized.run_dir)
     launcher_log_path.parent.mkdir(parents=True, exist_ok=True)

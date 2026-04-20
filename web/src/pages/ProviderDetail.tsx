@@ -35,7 +35,7 @@ export function ProviderDetailPage() {
 
   return (
     <Card padding="p-0">
-      <div className="px-5 py-4 border-b border-line-1 bg-gradient-brand-soft">
+      <div className="px-5 py-4 border-b border-line-1 bg-surface-2">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">

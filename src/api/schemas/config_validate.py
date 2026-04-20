@@ -17,3 +17,8 @@ class ConfigValidationResult(BaseModel):
     ok: bool
     config_path: str
     checks: list[ConfigCheck] = Field(default_factory=list)
+    # Per-field errors keyed by dotted Pydantic ``loc`` path, e.g.
+    # ``"training.strategies.0.strategy_type"``. Populated from
+    # ``ValidationError.errors()`` so the frontend can paint the
+    # offending field red + show the message inline.
+    field_errors: dict[str, list[str]] = Field(default_factory=dict)

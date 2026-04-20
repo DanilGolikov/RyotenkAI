@@ -128,9 +128,38 @@ def create_project(
     )
 
 
-def unregister(registry: ProjectRegistry, project_id: str) -> bool:
-    """Remove the project from the registry index (does NOT delete files)."""
-    return registry.unregister(project_id)
+def unregister(
+    registry: ProjectRegistry,
+    project_id: str,
+    *,
+    delete_files: bool = False,
+) -> bool:
+    """Remove the project from the registry. When ``delete_files`` is
+    true the on-disk workspace is also rm -rf'd so the UI's "delete"
+    actually deletes. Registry removal is attempted first so a crash in
+    the filesystem step doesn't leave an orphan registry entry.
+    """
+    try:
+        entry = registry.resolve(project_id)
+    except ProjectRegistryError:
+        entry = None
+
+    removed = registry.unregister(project_id)
+
+    if delete_files and entry is not None:
+        import shutil
+
+        path = Path(entry.path).expanduser().resolve()
+        if path.exists() and path.is_dir():
+            # Guard: refuse to delete obviously wrong paths (root, home,
+            # anything outside a reasonable depth).
+            if len(path.parts) < 3:
+                raise ProjectServiceError(
+                    f"refusing to delete suspicious path: {path}",
+                )
+            shutil.rmtree(path, ignore_errors=False)
+
+    return removed
 
 
 # ---------- Config --------------------------------------------------------
@@ -155,6 +184,25 @@ def get_config(registry: ProjectRegistry, project_id: str) -> ConfigResponse:
 def save_config(registry: ProjectRegistry, project_id: str, yaml_text: str) -> str | None:
     _, store, _ = _load_project(registry, project_id)
     return store.save_config(yaml_text)
+
+
+def read_env(registry: ProjectRegistry, project_id: str) -> dict[str, str]:
+    _, store, _ = _load_project(registry, project_id)
+    try:
+        return store.read_env()
+    except ProjectStoreError as exc:
+        raise ProjectServiceError(str(exc)) from exc
+
+
+def write_env(
+    registry: ProjectRegistry, project_id: str, env: dict[str, str]
+) -> dict[str, str]:
+    _, store, _ = _load_project(registry, project_id)
+    try:
+        store.write_env(env)
+        return store.read_env()
+    except ProjectStoreError as exc:
+        raise ProjectServiceError(str(exc)) from exc
 
 
 def validate_yaml(registry: ProjectRegistry, project_id: str, yaml_text: str) -> ConfigValidationResult:

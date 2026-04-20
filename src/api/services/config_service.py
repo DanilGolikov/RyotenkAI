@@ -4,18 +4,40 @@ import importlib
 import os
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
 from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 
 
+def _loc_to_path(loc: tuple) -> str:
+    """Turn a Pydantic ``loc`` tuple into a dotted path the UI uses."""
+    return ".".join(str(p) for p in loc)
+
+
 def validate_config(config_path: Path) -> ConfigValidationResult:
     checks: list[ConfigCheck] = []
+    field_errors: dict[str, list[str]] = {}
     cfg = None
     try:
         from src.utils.config import load_config
 
         cfg = load_config(config_path)
         checks.append(ConfigCheck(label="YAML schema valid (Pydantic)", status="ok"))
+    except ValidationError as exc:
+        # Pydantic gives us structured per-field errors via ``.errors()``.
+        # Collect them into ``field_errors`` so the UI can paint each bad
+        # field red + show the specific message inline, and keep a
+        # coarse check for the banner.
+        for err in exc.errors():
+            loc = err.get("loc") or ()
+            if not loc:
+                continue
+            path = _loc_to_path(loc)
+            msg = str(err.get("msg") or "").strip()
+            field_errors.setdefault(path, []).append(msg)
+        summary = f"{len(exc.errors())} field error(s)" if exc.errors() else str(exc)
+        checks.append(ConfigCheck(label="YAML schema", status="fail", detail=summary))
     except Exception as exc:  # noqa: BLE001 — surface full exception to UI
         checks.append(ConfigCheck(label="YAML schema", status="fail", detail=str(exc)))
 
@@ -86,7 +108,12 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
             checks.append(ConfigCheck(label="Stage consistency", status="ok"))
 
     ok = not any(check.status == "fail" for check in checks)
-    return ConfigValidationResult(ok=ok, config_path=str(config_path), checks=checks)
+    return ConfigValidationResult(
+        ok=ok,
+        config_path=str(config_path),
+        checks=checks,
+        field_errors=field_errors,
+    )
 
 
 __all__ = ["validate_config"]

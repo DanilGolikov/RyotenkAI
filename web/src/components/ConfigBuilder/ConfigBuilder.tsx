@@ -2,10 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { FieldRenderer } from './FieldRenderer'
 import { FieldSearchOmniBox } from './FieldSearchOmniBox'
-import { GroupSubtabs } from './GroupSubtabs'
 import type { GroupRendererProps } from './ProviderPickerField'
-import { orderTopLevelKeys } from './schemaUtils'
-import type { GroupValidity } from './TocRail'
+import { topLevelLabel, visibleTopLevelKeys } from './schemaUtils'
+import { TocRail, type GroupValidity } from './TocRail'
 
 export interface ConfigBuilderProps {
   schema: PipelineJsonSchema
@@ -50,7 +49,7 @@ export function ConfigBuilder({
 }: ConfigBuilderProps) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
   const topRequired = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
-  const keys = useMemo(() => orderTopLevelKeys(Object.keys(topProps)), [topProps])
+  const keys = useMemo(() => visibleTopLevelKeys(Object.keys(topProps)), [topProps])
 
   const [active, setActive] = useState<string>(() => readInitialGroup(keys, hashPrefix))
 
@@ -89,20 +88,29 @@ export function ConfigBuilder({
 
   const activeKey = keys.includes(active) ? active : keys[0]
   const activeNode = topProps[activeKey]
+  const activeNodeLabelled: JsonSchemaNode = activeNode
+    ? { ...activeNode, title: topLevelLabel(activeKey, (activeNode as { title?: string }).title) }
+    : activeNode
 
+  // Negative margins bleed the rail's darker surface-1 all the way to the
+  // outer Card edge — ProjectDetail.tsx wraps this in a `<div class="p-5">`,
+  // so -m-5 cancels that padding. If the outer padding changes, update here.
   return (
-    <div className="space-y-3">
-      <GroupSubtabs
-        schema={schema}
-        active={activeKey}
-        onSelect={selectGroup}
-        validity={groupValidity}
-      />
-
-      <section id={`cfg-${activeKey}`} className="min-w-0 scroll-mt-24">
-        {renderActive()}
-      </section>
-      <FieldSearchOmniBox schema={schema} hashPrefix={hashPrefix} />
+    <div className="grid grid-cols-[208px_1fr] -mx-5 -my-5">
+      <aside className="min-w-0 bg-surface-1 border-r border-line-1 px-3 py-5">
+        <TocRail
+          schema={schema}
+          active={activeKey}
+          onSelect={selectGroup}
+          validity={groupValidity}
+        />
+      </aside>
+      <div className="min-w-0 space-y-4 px-5 py-5">
+        <section id={`cfg-${activeKey}`} className="min-w-0 scroll-mt-24">
+          {renderActive()}
+        </section>
+        <FieldSearchOmniBox schema={schema} hashPrefix={hashPrefix} />
+      </div>
     </div>
   )
 
@@ -118,7 +126,7 @@ export function ConfigBuilder({
       return (
         <Custom
           root={schema}
-          node={activeNode}
+          node={activeNodeLabelled}
           value={value?.[activeKey]}
           labelKey={activeKey}
           required={topRequired.has(activeKey)}
@@ -131,7 +139,7 @@ export function ConfigBuilder({
     return (
       <FieldRenderer
         root={schema}
-        node={activeNode}
+        node={activeNodeLabelled}
         value={value?.[activeKey]}
         labelKey={activeKey}
         required={topRequired.has(activeKey)}

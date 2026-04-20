@@ -1,5 +1,5 @@
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
-import { orderTopLevelKeys, resolveRef, titleOrKey } from './schemaUtils'
+import { resolveRef, titleOrKey, topLevelLabel, visibleTopLevelKeys } from './schemaUtils'
 import type { GroupValidity } from './TocRail'
 
 const DOT_CLS: Record<GroupValidity, string> = {
@@ -26,34 +26,36 @@ export function GroupSubtabs({
   validity?: Partial<Record<string, GroupValidity>>
 }) {
   const topProps = (schema.properties ?? {}) as Record<string, JsonSchemaNode>
-  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
-  const keys = orderTopLevelKeys(Object.keys(topProps))
+  const keys = visibleTopLevelKeys(Object.keys(topProps))
 
   return (
-    <div className="sticky top-0 z-10 -mx-1 px-1 pb-2 pt-1 bg-surface-1/90 backdrop-blur border-b border-line-1 overflow-x-auto">
+    <div className="sticky top-0 z-10 -mx-1 px-1 pt-1 bg-surface-1/90 backdrop-blur border-b border-line-1 overflow-x-auto">
       <div className="flex gap-1 min-w-max">
         {keys.map((key) => {
           const node = resolveRef(schema, topProps[key])
-          const label = titleOrKey(node, key)
+          const label = topLevelLabel(key, titleOrKey(node, key))
           const isActive = key === active
-          const dot = validity?.[key] ?? 'idle'
+          // Default to red: if the server hasn't confirmed this group is
+          // clean yet, assume there's still something to fix. Server
+          // validation flips it to ok/warn/err based on real checks.
+          const dot = validity?.[key] ?? 'err'
           return (
             <button
               key={key}
               type="button"
               onClick={() => onSelect(key)}
               className={[
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs transition whitespace-nowrap border',
+                'flex items-center gap-1.5 px-3 py-2 text-xs transition whitespace-nowrap',
+                // Flat underline subtab — mirrors the main Info/Config
+                // tabs but uses brand-alt (violet) to distinguish the
+                // hierarchy: main tabs = burgundy, subtabs = violet.
                 isActive
-                  ? 'bg-surface-2 text-ink-1 border-brand/60 shadow-inset-accent'
-                  : 'text-ink-2 hover:text-ink-1 border-line-1 hover:border-line-2 hover:bg-surface-2/60',
+                  ? 'text-ink-1 border-b-2 border-brand-alt -mb-px'
+                  : 'text-ink-3 hover:text-ink-1 border-b-2 border-transparent',
               ].join(' ')}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${DOT_CLS[dot]}`} />
               <span>{label}</span>
-              {required.has(key) && !isActive && (
-                <span className="text-[0.55rem] text-brand">req</span>
-              )}
             </button>
           )
         })}

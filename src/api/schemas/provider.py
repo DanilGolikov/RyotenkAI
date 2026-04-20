@@ -24,6 +24,10 @@ class ProviderSummary(BaseModel):
     path: str
     created_at: str
     description: str = ""
+    # Capability flags — computed at list-time from the provider's YAML so
+    # the UI can filter without fetching each config individually. Stays
+    # False when the block is absent or has no meaningful content.
+    has_inference: bool = False
 
 
 class ProviderDetail(ProviderSummary):

@@ -19,6 +19,27 @@ export function useProjects() {
   })
 }
 
+interface ProjectEnvResponse {
+  env: Record<string, string>
+}
+
+export function useProjectEnv(projectId: string | undefined) {
+  return useQuery({
+    queryKey: projectId ? qk.projectEnv(projectId) : ['projects', 'env', 'disabled'],
+    queryFn: () => api.get<ProjectEnvResponse>(`/projects/${encodeURIComponent(projectId!)}/env`),
+    enabled: !!projectId,
+  })
+}
+
+export function useSaveProjectEnv(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (env: Record<string, string>) =>
+      api.put<ProjectEnvResponse>(`/projects/${encodeURIComponent(projectId)}/env`, { env }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.projectEnv(projectId) }),
+  })
+}
+
 export function useProject(projectId: string | undefined) {
   return useQuery({
     queryKey: projectId ? qk.project(projectId) : ['projects', 'disabled'],
@@ -117,7 +138,16 @@ export function useRestoreConfigVersion(projectId: string) {
 export function useDeleteProject() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (projectId: string) => api.del<void>(`/projects/${encodeURIComponent(projectId)}`),
+    mutationFn: ({
+      projectId,
+      deleteFiles = true,
+    }: {
+      projectId: string
+      deleteFiles?: boolean
+    }) =>
+      api.del<void>(
+        `/projects/${encodeURIComponent(projectId)}?delete_files=${deleteFiles}`,
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.projects() }),
   })
 }

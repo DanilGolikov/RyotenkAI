@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   useProjectConfig,
   useSaveProjectConfig,
@@ -6,26 +7,31 @@ import {
 } from '../../api/hooks/useProjects'
 import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
+import { useRef } from 'react'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import { DiffBadge } from '../ConfigBuilder/DiffBadge'
 import { PresetDropdown } from '../ConfigBuilder/PresetDropdown'
 import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
 import { ValidationBanner } from '../ConfigBuilder/ValidationBanner'
-import { deriveGroupValidity } from '../ConfigBuilder/validationMap'
-import { YamlView } from '../YamlView'
+import { ValidationProvider } from '../ConfigBuilder/ValidationContext'
+import {
+  deriveGroupValidity,
+  SETTINGS_JUMP_TARGET,
+} from '../ConfigBuilder/validationMap'
+import { YamlEditor } from '../YamlEditor'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { Spinner } from '../ui'
 
 type ViewMode = 'form' | 'yaml'
 
 export function ConfigTab({ projectId }: { projectId: string }) {
+  const navigate = useNavigate()
   const configQuery = useProjectConfig(projectId)
   const schemaQuery = useConfigSchema()
   const saveMut = useSaveProjectConfig(projectId)
   const validateMut = useValidateProjectConfig(projectId)
 
   const [view, setView] = useState<ViewMode>('form')
-  const [yamlEditing, setYamlEditing] = useState(false)
   const [yamlText, setYamlText] = useState<string>('')
   const [formValue, setFormValue] = useState<Record<string, unknown>>({})
   const [dirty, setDirty] = useState(false)
@@ -45,6 +51,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   }, [configQuery.data, dirty])
 
   const validationResult: ConfigValidationResult | undefined = validateMut.data
+  const fieldErrors = validationResult?.field_errors ?? {}
 
   // Debounced auto-validate on any change (form or yaml).
   useEffect(() => {
@@ -54,6 +61,22 @@ export function ConfigTab({ projectId }: { projectId: string }) {
     }, 900)
     return () => window.clearTimeout(handle)
   }, [yamlText, dirty])
+
+  // Blur handler sent down into every field — debounced so a rapid
+  // tab-through doesn't spam ``/validate``.
+  const validateTimer = useRef<number | null>(null)
+  const requestValidate = () => {
+    if (validateTimer.current !== null) {
+      window.clearTimeout(validateTimer.current)
+    }
+    validateTimer.current = window.setTimeout(() => {
+      validateMut.mutate(yamlText)
+      validateTimer.current = null
+    }, 250)
+  }
+  // Accept caller-provided errors for the context (field_errors is
+  // authoritative, ConfigTab owns this — no local setter needed).
+  const noopSetErrors = () => undefined
 
   const groupValidity = useMemo(
     () => (validationResult ? deriveGroupValidity(validationResult.checks) : {}),
@@ -101,6 +124,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
+      <div className="space-y-3">
       <div className="flex items-center gap-2">
         <div className="inline-flex rounded-md border border-line-1 overflow-hidden text-2xs">
           <button
@@ -151,50 +175,39 @@ export function ConfigTab({ projectId }: { projectId: string }) {
         result={validationResult ?? null}
         isValidating={validateMut.isPending}
         hashPrefix="project"
+        onJump={(group) => {
+          if (group === SETTINGS_JUMP_TARGET) {
+            navigate(`/projects/${encodeURIComponent(projectId)}/settings`)
+            return
+          }
+          const nextHash = `#project:${group}`
+          if (window.location.hash !== nextHash) {
+            history.replaceState(null, '', nextHash)
+            window.dispatchEvent(new HashChangeEvent('hashchange'))
+          }
+        }}
       />
+      </div>
 
       {view === 'form' && schemaQuery.data ? (
-        <ConfigBuilder
-          schema={schemaQuery.data}
-          value={formValue}
-          onChange={applyFormChange}
-          hashPrefix="project"
-          groupRenderers={{ providers: ProviderPickerField }}
-          groupValidity={groupValidity}
-        />
+        <ValidationProvider
+          fieldErrors={fieldErrors}
+          setFieldErrors={noopSetErrors}
+          onRequestValidate={requestValidate}
+        >
+          <ConfigBuilder
+            schema={schemaQuery.data}
+            value={formValue}
+            onChange={applyFormChange}
+            hashPrefix="project"
+            groupRenderers={{ providers: ProviderPickerField }}
+            groupValidity={groupValidity}
+          />
+        </ValidationProvider>
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
       ) : (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-2xs">
-            <button
-              type="button"
-              onClick={() => setYamlEditing((v) => !v)}
-              className="rounded-md border border-line-1 px-2 py-1 text-ink-3 hover:text-ink-1 hover:border-line-2"
-            >
-              {yamlEditing ? 'Preview' : 'Edit'}
-            </button>
-            {yamlEditing && (
-              <span className="text-ink-4">
-                Hitting "Save" below writes the raw text. Switch to Preview for syntax highlighting.
-              </span>
-            )}
-          </div>
-          {yamlEditing ? (
-            <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
-              <textarea
-                value={yamlText}
-                onChange={(e) => applyYamlChange(e.target.value)}
-                spellCheck={false}
-                rows={24}
-                className="w-full bg-surface-0 text-ink-1 font-mono text-xs px-4 py-3 focus:outline-none resize-y"
-                placeholder="# paste or build your pipeline config here"
-              />
-            </div>
-          ) : (
-            <YamlView text={yamlText} maxHeight="max-h-[640px]" />
-          )}
-        </div>
+        <YamlEditor value={yamlText} onChange={applyYamlChange} />
       )}
 
       <div className="flex items-center gap-2 text-xs">
@@ -233,3 +246,4 @@ export function ConfigTab({ projectId }: { projectId: string }) {
     </div>
   )
 }
+

@@ -74,7 +74,7 @@ export function NewProjectModal({
         onClick={(event) => event.stopPropagation()}
         className="w-full max-w-lg rounded-xl border border-line-2 bg-surface-1 shadow-card overflow-hidden"
       >
-        <div className="px-5 py-4 bg-gradient-brand-soft border-b border-line-1">
+        <div className="px-5 py-4 bg-surface-2 border-b border-line-1">
           <div className="text-sm font-semibold">New project</div>
           <div className="text-2xs text-ink-3">
             Workspace for one experiment — config, versions, plugins, runs.

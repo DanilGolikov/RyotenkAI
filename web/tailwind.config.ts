@@ -1,31 +1,36 @@
 import type { Config } from 'tailwindcss'
 
 /**
- * Dashboard palette — "brighter dark + burgundy→violet brand".
- *   - Surfaces lifted so the UI doesn't feel gloomy (~L 18% → 28%),
- *     neutral zinc (no hue tint in chrome).
- *   - Brand: burgundy → violet gradient. Used only on CTAs, logo,
- *     card-hero, active nav rule, focus ring, selection.
- *   - info (running / live) = sky-blue — distinct from the warm brand
- *     so "currently running" and "launch" never blur together.
- *   - Steady 4% L steps so elevation reads without shadows.
+ * Dashboard palette — Grafana-minimal dark + burgundy→violet brand.
+ *   - Surfaces flat, near-black with a faint cool undertone (modelled
+ *     after Grafana's #181B1F base). Steady ~3% L steps so elevation
+ *     still reads without shadows or tinted backgrounds.
+ *   - Borders are muted off-white greys (low alpha), so structure comes
+ *     from hairline rules rather than filled chrome.
+ *   - Brand (burgundy → violet) is preserved but reserved for CTAs,
+ *     logo, active nav rule, focus ring, selection — no longer bleeds
+ *     into inputs or section cards.
+ *   - info (running / live) stays sky-blue so "currently running" never
+ *     blurs into the warm brand.
  */
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // Surfaces — zinc, lifted ~2-3% L so the UI reads brighter without
-        // going washed-out. Canvas ~ L 22% (up from 18%).
-        'surface-0': '#1d1d21',   // app canvas    (+ 2% L)
-        'surface-1': '#24242a',   // sidebar
-        'surface-2': '#2d2d33',   // cards
-        'surface-3': '#3a3a42',   // hover / selected
-        'surface-4': '#484851',   // popover
+        // Surfaces — near-black canvas (~L 11%) with ~3% L lifts per step.
+        // No hue tint — chrome reads as neutral dark, closer to Grafana.
+        'surface-0': '#181b1f',   // app canvas
+        'surface-1': '#1f2226',   // sidebar / inputs
+        'surface-2': '#262a2f',   // cards / hover-of-input
+        'surface-3': '#2f3338',   // hover / selected
+        'surface-4': '#3a3e44',   // popover
 
-        // Borders — bumped to stay readable on brighter surfaces
-        'line-1': '#3a3a42',
-        'line-2': '#585862',
+        // Borders — hairline off-white greys. Lower contrast than before
+        // so cards feel flat; relies on surface elevation + hover to
+        // communicate grouping.
+        'line-1': '#2c3036',
+        'line-2': '#3c4046',
 
         // Text — ink-2 bumped to zinc-300 so body copy stays crisp
         // against the now-lighter surface-2.
@@ -51,12 +56,11 @@ export default {
         'idle':  '#71717a',
       },
       backgroundImage: {
+        // Reserved for logo only now — do NOT use on sections or hero.
         'gradient-brand':
-          'linear-gradient(135deg, #e63570 0%, #a78bfa 100%)', // brighter burgundy → violet
+          'linear-gradient(135deg, #e63570 0%, #a78bfa 100%)',
         'gradient-brand-soft':
           'linear-gradient(135deg, rgba(230,53,112,0.26) 0%, rgba(167,139,250,0.22) 100%)',
-        'gradient-sidebar':
-          'linear-gradient(180deg, #1e1e22 0%, #18181b 85%)',
       },
       boxShadow: {
         'glow-brand':    '0 0 28px rgba(230, 53, 112, 0.48)',

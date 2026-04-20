@@ -4,7 +4,6 @@ from pydantic import Field, model_validator
 
 from src.constants import (
     INFERENCE_ENGINE_VLLM,
-    PROVIDER_SINGLE_NODE,
     InferenceEngineName,
     InferenceProviderName,
 )
@@ -23,10 +22,20 @@ class InferenceEnginesConfig(StrictBaseModel):
 
 
 class InferenceConfig(StrictBaseModel):
-    """Inference deployment configuration (Provider × Engine)."""
+    """Inference deployment configuration (Provider × Engine).
+
+    ``provider`` refers to a Settings-managed provider id (not a hard-coded
+    enum of provider types): users pick one from the dropdown in the web UI
+    or type it in YAML. It's left empty by default so a new project doesn't
+    auto-select a specific provider; enabling inference without picking one
+    is caught by a model validator below.
+    """
 
     enabled: bool = False
-    provider: InferenceProviderName = PROVIDER_SINGLE_NODE
+    provider: InferenceProviderName | None = Field(
+        default=None,
+        description="Provider registered in Settings. Leave empty when inference is disabled — required when enabled.",
+    )
     engine: InferenceEngineName = INFERENCE_ENGINE_VLLM
 
     engines: InferenceEnginesConfig = Field(default_factory=InferenceEnginesConfig)
@@ -47,6 +56,11 @@ class InferenceConfig(StrictBaseModel):
             validate_inference_images_required_for_provider,
         )
 
+        if self.enabled and not (self.provider and self.provider.strip()):
+            raise ValueError(
+                "inference.provider is required when inference.enabled=true "
+                "(pick a provider in Settings or set inference.provider in YAML)."
+            )
         validate_inference_enabled_is_supported(self)
         validate_inference_images_required_for_provider(self)
         return self

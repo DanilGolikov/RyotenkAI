@@ -1,17 +1,42 @@
 import { NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { useProject } from '../api/hooks/useProjects'
+import type { ProjectDetail } from '../api/types'
 import { ConfigTab } from '../components/ProjectTabs/ConfigTab'
 import { PluginsTab } from '../components/ProjectTabs/PluginsTab'
 import { RunsTab } from '../components/ProjectTabs/RunsTab'
+import { SettingsTab } from '../components/ProjectTabs/SettingsTab'
 import { VersionsTab } from '../components/ProjectTabs/VersionsTab'
 import { Card, Spinner } from '../components/ui'
 
 const TABS: { to: string; label: string }[] = [
+  { to: 'info', label: 'Info' },
   { to: 'config', label: 'Config' },
   { to: 'versions', label: 'Versions' },
   { to: 'runs', label: 'Runs' },
   { to: 'plugins', label: 'Plugins' },
+  { to: 'settings', label: 'Settings' },
 ]
+
+function InfoTab({ project }: { project: ProjectDetail }) {
+  return (
+    <dl className="space-y-3 text-xs">
+      <div className="flex gap-4">
+        <dt className="w-28 text-ink-3 shrink-0">Config name</dt>
+        <dd className="text-ink-1 font-mono break-all">{project.id}</dd>
+      </div>
+      {project.description && (
+        <div className="flex gap-4">
+          <dt className="w-28 text-ink-3 shrink-0">Source</dt>
+          <dd className="text-ink-2 break-all">{project.description}</dd>
+        </div>
+      )}
+      <div className="flex gap-4">
+        <dt className="w-28 text-ink-3 shrink-0">Workspace</dt>
+        <dd className="text-ink-4 font-mono break-all">{project.path}</dd>
+      </div>
+    </dl>
+  )
+}
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -36,15 +61,8 @@ export function ProjectDetailPage() {
   return (
     <div className="px-6 py-6 space-y-4">
       <Card padding="p-0">
-        <div className="px-5 py-4 border-b border-line-1 bg-gradient-brand-soft">
+        <div className="px-5 py-4 border-b border-line-1 bg-surface-2">
           <div className="text-lg font-semibold text-ink-1">{project.name}</div>
-          <div className="text-2xs text-ink-3 font-mono mt-0.5">{project.id}</div>
-          {project.description && (
-            <div className="text-xs text-ink-2 mt-2">{project.description}</div>
-          )}
-          <div className="text-[0.65rem] text-ink-4 font-mono mt-2 truncate">
-            {project.path}
-          </div>
         </div>
 
         <div className="px-3 pt-2 border-b border-line-1 flex gap-1">
@@ -69,12 +87,14 @@ export function ProjectDetailPage() {
 
         <div className="p-5">
           <Routes>
-            <Route index element={<Navigate to="config" replace />} />
+            <Route index element={<Navigate to="info" replace />} />
+            <Route path="info" element={<InfoTab project={project} />} />
             <Route path="config" element={<ConfigTab projectId={project.id} />} />
             <Route path="versions" element={<VersionsTab projectId={project.id} />} />
             <Route path="runs" element={<RunsTab projectId={project.id} />} />
             <Route path="plugins" element={<PluginsTab projectId={project.id} />} />
-            <Route path="*" element={<Navigate to="config" replace />} />
+            <Route path="settings" element={<SettingsTab projectId={project.id} />} />
+            <Route path="*" element={<Navigate to="info" replace />} />
           </Routes>
         </div>
       </Card>

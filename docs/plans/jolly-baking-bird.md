@@ -1,240 +1,233 @@
-# Project Workspace + Config Builder + Plugin Manifests (+ Stage Timeline polish)
+# ConfigBuilder v3 — polish + array editor + delete provider + discriminated training
 
 ## Context
 
-Сейчас в web UI нет «места для эксперимента»: чтобы собрать pipeline run
-нужно вручную править YAML, искать плагины по исходникам, не видно defaults
-из Pydantic, нет истории config-ов, нет метаданных о плагинах. Вся работа
-структурирована вокруг **runs**, а не вокруг **experiment**.
+Пользователь прислал скриншот с явными UX-проблемами текущего Config tab и
+список запросов:
 
-Задача двойная:
+1. Поля мелкие и плотные — **нужно больше воздуха**.
+2. **Описание поля** (Pydantic `description`) сейчас — мелкий серый текст под
+   инпутом. Нужен **«?» над/рядом с полем** с tooltip'ом.
+3. В местах где есть дискриминатор (`training.type = qlora | lora | adalora`)
+   **делать явный выбор** — dropdown + только выбранная ветка.
+4. На странице провайдера **нет кнопки удаления** (`useDeleteProvider`
+   существует, UI нет).
+5. **Кнопка добавления провайдера «в настройках»** — в контексте
+   ProviderPicker проекта: когда зарегистрированных нет / нужен новый,
+   быстрый путь «Create in Settings →» (user choice).
+6. Блоки arrays (`plugins[]`, `strategies[]`, и т.д.) падают в
+   "advanced — edit via YAML" — **нужен реальный array editor**.
+7. На активной подвкладке (e.g. `TrainingOnlyConfig`) сейчас ещё раз висит
+   chevron «collapse», хотя вкладка и так открыта — **убрать дропдаун**,
+   но сохранить «?» help.
+8. «Блок конфига внутри другого блока» — двойная рамка (Card → FormGroup):
+   **убрать внешний бордер активной группы**, чтобы было одно общее
+   пространство.
+9. **Опциональные поля**: остаются скрытыми за "Show N optional fields"
+   toggle, но когда показаны — визуально неотличимы от required (сейчас
+   есть `border-t` сверху и визуальное зонирование).
 
-**Основное** — добавить вкладку **Projects**: workspace-концепт, который
-централизует для эксперимента (a) config с визуальным builder'ом поверх
-`PipelineConfig` Pydantic-схемы, (b) историю config-версий (snapshot на
-каждый save), (c) список плагинов (validation / reward / evaluation) с
-описаниями и suggested params/thresholds, (d) runs данного проекта. Проект
-= директория, по умолчанию `~/.ryotenkai/projects/<id>/`, user может задать
-абсолютный путь.
+Audit (conversation history) показал конкретные точки:
+[`FieldRenderer.tsx:22-46`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx) — LabelledRow с description СНИЗУ;
+[`FieldRenderer.tsx:303-311`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx) — AdvancedJsonPreview fallback для array/unknown;
+[`FieldRenderer.tsx:231-298`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx) — ObjectFields с `border-t` вокруг optional;
+[`FormGroup.tsx:18-36`](../../web/src/components/ConfigBuilder/FormGroup.tsx) — всегда collapsible с chevron;
+[`ConfigBuilder.tsx:130-142`](../../web/src/components/ConfigBuilder/ConfigBuilder.tsx) — activeNode всегда идёт через FormGroup (двойной border);
+[`ProviderDetail.tsx:32-80`](../../web/src/pages/ProviderDetail.tsx) — нет delete-кнопки;
+[`useProviders.ts:120-126`](../../web/src/api/hooks/useProviders.ts) — `useDeleteProvider` уже есть, не используется.
 
-**Заодно** — мелкий polish `StageTimeline`: поднять высоту сегмента и
-вывести status в центр, status-литералы централизовать в одном файле
-(`statusConstants.ts`) — уберём разбросанные literal-строки из
-`ActivityFeed.tsx`, `useKpis.ts`, `MiniStageTimeline.tsx`.
+`UnionField.tsx` уже работает для `anyOf` с discriminator'ом, но
+`training.type` — это **enum-поле `type`** + 3 optional object-поля в siblings
+(не `anyOf`). Нужна отдельная эвристика.
 
-## Decisions (подтверждено)
+## Decisions
 
-- **Project location**: default `~/.ryotenkai/projects/<id>/`, но user может
-  задать любой абсолютный путь при create.
-- **Project registry**: `~/.ryotenkai/projects.json` — индекс известных
-  проектов (id, name, path).
-- **Config builder scope**: **все 7 top-level групп** `PipelineConfig`
-  (model, datasets, training, providers, inference, evaluation,
-  experiment_tracking), schema-driven из `PipelineConfig.model_json_schema()`.
-  Advanced поля свёрнуты по-умолчанию.
-- **Versioning**: snapshots per save — `configs/current.yaml` + история в
-  `configs/history/<ISO8601>.yaml`. Нет git.
-- **Plugin manifests**: добавить `MANIFEST` ClassVar к `BasePlugin` +
-  `get_manifest()` classmethod. Seed 2-3 плагина per system с полным
-  manifest'ом (остальные вернут минимальный).
-- **Out of scope MVP**: dataset upload/preview, config diff viewer,
-  plugin upload/packaging, project file export/import, destructive
-  project-delete (только unregister).
+- Задача UX-only, бэкенд не трогаем. Все правки в
+  `web/src/components/ConfigBuilder/` + `ProviderDetail.tsx` + `Providers.tsx` +
+  `ProviderPickerField.tsx`.
+- Массивы и dict-поля — реальный inline editor. Fallback JSON preview
+  остаётся только для `kind === 'unknown'` (edge-case).
+- Discriminator-heuristic детектит pattern `object { type: enum, ...N
+  siblings с именами из enum values }` и прячет не-matching siblings
+  autoматически — generic, не hardcoded под `training`.
+- «Кнопка добавления провайдера» — в ProviderPicker проекта (user choice).
+  `/settings/providers#new` автоматически открывает NewProviderModal.
+- tooltip'ы — pure CSS (group-hover) без новых зависимостей.
 
-## Task 1 — StageTimeline polish + status constants
+## Out of scope
 
-### Files to create
-- **web/src/lib/statusConstants.ts** — источник истины:
-  - `STATUS_LABELS: Record<Status, string>` (из `StatusPill.LABEL`)
-  - `STATUS_LABELS_SHORT: Record<Status, string>` — для compact/micro вариантов
-  - `TERMINAL_STATUSES: ReadonlySet<Status>` (из `useKpis.ts`)
+- Drag-to-reorder массивов (add/remove только).
+- Полноценный map-editor для `additionalProperties=Any` (редкий кейс —
+  остаётся JSON preview).
+- Undo/redo, per-field validation feedback (у нас debounced full-config
+  validate уже рисует banner).
+- Bulk edit.
 
-### Files to modify
-- **web/src/components/StatusPill.tsx** — импорт `STATUS_LABELS` из constants
-- **web/src/components/ActivityFeed.tsx** — заменить literal-compares на `TERMINAL_STATUSES`
-- **web/src/components/MiniStageTimeline.tsx** — то же
-- **web/src/api/hooks/useKpis.ts** — убрать локальный `TERMINAL_STATUSES`, импорт из constants
-- **web/src/components/StageTimeline.tsx**:
-  - сегмент: `h-8 → h-14` (56px)
-  - layout внутри: `flex-col justify-center`, 2 строки — `stage_name` (text-2xs truncate, ink-1/90) и `status-label` (text-2xs, цвет semantic из `statusConstants`/semantic mapping)
-  - убрать нижнюю legend (дублирующую)
+---
 
-## Task 2 — Project workspace
+## Task A — Field spacing + "?" help tooltip (header-level description)
 
-### 2.1 Storage layout
+Файлы:
+- `web/src/components/ConfigBuilder/HelpTooltip.tsx` **(новый)** — кнопка «?»
+  с CSS-only hover-tooltip (`group-hover:opacity-100`, absolute positioned
+  box). Проп: `text: string`. Рендерится только если `text` не пуст.
+- [`web/src/components/ConfigBuilder/FieldRenderer.tsx`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx):
+  - `LabelledRow`: label строка становится `flex items-center gap-2` —
+    `{title} {required ? '*' : ''} <HelpTooltip text={description} />`.
+    **Убрать description из-под инпута.**
+  - Классы инпутов `px-2 py-1.5 text-xs` → `px-3 py-2 text-sm`.
+    Consistency c `NewProviderModal.tsx`.
+  - `ObjectFields`: `space-y-3` → `space-y-4`.
 
-```
-~/.ryotenkai/                       # created on demand
-  projects.json                     # { "projects": [{id, name, path, created_at}] }
-  projects/
-    <project-id>/                   # default. user can override with absolute path
-      project.json                  # { schema_version, id, name, description, created_at, updated_at }
-      configs/
-        current.yaml                # active working copy
-        history/
-          2026-04-19T10:30:45Z.yaml
-      runs/                         # standard runs layout (reuse PipelineStateStore)
-```
+## Task B — Make FormGroup optionally non-collapsible
 
-### 2.2 Backend — Python
+Файл: [`web/src/components/ConfigBuilder/FormGroup.tsx`](../../web/src/components/ConfigBuilder/FormGroup.tsx).
 
-**Create**
-- `src/pipeline/project/__init__.py`
-- `src/pipeline/project/models.py` — `ProjectMetadata` dataclass, `ProjectConfigVersion` dataclass.
-- `src/pipeline/project/store.py` — `ProjectStore`: `create()`, `load()`, `save_config()` (атомарно + snapshot в history/), `list_versions()`, `read_version()`, `current_yaml_text()`.
-- `src/pipeline/project/registry.py` — `ProjectRegistry`: load/save `~/.ryotenkai/projects.json`, `register()`, `list()`, `resolve(id)`.
-- `src/api/schemas/project.py` — `ProjectSummary`, `ProjectDetail`, `CreateProjectRequest`, `SaveConfigRequest`, `ConfigVersion`, `SaveConfigResponse`.
-- `src/api/schemas/plugin.py` — `PluginManifest`, `PluginListResponse`.
-- `src/api/services/project_service.py` — бизнес-логика (reuse `config_service.validate_config` для validate).
-- `src/api/services/plugin_service.py` — агрегирует manifests из 3 registry.
-- `src/api/routers/projects.py` — endpoints (см. 2.4).
-- `src/api/routers/plugins.py` — `GET /plugins/{kind}`.
+- Добавить проп `collapsible?: boolean` (default `true` — не ломает
+  существующие вызовы).
+- При `collapsible={false}`: не рендерить chevron, убрать `<button>`
+  wrapper, `useState(defaultOpen)` → всегда `true`.
+- Добавить место для `<HelpTooltip>` в header — проп
+  `helpText?: string` (опциональный, используется при `collapsible=false`
+  для top-level групп где нет отдельного FieldRenderer).
 
-**Modify**
-- `src/utils/plugin_base.py` — добавить `MANIFEST: ClassVar[dict | None] = None` + `@classmethod get_manifest(cls) -> dict` (мерджит `name/version/description` с `MANIFEST`; отсутствующие поля — пустышки).
-- `src/training/reward_plugins/registry.py`, `src/data/validation/registry.py`, `src/evaluation/plugins/registry.py` — `list_manifests() -> list[dict]` (вызывает discovery, мапит через `get_manifest`).
-- `src/training/reward_plugins/plugins/helixql_compiler_semantic.py` — seed `MANIFEST` (пример).
-- `src/data/validation/plugins/base/min_samples.py`, `avg_length.py` — seed `MANIFEST`.
-- `src/evaluation/plugins/semantic/helixql_semantic_match.py` — seed `MANIFEST`.
-- `src/api/main.py` — зарегистрировать `projects.router`, `plugins.router` (в правильном порядке до runs — они не конфликтуют).
-- `src/api/dependencies.py` — `get_project_registry()`, `resolve_project(id)` через `Depends`.
+## Task C — ConfigBuilder flat render на depth=0 (одна рамка, без chevron)
 
-### 2.3 Plugin `MANIFEST` format
+Файл: [`web/src/components/ConfigBuilder/ConfigBuilder.tsx`](../../web/src/components/ConfigBuilder/ConfigBuilder.tsx:130-142).
 
-```python
-MANIFEST: ClassVar[dict] = {
-  "description": "Compiles HelixQL samples and rewards on compile success.",
-  "category": "semantic",                 # for grouping in UI
-  "stability": "stable",                  # stable | beta | experimental
-  "params_schema": {                      # JSON-Schema-light
-    "timeout_seconds": {"type": "integer", "min": 1, "default": 10},
-  },
-  "thresholds_schema": {
-    "min_pass_rate": {"type": "float", "min": 0, "max": 1, "default": 0.95},
-  },
-  "suggested_params": {"timeout_seconds": 10},
-  "suggested_thresholds": {"min_pass_rate": 0.95},
-}
-```
+Сейчас `FieldRenderer` при `depth === 0 && kind === 'object'` оборачивает в
+`FormGroup` с `border + bg-surface-1 + chevron`. Это даёт «карточка внутри
+карточки» и ненужный chevron.
 
-`get_manifest()` в base-классе собирает финальный dict:
-`{id: cls.name, version: cls.version, ...MANIFEST|defaults}`.
+- В `FieldRenderer.tsx` object-branch: при `depth === 0` рендерить **не
+  FormGroup**, а плоско:
+  ```
+  <header>  {title}  {required marker}  {HelpTooltip}  </header>
+  <ObjectFields ... depth={1} />
+  ```
+  Без bg, без border, без padding — используется окружающий Card (ProjectDetail).
+- Вложенные объекты (`depth >= 1`) остаются как есть: `space-y-2 pl-3
+  border-l border-line-1` — это визуальный indent, не рамка.
 
-### 2.4 API endpoints (под `/api/v1`)
+## Task D — Optional fields стилем = required
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/projects` | список из registry |
-| `POST` | `/projects` | body: `{name, path?, description?}` |
-| `GET` | `/projects/{id}` | metadata + current config text |
-| `DELETE` | `/projects/{id}` | unregister only (файлы не трогаем) |
-| `GET` | `/projects/{id}/config` | `{yaml, parsed_json}` |
-| `PUT` | `/projects/{id}/config` | save + snapshot |
-| `POST` | `/projects/{id}/config/validate` | reuse `config_service.validate_config` на временном файле |
-| `GET` | `/projects/{id}/config/versions` | list snapshots |
-| `GET` | `/projects/{id}/config/versions/{filename}` | full YAML + parsed JSON |
-| `POST` | `/projects/{id}/config/versions/{filename}/restore` | копирует в current.yaml (делает snapshot прежнего) |
-| `GET` | `/projects/{id}/runs` | proxy `scan_runs_dir_grouped(project.runs_dir)` |
-| `GET` | `/config/schema` | `PipelineConfig.model_json_schema()` + добавить `_required_marks` если нужно нормализовать |
-| `GET` | `/plugins/{kind}` | kind ∈ {`reward`, `validation`, `evaluation`} |
+Файл: [`web/src/components/ConfigBuilder/FieldRenderer.tsx:285-298`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx).
 
-### 2.5 Frontend
+- Убрать `pt-1 border-t border-line-1/60` вокруг optional-секции.
+- Toggle-кнопка «Show N optional fields» — сохранить, но сделать
+  subtle (меньший stroke, без uppercase tracking).
+- Когда expanded — rows в том же `space-y-4`, идентично required.
 
-**Create pages**
-- `web/src/pages/Projects.tsx` — grid of `ProjectCard` + "New project" modal.
-- `web/src/pages/ProjectDetail.tsx` — tabs: `Config | Versions | Runs | Plugins`.
+## Task E — Array editor
 
-**Create components**
-- `web/src/components/ConfigBuilder/ConfigBuilder.tsx` — root; принимает schema + value, рендерит groups; debounced POST /validate.
-- `web/src/components/ConfigBuilder/FormGroup.tsx` — collapsible wrapper.
-- `web/src/components/ConfigBuilder/FieldRenderer.tsx` — dispatch по `schema.type` и `$ref`.
-  - string/number/boolean/enum → inputs
-  - object → nested FormGroup
-  - array → list editor
-  - union (`anyOf` с discriminator) → type selector + conditional block
-- `web/src/components/ConfigBuilder/ValidationBanner.tsx` — ok/warn/fail строки из `ConfigValidationResult`.
-- `web/src/components/ConfigBuilder/PluginPicker.tsx` — drawer, список manifests, "Add to evaluation/validation/training block".
-- `web/src/components/PluginBrowser.tsx` — grid cards: name, stability tag, description, params/thresholds defaults (readonly view в MVP).
-- `web/src/components/ProjectCard.tsx`, `VersionList.tsx`, `NewProjectModal.tsx`.
+Файлы:
+- `web/src/components/ConfigBuilder/ArrayField.tsx` **(новый)**. Пропы:
+  `{ root, node, value, onChange, labelKey, required, path, hashPrefix }`.
+  Схема берётся из `node.items` (resolveRef). Рендер:
+  - Header: title + HelpTooltip + «+ Add» кнопка справа (ink-3).
+  - Каждый item: row с «drag-handle placeholder» (не активный в MVP) +
+    `FieldRenderer` на `schema.items` + «✕ Remove» кнопка.
+  - При пустом массиве — outline-блок `+ Add` и подсказка "No items".
+  - Value всегда trusted array (если value undefined → `[]`).
+- [`FieldRenderer.tsx`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx):
+  ветка `kind === 'array'` → `<ArrayField>` вместо AdvancedJsonPreview.
+  Остаётся `kind === 'unknown'` → JSON preview (edge-case).
 
-**Hooks**
-- `web/src/api/hooks/useProjects.ts`, `useProject.ts`, `useCreateProject.ts`, `useSaveProjectConfig.ts`, `useProjectConfigVersions.ts`.
-- `web/src/api/hooks/useConfigSchema.ts` — cached, fetched once per session.
-- `web/src/api/hooks/usePlugins.ts` — per kind.
+## Task F — Delete provider affordance
 
-**Routes**
-- `/projects` → `Projects.tsx`
-- `/projects/:id` → `ProjectDetail.tsx` (default tab: Config)
-- `/projects/:id/:tab?` — tab из URL (config/versions/runs/plugins).
-- `web/src/components/Sidebar.tsx` — add nav item «Projects» (иконка папки).
+Файл: [`web/src/pages/ProviderDetail.tsx`](../../web/src/pages/ProviderDetail.tsx).
 
-**Types** (append to `web/src/api/types.ts`):
-- `ProjectSummary`, `ProjectDetail`, `ConfigVersion`, `PluginManifest`, `PluginKind`, `SaveConfigRequest/Response`.
+- Добавить `useDeleteProvider` hook + `useNavigate`.
+- В header напротив title (справа) — `Delete` кнопка (red outline, text-err).
+- `onClick`: `window.confirm('Unregister provider "<name>"? Files on disk stay.')`.
+  API endpoint сейчас **unregister-only** (файлы сохраняются) — донести в
+  тексте.
+- После успешного delete → `navigate('/settings/providers')`.
+- Consistent тест — /settings/providers список обновится (hook уже
+  инвалидирует query).
 
-### 2.6 Tests
+## Task G — Discriminated object rendering (`training.type` + siblings)
 
-**Create**
-- `src/tests/integration/api/test_projects.py`:
-  - create project at tmp_path → registry updated, dir exists, project.json valid.
-  - save config (valid yaml) → current.yaml + history file created.
-  - save config (invalid) → 422 с details.
-  - versions endpoint → список snapshots.
-  - delete → registry unregister, но директория не стёрта.
-- `src/tests/integration/api/test_plugins.py`:
-  - `/plugins/reward` → вернёт как минимум seed-плагин с полным manifest.
-  - `/plugins/validation` → manifest только у seed-плагинов, остальные — baseline.
+Файл: [`web/src/components/ConfigBuilder/FieldRenderer.tsx`](../../web/src/components/ConfigBuilder/FieldRenderer.tsx).
 
-## Reuse Surface
+Эвристика **в `ObjectFields`**: перед обычным required-first разделением,
+проверить:
+1. Среди properties есть поле `type` (или любое одно-из enum-полей
+   с `enum`/`anyOf-of-const`).
+2. Значения его enum'а ⊆ именам других properties (siblings).
 
-| Что | Где | Как используем |
-|---|---|---|
-| `PipelineConfig.model_json_schema()` | Pydantic v2 built-in | Источник формы + required + descriptions |
-| `config_service.validate_config(path)` | [src/api/services/config_service.py](../../src/api/services/config_service.py) | Re-use в projects validate endpoint |
-| `scan_runs_dir_grouped(runs_dir)` | [src/pipeline/run_queries.py](../../src/pipeline/run_queries.py) | Для /projects/{id}/runs |
-| `PipelineStateStore` layout | [src/pipeline/state/store.py](../../src/pipeline/state/store.py) | runs/ внутри project dir остаются совместимы |
-| `atomic_write_json` | [src/pipeline/state/store.py](../../src/pipeline/state/store.py) | Для project.json / registry.json записи |
-| `BasePlugin` + discovery | [src/utils/plugin_base.py](../../src/utils/plugin_base.py), `plugin_discovery.py` | Extend без breaking change |
-| `StatusPill.LABEL` | [web/src/components/StatusPill.tsx](../../web/src/components/StatusPill.tsx) | Переносим в `statusConstants.ts` |
-| `useKpis.TERMINAL_STATUSES` | [web/src/api/hooks/useKpis.ts](../../web/src/api/hooks/useKpis.ts) | Переносим туда же |
-| `Card / FormGroup` tokens | [web/src/components/ui.tsx](../../web/src/components/ui.tsx), `globals.css` | Builder переиспользует `card`, `btn-primary`, `pill-*` |
-| Launch flow | [web/src/components/LaunchModal.tsx](../../web/src/components/LaunchModal.tsx) | В Project runs tab можно кнопку «Launch from current config» → open modal pre-filled с project path |
+Если да — это discriminator pattern:
+- Показываем `type` как dropdown.
+- Из `N` siblings-блоков (qlora/lora/adalora) рендерим **только один** —
+  соответствующий выбранному `type`.
+- Остальные siblings остаются в значении (не стираем при переключении —
+  user может хотеть вернуться), но в UI скрыты.
+- Остальные non-sibling-non-type поля (hyperparams, strategies, provider,
+  ...) рендерятся как обычно.
 
-## Implementation Order
+Реализация — маленькая pre-pass функция `detectDiscriminator(node) → {
+enumKey, valueToSiblingMap } | null`, чистая функция, легко тестируется.
 
-1. **Status constants** + StageTimeline polish (Task 1) — 30 min, sanity-proof для последующих изменений.
-2. **Plugin `MANIFEST` extension + registries + endpoints + seed plugins** — изолированно, backend-only; тесты добавить сразу.
-3. **Project backend layer**: models, store, registry, service, router, tests.
-4. **Frontend scaffolding**: types, hooks, routes, Sidebar entry, `Projects.tsx` + `NewProjectModal`.
-5. **ProjectDetail + ConfigBuilder skeleton** (Config tab): top-level groups, enum/string/number fields only.
-6. **ConfigBuilder advanced rendering**: union/discriminated, arrays, nested objects, PluginPicker drawer.
-7. **Versions tab + restore**.
-8. **Runs tab** (reuse existing `ActivityFeed` filtered to project).
-9. **Plugins tab** (PluginBrowser).
-10. **Commit per step**.
+## Task H — ProviderPicker «Create in Settings →» + deep-link
+
+Файлы:
+- [`web/src/components/ConfigBuilder/ProviderPickerField.tsx`](../../web/src/components/ConfigBuilder/ProviderPickerField.tsx):
+  в dropdown «Add from Settings» добавить постоянный пункт
+  **«+ Create new provider in Settings →»** в конце списка (всегда viable,
+  не только когда пусто). Navigate to `/settings/providers#new`.
+- [`web/src/pages/Providers.tsx`](../../web/src/pages/Providers.tsx): на
+  mount проверить `window.location.hash === '#new'`, тогда авто-открыть
+  NewProviderModal и очистить hash (`history.replaceState`).
+
+---
+
+## Files — summary
+
+**Create:**
+- `web/src/components/ConfigBuilder/HelpTooltip.tsx`
+- `web/src/components/ConfigBuilder/ArrayField.tsx`
+
+**Modify:**
+- `web/src/components/ConfigBuilder/FieldRenderer.tsx` — A, C (flat depth=0), D, E wiring, G (discriminator)
+- `web/src/components/ConfigBuilder/FormGroup.tsx` — B (collapsible prop)
+- `web/src/components/ConfigBuilder/ConfigBuilder.tsx` — проверить что C не требует изменений здесь (работа в FieldRenderer)
+- `web/src/components/ConfigBuilder/ProviderPickerField.tsx` — H
+- `web/src/pages/ProviderDetail.tsx` — F (delete кнопка)
+- `web/src/pages/Providers.tsx` — H (hash #new → auto-open)
 
 ## Verification
 
-1. **Type check**: `cd web && npx tsc --noEmit` → clean.
-2. **Build**: `npm run build` → success.
-3. **Backend**: `pytest src/tests/integration/api/ -q` — existing + new = green.
-4. **Manual preview** (`make web-start`):
-   - Click Projects → empty state.
-   - Create project «demo» with default path → appears in list, `~/.ryotenkai/projects/demo/` создан с project.json + empty configs/current.yaml.
-   - Open project → Config tab, builder рендерит все 7 групп, required-поля помечены.
-   - Ввести invalid значение → inline ошибка.
-   - Save → появилась запись в Versions, `configs/history/<ts>.yaml` на диске.
-   - Plugins tab → видно seed плагины с description, suggested params/thresholds.
-   - Runs tab → пусто (до первого launch), но страница грузится без 500.
-   - StageTimeline на странице run → высокие сегменты, stage + status видны.
-5. **Regression — `/runs/:id`, Overview, Launch** — без визуальных regressions (status pills продолжают работать).
+1. `npx tsc --noEmit` clean.
+2. `npm run build` green.
+3. `pytest src/tests/integration/api/` green (API без изменений — 146/146).
+4. `make verify-api-sync` green.
+5. Manual preview на smoke-project и helixql-nl2hql-v7-mini:
+   a. Config tab → активная вкладка **без chevron, без внешнего бордера**,
+      header с «?» tooltip при hover.
+   b. Поля — крупнее (`text-sm`, `py-2`), межстрочное пространство
+      `space-y-4`.
+   c. `training` группа → dropdown `type: qlora`, видны только
+      qlora-поля + общие (hyperparams, strategies). Переключение на `lora`
+      → скрывает qlora, показывает lora.
+   d. `datasets.default.validations.plugins` → **array editor** с Add/Remove,
+      каждый элемент рендерится через FieldRenderer. Сохраняется в YAML
+      корректно (Save → verify через `/api/v1/projects/*/config`).
+   e. Optional fields под toggle — визуально идентичны required (нет
+      `border-t`).
+   f. `/settings/providers/runpod-prod` → появилась **Delete** кнопка
+      (красная). Clicking → confirm → redirect на /settings/providers,
+      список обновлён.
+   g. `/projects/*/config` → Providers tab → «+ Add from Settings» →
+      **«+ Create new provider in Settings →»** внизу списка → navigate
+      to `/settings/providers`, модалка открывается автоматически.
 
-## Phase 2 (out of scope)
+## Implementation order
 
-- Dataset preview (JSONL/parquet peek).
-- Diff viewer между snapshot-ами.
-- Git-backed versioning (optional toggle per project).
-- Plugin packages / file-uploads (true Grafana-style).
-- Project export/import (zip).
-- Multi-user / RBAC.
-- Drag-to-reorder strategies / evaluators.
-- Live syntax-highlighted YAML editor рядом с формой.
+1. **A + B + C** — базовый layout polish (spacing, «?», flat depth=0).
+   Один коммит.
+2. **D** — optional fields restyle. Коммит.
+3. **E** — ArrayField. Коммит.
+4. **G** — discriminator rendering. Коммит.
+5. **F** — Delete provider. Коммит.
+6. **H** — Create-in-Settings link + auto-open hash. Коммит.
+7. Final verify (pytest + tsc + build + verify-api-sync + preview).

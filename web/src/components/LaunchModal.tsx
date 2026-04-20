@@ -67,8 +67,8 @@ export function LaunchModal({
         onClick={(event) => event.stopPropagation()}
         className="w-full max-w-2xl rounded-xl border border-line-2 bg-surface-1 shadow-card overflow-hidden"
       >
-        <div className="px-5 py-4 bg-gradient-brand-soft border-b border-line-1 flex items-center gap-3">
-          <div className="w-8 h-8 rounded-md bg-gradient-brand shadow-glow-brand" />
+        <div className="px-5 py-4 bg-surface-2 border-b border-line-1 flex items-center gap-3">
+          <div className="w-8 h-8 rounded bg-gradient-brand" />
           <div>
             <div className="text-sm font-semibold">Launch pipeline</div>
             <div className="text-2xs text-ink-3">{runId}</div>

@@ -80,11 +80,13 @@ def list_summaries(registry: ProviderRegistry) -> list[ProviderSummary]:
     for entry in registry.list():
         store = ProviderStore(Path(entry.path))
         description = ""
+        has_inference = False
         if store.exists():
             try:
                 description = store.load().description
             except (OSError, ValueError):
                 description = ""
+            has_inference = _provider_has_inference(store)
         summaries.append(
             ProviderSummary(
                 id=entry.id,
@@ -93,9 +95,38 @@ def list_summaries(registry: ProviderRegistry) -> list[ProviderSummary]:
                 path=entry.path,
                 created_at=entry.created_at,
                 description=description,
+                has_inference=has_inference,
             )
         )
     return summaries
+
+
+def _provider_has_inference(store: ProviderStore) -> bool:
+    """Return True when this provider's YAML has a non-empty ``inference``
+    block. Used by the UI to filter the inference-provider dropdown to
+    providers that actually expose an inference runtime."""
+    try:
+        text = store.current_yaml_text()
+    except OSError:
+        return False
+    if not text.strip():
+        return False
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    inference = parsed.get("inference")
+    if not isinstance(inference, dict):
+        return False
+    # Require at least one meaningful knob — a bare `inference: {}` or
+    # just `enabled: false` doesn't count as "inference provider
+    # available".
+    meaningful = {k: v for k, v in inference.items() if k != "enabled"}
+    return bool(meaningful) or inference.get("enabled") is True
 
 
 def get_detail(registry: ProviderRegistry, provider_id: str) -> ProviderDetail:

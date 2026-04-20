@@ -11,7 +11,7 @@
 > They deliver richer context — documentation, ownership, history, decisions —
 > in a single call. Raw `read_file` calls are a last resort only.
 
-Last indexed: 2026-04-10. Confidence: 100%.
+Last indexed: 2026-04-19. Confidence: 100%.
 ### Architecture
 repo is a comprehensive Python-based project (comprising over 131k lines of code) designed for complex data pipeline orchestration, model training, and reporting. The repository is structured to support modular development, featuring specialized sub-modules for pipeline stages, configuration management, and plugin-based reporting. It is currently in an active development phase with high churn across core orchestration and training components. The project is primarily built with Python, supported by containerization and automation tooling:
 
@@ -29,16 +29,16 @@ repo is a comprehensive Python-based project (comprising over 131k lines of code
 - `run.sh`
 ### Tech Stack
 **Languages:** Python
-**Frameworks:** PyTorch, Pydantic
+**Frameworks:** FastAPI, PyTorch, Pydantic
 
 ### Hotspots (High Churn)
 | File | Churn | 90d Commits | Owner |
 |------|-------|-------------|-------|
-| `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 99.8th %ile | 6 | daniil |
-| `src/tests/unit/config/validators/test_cross_validators.py` | 99.7th %ile | 4 | daniil |
-| `src/tests/unit/evaluation/test_system_prompt_loader.py` | 99.5th %ile | 5 | daniil |
-| `src/tests/unit/training/test_trainer_factory_reward_routing.py` | 99.3th %ile | 3 | daniil |
-| `src/tui/screens/runs_list.py` | 99.2th %ile | 7 | daniil |
+| `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 100.0th %ile | 7 | daniil |
+| `src/tests/unit/config/validators/test_cross_validators.py` | 99.8th %ile | 4 | daniil |
+| `src/tests/unit/evaluation/test_system_prompt_loader.py` | 99.7th %ile | 5 | daniil |
+| `src/tests/unit/training/test_trainer_factory_reward_routing.py` | 99.5th %ile | 3 | daniil |
+| `src/tui/screens/runs_list.py` | 99.4th %ile | 7 | daniil |
 
 ### Repowise MCP Tools
 
@@ -73,7 +73,8 @@ This project has a Repowise MCP server configured. **ALWAYS use these tools befo
 | `get_architecture_diagram(scope=...)` | For visual structure or documentation |
 
 ### Codebase Conventions
-**Commands:**
+**Architectural Decisions:**
+- **Project workspace = experiment-scoped directory with snapshot-per-save config**: Separating "experiment workspace" from "runs" matches how users think (many runs belong to one exper.- **Web backend + frontend as sibling clients to file-based state store (Kubernetes-way)**: Preserves the existing invariant that pipeline state is file-based and crash-safe; allows the API, T.- **Extract ValidationArtifactManager from PipelineOrchestrator**: Reduces orchestrator by ~150 lines. ValidationArtifactManager is now independently testable without .**Commands:**
 - Test: `pytest`
 - Lint: `ruff check .`
 - Format: `ruff format .`

@@ -83,12 +83,19 @@ body {
 
   /* ---------- Buttons ---------- */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium text-white;
-    background-image: linear-gradient(135deg, #e63570 0%, #a78bfa 100%);
+    @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium text-white relative overflow-hidden;
+    /* Wide gradient (200%) + shifting background-position gives the
+       "shimmer" — colours slide across on hover. */
+    background-image: linear-gradient(120deg, #e63570 0%, #a78bfa 50%, #e63570 100%);
+    background-size: 220% 100%;
+    background-position: 0% 50%;
     box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 4px 18px rgba(230,53,112,0.42);
-    transition: transform .08s ease, filter .15s ease;
+    transition: transform .08s ease, filter .15s ease, background-position .9s ease, box-shadow .3s ease;
   }
-  .btn-primary:hover   { filter: brightness(1.08); }
+  .btn-primary:hover:not(:disabled) {
+    background-position: 100% 50%;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.28) inset, 0 8px 26px rgba(230,53,112,0.55);
+  }
   .btn-primary:active  { transform: translateY(1px); }
   .btn-primary:disabled { opacity: .5; cursor: not-allowed; filter: none; }
 

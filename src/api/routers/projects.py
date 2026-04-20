@@ -10,6 +10,8 @@ from src.api.schemas.project import (
     ConfigVersionsResponse,
     CreateProjectRequest,
     ProjectDetail,
+    ProjectEnvRequest,
+    ProjectEnvResponse,
     ProjectSummary,
     SaveConfigRequest,
     SaveConfigResponse,
@@ -63,10 +65,17 @@ def get_project(
 @router.delete("/{project_id}", status_code=204)
 def delete_project(
     project_id: str,
+    delete_files: bool = True,
     registry: ProjectRegistry = Depends(get_project_registry),
 ) -> None:
-    """Unregister a project (does not delete files on disk)."""
-    removed = project_service.unregister(registry, project_id)
+    """Unregister a project. By default also removes the on-disk
+    workspace — pass ``?delete_files=false`` to keep the directory."""
+    try:
+        removed = project_service.unregister(
+            registry, project_id, delete_files=delete_files
+        )
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not removed:
         raise HTTPException(status_code=404, detail=f"project {project_id!r} not registered")
 
@@ -93,6 +102,31 @@ def save_config(
     except ProjectServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return SaveConfigResponse(ok=True, snapshot_filename=snapshot)
+
+
+@router.get("/{project_id}/env", response_model=ProjectEnvResponse)
+def get_project_env(
+    project_id: str,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> ProjectEnvResponse:
+    try:
+        return ProjectEnvResponse(env=project_service.read_env(registry, project_id))
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/{project_id}/env", response_model=ProjectEnvResponse)
+def save_project_env(
+    project_id: str,
+    body: ProjectEnvRequest,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> ProjectEnvResponse:
+    try:
+        return ProjectEnvResponse(
+            env=project_service.write_env(registry, project_id, body.env),
+        )
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{project_id}/config/validate", response_model=ConfigValidationResult)

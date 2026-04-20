@@ -64,6 +64,32 @@ class ProjectStore:
     def runs_dir(self) -> Path:
         return self.root / "runs"
 
+    @property
+    def env_path(self) -> Path:
+        return self.root / "env.json"
+
+    # ---------- Env vars ---------------------------------------------------
+
+    def read_env(self) -> dict[str, str]:
+        """Return the project's env-var overrides, or {} when unset."""
+        if not self.env_path.is_file():
+            return {}
+        try:
+            import json
+
+            with self.env_path.open("r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+        except Exception as exc:  # noqa: BLE001 — bubble to API as 400
+            raise ProjectStoreError(f"failed to read {self.env_path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ProjectStoreError(
+                f"{self.env_path} must be a JSON object, got {type(raw).__name__}",
+            )
+        return {str(k): str(v) for k, v in raw.items()}
+
+    def write_env(self, env: dict[str, str]) -> None:
+        atomic_write_json(self.env_path, {k: v for k, v in env.items() if v != ""})
+
     # ---------- Lifecycle --------------------------------------------------
 
     def exists(self) -> bool:
@@ -128,19 +154,30 @@ class ProjectStore:
         """Write ``yaml_text`` to ``configs/current.yaml`` atomically.
 
         If a previous ``current.yaml`` existed, its contents are first copied
-        into ``configs/history/<iso>.yaml``. Returns the filename of the
-        snapshot (or ``None`` if there was no prior config).
+        into ``configs/history/<iso>.yaml``. On the FIRST save (no prior
+        content, no history yet) we snapshot the new content instead, so
+        the user sees a v1 in the versions list immediately. Returns the
+        filename of the snapshot (or ``None`` if nothing was snapshotted).
         """
         self.configs_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
 
         snapshot_name: str | None = None
+        previous: str | None = None
         if self.current_config_path.is_file():
             previous = self.current_config_path.read_text(encoding="utf-8")
-            if previous:
-                snapshot_path = unique_snapshot_path(self.history_dir)
-                atomic_write_text(snapshot_path, previous)
-                snapshot_name = snapshot_path.name
+
+        if previous:
+            snapshot_path = unique_snapshot_path(self.history_dir)
+            atomic_write_text(snapshot_path, previous)
+            snapshot_name = snapshot_path.name
+        elif not any(self.history_dir.iterdir()):
+            # First save on an empty project — seed v1 from the incoming
+            # content so the Versions tab isn't empty after the user's
+            # first Save click.
+            snapshot_path = unique_snapshot_path(self.history_dir)
+            atomic_write_text(snapshot_path, yaml_text)
+            snapshot_name = snapshot_path.name
 
         atomic_write_text(self.current_config_path, yaml_text)
         self.touch()

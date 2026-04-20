@@ -77,35 +77,39 @@ export function Sidebar() {
     <aside
       data-collapsed={collapsed}
       className={[
-        'shrink-0 bg-gradient-sidebar border-r border-line-1 flex flex-col',
+        'shrink-0 bg-surface-1 border-r border-line-1 flex flex-col',
         'transition-[width] duration-150 ease-out',
         collapsed ? 'w-[60px]' : 'w-[240px]',
       ].join(' ')}
     >
-      {/* Brand */}
-      <div
-        className={[
-          'py-5 flex items-center gap-2.5',
-          collapsed ? 'px-3 justify-center' : 'px-5',
-        ].join(' ')}
-      >
+      {/* Brand — icon always pinned at left (px-4), label block stays in
+          the DOM but animates opacity + max-width when collapsed. Keeps
+          layout stable during rapid toggles so icons don't jitter from
+          the mount/unmount churn that would otherwise reflow the row. */}
+      <div className="py-5 px-4 flex items-center gap-2.5">
         <div
           aria-label="RyotenkAI"
           className="w-7 h-7 shrink-0 rounded bg-gradient-brand shadow-glow-brand"
         />
-        {!collapsed && (
-          <div className="leading-tight min-w-0">
-            <div className="text-sm font-semibold">
-              <span className="text-ink-1">Ryotenk</span>
-              <span className="gradient-text">AI</span>
-            </div>
-            <div className="text-2xs text-ink-3">pipeline control plane</div>
+        <div
+          aria-hidden={collapsed}
+          className={[
+            'leading-tight overflow-hidden transition-[max-width,opacity] duration-150 ease-out',
+            collapsed ? 'max-w-0 opacity-0' : 'max-w-[180px] opacity-100',
+          ].join(' ')}
+        >
+          <div className="text-sm font-semibold whitespace-nowrap">
+            <span className="text-ink-1">Ryotenk</span>
+            <span className="gradient-text">AI</span>
           </div>
-        )}
+          <div className="text-2xs text-ink-3 whitespace-nowrap">pipeline control plane</div>
+        </div>
       </div>
 
-      {/* Nav */}
-      <nav className={`flex-1 ${collapsed ? 'px-2' : 'px-3'} space-y-0.5`}>
+      {/* Nav — icons stay at a constant x-offset so the collapse animation
+          doesn't jitter them. Labels fade/collapse width rather than
+          unmounting so the row doesn't reflow mid-transition. */}
+      <nav className="flex-1 px-2 space-y-0.5">
         {items.map((item) => (
           <NavLink
             key={item.to}
@@ -113,63 +117,78 @@ export function Sidebar() {
             end={item.end}
             title={collapsed ? item.label : undefined}
             className={({ isActive }) =>
-              [
-                isActive ? 'nav-item nav-item-active' : 'nav-item',
-                collapsed ? 'justify-center px-0 py-2.5' : '',
-              ].join(' ')
+              isActive ? 'nav-item nav-item-active' : 'nav-item'
             }
           >
             {({ isActive }) => (
               <>
                 <span className={isActive ? 'text-brand' : 'text-ink-3'}>{item.icon}</span>
-                {!collapsed && <span>{item.label}</span>}
+                <span
+                  className={[
+                    'whitespace-nowrap overflow-hidden transition-[max-width,opacity] duration-150 ease-out',
+                    collapsed ? 'max-w-0 opacity-0' : 'max-w-[140px] opacity-100',
+                  ].join(' ')}
+                >
+                  {item.label}
+                </span>
               </>
             )}
           </NavLink>
         ))}
       </nav>
 
-      {/* Footer: collapse toggle + meta when expanded */}
-      <div className={`pb-4 ${collapsed ? 'px-2' : 'px-4'} space-y-2`}>
-        {!collapsed && (
-          <div className="text-2xs text-ink-3 space-y-1">
-            <div className="flex justify-between">
-              <span>docs</span>
-              <a
-                href="/docs"
-                target="_blank"
-                rel="noreferrer"
-                className="text-ink-2 hover:text-ink-1"
-              >
-                OpenAPI
-              </a>
-            </div>
-            <div className="flex justify-between">
-              <span>palette</span>
-              <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd></span>
-            </div>
+      {/* Footer: meta fades; collapse toggle keeps icon pinned left. */}
+      <div className="pb-4 px-2 space-y-2">
+        <div
+          aria-hidden={collapsed}
+          className={[
+            'text-2xs text-ink-3 space-y-1 px-2 overflow-hidden transition-[max-height,opacity] duration-150 ease-out',
+            collapsed ? 'max-h-0 opacity-0' : 'max-h-16 opacity-100',
+          ].join(' ')}
+        >
+          <div className="flex justify-between">
+            <span>docs</span>
+            <a
+              href="/docs"
+              target="_blank"
+              rel="noreferrer"
+              className="text-ink-2 hover:text-ink-1"
+            >
+              OpenAPI
+            </a>
           </div>
-        )}
+          <div className="flex justify-between">
+            <span>palette</span>
+            <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">K</kbd></span>
+          </div>
+        </div>
 
         <button
           type="button"
           onClick={toggle}
           title={collapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          className={[
-            'w-full flex items-center rounded-md text-2xs text-ink-3',
-            'border border-line-1 bg-surface-1 hover:text-ink-1 hover:border-line-2 transition',
-            collapsed ? 'justify-center py-2' : 'justify-between px-2.5 py-1.5',
-          ].join(' ')}
+          className="w-full flex items-center justify-between rounded-md text-2xs text-ink-3 h-8 px-2.5 border border-line-1 bg-surface-1 hover:text-ink-1 hover:border-line-2 transition-colors"
         >
-          {collapsed ? (
-            ChevronRight
-          ) : (
-            <>
-              <span className="flex items-center gap-1.5">{ChevronLeft}Collapse</span>
-              <span className="flex gap-0.5"><kbd className="kbd">⌘</kbd><kbd className="kbd">B</kbd></span>
-            </>
-          )}
+          <span className="flex items-center gap-1.5 min-w-0">
+            {collapsed ? ChevronRight : ChevronLeft}
+            <span
+              className={[
+                'whitespace-nowrap overflow-hidden transition-[max-width,opacity] duration-150 ease-out',
+                collapsed ? 'max-w-0 opacity-0' : 'max-w-[80px] opacity-100',
+              ].join(' ')}
+            >
+              Collapse
+            </span>
+          </span>
+          <span
+            className={[
+              'flex gap-0.5 overflow-hidden transition-[max-width,opacity] duration-150 ease-out',
+              collapsed ? 'max-w-0 opacity-0' : 'max-w-[60px] opacity-100',
+            ].join(' ')}
+          >
+            <kbd className="kbd">⌘</kbd><kbd className="kbd">B</kbd>
+          </span>
         </button>
       </div>
     </aside>

@@ -22,6 +22,21 @@ from src.pipeline.launch import (
     spawn_launch_detached,
     validate_resume_run,
 )
+from src.pipeline.project.store import ProjectStore, ProjectStoreError
+
+
+def _project_env_for_run_dir(run_dir: Path) -> dict[str, str]:
+    """Walk up from ``run_dir`` until we find a ``project.json`` sibling and
+    return that workspace's env.json overrides. Returns {} if the run isn't
+    inside a project workspace (legacy runs, ad-hoc dirs).
+    """
+    for candidate in (run_dir, *run_dir.parents):
+        if (candidate / "project.json").is_file():
+            try:
+                return ProjectStore(candidate).read_env()
+            except ProjectStoreError:
+                return {}
+    return {}
 
 
 def list_restart_points(run_dir: Path, config_path: Path | None = None) -> RestartPointsResponse:
@@ -59,7 +74,10 @@ def launch(run_dir: Path, request: LaunchRequestSchema) -> LaunchResponse:
     )
     # Surface validation errors (missing config, illegal restart stage, etc.) as 422.
     launch_request = launch_request.validate()
-    pid, command, launcher_log = spawn_launch_detached(launch_request)
+    project_env = _project_env_for_run_dir(run_dir)
+    pid, command, launcher_log = spawn_launch_detached(
+        launch_request, extra_env=project_env
+    )
     return LaunchResponse(
         pid=pid,
         launched_at=datetime.now(UTC).isoformat(),

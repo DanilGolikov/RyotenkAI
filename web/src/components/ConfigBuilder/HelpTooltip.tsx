@@ -55,7 +55,7 @@ export function HelpTooltip({ text }: { text?: string }) {
       {open && (
         <span
           role="tooltip"
-          className="absolute left-1/2 top-full z-20 mt-2 w-80 -translate-x-1/2 rounded-md border border-line-2 bg-surface-4 px-3 py-2 text-[0.75rem] leading-snug text-ink-1 shadow-card"
+          className="absolute left-0 top-full z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-line-2 bg-surface-4 px-3 py-2 text-[0.75rem] leading-snug text-ink-1 shadow-card whitespace-normal break-words"
         >
           {text}
         </span>

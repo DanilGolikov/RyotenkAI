@@ -83,6 +83,16 @@ class ConfigValidateResponse(BaseModel):
     result: ConfigValidationResult
 
 
+class ProjectEnvResponse(BaseModel):
+    """Project-scoped environment overrides (``HF_TOKEN`` & friends)."""
+
+    env: dict[str, str] = {}
+
+
+class ProjectEnvRequest(BaseModel):
+    env: dict[str, str]
+
+
 __all__ = [
     "ConfigResponse",
     "ConfigValidateResponse",
@@ -91,6 +101,8 @@ __all__ = [
     "ConfigVersionsResponse",
     "CreateProjectRequest",
     "ProjectDetail",
+    "ProjectEnvRequest",
+    "ProjectEnvResponse",
     "ProjectSummary",
     "SaveConfigRequest",
     "SaveConfigResponse",

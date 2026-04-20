@@ -87,7 +87,12 @@ export type ReportResponse = S['ReportResponse']
 
 export type ConfigCheck = S['ConfigCheck']
 export type ConfigValidationResult =
-  Narrow<S['ConfigValidationResult'], 'checks', ConfigCheck[]>
+  Narrow<S['ConfigValidationResult'], 'checks', ConfigCheck[]> & {
+    /** Backend-emitted field errors keyed by dotted Pydantic loc
+     * (e.g. ``"training.strategies.0.strategy_type"``). Added 2026-04.
+     * Reflect manually here until ``openapi-typescript`` is re-run. */
+    field_errors?: Record<string, string[]>
+  }
 
 // ───────── Health ─────────
 
@@ -130,7 +135,10 @@ export type PluginListResponse =
 
 export type ProviderTypeInfo = S['ProviderTypeInfo']
 export type ProviderTypesResponse = S['ProviderTypesResponse']
-export type ProviderSummary = S['ProviderSummary']
+// Augment with has_inference until the OpenAPI spec is regenerated. The
+// field is populated by the backend in provider_service.list_summaries;
+// frontend filters use it directly (e.g. InferenceProviderField).
+export type ProviderSummary = S['ProviderSummary'] & { has_inference?: boolean }
 export type ProviderDetail = S['ProviderDetail']
 export type CreateProviderRequest = S['CreateProviderRequest']
 export type ProviderConfigResponse = S['ProviderConfigResponse']

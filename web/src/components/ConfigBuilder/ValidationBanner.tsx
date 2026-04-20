@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { ConfigValidationResult } from '../../api/types'
-import { groupForCheck } from './validationMap'
+import { groupForCheck, SETTINGS_JUMP_TARGET } from './validationMap'
 
 interface Props {
   result: ConfigValidationResult | null
@@ -87,7 +87,7 @@ export function ValidationBanner({ result, isValidating, hashPrefix, onJump }: P
                     onClick={() => jumpTo(group)}
                     className="text-[0.65rem] uppercase tracking-wide text-ink-1 hover:text-ink-2 whitespace-nowrap"
                   >
-                    → {group}
+                    → {group === SETTINGS_JUMP_TARGET ? 'settings' : group}
                   </button>
                 )}
               </div>
