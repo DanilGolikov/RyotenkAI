@@ -269,11 +269,48 @@ function ObjectFields({
   const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
   const currentValue = isPlainRecord(value) ? (value as Record<string, unknown>) : {}
 
+  // Discriminator detection: look for an enum-typed property whose values
+  // exactly match sibling property names. E.g. training.type ∈
+  // {qlora,lora,adalora} alongside sibling object fields of the same
+  // names. If detected, hide the non-matching siblings in the UI (keep
+  // them in the value so switching back is lossless).
+  const discriminator = detectDiscriminator(root, props)
+  const activeBranch = discriminator
+    ? (typeof currentValue[discriminator.enumKey] === 'string'
+        ? (currentValue[discriminator.enumKey] as string)
+        : undefined)
+    : undefined
+  const hiddenSiblings = new Set<string>()
+  if (discriminator) {
+    for (const name of discriminator.siblings) {
+      if (name !== activeBranch) hiddenSiblings.add(name)
+    }
+  }
+
   const requiredFields: string[] = []
   const optionalFields: string[] = []
   for (const key of Object.keys(props)) {
+    if (hiddenSiblings.has(key)) continue
     if (requiredSet.has(key)) requiredFields.push(key)
     else optionalFields.push(key)
+  }
+  // Reorder: when a discriminator is present, surface the enum key and
+  // its active branch first so the user doesn't have to hunt.
+  if (discriminator && activeBranch && discriminator.siblings.has(activeBranch)) {
+    const bump = (arr: string[], key: string) => {
+      const i = arr.indexOf(key)
+      if (i > 0) {
+        arr.splice(i, 1)
+        arr.unshift(key)
+      }
+    }
+    // Put branch first, then discriminator, so on render both are top-of-list.
+    // (unshift reverses insertion order — see below: push discriminator *after*
+    //  the branch so it ends up first.)
+    for (const arr of [requiredFields, optionalFields]) {
+      bump(arr, activeBranch)
+      bump(arr, discriminator.enumKey)
+    }
   }
 
   function setKey(key: string, next: unknown) {
@@ -283,20 +320,62 @@ function ObjectFields({
     onChange(copy)
   }
 
-  const renderField = (key: string) => (
-    <FieldRenderer
-      key={key}
-      root={root}
-      node={props[key]}
-      value={currentValue[key]}
-      onChange={(next) => setKey(key, next)}
-      labelKey={key}
-      required={requiredSet.has(key)}
-      depth={depth}
-      path={pathPrefix ? `${pathPrefix}.${key}` : key}
-      hashPrefix={hashPrefix}
-    />
-  )
+  const renderField = (key: string) => {
+    // When this is the soft-discriminator key, override the default
+    // string renderer with a select built from the sibling names so the
+    // user can't type typos.
+    if (discriminator && key === discriminator.enumKey) {
+      const resolved = resolveRef(root, props[key])
+      if (detectKind(resolved) !== 'enum') {
+        const label = titleOrKey(resolved, key)
+        const desc =
+          typeof resolved.description === 'string' ? resolved.description : undefined
+        const fallback =
+          typeof currentValue[key] === 'string'
+            ? (currentValue[key] as string)
+            : typeof resolved.default === 'string'
+            ? (resolved.default as string)
+            : ''
+        return (
+          <LabelledRow
+            key={key}
+            label={label}
+            description={desc}
+            required={requiredSet.has(key)}
+          >
+            <select
+              value={fallback}
+              onChange={(e) => setKey(key, e.target.value || undefined)}
+              className="w-full rounded-md bg-surface-2 border border-line-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand"
+            >
+              {!discriminator.enumValues.includes(fallback) && (
+                <option value="">—</option>
+              )}
+              {discriminator.enumValues.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </LabelledRow>
+        )
+      }
+    }
+    return (
+      <FieldRenderer
+        key={key}
+        root={root}
+        node={props[key]}
+        value={currentValue[key]}
+        onChange={(next) => setKey(key, next)}
+        labelKey={key}
+        required={requiredSet.has(key)}
+        depth={depth}
+        path={pathPrefix ? `${pathPrefix}.${key}` : key}
+        hashPrefix={hashPrefix}
+      />
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -342,4 +421,87 @@ function collectEnumOptions(node: JsonSchemaNode): unknown[] {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Detect a discriminator pattern in an object schema. Two shapes are
+ * recognised:
+ *
+ * 1. Strict: one property is an ``enum`` whose string values exactly
+ *    match the names of ≥2 sibling properties. E.g.
+ *    ``{ type: Literal["qlora","lora","adalora"], qlora, lora, adalora }``.
+ *
+ * 2. Soft: one property named ``type``/``kind``/``mode`` is a plain
+ *    string AND ≥2 sibling properties are object-like (optionally
+ *    nullable). The discriminator values default to the sibling names.
+ *    Covers Pydantic models that haven't been tightened to ``Literal``
+ *    (e.g. current ``TrainingOnlyConfig.type``).
+ *
+ * Returns the enum key + the set of sibling names + the values shown in
+ * the dropdown, or ``null`` when no such pattern is present.
+ */
+function detectDiscriminator(
+  root: PipelineJsonSchema,
+  props: Record<string, JsonSchemaNode>,
+): { enumKey: string; siblings: Set<string>; enumValues: string[] } | null {
+  const keys = Object.keys(props)
+  const objectLikeSiblings = (self: string): string[] =>
+    keys.filter((k) => {
+      if (k === self) return false
+      const resolved = resolveRef(root, props[k])
+      const kind = detectKind(resolved)
+      if (kind === 'object') return true
+      // Nullable object: anyOf of object + null.
+      if (Array.isArray(resolved.anyOf)) {
+        const branches = resolved.anyOf.map((b) => resolveRef(root, b))
+        if (
+          branches.some((b) => detectKind(b) === 'object') &&
+          branches.some((b) => (Array.isArray(b.type) ? b.type[0] : b.type) === 'null')
+        ) {
+          return true
+        }
+      }
+      return false
+    })
+
+  // Strict: enum values ⊆ sibling names.
+  for (const key of keys) {
+    const resolved = resolveRef(root, props[key])
+    if (detectKind(resolved) !== 'enum') continue
+
+    const values: string[] = []
+    if (Array.isArray(resolved.enum)) {
+      for (const v of resolved.enum) if (typeof v === 'string') values.push(v)
+    } else if (Array.isArray(resolved.anyOf)) {
+      for (const branch of resolved.anyOf) {
+        if (branch && typeof branch === 'object' && 'const' in branch) {
+          const c = (branch as { const?: unknown }).const
+          if (typeof c === 'string') values.push(c)
+        }
+      }
+    }
+    if (values.length < 2) continue
+
+    const matching = values.filter((v) => keys.includes(v) && v !== key)
+    if (matching.length >= 2 && matching.length === values.length) {
+      return { enumKey: key, siblings: new Set(matching), enumValues: values }
+    }
+  }
+
+  // Soft: a "type"/"kind"/"mode" string field + object-like siblings.
+  const candidateKeys = ['type', 'kind', 'mode']
+  for (const key of candidateKeys) {
+    if (!keys.includes(key)) continue
+    const resolved = resolveRef(root, props[key])
+    if (detectKind(resolved) !== 'string') continue
+    const siblings = objectLikeSiblings(key)
+    if (siblings.length < 2) continue
+    return {
+      enumKey: key,
+      siblings: new Set(siblings),
+      enumValues: siblings,
+    }
+  }
+
+  return null
 }
