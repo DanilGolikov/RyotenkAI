@@ -74,7 +74,9 @@ export function PresetDropdown({ dirty, onLoad, current, closeToken }: Props) {
                 onClick={() => handleClick(p)}
                 className="w-full text-left px-3 py-2 hover:bg-surface-2 transition block"
               >
-                <div className="text-xs text-ink-1 font-mono">{p.name}</div>
+                <div className="text-xs text-ink-1 font-medium">
+                  {p.display_name || p.name}
+                </div>
                 {p.description && (
                   <div className="text-[0.65rem] text-ink-3 line-clamp-2 mt-0.5">
                     {p.description}

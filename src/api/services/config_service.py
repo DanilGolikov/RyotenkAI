@@ -67,7 +67,19 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
             checks.append(ConfigCheck(label="HF_TOKEN not set", status="fail"))
 
         runpod_key = os.environ.get("RUNPOD_API_KEY", "").strip()
-        active_provider = cfg.get_active_provider_name() if hasattr(cfg, "get_active_provider_name") else None
+        # `get_active_provider_name()` raises when `training.provider` is
+        # unset. That's expected at runtime (you can't launch without a
+        # provider), but during the UI's pre-save validation we don't
+        # want that to surface as a 500. Tolerate "not yet chosen" — the
+        # dedicated provider-required check below still nags the user.
+        try:
+            active_provider = (
+                cfg.get_active_provider_name()
+                if hasattr(cfg, "get_active_provider_name")
+                else None
+            )
+        except ValueError:
+            active_provider = None
         if active_provider and "runpod" in (active_provider or "").lower():
             if runpod_key:
                 checks.append(ConfigCheck(label="RUNPOD_API_KEY found", status="ok"))

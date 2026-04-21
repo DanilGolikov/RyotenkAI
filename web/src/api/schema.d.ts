@@ -662,6 +662,11 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /**
              * Description
              * @default
              */

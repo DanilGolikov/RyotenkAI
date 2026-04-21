@@ -67,7 +67,7 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
         <div className="px-4 py-3 border-b border-line-1 flex items-center justify-between">
           <div>
             <div id="preset-preview-title" className="text-sm font-semibold text-ink-1">
-              Load preset <span className="font-mono text-brand-alt">{preset.name}</span>?
+              Load preset <span className="font-semibold text-brand-alt">{preset.display_name || preset.name}</span>?
             </div>
             <div className="text-2xs text-ink-3">
               {diff.length === 0

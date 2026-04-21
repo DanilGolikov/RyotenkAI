@@ -55,23 +55,45 @@ def schema() -> dict:
 
 @router.get("/presets", response_model=ConfigPresetsResponse)
 def presets() -> ConfigPresetsResponse:
-    """Return curated starter configs from ``configs/presets/*.yaml``."""
+    """Return curated starter configs from ``configs/presets/*.yaml``.
+
+    Preset YAMLs follow a light convention in the leading comment
+    block::
+
+        # Preset: <display_name>
+        # <first line of description>
+        # <more description…>
+
+    The ``# Preset:`` line becomes ``display_name`` (dropdown label);
+    remaining ``#`` lines join into ``description`` (secondary text).
+    ``name`` is always the file stem — so prefixing filenames with
+    ``01-``, ``02-`` etc. forces alphabetical order to match the
+    intended display order without leaking digits into the UI.
+    """
     presets_dir = Path("configs/presets").expanduser().resolve()
     items: list[ConfigPreset] = []
     if presets_dir.is_dir():
         for path in sorted(presets_dir.glob("*.yaml")):
             text = path.read_text(encoding="utf-8")
-            # Extract a short description from leading `# ` comments.
+            display_name = ""
             description_lines: list[str] = []
             for line in text.splitlines():
                 stripped = line.strip()
                 if stripped.startswith("#"):
-                    description_lines.append(stripped.lstrip("# ").rstrip())
+                    content = stripped.lstrip("# ").rstrip()
+                    if not display_name and content.lower().startswith("preset:"):
+                        display_name = content.split(":", 1)[1].strip()
+                    elif content:
+                        description_lines.append(content)
                 elif stripped:
                     break
             description = " ".join(description_lines).strip()
-            # Drop the leading "Preset: " prefix if the user followed the convention.
-            if description.lower().startswith("preset:"):
-                description = description.split(":", 1)[1].strip()
-            items.append(ConfigPreset(name=path.stem, description=description, yaml=text))
+            items.append(
+                ConfigPreset(
+                    name=path.stem,
+                    display_name=display_name or path.stem,
+                    description=description,
+                    yaml=text,
+                )
+            )
     return ConfigPresetsResponse(presets=items)

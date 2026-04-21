@@ -1,0 +1,60 @@
+# Preset: > 10B
+# Large models (13B and up). Conservative LoRA rank and lower LR to
+# keep VRAM bounded and avoid instability on larger models. Pick a
+# provider yourself after loading — the preset leaves
+# `training.provider` unset so you can target single_node or a
+# cloud pool with a big-memory GPU.
+model:
+  name: "meta-llama/Llama-3.1-70B-Instruct"
+  torch_dtype: bfloat16
+  trust_remote_code: false
+
+training:
+  # provider: choose in the Providers section after loading.
+  type: "qlora"
+
+  qlora:
+    r: 8
+    lora_alpha: 16
+    lora_dropout: 0.05
+    bias: none
+    target_modules: "all-linear"
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_use_double_quant: true
+
+  hyperparams:
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 16
+    learning_rate: 1.0e-4
+    warmup_ratio: 0.05
+    epochs: 2
+    weight_decay: 0.01
+    lr_scheduler_type: cosine
+    bf16: true
+    fp16: false
+    gradient_checkpointing: true
+    logging_steps: 10
+    save_steps: 200
+    max_length: 2048
+    packing: true
+
+  strategies:
+    - strategy_type: "sft"
+      dataset: "default"
+      hyperparams:
+        epochs: 2
+        max_length: 2048
+        packing: true
+
+datasets:
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        train: "./datasets/train.jsonl"
+
+providers: {}
