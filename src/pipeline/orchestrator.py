@@ -12,7 +12,6 @@ Features:
 
 from __future__ import annotations
 
-import contextlib
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,6 +39,7 @@ from src.pipeline.constants import (
 )
 from src.pipeline.domain import RunContext
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
+from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.stages import (
     DatasetValidator,
     GPUDeployer,
@@ -75,7 +75,10 @@ from src.pipeline.state.transitioner import (
 )
 from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 from src.reports import ExperimentReportGenerator
-from src.training.managers.mlflow_manager import MLflowManager
+
+# Runtime re-export — several tests patch ``src.pipeline.orchestrator.MLflowManager``.
+# Keeping this symbol here lets those tests keep working without migrating them yet.
+from src.training.managers.mlflow_manager import MLflowManager  # noqa: TC001
 from src.utils.config import AdaLoraConfig, PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
 from src.utils.logger import console, get_run_log_dir, init_run_logging, logger, stage_logging_context
 from src.utils.logs_layout import LogLayout
@@ -223,11 +226,10 @@ class PipelineOrchestrator:
             PipelineContextKeys.RUN: self.run_ctx,
         }
 
-        # MLflow manager for pipeline event logging
-        self._mlflow_manager: MLflowManager | None = None
-        self._mlflow_run_context: Any = None
-        self._mlflow_root_run: Any = None
-        self._mlflow_attempt_run: Any = None
+        # MLflow lifecycle manager (extracted from orchestrator).
+        # Owns MLflowManager + root/attempt runs; orchestrator keeps a single
+        # collaborator instead of four scattered attributes.
+        self._mlflow_attempt = MLflowAttemptManager(self.config, self.config_path)
         self._shutdown_signal_name: str | None = None
         self._cleanup_done: bool = False
 
@@ -250,6 +252,22 @@ class PipelineOrchestrator:
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""
         self._shutdown_signal_name = str(signal_name or "").upper()
+
+    @property
+    def _mlflow_manager(self) -> MLflowManager | None:
+        """Backward-compat alias — many call sites read ``self._mlflow_manager`` directly."""
+        return self._mlflow_attempt.manager
+
+    @_mlflow_manager.setter
+    def _mlflow_manager(self, value: MLflowManager | None) -> None:
+        """Backward-compat setter — some tests assign to ``orchestrator._mlflow_manager``.
+
+        Safe to call before ``_mlflow_attempt`` is initialised (tests sometimes
+        partially build the orchestrator): in that case the assignment is a no-op.
+        """
+        attempt_mgr = self.__dict__.get("_mlflow_attempt")
+        if attempt_mgr is not None:
+            attempt_mgr._manager = value
 
     def _init_stages(self) -> list[PipelineStage]:
         """Initialize all pipeline stages in execution order."""
@@ -310,60 +328,12 @@ class PipelineOrchestrator:
         }
 
     def _setup_mlflow(self) -> MLflowManager | None:
-        """Setup MLflow for pipeline event logging."""
-        mlflow_config = self.config.experiment_tracking.mlflow
-        try:
-            # Explicitly disable system metrics for pipeline orchestrator (Control Plane)
-            # We don't want to log Mac/Host CPU/RAM metrics to the main run
-            # because it confuses the dashboard (mixes with GPU metrics from provider)
-
-            # 1. Force config setting
-            config_copy = self.config
-            config_copy.experiment_tracking.mlflow.system_metrics_callback_enabled = False
-
-            # 2. Force environment variable (critical for MLflow internals)
-            import os
-
-            os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "false"
-
-            manager = MLflowManager(config_copy, runtime_role="control_plane")
-
-            # 3. Disable system metrics logging in MLflow client directly
-            # Important: Call disable_system_metrics_logging() globally first
-            try:
-                import mlflow
-
-                mlflow.disable_system_metrics_logging()
-            except Exception:
-                # Best-effort: MLflow may be missing, API may differ, or call can fail.
-                # We still proceed with manager.setup(disable_system_metrics=True).
-                pass
-
-            manager.setup(disable_system_metrics=True)
-            return manager
-        except Exception as e:
-            logger.warning(f"MLflow setup failed: {e}")
-            return None
+        """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager)."""
+        return self._mlflow_attempt.bootstrap()
 
     def _get_mlflow_run_id(self) -> str | None:
-        """
-        Best-effort get current MLflow run_id (works for real MLflowManager and test mocks).
-
-        - Prefer `run_id` property when it's a non-empty string.
-        - Fall back to legacy `_run_id` attribute used in older code/tests.
-        """
-        if not self._mlflow_manager:
-            return None
-
-        run_id = getattr(self._mlflow_manager, "run_id", None)
-        if isinstance(run_id, str) and run_id:
-            return run_id
-
-        legacy_run_id = getattr(self._mlflow_manager, "_run_id", None)
-        if isinstance(legacy_run_id, str) and legacy_run_id:
-            return legacy_run_id
-
-        return None
+        """Best-effort MLflow run_id (delegates to MLflowAttemptManager)."""
+        return self._mlflow_attempt.get_run_id()
 
     def run(
         self,
@@ -1101,160 +1071,54 @@ class PipelineOrchestrator:
     def _setup_mlflow_for_attempt(
         self, *, state: PipelineState, attempt: PipelineAttemptState, start_stage_idx: int
     ) -> None:
-        self._mlflow_manager = self._setup_mlflow()
-        if not self._mlflow_manager or not self._mlflow_manager.is_active:
-            return
-        runtime_tracking_uri = self._mlflow_manager.get_runtime_tracking_uri()
-        ca_bundle_path = getattr(self.config.experiment_tracking.mlflow, "ca_bundle_path", None)
-        state.mlflow_runtime_tracking_uri = (
-            runtime_tracking_uri if isinstance(runtime_tracking_uri, str) and runtime_tracking_uri else None
-        )
-        state.mlflow_ca_bundle_path = ca_bundle_path if isinstance(ca_bundle_path, str) and ca_bundle_path else None
-        try:
-            import mlflow
-
-            mlflow.disable_system_metrics_logging()
-        except Exception:
-            pass
-
-        if state.root_mlflow_run_id:
-            self._mlflow_root_run = self._open_existing_root_run(state.root_mlflow_run_id)
-            attempt.root_mlflow_run_id = state.root_mlflow_run_id
-        else:
-            self._mlflow_run_context = self._mlflow_manager.start_run(run_name=state.logical_run_id)
-            self._mlflow_root_run = self._mlflow_run_context.__enter__()
-            state.root_mlflow_run_id = self._get_mlflow_run_id()
-            attempt.root_mlflow_run_id = state.root_mlflow_run_id
-
-        attempt_name = f"{state.logical_run_id}_attempt_{attempt.attempt_no}"
-        attempt_tags = {
-            "pipeline.logical_run_id": state.logical_run_id,
-            "pipeline.attempt_id": attempt.attempt_id,
-            "pipeline.attempt_no": str(attempt.attempt_no),
-        }
-        self._mlflow_attempt_run = self._mlflow_manager.start_nested_run(run_name=attempt_name, tags=attempt_tags)
-        self._mlflow_attempt_run.__enter__()
-        attempt.pipeline_attempt_mlflow_run_id = self._get_mlflow_run_id()
-        self.context[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = attempt.pipeline_attempt_mlflow_run_id
-        self.context[PipelineContextKeys.MLFLOW_MANAGER] = self._mlflow_manager
-        self._mlflow_manager.log_event_start(
-            "Pipeline attempt started",
-            category=MLFLOW_CATEGORY_PIPELINE,
-            source=MLFLOW_SOURCE_ORCHESTRATOR,
-        )
-        self._mlflow_manager.log_pipeline_config(self.config)
-        self._mlflow_manager.log_dataset_config(self.config)
-        self._mlflow_manager.log_params(
-            {
-                "pipeline.total_stages": len(self.stages),
-                "pipeline.start_stage": start_stage_idx,
-                "pipeline.run_directory": str(self.run_directory),
-            }
+        # Bootstrap via the thin delegate so tests that patch ``_setup_mlflow``
+        # can inject a mock MLflowManager without reaching into MLflowAttemptManager.
+        manager = self._setup_mlflow()
+        self._mlflow_attempt.setup_for_attempt(
+            state=state,
+            attempt=attempt,
+            start_stage_idx=start_stage_idx,
+            context=self.context,
+            total_stages=len(self.stages),
+            run_directory=self.run_directory,
+            manager=manager,
         )
 
     def _ensure_mlflow_preflight(self, *, state: PipelineState) -> None:
         """Fail fast when mandatory MLflow setup/connectivity is not available."""
-        mlflow_cfg = self.config.experiment_tracking.mlflow
-        raw_tracking_uri = getattr(mlflow_cfg, "tracking_uri", None)
-        raw_local_tracking_uri = getattr(mlflow_cfg, "local_tracking_uri", None)
-        tracking_uri = (
-            self._mlflow_manager.get_runtime_tracking_uri()
-            if self._mlflow_manager is not None
-            else (raw_local_tracking_uri or raw_tracking_uri)
-        )
-        if self._mlflow_manager is None or not self._mlflow_manager.is_active:
-            raise LaunchPreparationError(
-                AppError(
-                    code="MLFLOW_PREFLIGHT_SETUP_FAILED",
-                    message=(
-                        "MLflow setup failed "
-                        f"(effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
-                        f"raw_local_tracking_uri={raw_local_tracking_uri})"
-                    ),
-                    details={
-                        "effective_uri": tracking_uri,
-                        "raw_tracking_uri": raw_tracking_uri,
-                        "raw_local_tracking_uri": raw_local_tracking_uri,
-                    },
-                ),
-                state=state,
-            )
-        if not self._mlflow_manager.check_mlflow_connectivity():
-            gateway_error = self._mlflow_manager.get_last_connectivity_error()
-            error_code = gateway_error.code if gateway_error is not None else "MLFLOW_PREFLIGHT_UNREACHABLE"
-            error_message = (
-                f"MLflow not reachable (effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
-                f"raw_local_tracking_uri={raw_local_tracking_uri})"
-            )
-            if gateway_error is not None:
-                error_message = f"{error_message}: {gateway_error.message}"
-            raise LaunchPreparationError(
-                AppError(
-                    code=error_code,
-                    message=error_message,
-                    details={
-                        "effective_uri": tracking_uri,
-                        "raw_tracking_uri": raw_tracking_uri,
-                        "raw_local_tracking_uri": raw_local_tracking_uri,
-                        "gateway_error": gateway_error.to_log_dict() if gateway_error is not None else None,
-                    },
-                ),
-                state=state,
-            )
-        if self.config_path.exists():
-            self._mlflow_manager.log_artifact(str(self.config_path))
+        app_error = self._mlflow_attempt.ensure_preflight()
+        if app_error is not None:
+            raise LaunchPreparationError(app_error, state=state)
+        self._mlflow_attempt.log_config_artifact()
         self._save_state()
 
     def _open_existing_root_run(self, root_run_id: str) -> Any:
-        assert self._mlflow_manager is not None
-        if self._mlflow_manager._mlflow is None:
-            return None
-        run = self._mlflow_manager._mlflow.start_run(run_id=root_run_id, nested=False, log_system_metrics=False)
-        self._mlflow_manager._run = run
-        self._mlflow_manager._run_id = root_run_id
-        self._mlflow_manager._parent_run_id = root_run_id
-        return run
+        return self._mlflow_attempt.open_existing_root_run(root_run_id)
 
     def _teardown_mlflow_attempt(self, *, pipeline_success: bool) -> None:
-        if self._mlflow_manager:
-            try:
-                self._aggregate_training_metrics()
-            except Exception as e:
-                logger.warning(f"Failed to aggregate training metrics: {e}")
+        attempt_run_id = (
+            self._current_attempt.pipeline_attempt_mlflow_run_id if self._current_attempt else None
+        )
 
-            attempt_run_id = self._current_attempt.pipeline_attempt_mlflow_run_id if self._current_attempt else None
+        def _before_end() -> None:
+            self._aggregate_training_metrics()
 
-            if self._mlflow_attempt_run:
-                with contextlib.suppress(Exception):
-                    if pipeline_success:
-                        self._mlflow_attempt_run.__exit__(None, None, None)
-                    else:
-                        _exc = RuntimeError("Pipeline attempt failed")
-                        self._mlflow_attempt_run.__exit__(type(_exc), _exc, None)
-                self._mlflow_attempt_run = None
+        def _sync_state_and_return_path() -> Path | None:
+            if self._state_store is None:
+                return None
+            self._save_state()
+            return self._state_store.state_path
 
-            # Log final pipeline_state.json to the root MLflow run.
-            # The nested attempt run is already closed above, so log_artifact
-            # goes to the root run context.
-            if self._state_store is not None:
-                with contextlib.suppress(Exception):
-                    self._save_state()
-                    if self._state_store.state_path.exists():
-                        self._mlflow_manager.log_artifact(str(self._state_store.state_path))
+        def _after_end(run_id: str | None) -> None:
+            self._generate_experiment_report(run_id=run_id)
 
-            root_status = "FINISHED" if pipeline_success else "FAILED"
-            self._mlflow_manager.end_run(status=root_status)
-            self._generate_experiment_report(run_id=attempt_run_id)
-
-        if self._mlflow_run_context:
-            with contextlib.suppress(Exception):
-                self._mlflow_run_context.__exit__(None, None, None)
-            self._mlflow_run_context = None
-
-        self._mlflow_root_run = None
-
-        if self._mlflow_manager:
-            self._mlflow_manager.cleanup()
+        self._mlflow_attempt.teardown_attempt(
+            pipeline_success=pipeline_success,
+            attempt_run_id=attempt_run_id,
+            on_before_end=_before_end,
+            state_path_supplier=_sync_state_and_return_path,
+            on_after_end=_after_end,
+        )
 
     def _validate_stage_prerequisites(self, *, stage_name: str, start_stage_name: str) -> AppError | None:
         return self._stage_planner.validate_stage_prerequisites(
