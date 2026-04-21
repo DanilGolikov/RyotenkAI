@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from contextvars import copy_context
 from typing import Any, Protocol
 
 from src.utils.logger import get_logger
@@ -146,8 +147,10 @@ class MLflowGateway:
                 mlflow.set_tracking_uri(self._uri)
                 return mlflow.genai.load_prompt(name)
 
+            # Carry ContextVars (per-stage logging context etc.) into worker.
+            parent_ctx = copy_context()
             with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_call)
+                future = executor.submit(parent_ctx.run, _call)
                 return future.result(timeout=timeout)
         except FuturesTimeoutError:
             logger.warning(f"[MLFLOW:GATEWAY] load_prompt({name!r}) timed out after {timeout}s " f"(URI={self._uri!r})")
