@@ -7,9 +7,15 @@ incompatible strategy chains before any stage runs. Extracting this from
 makes startup validation test-in-isolation.
 """
 
+from src.pipeline.bootstrap.pipeline_bootstrap import BootstrapResult, PipelineBootstrap
 from src.pipeline.bootstrap.startup_validator import (
     StartupValidationError,
     StartupValidator,
 )
 
-__all__ = ["StartupValidationError", "StartupValidator"]
+__all__ = [
+    "BootstrapResult",
+    "PipelineBootstrap",
+    "StartupValidationError",
+    "StartupValidator",
+]

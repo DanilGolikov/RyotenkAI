@@ -159,8 +159,8 @@ def _build_orchestrator(
         ControlledStage(config, StageNames.MODEL_EVALUATOR, calls=calls, behavior=stage_behaviors[StageNames.MODEL_EVALUATOR]),
     ]
     with (
-        patch("src.pipeline.orchestrator.load_config", return_value=config),
-        patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
         patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch.object(StageRegistry, "_build_stages", return_value=stages),
         patch.object(PipelineOrchestrator, "_setup_mlflow", return_value=None),

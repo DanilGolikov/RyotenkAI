@@ -16,21 +16,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config.runtime import RuntimeSettings, load_runtime_settings
-from src.pipeline.bootstrap import StartupValidator
-from src.pipeline.config_drift import ConfigDriftValidator
+from src.pipeline.bootstrap import PipelineBootstrap
 from src.pipeline.constants import (
     EXIT_CODE_SIGINT,
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
-from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
-from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop, StageRegistry
-from src.pipeline.executor import StagePlanner
-from src.pipeline.launch import LaunchPreparationError, LaunchPreparator, PreparedAttempt
-from src.pipeline.mlflow_attempt import MLflowAttemptManager
+from src.pipeline.launch import LaunchPreparationError, PreparedAttempt
 from src.pipeline.reporting import ExecutionSummaryReporter
-from src.pipeline.stages import PipelineContextKeys, StageNames
+from src.pipeline.stages import StageNames
 from src.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
@@ -39,13 +34,10 @@ from src.pipeline.state import (
     PipelineStateStore,
 )
 from src.pipeline.state.run_lock_guard import RunLockGuard
-from src.pipeline.validation.artifact_manager import ValidationArtifactManager
-from src.utils.config import PipelineConfig, Secrets, load_config, load_secrets
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
-    from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.stages.base import PipelineStage
     from src.training.managers.mlflow_manager import MLflowManager
     from src.utils.logs_layout import LogLayout
@@ -72,23 +64,30 @@ class PipelineOrchestrator:
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
     ):
-        """
-        Initialize the orchestrator with configuration.
+        """Initialize the orchestrator.
 
-        Args:
-            config_path: Path to pipeline configuration YAML file
-            run_directory: Explicit run directory (resume / restart).
-            settings: Runtime settings (env vars snapshot). Auto-loaded if not provided.
+        Construction is two-phase:
+
+        1. Declare per-run mutable state (run_ctx, _run_lock_guard, etc.) and
+           the AttemptController — its save_fn closes over ``self._state_store``
+           so the controller must exist before anything that might mutate state.
+        2. :meth:`PipelineBootstrap.build` does the heavy wiring (config load,
+           validation, component construction). The frozen result is copied
+           onto ``self.*`` fields to keep backward compatibility with callers
+           that read ``orch.config`` / ``orch.stages`` / etc.
         """
+        # ----- Phase 1: per-run mutable state + single-writer controller -----
         self.settings: RuntimeSettings = settings or load_runtime_settings()
-        # Single source of truth for run naming (no env fallbacks, no legacy).
-        # NOTE: Do not name this attribute `run` — it would shadow PipelineOrchestrator.run().
+        # Do not name this attribute `run` — it would shadow
+        # PipelineOrchestrator.run().
         self.run_ctx: RunContext = RunContext.create()
         self.logical_run_id: str | None = None
         self.run_directory: Path | None = run_directory
         self.attempt_directory: Path | None = None
         self._log_layout: LogLayout | None = None
         self._state_store: PipelineStateStore | None = None
+        self._shutdown_signal_name: str | None = None
+        self._run_lock_guard: RunLockGuard | None = None
         # Single writer of PipelineState / active attempt / lineage.
         # save_fn is a closure that reads ``self._state_store`` at call time —
         # that way ``_state_store`` can be bound by LaunchPreparator later
@@ -97,113 +96,36 @@ class PipelineOrchestrator:
             save_fn=self._persist_state,
             run_ctx=self.run_ctx,
         )
-        # Ownership of the on-disk run.lock. Kept as a RunLockGuard so the
-        # finally block can rely on context-manager semantics (Invariant #1).
-        self._run_lock_guard: RunLockGuard | None = None
 
-        logger.info("Initializing Pipeline Orchestrator")
-
-        # Load configuration + fail-fast validation
-        try:
-            self.config_path = config_path  # Save for later use
-            self.config: PipelineConfig = load_config(config_path)
-            self.secrets: Secrets = load_secrets()
-            StartupValidator.validate(config=self.config, secrets=self.secrets)
-            logger.info("Configuration loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load configuration: {e}")
-            raise
-
-        # Pipeline context (shared data between stages).
-        # PipelineContext inherits from dict — existing stages that accept
-        # ``dict[str, Any]`` keep working without changes.
-        self.context: PipelineContext = PipelineContext(
-            {
-                PipelineContextKeys.CONFIG_PATH: str(config_path),
-                PipelineContextKeys.RUN: self.run_ctx,
-            }
-        )
-
-        # MLflow lifecycle manager (extracted from orchestrator).
-        # Owns MLflowManager + root/attempt runs; orchestrator keeps a single
-        # collaborator instead of four scattered attributes.
-        self._mlflow_attempt = MLflowAttemptManager(self.config, self.config_path)
-        self._shutdown_signal_name: str | None = None
-
-        # Collectors first — everything downstream references the canonical
-        # mapping (ValidationArtifactManager watches this exact dict).
-        collectors = StageRegistry._build_collectors()
-        self._collectors: dict[str, StageArtifactCollector] = collectors
-        self._validation_artifact_mgr = ValidationArtifactManager(
-            collectors=collectors,
-            context=self.context,
-        )
-        # Stage context propagation (extracted from orchestrator).
-        self._context_propagator = ContextPropagator(self._validation_artifact_mgr)
-        # Post-stage MLflow info logging (extracted from orchestrator).
-        self._stage_info_logger = StageInfoLogger()
-        # Config hash / drift validation (extracted from orchestrator).
-        self._config_drift = ConfigDriftValidator(self.config)
-        # End-of-pipeline reporting (extracted from orchestrator).
-        self._summary_reporter = ExecutionSummaryReporter(self.config)
-
-        # Stage registry: owns the stages list + cleanup policy (uses the
-        # collectors we just built so all downstream components share a
-        # single dict).
-        stages_list = StageRegistry._build_stages(
-            config=self.config,
-            secrets=self.secrets,
-            validation_artifact_mgr=self._validation_artifact_mgr,
-        )
-        self._registry = StageRegistry(
-            config=self.config,
-            stages=stages_list,
-            collectors=collectors,
-        )
-        self.stages: list[PipelineStage] = self._registry.stages
-        logger.info(f"Initialized {len(self.stages)} pipeline stages")
-
-        # Stage planner: pure stage-ordering logic (extracted from orchestrator).
-        # Depends on the finalised self.stages + self.config, so instantiate here.
-        self._stage_planner = StagePlanner(self.stages, self.config)
-
-        # Launch preparator: owns state-store creation, drift validation, and
-        # per-attempt dir/log layout. Returns a frozen PreparedAttempt — the
-        # orchestrator's _prepare_stateful_attempt reads that rather than
-        # mutating a dozen instance fields.
-        self._launch_preparator = LaunchPreparator(
-            config_path=self.config_path,
+        # ----- Phase 2: delegate wiring to PipelineBootstrap -----
+        bootstrap = PipelineBootstrap.build(
+            config_path=config_path,
             run_ctx=self.run_ctx,
             settings=self.settings,
-            stages=self.stages,
-            stage_planner=self._stage_planner,
-            config_drift=self._config_drift,
             attempt_controller=self._attempt_controller,
-        )
-
-        # Restart-points inspector: pure read-only query of saved state +
-        # config drift + runtime health. Lives outside the run lifecycle so
-        # callers can ask "what can I restart?" without entering _run_stateful.
-        self._restart_inspector = RestartPointsInspector(
-            stages=self.stages,
-            config_drift=self._config_drift,
-        )
-
-        # Stage execution loop: the for-loop + outcome handlers + exception
-        # boundary for mid-run failures. Runs AFTER _prepare_stateful_attempt
-        # produces a PreparedAttempt.
-        self._stage_execution_loop = StageExecutionLoop(
-            stages=self.stages,
-            collectors=self._collectors,
-            attempt_controller=self._attempt_controller,
-            stage_planner=self._stage_planner,
-            context_propagator=self._context_propagator,
-            stage_info_logger=self._stage_info_logger,
-            validation_artifact_mgr=self._validation_artifact_mgr,
-            summary_reporter=self._summary_reporter,
             on_stage_completed=self._on_stage_completed,
             on_shutdown_signal=self._on_shutdown_signal,
         )
+        # Unpack onto ``self.*`` for backward compatibility — downstream
+        # callers (and tests) still read ``orch.config``, ``orch.stages``,
+        # ``orch._registry`` etc.
+        self.config_path = bootstrap.config_path
+        self.config = bootstrap.config
+        self.secrets = bootstrap.secrets
+        self.context = bootstrap.context
+        self.stages = bootstrap.stages
+        self._collectors = bootstrap.collectors
+        self._validation_artifact_mgr = bootstrap.validation_artifact_mgr
+        self._context_propagator = bootstrap.context_propagator
+        self._stage_info_logger = bootstrap.stage_info_logger
+        self._config_drift = bootstrap.config_drift
+        self._summary_reporter = bootstrap.summary_reporter
+        self._mlflow_attempt = bootstrap.mlflow_attempt
+        self._registry = bootstrap.registry
+        self._stage_planner = bootstrap.stage_planner
+        self._launch_preparator = bootstrap.launch_preparator
+        self._restart_inspector = bootstrap.restart_inspector
+        self._stage_execution_loop = bootstrap.stage_execution_loop
 
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""

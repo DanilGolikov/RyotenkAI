@@ -26,8 +26,8 @@ def _mk_orchestrator(
     stages: list[Any] | None = None,
 ) -> PipelineOrchestrator:
     with (
-        patch("src.pipeline.orchestrator.load_config", return_value=config),
-        patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
         patch.object(StageRegistry, "_build_stages", return_value=stages or []),
     ):
         return PipelineOrchestrator(config_path)

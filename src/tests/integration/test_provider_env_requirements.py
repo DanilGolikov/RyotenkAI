@@ -110,7 +110,7 @@ experiment_tracking:
 
     _patch_stage_construction(monkeypatch)
     monkeypatch.setattr(
-        "src.pipeline.orchestrator.load_secrets",
+        "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
         lambda: type("S", (), {"hf_token": "hf_test_token", "runpod_api_key": None})(),
     )
 
@@ -194,7 +194,7 @@ experiment_tracking:
 
     _patch_stage_construction(monkeypatch)
     monkeypatch.setattr(
-        "src.pipeline.orchestrator.load_secrets",
+        "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
         lambda: type("S", (), {"hf_token": "hf_test_token", "runpod_api_key": None})(),
     )
 
@@ -299,7 +299,7 @@ experiment_tracking:
 
     _patch_stage_construction(monkeypatch)
     monkeypatch.setattr(
-        "src.pipeline.orchestrator.load_secrets",
+        "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
         lambda: type("S", (), {"hf_token": "hf_test_token", "runpod_api_key": None})(),
     )
 

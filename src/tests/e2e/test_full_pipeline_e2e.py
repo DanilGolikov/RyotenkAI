@@ -48,8 +48,8 @@ def mock_stages():
 def mock_orchestrator_with_stages(mock_config, mock_stages):
     """Create orchestrator with mock stages."""
     with (
-        patch("src.pipeline.orchestrator.load_config") as mock_load_config,
-        patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config") as mock_load_config,
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
     ):
         mock_load_config.return_value = mock_config
         mock_load_secrets.return_value = MagicMock()
@@ -276,7 +276,7 @@ class TestRealConfigLoading:
         if not config_path.exists():
             pytest.skip("Test config file not found")
 
-        with patch("src.pipeline.orchestrator.load_secrets") as mock_secrets:
+        with patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_secrets:
             mock_secrets.return_value = MagicMock()
 
             orchestrator = PipelineOrchestrator(config_path)

@@ -36,8 +36,8 @@ def _build_orchestrator(config_path: Path, config: MagicMock) -> PipelineOrchest
     secrets = MagicMock()
     secrets.hf_token = "test-token"
     with (
-        patch("src.pipeline.orchestrator.load_config", return_value=config),
-        patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
+        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
         patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch("src.pipeline.execution.stage_registry.DatasetValidator"),
         patch("src.pipeline.execution.stage_registry.GPUDeployer"),
