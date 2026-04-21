@@ -356,7 +356,59 @@ else
     [[ -n "$CONFIG" ]]  && CMD_ARGS+=(--config "$CONFIG")
     [[ -n "$RUN_DIR" ]] && CMD_ARGS+=(--run-dir "$RUN_DIR")
 
-    LOG_LEVEL=DEBUG python -m src.main train "${CMD_ARGS[@]}" "${PASSTHROUGH[@]}"
+    # Route pipeline output through a single channel: pipeline.log (root-logger
+    # FileHandler) is the aggregate — it already contains ryotenkai.*, mlflow,
+    # transformers, paramiko etc. We hide the Python stderr (console handler)
+    # into a startup buffer and live-tail pipeline.log into the terminal, so
+    # the user sees each record exactly once.
+    STARTUP_LOG=$(mktemp -t helix-startup.XXXXXX)
+    SEARCH_ROOT="${RUN_DIR:-runs}"
+    [[ -d "$SEARCH_ROOT" ]] || mkdir -p "$SEARCH_ROOT"
+
+    LOG_LEVEL=DEBUG python -m src.main train "${CMD_ARGS[@]}" "${PASSTHROUGH[@]}" \
+        >"$STARTUP_LOG" 2>&1 &
+    PYTHON_PID=$!
+
+    TAIL_PID=""
+    _cleanup_children() {
+        [[ -n "$TAIL_PID" ]] && kill "$TAIL_PID" 2>/dev/null || true
+        kill "$PYTHON_PID" 2>/dev/null || true
+    }
+    trap _cleanup_children INT TERM
+
+    # Poll for pipeline.log (created by init_run_logging, usually within
+    # a few seconds). -newer "$STARTUP_LOG" restricts to this invocation's run.
+    LOG_FILE=""
+    for _ in $(seq 1 150); do   # 150 * 0.2s = 30s budget
+        LOG_FILE=$(find "$SEARCH_ROOT" -path '*/attempts/*/logs/pipeline.log' \
+                      -newer "$STARTUP_LOG" 2>/dev/null | head -1)
+        [[ -n "$LOG_FILE" ]] && break
+        kill -0 "$PYTHON_PID" 2>/dev/null || break
+        sleep 0.2
+    done
+
+    if [[ -n "$LOG_FILE" ]]; then
+        echo "Log: $LOG_FILE"
+        echo ""
+        tail -F -n +1 "$LOG_FILE" 2>/dev/null &
+        TAIL_PID=$!
+        # `wait || ...` keeps set -e happy even when python exits non-zero.
+        PY_EXIT=0
+        wait "$PYTHON_PID" || PY_EXIT=$?
+        sleep 0.3   # let tail flush the final records
+        kill "$TAIL_PID" 2>/dev/null || true
+        wait "$TAIL_PID" 2>/dev/null || true
+    else
+        PY_EXIT=0
+        wait "$PYTHON_PID" || PY_EXIT=$?
+        echo ""
+        echo "=== pipeline.log was not created — startup output below ==="
+        cat "$STARTUP_LOG"
+    fi
+
+    trap - INT TERM
+    rm -f "$STARTUP_LOG"
+    (exit $PY_EXIT)   # set $? for the outer EXIT=$? below
 fi
 
 EXIT=$?
