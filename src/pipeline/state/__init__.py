@@ -1,3 +1,10 @@
+# attempt_controller indirectly imports lineage_manager → transitioner →
+# models. The submodules in that chain now all import from
+# ``src.pipeline.state.models`` directly (not from the package __init__),
+# which is what keeps the import order circular-safe regardless of ordering
+# here. Changing any of those downstream imports to go through the package
+# would re-introduce the cycle — see the top of transitioner.py.
+from src.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
 from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
 from src.pipeline.state.store import (
     SCHEMA_VERSION,
@@ -16,6 +23,8 @@ from src.pipeline.state.store import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "AttemptController",
+    "AttemptControllerError",
     "PipelineAttemptState",
     "PipelineRunLock",
     "PipelineState",

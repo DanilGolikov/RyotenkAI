@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.pipeline.artifacts.base import utc_now_iso
-from src.pipeline.state import (
+from src.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     StageRunState,

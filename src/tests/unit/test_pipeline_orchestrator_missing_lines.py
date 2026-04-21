@@ -203,10 +203,12 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             orch.run_directory = tmp_path
             return (mock_state, "fresh", "fresh", StageNames.DATASET_VALIDATOR)
 
+        # No need to patch ``_save_state`` — the fake ``_state_store`` is a
+        # MagicMock and AttemptController's save_fn routes through it
+        # harmlessly (no real I/O).
         with (
             patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
             patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
-            patch.object(orch, "_save_state"),
         ):
             res = orch.run()
         assert res.is_ok()
@@ -253,10 +255,12 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             orch.run_directory = tmp_path
             return (mock_state, "fresh", "fresh", StageNames.DATASET_VALIDATOR)
 
+        # No need to patch ``_save_state`` — the fake ``_state_store`` is a
+        # MagicMock and AttemptController's save_fn routes through it
+        # harmlessly (no real I/O).
         with (
             patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
             patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
-            patch.object(orch, "_save_state"),
         ):
             orch.run()
         # pipeline_events.json logging is removed — log_summary_artifact must NOT be called
