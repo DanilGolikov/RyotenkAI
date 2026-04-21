@@ -21,15 +21,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.constants import CTX_TRAINING_DURATION
+from src.pipeline.constants import CTX_TRAINING_DURATION, CTX_UPLOAD_DURATION
 from src.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
     from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.validation.artifact_manager import ValidationArtifactManager
-
-
-_KEY_UPLOAD_DURATION = "upload_duration_seconds"
 
 
 class ContextPropagator:
@@ -130,7 +127,7 @@ class ContextPropagator:
 
         if stage_name == StageNames.GPU_DEPLOYER:
             collector.put(
-                upload_duration_seconds=ctx.get(_KEY_UPLOAD_DURATION),
+                upload_duration_seconds=ctx.get(CTX_UPLOAD_DURATION),
                 deps_duration_seconds=ctx.get("deps_duration_seconds"),
                 provider_name=ctx.get("provider_name"),
                 provider_type=ctx.get("provider_type"),
@@ -147,7 +144,7 @@ class ContextPropagator:
             collector.put(
                 model_size_mb=ctx.get("model_size_mb"),
                 hf_repo_id=ctx.get("hf_repo_id"),
-                upload_duration_seconds=ctx.get(_KEY_UPLOAD_DURATION),
+                upload_duration_seconds=ctx.get(CTX_UPLOAD_DURATION),
             )
 
         elif stage_name == StageNames.INFERENCE_DEPLOYER:

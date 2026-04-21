@@ -11,6 +11,7 @@ that mutable state.
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
@@ -20,6 +21,7 @@ from src.pipeline.constants import (
     CTX_RUNTIME_SECONDS,
     CTX_TRAINING_DURATION,
     CTX_TRAINING_INFO,
+    CTX_UPLOAD_DURATION,
     SECONDS_PER_HOUR,
     SEPARATOR_CHAR,
     SUMMARY_LINE_WIDTH,
@@ -34,9 +36,6 @@ if TYPE_CHECKING:
 
     from src.training.managers.mlflow_manager import MLflowManager
     from src.utils.config import PipelineConfig
-
-
-_KEY_UPLOAD_DURATION = "upload_duration_seconds"
 
 
 class ExecutionSummaryReporter:
@@ -115,7 +114,7 @@ class ExecutionSummaryReporter:
         console.print(f"   Duration: {training_duration / 60:.1f} minutes")
 
         pod_startup = deployer_ctx.get("pod_startup_seconds")
-        upload_dur = deployer_ctx.get(_KEY_UPLOAD_DURATION)
+        upload_dur = deployer_ctx.get(CTX_UPLOAD_DURATION)
         if pod_startup is not None:
             console.print(f"   Pod ready: {pod_startup:.0f}s")
         if upload_dur is not None:
@@ -241,12 +240,18 @@ class ExecutionSummaryReporter:
         total_runtime = 0.0
         final_loss: float | None = None
 
+        # NB: explicit ``is not None`` — converged runs can have train_loss=0.0,
+        # and total_steps=0 / runtime=0 are legitimate "no-op" phases worth
+        # surfacing; the previous ``if train_loss := ...:`` dropped them.
         for phase_metrics in all_phase_metrics:
-            if train_loss := phase_metrics.get("train_loss"):
+            train_loss = phase_metrics.get("train_loss")
+            if train_loss is not None:
                 final_loss = train_loss
-            if runtime := phase_metrics.get("train_runtime"):
+            runtime = phase_metrics.get("train_runtime")
+            if runtime is not None:
                 total_runtime += runtime
-            if steps := phase_metrics.get("global_step"):
+            steps = phase_metrics.get("global_step")
+            if steps is not None:
                 total_steps += int(steps)
 
         if final_loss is not None:
@@ -281,10 +286,11 @@ class ExecutionSummaryReporter:
 
             phase_metrics: list[dict[str, float]] = []
             visited: set[str] = set()
-            queue: list[tuple[str, int]] = [(parent_run_id, 0)]
+            # deque.popleft is O(1); list.pop(0) is O(n). Matters for deep run trees.
+            bfs_queue: deque[tuple[str, int]] = deque([(parent_run_id, 0)])
 
-            while queue:
-                current_id, depth = queue.pop(0)
+            while bfs_queue:
+                current_id, depth = bfs_queue.popleft()
                 if current_id in visited or depth > max_depth:
                     continue
                 visited.add(current_id)
@@ -303,7 +309,7 @@ class ExecutionSummaryReporter:
                                 f"[METRICS] Found phase run: {child_name} ({len(metrics)} metrics)"
                             )
                     if depth + 1 <= max_depth:
-                        queue.append((child.info.run_id, depth + 1))
+                        bfs_queue.append((child.info.run_id, depth + 1))
             return phase_metrics
         except Exception as e:
             logger.warning(f"[METRICS] Failed to collect descendant metrics: {e}")
@@ -322,7 +328,8 @@ class ExecutionSummaryReporter:
             logger.warning("[REPORT] Cannot generate report: no run_id provided")
             return
         try:
-            tracking_uri = mlflow_manager._gateway.uri if mlflow_manager else ""
+            # Use the public tracking_uri accessor instead of reaching into _gateway.
+            tracking_uri = (mlflow_manager.tracking_uri or "") if mlflow_manager else ""
             local_logs_dir = get_run_log_dir()
             logger.info(f"[REPORT] Generating experiment report for run {run_id[:8]}...")
             generator = ExperimentReportGenerator(tracking_uri)

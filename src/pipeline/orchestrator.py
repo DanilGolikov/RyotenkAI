@@ -514,11 +514,23 @@ class PipelineOrchestrator:
         except Exception as e:
             return self._handle_unexpected_error(e)
         finally:
-            self._flush_pending_collectors()
-            self._cleanup_resources(success=pipeline_success)
-            self._teardown_mlflow_attempt(pipeline_success=pipeline_success)
+            # Each teardown step is wrapped independently: a failure in one must
+            # not skip the others. Critically, this guarantees run_lock.release()
+            # always runs, otherwise subsequent pipeline launches get stuck.
+            for step_name, step in (
+                ("flush_pending_collectors", lambda: self._flush_pending_collectors()),
+                ("cleanup_resources", lambda: self._cleanup_resources(success=pipeline_success)),
+                ("teardown_mlflow_attempt", lambda: self._teardown_mlflow_attempt(pipeline_success=pipeline_success)),
+            ):
+                try:
+                    step()
+                except Exception:
+                    logger.exception(f"[CLEANUP] step '{step_name}' failed")
             if self._run_lock:
-                self._run_lock.release()
+                try:
+                    self._run_lock.release()
+                except Exception:
+                    logger.exception("[CLEANUP] run lock release failed")
                 self._run_lock = None
 
     def _prepare_stateful_attempt(

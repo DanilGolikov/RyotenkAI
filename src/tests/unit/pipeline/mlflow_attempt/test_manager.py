@@ -288,8 +288,7 @@ def test_setup_for_attempt_reopens_existing_root(manager_under_test: MLflowAttem
     state.root_mlflow_run_id = "existing-root"
     attempt = _build_attempt()
     mgr = _build_active_mgr()
-    mgr._mlflow = MagicMock()
-    mgr._mlflow.start_run.return_value = MagicMock()
+    mgr.adopt_existing_run.return_value = MagicMock()
 
     manager_under_test.setup_for_attempt(
         state=state,
@@ -301,9 +300,10 @@ def test_setup_for_attempt_reopens_existing_root(manager_under_test: MLflowAttem
         manager=mgr,
     )
 
-    # When root already exists, start_run (context-manager) must NOT be called — we reopen.
+    # When root already exists we reopen it via the public adopt_existing_run API,
+    # not the context-manager start_run.
     mgr.start_run.assert_not_called()
-    mgr._mlflow.start_run.assert_called_once()
+    mgr.adopt_existing_run.assert_called_once_with("existing-root")
     assert attempt.root_mlflow_run_id == "existing-root"
 
 
@@ -330,23 +330,36 @@ def test_setup_for_attempt_noop_when_manager_inactive(manager_under_test: MLflow
 # -----------------------------------------------------------------------------
 
 
-def test_open_existing_root_run_wires_internals(manager_under_test: MLflowAttemptManager) -> None:
+def test_open_existing_root_run_delegates_to_public_adopt(manager_under_test: MLflowAttemptManager) -> None:
+    """open_existing_root_run now goes through the public adopt_existing_run API."""
     mgr = MagicMock()
-    mgr._mlflow = MagicMock()
-    mgr._mlflow.start_run.return_value = MagicMock(name="opened-run")
+    adopted_run = MagicMock(name="opened-run")
+    mgr.adopt_existing_run.return_value = adopted_run
     manager_under_test._manager = mgr
 
     run = manager_under_test.open_existing_root_run("root-abc")
-    assert run is mgr._mlflow.start_run.return_value
-    assert mgr._run_id == "root-abc"
-    assert mgr._parent_run_id == "root-abc"
+    assert run is adopted_run
+    mgr.adopt_existing_run.assert_called_once_with("root-abc")
 
 
-def test_open_existing_root_run_handles_missing_mlflow(manager_under_test: MLflowAttemptManager) -> None:
+def test_open_existing_root_run_returns_none_when_adopt_returns_none(
+    manager_under_test: MLflowAttemptManager,
+) -> None:
+    """adopt_existing_run returns None when mlflow isn't available — propagate that."""
     mgr = MagicMock()
-    mgr._mlflow = None
+    mgr.adopt_existing_run.return_value = None
     manager_under_test._manager = mgr
     assert manager_under_test.open_existing_root_run("x") is None
+
+
+def test_open_existing_root_run_raises_when_no_manager(
+    manager_under_test: MLflowAttemptManager,
+) -> None:
+    """Explicit raise (not assert) — this path also exercises -O builds correctly."""
+    from src.pipeline.mlflow_attempt.manager import MLflowManagerNotInitializedError
+
+    with pytest.raises(MLflowManagerNotInitializedError):
+        manager_under_test.open_existing_root_run("x")
 
 
 # -----------------------------------------------------------------------------

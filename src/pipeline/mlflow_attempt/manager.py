@@ -38,14 +38,6 @@ if TYPE_CHECKING:
     from src.utils.config import PipelineConfig
 
 
-class MLflowPreflightError(Exception):
-    """Raised when the orchestrator chooses to convert a preflight AppError into a fatal failure."""
-
-    def __init__(self, error: AppError) -> None:
-        super().__init__(error.message)
-        self.error = error
-
-
 class MLflowAttemptManager:
     """Owns MLflowManager + root/attempt run lifecycle for one pipeline attempt."""
 
@@ -164,26 +156,38 @@ class MLflowAttemptManager:
             self._cleanup_partial_runs()
             raise
 
+    def _require_manager(self) -> MLflowManager:
+        """Return ``self._manager`` or raise a clear error instead of a bare AttributeError.
+
+        Use this anywhere a method assumes bootstrap() has already put a manager
+        in place. ``assert`` is avoided — Python -O removes asserts in production.
+        """
+        if self._manager is None:
+            raise MLflowManagerNotInitializedError(
+                "MLflowAttemptManager has no active MLflowManager; bootstrap() must be called first"
+            )
+        return self._manager
+
     def _open_root_run(self, *, state: PipelineState, attempt: PipelineAttemptState) -> None:
-        assert self._manager is not None
+        manager = self._require_manager()
         if state.root_mlflow_run_id:
             self._root_run = self.open_existing_root_run(state.root_mlflow_run_id)
             attempt.root_mlflow_run_id = state.root_mlflow_run_id
         else:
-            self._run_context = self._manager.start_run(run_name=state.logical_run_id)
+            self._run_context = manager.start_run(run_name=state.logical_run_id)
             self._root_run = self._run_context.__enter__()
             state.root_mlflow_run_id = self.get_run_id()
             attempt.root_mlflow_run_id = state.root_mlflow_run_id
 
     def _open_attempt_run(self, *, state: PipelineState, attempt: PipelineAttemptState) -> None:
-        assert self._manager is not None
+        manager = self._require_manager()
         attempt_name = f"{state.logical_run_id}_attempt_{attempt.attempt_no}"
         attempt_tags = {
             "pipeline.logical_run_id": state.logical_run_id,
             "pipeline.attempt_id": attempt.attempt_id,
             "pipeline.attempt_no": str(attempt.attempt_no),
         }
-        self._attempt_run = self._manager.start_nested_run(run_name=attempt_name, tags=attempt_tags)
+        self._attempt_run = manager.start_nested_run(run_name=attempt_name, tags=attempt_tags)
         self._attempt_run.__enter__()
         attempt.pipeline_attempt_mlflow_run_id = self.get_run_id()
 
@@ -195,17 +199,17 @@ class MLflowAttemptManager:
         start_stage_idx: int,
         run_directory: Path | None,
     ) -> None:
-        assert self._manager is not None
+        manager = self._require_manager()
         context[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = self.get_run_id()
-        context[PipelineContextKeys.MLFLOW_MANAGER] = self._manager
-        self._manager.log_event_start(
+        context[PipelineContextKeys.MLFLOW_MANAGER] = manager
+        manager.log_event_start(
             "Pipeline attempt started",
             category=MLFLOW_CATEGORY_PIPELINE,
             source=MLFLOW_SOURCE_ORCHESTRATOR,
         )
-        self._manager.log_pipeline_config(self._config)
-        self._manager.log_dataset_config(self._config)
-        self._manager.log_params(
+        manager.log_pipeline_config(self._config)
+        manager.log_dataset_config(self._config)
+        manager.log_params(
             {
                 "pipeline.total_stages": total_stages,
                 "pipeline.start_stage": start_stage_idx,
@@ -285,15 +289,13 @@ class MLflowAttemptManager:
     # ---- root run -----------------------------------------------------------
 
     def open_existing_root_run(self, root_run_id: str) -> Any:
-        """Reopen an existing root run so nested attempts log under the same parent."""
-        assert self._manager is not None
-        if self._manager._mlflow is None:
-            return None
-        run = self._manager._mlflow.start_run(run_id=root_run_id, nested=False, log_system_metrics=False)
-        self._manager._run = run
-        self._manager._run_id = root_run_id
-        self._manager._parent_run_id = root_run_id
-        return run
+        """Reopen an existing root run so nested attempts log under the same parent.
+
+        Delegates to ``MLflowManager.adopt_existing_run`` so we don't touch the
+        manager's private attributes.
+        """
+        manager = self._require_manager()
+        return manager.adopt_existing_run(root_run_id)
 
     # ---- teardown -----------------------------------------------------------
 
@@ -358,7 +360,15 @@ class MLflowAttemptManager:
             self._manager.cleanup()
 
 
+class MLflowManagerNotInitializedError(RuntimeError):
+    """Raised when an operation needs a ready MLflowManager but none is bootstrapped.
+
+    Prefer this over ``assert`` — asserts are disabled under ``python -O`` and
+    would silently degrade to opaque AttributeError in production.
+    """
+
+
 __all__ = [
     "MLflowAttemptManager",
-    "MLflowPreflightError",
+    "MLflowManagerNotInitializedError",
 ]

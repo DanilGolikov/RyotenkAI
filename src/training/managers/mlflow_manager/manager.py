@@ -142,6 +142,34 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
     def is_nested(self) -> bool:
         return bool(self._nested_run_stack)
 
+    @property
+    def tracking_uri(self) -> str | None:
+        """Public accessor for the configured tracking URI.
+
+        Returns ``None`` when setup() has not completed; otherwise the gateway URI.
+        Prefer this over reaching into ``_gateway.uri`` directly.
+        """
+        if self._mlflow is None:
+            return None
+        return self._gateway.uri
+
+    def adopt_existing_run(self, run_id: str) -> Any:
+        """Reopen an existing MLflow run_id as the active root run on this manager.
+
+        Used by the orchestrator to continue writing to a parent run that was
+        opened in a previous attempt (e.g. on resume/restart). Replaces the
+        former private-attribute mutation in MLflowAttemptManager.
+
+        Returns the mlflow Run object, or ``None`` if mlflow isn't available.
+        """
+        if self._mlflow is None:
+            return None
+        run = self._mlflow.start_run(run_id=run_id, nested=False, log_system_metrics=False)
+        self._run = run
+        self._run_id = run_id
+        self._parent_run_id = run_id
+        return run
+
     # =========================================================================
     # EVENT LOG — delegate to MLflowEventLog
     # =========================================================================

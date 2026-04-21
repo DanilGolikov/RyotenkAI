@@ -6,10 +6,10 @@ teardown — extracted from PipelineOrchestrator.
 
 from src.pipeline.mlflow_attempt.manager import (
     MLflowAttemptManager,
-    MLflowPreflightError,
+    MLflowManagerNotInitializedError,
 )
 
 __all__ = [
     "MLflowAttemptManager",
-    "MLflowPreflightError",
+    "MLflowManagerNotInitializedError",
 ]

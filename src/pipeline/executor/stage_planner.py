@@ -24,6 +24,30 @@ _HTTP_ERROR_MIN = 400
 _HEALTH_CHECK_TIMEOUT_SECONDS = 5
 
 
+# Canonical pipeline stage order. Listing by name (rather than slicing
+# self._stages) decouples enabled-stage computation from how many/which
+# stage instances happen to populate ``self._stages`` — especially
+# relevant in tests that patch stage classes with MagicMock.
+_CANONICAL_STAGE_ORDER: tuple[str, ...] = (
+    StageNames.DATASET_VALIDATOR,
+    StageNames.GPU_DEPLOYER,
+    StageNames.TRAINING_MONITOR,
+    StageNames.MODEL_RETRIEVER,
+    StageNames.INFERENCE_DEPLOYER,
+    StageNames.MODEL_EVALUATOR,
+)
+
+# Stages that always run regardless of config toggles.
+_MANDATORY_STAGES: frozenset[str] = frozenset(
+    {
+        StageNames.DATASET_VALIDATOR,
+        StageNames.GPU_DEPLOYER,
+        StageNames.TRAINING_MONITOR,
+        StageNames.MODEL_RETRIEVER,
+    }
+)
+
+
 def is_inference_runtime_healthy(inference_ctx: dict[str, Any] | None) -> bool:
     """Probe inference endpoint health via HTTP.
 
@@ -79,10 +103,14 @@ class StagePlanner:
         if stage_ref is None:
             raise ValueError("Stage reference is required")
         n = len(self._stages)
-        if isinstance(stage_ref, int):
+        # ``type() is int`` rather than ``isinstance(..., int)`` so that a
+        # stray ``True`` / ``False`` (which subclass int) is rejected cleanly.
+        if type(stage_ref) is int:
             if 1 <= stage_ref <= n:
                 return self._stages[stage_ref - 1].stage_name
             raise ValueError(f"Stage index {stage_ref} out of range 1–{n}")
+        if isinstance(stage_ref, bool):
+            raise TypeError(f"Stage reference must be str|int, not bool (got {stage_ref!r})")
         stage_value = str(stage_ref).strip()
         if stage_value == "":
             raise ValueError("Stage reference is empty")
@@ -112,15 +140,31 @@ class StagePlanner:
         return forced
 
     def compute_enabled_stage_names(self, *, start_stage_name: str) -> list[str]:
-        """Return the ordered list of stages enabled for this run."""
-        enabled = [stage.stage_name for stage in self._stages[:4]]
-        if self._config.inference.enabled:
-            enabled.append(StageNames.INFERENCE_DEPLOYER)
-        if self._config.evaluation.enabled:
-            enabled.append(StageNames.MODEL_EVALUATOR)
-        for forced_name in self.forced_stage_names(start_stage_name=start_stage_name):
-            if forced_name not in enabled:
-                enabled.append(forced_name)
+        """Return the ordered list of stages enabled for this run.
+
+        The result is built from a canonical stage order (below) rather than
+        ``self._stages``: it's a pipeline-level contract that does not depend
+        on how many or which mock objects happen to populate ``self._stages``.
+
+        Membership in ``_MANDATORY_STAGES`` guarantees inclusion regardless of
+        config; inference/evaluation are toggleable; ``forced_stage_names``
+        covers "user explicitly targeted a config-disabled stage".
+        """
+        forced = self.forced_stage_names(start_stage_name=start_stage_name)
+        enabled: list[str] = []
+        # Kept as three branches (not combined) for readability: each branch
+        # documents a distinct inclusion rule.
+        for name in _CANONICAL_STAGE_ORDER:
+            if name in _MANDATORY_STAGES:  # noqa: SIM114 — keep branches separate
+                enabled.append(name)
+            elif name == StageNames.INFERENCE_DEPLOYER and (  # noqa: SIM114
+                self._config.inference.enabled or name in forced
+            ):
+                enabled.append(name)
+            elif name == StageNames.MODEL_EVALUATOR and (
+                self._config.evaluation.enabled or name in forced
+            ):
+                enabled.append(name)
         return enabled
 
     def derive_resume_stage(self, state: PipelineState) -> str | None:

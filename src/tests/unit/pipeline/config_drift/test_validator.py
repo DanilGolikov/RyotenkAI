@@ -131,7 +131,9 @@ def test_model_dataset_drift_is_fatal(validator: ConfigDriftValidator) -> None:
         resume=True,
     )
     assert isinstance(err, ConfigDriftError)
-    assert err.details["scope"] == "training_critical"
+    # Modern state: scope should be the specific hash that drifted.
+    assert err.details["scope"] == "model_dataset"
+    assert "model_dataset" in err.message
 
 
 def test_legacy_state_uses_training_critical_hash(validator: ConfigDriftValidator) -> None:
@@ -144,6 +146,8 @@ def test_legacy_state_uses_training_critical_hash(validator: ConfigDriftValidato
         resume=True,
     )
     assert isinstance(err, ConfigDriftError)
+    # Legacy fallback scope.
+    assert err.details["scope"] == "training_critical"
 
 
 def test_legacy_state_matching_training_critical_is_ok(validator: ConfigDriftValidator) -> None:

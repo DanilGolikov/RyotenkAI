@@ -80,21 +80,26 @@ class ConfigDriftValidator:
         Legacy states without ``model_dataset_config_hash`` fall back to
         comparing ``training_critical`` hash.
         """
+        # Prefer the fine-grained model_dataset hash when present; legacy states
+        # without it fall back to the broader training_critical hash so they
+        # still detect drift (provider-only changes are allowed on modern runs).
         if state.model_dataset_config_hash:
             model_dataset_changed = state.model_dataset_config_hash != config_hashes["model_dataset"]
+            drift_scope = "model_dataset"
         else:
             model_dataset_changed = state.training_critical_config_hash != config_hashes["training_critical"]
+            drift_scope = "training_critical"
 
         late_changed = state.late_stage_config_hash != config_hashes["late_stage"]
 
         if model_dataset_changed:
             return ConfigDriftError(
                 message=(
-                    "training_critical config changed for existing logical run; "
+                    f"{drift_scope} config changed for existing logical run; "
                     "resume/restart is blocked. Use the original config or start a new run."
                 ),
                 details={
-                    "scope": "training_critical",
+                    "scope": drift_scope,
                     "start_stage_name": start_stage_name,
                     "resume": resume,
                 },

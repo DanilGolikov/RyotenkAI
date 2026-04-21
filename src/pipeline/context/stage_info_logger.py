@@ -19,14 +19,12 @@ from src.pipeline.constants import (
     CTX_RUNTIME_SECONDS,
     CTX_TRAINING_DURATION,
     CTX_TRAINING_INFO,
+    CTX_UPLOAD_DURATION,
 )
 from src.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
     from src.training.managers.mlflow_manager import MLflowManager
-
-
-_KEY_UPLOAD_DURATION = "upload_duration_seconds"
 
 
 class StageInfoLogger:
@@ -63,16 +61,18 @@ class StageInfoLogger:
             gpu_type=deployer_ctx.get("gpu_type"),
             resource_id=deployer_ctx.get("resource_id"),
         )
-        upload_dur = deployer_ctx.get(_KEY_UPLOAD_DURATION)
+        # NB: explicit ``is not None`` — a genuine 0 (instant upload/deps) is a
+        # valid value we still want to log; ``if upload_dur:`` would drop it.
+        upload_dur = deployer_ctx.get(CTX_UPLOAD_DURATION)
         deps_dur = deployer_ctx.get("deps_duration_seconds")
-        if upload_dur:
+        if upload_dur is not None:
             mlflow_manager.log_event_info(
                 f"Files uploaded ({upload_dur:.1f}s)",
                 category="deployment",
                 source=StageNames.GPU_DEPLOYER,
                 upload_duration_seconds=upload_dur,
             )
-        if deps_dur:
+        if deps_dur is not None:
             mlflow_manager.log_event_info(
                 f"Dependencies installed ({deps_dur:.1f}s)",
                 category="deployment",
@@ -111,8 +111,10 @@ class StageInfoLogger:
     def _log_training_monitor(mlflow_manager: MLflowManager, monitor_ctx: Any) -> None:
         if not isinstance(monitor_ctx, dict):
             return
+        # NB: ``is not None`` — a converged run can have final_loss=0.0 / accuracy=0.0,
+        # and training_duration=0 should still produce a (trivial) event.
         training_dur = monitor_ctx.get(CTX_TRAINING_DURATION)
-        if training_dur:
+        if training_dur is not None:
             mlflow_manager.log_event_info(
                 f"Training completed ({training_dur:.1f}s)",
                 category="training",
@@ -124,13 +126,13 @@ class StageInfoLogger:
         if not isinstance(training_info, dict) or not training_info:
             return
         metrics_to_log: dict[str, float] = {}
-        if training_info.get(CTX_RUNTIME_SECONDS):
+        if training_info.get(CTX_RUNTIME_SECONDS) is not None:
             metrics_to_log[f"training.{CTX_RUNTIME_SECONDS}"] = training_info[CTX_RUNTIME_SECONDS]
-        if training_info.get("final_loss"):
+        if training_info.get("final_loss") is not None:
             metrics_to_log["training.final_loss"] = training_info["final_loss"]
-        if training_info.get("final_accuracy"):
+        if training_info.get("final_accuracy") is not None:
             metrics_to_log["training.final_accuracy"] = training_info["final_accuracy"]
-        if training_info.get("total_steps"):
+        if training_info.get("total_steps") is not None:
             metrics_to_log["training.total_steps"] = float(training_info["total_steps"])
         if metrics_to_log:
             mlflow_manager.log_metrics(metrics_to_log)
@@ -139,8 +141,10 @@ class StageInfoLogger:
     def _log_model_retriever(mlflow_manager: MLflowManager, retriever_ctx: Any) -> None:
         if not isinstance(retriever_ctx, dict):
             return
+        # NB: ``is not None`` — model_size_mb=0 (empty model, edge case in tests)
+        # should still be emitted rather than silently dropped.
         model_size = retriever_ctx.get("model_size_mb")
-        if model_size:
+        if model_size is not None:
             mlflow_manager.log_event_info(
                 f"Model size: {model_size:.1f} MB",
                 category="model",
@@ -149,8 +153,8 @@ class StageInfoLogger:
             )
 
         hf_uploaded = retriever_ctx.get("hf_uploaded")
-        upload_dur = retriever_ctx.get(_KEY_UPLOAD_DURATION)
-        if hf_uploaded and upload_dur:
+        upload_dur = retriever_ctx.get(CTX_UPLOAD_DURATION)
+        if hf_uploaded and upload_dur is not None:
             hf_repo = retriever_ctx.get("hf_repo_id", CTX_PROVIDER_NAME_UNKNOWN)
             mlflow_manager.log_event_info(
                 f"Model uploaded to HF: {hf_repo} ({upload_dur:.1f}s)",

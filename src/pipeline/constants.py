@@ -28,6 +28,7 @@ CTX_PROVIDER_TYPE_UNKNOWN = "unknown"
 CTX_RUNTIME_SECONDS = "runtime_seconds"
 CTX_TRAINING_INFO = "training_info"
 CTX_TRAINING_DURATION = "training_duration_seconds"
+CTX_UPLOAD_DURATION = "upload_duration_seconds"
 
 # Time
 SECONDS_PER_HOUR = 3600
