@@ -128,6 +128,29 @@ def create_project(
     )
 
 
+def update_description(
+    registry: ProjectRegistry,
+    project_id: str,
+    description: str,
+) -> ProjectDetail:
+    """Patch only the description (plus updated_at) on disk. Name, id, and
+    path are fixed identity fields and stay put."""
+    entry, store, _ = _load_project(registry, project_id)
+    try:
+        metadata = store.update_description(description)
+    except ProjectStoreError as exc:
+        raise ProjectServiceError(str(exc)) from exc
+    return ProjectDetail(
+        id=metadata.id,
+        name=metadata.name,
+        path=entry.path,
+        description=metadata.description,
+        created_at=metadata.created_at,
+        updated_at=metadata.updated_at,
+        current_config_yaml=store.current_yaml_text(),
+    )
+
+
 def unregister(
     registry: ProjectRegistry,
     project_id: str,
@@ -285,6 +308,7 @@ __all__ = [
     "list_summaries",
     "list_versions",
     "read_version",
+    "update_description",
     "restore_version",
     "save_config",
     "set_favorite",

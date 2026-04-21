@@ -27,6 +27,10 @@ class ProjectDetail(BaseModel):
     current_config_yaml: str = ""
 
 
+class UpdateProjectDescriptionRequest(BaseModel):
+    description: str = Field(default="", max_length=2000)
+
+
 class CreateProjectRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     id: str | None = Field(
@@ -108,4 +112,5 @@ __all__ = [
     "SaveConfigResponse",
     "ToggleFavoriteRequest",
     "ToggleFavoriteResponse",
+    "UpdateProjectDescriptionRequest",
 ]

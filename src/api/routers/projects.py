@@ -17,6 +17,7 @@ from src.api.schemas.project import (
     SaveConfigResponse,
     ToggleFavoriteRequest,
     ToggleFavoriteResponse,
+    UpdateProjectDescriptionRequest,
 )
 from src.api.services import project_service
 from src.api.services.project_service import ProjectServiceError
@@ -58,6 +59,18 @@ def get_project(
 ) -> ProjectDetail:
     try:
         return project_service.get_detail(registry, project_id)
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.put("/{project_id}/description", response_model=ProjectDetail)
+def update_description(
+    project_id: str,
+    body: UpdateProjectDescriptionRequest,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> ProjectDetail:
+    try:
+        return project_service.update_description(registry, project_id, body.description)
     except ProjectServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
