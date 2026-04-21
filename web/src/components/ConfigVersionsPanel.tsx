@@ -55,12 +55,17 @@ export function ConfigVersionsPanel({
             <div
               key={v.filename}
               className={[
-                'rounded-md px-3 py-2 text-xs border transition flex items-start gap-2',
+                // Hover lights the border in the active-state colour
+                // WITHOUT filling the body (no `bg-surface-2` on hover).
+                // This gives the "target outlined" affordance the user
+                // expects without flashing a dark block behind the text,
+                // which previously looked like a selection glitch.
+                'rounded-md px-3 py-2 text-xs border transition-colors flex items-start gap-2',
                 active
                   ? 'border-brand bg-surface-2 text-ink-1'
                   : fav
-                  ? 'border-warn/60 hover:border-warn text-ink-2'
-                  : 'border-line-1 hover:border-line-2 text-ink-2',
+                  ? 'border-warn/60 hover:border-warn text-ink-1'
+                  : 'border-line-1 hover:border-brand/60 text-ink-2 hover:text-ink-1',
               ].join(' ')}
             >
               {favorite && (

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ConfigValidationResult } from '../../api/types'
+import { AlertIcon, CheckIcon, ChevronRightIcon, InfoIcon } from '../icons'
 import { groupForCheck, SETTINGS_JUMP_TARGET } from './validationMap'
 
 interface Props {
@@ -12,27 +13,93 @@ interface Props {
 export function ValidationBanner({ result, isValidating, hashPrefix, onJump }: Props) {
   const [expanded, setExpanded] = useState(false)
 
-  if (!result && !isValidating) return null
-
   const failures = (result?.checks ?? []).filter((c) => c.status !== 'ok')
   const hasWarnings = failures.some((c) => c.status === 'warn')
   const ok = result?.ok ?? true
 
-  const cls = ok
-    ? hasWarnings
-      ? 'border-warn/40 bg-warn/10 text-warn'
-      : 'border-ok/40 bg-ok/10 text-ok'
-    : 'border-err/40 bg-err/10 text-err'
+  // Brief green glow when validation first goes fully green.
+  // Edge-trigger on the false → (ok && !hasWarnings) transition so
+  // we don't re-glow on every re-render after success. Fades in ~800ms.
+  const [successFlash, setSuccessFlash] = useState(false)
+  const wasOkRef = useRef(false)
+  useEffect(() => {
+    const fullyOk = Boolean(result && result.ok && !hasWarnings && !isValidating)
+    if (fullyOk && !wasOkRef.current) {
+      setSuccessFlash(true)
+      const t = window.setTimeout(() => setSuccessFlash(false), 900)
+      wasOkRef.current = true
+      return () => window.clearTimeout(t)
+    }
+    if (!fullyOk) wasOkRef.current = false
+  }, [result, hasWarnings, isValidating])
+
+  if (!result && !isValidating) return null
+
+  // State-driven palette. `left` is a vertical accent bar on the left
+  // edge (the card silhouette) — pulls the banner out of "tinted fill
+  // block" into "status card with accent", much less visually noisy.
+  const tone = ok ? (hasWarnings ? 'warn' : 'ok') : 'err'
+  const palette: Record<
+    'err' | 'warn' | 'ok' | 'loading',
+    { chrome: string; left: string; badge: string; icon: string }
+  > = {
+    err: {
+      chrome: 'border-err/30 bg-err/[0.06] text-ink-1',
+      left: 'bg-err',
+      badge: 'bg-err/20 text-err border-err/40',
+      icon: 'text-err',
+    },
+    warn: {
+      chrome: 'border-warn/30 bg-warn/[0.05] text-ink-1',
+      left: 'bg-warn',
+      badge: 'bg-warn/20 text-warn border-warn/40',
+      icon: 'text-warn',
+    },
+    ok: {
+      chrome: 'border-ok/25 bg-ok/[0.04] text-ink-1',
+      left: 'bg-ok',
+      badge: 'bg-ok/20 text-ok border-ok/40',
+      icon: 'text-ok',
+    },
+    loading: {
+      chrome: 'border-line-2 bg-surface-2 text-ink-2',
+      left: 'bg-info/60',
+      badge: 'bg-info/15 text-info border-info/30',
+      icon: 'text-info',
+    },
+  }
+  const p = palette[isValidating ? 'loading' : tone]
+
+  const failCount = failures.filter((c) => c.status === 'fail').length
+  const warnCount = failures.filter((c) => c.status === 'warn').length
 
   const title = isValidating
     ? 'Validating…'
     : ok
     ? hasWarnings
-      ? `Valid (${failures.length} warning${failures.length === 1 ? '' : 's'})`
+      ? 'Configuration valid — with warnings'
       : 'Configuration is valid'
-    : `${failures.filter((c) => c.status === 'fail').length} issue${
-        failures.filter((c) => c.status === 'fail').length === 1 ? '' : 's'
-      } to fix`
+    : failCount === 1
+    ? '1 issue to fix'
+    : `${failCount} issues to fix`
+
+  const subtitle = isValidating
+    ? null
+    : ok
+    ? hasWarnings
+      ? `${warnCount} warning${warnCount === 1 ? '' : 's'} — review when you can`
+      : 'Ready to save or launch a run.'
+    : warnCount > 0
+    ? `${warnCount} warning${warnCount === 1 ? '' : 's'} + ${failCount} error${
+        failCount === 1 ? '' : 's'
+      }`
+    : null
+
+  const Icon = isValidating
+    ? InfoIcon
+    : tone === 'ok'
+    ? CheckIcon
+    : AlertIcon
 
   function jumpTo(group: string | null) {
     if (!group) return
@@ -49,45 +116,117 @@ export function ValidationBanner({ result, isValidating, hashPrefix, onJump }: P
   }
 
   return (
-    <div className={`rounded-md border ${cls} text-xs`}>
+    <div
+      className={`relative overflow-hidden rounded-lg border ${p.chrome} transition-shadow duration-[700ms] ${
+        successFlash ? 'shadow-[0_0_40px_rgba(74,222,128,0.28)]' : 'shadow-card'
+      }`}
+    >
+      {/* Left accent bar — carries the status colour at full intensity
+          so the banner reads from the corner of the eye without the fill
+          having to compete with it. */}
+      <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${p.left}`} />
+
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-black/10 transition"
+        disabled={failures.length === 0}
+        className="w-full flex items-center gap-3 pl-4 pr-3 py-2.5 text-left hover:bg-white/[0.02] transition disabled:cursor-default"
       >
-        <span className={`w-1.5 h-1.5 rounded-full ${ok ? (hasWarnings ? 'bg-warn' : 'bg-ok') : 'bg-err'}`} />
-        <span className="font-medium">{title}</span>
+        <Icon className={`w-4 h-4 shrink-0 ${p.icon}`} />
+        <div className="min-w-0 flex-1 flex items-baseline gap-3 flex-wrap">
+          <span className="text-sm font-semibold text-ink-1">{title}</span>
+          {subtitle && (
+            <span className="text-[0.7rem] text-ink-3">{subtitle}</span>
+          )}
+        </div>
         {failures.length > 0 && (
-          <span className="ml-auto text-[0.65rem] opacity-70">
-            {expanded ? 'hide' : 'details'}
-          </span>
+          <>
+            {failCount > 0 && (
+              <span className={`inline-flex items-center h-5 px-1.5 rounded border text-[0.65rem] font-mono font-medium tabular-nums ${palette.err.badge}`}>
+                {failCount}
+              </span>
+            )}
+            {warnCount > 0 && (
+              <span className={`inline-flex items-center h-5 px-1.5 rounded border text-[0.65rem] font-mono font-medium tabular-nums ${palette.warn.badge}`}>
+                {warnCount}
+              </span>
+            )}
+            <span className="text-ink-3 shrink-0">
+              <ChevronRightIcon
+                className={`w-3.5 h-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              />
+            </span>
+          </>
         )}
       </button>
       {expanded && failures.length > 0 && (
-        <div className="border-t border-current/20 px-3 py-2 space-y-1.5">
+        <div className="border-t border-line-1/60 bg-surface-0/40 pl-4 pr-3 py-2 space-y-1.5">
+          {(() => {
+            // Promote secret-related failures to a prominent "Open
+            // project Settings" CTA at the top of the expanded area.
+            const settingsFailures = failures.filter(
+              (c) => groupForCheck(c) === SETTINGS_JUMP_TARGET,
+            )
+            if (settingsFailures.length === 0) return null
+            const label =
+              settingsFailures.length === 1
+                ? '1 secret missing'
+                : `${settingsFailures.length} secrets missing`
+            return (
+              <button
+                type="button"
+                onClick={() => jumpTo(SETTINGS_JUMP_TARGET)}
+                className="group w-full flex items-center justify-between gap-2 rounded-md border border-line-2 bg-surface-2 hover:bg-surface-3 hover:border-brand/40 px-3 py-2 mb-2 transition"
+              >
+                <span className="flex items-center gap-2.5">
+                  <AlertIcon className="w-4 h-4 text-err shrink-0" />
+                  <span className="flex flex-col items-start gap-0.5">
+                    <span className="text-xs font-medium text-ink-1">
+                      Open project Settings
+                    </span>
+                    <span className="text-[0.65rem] text-ink-3">
+                      {label} — set env vars to unblock runs
+                    </span>
+                  </span>
+                </span>
+                <ChevronRightIcon className="w-3.5 h-3.5 text-ink-3 group-hover:text-ink-1 transition-colors" />
+              </button>
+            )
+          })()}
           {failures.map((check, idx) => {
             const group = groupForCheck(check)
+            const isSettings = group === SETTINGS_JUMP_TARGET
+            const dotCls =
+              check.status === 'warn'
+                ? 'bg-warn'
+                : check.status === 'fail'
+                ? 'bg-err'
+                : 'bg-ink-3'
             return (
-              <div key={idx} className="flex items-start gap-2 text-2xs">
+              <div
+                key={idx}
+                className="flex items-start gap-2.5 py-1 text-[0.7rem]"
+              >
                 <span
-                  className={[
-                    'w-1 h-1 mt-1.5 rounded-full shrink-0',
-                    check.status === 'warn' ? 'bg-warn' : 'bg-err',
-                  ].join(' ')}
+                  aria-hidden
+                  className={`w-1.5 h-1.5 mt-1.5 rounded-full shrink-0 ${dotCls}`}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="text-ink-1">{check.label}</div>
                   {check.detail && (
-                    <div className="text-ink-3 font-mono truncate">{check.detail}</div>
+                    <div className="text-ink-3 font-mono text-[0.65rem] truncate">
+                      {check.detail}
+                    </div>
                   )}
                 </div>
-                {group && (
+                {group && !isSettings && (
                   <button
                     type="button"
                     onClick={() => jumpTo(group)}
-                    className="text-[0.65rem] uppercase tracking-wide text-ink-1 hover:text-ink-2 whitespace-nowrap"
+                    className="inline-flex items-center gap-1 text-[0.6rem] uppercase tracking-wide text-ink-3 hover:text-brand transition whitespace-nowrap"
                   >
-                    → {group === SETTINGS_JUMP_TARGET ? 'settings' : group}
+                    {group}
+                    <ChevronRightIcon className="w-3 h-3" />
                   </button>
                 )}
               </div>

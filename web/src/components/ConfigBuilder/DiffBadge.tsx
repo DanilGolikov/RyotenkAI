@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { deepDiff, type DiffEntry } from '../../lib/jsonDiff'
 
 const KIND_CLS: Record<DiffEntry['kind'], string> = {
@@ -29,12 +29,29 @@ export function DiffBadge({ presetName, baseline, current, onClear }: Props) {
   const [open, setOpen] = useState(false)
   const diff = useMemo(() => deepDiff(baseline, current), [baseline, current])
 
+  // Brief brand-burgundy glow when the badge appears (a preset was
+  // applied) or when the preset changes (swapped for another). Fades
+  // after ~2.5s. Provides non-modal "something happened" signal so
+  // the user doesn't miss the quiet state change in the corner.
+  const [flash, setFlash] = useState(true)
+  const prevNameRef = useRef(presetName)
+  useEffect(() => {
+    if (prevNameRef.current !== presetName) setFlash(true)
+    prevNameRef.current = presetName
+    const t = window.setTimeout(() => setFlash(false), 2500)
+    return () => window.clearTimeout(t)
+  }, [presetName])
+
   return (
     <div className="inline-flex items-center gap-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="rounded-md border border-brand-alt/50 bg-brand-alt/10 text-brand-alt px-2 py-1 text-[0.65rem]"
+        className={`rounded-md border border-brand-alt/50 bg-brand-alt/10 text-brand-alt px-2 py-1 text-[0.65rem] transition-shadow duration-[1500ms] ${
+          flash
+            ? 'shadow-[0_0_20px_rgba(237,72,127,0.45)]'
+            : 'shadow-none'
+        }`}
       >
         from <span className="font-mono">{presetName}</span>
         {diff.length > 0 && <span className="ml-1">· {diff.length} diff</span>}

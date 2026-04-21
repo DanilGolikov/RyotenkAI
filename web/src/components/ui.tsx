@@ -4,10 +4,19 @@ export function Card({
   children,
   className = '',
   raised = false,
+  hero = false,
   padding = 'p-4',
-}: PropsWithChildren<{ className?: string; raised?: boolean; padding?: string }>) {
+}: PropsWithChildren<{
+  className?: string
+  raised?: boolean
+  /** The one brand-washed card per screen — burgundy→violet wash at the top.
+   *  Use sparingly; guideline says exactly one per screen. */
+  hero?: boolean
+  padding?: string
+}>) {
+  const variant = hero ? 'card-hero' : raised ? 'card-raised' : 'card'
   return (
-    <div className={`${raised ? 'card-raised' : 'card'} ${padding} ${className}`}>{children}</div>
+    <div className={`${variant} ${padding} ${className}`}>{children}</div>
   )
 }
 

@@ -8,7 +8,13 @@ import { InferenceProviderField } from './InferenceProviderField'
 import { SelectField } from './SelectField'
 import { TrainingProviderField } from './TrainingProviderField'
 import { UnionField } from './UnionField'
-import { useFieldStatus, useValidationCtx } from './ValidationContext'
+import {
+  GLOBAL_HP_RECOMMENDATIONS,
+  LORA_RECOMMENDATIONS,
+  STRATEGY_PHASE_RECOMMENDATIONS,
+} from '../../lib/loraRecommendations'
+import { RecommendationChips } from './RecommendationChips'
+import { useClientFieldValidation, useFieldStatus, useValidationCtx } from './ValidationContext'
 import type { FieldStatus } from './ValidationContext'
 
 /**
@@ -80,14 +86,20 @@ const STATUS_BORDER: Record<FieldStatus['state'], string> = {
   // not the wrapper — the wrapper fills the whole grid cell, so a ring on
   // it spans the full pane while the actual input may be narrow. Arbitrary
   // variant [&>*] lets us reach only the one rendered input element.
-  error: '[&>*]:rounded [&>*]:ring-1 [&>*]:ring-err/70',
+  // Thicker 2px ring + subtle red bg tint + red border: errors should
+  // pop visually against the flat grey surface — previously a 1px ring
+  // was too quiet to notice while scrolling a long form.
+  error:
+    '[&>*]:rounded [&>*]:ring-2 [&>*]:ring-err/40 [&>*]:border-err [&>*]:bg-err/[0.04]',
 }
 
 const LABEL_PILL_BORDER: Record<FieldStatus['state'], string> = {
   idle: 'border-line-1',
   editing: 'border-brand',
   ok: 'border-line-1',
-  error: 'border-err',
+  // Matching the stronger ring on the input side: thin red ring + red
+  // border on the label pill so both halves of the row read as "errored".
+  error: 'border-err ring-1 ring-err/30',
 }
 
 function LabelledRow({
@@ -112,11 +124,24 @@ function LabelledRow({
   const status = useFieldStatus(path ?? '', Boolean(required), value)
   const bar = path && !suppressBar ? STATUS_BORDER[status.state] : STATUS_BORDER.idle
   const labelBorder = path ? LABEL_PILL_BORDER[status.state] : LABEL_PILL_BORDER.idle
+  // Derive a stable DOM id from the dotted config path so the <label
+  // htmlFor> binds to the input rendered by children, and screen
+  // readers can announce "Field X, required, value Y" consistently.
+  // Path is guaranteed unique within one form instance. CSS.escape
+  // handles numeric array indices and any chars that aren't valid in
+  // id selectors.
+  const inputId = path ? `cfg-${path.replace(/[^a-zA-Z0-9_-]/g, '_')}` : undefined
+  const helpLabel = path ? `Help for ${label}` : 'Field help'
+  // `group/row` + `group-focus-within/row:*` lets the label column light
+  // up brand-burgundy whenever any input inside the row is focused — a
+  // single visual signal "you're editing this field" that survives
+  // focus shifts between sub-inputs (e.g. combobox popovers). Brand tint
+  // stays ≤10% alpha per the "brand doesn't flood forms" policy.
   return (
     <div className="group/row py-1.5">
       <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
         <div
-          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} px-2.5 h-8 transition-colors`}
+          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} px-2.5 h-8 transition-colors group-focus-within/row:bg-brand-weak/10 group-focus-within/row:border-brand/30`}
         >
           {/* Required marker lives in a fixed-width slot on the left so
               every row aligns to the same column, regardless of label
@@ -128,16 +153,31 @@ function LabelledRow({
           >
             *
           </span>
-          <label className="flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate">
+          <label
+            htmlFor={inputId}
+            className="flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate"
+          >
             {label}
             {required && <span className="sr-only"> (required)</span>}
           </label>
-          <HelpTooltip text={description} />
+          <HelpTooltip text={description} label={helpLabel} />
         </div>
-        <div className={`w-full min-w-0 ${bar} transition-colors`}>{children}</div>
+        <div
+          id={inputId}
+          className={`w-full min-w-0 ${bar} transition-colors`}
+          aria-invalid={status.state === 'error' || undefined}
+          aria-describedby={
+            status.state === 'error' && inputId ? `${inputId}-err` : undefined
+          }
+        >
+          {children}
+        </div>
       </div>
       {status.state === 'error' && status.message && (
-        <div className="mt-1 ml-0 sm:ml-[236px] text-[0.65rem] text-err font-mono break-words">
+        <div
+          id={inputId ? `${inputId}-err` : undefined}
+          className="mt-1 ml-0 sm:ml-[236px] text-[0.65rem] text-err font-mono break-words"
+        >
           {status.message}
         </div>
       )}
@@ -210,6 +250,10 @@ export function FieldRenderer(props: FieldProps) {
     </FieldAnchor>
   )
   const focusHandlers = useFieldHandlers(path)
+  // Synchronous client-side range/enum/pattern check — merges into the
+  // same field status pipe as the server errors, so UI styling doesn't
+  // need to know which source produced the message.
+  useClientFieldValidation(path, node, fallback)
 
   const normalizedPath = path
     .split('.')
@@ -226,15 +270,28 @@ export function FieldRenderer(props: FieldProps) {
 
   const fieldOverride = getFieldOverride(path)
   if (fieldOverride?.comingSoon) {
+    // Don't surface this field as "required" — the form widget isn't
+    // built yet, so the client can't satisfy it anyway. Server still
+    // validates the underlying YAML, so correctness isn't lost; we
+    // just stop blocking the UI on a widget we haven't shipped. Show
+    // a muted banner underneath so the user knows they must edit the
+    // YAML view to set this value in the meantime.
     return wrapAnchor(
-      <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
-        <div className="h-8 inline-flex items-center gap-2 px-2.5 rounded-md border border-dashed border-line-1 bg-surface-0/40 text-xs text-ink-3 italic">
-          <span>{fieldOverride.comingSoon}</span>
-          <span className="not-italic text-[0.55rem] uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-alt/15 text-brand-alt">
-            soon
-          </span>
+      <div className="space-y-1">
+        <LabelledRow label={label} description={description} required={false} path={path} value={fallback}>
+          <div className="h-8 inline-flex items-center gap-2 px-2.5 rounded-md border border-dashed border-line-1 bg-surface-0/40 text-xs text-ink-3 italic">
+            <span>{fieldOverride.comingSoon}</span>
+            <span className="not-italic text-[0.55rem] uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-alt/15 text-brand-alt">
+              soon
+            </span>
+          </div>
+        </LabelledRow>
+        <div className="ml-0 sm:ml-[236px] text-[0.65rem] text-ink-4">
+          Picker in progress — switch to the{' '}
+          <span className="text-ink-3 font-medium">YAML</span> view to set this
+          value today.
         </div>
-      </LabelledRow>,
+      </div>,
     )
   }
   if (fieldOverride?.enumValues) {
@@ -392,11 +449,34 @@ export function FieldRenderer(props: FieldProps) {
     if (depth === 0) {
       // Flat render: the active subtab already owns the frame, no need for
       // a nested collapsible card inside it.
+      //
+      // Header design — follows the Linear/Stripe/GitHub pattern for
+      // config forms (researched for this pass, Nov 2026):
+      //   • Typography carries the hierarchy (18–20 px, font-weight 600).
+      //     Decoration is a short accent, not a column-height bar.
+      //   • A tiny uppercase "eyebrow" sits above the title — gives
+      //     context ("Section") without bolder chrome.
+      //   • A short gradient underline (~64 px) under the title reads as
+      //     a tasteful flourish, disappears when glanced at, present
+      //     when looked for.
+      //   • Hairline divider below the whole block keeps rhythm between
+      //     sections without a heavy box.
       return (
         <div className="space-y-5">
-          <header className="flex items-center gap-2 pb-3 border-b border-line-1">
-            <h3 className="text-lg font-semibold text-ink-1">{label}</h3>
-            <HelpTooltip text={description} />
+          <header className="pb-3 border-b border-line-1/50">
+            <div className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-ink-4 mb-1">
+              Section
+            </div>
+            <div className="flex items-baseline gap-2">
+              <h3 className="text-[1.15rem] font-semibold text-ink-1 tracking-tight leading-tight">
+                {label}
+              </h3>
+              <HelpTooltip text={description} label={`Help for ${label}`} />
+            </div>
+            <span
+              aria-hidden="true"
+              className="block mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-brand via-brand-alt to-transparent opacity-80"
+            />
           </header>
           <ObjectFields
             root={root}
@@ -410,11 +490,62 @@ export function FieldRenderer(props: FieldProps) {
         </div>
       )
     }
+    // Recommendation chips — one-click-fill presets for a few known
+    // groups so the user doesn't have to remember conventional values.
+    // Detected by path suffix (case-insensitive) against well-known
+    // group names from the schema. Each group has its own preset list
+    // in `lib/loraRecommendations.ts` (name retained for backwards
+    // compat, but the file now holds several categories).
+    const currentObj = (fallback as Record<string, unknown>) ?? {}
+    const setObj = (next: Record<string, unknown>) => onChange(next)
+    let bodyExtra: React.ReactNode = null
+    // Strategy phase hyperparameters come FIRST — path is like
+    // `training.strategies.0.hyperparams`, which would otherwise match
+    // the broader `hyperparams$` rule below and mis-suggest the
+    // global-HP presets.
+    const phaseMatch = /strategies\.(\d+)\.(?:hyperparams|phase_hyperparameters)$/.exec(path)
+    if (/(^|\.)(qlora|lora)$/.test(path)) {
+      bodyExtra = (
+        <RecommendationChips
+          currentValue={currentObj}
+          recommendations={LORA_RECOMMENDATIONS}
+          onApply={setObj}
+        />
+      )
+    } else if (phaseMatch) {
+      // We don't have root access here to read the sibling
+      // `strategy_type` — fall back to showing SFT presets (the most
+      // common starting phase) and let the chip labels advertise
+      // strategy-specific alternatives when the user iterates. A
+      // future pass can surface strategy_type through a context.
+      const fallbackType = 'sft'
+      const recs = STRATEGY_PHASE_RECOMMENDATIONS[fallbackType] ?? []
+      if (recs.length > 0) {
+        bodyExtra = (
+          <RecommendationChips
+            title="Phase recommendations (sft baseline)"
+            currentValue={currentObj}
+            recommendations={recs}
+            onApply={setObj}
+          />
+        )
+      }
+    } else if (/^training\.hyperparams$/.test(path) || /(^|\.)global_hyperparameters$/.test(path)) {
+      bodyExtra = (
+        <RecommendationChips
+          currentValue={currentObj}
+          recommendations={GLOBAL_HP_RECOMMENDATIONS}
+          onApply={setObj}
+        />
+      )
+    }
     return wrapAnchor(
       <CollapsibleCard
         label={label}
         description={description}
         required={required}
+        headerExtra={null}
+        bodyExtra={bodyExtra}
       >
         <ObjectFields
           root={root}
@@ -698,22 +829,38 @@ function CollapsibleCard({
   required,
   defaultOpen = false,
   children,
+  headerExtra,
+  bodyExtra,
 }: {
   label: string
   description?: string
   required?: boolean
   defaultOpen?: boolean
   children: React.ReactNode
+  /** Rendered inside the header row next to the label — e.g. status
+   *  chips or counts. Not toggle-sensitive. */
+  headerExtra?: React.ReactNode
+  /** Rendered at the top of the expanded body — e.g. LoRA one-click
+   *  recommendations above the actual field list. */
+  bodyExtra?: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="relative rounded border border-line-1 bg-surface-2">
-      {open && (
-        <div
-          aria-hidden
-          className="absolute left-0 inset-y-1 w-0.5 bg-gradient-brand rounded-full pointer-events-none"
-        />
-      )}
+    // Nested collapsibles wear a violet (`brand-alt`) left-line as the
+    // secondary brand tone — top sections use burgundy, nested groups
+    // use violet, so two levels read as two moods (see Brand-usage
+    // policy in FRONTEND_GUIDELINES.md). When closed the card stays flat
+    // on `surface-2`; when open, the header gets a soft violet-to-right
+    // wash and the body drops to `surface-1` so the open group reads as
+    // a well, not a pasted-on block.
+    <div
+      className={[
+        'relative rounded border border-line-1 transition-colors',
+        open
+          ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
+          : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
+      ].join(' ')}
+    >
       <div
         role="button"
         tabIndex={-1}
@@ -721,7 +868,12 @@ function CollapsibleCard({
           if ((e.target as HTMLElement).closest('[data-no-toggle]')) return
           setOpen((v) => !v)
         }}
-        className="flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:bg-surface-3/40 transition-colors"
+        className={[
+          'flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors',
+          open
+            ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
+            : 'hover:bg-surface-3/40',
+        ].join(' ')}
       >
         <button
           type="button"
@@ -734,7 +886,9 @@ function CollapsibleCard({
         >
           <span
             aria-hidden
-            className={`text-ink-3 text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}
+            className={`text-[10px] transition-transform ${
+              open ? 'rotate-90 text-brand-alt' : 'text-ink-3'
+            }`}
           >
             ▸
           </span>
@@ -746,11 +900,18 @@ function CollapsibleCard({
         <span data-no-toggle>
           <HelpTooltip text={description} />
         </span>
+        {headerExtra && <span data-no-toggle className="ml-auto">{headerExtra}</span>}
       </div>
-      {open && <div className="px-4 pb-3 pt-1 space-y-3">{children}</div>}
+      {open && (
+        <div className="px-4 pb-3 pt-1 space-y-3">
+          {bodyExtra}
+          {children}
+        </div>
+      )}
     </div>
   )
 }
+
 
 function AdvancedJsonPreview({ value }: { value: unknown }) {
   return (

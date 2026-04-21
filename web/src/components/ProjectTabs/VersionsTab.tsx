@@ -124,9 +124,18 @@ export function VersionsTab({ projectId }: { projectId: string }) {
     (rightSel !== null && rightSel !== CURRENT && rightVersionQuery.isLoading)
 
   return (
-    <div className="grid grid-cols-[280px_1fr] gap-4">
-      {/* Snapshot list */}
-      <div className="space-y-1 max-h-[560px] overflow-y-auto pr-2">
+    // `h-full` pulls height from the Card's scrolling region, which
+    // is itself bounded to the viewport (see ProjectDetail.tsx — the
+    // page is a viewport-height flex column, the card takes the
+    // remainder, its content area is the scroll container). Each
+    // column then gets `min-h-0 overflow-y-auto` and scrolls inside
+    // its own box — no page-level scrollbar.
+    <div className="grid grid-cols-[280px_1fr] gap-4 h-full">
+      {/* Snapshot list — internal scroll. `min-h-0` is the flex /
+          grid "unstuck overflow" trick: without it, the list would
+          prefer its intrinsic height and push the grid row taller
+          than the container. */}
+      <div className="space-y-1 min-h-0 overflow-y-auto pr-2">
         <div className="text-[0.65rem] uppercase tracking-wider text-ink-4 font-medium px-1 pb-1">
           Snapshots
         </div>
@@ -138,12 +147,19 @@ export function VersionsTab({ projectId }: { projectId: string }) {
             <div
               key={v.filename}
               className={[
-                'rounded-md px-3 py-2 text-xs border transition flex items-start gap-2',
+                // Hover highlights the border in the active-state colour
+                // without filling the body — previously the hover applied
+                // `hover:border-line-2` which was nearly invisible and the
+                // active state added a dark `bg-surface-2` fill that made
+                // hover feel stuck halfway through a selection animation.
+                // Now hover reads as "outlined target" and active adds
+                // the fill as a clear "this one is chosen" signal.
+                'rounded-md px-3 py-2 text-xs border transition-colors flex items-start gap-2',
                 active
                   ? 'border-brand bg-surface-2 text-ink-1'
                   : fav
-                    ? 'border-warn/60 hover:border-warn text-ink-2'
-                    : 'border-line-1 hover:border-line-2 text-ink-2',
+                    ? 'border-warn/60 hover:border-warn text-ink-1'
+                    : 'border-line-1 hover:border-brand/60 text-ink-2 hover:text-ink-1',
               ].join(' ')}
             >
               <button
@@ -188,8 +204,10 @@ export function VersionsTab({ projectId }: { projectId: string }) {
         })}
       </div>
 
-      {/* Right pane — preview or diff */}
-      <div className="min-w-0 space-y-2">
+      {/* Right pane — fixed-height flex column. Picker row + label row
+          take their natural height, YamlView absorbs the rest with
+          `flex-1 min-h-0` and scrolls internally. */}
+      <div className="min-w-0 min-h-0 flex flex-col space-y-2">
         <div className="flex items-center gap-3 text-[0.65rem] font-mono text-ink-3 flex-wrap">
           <span className="text-ink-4">old:</span>
           <SelectField
@@ -299,7 +317,20 @@ export function VersionsTab({ projectId }: { projectId: string }) {
                 </button>
               )}
             </div>
-            <YamlView text={previewYaml || '# (empty)'} maxHeight="max-h-[560px]" />
+            <YamlView
+              text={previewYaml || '# (empty)'}
+              // `flex-1 min-h-0` absorbs the remaining height inside
+              // the sticky wrapper (after the picker + label rows).
+              // `maxHeight` becomes the upper bound — internal scroll
+              // kicks in when a version's YAML is longer than viewport.
+              className="flex-1 min-h-0"
+              maxHeight="max-h-full"
+              toolbarExtra={
+                <span className="text-[0.65rem] font-mono text-ink-3">
+                  {labelFor(previewSel)}
+                </span>
+              }
+            />
             {restoreMut.error && (
               <div className="text-err text-2xs">
                 {(restoreMut.error as Error).message}

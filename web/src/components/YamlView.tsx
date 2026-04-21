@@ -1,35 +1,39 @@
-import { useMemo } from 'react'
-import { tokenizeYamlLine } from '../lib/yamlTokens'
+import { YamlEditor } from './YamlEditor'
 
 interface Props {
   text: string
   className?: string
   maxHeight?: string
+  /** Render the Collapse-all/Expand-all toolbar. Default true — version
+   *  previews are long and fold gutters are a key navigation aid. */
+  showToolbar?: boolean
+  /** Extra content in the toolbar (e.g. version label). */
+  toolbarExtra?: React.ReactNode
 }
 
-export function YamlView({ text, className = '', maxHeight = 'max-h-[520px]' }: Props) {
-  const lines = useMemo(() => text.split('\n'), [text])
+/**
+ * Read-only YAML display. Delegates to `YamlEditor` in read-only mode
+ * so snapshots, version previews, and config dumps get the same
+ * gutters, line numbers, fold gutter, and syntax highlighting as the
+ * editable form. Previously this was a plain `<pre>` with a hand-
+ * rolled tokenizer, which meant version previews missed all the
+ * navigation affordances of the live editor.
+ */
+export function YamlView({
+  text,
+  className = '',
+  maxHeight = 'max-h-[520px]',
+  showToolbar = true,
+  toolbarExtra,
+}: Props) {
   return (
-    <pre
-      className={[
-        'bg-surface-0 border border-line-1 rounded-md p-3 text-xs font-mono overflow-auto leading-relaxed',
-        maxHeight,
-        className,
-      ].join(' ')}
-    >
-      {lines.map((line, idx) => {
-        const segs = tokenizeYamlLine(line)
-        return (
-          <div key={idx} className="whitespace-pre">
-            {segs.map((seg, i) => (
-              <span key={i} className={seg.cls}>
-                {seg.text}
-              </span>
-            ))}
-            {segs.length === 0 && <span>&nbsp;</span>}
-          </div>
-        )
-      })}
-    </pre>
+    <YamlEditor
+      value={text}
+      readOnly
+      maxHeight={maxHeight}
+      className={className}
+      showToolbar={showToolbar}
+      toolbarExtra={toolbarExtra}
+    />
   )
 }

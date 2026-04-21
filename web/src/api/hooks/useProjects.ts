@@ -135,6 +135,22 @@ export function useRestoreConfigVersion(projectId: string) {
   })
 }
 
+export function useUpdateProjectDescription(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (description: string) =>
+      api.put<ProjectDetail>(
+        `/projects/${encodeURIComponent(projectId)}/description`,
+        { description },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.project(projectId) })
+      qc.invalidateQueries({ queryKey: qk.projects() })
+    },
+  })
+}
+
+
 export function useDeleteProject() {
   const qc = useQueryClient()
   return useMutation({

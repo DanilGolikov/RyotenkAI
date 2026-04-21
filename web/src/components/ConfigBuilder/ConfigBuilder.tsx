@@ -96,8 +96,10 @@ export function ConfigBuilder({
   // outer Card edge — ProjectDetail.tsx wraps this in a `<div class="p-5">`,
   // so -m-5 cancels that padding. If the outer padding changes, update here.
   return (
-    <div className="grid grid-cols-[208px_1fr] -mx-5 -my-5">
-      <aside className="min-w-0 bg-surface-1 border-r border-line-1 px-3 py-5">
+    <div className="grid grid-cols-[232px_1fr] -mx-5 -my-5">
+      <aside
+        className="min-w-0 border-r border-line-1 px-3 py-5 bg-gradient-to-b from-brand/[0.04] via-surface-1 to-brand-alt/[0.04]"
+      >
         <TocRail
           schema={schema}
           active={activeKey}

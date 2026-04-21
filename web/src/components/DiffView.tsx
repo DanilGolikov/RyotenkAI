@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   diffLines,
   foldDiff,
@@ -8,6 +8,7 @@ import {
   type DiffLine,
 } from '../lib/lineDiff'
 import { tokenizeYamlLine } from '../lib/yamlTokens'
+import { CollapseIcon, ExpandIcon } from './icons'
 import { Spinner } from './ui'
 
 interface Props {
@@ -45,6 +46,34 @@ export function DiffView({
     [lines],
   )
 
+  // Fullscreen overlay — same pattern as YamlEditor: CSS `!fixed`
+  // overlay at inset-6/10, blurred backdrop behind, Esc + backdrop
+  // click to close. Keeps the same DOM subtree mounted so diff scroll
+  // position and fold state persist through enter/exit.
+  const [fullscreen, setFullscreen] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const enterFullscreen = useCallback(() => setFullscreen(true), [])
+  const exitFullscreen = useCallback(() => {
+    setClosing(true)
+    window.setTimeout(() => {
+      setFullscreen(false)
+      setClosing(false)
+    }, 160)
+  }, [])
+  useEffect(() => {
+    if (!fullscreen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') exitFullscreen()
+    }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [fullscreen, exitFullscreen])
+
   const adds = lines.filter((l) => l.type === 'add').length
   const dels = lines.filter((l) => l.type === 'del').length
 
@@ -55,8 +84,31 @@ export function DiffView({
     }
   })
 
+  const wrapperCls = fullscreen
+    ? `relative rounded-md border border-line-1 bg-surface-0 overflow-hidden flex flex-col !fixed inset-6 lg:inset-10 z-[9999] !rounded-xl shadow-card ${
+        closing ? 'fs-exit' : 'fs-enter'
+      }`
+    : 'relative rounded-md border border-line-1 bg-surface-0 overflow-hidden'
+
+  // When fullscreen, the diff scroll area becomes the whole remaining
+  // height of the overlay instead of a fixed `maxHeight`.
+  const scrollCls = fullscreen
+    ? 'flex-1 min-h-0 overflow-auto font-mono text-xs leading-5'
+    : `${maxHeight} overflow-auto font-mono text-xs leading-5`
+
   return (
-    <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
+    <>
+      {fullscreen && (
+        <div
+          aria-hidden="true"
+          onClick={exitFullscreen}
+          className={[
+            'fixed inset-0 z-[9998] bg-black/55 backdrop-blur-md',
+            closing ? 'fs-backdrop-out' : 'fs-backdrop-in',
+          ].join(' ')}
+        />
+      )}
+      <div className={wrapperCls}>
       <div className="flex items-center gap-3 px-3 py-1.5 border-b border-line-1 text-[0.65rem] font-mono text-ink-3">
         <span className="text-ok">+{adds}</span>
         <span className="text-err">−{dels}</span>
@@ -77,8 +129,22 @@ export function DiffView({
             )}
           </span>
         )}
-        <span className="ml-auto">
-          {hunks.length} hunk{hunks.length === 1 ? '' : 's'}
+        <span className="ml-auto flex items-center gap-2">
+          <span>{hunks.length} hunk{hunks.length === 1 ? '' : 's'}</span>
+          <button
+            type="button"
+            onClick={fullscreen ? exitFullscreen : enterFullscreen}
+            title={fullscreen ? 'Exit fullscreen (Esc)' : 'Open diff fullscreen'}
+            aria-label={fullscreen ? 'Exit fullscreen' : 'Open fullscreen'}
+            aria-pressed={fullscreen}
+            className="rounded px-1 py-0.5 text-ink-3 hover:text-ink-1 hover:bg-surface-3/50 transition inline-flex items-center"
+          >
+            {fullscreen ? (
+              <CollapseIcon className="w-3.5 h-3.5" />
+            ) : (
+              <ExpandIcon className="w-3.5 h-3.5" />
+            )}
+          </button>
         </span>
       </div>
 
@@ -93,7 +159,7 @@ export function DiffView({
           Identical content on both sides.
         </div>
       ) : (
-        <div className={`${maxHeight} overflow-auto font-mono text-xs leading-5`}>
+        <div className={scrollCls}>
           {chunks.map((chunk, ci) => {
             if (chunk.kind === 'fold') {
               if (expandedFolds.has(chunk.startIdx)) {
@@ -167,7 +233,8 @@ export function DiffView({
           })}
         </div>
       )}
-    </div>
+      </div>
+    </>
   )
 }
 

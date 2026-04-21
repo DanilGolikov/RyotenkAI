@@ -1,8 +1,11 @@
 import { useQueries } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useProviders } from '../../api/hooks/useProviders'
 import { qk } from '../../api/queryKeys'
 import type { ConfigResponse } from '../../api/types'
+import { ProviderStatusChip } from './ProviderStatusChip'
 import { SelectField } from './SelectField'
 
 interface Props {
@@ -22,6 +25,11 @@ interface Props {
 export function TrainingProviderField({ value, onChange, onFocus, onBlur }: Props) {
   const providersQuery = useProviders()
   const providers = providersQuery.data ?? []
+  const navigate = useNavigate()
+  const { id: projectId } = useParams<{ id: string }>()
+  const openSettings = () => {
+    if (projectId) navigate(`/projects/${encodeURIComponent(projectId)}/settings`)
+  }
 
   const configQueries = useQueries({
     queries: providers.map((p) => ({
@@ -53,18 +61,21 @@ export function TrainingProviderField({ value, onChange, onFocus, onBlur }: Prop
   }
 
   return (
-    <SelectField
-      value={current}
-      options={eligible.map((p) => ({
-        value: p.id,
-        label: `${p.name} (${p.type})`,
-      }))}
-      onChange={(next) => onChange(next === '' ? undefined : next)}
-      allowEmpty
-      footer={<AddProviderRow />}
-      onFocus={onFocus}
-      onBlur={onBlur}
-    />
+    <div className="flex items-center gap-2">
+      <SelectField
+        value={current}
+        options={eligible.map((p) => ({
+          value: p.id,
+          label: `${p.name} (${p.type})`,
+        }))}
+        onChange={(next) => onChange(next === '' ? undefined : next)}
+        allowEmpty
+        footer={<AddProviderRow />}
+        onFocus={onFocus}
+        onBlur={onBlur}
+      />
+      <ProviderStatusChip onOpenSettings={openSettings} />
+    </div>
   )
 }
 

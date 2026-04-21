@@ -73,6 +73,15 @@ function defaultItem(node: JsonSchemaNode): unknown {
 }
 
 /**
+ * Paths that should render as a phase chain — each item gets a
+ * numbered "Phase N" badge and an arrow pointing to the next item,
+ * visually communicating that the array is an ordered pipeline, not a
+ * bag of peers. Currently used for `training.strategies` which is a
+ * SFT → DPO → GRPO chain in order.
+ */
+const CHAIN_PATHS = new Set(['training.strategies'])
+
+/**
  * Inline array editor. Replaces the "advanced — edit via YAML" fallback
  * for ``kind === 'array'``. Each row renders its element through
  * FieldRenderer using the resolved ``items`` schema; items can be added
@@ -93,6 +102,7 @@ export function ArrayField({
   // Auto-expand arrays that already carry content; empty arrays start
   // collapsed so a fresh form reads as "section present, no entries yet".
   const [open, setOpen] = useState(initialList.length > 0)
+  const isChain = CHAIN_PATHS.has(path)
   const itemsSchema = useMemo<JsonSchemaNode>(() => {
     const raw = (node.items as JsonSchemaNode | undefined) ?? {}
     return resolveRef(root, raw)
@@ -120,13 +130,20 @@ export function ArrayField({
 
   return (
     <FieldAnchor path={path} hashPrefix={hashPrefix ?? ''}>
-      <div className="relative rounded border border-line-1 bg-surface-2">
-        {open && (
-          <div
-            aria-hidden
-            className="absolute left-0 inset-y-1 w-0.5 bg-gradient-brand rounded-full pointer-events-none"
-          />
-        )}
+      {/* Unified "nested group" shell: violet left-line matches
+          CollapsibleCard so Strategies and QLora read as the same kind
+          of object visually. Open state swaps body to surface-1 (well
+          effect) and header gets a soft violet wash, same as
+          CollapsibleCard — see FRONTEND_GUIDELINES.md "Visual
+          hierarchy recipes". */}
+      <div
+        className={[
+          'relative rounded border border-line-1 transition-colors',
+          open
+            ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
+            : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
+        ].join(' ')}
+      >
         <div
           role="button"
           tabIndex={-1}
@@ -134,7 +151,12 @@ export function ArrayField({
             if ((e.target as HTMLElement).closest('[data-no-toggle]')) return
             setOpen((v) => !v)
           }}
-          className="flex items-center gap-2 px-4 py-2.5 cursor-pointer hover:bg-surface-3/40 transition-colors"
+          className={[
+            'flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors',
+            open
+              ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
+              : 'hover:bg-surface-3/40',
+          ].join(' ')}
         >
           <button
             type="button"
@@ -187,6 +209,8 @@ export function ArrayField({
                   key={idx}
                   title={deriveItemTitle(item, idx)}
                   onRemove={() => removeAt(idx)}
+                  phaseIndex={isChain ? idx : undefined}
+                  isLast={isChain ? idx === list.length - 1 : undefined}
                 >
                   {detectKind(itemsSchema) === 'object' ? (
                     // Skip the extra CollapsibleCard FieldRenderer would
@@ -234,6 +258,8 @@ function ArrayItem({
   onRemove,
   children,
   defaultOpen = true,
+  phaseIndex,
+  isLast,
 }: {
   title: string
   onRemove: () => void
@@ -242,46 +268,97 @@ function ArrayItem({
    *  without an extra click — callers pass false only for really long
    *  lists where auto-expansion would flood the screen. */
   defaultOpen?: boolean
+  /** If provided, renders a "Phase N" badge and (unless isLast) a
+   *  downward arrow under the card — ArrayField sets this for chain
+   *  paths like `training.strategies`. */
+  phaseIndex?: number
+  isLast?: boolean
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const isChain = phaseIndex !== undefined
   return (
-    <div className="relative rounded border border-line-1 bg-surface-2">
-      {open && (
-        <div
-          aria-hidden
-          className="absolute left-0 inset-y-1 w-0.5 bg-gradient-brand rounded-full pointer-events-none"
-        />
-      )}
+    <div className="relative">
       <div
-        role="button"
-        tabIndex={-1}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).closest('[data-no-toggle]')) return
-          setOpen((v) => !v)
-        }}
-        className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-surface-2/60 transition-colors"
+        className={[
+          'relative rounded border border-line-1 transition-colors',
+          open
+            ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
+            : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
+        ].join(' ')}
       >
-        <span
-          aria-hidden
-          className={`text-ink-3 text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}
-        >
-          ▸
-        </span>
-        <span className="text-xs font-medium text-ink-1">{title}</span>
-        <button
-          type="button"
-          data-no-toggle
+        <div
+          role="button"
+          tabIndex={-1}
           onClick={(e) => {
-            e.stopPropagation()
-            onRemove()
+            if ((e.target as HTMLElement).closest('[data-no-toggle]')) return
+            setOpen((v) => !v)
           }}
-          title="Remove item"
-          className="ml-auto w-6 h-6 rounded text-err hover:bg-err/10 transition text-xs"
+          className={[
+            'flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors',
+            open
+              ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
+              : 'hover:bg-surface-2/60',
+          ].join(' ')}
         >
-          ✕
-        </button>
+          <span
+            aria-hidden
+            className={`text-ink-3 text-[10px] transition-transform ${open ? 'rotate-90' : ''}`}
+          >
+            ▸
+          </span>
+          {isChain && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6rem] font-mono font-semibold bg-brand/15 text-brand-strong border border-brand/30"
+              aria-label={`Phase ${(phaseIndex as number) + 1}`}
+            >
+              Phase {(phaseIndex as number) + 1}
+            </span>
+          )}
+          <span className="text-xs font-medium text-ink-1">{title}</span>
+          <button
+            type="button"
+            data-no-toggle
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove()
+            }}
+            title="Remove item"
+            className="ml-auto w-6 h-6 rounded text-err hover:bg-err/10 transition text-xs"
+          >
+            ✕
+          </button>
+        </div>
+        {open && <div className="px-3 pb-3 pt-1">{children}</div>}
       </div>
-      {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+      {isChain && !isLast && (
+        <div className="flex justify-center py-1" aria-hidden="true">
+          <svg width="14" height="18" viewBox="0 0 14 18" className="opacity-70">
+            <defs>
+              <linearGradient id="chainArrow" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#ed487f" />
+                <stop offset="100%" stopColor="#b8a1fb" />
+              </linearGradient>
+            </defs>
+            <line
+              x1="7"
+              y1="0"
+              x2="7"
+              y2="13"
+              stroke="url(#chainArrow)"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+            <polyline
+              points="2,11 7,17 12,11"
+              fill="none"
+              stroke="#b8a1fb"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </div>
+      )}
     </div>
   )
 }

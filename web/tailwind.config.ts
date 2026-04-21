@@ -17,6 +17,21 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // Custom breakpoints tuned to the global 113% root font-size
+      // (see globals.css — `html { font-size: 113% }`). Default
+      // Tailwind breakpoints are rem-based, so a 113% root would make
+      // `md:` fire at ~868 CSS px instead of the conventional 768.
+      // We restore the conventional CSS-px thresholds by dividing the
+      // default rem values by 1.13 and rounding. Result: class names
+      // still read the familiar way (`md:` ≈ 768 CSS px) regardless of
+      // the ink-density scale choice.
+      screens: {
+        sm: '566px',   // default 640 / 1.13
+        md: '680px',   // default 768 / 1.13
+        lg: '907px',   // default 1024 / 1.13
+        xl: '1133px',  // default 1280 / 1.13
+        '2xl': '1359px', // default 1536 / 1.13
+      },
       colors: {
         // Surfaces — near-black canvas (~L 11%) with ~3% L lifts per step.
         // No hue tint — chrome reads as neutral dark, closer to Grafana.

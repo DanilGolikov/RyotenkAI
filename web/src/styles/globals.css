@@ -6,6 +6,13 @@
   color-scheme: dark;
 }
 
+html {
+  /* Global +13% scale: rem-based Tailwind sizes (text-xs, h-8, spacing)
+     all rescale from 1rem=16px baseline to 1rem≈18.08px. Explicit px
+     values in arbitrary classes (text-[13px] etc.) stay fixed. */
+  font-size: 113%;
+}
+
 html, body, #root {
   height: 100%;
 }
@@ -72,13 +79,21 @@ body {
   .card-raised {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card;
   }
-  /* Single "hero" variant — brighter burgundy→violet wash, the one card
-     allowed to wear brand. Opacity raised so the gradient actually pops. */
+  /* Single "hero" variant — deep burgundy→indigo wash, the one card
+     allowed to wear brand. Uses `brand-weak` (#44182b, near-black
+     burgundy) instead of the lit `brand` pink so the top of the card
+     reads as "vintage wine" rather than "bubblegum", and blends into
+     `surface-2` by the midline. Matches the ambient backdrop in
+     `#root::before` so the card feels cut from the same fabric as the
+     canvas. */
   .card-hero {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card relative overflow-hidden;
     background-image:
-      linear-gradient(180deg, rgba(230,53,112,0.22), rgba(167,139,250,0.16) 55%, transparent),
-      linear-gradient(#27272a, #27272a);
+      linear-gradient(180deg,
+        rgba(68, 24, 43, 0.55) 0%,
+        rgba(68, 24, 43, 0.28) 25%,
+        rgba(55, 45, 80, 0.18) 50%,
+        transparent 80%);
   }
 
   /* ---------- Buttons ---------- */
@@ -140,6 +155,35 @@ body {
     @apply w-full bg-surface-1 border border-line-2 rounded-md px-3 py-2 text-sm text-ink-1 placeholder:text-ink-4 focus:border-brand focus:outline-none transition;
   }
 }
+
+/* ------------------------------------------------------------------
+   Fullscreen YAML editor animation — used by YamlEditor.tsx when the
+   expand button is clicked. Fade + subtle scale so the switch between
+   "inline pane" and "cover-the-page overlay" reads as a panel lifting
+   off rather than a layout jump. Exit mirrors enter so closing feels
+   reversible. Durations tuned on a dev tool (~180ms) — just long
+   enough to register, not long enough to feel slow.
+   ------------------------------------------------------------------ */
+@keyframes fs-enter {
+  from { opacity: 0; transform: scale(0.97); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes fs-exit {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.97); }
+}
+@keyframes fs-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes fs-backdrop-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.fs-enter  { animation: fs-enter 180ms ease-out; }
+.fs-exit   { animation: fs-exit 160ms ease-in forwards; }
+.fs-backdrop-in  { animation: fs-backdrop-in 180ms ease-out; }
+.fs-backdrop-out { animation: fs-backdrop-out 160ms ease-in forwards; }
 
 /* Live-running dot — sky-blue so "happening now" is visually distinct
    from the burgundy brand CTA. */
