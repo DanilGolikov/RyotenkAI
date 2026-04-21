@@ -25,9 +25,17 @@ from typing import TYPE_CHECKING, Literal
 
 from src.pipeline.launch_queries import (
     RestartPointOption,
+)
+from src.pipeline.launch_queries import (
     load_restart_point_options as _load_restart_point_options,
+)
+from src.pipeline.launch_queries import (
     pick_default_launch_mode as _pick_default_launch_mode,
+)
+from src.pipeline.launch_queries import (
     resolve_config_path_for_run as _resolve_config_path_for_run,
+)
+from src.pipeline.launch_queries import (
     validate_resume_run as _validate_resume_run,
 )
 
@@ -316,16 +324,16 @@ def spawn_launch_detached(
 
 
 __all__ = [
+    "MODE_FRESH",
+    "MODE_NEW_RUN",
+    "MODE_RESTART",
+    "MODE_RESUME",
     "ActiveLaunch",
     "LaunchLogLevel",
     "LaunchMode",
     "LaunchRequest",
     "LaunchResult",
     "LaunchStatus",
-    "MODE_FRESH",
-    "MODE_NEW_RUN",
-    "MODE_RESTART",
-    "MODE_RESUME",
     "RestartPointOption",
     "build_train_command",
     "execute_launch_subprocess",
