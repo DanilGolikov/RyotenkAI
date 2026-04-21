@@ -37,7 +37,7 @@ from src.pipeline.constants import (
     SEPARATOR_LINE_WIDTH,
     SUMMARY_LINE_WIDTH,
 )
-from src.pipeline.context import ContextPropagator
+from src.pipeline.context import ContextPropagator, StageInfoLogger
 from src.pipeline.domain import RunContext
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
@@ -243,6 +243,8 @@ class PipelineOrchestrator:
         )
         # Stage context propagation (extracted from orchestrator).
         self._context_propagator = ContextPropagator(self._validation_artifact_mgr)
+        # Post-stage MLflow info logging (extracted from orchestrator).
+        self._stage_info_logger = StageInfoLogger()
 
         # Initialize stages (after context + collectors, since stages may reference validation mgr)
         self.stages: list[PipelineStage] = self._init_stages()
@@ -1153,121 +1155,11 @@ class PipelineOrchestrator:
 
     def _log_stage_specific_info(self, stage_name: str) -> None:
         """Log stage-specific info to MLflow after stage completion."""
-        if not self._mlflow_manager:
-            return
-
-        # After GPU Deployer: log provider info + durations
-        if stage_name == StageNames.GPU_DEPLOYER and StageNames.GPU_DEPLOYER in self.context:
-            deployer_ctx = self.context[StageNames.GPU_DEPLOYER]
-            self._mlflow_manager.log_provider_info(
-                provider_name=deployer_ctx.get("provider_name", CTX_PROVIDER_NAME_UNKNOWN),
-                provider_type=deployer_ctx.get("provider_type", CTX_PROVIDER_TYPE_UNKNOWN),
-                gpu_type=deployer_ctx.get("gpu_type"),
-                resource_id=deployer_ctx.get("resource_id"),
-            )
-            # Log upload and deps durations as events
-            upload_dur = deployer_ctx.get(_KEY_UPLOAD_DURATION)
-            deps_dur = deployer_ctx.get("deps_duration_seconds")
-            if upload_dur:
-                self._mlflow_manager.log_event_info(
-                    f"Files uploaded ({upload_dur:.1f}s)",
-                    category="deployment",
-                    source=StageNames.GPU_DEPLOYER,
-                    upload_duration_seconds=upload_dur,
-                )
-            if deps_dur:
-                self._mlflow_manager.log_event_info(
-                    f"Dependencies installed ({deps_dur:.1f}s)",
-                    category="deployment",
-                    source=StageNames.GPU_DEPLOYER,
-                    deps_duration_seconds=deps_dur,
-                )
-
-        # After Dataset Validator: log dataset validation metrics
-        if stage_name == StageNames.DATASET_VALIDATOR and StageNames.DATASET_VALIDATOR in self.context:
-            validator_ctx = self.context[StageNames.DATASET_VALIDATOR]
-            metrics = validator_ctx.get("metrics", {})  # noqa: WPS226
-            validation_mode = validator_ctx.get("validation_mode", "legacy")
-
-            if metrics:
-                # NEW: Plugin-based validation logs plugin-specific metrics
-                if validation_mode == "plugin":
-                    # Log all plugin metrics as params
-                    params_to_log: dict[str, float | str] = {}
-                    for key, value in metrics.items():
-                        # Convert to float/int for MLflow
-                        try:
-                            params_to_log[f"dataset.{key}"] = float(value)
-                        except (ValueError, TypeError):
-                            params_to_log[f"dataset.{key}"] = str(value)
-
-                    self._mlflow_manager.log_params(params_to_log)
-
-                else:
-                    # LEGACY: Log as before (backward compatibility)
-                    self._mlflow_manager.log_params(
-                        {
-                            "dataset.sample_count": validator_ctx.get("sample_count", 0),
-                            "dataset.avg_length": metrics.get("avg_length", 0),
-                            "dataset.empty_ratio": metrics.get("empty_ratio", 0),
-                            "dataset.diversity_score": metrics.get("diversity_score", 0),
-                        }
-                    )
-
-        # After Training Monitor: log training metrics + duration
-        if stage_name == StageNames.TRAINING_MONITOR and StageNames.TRAINING_MONITOR in self.context:
-            monitor_ctx = self.context[StageNames.TRAINING_MONITOR]
-
-            # Log training duration as event
-            training_dur = monitor_ctx.get(CTX_TRAINING_DURATION)
-            if training_dur:
-                self._mlflow_manager.log_event_info(
-                    f"Training completed ({training_dur:.1f}s)",
-                    category="training",
-                    source=StageNames.TRAINING_MONITOR,
-                    training_duration_seconds=training_dur,
-                )
-
-            # Log mock training info if present
-            training_info = monitor_ctx.get(CTX_TRAINING_INFO, {})
-            if training_info:
-                metrics_to_log = {}
-                if training_info.get(CTX_RUNTIME_SECONDS):
-                    metrics_to_log[f"training.{CTX_RUNTIME_SECONDS}"] = training_info[CTX_RUNTIME_SECONDS]
-                if training_info.get("final_loss"):
-                    metrics_to_log["training.final_loss"] = training_info["final_loss"]
-                if training_info.get("final_accuracy"):
-                    metrics_to_log["training.final_accuracy"] = training_info["final_accuracy"]
-                if training_info.get("total_steps"):
-                    metrics_to_log["training.total_steps"] = float(training_info["total_steps"])
-
-                if metrics_to_log:
-                    self._mlflow_manager.log_metrics(metrics_to_log)
-
-        # After Model Retriever: log model info
-        if stage_name == StageNames.MODEL_RETRIEVER and StageNames.MODEL_RETRIEVER in self.context:
-            retriever_ctx = self.context[StageNames.MODEL_RETRIEVER]
-
-            model_size = retriever_ctx.get("model_size_mb")
-            if model_size:
-                self._mlflow_manager.log_event_info(
-                    f"Model size: {model_size:.1f} MB",
-                    category="model",
-                    source=StageNames.MODEL_RETRIEVER,
-                    model_size_mb=model_size,
-                )
-
-            hf_uploaded = retriever_ctx.get("hf_uploaded")
-            upload_dur = retriever_ctx.get(_KEY_UPLOAD_DURATION)
-            if hf_uploaded and upload_dur:
-                hf_repo = retriever_ctx.get("hf_repo_id", CTX_PROVIDER_NAME_UNKNOWN)
-                self._mlflow_manager.log_event_info(
-                    f"Model uploaded to HF: {hf_repo} ({upload_dur:.1f}s)",
-                    category="model",
-                    source=StageNames.MODEL_RETRIEVER,
-                    hf_repo_id=hf_repo,
-                    upload_duration_seconds=upload_dur,
-                )
+        self._stage_info_logger.log(
+            mlflow_manager=self._mlflow_manager,
+            context=self.context,
+            stage_name=stage_name,
+        )
 
     def _fill_from_context(self, stage_name: str, collector: StageArtifactCollector) -> None:
         """Populate collector with stage-specific data read from pipeline context."""
