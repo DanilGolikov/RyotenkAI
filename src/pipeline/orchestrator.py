@@ -82,15 +82,11 @@ from src.utils.result import AppError, Err, Ok, Result
 if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
 
-# Status literals used in MLflow event attributes (> 3 uses → extract to avoid WPS226)
+# Status literals used in MLflow event attributes.
 _STATUS_FAILED = "failed"
 _STATUS_PASSED = "passed"
 _STATUS_RUNNING = "running"
 _STATUS_STARTED = "started"
-
-# Dict key literals reused across context reads (> 3 uses → WPS226)
-_KEY_DESCRIPTION = "description"
-_KEY_UPLOAD_DURATION = "upload_duration_seconds"
 
 
 class LaunchPreparationError(Exception):
