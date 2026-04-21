@@ -30,7 +30,7 @@ from src.pipeline.constants import (
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
-from src.pipeline.context import ContextPropagator, StageInfoLogger
+from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
@@ -211,12 +211,15 @@ class PipelineOrchestrator:
             chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
             logger.info(f"Strategy chain checked: {chain_str}")
 
-        # Pipeline context (shared data between stages)
-        # Include config_path so deployment knows which config to upload
-        self.context: dict[str, Any] = {
-            PipelineContextKeys.CONFIG_PATH: str(config_path),
-            PipelineContextKeys.RUN: self.run_ctx,
-        }
+        # Pipeline context (shared data between stages).
+        # PipelineContext inherits from dict — existing stages that accept
+        # ``dict[str, Any]`` keep working without changes.
+        self.context: PipelineContext = PipelineContext(
+            {
+                PipelineContextKeys.CONFIG_PATH: str(config_path),
+                PipelineContextKeys.RUN: self.run_ctx,
+            }
+        )
 
         # MLflow lifecycle manager (extracted from orchestrator).
         # Owns MLflowManager + root/attempt runs; orchestrator keeps a single
@@ -591,16 +594,18 @@ class PipelineOrchestrator:
         self._log_layout = LogLayout(self.attempt_directory)
         init_run_logging(self.run_ctx.name, log_dir=self.attempt_directory)
 
-        self.context = {
-            PipelineContextKeys.CONFIG_PATH: str(self.config_path),
-            PipelineContextKeys.RUN: self.run_ctx,
-            PipelineContextKeys.LOGICAL_RUN_ID: state.logical_run_id,
-            PipelineContextKeys.ATTEMPT_ID: attempt.attempt_id,
-            PipelineContextKeys.ATTEMPT_NO: attempt.attempt_no,
-            PipelineContextKeys.RUN_DIRECTORY: str(self.run_directory),
-            PipelineContextKeys.ATTEMPT_DIRECTORY: str(self.attempt_directory),
-            PipelineContextKeys.FORCED_STAGES: set(self._forced_stage_names(start_stage_name=start_stage_name)),
-        }
+        # Fork the run-scoped context (CONFIG_PATH, RUN) into a per-attempt
+        # context with fresh attempt-scoped keys. PipelineContext.fork
+        # guarantees no state leaks back to the original.
+        assert self.run_directory is not None
+        self.context = self.context.fork(
+            attempt_id=attempt.attempt_id,
+            attempt_no=attempt.attempt_no,
+            attempt_directory=self.attempt_directory,
+            logical_run_id=state.logical_run_id,
+            run_directory=self.run_directory,
+            forced_stages=set(self._forced_stage_names(start_stage_name=start_stage_name)),
+        )
 
         state.attempts.append(attempt)
         state.active_attempt_id = attempt.attempt_id
