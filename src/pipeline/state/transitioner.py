@@ -1,30 +1,26 @@
 """
 State transition functions for pipeline stage lifecycle.
 
-Extracted from PipelineOrchestrator to reduce orchestrator size and isolate
-pure state mutations into testable functions.
+Pure mutators of ``PipelineAttemptState`` / ``PipelineState`` — each takes
+a state object and mutates it in place with a specific semantic transition
+(running / completed / failed / skipped / interrupted / finalized).
 
-Most functions operate on PipelineAttemptState / PipelineState objects
-directly. ``restore_reused_context`` additionally mutates a pipeline context
-dict and calls a sync-root callback — we keep it alongside the other
-transitioners because its job is "materialise completed-and-reused stage
-runs into attempt state".
+Lineage manipulation (``invalidate_from`` / ``restore_reused`` / the
+per-stage wrappers around ``update_lineage``) lives in
+:mod:`src.pipeline.state.lineage_manager` — this module keeps a single
+concern: stage-run state transitions.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.pipeline.artifacts.base import utc_now_iso
 from src.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
-    StageLineageRef,
     StageRunState,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 def mark_stage_running(
@@ -141,90 +137,11 @@ def finalize_attempt_state(
         state.active_attempt_id = None
 
 
-def invalidate_lineage_from(
-    *,
-    lineage: dict[str, StageLineageRef],
-    stage_names: list[str],
-    start_stage_name: str,
-) -> dict[str, StageLineageRef]:
-    """Return a new lineage dict with all entries from ``start_stage_name`` onward removed.
-
-    Used when a user restarts from a specific stage: every downstream stage's
-    previous outputs must be invalidated so the pipeline recomputes them.
-
-    Raises ``ValueError`` if ``start_stage_name`` is not in ``stage_names``.
-    """
-    if start_stage_name not in stage_names:
-        raise ValueError(f"Unknown stage name: {start_stage_name}")
-    start_idx = stage_names.index(start_stage_name)
-    new_lineage = dict(lineage)
-    for name in stage_names[start_idx:]:
-        new_lineage.pop(name, None)
-    return new_lineage
-
-
-def restore_reused_context(
-    *,
-    attempt: PipelineAttemptState,
-    lineage: dict[str, StageLineageRef],
-    stage_names: list[str],
-    start_stage_name: str,
-    enabled_stage_names: list[str],
-    context: dict[str, Any],
-    sync_root_from_stage: Callable[[dict[str, Any], str, dict[str, Any]], None],
-) -> None:
-    """Materialise completed-and-reused stages into attempt state and context.
-
-    For each stage strictly before ``start_stage_name`` that has a lineage
-    entry:
-
-    * If the stage is disabled in the current config, mark it as SKIPPED.
-    * Otherwise copy its stored outputs into ``context[stage_name]``, invoke
-      ``sync_root_from_stage`` so downstream root-level keys stay populated,
-      and record the stage as COMPLETED/REUSED in attempt state.
-
-    ``sync_root_from_stage`` is injected so this function stays independent of
-    the ContextPropagator module.
-
-    Raises ``ValueError`` if ``start_stage_name`` is not in ``stage_names``.
-    """
-    if start_stage_name not in stage_names:
-        raise ValueError(f"Unknown stage name: {start_stage_name}")
-    start_idx = stage_names.index(start_stage_name)
-    for i, stage_name in enumerate(stage_names):
-        if i >= start_idx:
-            break
-        ref = lineage.get(stage_name)
-        if ref is None:
-            continue
-        if stage_name not in enabled_stage_names:
-            mark_stage_skipped(
-                attempt=attempt,
-                stage_name=stage_name,
-                reason="disabled_by_config",
-                outputs=ref.outputs,
-            )
-            continue
-        context[stage_name] = dict(ref.outputs)
-        sync_root_from_stage(context, stage_name, ref.outputs)
-        attempt.stage_runs[stage_name] = StageRunState(
-            stage_name=stage_name,
-            status=StageRunState.STATUS_COMPLETED,
-            execution_mode=StageRunState.MODE_REUSED,
-            outputs=dict(ref.outputs),
-            started_at=utc_now_iso(),
-            completed_at=utc_now_iso(),
-            reuse_from={"attempt_id": ref.attempt_id, "stage_name": ref.stage_name},
-        )
-
-
 __all__ = [
     "finalize_attempt_state",
-    "invalidate_lineage_from",
     "mark_stage_completed",
     "mark_stage_failed",
     "mark_stage_interrupted",
     "mark_stage_running",
     "mark_stage_skipped",
-    "restore_reused_context",
 ]

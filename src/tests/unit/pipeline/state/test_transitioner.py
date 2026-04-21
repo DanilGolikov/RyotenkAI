@@ -14,15 +14,15 @@ from __future__ import annotations
 import pytest
 
 from src.pipeline.state import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
+from src.pipeline.state.lineage_manager import invalidate_from as invalidate_lineage_from
+from src.pipeline.state.lineage_manager import restore_reused as restore_reused_context
 from src.pipeline.state.transitioner import (
     finalize_attempt_state,
-    invalidate_lineage_from,
     mark_stage_completed,
     mark_stage_failed,
     mark_stage_interrupted,
     mark_stage_running,
     mark_stage_skipped,
-    restore_reused_context,
 )
 
 pytestmark = pytest.mark.unit

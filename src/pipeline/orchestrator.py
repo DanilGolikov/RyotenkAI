@@ -55,18 +55,16 @@ from src.pipeline.state import (
     StageLineageRef,
     StageRunState,
     build_attempt_state,
-    update_lineage,
+    lineage_manager,
 )
 from src.pipeline.state.run_lock_guard import RunLockGuard
 from src.pipeline.state.transitioner import (
     finalize_attempt_state,
-    invalidate_lineage_from,
     mark_stage_completed,
     mark_stage_failed,
     mark_stage_interrupted,
     mark_stage_running,
     mark_stage_skipped,
-    restore_reused_context,
 )
 from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 
@@ -395,11 +393,10 @@ class PipelineOrchestrator:
                         stage_name=stage_name,
                         reason="disabled_by_config",
                     )
-                    state.current_output_lineage = update_lineage(
+                    state.current_output_lineage = lineage_manager.after_stage_skipped(
                         state.current_output_lineage,
                         stage_name=stage_name,
                         attempt_id=attempt.attempt_id,
-                        remove=True,
                     )
                     self._save_state()
                     continue
@@ -773,11 +770,10 @@ class PipelineOrchestrator:
         self._finalize_attempt_state(
             state=state, attempt=attempt, status=StageRunState.STATUS_FAILED
         )
-        state.current_output_lineage = update_lineage(
+        state.current_output_lineage = lineage_manager.after_stage_failed(
             state.current_output_lineage,
             stage_name=stage_name,
             attempt_id=attempt.attempt_id,
-            remove=True,
         )
         self._save_state()
         return Err(
@@ -826,15 +822,14 @@ class PipelineOrchestrator:
             self._mark_stage_skipped(
                 attempt=attempt, stage_name=stage_name, reason=skip_reason, outputs=outputs
             )
-            state.current_output_lineage = update_lineage(
+            state.current_output_lineage = lineage_manager.after_stage_skipped(
                 state.current_output_lineage,
                 stage_name=stage_name,
                 attempt_id=attempt.attempt_id,
-                remove=True,
             )
         else:
             self._mark_stage_completed(attempt=attempt, stage_name=stage_name, outputs=outputs)
-            state.current_output_lineage = update_lineage(
+            state.current_output_lineage = lineage_manager.after_stage_completed(
                 state.current_output_lineage,
                 stage_name=stage_name,
                 attempt_id=attempt.attempt_id,
@@ -1000,7 +995,7 @@ class PipelineOrchestrator:
         lineage: dict[str, StageLineageRef],
         start_stage_name: str,
     ) -> dict[str, StageLineageRef]:
-        return invalidate_lineage_from(
+        return lineage_manager.invalidate_from(
             lineage=lineage,
             stage_names=[s.stage_name for s in self.stages],
             start_stage_name=start_stage_name,
@@ -1019,7 +1014,7 @@ class PipelineOrchestrator:
         def _sync(ctx: dict[str, Any], stage_name: str, outputs: dict[str, Any]) -> None:
             propagator.sync_root_from_stage(context=ctx, stage_name=stage_name, outputs=outputs)
 
-        restore_reused_context(
+        lineage_manager.restore_reused(
             attempt=attempt,
             lineage=lineage,
             stage_names=[s.stage_name for s in self.stages],
