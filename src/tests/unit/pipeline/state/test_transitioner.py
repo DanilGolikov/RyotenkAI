@@ -13,14 +13,16 @@ from __future__ import annotations
 
 import pytest
 
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
+from src.pipeline.state import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
 from src.pipeline.state.transitioner import (
     finalize_attempt_state,
+    invalidate_lineage_from,
     mark_stage_completed,
     mark_stage_failed,
     mark_stage_interrupted,
     mark_stage_running,
     mark_stage_skipped,
+    restore_reused_context,
 )
 
 pytestmark = pytest.mark.unit
@@ -187,3 +189,131 @@ class TestFinalizeAttemptState:
         state = _make_state()
         finalize_attempt_state(state=state, attempt=attempt, status="completed")
         assert attempt.completed_at is not None
+
+
+_PIPELINE_STAGES = ["s0", "s1", "s2", "s3"]
+
+
+class TestInvalidateLineageFrom:
+    def test_drops_entries_from_start_stage_onward(self) -> None:
+        lineage = {
+            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={})
+            for name in _PIPELINE_STAGES
+        }
+        new_lineage = invalidate_lineage_from(
+            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s1"
+        )
+        assert set(new_lineage.keys()) == {"s0"}
+
+    def test_preserves_input_unchanged(self) -> None:
+        lineage = {"s0": StageLineageRef(attempt_id="a", stage_name="s0", outputs={})}
+        new_lineage = invalidate_lineage_from(
+            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s2"
+        )
+        assert lineage == {"s0": StageLineageRef(attempt_id="a", stage_name="s0", outputs={})}
+        assert new_lineage is not lineage
+
+    def test_drops_all_when_start_is_first_stage(self) -> None:
+        lineage = {
+            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={})
+            for name in _PIPELINE_STAGES
+        }
+        new_lineage = invalidate_lineage_from(
+            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s0"
+        )
+        assert new_lineage == {}
+
+    def test_unknown_start_stage_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown stage name"):
+            invalidate_lineage_from(lineage={}, stage_names=_PIPELINE_STAGES, start_stage_name="missing")
+
+
+class TestRestoreReusedContext:
+    def test_copies_lineage_outputs_into_context(self) -> None:
+        attempt = _make_attempt()
+        lineage = {"s0": StageLineageRef(attempt_id="a0", stage_name="s0", outputs={"k": "v"})}
+        context: dict = {}
+        syncs: list[tuple[str, dict]] = []
+
+        def sync(ctx: dict, name: str, outputs: dict) -> None:
+            syncs.append((name, outputs))
+
+        restore_reused_context(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_PIPELINE_STAGES,
+            start_stage_name="s2",
+            enabled_stage_names=_PIPELINE_STAGES,
+            context=context,
+            sync_root_from_stage=sync,
+        )
+        assert context["s0"] == {"k": "v"}
+        assert syncs == [("s0", {"k": "v"})]
+        s0 = attempt.stage_runs["s0"]
+        assert s0.status == StageRunState.STATUS_COMPLETED
+        assert s0.execution_mode == StageRunState.MODE_REUSED
+        assert s0.reuse_from == {"attempt_id": "a0", "stage_name": "s0"}
+
+    def test_disabled_stage_marked_skipped(self) -> None:
+        attempt = _make_attempt()
+        lineage = {"s0": StageLineageRef(attempt_id="a0", stage_name="s0", outputs={"k": "v"})}
+        context: dict = {}
+        restore_reused_context(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_PIPELINE_STAGES,
+            start_stage_name="s2",
+            enabled_stage_names=["s1", "s2"],  # s0 disabled
+            context=context,
+            sync_root_from_stage=lambda *_: None,
+        )
+        s0 = attempt.stage_runs["s0"]
+        assert s0.status == StageRunState.STATUS_SKIPPED
+        assert s0.skip_reason == "disabled_by_config"
+        assert "s0" not in context  # context not populated for disabled stages
+
+    def test_stops_at_start_stage(self) -> None:
+        attempt = _make_attempt()
+        lineage = {
+            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={"n": name})
+            for name in _PIPELINE_STAGES
+        }
+        restore_reused_context(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_PIPELINE_STAGES,
+            start_stage_name="s2",
+            enabled_stage_names=_PIPELINE_STAGES,
+            context={},
+            sync_root_from_stage=lambda *_: None,
+        )
+        # Only s0 and s1 should be restored (s2 is start, s3 is after)
+        assert set(attempt.stage_runs.keys()) == {"s0", "s1"}
+
+    def test_missing_lineage_entry_skipped(self) -> None:
+        attempt = _make_attempt()
+        lineage = {"s1": StageLineageRef(attempt_id="a", stage_name="s1", outputs={})}
+        restore_reused_context(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_PIPELINE_STAGES,
+            start_stage_name="s3",
+            enabled_stage_names=_PIPELINE_STAGES,
+            context={},
+            sync_root_from_stage=lambda *_: None,
+        )
+        assert "s0" not in attempt.stage_runs  # no lineage → no entry
+        assert "s1" in attempt.stage_runs
+        assert "s2" not in attempt.stage_runs
+
+    def test_unknown_start_stage_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unknown stage name"):
+            restore_reused_context(
+                attempt=_make_attempt(),
+                lineage={},
+                stage_names=_PIPELINE_STAGES,
+                start_stage_name="missing",
+                enabled_stage_names=_PIPELINE_STAGES,
+                context={},
+                sync_root_from_stage=lambda *_: None,
+            )

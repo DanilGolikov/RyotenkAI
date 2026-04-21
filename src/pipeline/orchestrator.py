@@ -68,11 +68,13 @@ from src.pipeline.state import (
 )
 from src.pipeline.state.transitioner import (
     finalize_attempt_state,
+    invalidate_lineage_from,
     mark_stage_completed,
     mark_stage_failed,
     mark_stage_interrupted,
     mark_stage_running,
     mark_stage_skipped,
+    restore_reused_context,
 )
 from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 from src.reports import ExperimentReportGenerator
@@ -892,11 +894,11 @@ class PipelineOrchestrator:
         lineage: dict[str, StageLineageRef],
         start_stage_name: str,
     ) -> dict[str, StageLineageRef]:
-        start_idx = self._get_stage_index(start_stage_name)
-        new_lineage = dict(lineage)
-        for stage in self.stages[start_idx:]:
-            new_lineage.pop(stage.stage_name, None)
-        return new_lineage
+        return invalidate_lineage_from(
+            lineage=lineage,
+            stage_names=[s.stage_name for s in self.stages],
+            start_stage_name=start_stage_name,
+        )
 
     def _restore_reused_context(
         self,
@@ -906,32 +908,20 @@ class PipelineOrchestrator:
         start_stage_name: str,
         enabled_stage_names: list[str],
     ) -> None:
-        start_idx = self._get_stage_index(start_stage_name)
-        for i, stage in enumerate(self.stages):
-            if i >= start_idx:
-                break
-            ref = lineage.get(stage.stage_name)
-            if ref is None:
-                continue
-            if stage.stage_name not in enabled_stage_names:
-                self._mark_stage_skipped(
-                    attempt=attempt,
-                    stage_name=stage.stage_name,
-                    reason="disabled_by_config",
-                    outputs=ref.outputs,
-                )
-                continue
-            self.context[stage.stage_name] = dict(ref.outputs)
-            self._sync_root_context_from_stage(stage.stage_name, ref.outputs)
-            attempt.stage_runs[stage.stage_name] = StageRunState(
-                stage_name=stage.stage_name,
-                status=StageRunState.STATUS_COMPLETED,
-                execution_mode=StageRunState.MODE_REUSED,
-                outputs=dict(ref.outputs),
-                started_at=utc_now_iso(),
-                completed_at=utc_now_iso(),
-                reuse_from={"attempt_id": ref.attempt_id, "stage_name": ref.stage_name},
-            )
+        propagator = self._context_propagator
+
+        def _sync(ctx: dict[str, Any], stage_name: str, outputs: dict[str, Any]) -> None:
+            propagator.sync_root_from_stage(context=ctx, stage_name=stage_name, outputs=outputs)
+
+        restore_reused_context(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=[s.stage_name for s in self.stages],
+            start_stage_name=start_stage_name,
+            enabled_stage_names=enabled_stage_names,
+            context=self.context,
+            sync_root_from_stage=_sync,
+        )
 
     def _sync_root_context_from_stage(self, stage_name: str, outputs: dict[str, Any]) -> None:
         self._context_propagator.sync_root_from_stage(
