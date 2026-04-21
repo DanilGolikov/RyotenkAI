@@ -12,10 +12,10 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
+from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
 from src.data.validation.registry import ValidationPluginRegistry
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
@@ -246,6 +246,7 @@ class DatasetValidator(PipelineStage):
             Result with aggregated validation metrics or DatasetError
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from contextvars import copy_context
 
         # FIX: Prevent tqdm race condition in multi-threading
         # See: https://github.com/huggingface/datasets/issues/7660
@@ -291,9 +292,19 @@ class DatasetValidator(PipelineStage):
         all_errors = []
         critical_failure = False
 
+        # Propagate ContextVars (e.g. per-stage logging context) into worker
+        # threads — ThreadPoolExecutor does not do this automatically.
+        parent_ctx = copy_context()
         with ThreadPoolExecutor(max_workers=len(datasets_to_validate)) as executor:
             futures = {
-                executor.submit(self._validate_single_dataset, dataset_name, dataset_config, strategy_phases, context): (
+                executor.submit(
+                    parent_ctx.run,
+                    self._validate_single_dataset,
+                    dataset_name,
+                    dataset_config,
+                    strategy_phases,
+                    context,
+                ): (
                     dataset_name,
                     dataset_config,
                 )

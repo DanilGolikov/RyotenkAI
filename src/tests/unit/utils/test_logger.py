@@ -51,6 +51,7 @@ def _fresh_run_logging(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(logger_module, "_run_log_dir", None)
     monkeypatch.setattr(logger_module, "_run_log_layout", None)
     monkeypatch.setattr(logger_module, "_enable_file_logs", True)
+    monkeypatch.setattr(logger_module, "_active_stage", None)
     base = logging.getLogger("ryotenkai")
     saved_handlers = list(base.handlers)
     base.handlers.clear()
@@ -411,3 +412,115 @@ def test_set_log_level_reattaches_pipeline_handler_at_new_level(
     test_logger.setLevel(logging.DEBUG)
     test_logger.debug("dbg_marker_XYZ")
     assert "dbg_marker_XYZ" in layout.pipeline_log.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Iteration-3: ContextVar does not propagate to ThreadPoolExecutor workers.
+# A module-level ``_active_stage`` serves as a fallback, and ``copy_context``
+# is the canonical path. Both must land records in the per-stage file.
+# ---------------------------------------------------------------------------
+
+
+def test_stage_filter_captures_threadpool_record_via_global_fallback(
+    tmp_path: Path, _fresh_root_logger
+) -> None:
+    """Bare ThreadPoolExecutor.submit (no copy_context) — worker has no ContextVar.
+    The module-level _active_stage fallback must keep records flowing into stage.log."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    init_run_logging("run_tp_global", log_dir=tmp_path / "attempt_1")
+    layout = get_run_log_layout()
+
+    def worker() -> None:
+        # Child threads don't inherit ContextVar — verify assumption.
+        assert logger_module._current_stage.get() is None
+        _isolated_third_party_logger("third_party_tp_global_1").info("threadpool_marker_A")
+
+    with stage_logging_context("Dataset Validator", layout):
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(worker).result()
+
+    stage_content = layout.stage_log("Dataset Validator").read_text(encoding="utf-8")
+    assert "threadpool_marker_A" in stage_content
+
+
+def test_stage_filter_captures_threadpool_record_via_copy_context(
+    tmp_path: Path, _fresh_root_logger
+) -> None:
+    """Canonical path: copy_context().run propagates the ContextVar into the worker."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+
+    init_run_logging("run_tp_canonical", log_dir=tmp_path / "attempt_1")
+    layout = get_run_log_layout()
+
+    def worker() -> None:
+        # With copy_context the ContextVar reaches the worker — no fallback needed.
+        assert logger_module._current_stage.get() == "Dataset Validator"
+        _isolated_third_party_logger("third_party_tp_canonical_1").info("threadpool_marker_B")
+
+    with stage_logging_context("Dataset Validator", layout):
+        ctx = copy_context()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(ctx.run, worker).result()
+
+    stage_content = layout.stage_log("Dataset Validator").read_text(encoding="utf-8")
+    assert "threadpool_marker_B" in stage_content
+
+
+def test_active_stage_reset_on_exit(tmp_path: Path, _fresh_root_logger) -> None:
+    """After leaving stage_logging_context, _active_stage is None and later threads
+    must not land records in the (previous) stage file."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    init_run_logging("run_reset", log_dir=tmp_path / "attempt_1")
+    layout = get_run_log_layout()
+    stage_log = layout.stage_log("Dataset Validator")
+
+    with stage_logging_context("Dataset Validator", layout):
+        pass
+
+    assert logger_module._active_stage is None
+
+    # A thread started AFTER exit must not reach the closed stage file.
+    def worker() -> None:
+        _isolated_third_party_logger("third_party_post_exit_1").info("post_exit_marker")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(worker).result()
+
+    if stage_log.exists():
+        assert "post_exit_marker" not in stage_log.read_text(encoding="utf-8")
+
+
+def test_nested_stage_restores_outer_active_stage(
+    tmp_path: Path, _fresh_root_logger
+) -> None:
+    """Nested contexts: inner sets _active_stage, exit restores outer (mirrors
+    the ContextVar token pattern)."""
+    init_run_logging("run_nested_global", log_dir=tmp_path / "attempt_1")
+    layout = get_run_log_layout()
+
+    with stage_logging_context("outer", layout):
+        assert logger_module._active_stage == "outer"
+        with stage_logging_context("inner", layout):
+            assert logger_module._active_stage == "inner"
+        assert logger_module._active_stage == "outer"
+    assert logger_module._active_stage is None
+
+
+def test_active_stage_survives_exception_in_stage(
+    tmp_path: Path, _fresh_root_logger
+) -> None:
+    """An exception inside the stage body must still trigger cleanup: _active_stage
+    and _current_stage must both reset on exit."""
+    init_run_logging("run_exc", log_dir=tmp_path / "attempt_1")
+    layout = get_run_log_layout()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with stage_logging_context("Dataset Validator", layout):
+            assert logger_module._active_stage == "Dataset Validator"
+            raise RuntimeError("boom")
+
+    assert logger_module._active_stage is None
+    assert logger_module._current_stage.get() is None

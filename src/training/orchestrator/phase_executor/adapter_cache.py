@@ -12,6 +12,7 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -23,7 +24,7 @@ from src.constants import (
     LORA_CHECKPOINT_PATTERNS,
 )
 from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, TrainingError
+from src.utils.result import Err, Ok, Result, TrainingError  # noqa: F401  — re-exported
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
@@ -57,8 +58,10 @@ def _call_with_timeout(fn: Any, timeout_s: int, label: str = "") -> Any:
     huggingface_hub.upload_folder() has no built-in timeout — on a slow or stalled
     connection it hangs indefinitely. This wrapper gives it a hard ceiling.
     """
+    # Carry ContextVars (e.g. per-stage logging context) into the worker thread.
+    parent_ctx = copy_context()
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(fn)
+        future = executor.submit(parent_ctx.run, fn)
         try:
             return future.result(timeout=timeout_s)
         except concurrent.futures.TimeoutError:
@@ -285,4 +288,4 @@ class AdapterCacheManager:
             )
 
 
-__all__ = ["AdapterCacheManager", "_retry_call", "_call_with_timeout"]
+__all__ = ["AdapterCacheManager", "_call_with_timeout", "_retry_call"]

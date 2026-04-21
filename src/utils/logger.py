@@ -23,6 +23,14 @@ if TYPE_CHECKING:
 
 _current_stage: ContextVar[str | None] = ContextVar("_current_stage", default=None)
 
+# Module-level fallback for threads that don't receive the ContextVar copy
+# (ThreadPoolExecutor workers, signal handlers, third-party-started threads).
+# Valid because the orchestrator runs stages strictly sequentially and
+# ThreadPoolExecutor's ``with``-block waits for all workers on exit
+# (``shutdown(wait=True)``). If concurrent stages ever land in the same
+# process, drop this fallback and rely solely on ``copy_context()``.
+_active_stage: str | None = None
+
 
 def _set_aligned_location(record: logging.LogRecord, location_width: int) -> None:
     """Set `record.location` as fixed-width `module:line` for log formatting."""
@@ -71,7 +79,12 @@ class _StageContextFilter(logging.Filter):
         self._stage_name = stage_name
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: ARG002 — logging.Filter API
-        return _current_stage.get() == self._stage_name
+        ctx = _current_stage.get()
+        if ctx is None:
+            # ThreadPoolExecutor workers and signal handlers don't inherit
+            # the ContextVar — fall back to the module-level marker.
+            ctx = _active_stage
+        return ctx == self._stage_name
 
 
 class _ExcludeRyotenkaiFilter(logging.Filter):
@@ -384,6 +397,13 @@ def stage_logging_context(stage_name: str, layout: LogLayout) -> Iterator[Path]:
     # Per-scope bookkeeping: keep references so ``finally`` can undo
     # exactly what this context established, even on exception.
     installed: list[tuple[logging.Logger, logging.Handler]] = []
+
+    # Set both the ContextVar (asyncio-safe) and the module-level marker
+    # (thread-safe fallback). Save the previous active marker so nested
+    # contexts restore the outer stage on exit (mirrors the ContextVar token).
+    global _active_stage
+    prev_active = _active_stage
+    _active_stage = stage_name
     token = _current_stage.set(stage_name)
 
     try:
@@ -412,6 +432,7 @@ def stage_logging_context(stage_name: str, layout: LogLayout) -> Iterator[Path]:
         yield stage_log_path
     finally:
         _current_stage.reset(token)
+        _active_stage = prev_active
         for logger_obj, handler in installed:
             logger_obj.removeHandler(handler)
             with contextlib.suppress(Exception):  # pragma: no cover — best-effort cleanup
