@@ -24,12 +24,12 @@ def _write_yaml(path: Path, text: str) -> None:
 
 def _patch_stage_construction(monkeypatch: pytest.MonkeyPatch) -> None:
     # Avoid stage construction + other heavy deps during __init__
-    monkeypatch.setattr("src.pipeline.orchestrator.DatasetValidator", lambda *a, **k: None)
-    monkeypatch.setattr("src.pipeline.orchestrator.GPUDeployer", lambda *a, **k: None)
-    monkeypatch.setattr("src.pipeline.orchestrator.TrainingMonitor", lambda *a, **k: None)
-    monkeypatch.setattr("src.pipeline.orchestrator.ModelRetriever", lambda *a, **k: None)
-    monkeypatch.setattr("src.pipeline.orchestrator.ModelEvaluator", lambda *a, **k: None)
-    monkeypatch.setattr("src.pipeline.orchestrator.InferenceDeployer", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.DatasetValidator", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.GPUDeployer", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.TrainingMonitor", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.ModelRetriever", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.ModelEvaluator", lambda *a, **k: None)
+    monkeypatch.setattr("src.pipeline.execution.stage_registry.InferenceDeployer", lambda *a, **k: None)
 
 
 def test_runpod_key_optional_for_ssh_provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
