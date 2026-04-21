@@ -1097,7 +1097,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.validate_strategy_chain") as mock_validate,
             patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.orchestrator.ExperimentReportGenerator") as MockReportGen,
+            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
@@ -1138,7 +1138,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.validate_strategy_chain") as mock_validate,
             patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.orchestrator.ExperimentReportGenerator") as MockReportGen,
+            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             MockReportGen.return_value = mock_report_gen
             mock_load_config.return_value = mock_config
@@ -1177,7 +1177,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.validate_strategy_chain") as mock_validate,
             patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.orchestrator.ExperimentReportGenerator") as MockReportGen,
+            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             MockReportGen.side_effect = Exception("Report generation failed")
             mock_load_config.return_value = mock_config
@@ -1206,7 +1206,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.validate_strategy_chain") as mock_validate,
             patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.orchestrator.ExperimentReportGenerator") as MockReportGen,
+            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets

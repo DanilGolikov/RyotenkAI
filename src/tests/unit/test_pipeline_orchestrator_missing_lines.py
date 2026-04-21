@@ -321,7 +321,7 @@ class TestPrintSummaryCleanupAndMetricsCollectionMissingLines:
 
         # Patch console to avoid noisy output
         fake_console = MagicMock()
-        monkeypatch.setattr("src.pipeline.orchestrator.console", fake_console)
+        monkeypatch.setattr("src.pipeline.reporting.summary_reporter.console", fake_console)
 
         # Case 1: huggingface dataset with eval_id -> covers HF branch prints
         hf_ds = SimpleNamespace(
