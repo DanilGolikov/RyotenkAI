@@ -7,10 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.pipeline.launch import PreparedAttempt
 from src.pipeline.orchestrator import PipelineOrchestrator, run_pipeline
 from src.pipeline.stages.constants import StageNames
+from src.pipeline.state import PipelineStateStore, build_attempt_state
 from src.pipeline.state.models import PipelineState, StageRunState
 from src.pipeline.state.store import SCHEMA_VERSION
+from src.utils.logs_layout import LogLayout
 from src.utils.result import AppError, Err, Ok
 
 
@@ -71,6 +74,49 @@ def _mk_secrets() -> MagicMock:
     secrets = MagicMock()
     secrets.hf_token = "hf_test"
     return secrets
+
+
+def _mk_prepared_attempt(
+    state: PipelineState,
+    tmp_path: Path,
+    state_store: PipelineStateStore | MagicMock,
+) -> PreparedAttempt:
+    """Build a PreparedAttempt for tests that fake ``_prepare_stateful_attempt``.
+
+    The attempt has the minimum required shape for the orchestrator's loop
+    and teardown paths — no real I/O is performed.
+    """
+    from types import SimpleNamespace
+
+    attempt = build_attempt_state(
+        state=state,
+        run_ctx=SimpleNamespace(name="test_run", run_id="rid"),
+        requested_action="fresh",
+        effective_action="fresh",
+        restart_from_stage=StageNames.DATASET_VALIDATOR,
+        enabled_stage_names=[StageNames.DATASET_VALIDATOR],
+        training_critical_config_hash="h",
+        late_stage_config_hash="h",
+        model_dataset_config_hash="",
+    )
+    attempt_directory = tmp_path / "attempt_1"
+    attempt_directory.mkdir(parents=True, exist_ok=True)
+    return PreparedAttempt(
+        state=state,
+        attempt=attempt,
+        state_store=state_store,  # type: ignore[arg-type]
+        run_directory=tmp_path,
+        attempt_directory=attempt_directory,
+        log_layout=LogLayout(attempt_directory),
+        logical_run_id="test_run",
+        requested_action="fresh",
+        effective_action="fresh",
+        start_stage_name=StageNames.DATASET_VALIDATOR,
+        start_idx=0,
+        stop_idx=1,
+        enabled_stage_names=(StageNames.DATASET_VALIDATOR,),
+        forced_stage_names=frozenset(),
+    )
 
 
 class TestMissingInitAndMlflowSetupLines:
@@ -197,17 +243,27 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         mock_state = _mk_pipeline_state(tmp_path)
         mock_lock = MagicMock()
 
-        def _fake_bootstrap(**kwargs):
+        # Fake the entire preparation path — the test cares about the stage
+        # loop + finally semantics, not the bootstrap pipeline. We install a
+        # PreparedAttempt-shaped fake and flip the orchestrator fields that
+        # ``_prepare_stateful_attempt`` would normally set.
+        def _fake_prepare(**kwargs):
             orch._state_store = MagicMock()
             orch._state_store.next_attempt_dir.return_value = tmp_path / "attempt_1"
             orch.run_directory = tmp_path
-            return (mock_state, "fresh", "fresh", StageNames.DATASET_VALIDATOR)
+            orch._attempt_controller.adopt_state(mock_state)
+            prepared = _mk_prepared_attempt(mock_state, tmp_path, orch._state_store)
+            # Mirror the side-effects the real _prepare_stateful_attempt performs.
+            orch.attempt_directory = prepared.attempt_directory
+            orch._log_layout = prepared.log_layout
+            orch._attempt_controller.register_attempt(prepared.attempt)
+            return prepared
 
         # No need to patch ``_save_state`` — the fake ``_state_store`` is a
         # MagicMock and AttemptController's save_fn routes through it
         # harmlessly (no real I/O).
         with (
-            patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
+            patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
             patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             res = orch.run()
@@ -249,17 +305,27 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         mock_state = _mk_pipeline_state(tmp_path)
         mock_lock = MagicMock()
 
-        def _fake_bootstrap(**kwargs):
+        # Fake the entire preparation path — the test cares about the stage
+        # loop + finally semantics, not the bootstrap pipeline. We install a
+        # PreparedAttempt-shaped fake and flip the orchestrator fields that
+        # ``_prepare_stateful_attempt`` would normally set.
+        def _fake_prepare(**kwargs):
             orch._state_store = MagicMock()
             orch._state_store.next_attempt_dir.return_value = tmp_path / "attempt_1"
             orch.run_directory = tmp_path
-            return (mock_state, "fresh", "fresh", StageNames.DATASET_VALIDATOR)
+            orch._attempt_controller.adopt_state(mock_state)
+            prepared = _mk_prepared_attempt(mock_state, tmp_path, orch._state_store)
+            # Mirror the side-effects the real _prepare_stateful_attempt performs.
+            orch.attempt_directory = prepared.attempt_directory
+            orch._log_layout = prepared.log_layout
+            orch._attempt_controller.register_attempt(prepared.attempt)
+            return prepared
 
         # No need to patch ``_save_state`` — the fake ``_state_store`` is a
         # MagicMock and AttemptController's save_fn routes through it
         # harmlessly (no real I/O).
         with (
-            patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
+            patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
             patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             orch.run()

@@ -33,6 +33,7 @@ from src.pipeline.constants import (
 from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
+from src.pipeline.launch import LaunchPreparationError, LaunchPreparator, PreparedAttempt
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import (
@@ -51,10 +52,8 @@ from src.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
     PipelineStateError,
-    PipelineStateLoadError,
     PipelineStateStore,
     StageRunState,
-    build_attempt_state,
 )
 from src.pipeline.state.run_lock_guard import RunLockGuard
 from src.pipeline.validation.artifact_manager import ValidationArtifactManager
@@ -63,12 +62,12 @@ from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 # Keeping this symbol here lets those tests keep working without migrating them yet.
 from src.training.managers.mlflow_manager import MLflowManager  # noqa: TC001
 from src.utils.config import PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
-from src.utils.logger import init_run_logging, logger, stage_logging_context
-from src.utils.logs_layout import LogLayout
+from src.utils.logger import logger, stage_logging_context
 from src.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
+    from src.utils.logs_layout import LogLayout
 
 # Status literals used in MLflow event attributes.
 _STATUS_FAILED = "failed"
@@ -77,24 +76,10 @@ _STATUS_RUNNING = "running"
 _STATUS_STARTED = "started"
 
 
-class LaunchPreparationError(Exception):
-    """Internal error used to reject a launch before stage execution begins."""
-
-    def __init__(
-        self,
-        app_error: AppError,
-        *,
-        state: PipelineState | None = None,
-        requested_action: str | None = None,
-        effective_action: str | None = None,
-        start_stage_name: str | None = None,
-    ) -> None:
-        super().__init__(app_error.message)
-        self.app_error = app_error
-        self.state = state
-        self.requested_action = requested_action
-        self.effective_action = effective_action
-        self.start_stage_name = start_stage_name
+# Re-export from the launch package so downstream test imports keep working
+# without needing to know that the exception moved. Orchestrator.run() still
+# catches it by this name.
+__all__ = ["LaunchPreparationError", "PipelineOrchestrator"]
 
 
 class PipelineOrchestrator:
@@ -247,6 +232,20 @@ class PipelineOrchestrator:
         # Depends on the finalised self.stages + self.config, so instantiate here.
         self._stage_planner = StagePlanner(self.stages, self.config)
 
+        # Launch preparator: owns state-store creation, drift validation, and
+        # per-attempt dir/log layout. Returns a frozen PreparedAttempt — the
+        # orchestrator's _prepare_stateful_attempt reads that rather than
+        # mutating a dozen instance fields.
+        self._launch_preparator = LaunchPreparator(
+            config_path=self.config_path,
+            run_ctx=self.run_ctx,
+            settings=self.settings,
+            stages=self.stages,
+            stage_planner=self._stage_planner,
+            config_drift=self._config_drift,
+            attempt_controller=self._attempt_controller,
+        )
+
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""
         self._shutdown_signal_name = str(signal_name or "").upper()
@@ -367,17 +366,16 @@ class PipelineOrchestrator:
         config_hashes = self._build_config_hashes()
 
         try:
-            (
-                start_idx,
-                stop_idx,
-                start_stage_name,
-                enabled_stage_names,
-            ) = self._prepare_stateful_attempt(
+            prepared = self._prepare_stateful_attempt(
                 run_dir=run_dir,
                 resume=resume,
                 restart_from_stage=restart_from_stage,
                 config_hashes=config_hashes,
             )
+            start_idx = prepared.start_idx
+            stop_idx = prepared.stop_idx
+            start_stage_name = prepared.start_stage_name
+            enabled_stage_names = list(prepared.enabled_stage_names)
 
             for i, stage in enumerate(self.stages):
                 stage_name = stage.stage_name
@@ -479,19 +477,22 @@ class PipelineOrchestrator:
             return Err(AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED"))
         except LaunchPreparationError as exc:
             logger.error(exc.app_error.message)
+            # Surface the run_directory+state_store that the preparator
+            # resolved before raising, so teardown callers that read them
+            # still see the right paths.
+            if self._launch_preparator.last_state_store is not None:
+                self._state_store = self._launch_preparator.last_state_store
+            if self._launch_preparator.last_run_directory is not None:
+                self.run_directory = self._launch_preparator.last_run_directory
             if (
                 exc.state is not None
                 and exc.requested_action is not None
                 and exc.effective_action is not None
                 and exc.start_stage_name is not None
             ):
-                self._record_launch_rejection_attempt(
-                    state=exc.state,
-                    requested_action=exc.requested_action,
-                    effective_action=exc.effective_action,
-                    start_stage_name=exc.start_stage_name,
+                self._launch_preparator.record_launch_rejection(
+                    launch_error=exc,
                     config_hashes=config_hashes,
-                    app_error=exc.app_error,
                 )
             return Err(exc.app_error)
         except PipelineStateError as e:
@@ -529,91 +530,73 @@ class PipelineOrchestrator:
         resume: bool,
         restart_from_stage: str | int | None,
         config_hashes: dict[str, str],
-    ) -> tuple[int, int, str, list[str]]:
-        """Boot state, acquire run lock, materialise attempt, restore lineage, open MLflow.
+    ) -> PreparedAttempt:
+        """Prepare an attempt + execute the non-pure launch steps.
 
-        Runs end-to-end before the stage loop. Leaves the orchestrator in a
-        fully-configured state ready to execute stages. All side effects are
-        captured in ``self._state_store``, ``self.run_directory``,
-        ``self._current_attempt``, ``self.attempt_directory``, ``self._log_layout``,
-        ``self.context``, and ``self._run_lock_guard``.
+        Delegates to :class:`LaunchPreparator` for the pure "compute
+        PreparedAttempt from disk state" part, then does the three cross-
+        cutting setup steps the preparator deliberately doesn't touch:
+        acquiring the run lock, forking the execution context, registering
+        the attempt into the controller + restoring lineage, and opening
+        MLflow runs. Returns the PreparedAttempt so the loop can drive it.
         """
-        state, requested_action, effective_action, start_stage_name = self._bootstrap_pipeline_state(
+        prepared = self._launch_preparator.prepare(
             run_dir=run_dir,
             resume=resume,
             restart_from_stage=restart_from_stage,
             config_hashes=config_hashes,
         )
-        assert self._state_store is not None
-        assert self.run_directory is not None
-        # Idempotent — _bootstrap_pipeline_state already adopts on live paths,
-        # but faked-bootstrap tests skip that. Re-adopting with the same state
-        # object is a no-op that keeps the controller invariant holding.
-        self._attempt_controller.adopt_state(state)
-        state.training_critical_config_hash = config_hashes["training_critical"]
-        state.late_stage_config_hash = config_hashes["late_stage"]
-        state.model_dataset_config_hash = config_hashes["model_dataset"]
 
-        start_idx = self._get_stage_index(start_stage_name)
-        stop_idx = len(self.stages)
+        # Mirror the prepared attempt onto orchestrator fields — downstream
+        # code still reads ``self.run_directory``/``self._state_store`` etc.
+        # These will be removed once RunSession (PR-A11) takes over.
+        self.run_directory = prepared.run_directory
+        self._state_store = prepared.state_store
+        self.attempt_directory = prepared.attempt_directory
+        self._log_layout = prepared.log_layout
+        self.logical_run_id = prepared.logical_run_id
 
         # Acquire the run.lock via RunLockGuard so release is impossible
         # to forget in the finally block (Invariant #1 of the architecture).
-        self._run_lock_guard = RunLockGuard(self._state_store.lock_path)
+        self._run_lock_guard = RunLockGuard(prepared.state_store.lock_path)
         self._run_lock_guard.__enter__()
 
-        enabled_stage_names = self._compute_enabled_stage_names(start_stage_name=start_stage_name)
-        attempt = build_attempt_state(
-            state=state,
-            run_ctx=self.run_ctx,
-            requested_action=requested_action,
-            effective_action=effective_action,
-            restart_from_stage=start_stage_name,
-            enabled_stage_names=enabled_stage_names,
-            training_critical_config_hash=config_hashes["training_critical"],
-            late_stage_config_hash=config_hashes["late_stage"],
-            model_dataset_config_hash=config_hashes["model_dataset"],
-        )
-        self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
-        self._log_layout = LogLayout(self.attempt_directory)
-        init_run_logging(self.run_ctx.name, log_dir=self.attempt_directory)
-
-        # Fork the run-scoped context (CONFIG_PATH, RUN) into a per-attempt
-        # context with fresh attempt-scoped keys. PipelineContext.fork
+        # Fork the run-scoped context into per-attempt context. fork()
         # guarantees no state leaks back to the original.
-        assert self.run_directory is not None
         self.context = self.context.fork(
-            attempt_id=attempt.attempt_id,
-            attempt_no=attempt.attempt_no,
-            attempt_directory=self.attempt_directory,
-            logical_run_id=state.logical_run_id,
-            run_directory=self.run_directory,
-            forced_stages=set(self._forced_stage_names(start_stage_name=start_stage_name)),
+            attempt_id=prepared.attempt.attempt_id,
+            attempt_no=prepared.attempt.attempt_no,
+            attempt_directory=prepared.attempt_directory,
+            logical_run_id=prepared.logical_run_id,
+            run_directory=prepared.run_directory,
+            forced_stages=set(prepared.forced_stage_names),
         )
 
         # Register the attempt — flips state.attempts + active_attempt_id +
         # pipeline_status=RUNNING and persists atomically.
-        self._attempt_controller.register_attempt(attempt)
+        self._attempt_controller.register_attempt(prepared.attempt)
 
         # Invalidate lineage from restart point first, then restore context
         # from the (already-trimmed) remaining lineage.
         stage_names = [s.stage_name for s in self.stages]
         self._attempt_controller.invalidate_lineage_from(
             stage_names=stage_names,
-            start_stage_name=start_stage_name,
+            start_stage_name=prepared.start_stage_name,
         )
         self._attempt_controller.restore_reused_context(
             stage_names=stage_names,
-            start_stage_name=start_stage_name,
-            enabled_stage_names=enabled_stage_names,
+            start_stage_name=prepared.start_stage_name,
+            enabled_stage_names=list(prepared.enabled_stage_names),
             context=self.context,
             sync_root_from_stage=self._sync_root_context_from_stage_outputs,
         )
 
-        self._setup_mlflow_for_attempt(state=state, attempt=attempt, start_stage_idx=start_idx)
-        self._ensure_mlflow_preflight(state=state)
+        self._setup_mlflow_for_attempt(
+            state=prepared.state, attempt=prepared.attempt, start_stage_idx=prepared.start_idx
+        )
+        self._ensure_mlflow_preflight(state=prepared.state)
 
-        return start_idx, stop_idx, start_stage_name, enabled_stage_names
+        return prepared
 
     def _finalize_successful_run(
         self,
@@ -791,82 +774,6 @@ class PipelineOrchestrator:
 
         logger.info(f"Stage {stage_idx + 1} completed successfully ({duration_seconds:.1f}s)")
 
-    def _bootstrap_pipeline_state(
-        self,
-        *,
-        run_dir: Path | None,
-        resume: bool,
-        restart_from_stage: str | int | None,
-        config_hashes: dict[str, str],
-    ) -> tuple[PipelineState, str, str, str]:
-        requested_run_dir = run_dir or self.run_directory
-        normalized_restart = self._normalize_stage_ref(restart_from_stage) if restart_from_stage is not None else None
-
-        if requested_run_dir is not None:
-            resolved_run_dir = requested_run_dir.expanduser().resolve()
-        else:
-            runs_base = self.settings.runs_base_dir
-            resolved_run_dir = (runs_base / self.run_ctx.name).resolve()
-
-        self.run_directory = resolved_run_dir
-        self._state_store = PipelineStateStore(resolved_run_dir)
-
-        if self._state_store.exists():
-            state = self._state_store.load()
-            self._attempt_controller.adopt_state(state)
-            self.logical_run_id = state.logical_run_id
-            requested_action = "resume" if resume else ("restart" if normalized_restart else "fresh")
-            start_stage_name = normalized_restart or (
-                self._derive_resume_stage(state) if resume else self.stages[0].stage_name
-            )
-            if start_stage_name is None:
-                raise LaunchPreparationError(
-                    AppError(
-                        message="No resumable stage found in pipeline_state.json",
-                        code="RESUME_NOT_AVAILABLE",
-                    ),
-                    state=state,
-                    requested_action=requested_action,
-                    effective_action=("auto_resume" if resume and normalized_restart is None else requested_action),
-                    start_stage_name=self.stages[0].stage_name,
-                )
-            drift_error = self._validate_config_drift(
-                state=state,
-                start_stage_name=start_stage_name,
-                config_hashes=config_hashes,
-                resume=resume,
-            )
-            if drift_error is not None:
-                raise LaunchPreparationError(
-                    drift_error,
-                    state=state,
-                    requested_action=requested_action,
-                    effective_action=("auto_resume" if resume and normalized_restart is None else requested_action),
-                    start_stage_name=start_stage_name,
-                )
-            return (
-                state,
-                requested_action,
-                ("auto_resume" if resume and normalized_restart is None else requested_action),
-                start_stage_name,
-            )
-
-        if resume or normalized_restart is not None:
-            raise PipelineStateLoadError(f"Missing pipeline_state.json in run directory: {resolved_run_dir}")
-
-        logical_run_id = resolved_run_dir.name if run_dir is not None else self.run_ctx.name
-        resolved_run_dir.mkdir(parents=True, exist_ok=True)
-        state = self._state_store.init_state(
-            logical_run_id=logical_run_id,
-            config_path=str(self.config_path.expanduser().resolve()),
-            training_critical_config_hash=config_hashes["training_critical"],
-            late_stage_config_hash=config_hashes["late_stage"],
-            model_dataset_config_hash=config_hashes["model_dataset"],
-        )
-        self._attempt_controller.adopt_state(state)
-        self.logical_run_id = logical_run_id
-        return state, "fresh", "fresh", self.stages[0].stage_name
-
     def _build_config_hashes(self) -> dict[str, str]:
         return self._config_drift.build_config_hashes()
 
@@ -898,44 +805,6 @@ class PipelineOrchestrator:
             start_stage_name=start_stage_name,
             config_hashes=config_hashes,
             resume=resume,
-        )
-
-    def _record_launch_rejection_attempt(
-        self,
-        *,
-        state: PipelineState,
-        requested_action: str,
-        effective_action: str,
-        start_stage_name: str,
-        config_hashes: dict[str, str],
-        app_error: AppError,
-    ) -> None:
-        if self._state_store is None:
-            return
-        enabled_stage_names = self._compute_enabled_stage_names(start_stage_name=start_stage_name)
-        attempt = build_attempt_state(
-            state=state,
-            run_ctx=self.run_ctx,
-            requested_action=requested_action,
-            effective_action=effective_action,
-            restart_from_stage=start_stage_name,
-            enabled_stage_names=enabled_stage_names,
-            training_critical_config_hash=config_hashes["training_critical"],
-            late_stage_config_hash=config_hashes["late_stage"],
-            model_dataset_config_hash=config_hashes["model_dataset"],
-        )
-        self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
-        init_run_logging(self.run_ctx.name, log_dir=self.attempt_directory)
-        logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
-        logger.error(f"Launch rejected before stage execution: {app_error}")
-        logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
-        attempt.error = app_error.message
-        # Atomic rejection: one persist writes the final FAILED snapshot
-        # without any transient RUNNING state that could mislead recovery.
-        self._attempt_controller.record_rejected_attempt(
-            attempt=attempt,
-            status=StageRunState.STATUS_FAILED,
-            completed_at=utc_now_iso(),
         )
 
     def _sync_root_context_from_stage(self, stage_name: str, outputs: dict[str, Any]) -> None:

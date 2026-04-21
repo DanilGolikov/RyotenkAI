@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.orchestrator import LaunchPreparationError, PipelineOrchestrator
+from src.pipeline.launch import LaunchPreparationError
+from src.pipeline.orchestrator import PipelineOrchestrator
 from src.pipeline.state import PipelineAttemptState, PipelineState, PipelineStateLoadError, PipelineStateStore, StageLineageRef, StageRunState
 from src.pipeline.stages.constants import StageNames
 from src.utils.result import Ok
@@ -149,34 +150,43 @@ def test_derive_resume_stage_prefers_first_missing_or_failed_stage(tmp_path: Pat
     assert orchestrator._derive_resume_stage(state) == StageNames.TRAINING_MONITOR
 
 
-def test_bootstrap_pipeline_state_fresh_creates_new_state(tmp_path: Path) -> None:
+# ---------------------------------------------------------------------------
+# Bootstrap coverage now lives on LaunchPreparator; we test it via the
+# preparator instance on the orchestrator (``orchestrator._launch_preparator``)
+# rather than a removed private method. These tests exercise the ``prepare``
+# entry point end-to-end, which is a superset of the old bootstrap coverage
+# (it also validates attempt + directory computation).
+# ---------------------------------------------------------------------------
+
+
+def test_launch_preparator_fresh_creates_new_state(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     run_dir = tmp_path / "runs" / "logical_run_1"
     orchestrator = _build_orchestrator(config_path, _build_mock_config(), run_directory=run_dir)
 
-    state, requested_action, effective_action, start_stage = orchestrator._bootstrap_pipeline_state(
+    prepared = orchestrator._launch_preparator.prepare(
         run_dir=run_dir,
         resume=False,
         restart_from_stage=None,
         config_hashes={"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
     )
 
-    assert requested_action == "fresh"
-    assert effective_action == "fresh"
-    assert start_stage == StageNames.DATASET_VALIDATOR
-    assert state.logical_run_id == "logical_run_1"
+    assert prepared.requested_action == "fresh"
+    assert prepared.effective_action == "fresh"
+    assert prepared.start_stage_name == StageNames.DATASET_VALIDATOR
+    assert prepared.state.logical_run_id == "logical_run_1"
     assert (run_dir / "pipeline_state.json").exists()
 
 
-def test_bootstrap_pipeline_state_resume_requires_existing_state(tmp_path: Path) -> None:
+def test_launch_preparator_resume_requires_existing_state(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     run_dir = tmp_path / "runs" / "logical_run_1"
     orchestrator = _build_orchestrator(config_path, _build_mock_config(), run_directory=run_dir)
 
     with pytest.raises(PipelineStateLoadError, match="Missing pipeline_state.json"):
-        orchestrator._bootstrap_pipeline_state(
+        orchestrator._launch_preparator.prepare(
             run_dir=run_dir,
             resume=True,
             restart_from_stage=None,
@@ -184,7 +194,7 @@ def test_bootstrap_pipeline_state_resume_requires_existing_state(tmp_path: Path)
         )
 
 
-def test_bootstrap_pipeline_state_resume_uses_failed_stage(tmp_path: Path) -> None:
+def test_launch_preparator_resume_uses_failed_stage(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     run_dir = tmp_path / "runs" / "logical_run_1"
@@ -207,20 +217,20 @@ def test_bootstrap_pipeline_state_resume_uses_failed_stage(tmp_path: Path) -> No
 
     orchestrator = _build_orchestrator(config_path, _build_mock_config(), run_directory=run_dir)
 
-    loaded_state, requested_action, effective_action, start_stage = orchestrator._bootstrap_pipeline_state(
+    prepared = orchestrator._launch_preparator.prepare(
         run_dir=run_dir,
         resume=True,
         restart_from_stage=None,
         config_hashes={"training_critical": "train_hash", "late_stage": "late_hash", "model_dataset": "md_hash"},
     )
 
-    assert loaded_state.logical_run_id == "logical_run_1"
-    assert requested_action == "resume"
-    assert effective_action == "auto_resume"
-    assert start_stage == StageNames.GPU_DEPLOYER
+    assert prepared.state.logical_run_id == "logical_run_1"
+    assert prepared.requested_action == "resume"
+    assert prepared.effective_action == "auto_resume"
+    assert prepared.start_stage_name == StageNames.GPU_DEPLOYER
 
 
-def test_bootstrap_pipeline_state_blocks_training_critical_drift(tmp_path: Path) -> None:
+def test_launch_preparator_blocks_training_critical_drift(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     run_dir = tmp_path / "runs" / "logical_run_1"
@@ -236,7 +246,7 @@ def test_bootstrap_pipeline_state_blocks_training_critical_drift(tmp_path: Path)
     orchestrator = _build_orchestrator(config_path, _build_mock_config(), run_directory=run_dir)
 
     with pytest.raises(LaunchPreparationError, match="training_critical config changed"):
-        orchestrator._bootstrap_pipeline_state(
+        orchestrator._launch_preparator.prepare(
             run_dir=run_dir,
             resume=False,
             restart_from_stage=StageNames.MODEL_RETRIEVER,
