@@ -28,7 +28,7 @@ from src.pipeline.constants import (
 )
 from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
-from src.pipeline.execution import StageExecutionLoop
+from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
 from src.pipeline.launch import LaunchPreparationError, LaunchPreparator, PreparedAttempt
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
@@ -195,6 +195,14 @@ class PipelineOrchestrator:
             stage_planner=self._stage_planner,
             config_drift=self._config_drift,
             attempt_controller=self._attempt_controller,
+        )
+
+        # Restart-points inspector: pure read-only query of saved state +
+        # config drift + runtime health. Lives outside the run lifecycle so
+        # callers can ask "what can I restart?" without entering _run_stateful.
+        self._restart_inspector = RestartPointsInspector(
+            stages=self.stages,
+            config_drift=self._config_drift,
         )
 
         # Stage execution loop: the for-loop + outcome handlers + exception
@@ -678,78 +686,18 @@ class PipelineOrchestrator:
         )
 
     def _is_inference_runtime_healthy(self, inference_ctx: dict[str, Any] | None = None) -> bool:
+        """Back-compat wrapper around the shared health probe.
+
+        Tests still patch ``self._is_inference_runtime_healthy``; new callers
+        should use ``src.pipeline.executor.is_inference_runtime_healthy``
+        directly or go through :class:`RestartPointsInspector`.
+        """
         ctx = inference_ctx if inference_ctx is not None else self.context.get(StageNames.INFERENCE_DEPLOYER, {})
         return is_inference_runtime_healthy(ctx if isinstance(ctx, dict) else None)
 
     def list_restart_points(self, run_dir: Path) -> list[dict[str, Any]]:
-        store = PipelineStateStore(run_dir.expanduser().resolve())
-        state = store.load()
-        # Purely read-only inspection — do not pollute the controller's live
-        # state with a snapshot from another run. This used to set
-        # ``self._pipeline_state = state`` but that value was never read.
-        config_hashes = self._build_config_hashes()
-        points: list[dict[str, Any]] = []
-        for stage in self.stages:
-            stage_name = stage.stage_name
-            available = True
-            reason = "restart_allowed"
-            mode = "fresh_only"
-
-            if stage_name == StageNames.TRAINING_MONITOR:
-                mode = "reconnect_only"
-                ref = state.current_output_lineage.get(StageNames.GPU_DEPLOYER)
-                gpu_outputs = ref.outputs if ref else {}
-                if not all(gpu_outputs.get(key) for key in ("ssh_host", "ssh_port", "workspace_path")):
-                    available = False
-                    reason = "missing_gpu_deployer_outputs"
-            elif stage_name == StageNames.MODEL_RETRIEVER:
-                mode = "fresh_or_resume"
-                ref = state.current_output_lineage.get(StageNames.GPU_DEPLOYER)
-                if ref is None:
-                    available = False
-                    reason = "missing_gpu_deployer_outputs"
-            elif stage_name == StageNames.INFERENCE_DEPLOYER:
-                mode = "fresh_or_resume"
-                ref = state.current_output_lineage.get(StageNames.MODEL_RETRIEVER)
-                outputs = ref.outputs if ref else {}
-                if not (outputs.get("hf_repo_id") or outputs.get("local_model_path")):
-                    available = False
-                    reason = "missing_model_retriever_outputs"
-            elif stage_name == StageNames.MODEL_EVALUATOR:
-                mode = "live_runtime_only"
-                ref = state.current_output_lineage.get(StageNames.INFERENCE_DEPLOYER)
-                if ref is None:
-                    available = False
-                    reason = "missing_inference_outputs"
-                else:
-                    if not self._is_inference_runtime_healthy(inference_ctx=dict(ref.outputs)):
-                        available = False
-                        reason = "inference_runtime_not_healthy"
-
-            if state.model_dataset_config_hash:
-                if state.model_dataset_config_hash != config_hashes["model_dataset"]:
-                    available = False
-                    reason = "training_critical_config_changed"
-            elif state.training_critical_config_hash != config_hashes["training_critical"]:
-                available = False
-                reason = "training_critical_config_changed"
-
-            if state.late_stage_config_hash != config_hashes["late_stage"] and stage_name not in {
-                StageNames.INFERENCE_DEPLOYER,
-                StageNames.MODEL_EVALUATOR,
-            }:
-                available = False
-                reason = "late_stage_config_changed"
-
-            points.append(
-                {
-                    "stage": stage_name,
-                    "available": available,
-                    "mode": mode,
-                    "reason": reason,
-                }
-            )
-        return points
+        """Delegate to :class:`RestartPointsInspector`."""
+        return self._restart_inspector.inspect(run_dir)
 
     def _log_stage_specific_info(self, stage_name: str) -> None:
         """Log stage-specific info to MLflow after stage completion."""

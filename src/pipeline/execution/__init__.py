@@ -12,6 +12,7 @@ timing, logging, artifact flushing, and the decision of whether a stage
 is eligible to run.
 """
 
+from src.pipeline.execution.restart_inspector import RestartPointsInspector
 from src.pipeline.execution.stage_execution_loop import StageExecutionLoop
 
-__all__ = ["StageExecutionLoop"]
+__all__ = ["RestartPointsInspector", "StageExecutionLoop"]
