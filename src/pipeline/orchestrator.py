@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config.runtime import RuntimeSettings, load_runtime_settings
-from src.constants import PROVIDER_RUNPOD
 from src.pipeline.artifacts import (
     StageArtifactCollector,
 )
+from src.pipeline.bootstrap import StartupValidator
 from src.pipeline.config_drift import ConfigDriftValidator
 from src.pipeline.constants import (
     EXIT_CODE_SIGINT,
@@ -57,7 +57,13 @@ from src.pipeline.validation.artifact_manager import ValidationArtifactManager
 # Runtime re-export — several tests patch ``src.pipeline.orchestrator.MLflowManager``.
 # Keeping this symbol here lets those tests keep working without migrating them yet.
 from src.training.managers.mlflow_manager import MLflowManager  # noqa: TC001
-from src.utils.config import PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
+from src.utils.config import (
+    PipelineConfig,
+    Secrets,
+    load_config,
+    load_secrets,
+    validate_strategy_chain,  # noqa: F401  — re-exported for tests that patch it
+)
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
@@ -125,67 +131,16 @@ class PipelineOrchestrator:
 
         logger.info("Initializing Pipeline Orchestrator")
 
-        # Load configuration
+        # Load configuration + fail-fast validation
         try:
             self.config_path = config_path  # Save for later use
             self.config: PipelineConfig = load_config(config_path)
             self.secrets: Secrets = load_secrets()
-
-            # Canonical HuggingFace auth token for the entire process.
-            # All HuggingFace integrations must rely on HF_TOKEN only.
-            import os
-
-            # os.environ requires str values; tests may inject MagicMock secrets.
-            os.environ["HF_TOKEN"] = str(self.secrets.hf_token)
-
-            # Provider-specific secrets (required only when provider is active)
-            try:
-                active_provider = self.config.get_active_provider_name()
-            except (ValueError, AttributeError):
-                # Config may be incomplete in tests or during initialization
-                active_provider = None
-
-            if active_provider == PROVIDER_RUNPOD and not getattr(self.secrets, "runpod_api_key", None):
-                raise ValueError(
-                    f"RUNPOD_API_KEY is required when using provider {PROVIDER_RUNPOD!r}. "
-                    "Set it via environment variable RUNPOD_API_KEY or in config/secrets.env."
-                )
-
-            # Inference-only provider: RunPod Serverless (training provider may be different).
-            inference_cfg = getattr(self.config, "inference", None)
-            if (
-                getattr(inference_cfg, "enabled", False) is True
-                and getattr(inference_cfg, "provider", None) in {PROVIDER_RUNPOD}
-                and not getattr(self.secrets, "runpod_api_key", None)
-            ):
-                raise ValueError(
-                    f"RUNPOD_API_KEY is required when using inference.provider={getattr(inference_cfg, 'provider', None)!r}. "
-                    "Set it via environment variable RUNPOD_API_KEY or in config/secrets.env."
-                )
-
-            # Fail-fast: validate that all secrets required by enabled evaluation plugins
-            # are present in secrets.env before any pipeline stage runs.
-            from src.config.validators.runtime import validate_eval_plugin_secrets
-
-            validate_eval_plugin_secrets(self.config, self.secrets)
-
+            StartupValidator.validate(config=self.config, secrets=self.secrets)
             logger.info("Configuration loaded successfully")
         except Exception as e:
             logger.error(f"Failed to load configuration: {e}")
             raise
-
-        # Check strategy chain EARLY (before any stages run)
-        strategies = self.config.training.strategies
-        if strategies:
-            validation = validate_strategy_chain(strategies)
-            if validation.is_failure():
-                error = validation.unwrap_err()
-                chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-                logger.error(f"Invalid strategy chain: {chain_str}")
-                logger.error(f"   Error: {error}")
-                raise ValueError(f"Invalid strategy chain: {error}")
-            chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-            logger.info(f"Strategy chain checked: {chain_str}")
 
         # Pipeline context (shared data between stages).
         # PipelineContext inherits from dict — existing stages that accept
