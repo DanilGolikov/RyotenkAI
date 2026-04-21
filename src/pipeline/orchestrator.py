@@ -26,7 +26,7 @@ from src.pipeline.constants import (
 from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
 from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop, StageRegistry
-from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
+from src.pipeline.executor import StagePlanner
 from src.pipeline.launch import LaunchPreparationError, LaunchPreparator, PreparedAttempt
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
@@ -40,23 +40,14 @@ from src.pipeline.state import (
 )
 from src.pipeline.state.run_lock_guard import RunLockGuard
 from src.pipeline.validation.artifact_manager import ValidationArtifactManager
-
-# Runtime re-export — several tests patch ``src.pipeline.orchestrator.MLflowManager``.
-# Keeping this symbol here lets those tests keep working without migrating them yet.
-from src.training.managers.mlflow_manager import MLflowManager  # noqa: TC001
-from src.utils.config import (
-    PipelineConfig,
-    Secrets,
-    load_config,
-    load_secrets,
-    validate_strategy_chain,  # noqa: F401  — re-exported for tests that patch it
-)
+from src.utils.config import PipelineConfig, Secrets, load_config, load_secrets
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
     from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.stages.base import PipelineStage
+    from src.training.managers.mlflow_manager import MLflowManager
     from src.utils.logs_layout import LogLayout
 
 # Re-export from the launch package so downstream test imports keep working
@@ -450,55 +441,6 @@ class PipelineOrchestrator:
     def _build_config_hashes(self) -> dict[str, str]:
         return self._config_drift.build_config_hashes()
 
-    # ------------------------------------------------------------------
-    # Thin delegates kept for backward-compat with test-callsites
-    # ------------------------------------------------------------------
-    # These wrappers add no logic; they just expose the extracted component
-    # methods under their pre-refactor names so existing tests (and the
-    # handful of in-tree callers that haven't been migrated) keep working.
-    # The extracted components are the source of truth.
-
-    def _compute_enabled_stage_names(self, *, start_stage_name: str) -> list[str]:
-        return self._stage_planner.compute_enabled_stage_names(start_stage_name=start_stage_name)
-
-    def _validate_stage_prerequisites(
-        self, *, stage_name: str, start_stage_name: str
-    ) -> AppError | None:
-        return self._stage_planner.validate_stage_prerequisites(
-            stage_name=stage_name,
-            start_stage_name=start_stage_name,
-            context=self.context,
-        )
-
-    def _log_stage_specific_info(self, stage_name: str) -> None:
-        self._stage_info_logger.log(
-            mlflow_manager=self._mlflow_manager,
-            context=self.context,
-            stage_name=stage_name,
-        )
-
-    def _fill_from_context(
-        self, stage_name: str, collector: StageArtifactCollector
-    ) -> None:
-        self._context_propagator.fill_collector_from_context(
-            context=self.context, stage_name=stage_name, collector=collector
-        )
-
-    def _validate_config_drift(
-        self,
-        *,
-        state: PipelineState,
-        start_stage_name: str,
-        config_hashes: dict[str, str],
-        resume: bool,
-    ) -> AppError | None:
-        return self._config_drift.validate_drift(
-            state=state,
-            start_stage_name=start_stage_name,
-            config_hashes=config_hashes,
-            resume=resume,
-        )
-
     def _sync_root_context_from_stage_outputs(
         self, ctx: dict[str, Any], stage_name: str, outputs: dict[str, Any]
     ) -> None:
@@ -511,26 +453,6 @@ class PipelineOrchestrator:
         self._context_propagator.sync_root_from_stage(
             context=ctx, stage_name=stage_name, outputs=outputs
         )
-
-    # ------------------------------------------------------------------
-    # AttemptController backplane
-    # ------------------------------------------------------------------
-    # Read-only views onto the controller-owned state, kept for backward
-    # compatibility with callers (and tests) that still reference the old
-    # private attribute names. Writes must go through the controller, not
-    # these properties.
-
-    @property
-    def _pipeline_state(self) -> PipelineState | None:
-        """Read-only view of the controller-owned pipeline state."""
-        return self._attempt_controller.state if self._attempt_controller.has_state else None
-
-    @property
-    def _current_attempt(self) -> PipelineAttemptState | None:
-        """Read-only view of the controller-owned active attempt."""
-        if self._attempt_controller.has_active_attempt:
-            return self._attempt_controller.active_attempt
-        return None
 
     def _persist_state(self, state: PipelineState) -> None:
         """Save callback injected into ``AttemptController``.
@@ -609,16 +531,6 @@ class PipelineOrchestrator:
             state_path_supplier=_sync_state_and_return_path,
             on_after_end=_after_end,
         )
-
-    def _is_inference_runtime_healthy(self, inference_ctx: dict[str, Any] | None = None) -> bool:
-        """Back-compat wrapper around the shared health probe.
-
-        Tests still patch ``self._is_inference_runtime_healthy``; new callers
-        should use ``src.pipeline.executor.is_inference_runtime_healthy``
-        directly or go through :class:`RestartPointsInspector`.
-        """
-        ctx = inference_ctx if inference_ctx is not None else self.context.get(StageNames.INFERENCE_DEPLOYER, {})
-        return is_inference_runtime_healthy(ctx if isinstance(ctx, dict) else None)
 
     def list_restart_points(self, run_dir: Path) -> list[dict[str, Any]]:
         """Delegate to :class:`RestartPointsInspector`."""

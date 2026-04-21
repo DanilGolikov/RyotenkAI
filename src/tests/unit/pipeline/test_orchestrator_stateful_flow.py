@@ -161,7 +161,7 @@ def _build_orchestrator(
     with (
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
-        patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
+        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch.object(StageRegistry, "_build_stages", return_value=stages),
         patch.object(PipelineOrchestrator, "_setup_mlflow", return_value=None),
     ):
@@ -240,7 +240,10 @@ def test_stateful_resume_reuses_completed_stages_and_appends_attempt(tmp_path: P
         calls=second_calls,
     )
 
-    with patch.object(second_orchestrator, "_is_inference_runtime_healthy", return_value=True):
+    with patch(
+        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        return_value=True,
+    ):
         second_result = second_orchestrator.run(run_dir=run_dir, resume=True)
 
     assert second_result.is_success()

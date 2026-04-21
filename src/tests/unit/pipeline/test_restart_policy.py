@@ -38,7 +38,7 @@ def _build_orchestrator(config_path: Path, config: MagicMock) -> PipelineOrchest
     with (
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
-        patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
+        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch("src.pipeline.execution.stage_registry.DatasetValidator"),
         patch("src.pipeline.execution.stage_registry.GPUDeployer"),
         patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
@@ -54,7 +54,7 @@ def test_forced_disabled_inference_stage_is_enabled_for_manual_restart(tmp_path:
     config_path.write_text("model:\n  name: gpt2\n")
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
 
-    enabled = orchestrator._compute_enabled_stage_names(start_stage_name=StageNames.INFERENCE_DEPLOYER)
+    enabled = orchestrator._stage_planner.compute_enabled_stage_names(start_stage_name=StageNames.INFERENCE_DEPLOYER)
 
     assert StageNames.INFERENCE_DEPLOYER in enabled
     assert StageNames.MODEL_EVALUATOR not in enabled
@@ -78,7 +78,7 @@ def test_late_stage_config_drift_allowed_only_for_late_stages(tmp_path: Path) ->
         current_output_lineage={},
     )
 
-    drift_error = orchestrator._validate_config_drift(
+    drift_error = orchestrator._config_drift.validate_drift(
         state=state,
         start_stage_name=StageNames.INFERENCE_DEPLOYER,
         config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash", "model_dataset": "md_hash"},
@@ -86,7 +86,7 @@ def test_late_stage_config_drift_allowed_only_for_late_stages(tmp_path: Path) ->
     )
     assert drift_error is None
 
-    drift_error = orchestrator._validate_config_drift(
+    drift_error = orchestrator._config_drift.validate_drift(
         state=state,
         start_stage_name=StageNames.MODEL_RETRIEVER,
         config_hashes={"training_critical": "train_hash", "late_stage": "new_late_hash", "model_dataset": "md_hash"},

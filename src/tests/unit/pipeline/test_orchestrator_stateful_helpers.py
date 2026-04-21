@@ -59,7 +59,7 @@ def _build_orchestrator(config_path: Path, config: MagicMock, *, run_directory: 
     with (
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
-        patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
+        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch.object(StageRegistry, "_build_stages", return_value=stages),
     ):
         orchestrator = PipelineOrchestrator(config_path, run_directory=run_directory)
@@ -312,7 +312,9 @@ def test_compute_enabled_stage_names_covers_optional_stage_combinations(
     config.evaluation.model_dump.return_value = {"enabled": evaluation_enabled}
     orchestrator = _build_orchestrator(config_path, config)
 
-    enabled = set(orchestrator._compute_enabled_stage_names(start_stage_name=start_stage))
+    enabled = set(
+        orchestrator._stage_planner.compute_enabled_stage_names(start_stage_name=start_stage)
+    )
 
     assert enabled == expected_enabled
 
@@ -326,9 +328,10 @@ def test_validate_stage_prerequisites_for_training_monitor_requires_workspace(tm
         "ssh_port": 22,
     }
 
-    error = orchestrator._validate_stage_prerequisites(
+    error = orchestrator._stage_planner.validate_stage_prerequisites(
         stage_name=StageNames.TRAINING_MONITOR,
         start_stage_name=StageNames.TRAINING_MONITOR,
+        context=orchestrator.context,
     )
 
     assert error is not None
@@ -340,10 +343,14 @@ def test_validate_stage_prerequisites_for_evaluator_requires_live_runtime(tmp_pa
     config_path.write_text("model:\n  name: gpt2\n")
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
 
-    with patch.object(orchestrator, "_is_inference_runtime_healthy", return_value=False):
-        error = orchestrator._validate_stage_prerequisites(
+    with patch(
+        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        return_value=False,
+    ):
+        error = orchestrator._stage_planner.validate_stage_prerequisites(
             stage_name=StageNames.MODEL_EVALUATOR,
             start_stage_name=StageNames.MODEL_EVALUATOR,
+            context=orchestrator.context,
         )
 
     assert error is not None
@@ -351,21 +358,21 @@ def test_validate_stage_prerequisites_for_evaluator_requires_live_runtime(tmp_pa
 
 
 def test_is_inference_runtime_healthy_handles_success_and_failure(tmp_path: Path) -> None:
+    from src.pipeline.executor import is_inference_runtime_healthy
+
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
-    orchestrator.context[StageNames.INFERENCE_DEPLOYER] = {
-        "endpoint_info": {"health_url": "http://localhost/health"},
-    }
+    inference_ctx = {"endpoint_info": {"health_url": "http://localhost/health"}}
 
     response = MagicMock()
     response.__enter__.return_value = MagicMock(status=200)
     response.__exit__.return_value = None
     with patch("src.pipeline.executor.stage_planner.urlopen", return_value=response):
-        assert orchestrator._is_inference_runtime_healthy() is True
+        assert is_inference_runtime_healthy(inference_ctx) is True
 
     with patch("src.pipeline.executor.stage_planner.urlopen", side_effect=RuntimeError("boom")):
-        assert orchestrator._is_inference_runtime_healthy() is False
+        assert is_inference_runtime_healthy(inference_ctx) is False
 
 
 def test_list_restart_points_reports_block_reasons(tmp_path: Path) -> None:
@@ -397,7 +404,10 @@ def test_list_restart_points_reports_block_reasons(tmp_path: Path) -> None:
     state.late_stage_config_hash = config_hashes["late_stage"]
     store.save(state)
 
-    with patch.object(orchestrator, "_is_inference_runtime_healthy", return_value=False):
+    with patch(
+        "src.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
+        return_value=False,
+    ):
         points = orchestrator.list_restart_points(run_dir)
 
     by_stage = {item["stage"]: item for item in points}

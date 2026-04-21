@@ -338,7 +338,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             config_path=tmp_path / "cfg.yaml", config=_mk_config(), secrets=_mk_secrets(), stages=[]
         )
         orch._mlflow_manager = None
-        orch._log_stage_specific_info("any")
+        orch._stage_info_logger.log(mlflow_manager=orch._mlflow_manager, context=orch.context, stage_name="any")
 
     def test_log_stage_specific_info_gpu_deployer_logs_upload_and_deps_events(self, tmp_path: Path) -> None:
         orch = _mk_orchestrator(
@@ -354,7 +354,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             "deps_duration_seconds": 3.4,
         }
 
-        orch._log_stage_specific_info("GPU Deployer")
+        orch._stage_info_logger.log(mlflow_manager=orch._mlflow_manager, context=orch.context, stage_name="GPU Deployer")
         assert orch._mlflow_manager.log_event_info.call_count >= 2
 
     def test_log_stage_specific_info_dataset_validator_plugin_metrics_handles_non_numeric(self, tmp_path: Path) -> None:
@@ -367,7 +367,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             "metrics": {"avg_length": "not-a-number"},
             "sample_count": 10,
         }
-        orch._log_stage_specific_info("Dataset Validator")
+        orch._stage_info_logger.log(mlflow_manager=orch._mlflow_manager, context=orch.context, stage_name="Dataset Validator")
         orch._mlflow_manager.log_params.assert_called()
 
     def test_log_stage_specific_info_dataset_validator_legacy_metrics(self, tmp_path: Path) -> None:
@@ -380,7 +380,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             "metrics": {"avg_length": 5, "empty_ratio": 0.0, "diversity_score": 0.1},
             "sample_count": 3,
         }
-        orch._log_stage_specific_info("Dataset Validator")
+        orch._stage_info_logger.log(mlflow_manager=orch._mlflow_manager, context=orch.context, stage_name="Dataset Validator")
         orch._mlflow_manager.log_params.assert_called()
 
 
@@ -668,7 +668,7 @@ class TestFillFromContext:
             "resource_id": "pod123",
         }
         col = StageArtifactCollector(stage=StageNames.GPU_DEPLOYER, artifact_name="gpu.json")
-        orch._fill_from_context(StageNames.GPU_DEPLOYER, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.GPU_DEPLOYER, collector=col)
         assert col._data["upload_duration_seconds"] == 12.3
         assert col._data["provider_name"] == "runpod"
         assert col._data["gpu_type"] == "A100"
@@ -680,7 +680,7 @@ class TestFillFromContext:
         orch = self._mk(tmp_path)
         orch.context[StageNames.TRAINING_MONITOR] = {"training_duration_seconds": 3600.0}
         col = StageArtifactCollector(stage=StageNames.TRAINING_MONITOR, artifact_name="t.json")
-        orch._fill_from_context(StageNames.TRAINING_MONITOR, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.TRAINING_MONITOR, collector=col)
         assert col._data["training_duration_seconds"] == 3600.0
 
     def test_fill_model_retriever(self, tmp_path: Path) -> None:
@@ -694,7 +694,7 @@ class TestFillFromContext:
             "upload_duration_seconds": 60.0,
         }
         col = StageArtifactCollector(stage=StageNames.MODEL_RETRIEVER, artifact_name="m.json")
-        orch._fill_from_context(StageNames.MODEL_RETRIEVER, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.MODEL_RETRIEVER, collector=col)
         assert col._data["model_size_mb"] == 1500.0
         assert col._data["hf_repo_id"] == "org/model-adapter"
 
@@ -709,7 +709,7 @@ class TestFillFromContext:
             "provider": "single_node",
         }
         col = StageArtifactCollector(stage=StageNames.INFERENCE_DEPLOYER, artifact_name="i.json")
-        orch._fill_from_context(StageNames.INFERENCE_DEPLOYER, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.INFERENCE_DEPLOYER, collector=col)
         assert col._data["endpoint_url"] == "http://localhost:8000/v1"
         assert col._data["provider"] == "single_node"
 
@@ -722,7 +722,7 @@ class TestFillFromContext:
             "eval_summary": {"overall_passed": True, "sample_count": 10}
         }
         col = StageArtifactCollector(stage=StageNames.MODEL_EVALUATOR, artifact_name="e.json")
-        orch._fill_from_context(StageNames.MODEL_EVALUATOR, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.MODEL_EVALUATOR, collector=col)
         assert col._data["overall_passed"] is True
         assert col._data["sample_count"] == 10
 
@@ -732,7 +732,7 @@ class TestFillFromContext:
 
         orch = self._mk(tmp_path)
         col = StageArtifactCollector(stage=StageNames.GPU_DEPLOYER, artifact_name="g.json")
-        orch._fill_from_context(StageNames.GPU_DEPLOYER, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.GPU_DEPLOYER, collector=col)
         # GPU deployer with empty context: all fields are None
         assert col._data.get("provider_name") is None
 
@@ -743,7 +743,7 @@ class TestFillFromContext:
         orch = self._mk(tmp_path)
         orch.context[StageNames.TRAINING_MONITOR] = "not_a_dict"
         col = StageArtifactCollector(stage=StageNames.TRAINING_MONITOR, artifact_name="t.json")
-        orch._fill_from_context(StageNames.TRAINING_MONITOR, col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name=StageNames.TRAINING_MONITOR, collector=col)
         assert col._data == {}
 
     def test_fill_unknown_stage_name_is_noop(self, tmp_path: Path) -> None:
@@ -753,7 +753,7 @@ class TestFillFromContext:
         orch = self._mk(tmp_path)
         orch.context["Unknown Stage"] = {"x": 1}
         col = StageArtifactCollector(stage="Unknown Stage", artifact_name="u.json")
-        orch._fill_from_context("Unknown Stage", col)
+        orch._context_propagator.fill_collector_from_context(context=orch.context, stage_name="Unknown Stage", collector=col)
         assert col._data == {}
 
 
