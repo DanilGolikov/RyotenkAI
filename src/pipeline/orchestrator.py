@@ -59,13 +59,6 @@ if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
     from src.utils.logs_layout import LogLayout
 
-# Status literals used in MLflow event attributes.
-_STATUS_FAILED = "failed"
-_STATUS_PASSED = "passed"
-_STATUS_RUNNING = "running"
-_STATUS_STARTED = "started"
-
-
 # Re-export from the launch package so downstream test imports keep working
 # without needing to know that the exception moved. Orchestrator.run() still
 # catches it by this name.
@@ -461,20 +454,39 @@ class PipelineOrchestrator:
     def _build_config_hashes(self) -> dict[str, str]:
         return self._config_drift.build_config_hashes()
 
-    def _normalize_stage_ref(self, stage_ref: str | int | None) -> str:
-        return self._stage_planner.normalize_stage_ref(stage_ref)
-
-    def _get_stage_index(self, stage_name: str) -> int:
-        return self._stage_planner.get_stage_index(stage_name)
-
-    def _forced_stage_names(self, *, start_stage_name: str) -> set[str]:
-        return self._stage_planner.forced_stage_names(start_stage_name=start_stage_name)
+    # ------------------------------------------------------------------
+    # Thin delegates kept for backward-compat with test-callsites
+    # ------------------------------------------------------------------
+    # These wrappers add no logic; they just expose the extracted component
+    # methods under their pre-refactor names so existing tests (and the
+    # handful of in-tree callers that haven't been migrated) keep working.
+    # The extracted components are the source of truth.
 
     def _compute_enabled_stage_names(self, *, start_stage_name: str) -> list[str]:
         return self._stage_planner.compute_enabled_stage_names(start_stage_name=start_stage_name)
 
-    def _derive_resume_stage(self, state: PipelineState) -> str | None:
-        return self._stage_planner.derive_resume_stage(state)
+    def _validate_stage_prerequisites(
+        self, *, stage_name: str, start_stage_name: str
+    ) -> AppError | None:
+        return self._stage_planner.validate_stage_prerequisites(
+            stage_name=stage_name,
+            start_stage_name=start_stage_name,
+            context=self.context,
+        )
+
+    def _log_stage_specific_info(self, stage_name: str) -> None:
+        self._stage_info_logger.log(
+            mlflow_manager=self._mlflow_manager,
+            context=self.context,
+            stage_name=stage_name,
+        )
+
+    def _fill_from_context(
+        self, stage_name: str, collector: StageArtifactCollector
+    ) -> None:
+        self._context_propagator.fill_collector_from_context(
+            context=self.context, stage_name=stage_name, collector=collector
+        )
 
     def _validate_config_drift(
         self,
@@ -489,11 +501,6 @@ class PipelineOrchestrator:
             start_stage_name=start_stage_name,
             config_hashes=config_hashes,
             resume=resume,
-        )
-
-    def _sync_root_context_from_stage(self, stage_name: str, outputs: dict[str, Any]) -> None:
-        self._context_propagator.sync_root_from_stage(
-            context=self.context, stage_name=stage_name, outputs=outputs
         )
 
     def _sync_root_context_from_stage_outputs(
@@ -620,13 +627,6 @@ class PipelineOrchestrator:
             on_after_end=_after_end,
         )
 
-    def _validate_stage_prerequisites(self, *, stage_name: str, start_stage_name: str) -> AppError | None:
-        return self._stage_planner.validate_stage_prerequisites(
-            stage_name=stage_name,
-            start_stage_name=start_stage_name,
-            context=self.context,
-        )
-
     def _is_inference_runtime_healthy(self, inference_ctx: dict[str, Any] | None = None) -> bool:
         """Back-compat wrapper around the shared health probe.
 
@@ -640,20 +640,6 @@ class PipelineOrchestrator:
     def list_restart_points(self, run_dir: Path) -> list[dict[str, Any]]:
         """Delegate to :class:`RestartPointsInspector`."""
         return self._restart_inspector.inspect(run_dir)
-
-    def _log_stage_specific_info(self, stage_name: str) -> None:
-        """Log stage-specific info to MLflow after stage completion."""
-        self._stage_info_logger.log(
-            mlflow_manager=self._mlflow_manager,
-            context=self.context,
-            stage_name=stage_name,
-        )
-
-    def _fill_from_context(self, stage_name: str, collector: StageArtifactCollector) -> None:
-        """Populate collector with stage-specific data read from pipeline context."""
-        self._context_propagator.fill_collector_from_context(
-            context=self.context, stage_name=stage_name, collector=collector
-        )
 
     def _flush_pending_collectors(self) -> None:
         """Delegate: flush still-open collectors via the registry."""

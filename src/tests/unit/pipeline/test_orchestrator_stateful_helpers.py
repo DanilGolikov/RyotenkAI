@@ -92,13 +92,13 @@ def test_normalize_stage_ref_supports_indices_and_names(tmp_path: Path) -> None:
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
 
     # 1-based human index (1 = first, 6 = last)
-    assert orchestrator._normalize_stage_ref(1) == StageNames.DATASET_VALIDATOR
-    assert orchestrator._normalize_stage_ref("1") == StageNames.DATASET_VALIDATOR
-    assert orchestrator._normalize_stage_ref(5) == StageNames.INFERENCE_DEPLOYER
-    assert orchestrator._normalize_stage_ref("6") == StageNames.MODEL_EVALUATOR
+    assert orchestrator._stage_planner.normalize_stage_ref(1) == StageNames.DATASET_VALIDATOR
+    assert orchestrator._stage_planner.normalize_stage_ref("1") == StageNames.DATASET_VALIDATOR
+    assert orchestrator._stage_planner.normalize_stage_ref(5) == StageNames.INFERENCE_DEPLOYER
+    assert orchestrator._stage_planner.normalize_stage_ref("6") == StageNames.MODEL_EVALUATOR
     # name-based (case and underscore-insensitive)
-    assert orchestrator._normalize_stage_ref("Inference Deployer") == StageNames.INFERENCE_DEPLOYER
-    assert orchestrator._normalize_stage_ref("model_evaluator") == StageNames.MODEL_EVALUATOR
+    assert orchestrator._stage_planner.normalize_stage_ref("Inference Deployer") == StageNames.INFERENCE_DEPLOYER
+    assert orchestrator._stage_planner.normalize_stage_ref("model_evaluator") == StageNames.MODEL_EVALUATOR
 
 
 def test_normalize_stage_ref_rejects_unknown_values(tmp_path: Path) -> None:
@@ -107,11 +107,11 @@ def test_normalize_stage_ref_rejects_unknown_values(tmp_path: Path) -> None:
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
 
     with pytest.raises(ValueError, match="Unknown stage reference"):
-        orchestrator._normalize_stage_ref("unknown_stage")
+        orchestrator._stage_planner.normalize_stage_ref("unknown_stage")
     with pytest.raises(ValueError, match="out of range"):
-        orchestrator._normalize_stage_ref("0")
+        orchestrator._stage_planner.normalize_stage_ref("0")
     with pytest.raises(ValueError, match="out of range"):
-        orchestrator._normalize_stage_ref("7")
+        orchestrator._stage_planner.normalize_stage_ref("7")
 
 
 def test_derive_resume_stage_prefers_first_missing_or_failed_stage(tmp_path: Path) -> None:
@@ -148,7 +148,7 @@ def test_derive_resume_stage_prefers_first_missing_or_failed_stage(tmp_path: Pat
         current_output_lineage={},
     )
 
-    assert orchestrator._derive_resume_stage(state) == StageNames.TRAINING_MONITOR
+    assert orchestrator._stage_planner.derive_resume_stage(state) == StageNames.TRAINING_MONITOR
 
 
 # ---------------------------------------------------------------------------
