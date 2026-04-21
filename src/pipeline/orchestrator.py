@@ -368,70 +368,14 @@ class PipelineOrchestrator:
         config_hashes = self._build_config_hashes()
 
         try:
-            state, requested_action, effective_action, start_stage_name = self._bootstrap_pipeline_state(
-                run_dir=run_dir,
-                resume=resume,
-                restart_from_stage=restart_from_stage,
-                config_hashes=config_hashes,
+            state, attempt, start_idx, stop_idx, start_stage_name, enabled_stage_names = (
+                self._prepare_stateful_attempt(
+                    run_dir=run_dir,
+                    resume=resume,
+                    restart_from_stage=restart_from_stage,
+                    config_hashes=config_hashes,
+                )
             )
-            assert self._state_store is not None
-            assert self.run_directory is not None
-            state.training_critical_config_hash = config_hashes["training_critical"]
-            state.late_stage_config_hash = config_hashes["late_stage"]
-            state.model_dataset_config_hash = config_hashes["model_dataset"]
-
-            start_idx = self._get_stage_index(start_stage_name)
-            stop_idx = len(self.stages)
-
-            self._run_lock = acquire_run_lock(self._state_store.lock_path)
-
-            enabled_stage_names = self._compute_enabled_stage_names(start_stage_name=start_stage_name)
-            attempt = build_attempt_state(
-                state=state,
-                run_ctx=self.run_ctx,
-                requested_action=requested_action,
-                effective_action=effective_action,
-                restart_from_stage=start_stage_name,
-                enabled_stage_names=enabled_stage_names,
-                training_critical_config_hash=config_hashes["training_critical"],
-                late_stage_config_hash=config_hashes["late_stage"],
-                model_dataset_config_hash=config_hashes["model_dataset"],
-            )
-            self._current_attempt = attempt
-            self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
-            self._log_layout = LogLayout(self.attempt_directory)
-            init_run_logging(self.run_ctx.name, log_dir=self.attempt_directory)
-
-            self.context = {
-                PipelineContextKeys.CONFIG_PATH: str(self.config_path),
-                PipelineContextKeys.RUN: self.run_ctx,
-                PipelineContextKeys.LOGICAL_RUN_ID: state.logical_run_id,
-                PipelineContextKeys.ATTEMPT_ID: attempt.attempt_id,
-                PipelineContextKeys.ATTEMPT_NO: attempt.attempt_no,
-                PipelineContextKeys.RUN_DIRECTORY: str(self.run_directory),
-                PipelineContextKeys.ATTEMPT_DIRECTORY: str(self.attempt_directory),
-                PipelineContextKeys.FORCED_STAGES: set(self._forced_stage_names(start_stage_name=start_stage_name)),
-            }
-
-            state.attempts.append(attempt)
-            state.active_attempt_id = attempt.attempt_id
-            state.pipeline_status = StageRunState.STATUS_RUNNING
-
-            current_lineage = self._invalidate_lineage_from(
-                lineage=state.current_output_lineage,
-                start_stage_name=start_stage_name,
-            )
-            self._restore_reused_context(
-                attempt=attempt,
-                lineage=state.current_output_lineage,
-                start_stage_name=start_stage_name,
-                enabled_stage_names=enabled_stage_names,
-            )
-            state.current_output_lineage = current_lineage
-            self._save_state()
-
-            self._setup_mlflow_for_attempt(state=state, attempt=attempt, start_stage_idx=start_idx)
-            self._ensure_mlflow_preflight(state=state)
 
             for i, stage in enumerate(self.stages):
                 stage_name = stage.stage_name
@@ -502,56 +446,15 @@ class PipelineOrchestrator:
 
                     if result.is_failure():
                         stage_err = result.unwrap_err()  # type: ignore[union-attr]
-                        logger.error(f"Pipeline failed at stage {i + 1}: {stage_name}")
-                        logger.error(f"Error: {stage_err}")
-                        if self._mlflow_manager:
-                            self._mlflow_manager.log_stage_failed(
-                                stage_name=stage_name, stage_idx=i, error=str(stage_err)
-                            )
-                        if collector and not collector.is_flushed:
-                            if stage_name == StageNames.DATASET_VALIDATOR:
-                                self._validation_artifact_mgr.flush_validation_artifact(
-                                    started_at=current_stage_started_at,
-                                    duration_seconds=stage_duration,
-                                )
-                            else:
-                                collector.flush_error(
-                                    error=str(stage_err),
-                                    started_at=current_stage_started_at,
-                                    duration_seconds=stage_duration,
-                                    context=self.context,
-                                )
-                        self._mark_stage_failed(
-                            attempt=attempt,
-                            stage_name=stage_name,
-                            error=str(stage_err),
-                            failure_kind=getattr(stage_err, "code", "STAGE_FAILED"),
-                            outputs=(
-                                self._validation_artifact_mgr.build_dataset_validation_state_outputs(
-                                    error=str(stage_err)
-                                )
-                                if stage_name == StageNames.DATASET_VALIDATOR
-                                else None
-                            ),
-                        )
-                        self._finalize_attempt_state(
+                        return self._handle_stage_failure(
                             state=state,
                             attempt=attempt,
-                            status=StageRunState.STATUS_FAILED,
-                        )
-                        state.current_output_lineage = update_lineage(
-                            state.current_output_lineage,
                             stage_name=stage_name,
-                            attempt_id=attempt.attempt_id,
-                            remove=True,
-                        )
-                        self._save_state()
-                        return Err(
-                            AppError(
-                                message=f"Stage '{stage_name}' failed: {stage_err.message}",
-                                code="STAGE_FAILED",
-                                details={**stage_err.to_log_dict(), "stage_name": stage_name, "stage_idx": i},
-                            )
+                            stage_idx=i,
+                            stage_err=stage_err,
+                            collector=collector,
+                            started_at=current_stage_started_at,
+                            duration_seconds=stage_duration,
                         )
 
                     stage_result = result.unwrap()
@@ -561,52 +464,15 @@ class PipelineOrchestrator:
                     if stage_name == StageNames.MODEL_RETRIEVER:
                         self._maybe_early_release_gpu()
 
-                    outputs = self._extract_restart_outputs(stage_name)
-                    skip_reason = self._get_stage_skip_reason(stage_name)
-
-                    if collector and not collector.is_flushed:
-                        if stage_name == StageNames.DATASET_VALIDATOR:
-                            self._validation_artifact_mgr.flush_validation_artifact(
-                                started_at=current_stage_started_at,
-                                duration_seconds=stage_duration,
-                            )
-                        else:
-                            self._fill_from_context(stage_name, collector)
-                            collector.flush_ok(
-                                started_at=current_stage_started_at,
-                                duration_seconds=stage_duration,
-                                context=self.context,
-                            )
-
-                    if self._mlflow_manager:
-                        self._log_stage_specific_info(stage_name)
-                        self._mlflow_manager.log_stage_complete(
-                            stage_name=stage_name,
-                            stage_idx=i,
-                            duration_seconds=stage_duration,
-                        )
-
-                    if skip_reason is not None:
-                        self._mark_stage_skipped(
-                            attempt=attempt, stage_name=stage_name, reason=skip_reason, outputs=outputs
-                        )
-                        state.current_output_lineage = update_lineage(
-                            state.current_output_lineage,
-                            stage_name=stage_name,
-                            attempt_id=attempt.attempt_id,
-                            remove=True,
-                        )
-                    else:
-                        self._mark_stage_completed(attempt=attempt, stage_name=stage_name, outputs=outputs)
-                        state.current_output_lineage = update_lineage(
-                            state.current_output_lineage,
-                            stage_name=stage_name,
-                            attempt_id=attempt.attempt_id,
-                            outputs=outputs,
-                        )
-
-                    self._save_state()
-                    logger.info(f"Stage {i + 1} completed successfully ({stage_duration:.1f}s)")
+                    self._handle_stage_success(
+                        state=state,
+                        attempt=attempt,
+                        stage_name=stage_name,
+                        stage_idx=i,
+                        collector=collector,
+                        started_at=current_stage_started_at,
+                        duration_seconds=stage_duration,
+                    )
 
                 current_stage_name = None
                 current_stage_started_at = None
@@ -614,59 +480,15 @@ class PipelineOrchestrator:
 
             pipeline_success = True
             pipeline_duration = time.time() - pipeline_start_time
-            self._finalize_attempt_state(
-                state=state,
-                attempt=attempt,
-                status=StageRunState.STATUS_COMPLETED,
-                completed_at=utc_now_iso(),
-            )
-            self._save_state()
-
-            logger.info("\n" + SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
-            logger.info("Pipeline completed successfully!")
-            logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
-
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_complete(
-                    f"Pipeline completed successfully in {pipeline_duration:.1f}s",
-                    category=MLFLOW_CATEGORY_PIPELINE,
-                    source=MLFLOW_SOURCE_ORCHESTRATOR,
-                    duration_seconds=pipeline_duration,
-                )
-                self._mlflow_manager.set_tags({"pipeline.status": "completed"})
-                self._mlflow_manager.log_params({"pipeline.duration_seconds": pipeline_duration})
-
-            self._print_summary()
+            self._finalize_successful_run(state=state, attempt=attempt, pipeline_duration=pipeline_duration)
             return Ok(self.context)
 
         except (KeyboardInterrupt, SystemExit) as exc:
             is_system_exit = isinstance(exc, SystemExit)
-            self._shutdown_signal_name = self._shutdown_signal_name or "SIGINT"
-            logger.warning("\nPipeline interrupted by user")
-            if self._current_attempt:
-                completed_at = utc_now_iso()
-                self._current_attempt.completed_at = completed_at
-                if current_stage_name and current_stage_started_at:
-                    self._mark_stage_interrupted(
-                        attempt=self._current_attempt,
-                        stage_name=current_stage_name,
-                        started_at=current_stage_started_at,
-                    )
-                if self._pipeline_state:
-                    self._finalize_attempt_state(
-                        state=self._pipeline_state,
-                        attempt=self._current_attempt,
-                        status=StageRunState.STATUS_INTERRUPTED,
-                        completed_at=completed_at,
-                    )
-                    self._save_state()
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_warning(
-                    "Pipeline interrupted by user",
-                    category=MLFLOW_CATEGORY_PIPELINE,
-                    source=MLFLOW_SOURCE_ORCHESTRATOR,
-                )
-                self._mlflow_manager.set_tags({"pipeline.status": "interrupted"})
+            self._handle_interrupt(
+                current_stage_name=current_stage_name,
+                current_stage_started_at=current_stage_started_at,
+            )
             if is_system_exit:
                 raise
             return Err(AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED"))
@@ -690,36 +512,7 @@ class PipelineOrchestrator:
         except PipelineStateError as e:
             return Err(AppError(message=str(e), code="PIPELINE_STATE_ERROR"))
         except Exception as e:
-            logger.exception(f"Unexpected error in pipeline: {e}")
-            if self._current_attempt:
-                completed_at = utc_now_iso()
-                self._current_attempt.completed_at = completed_at
-            if self._pipeline_state:
-                if self._current_attempt is not None:
-                    self._finalize_attempt_state(
-                        state=self._pipeline_state,
-                        attempt=self._current_attempt,
-                        status=StageRunState.STATUS_FAILED,
-                        completed_at=completed_at,
-                    )
-                else:
-                    self._pipeline_state.pipeline_status = StageRunState.STATUS_FAILED
-                self._save_state()
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_error(
-                    f"Unexpected error: {e!s}",
-                    category=MLFLOW_CATEGORY_PIPELINE,
-                    source=MLFLOW_SOURCE_ORCHESTRATOR,
-                    error_type=type(e).__name__,
-                )
-                self._mlflow_manager.set_tags({"pipeline.status": _STATUS_FAILED})
-            return Err(
-                AppError(
-                    message=f"Unexpected error: {e!s}",
-                    code="UNEXPECTED_ERROR",
-                    details={"exception_type": type(e).__name__},
-                )
-            )
+            return self._handle_unexpected_error(e)
         finally:
             self._flush_pending_collectors()
             self._cleanup_resources(success=pipeline_success)
@@ -727,6 +520,304 @@ class PipelineOrchestrator:
             if self._run_lock:
                 self._run_lock.release()
                 self._run_lock = None
+
+    def _prepare_stateful_attempt(
+        self,
+        *,
+        run_dir: Path | None,
+        resume: bool,
+        restart_from_stage: str | int | None,
+        config_hashes: dict[str, str],
+    ) -> tuple[PipelineState, PipelineAttemptState, int, int, str, list[str]]:
+        """Boot state, acquire run lock, materialise attempt, restore lineage, open MLflow.
+
+        Runs end-to-end before the stage loop. Leaves the orchestrator in a
+        fully-configured state ready to execute stages. All side effects are
+        captured in ``self._state_store``, ``self.run_directory``,
+        ``self._current_attempt``, ``self.attempt_directory``, ``self._log_layout``,
+        ``self.context``, and ``self._run_lock``.
+        """
+        state, requested_action, effective_action, start_stage_name = self._bootstrap_pipeline_state(
+            run_dir=run_dir,
+            resume=resume,
+            restart_from_stage=restart_from_stage,
+            config_hashes=config_hashes,
+        )
+        assert self._state_store is not None
+        assert self.run_directory is not None
+        state.training_critical_config_hash = config_hashes["training_critical"]
+        state.late_stage_config_hash = config_hashes["late_stage"]
+        state.model_dataset_config_hash = config_hashes["model_dataset"]
+
+        start_idx = self._get_stage_index(start_stage_name)
+        stop_idx = len(self.stages)
+
+        self._run_lock = acquire_run_lock(self._state_store.lock_path)
+
+        enabled_stage_names = self._compute_enabled_stage_names(start_stage_name=start_stage_name)
+        attempt = build_attempt_state(
+            state=state,
+            run_ctx=self.run_ctx,
+            requested_action=requested_action,
+            effective_action=effective_action,
+            restart_from_stage=start_stage_name,
+            enabled_stage_names=enabled_stage_names,
+            training_critical_config_hash=config_hashes["training_critical"],
+            late_stage_config_hash=config_hashes["late_stage"],
+            model_dataset_config_hash=config_hashes["model_dataset"],
+        )
+        self._current_attempt = attempt
+        self.attempt_directory = self._state_store.next_attempt_dir(attempt.attempt_no)
+        self._log_layout = LogLayout(self.attempt_directory)
+        init_run_logging(self.run_ctx.name, log_dir=self.attempt_directory)
+
+        self.context = {
+            PipelineContextKeys.CONFIG_PATH: str(self.config_path),
+            PipelineContextKeys.RUN: self.run_ctx,
+            PipelineContextKeys.LOGICAL_RUN_ID: state.logical_run_id,
+            PipelineContextKeys.ATTEMPT_ID: attempt.attempt_id,
+            PipelineContextKeys.ATTEMPT_NO: attempt.attempt_no,
+            PipelineContextKeys.RUN_DIRECTORY: str(self.run_directory),
+            PipelineContextKeys.ATTEMPT_DIRECTORY: str(self.attempt_directory),
+            PipelineContextKeys.FORCED_STAGES: set(self._forced_stage_names(start_stage_name=start_stage_name)),
+        }
+
+        state.attempts.append(attempt)
+        state.active_attempt_id = attempt.attempt_id
+        state.pipeline_status = StageRunState.STATUS_RUNNING
+
+        current_lineage = self._invalidate_lineage_from(
+            lineage=state.current_output_lineage,
+            start_stage_name=start_stage_name,
+        )
+        self._restore_reused_context(
+            attempt=attempt,
+            lineage=state.current_output_lineage,
+            start_stage_name=start_stage_name,
+            enabled_stage_names=enabled_stage_names,
+        )
+        state.current_output_lineage = current_lineage
+        self._save_state()
+
+        self._setup_mlflow_for_attempt(state=state, attempt=attempt, start_stage_idx=start_idx)
+        self._ensure_mlflow_preflight(state=state)
+
+        return state, attempt, start_idx, stop_idx, start_stage_name, enabled_stage_names
+
+    def _finalize_successful_run(
+        self,
+        *,
+        state: PipelineState,
+        attempt: PipelineAttemptState,
+        pipeline_duration: float,
+    ) -> None:
+        """Mark attempt completed, emit summary + MLflow completion event."""
+        self._finalize_attempt_state(
+            state=state,
+            attempt=attempt,
+            status=StageRunState.STATUS_COMPLETED,
+            completed_at=utc_now_iso(),
+        )
+        self._save_state()
+
+        logger.info("\n" + SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
+        logger.info("Pipeline completed successfully!")
+        logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
+
+        if self._mlflow_manager:
+            self._mlflow_manager.log_event_complete(
+                f"Pipeline completed successfully in {pipeline_duration:.1f}s",
+                category=MLFLOW_CATEGORY_PIPELINE,
+                source=MLFLOW_SOURCE_ORCHESTRATOR,
+                duration_seconds=pipeline_duration,
+            )
+            self._mlflow_manager.set_tags({"pipeline.status": "completed"})
+            self._mlflow_manager.log_params({"pipeline.duration_seconds": pipeline_duration})
+
+        self._print_summary()
+
+    def _handle_interrupt(
+        self,
+        *,
+        current_stage_name: str | None,
+        current_stage_started_at: str | None,
+    ) -> None:
+        """Mark the attempt/stage interrupted and record the MLflow warning event."""
+        self._shutdown_signal_name = self._shutdown_signal_name or "SIGINT"
+        logger.warning("\nPipeline interrupted by user")
+        if self._current_attempt:
+            completed_at = utc_now_iso()
+            self._current_attempt.completed_at = completed_at
+            if current_stage_name and current_stage_started_at:
+                self._mark_stage_interrupted(
+                    attempt=self._current_attempt,
+                    stage_name=current_stage_name,
+                    started_at=current_stage_started_at,
+                )
+            if self._pipeline_state:
+                self._finalize_attempt_state(
+                    state=self._pipeline_state,
+                    attempt=self._current_attempt,
+                    status=StageRunState.STATUS_INTERRUPTED,
+                    completed_at=completed_at,
+                )
+                self._save_state()
+        if self._mlflow_manager:
+            self._mlflow_manager.log_event_warning(
+                "Pipeline interrupted by user",
+                category=MLFLOW_CATEGORY_PIPELINE,
+                source=MLFLOW_SOURCE_ORCHESTRATOR,
+            )
+            self._mlflow_manager.set_tags({"pipeline.status": "interrupted"})
+
+    def _handle_unexpected_error(self, e: Exception) -> Result[dict[str, Any], AppError]:
+        """Mark the attempt failed on an unexpected exception and surface it as an Err."""
+        logger.exception(f"Unexpected error in pipeline: {e}")
+        completed_at = utc_now_iso()
+        if self._current_attempt:
+            self._current_attempt.completed_at = completed_at
+        if self._pipeline_state:
+            if self._current_attempt is not None:
+                self._finalize_attempt_state(
+                    state=self._pipeline_state,
+                    attempt=self._current_attempt,
+                    status=StageRunState.STATUS_FAILED,
+                    completed_at=completed_at,
+                )
+            else:
+                self._pipeline_state.pipeline_status = StageRunState.STATUS_FAILED
+            self._save_state()
+        if self._mlflow_manager:
+            self._mlflow_manager.log_event_error(
+                f"Unexpected error: {e!s}",
+                category=MLFLOW_CATEGORY_PIPELINE,
+                source=MLFLOW_SOURCE_ORCHESTRATOR,
+                error_type=type(e).__name__,
+            )
+            self._mlflow_manager.set_tags({"pipeline.status": _STATUS_FAILED})
+        return Err(
+            AppError(
+                message=f"Unexpected error: {e!s}",
+                code="UNEXPECTED_ERROR",
+                details={"exception_type": type(e).__name__},
+            )
+        )
+
+    def _handle_stage_failure(
+        self,
+        *,
+        state: PipelineState,
+        attempt: PipelineAttemptState,
+        stage_name: str,
+        stage_idx: int,
+        stage_err: AppError,
+        collector: StageArtifactCollector | None,
+        started_at: str,
+        duration_seconds: float,
+    ) -> Result[dict[str, Any], AppError]:
+        """Handle a Failure result from a stage: log, flush artifacts, mark failed, return Err."""
+        logger.error(f"Pipeline failed at stage {stage_idx + 1}: {stage_name}")
+        logger.error(f"Error: {stage_err}")
+        if self._mlflow_manager:
+            self._mlflow_manager.log_stage_failed(
+                stage_name=stage_name, stage_idx=stage_idx, error=str(stage_err)
+            )
+        if collector and not collector.is_flushed:
+            if stage_name == StageNames.DATASET_VALIDATOR:
+                self._validation_artifact_mgr.flush_validation_artifact(
+                    started_at=started_at, duration_seconds=duration_seconds
+                )
+            else:
+                collector.flush_error(
+                    error=str(stage_err),
+                    started_at=started_at,
+                    duration_seconds=duration_seconds,
+                    context=self.context,
+                )
+        self._mark_stage_failed(
+            attempt=attempt,
+            stage_name=stage_name,
+            error=str(stage_err),
+            failure_kind=getattr(stage_err, "code", "STAGE_FAILED"),
+            outputs=(
+                self._validation_artifact_mgr.build_dataset_validation_state_outputs(error=str(stage_err))
+                if stage_name == StageNames.DATASET_VALIDATOR
+                else None
+            ),
+        )
+        self._finalize_attempt_state(
+            state=state, attempt=attempt, status=StageRunState.STATUS_FAILED
+        )
+        state.current_output_lineage = update_lineage(
+            state.current_output_lineage,
+            stage_name=stage_name,
+            attempt_id=attempt.attempt_id,
+            remove=True,
+        )
+        self._save_state()
+        return Err(
+            AppError(
+                message=f"Stage '{stage_name}' failed: {stage_err.message}",
+                code="STAGE_FAILED",
+                details={**stage_err.to_log_dict(), "stage_name": stage_name, "stage_idx": stage_idx},
+            )
+        )
+
+    def _handle_stage_success(
+        self,
+        *,
+        state: PipelineState,
+        attempt: PipelineAttemptState,
+        stage_name: str,
+        stage_idx: int,
+        collector: StageArtifactCollector | None,
+        started_at: str,
+        duration_seconds: float,
+    ) -> None:
+        """Handle a successful stage completion: flush artifacts, log, update lineage/state."""
+        outputs = self._extract_restart_outputs(stage_name)
+        skip_reason = self._get_stage_skip_reason(stage_name)
+
+        if collector and not collector.is_flushed:
+            if stage_name == StageNames.DATASET_VALIDATOR:
+                self._validation_artifact_mgr.flush_validation_artifact(
+                    started_at=started_at, duration_seconds=duration_seconds
+                )
+            else:
+                self._fill_from_context(stage_name, collector)
+                collector.flush_ok(
+                    started_at=started_at,
+                    duration_seconds=duration_seconds,
+                    context=self.context,
+                )
+
+        if self._mlflow_manager:
+            self._log_stage_specific_info(stage_name)
+            self._mlflow_manager.log_stage_complete(
+                stage_name=stage_name, stage_idx=stage_idx, duration_seconds=duration_seconds
+            )
+
+        if skip_reason is not None:
+            self._mark_stage_skipped(
+                attempt=attempt, stage_name=stage_name, reason=skip_reason, outputs=outputs
+            )
+            state.current_output_lineage = update_lineage(
+                state.current_output_lineage,
+                stage_name=stage_name,
+                attempt_id=attempt.attempt_id,
+                remove=True,
+            )
+        else:
+            self._mark_stage_completed(attempt=attempt, stage_name=stage_name, outputs=outputs)
+            state.current_output_lineage = update_lineage(
+                state.current_output_lineage,
+                stage_name=stage_name,
+                attempt_id=attempt.attempt_id,
+                outputs=outputs,
+            )
+
+        self._save_state()
+        logger.info(f"Stage {stage_idx + 1} completed successfully ({duration_seconds:.1f}s)")
 
     def _bootstrap_pipeline_state(
         self,
