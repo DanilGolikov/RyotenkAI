@@ -3,17 +3,12 @@ import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConf
 import { ArrayField } from './ArrayField'
 import { FieldAnchor } from './FieldAnchor'
 import { HelpTooltip } from './HelpTooltip'
+import { AlertIcon } from '../icons'
 import { HFModelField } from './HFModelField'
 import { InferenceProviderField } from './InferenceProviderField'
 import { SelectField } from './SelectField'
 import { TrainingProviderField } from './TrainingProviderField'
 import { UnionField } from './UnionField'
-import {
-  GLOBAL_HP_RECOMMENDATIONS,
-  LORA_RECOMMENDATIONS,
-  STRATEGY_PHASE_RECOMMENDATIONS,
-} from '../../lib/loraRecommendations'
-import { RecommendationChips } from './RecommendationChips'
 import { useClientFieldValidation, useFieldStatus, useValidationCtx } from './ValidationContext'
 import type { FieldStatus } from './ValidationContext'
 
@@ -122,8 +117,20 @@ function LabelledRow({
   children: React.ReactNode
 }) {
   const status = useFieldStatus(path ?? '', Boolean(required), value)
+  const ctx = useValidationCtx()
   const bar = path && !suppressBar ? STATUS_BORDER[status.state] : STATUS_BORDER.idle
   const labelBorder = path ? LABEL_PILL_BORDER[status.state] : LABEL_PILL_BORDER.idle
+  // Pulse class: soft yellow attention halo, applied to both halves
+  // while the field has an unresolved error AND isn't currently
+  // focused. The moment the user clicks into the field, focusedPath
+  // matches and the class falls off — animation stops cleanly. Kept
+  // OFF the input-side wrapper when `suppressBar` is set (e.g.
+  // checkboxes) to avoid the halo cupping a 16px box.
+  const isFocused = path != null && ctx?.focusedPath === path
+  const pulseCls =
+    path && status.state === 'error' && !isFocused
+      ? 'field-attention-pulse'
+      : ''
   // Derive a stable DOM id from the dotted config path so the <label
   // htmlFor> binds to the input rendered by children, and screen
   // readers can announce "Field X, required, value Y" consistently.
@@ -141,7 +148,7 @@ function LabelledRow({
     <div className="group/row py-1.5">
       <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
         <div
-          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} px-2.5 h-8 transition-colors group-focus-within/row:bg-brand-weak/10 group-focus-within/row:border-brand/30`}
+          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} ${pulseCls} px-2.5 h-8 transition-colors group-focus-within/row:bg-brand-weak/10 group-focus-within/row:border-brand/30`}
         >
           {/* Required marker lives in a fixed-width slot on the left so
               every row aligns to the same column, regardless of label
@@ -149,7 +156,7 @@ function LabelledRow({
               an invisible placeholder to preserve the grid. */}
           <span
             aria-hidden={!required}
-            className={`inline-flex w-2 shrink-0 text-brand text-xs leading-none ${required ? '' : 'invisible'}`}
+            className={`inline-flex w-2 shrink-0 text-brand-warm text-xs leading-none ${required ? '' : 'invisible'}`}
           >
             *
           </span>
@@ -160,11 +167,25 @@ function LabelledRow({
             {label}
             {required && <span className="sr-only"> (required)</span>}
           </label>
+          {/* Error glyph — sits to the LEFT of the help "?" so the
+              user registers "something's wrong here" before they
+              look at the input column. Only rendered on error; no
+              tooltip interaction — the full message already lives
+              inline below the field row. */}
+          {status.state === 'error' && (
+            <span
+              aria-hidden
+              title={status.message}
+              className="inline-flex w-4 h-4 items-center justify-center text-err shrink-0"
+            >
+              <AlertIcon className="w-3.5 h-3.5" />
+            </span>
+          )}
           <HelpTooltip text={description} label={helpLabel} />
         </div>
         <div
           id={inputId}
-          className={`w-full min-w-0 ${bar} transition-colors`}
+          className={`w-full min-w-0 ${bar} ${pulseCls} transition-colors`}
           aria-invalid={status.state === 'error' || undefined}
           aria-describedby={
             status.state === 'error' && inputId ? `${inputId}-err` : undefined
@@ -206,8 +227,8 @@ function useFieldHandlers(path: string) {
 
 // Dense input baseline: 32px height, 13px text, monospace for values.
 // Grafana-flat: neutral surface-1 bg + hairline line-1 border. Focus
-// lifts to brand border (pink) without any coloured background, so the
-// form reads as chrome rather than decoration.
+// lifts to brand border (violet) without any coloured background, so
+// the form reads as chrome rather than decoration.
 const INPUT_BASE =
   'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors placeholder:text-ink-4 placeholder:italic'
 
@@ -451,14 +472,11 @@ export function FieldRenderer(props: FieldProps) {
       // a nested collapsible card inside it.
       //
       // Header design — follows the Linear/Stripe/GitHub pattern for
-      // config forms (researched for this pass, Nov 2026):
+      // config forms:
       //   • Typography carries the hierarchy (18–20 px, font-weight 600).
-      //     Decoration is a short accent, not a column-height bar.
-      //   • A tiny uppercase "eyebrow" sits above the title — gives
-      //     context ("Section") without bolder chrome.
-      //   • A short gradient underline (~64 px) under the title reads as
-      //     a tasteful flourish, disappears when glanced at, present
-      //     when looked for.
+      //     Decoration is minimal — no accent bars or gradient flourishes.
+      //   • A tiny uppercase "eyebrow" above the title gives context
+      //     ("Section") without bolder chrome.
       //   • Hairline divider below the whole block keeps rhythm between
       //     sections without a heavy box.
       return (
@@ -473,10 +491,6 @@ export function FieldRenderer(props: FieldProps) {
               </h3>
               <HelpTooltip text={description} label={`Help for ${label}`} />
             </div>
-            <span
-              aria-hidden="true"
-              className="block mt-2 h-[2px] w-16 rounded-full bg-gradient-to-r from-brand via-brand-alt to-transparent opacity-80"
-            />
           </header>
           <ObjectFields
             root={root}
@@ -490,62 +504,18 @@ export function FieldRenderer(props: FieldProps) {
         </div>
       )
     }
-    // Recommendation chips — one-click-fill presets for a few known
-    // groups so the user doesn't have to remember conventional values.
-    // Detected by path suffix (case-insensitive) against well-known
-    // group names from the schema. Each group has its own preset list
-    // in `lib/loraRecommendations.ts` (name retained for backwards
-    // compat, but the file now holds several categories).
-    const currentObj = (fallback as Record<string, unknown>) ?? {}
-    const setObj = (next: Record<string, unknown>) => onChange(next)
-    let bodyExtra: React.ReactNode = null
-    // Strategy phase hyperparameters come FIRST — path is like
-    // `training.strategies.0.hyperparams`, which would otherwise match
-    // the broader `hyperparams$` rule below and mis-suggest the
-    // global-HP presets.
-    const phaseMatch = /strategies\.(\d+)\.(?:hyperparams|phase_hyperparameters)$/.exec(path)
-    if (/(^|\.)(qlora|lora)$/.test(path)) {
-      bodyExtra = (
-        <RecommendationChips
-          currentValue={currentObj}
-          recommendations={LORA_RECOMMENDATIONS}
-          onApply={setObj}
-        />
-      )
-    } else if (phaseMatch) {
-      // We don't have root access here to read the sibling
-      // `strategy_type` — fall back to showing SFT presets (the most
-      // common starting phase) and let the chip labels advertise
-      // strategy-specific alternatives when the user iterates. A
-      // future pass can surface strategy_type through a context.
-      const fallbackType = 'sft'
-      const recs = STRATEGY_PHASE_RECOMMENDATIONS[fallbackType] ?? []
-      if (recs.length > 0) {
-        bodyExtra = (
-          <RecommendationChips
-            title="Phase recommendations (sft baseline)"
-            currentValue={currentObj}
-            recommendations={recs}
-            onApply={setObj}
-          />
-        )
-      }
-    } else if (/^training\.hyperparams$/.test(path) || /(^|\.)global_hyperparameters$/.test(path)) {
-      bodyExtra = (
-        <RecommendationChips
-          currentValue={currentObj}
-          recommendations={GLOBAL_HP_RECOMMENDATIONS}
-          onApply={setObj}
-        />
-      )
-    }
+    // Per-block recommendation chips were removed — starter values
+    // now ship as top-level config presets (configs/presets/*.yaml,
+    // loaded via the PresetDropdown in ConfigTab). Keeps the form
+    // chromeless inside groups and moves "I want a sensible starting
+    // point" up one level where it belongs.
     return wrapAnchor(
       <CollapsibleCard
         label={label}
         description={description}
         required={required}
         headerExtra={null}
-        bodyExtra={bodyExtra}
+        bodyExtra={null}
       >
         <ObjectFields
           root={root}
@@ -894,7 +864,7 @@ function CollapsibleCard({
           </span>
           <span className="text-xs text-ink-1 font-medium">
             {label}
-            {required && <span className="ml-1 text-brand">*</span>}
+            {required && <span className="ml-1 text-brand-warm">*</span>}
           </span>
         </button>
         <span data-no-toggle>

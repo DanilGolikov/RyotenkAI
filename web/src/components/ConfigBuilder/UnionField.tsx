@@ -115,7 +115,7 @@ export function UnionField({
           </span>
           <span className="text-xs text-ink-1 font-medium">
             {label}
-            {required ? <span className="text-brand ml-1">*</span> : null}
+            {required ? <span className="text-brand-warm ml-1">*</span> : null}
           </span>
         </button>
         <div className="ml-auto" data-no-toggle>

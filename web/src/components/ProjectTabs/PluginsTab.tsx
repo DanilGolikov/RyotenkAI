@@ -261,7 +261,7 @@ export function PluginsTab({ projectId }: Props) {
       ) : pluginsQuery.error ? (
         <div className="text-sm text-err">{(pluginsQuery.error as Error).message}</div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3">
           {(pluginsQuery.data?.plugins ?? []).map((p) => (
             <PluginToggleCard
               key={p.id}

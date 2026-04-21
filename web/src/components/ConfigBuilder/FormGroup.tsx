@@ -38,7 +38,7 @@ export function FormGroup({
       )}
       <span className="text-sm font-medium text-ink-1">{title}</span>
       <HelpTooltip text={helpText} />
-      {required && <span className="text-[0.6rem] text-brand">required</span>}
+      {required && <span className="text-[0.6rem] text-brand-warm">required</span>}
       {badge}
       {description && (
         <span className="ml-2 text-2xs text-ink-3 truncate flex-1">{description}</span>

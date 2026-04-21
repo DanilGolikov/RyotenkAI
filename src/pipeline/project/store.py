@@ -143,6 +143,18 @@ class ProjectStore:
         metadata.updated_at = utc_now_iso()
         atomic_write_json(self.metadata_path, metadata.to_dict())
 
+    def update_description(self, description: str) -> ProjectMetadata:
+        """Patch ``description`` + ``updated_at`` in metadata, leaving every
+        other identity field (id, name, created_at, favorites) untouched.
+        Returns the fresh metadata so callers can echo it back."""
+        if not self.exists():
+            raise ProjectStoreError(f"project not found at {self.root}")
+        metadata = self.load()
+        metadata.description = description
+        metadata.updated_at = utc_now_iso()
+        atomic_write_json(self.metadata_path, metadata.to_dict())
+        return metadata
+
     # ---------- Config ------------------------------------------------------
 
     def current_yaml_text(self) -> str:

@@ -49,7 +49,10 @@ export function DiffBadge({ presetName, baseline, current, onClear }: Props) {
         onClick={() => setOpen((v) => !v)}
         className={`rounded-md border border-brand-alt/50 bg-brand-alt/10 text-brand-alt px-2 py-1 text-[0.65rem] transition-shadow duration-[1500ms] ${
           flash
-            ? 'shadow-[0_0_20px_rgba(237,72,127,0.45)]'
+            // Burgundy flash glow — warm-accent `pop` next to the
+            // cool-violet theme for a brief "preset just applied"
+            // signal. #800020 (classic wine burgundy) + 0.5 alpha.
+            ? 'shadow-[0_0_20px_rgba(128,0,32,0.55)]'
             : 'shadow-none'
         }`}
       >

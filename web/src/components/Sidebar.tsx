@@ -98,9 +98,8 @@ export function Sidebar() {
             collapsed ? 'max-w-0 opacity-0' : 'max-w-[180px] opacity-100',
           ].join(' ')}
         >
-          <div className="text-sm font-semibold whitespace-nowrap">
-            <span className="text-ink-1">Ryotenk</span>
-            <span className="gradient-text">AI</span>
+          <div className="text-sm font-semibold whitespace-nowrap text-ink-1">
+            Ryotenk<span className="text-brand-alt">AI</span>
           </div>
           <div className="text-2xs text-ink-3 whitespace-nowrap">pipeline control plane</div>
         </div>

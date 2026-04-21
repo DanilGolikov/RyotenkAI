@@ -36,7 +36,7 @@ export function LaunchPage() {
   return (
     <div className="p-5 space-y-5 max-w-[900px]">
       <section className="space-y-1">
-        <h1 className="text-2xl font-semibold gradient-text">Launch</h1>
+        <h1 className="text-2xl font-semibold text-ink-1">Launch</h1>
         <p className="text-xs text-ink-3">
           Create a new run directory and start the pipeline. Config validation is optional but recommended.
         </p>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   useProjectConfig,
@@ -7,9 +7,9 @@ import {
   useSaveProjectConfig,
   useValidateProjectConfig,
 } from '../../api/hooks/useProjects'
+import { useConfigPresets } from '../../api/hooks/useConfigPresets'
 import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
-import { useRef } from 'react'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import { DiffBadge } from '../ConfigBuilder/DiffBadge'
 import { PresetDropdown } from '../ConfigBuilder/PresetDropdown'
@@ -136,17 +136,44 @@ export function ConfigTab({ projectId }: { projectId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configQuery.data, dirty, projectId])
 
+  // Auto-seed new projects with the first preset so a fresh project
+  // starts from a sensible ≤ 1B baseline instead of an empty editor.
+  // Runs at most once per project session, and only while:
+  //   - the project's current config is empty (never saved, or cleared)
+  //   - the user hasn't started editing (not dirty)
+  //   - presets have loaded from the backend
+  // Applied silently (no preview modal) — the whole point is "new
+  // project already comes populated". If the user hates the defaults
+  // they can either edit or Load preset another one.
+  const presetsQuery = useConfigPresets()
+  const seededRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (seededRef.current === projectId) return
+    if (!configQuery.data) return
+    if (dirty) return
+    const serverText = (configQuery.data.yaml ?? '').trim()
+    if (serverText) {
+      // Project already has a saved config — nothing to seed.
+      seededRef.current = projectId
+      return
+    }
+    const first = presetsQuery.data?.presets?.[0]
+    if (!first) return
+    setYamlText(first.yaml)
+    const parsed = safeYamlParse(first.yaml)
+    setFormValue(parsed ?? {})
+    setDirty(true)
+    seededRef.current = projectId
+  }, [configQuery.data, presetsQuery.data, dirty, projectId])
+
   const validationResult: ConfigValidationResult | undefined = validateMut.data
   const fieldErrors = validationResult?.field_errors ?? {}
 
-  // Debounced auto-validate on any change (form or yaml).
-  useEffect(() => {
-    if (!dirty) return
-    const handle = window.setTimeout(() => {
-      validateMut.mutate(yamlText)
-    }, 900)
-    return () => window.clearTimeout(handle)
-  }, [yamlText, dirty])
+  // Explicit-only validation. Auto-validate (debounced on edit +
+  // on-blur per field) was removed because: it spammed /validate on
+  // every keystroke, made the banner jitter between states mid-edit,
+  // and could pull focus on repeated 0→N error transitions. Validation
+  // now runs ONLY when the user clicks Validate or Save.
 
   // Warn on tab-close / reload when there are unsaved form changes.
   // Only installs the listener when dirty so we don't pay the
@@ -165,18 +192,11 @@ export function ConfigTab({ projectId }: { projectId: string }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [dirty])
 
-  // Blur handler sent down into every field — debounced so a rapid
-  // tab-through doesn't spam ``/validate``.
-  const validateTimer = useRef<number | null>(null)
-  const requestValidate = () => {
-    if (validateTimer.current !== null) {
-      window.clearTimeout(validateTimer.current)
-    }
-    validateTimer.current = window.setTimeout(() => {
-      validateMut.mutate(yamlText)
-      validateTimer.current = null
-    }, 250)
-  }
+  // No-op: ValidationContext still wires `onRequestValidate` down to
+  // every field's onBlur, but we intentionally don't hit the server.
+  // Client-side schema checks in ValidationContext stay active and
+  // paint bad fields red in real-time without any network traffic.
+  const requestValidate = () => undefined
   // Accept caller-provided errors for the context (field_errors is
   // authoritative, ConfigTab owns this — no local setter needed).
   const noopSetErrors = () => undefined
@@ -298,6 +318,27 @@ export function ConfigTab({ projectId }: { projectId: string }) {
             window.dispatchEvent(new HashChangeEvent('hashchange'))
           }
         }}
+        onJumpToField={(path) => {
+          // Field jump is only meaningful in Form view — FieldAnchor
+          // elements don't exist in YAML mode. Force-switch first,
+          // then set hash so ConfigBuilder's hashchange handler
+          // picks up the dotted trailer and scrolls to the field.
+          if (view !== 'form') {
+            setView('form')
+            setPresetCloseToken((t) => t + 1)
+          }
+          const nextHash = `#project:${path}`
+          if (window.location.hash !== nextHash) {
+            history.replaceState(null, '', nextHash)
+          }
+          // Dispatch unconditionally: if we just switched views, the
+          // FieldAnchor isn't mounted yet, so the event needs to fire
+          // *after* React paints the new form tree. The 120ms delay
+          // matches the 100ms scroll timeout inside ConfigBuilder.
+          window.setTimeout(() => {
+            window.dispatchEvent(new HashChangeEvent('hashchange'))
+          }, 120)
+        }}
       />
 
       {draft.draftPrompt && (
@@ -384,20 +425,29 @@ export function ConfigTab({ projectId }: { projectId: string }) {
           <div className="space-y-1">
             {/* Button order: Save · Save as Draft · Validate — the
                 "commit" actions first (primary → secondary), the
-                "checking" action last. Validate ends the row because
-                auto-validate runs on blur anyway, so explicit Validate
-                is mostly a "re-run now" escape hatch.
+                "checking" action last.
 
-                Save is enabled whenever the form has changes. We used
-                to also block on validation failures, but that made the
-                button feel broken in YAML mode where the user might
-                knowingly save an in-progress config — the server
-                still validates on PUT and surfaces a real error if
-                anything is truly wrong. */}
+                Validation is now EXPLICIT — it runs only when the
+                user clicks Save (which fires validate + save in
+                parallel) or Validate (check-without-committing).
+                Typing no longer spams /validate.
+
+                Save is enabled whenever the form has changes. We
+                deliberately don't gate on validation failures — the
+                server rejects bad YAML on PUT and surfaces the real
+                error below. Client-side schema checks still paint
+                bad fields red in real time without hitting the
+                network. */}
             <div className="flex items-center gap-2 text-xs">
               <button
                 type="button"
                 onClick={async () => {
+                  // Kick off validate alongside save so the banner
+                  // reflects the state of *this* yamlText after the
+                  // round-trip (we don't block on it — save still
+                  // owns success/failure; validate just paints the
+                  // checks list).
+                  validateMut.mutate(yamlText)
                   await saveMut.mutateAsync(yamlText)
                   setDirty(false)
                   draft.clear()
@@ -437,29 +487,31 @@ export function ConfigTab({ projectId }: { projectId: string }) {
               >
                 Validate
               </button>
+              {/* Compare moved into the main button group: it's a peer
+                  inspection action — Save / Save as Draft / Validate /
+                  Compare. Previously parked at `ml-auto` (right edge),
+                  the eye had to skip the whole row to spot it. */}
+              <button
+                type="button"
+                onClick={() => setCompareOpen(true)}
+                className="rounded-md border border-line-1 px-3 py-1.5 text-ink-2 hover:text-ink-1 hover:border-line-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                disabled={!latestVersionFilename}
+                title={
+                  latestVersionFilename
+                    ? 'Compare current form with the most recent saved version'
+                    : 'No saved versions yet'
+                }
+              >
+                Compare with last run
+              </button>
               {saveDisabled && saveDisabledReason && (
                 <span
                   id="save-disabled-reason"
-                  className="text-2xs text-ink-3"
+                  className="ml-auto text-2xs text-ink-3"
                 >
                   {saveDisabledReason}
                 </span>
               )}
-              <div className="ml-auto">
-                <button
-                  type="button"
-                  onClick={() => setCompareOpen(true)}
-                  className="rounded-md border border-line-1 px-3 py-1.5 text-ink-3 hover:text-ink-1 hover:border-line-2 text-2xs disabled:opacity-40 disabled:cursor-not-allowed"
-                  disabled={!latestVersionFilename}
-                  title={
-                    latestVersionFilename
-                      ? 'Compare current form with the most recent saved version'
-                      : 'No saved versions yet'
-                  }
-                >
-                  Compare with last run
-                </button>
-              </div>
             </div>
           </div>
         )

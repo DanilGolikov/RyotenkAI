@@ -12,7 +12,7 @@ export function Overview() {
   return (
     <div className="p-5 space-y-5 max-w-[1400px]">
       <section className="space-y-1">
-        <h1 className="text-2xl font-semibold gradient-text">Overview</h1>
+        <h1 className="text-2xl font-semibold text-ink-1">Overview</h1>
         <p className="text-xs text-ink-3">Pipeline fleet at a glance.</p>
       </section>
 

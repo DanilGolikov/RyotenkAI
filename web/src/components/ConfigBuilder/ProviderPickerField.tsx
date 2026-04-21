@@ -117,7 +117,7 @@ export function ProviderPickerField({
     <div className="rounded-md border border-line-1 bg-surface-1 p-4 space-y-4">
       <div>
         <div className="text-sm font-medium text-ink-1">
-          Providers {required && <span className="ml-1 text-brand">*</span>}
+          Providers {required && <span className="ml-1 text-brand-warm">*</span>}
         </div>
         <div className="text-2xs text-ink-3">
           Named compute providers. Pick one of your saved Settings providers or

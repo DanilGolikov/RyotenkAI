@@ -58,12 +58,34 @@ export function ConfigBuilder({
     function onHash() {
       setActive(readInitialGroup(keys, hashPrefix))
       // If the hash has a dotted trailer like "training.lora.r", try to scroll
-      // to the matching FieldAnchor once the group is mounted.
+      // to the matching FieldAnchor once the group is mounted, THEN move
+      // focus to the first focusable input inside so the caret lands on
+      // the problem field. Focusing also cancels the yellow
+      // `.field-attention-pulse` halo because useFieldStatus flips
+      // state from 'error' → 'editing' via focusedPath.
       const trailer = readDottedTrailer(hashPrefix)
       if (trailer) {
         setTimeout(() => {
-          const anchor = document.querySelector(`[data-field-path="${CSS.escape(trailer)}"]`)
-          if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          const anchor = document.querySelector(
+            `[data-field-path="${CSS.escape(trailer)}"]`,
+          )
+          if (!anchor) return
+          anchor.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Defer focus past the smooth-scroll animation (~320ms
+          // across most browsers) so the caret lands ONCE the field
+          // is in view — focusing during scroll cancels the animation
+          // in Safari and Firefox. Prefer a visible input over a
+          // button so the keyboard is ready for typing.
+          window.setTimeout(() => {
+            const focusable = anchor.querySelector<HTMLElement>(
+              'input:not([type="hidden"]):not([disabled]), ' +
+                'textarea:not([disabled]), select:not([disabled]), ' +
+                'button:not([disabled]):not([aria-label^="Copy link"])',
+            )
+            if (focusable) {
+              focusable.focus({ preventScroll: true })
+            }
+          }, 360)
         }, 100)
       }
     }
@@ -98,7 +120,7 @@ export function ConfigBuilder({
   return (
     <div className="grid grid-cols-[232px_1fr] -mx-5 -my-5">
       <aside
-        className="min-w-0 border-r border-line-1 px-3 py-5 bg-gradient-to-b from-brand/[0.04] via-surface-1 to-brand-alt/[0.04]"
+        className="min-w-0 border-r border-line-1 px-3 py-5"
       >
         <TocRail
           schema={schema}

@@ -10,7 +10,7 @@ import { PluginsTab } from '../components/ProjectTabs/PluginsTab'
 import { RunsTab } from '../components/ProjectTabs/RunsTab'
 import { SettingsTab } from '../components/ProjectTabs/SettingsTab'
 import { VersionsTab } from '../components/ProjectTabs/VersionsTab'
-import { Card, Spinner } from '../components/ui'
+import { Spinner } from '../components/ui'
 
 const TABS: { to: string; label: string }[] = [
   { to: 'info', label: 'Info' },
@@ -23,26 +23,74 @@ const TABS: { to: string; label: string }[] = [
 
 function InfoTab({ project }: { project: ProjectDetail }) {
   return (
-    <dl className="space-y-3 text-xs">
-      <div className="flex gap-4">
-        <dt className="w-28 text-ink-3 shrink-0">Name</dt>
-        <dd className="text-ink-1 break-all">{project.name}</dd>
+    // `max-w-4xl` keeps the metadata block from pooling to the left
+    // on a 1200+ px canvas — the dl previously left ~70 % of the row
+    // empty. Description gets its own full-width block so the
+    // textarea can stretch comfortably; metadata sits above in a
+    // 2-column grid that wraps naturally on narrower viewports.
+    <div className="max-w-4xl space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4 text-xs">
+        <InfoField label="Name" value={project.name} />
+        <InfoField label="ID" value={project.id} mono />
+        <InfoField label="Created" value={project.created_at} mono />
+        <InfoField label="Updated" value={project.updated_at} mono />
       </div>
-      <div className="flex gap-4">
-        <dt className="w-28 text-ink-3 shrink-0">ID</dt>
-        <dd className="text-ink-2 font-mono break-all">{project.id}</dd>
+
+      <div className="space-y-2">
+        <div className="text-[0.7rem] uppercase tracking-wider text-ink-4 font-medium">
+          Description
+        </div>
+        <DescriptionEditor project={project} />
       </div>
-      <div className="flex gap-4">
-        <dt className="w-28 text-ink-3 shrink-0 pt-1">Description</dt>
-        <dd className="flex-1 min-w-0">
-          <DescriptionEditor project={project} />
-        </dd>
+
+      <div className="space-y-2">
+        <div className="text-[0.7rem] uppercase tracking-wider text-ink-4 font-medium">
+          Workspace
+        </div>
+        <WorkspacePath path={project.path} />
       </div>
-      <div className="flex gap-4">
-        <dt className="w-28 text-ink-3 shrink-0">Workspace</dt>
-        <dd className="text-ink-4 font-mono break-all">{project.path}</dd>
+    </div>
+  )
+}
+
+function InfoField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="space-y-1 min-w-0">
+      <div className="text-[0.65rem] uppercase tracking-wider text-ink-4 font-medium">
+        {label}
       </div>
-    </dl>
+      <div className={`text-ink-1 break-all ${mono ? 'font-mono text-[0.75rem]' : ''}`}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function WorkspacePath({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(path)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard unavailable — leave silently */
+    }
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-line-1 bg-surface-1 px-3 py-2">
+      <code className="flex-1 min-w-0 text-[0.75rem] font-mono text-ink-2 break-all">
+        {path}
+      </code>
+      <button
+        type="button"
+        onClick={copy}
+        title={copied ? 'Copied' : 'Copy path'}
+        className="text-2xs text-ink-3 hover:text-ink-1 transition shrink-0 px-2 py-1 rounded border border-line-1 hover:border-line-2"
+      >
+        {copied ? 'copied' : 'copy'}
+      </button>
+    </div>
   )
 }
 
@@ -121,20 +169,38 @@ export function ProjectDetailPage() {
 
   return (
     // Edge-to-edge project shell: no outer padding — the card fills
-    // main completely. Removes the "frame" effect where page bg
-    // peeked through around the card. h-full from AppShell cascades
-    // down so the card occupies full viewport height minus topbar.
+    // main completely. Uses `.card-hero-ambient` so the root-level
+    // ambient gradients (top-left burgundy, bottom-right violet)
+    // bleed through, matching the visual of Overview/Projects/Settings
+    // where those ambient washes are visible behind content.
     <div className="h-full flex flex-col min-h-0">
-      <Card padding="p-0" hero className="flex-1 min-h-0 flex flex-col !rounded-none !border-0">
-        {/* Project-name strip + tabs — natural height, sit at top of
-            card. They don't move because the scrolling region lives
-            below them. */}
-        <div className="px-5 py-3 border-b border-line-1/60 flex items-baseline gap-3 shrink-0">
-          <div className="text-sm font-semibold text-ink-1 truncate">{project.name}</div>
-          <div className="text-[0.65rem] font-mono text-ink-4 truncate">{project.id}</div>
+      <div className="card-hero-ambient flex-1 min-h-0 flex flex-col !rounded-none !border-0">
+        {/* Project header: real h1 with burgundy-gradient text, ID
+            slug below as a quiet caption, optional description on
+            its OWN line below the ID. Previously id + description
+            shared a single flex row which truncated both on narrow
+            viewports and made description feel tacked-on. Split
+            layout gives the description its full breathing room. */}
+        <div className="px-6 pt-5 pb-4 border-b border-line-1/60 shrink-0">
+          <h1 className="text-2xl font-semibold text-ink-1 leading-tight truncate">
+            {project.name}
+          </h1>
+          <div className="mt-1 text-[0.65rem] font-mono text-ink-4 truncate">
+            {project.id}
+          </div>
+          {project.description && (
+            <div className="mt-1.5 text-xs text-ink-3 line-clamp-2 max-w-3xl">
+              {project.description}
+            </div>
+          )}
         </div>
 
-        <div className="px-3 pt-2 border-b border-line-1 flex gap-1 shrink-0">
+        {/* Tabs strip — aligned with header padding (px-6), pt-3 for
+            breathing room from the title block above, slightly
+            larger text-sm for easier hit-target on a 1200+ canvas,
+            and a brighter line-2 bottom border so the boundary with
+            the content area reads clearly. */}
+        <div className="px-6 pt-3 border-b border-line-2 flex gap-1 shrink-0">
           {TABS.map((t) => (
             <NavLink
               key={t.to}
@@ -142,10 +208,28 @@ export function ProjectDetailPage() {
               replace
               className={({ isActive }) =>
                 [
-                  'px-3 py-2 text-xs rounded-t-md transition',
+                  // Border widths reserved in base (1px all sides +
+                  // 2px bottom) so toggling the colors doesn't shift
+                  // layout. Colors are assigned separately per-state —
+                  // putting `border-transparent` in the base collides
+                  // with `border-line-2` in active (Tailwind generates
+                  // both as `border-color`, and ordering in the
+                  // stylesheet decides which wins per side), which
+                  // is why the top/side frame was invisible before.
+                  'relative px-3 py-2.5 text-sm rounded-t-md',
+                  'border border-b-2',
+                  'transition-colors duration-150',
                   isActive
-                    ? 'text-ink-1 border-b-2 border-brand -mb-px'
-                    : 'text-ink-3 hover:text-ink-1',
+                    // Three concurrent signals on active — matches the
+                    // NN/g recommendation of "active needs ~3× weight
+                    // over inactive":
+                    //   1) brighter text (ink-1) + medium weight
+                    //   2) burgundy bottom "полоска" (2px)
+                    //   3) soft side+top frame (line-2) + bg lift to
+                    //      surface-3, so the tab silhouette reads
+                    //      as a card popping out of the strip.
+                    ? 'text-ink-1 font-medium bg-surface-3 border-[#3c4046] border-b-brand-warm'
+                    : 'text-ink-3 hover:text-ink-1 hover:bg-surface-2/50 border-transparent',
                 ].join(' ')
               }
             >
@@ -171,7 +255,7 @@ export function ProjectDetailPage() {
             <Route path="*" element={<Navigate to="info" replace />} />
           </Routes>
         </div>
-      </Card>
+      </div>
     </div>
   )
 }

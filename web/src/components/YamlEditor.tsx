@@ -49,8 +49,8 @@ import { tags as t } from '@lezer/highlight'
 // like any other value.
 //
 // Tag coverage:
-//   propertyName → brand (pink), weight 500, anchors "this is a key"
-//   number       → brand-alt (violet), numeric literal
+//   propertyName → brand (violet-500), weight 500, anchors "this is a key"
+//   number       → brand-alt (violet-300), numeric literal
 //   bool         → info (sky blue), truthy literal (distinct from
 //                  numbers on purpose — reading YAML on a dark panel,
 //                  having two literals in the same hue was
@@ -61,7 +61,7 @@ import { tags as t } from '@lezer/highlight'
 //   operator) falls back to default `color: #fafafa` so values read
 //   as plain white text.
 const yamlHighlight = HighlightStyle.define([
-  { tag: t.propertyName, color: '#ed487f', fontWeight: '500' },
+  { tag: t.propertyName, color: '#8b5cf6', fontWeight: '500' },
   { tag: t.number, color: '#b8a1fb' },
   { tag: t.bool, color: '#60a5fa' },
   { tag: t.keyword, color: '#f87171' },
@@ -78,7 +78,7 @@ const yamlHighlight = HighlightStyle.define([
 // value after `: ` and classifies it into four buckets mapped to CSS
 // classes. Palette follows the conventional Dracula / One-Dark mapping
 // for readability (strings = yellow, numbers = orange, booleans =
-// cyan, null = red, keys = brand pink).
+// cyan, null = red, keys = brand violet).
 //
 // Single regex with one capture group; the JS callback inspects the
 // captured text to decide the type. Alternation-in-regex with a
@@ -164,8 +164,8 @@ const editorTheme = EditorView.theme(
       borderRadius: '3px',
     },
     '.cm-foldGutter .cm-gutterElement:hover': {
-      color: '#ed487f',
-      backgroundColor: 'rgba(237, 72, 127, 0.14)',
+      color: '#8b5cf6',
+      backgroundColor: 'rgba(139, 92, 246, 0.14)',
     },
     // Value-literal decorations — palette follows the conventional
     // Dracula / One-Dark mapping (researched, see YamlEditor file
@@ -190,10 +190,10 @@ const editorTheme = EditorView.theme(
       borderLeftColor: '#fafafa',
     },
     '.cm-selectionBackground, .cm-content ::selection': {
-      backgroundColor: 'rgba(237, 72, 127, 0.28) !important',
+      backgroundColor: 'rgba(139, 92, 246, 0.28) !important',
     },
     '.cm-focused .cm-selectionBackground, .cm-focused .cm-content ::selection': {
-      backgroundColor: 'rgba(237, 72, 127, 0.38) !important',
+      backgroundColor: 'rgba(139, 92, 246, 0.38) !important',
     },
   },
   { dark: true },

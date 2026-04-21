@@ -26,26 +26,19 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Ambient backdrop — burgundy whisper in the top-left so brand colour
-   "lives" in the room without flooding the chrome. */
+/* Flat app canvas — no ambient corner gradients. The old burgundy
+   top-left + violet bottom-right radials made the app feel "moody"
+   / "foggy"; dropping them matches RunPod-style flat-dark which
+   reads as clean and techno. `isolation: isolate` kept so future
+   z-index use inside #root stays contained. */
 #root {
   position: relative;
   isolation: isolate;
 }
-#root::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  background:
-    radial-gradient(circle at 6% -8%, rgba(230, 53, 112, 0.14), transparent 48%),
-    radial-gradient(circle at 100% 100%, rgba(167, 139, 250, 0.11), transparent 50%);
-}
 
-/* Selection is brand-tinted (deliberate signal). */
+/* Selection is brand-tinted (deliberate signal) — now cool violet. */
 ::selection {
-  background: rgba(230, 53, 112, 0.38);
+  background: rgba(139, 92, 246, 0.38);
   color: #ffffff;
 }
 * {
@@ -58,19 +51,17 @@ body {
 *::-webkit-scrollbar-thumb:hover { background: #5d5d66; }
 
 :focus-visible {
-  outline: 2px solid #f25088;
+  outline: 2px solid #a78bfa;   /* violet-400 */
   outline-offset: 2px;
   border-radius: 4px;
 }
 
 @layer components {
-  /* ---------- Text ---------- */
-  .gradient-text {
-    background: linear-gradient(135deg, #f25088 0%, #bda7ff 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
+  /* `.gradient-text` and `.gradient-text-burgundy` were removed in
+     the cool-violet migration (2026-04). H1s on Overview / LaunchPage
+     / ProjectDetail / Sidebar caption now render as plain `text-ink-1`
+     — matches the RunPod flat-dark reference and keeps the one violet
+     accent reserved for CTA / nav-active / focus. */
 
   /* ---------- Surfaces ---------- */
   .card {
@@ -79,37 +70,40 @@ body {
   .card-raised {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card;
   }
-  /* Single "hero" variant — deep burgundy→indigo wash, the one card
-     allowed to wear brand. Uses `brand-weak` (#44182b, near-black
-     burgundy) instead of the lit `brand` pink so the top of the card
-     reads as "vintage wine" rather than "bubblegum", and blends into
-     `surface-2` by the midline. Matches the ambient backdrop in
-     `#root::before` so the card feels cut from the same fabric as the
-     canvas. */
+  /* "Hero" card — previously wore a burgundy→indigo wash in the
+     title band; the wash made the app read as "moody", so it was
+     stripped in the cool-violet migration. Now the hero card is
+     just `.card-raised` with the same surface + border — identity
+     comes from the h1 copy + active-tab violet underline inside. */
   .card-hero {
     @apply bg-surface-2 border border-line-2 rounded-lg shadow-card relative overflow-hidden;
-    background-image:
-      linear-gradient(180deg,
-        rgba(68, 24, 43, 0.55) 0%,
-        rgba(68, 24, 43, 0.28) 25%,
-        rgba(55, 45, 80, 0.18) 50%,
-        transparent 80%);
+  }
+  /* Edge-to-edge variant (ProjectDetail full-bleed canvas). Keeps
+     the transparent body so nothing paints over the app canvas,
+     and since the canvas itself is flat surface-0 now, the page
+     reads as one contiguous dark slab rather than a card floating
+     on a tinted page. */
+  .card-hero-ambient {
+    @apply border border-line-2 rounded-lg shadow-card relative overflow-hidden;
+    background-color: transparent;
   }
 
   /* ---------- Buttons ---------- */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-md text-sm font-medium text-white relative overflow-hidden;
-    /* Wide gradient (200%) + shifting background-position gives the
-       "shimmer" — colours slide across on hover. */
-    background-image: linear-gradient(120deg, #e63570 0%, #a78bfa 50%, #e63570 100%);
+    /* Wide gradient (220%) + shifting background-position gives the
+       "shimmer" — colours slide across on hover. Now mono-violet
+       (deep → light → deep) instead of warm burgundy→violet; same
+       mechanics, cool tone. */
+    background-image: linear-gradient(120deg, #7c3aed 0%, #b8a1fb 50%, #7c3aed 100%);
     background-size: 220% 100%;
     background-position: 0% 50%;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 4px 18px rgba(230,53,112,0.42);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 4px 18px rgba(139, 92, 246, 0.42);
     transition: transform .08s ease, filter .15s ease, background-position .9s ease, box-shadow .3s ease;
   }
   .btn-primary:hover:not(:disabled) {
     background-position: 100% 50%;
-    box-shadow: 0 1px 0 rgba(255,255,255,0.28) inset, 0 8px 26px rgba(230,53,112,0.55);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.28) inset, 0 8px 26px rgba(139, 92, 246, 0.55);
   }
   .btn-primary:active  { transform: translateY(1px); }
   .btn-primary:disabled { opacity: .5; cursor: not-allowed; filter: none; }
@@ -147,7 +141,7 @@ body {
   }
   .nav-item-active {
     @apply text-ink-1 bg-surface-2;
-    box-shadow: inset 2px 0 0 #e63570;
+    box-shadow: inset 2px 0 0 #8b5cf6;   /* violet-500 */
   }
 
   /* ---------- Inputs ---------- */
@@ -184,6 +178,33 @@ body {
 .fs-exit   { animation: fs-exit 160ms ease-in forwards; }
 .fs-backdrop-in  { animation: fs-backdrop-in 180ms ease-out; }
 .fs-backdrop-out { animation: fs-backdrop-out 160ms ease-in forwards; }
+
+/* ------------------------------------------------------------------
+   Field "attention" pulse — used on both halves of a LabelledRow
+   (label pill + input wrapper) when the field has an unresolved
+   validation error AND is NOT currently focused. A soft yellow glow
+   fades in and out via box-shadow so it layers on top of the existing
+   red error ring without mutating any colours. Stops as soon as the
+   user focuses the field (class is removed).
+
+   Why box-shadow and not background/border: the field already carries
+   a red border + red 2px ring in the error state; swapping colours
+   would lose that signal. An outer yellow halo sits beyond the red
+   ring so both reads ("this is an error" + "look here") are visible
+   at a glance.
+   ------------------------------------------------------------------ */
+@keyframes field-attention-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.55);
+  }
+}
+.field-attention-pulse {
+  animation: field-attention-pulse 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
 
 /* Live-running dot — sky-blue so "happening now" is visually distinct
    from the burgundy brand CTA. */

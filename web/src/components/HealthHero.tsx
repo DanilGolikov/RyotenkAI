@@ -149,10 +149,14 @@ export function HealthHero({ onReviewFailures }: { onReviewFailures?: () => void
     }
   }
 
-  // Alert tone gets a slightly warmer coral wash over the default hero gradient.
+  // Alert tone gets a faint red wash at the top so "something is
+  // wrong" reads instantly without tinting the whole card. The old
+  // recipe layered a second pink stop (rgba(198,48,107,0.04)) which
+  // clashed with the cool-violet theme — dropped it, kept the single
+  // red wash over the flat surface-2 base.
   const heroClasses =
     tone === 'alert'
-      ? 'card-hero !bg-none bg-[linear-gradient(180deg,rgba(248,113,113,0.10),rgba(198,48,107,0.04)_55%,transparent),linear-gradient(#1c1a23,#1c1a23)]'
+      ? 'card-hero !bg-none bg-[linear-gradient(180deg,rgba(248,113,113,0.10),transparent_70%),linear-gradient(#262a2f,#262a2f)]'
       : 'card-hero'
 
   return (

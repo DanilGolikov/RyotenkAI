@@ -175,7 +175,7 @@ export function ArrayField({
             </span>
             <span className="text-xs text-ink-1 font-medium">
               {label}
-              {required && <span className="ml-1 text-brand">*</span>}
+              {required && <span className="ml-1 text-brand-warm">*</span>}
             </span>
           </button>
           <span data-no-toggle>
@@ -335,7 +335,7 @@ function ArrayItem({
           <svg width="14" height="18" viewBox="0 0 14 18" className="opacity-70">
             <defs>
               <linearGradient id="chainArrow" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#ed487f" />
+                <stop offset="0%" stopColor="#7c3aed" />
                 <stop offset="100%" stopColor="#b8a1fb" />
               </linearGradient>
             </defs>
