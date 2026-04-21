@@ -49,7 +49,7 @@ def _discover_from_state(run_dir: Path, attempt_no: int) -> dict[str, Path]:
     if pipeline_log.exists():
         out[PIPELINE_LOG_NAME] = pipeline_log.resolve()
 
-    for stage_name, stage_state in attempt.stage_runs.items():
+    for stage_state in attempt.stage_runs.values():
         paths = stage_state.log_paths or {}
         for key, rel_path in paths.items():
             if not isinstance(rel_path, str) or not rel_path:
@@ -59,7 +59,10 @@ def _discover_from_state(run_dir: Path, attempt_no: int) -> dict[str, Path]:
                 # Expose the remote training log under its historical file name.
                 out[REMOTE_TRAINING_LOG_NAME] = abs_path
             else:
-                out[f"{stage_name}.log"] = abs_path
+                # File name is whatever the LogLayout actually wrote (slug),
+                # not a reconstruction from stage_name — which may carry
+                # spaces (e.g. "Dataset Validator").
+                out[Path(rel_path).name] = abs_path
     return out
 
 

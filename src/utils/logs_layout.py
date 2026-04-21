@@ -17,6 +17,7 @@ class — no module is allowed to construct log paths from raw string literals.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 LOGS_DIR_NAME = "logs"
@@ -26,6 +27,20 @@ STAGE_LOG_SUFFIX = ".log"
 
 STAGE_LOG_PATHS_KEY = "stage"
 REMOTE_TRAINING_LOG_PATHS_KEY = "remote_training"
+
+_SLUG_FALLBACK = "stage"
+_SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(name: str) -> str:
+    """Normalize a stage name for use as a filename.
+
+    Lowercases, replaces any non-[a-z0-9] run with a single underscore, and
+    strips leading/trailing underscores. Empty input or non-alphanumeric-only
+    input collapses to a safe fallback so we never produce an empty filename.
+    """
+    normalized = _SLUG_PATTERN.sub("_", name.lower()).strip("_")
+    return normalized or _SLUG_FALLBACK
 
 
 class LogLayout:
@@ -49,7 +64,7 @@ class LogLayout:
     def stage_log(self, stage_name: str) -> Path:
         if not stage_name:
             raise ValueError("stage_name must be non-empty")
-        return self.logs_dir / f"{stage_name}{STAGE_LOG_SUFFIX}"
+        return self.logs_dir / f"{_slugify(stage_name)}{STAGE_LOG_SUFFIX}"
 
     @property
     def remote_training_log(self) -> Path:
@@ -88,4 +103,5 @@ __all__ = [
     "STAGE_LOG_PATHS_KEY",
     "STAGE_LOG_SUFFIX",
     "LogLayout",
+    "_slugify",
 ]
