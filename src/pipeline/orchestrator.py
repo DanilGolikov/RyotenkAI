@@ -238,10 +238,6 @@ class PipelineOrchestrator:
         """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager)."""
         return self._mlflow_attempt.bootstrap()
 
-    def _get_mlflow_run_id(self) -> str | None:
-        """Best-effort MLflow run_id (delegates to MLflowAttemptManager)."""
-        return self._mlflow_attempt.get_run_id()
-
     def run(
         self,
         *,
@@ -516,16 +512,6 @@ class PipelineOrchestrator:
             context=ctx, stage_name=stage_name, outputs=outputs
         )
 
-    def _extract_restart_outputs(self, stage_name: str) -> dict[str, Any]:
-        return self._context_propagator.extract_restart_outputs(
-            context=self.context, stage_name=stage_name
-        )
-
-    def _get_stage_skip_reason(self, stage_name: str) -> str | None:
-        return self._context_propagator.get_stage_skip_reason(
-            context=self.context, stage_name=stage_name
-        )
-
     # ------------------------------------------------------------------
     # AttemptController backplane
     # ------------------------------------------------------------------
@@ -596,9 +582,6 @@ class PipelineOrchestrator:
         # MLflowAttemptManager may have written run ids onto state/attempt
         # out-of-band; persist those through the controller.
         self._attempt_controller.save()
-
-    def _open_existing_root_run(self, root_run_id: str) -> Any:
-        return self._mlflow_attempt.open_existing_root_run(root_run_id)
 
     def _teardown_mlflow_attempt(self, *, pipeline_success: bool) -> None:
         attempt_run_id = (
