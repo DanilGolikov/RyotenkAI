@@ -23,6 +23,7 @@ from src.pipeline.artifacts import (
     StageArtifactCollector,
 )
 from src.pipeline.artifacts.base import utc_now_iso
+from src.pipeline.config_drift import ConfigDriftValidator
 from src.pipeline.constants import (
     CTX_PROVIDER_NAME_UNKNOWN,
     CTX_PROVIDER_TYPE_UNKNOWN,
@@ -63,7 +64,6 @@ from src.pipeline.state import (
     StageRunState,
     acquire_run_lock,
     build_attempt_state,
-    hash_payload,
     update_lineage,
 )
 from src.pipeline.state.transitioner import (
@@ -83,7 +83,7 @@ from src.training.managers.mlflow_manager import MLflowManager  # noqa: TC001
 from src.utils.config import AdaLoraConfig, PipelineConfig, Secrets, load_config, load_secrets, validate_strategy_chain
 from src.utils.logger import console, get_run_log_dir, init_run_logging, logger, stage_logging_context
 from src.utils.logs_layout import LogLayout
-from src.utils.result import AppError, ConfigDriftError, Err, Ok, Result
+from src.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
@@ -245,6 +245,8 @@ class PipelineOrchestrator:
         self._context_propagator = ContextPropagator(self._validation_artifact_mgr)
         # Post-stage MLflow info logging (extracted from orchestrator).
         self._stage_info_logger = StageInfoLogger()
+        # Config hash / drift validation (extracted from orchestrator).
+        self._config_drift = ConfigDriftValidator(self.config)
 
         # Initialize stages (after context + collectors, since stages may reference validation mgr)
         self.stages: list[PipelineStage] = self._init_stages()
@@ -811,27 +813,7 @@ class PipelineOrchestrator:
         return state, "fresh", "fresh", self.stages[0].stage_name
 
     def _build_config_hashes(self) -> dict[str, str]:
-        training_provider_name = self.config.get_active_provider_name()
-        training_provider_cfg = self.config.get_provider_config()
-        model_dataset_payload = {
-            "model": self.config.model.model_dump(mode="json"),
-            "training": self.config.training.model_dump(mode="json"),
-            "datasets": {name: cfg.model_dump(mode="json") for name, cfg in self.config.datasets.items()},
-        }
-        training_payload = {
-            **model_dataset_payload,
-            "provider_name": training_provider_name,
-            "provider": training_provider_cfg,
-        }
-        late_payload = {
-            "inference": self.config.inference.model_dump(mode="json"),
-            "evaluation": self.config.evaluation.model_dump(mode="json"),
-        }
-        return {
-            "training_critical": hash_payload(training_payload),
-            "late_stage": hash_payload(late_payload),
-            "model_dataset": hash_payload(model_dataset_payload),
-        }
+        return self._config_drift.build_config_hashes()
 
     def _normalize_stage_ref(self, stage_ref: str | int | None) -> str:
         return self._stage_planner.normalize_stage_ref(stage_ref)
@@ -856,42 +838,12 @@ class PipelineOrchestrator:
         config_hashes: dict[str, str],
         resume: bool,
     ) -> AppError | None:
-        # Fine-grained check: if model_dataset_config_hash is stored, use it (provider changes are allowed).
-        # Legacy fallback: states without model_dataset_config_hash use the full training_critical hash.
-        if state.model_dataset_config_hash:
-            model_dataset_changed = state.model_dataset_config_hash != config_hashes["model_dataset"]
-        else:
-            model_dataset_changed = state.training_critical_config_hash != config_hashes["training_critical"]
-
-        late_changed = state.late_stage_config_hash != config_hashes["late_stage"]
-
-        if model_dataset_changed:
-            return ConfigDriftError(
-                message=(
-                    "training_critical config changed for existing logical run; "
-                    "resume/restart is blocked. Use the original config or start a new run."
-                ),
-                details={
-                    "scope": "training_critical",
-                    "start_stage_name": start_stage_name,
-                    "resume": resume,
-                },
-            )
-        if late_changed and (
-            resume or start_stage_name not in {StageNames.INFERENCE_DEPLOYER, StageNames.MODEL_EVALUATOR}
-        ):
-            return ConfigDriftError(
-                message=(
-                    "late_stage config changed; only manual restart from "
-                    "Inference Deployer or Model Evaluator is allowed."
-                ),
-                details={
-                    "scope": "late_stage",
-                    "start_stage_name": start_stage_name,
-                    "resume": resume,
-                },
-            )
-        return None
+        return self._config_drift.validate_drift(
+            state=state,
+            start_stage_name=start_stage_name,
+            config_hashes=config_hashes,
+            resume=resume,
+        )
 
     def _record_launch_rejection_attempt(
         self,
