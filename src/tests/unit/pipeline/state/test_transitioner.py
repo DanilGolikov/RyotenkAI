@@ -317,3 +317,71 @@ class TestRestoreReusedContext:
                 context={},
                 sync_root_from_stage=lambda *_: None,
             )
+
+
+# ---------------------------------------------------------------------------
+# Invariant: log_paths set on running stage MUST survive every transition.
+# Rationale: log_paths describes the physical file, not the stage status.
+# ---------------------------------------------------------------------------
+
+class TestLogPathsPreservation:
+    _LOG_PATHS: dict[str, str] = {
+        "stage": "logs/dataset_validator.log",
+        "remote_training": "logs/training.log",
+    }
+
+    def _running_with_log_paths(self) -> PipelineAttemptState:
+        attempt = _make_attempt()
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:00:00Z")
+        attempt.stage_runs["s1"].log_paths = dict(self._LOG_PATHS)
+        return attempt
+
+    def test_running_inherits_prior_log_paths(self) -> None:
+        """Re-run of the same stage (retry) inherits log_paths from the previous run."""
+        attempt = self._running_with_log_paths()
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:05:00Z")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_running_with_no_prior_state_starts_empty(self) -> None:
+        attempt = _make_attempt()
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:00:00Z")
+        assert attempt.stage_runs["s1"].log_paths == {}
+
+    def test_completed_preserves_log_paths(self) -> None:
+        attempt = self._running_with_log_paths()
+        mark_stage_completed(attempt=attempt, stage_name="s1", outputs={"ok": True})
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_failed_preserves_log_paths(self) -> None:
+        attempt = self._running_with_log_paths()
+        mark_stage_failed(attempt=attempt, stage_name="s1", error="boom", failure_kind="X")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_skipped_preserves_log_paths(self) -> None:
+        attempt = self._running_with_log_paths()
+        mark_stage_skipped(attempt=attempt, stage_name="s1", reason="why")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_interrupted_preserves_log_paths(self) -> None:
+        attempt = self._running_with_log_paths()
+        mark_stage_interrupted(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:00:00Z")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_skipped_with_no_prior_state_has_empty_log_paths(self) -> None:
+        """First-time skip (never ran) has no log paths yet."""
+        attempt = _make_attempt()
+        mark_stage_skipped(attempt=attempt, stage_name="s1", reason="disabled")
+        assert attempt.stage_runs["s1"].log_paths == {}
+
+    def test_interrupted_with_no_prior_state_has_empty_log_paths(self) -> None:
+        attempt = _make_attempt()
+        mark_stage_interrupted(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:00:00Z")
+        assert attempt.stage_runs["s1"].log_paths == {}
+
+    def test_running_copy_is_independent_from_prior(self) -> None:
+        """Mutating the new stage state must not affect the previous attempt slot."""
+        attempt = self._running_with_log_paths()
+        original = dict(attempt.stage_runs["s1"].log_paths)
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:05:00Z")
+        attempt.stage_runs["s1"].log_paths["injected"] = "logs/x.log"
+        assert original == self._LOG_PATHS
