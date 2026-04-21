@@ -11,18 +11,16 @@
 > They deliver richer context — documentation, ownership, history, decisions —
 > in a single call. Raw `read_file` calls are a last resort only.
 
-Last indexed: 2026-04-19. Confidence: 100%.
+Last indexed: 2026-04-21. Confidence: 100%.
 ### Architecture
-repo is a comprehensive Python-based project (comprising over 131k lines of code) designed for complex data pipeline orchestration, model training, and reporting. The repository is structured to support modular development, featuring specialized sub-modules for pipeline stages, configuration management, and plugin-based reporting. It is currently in an active development phase with high churn across core orchestration and training components. The project is primarily built with Python, supported by containerization and automation tooling:
-
-*   **Primary Language:** Python (93.0%)
-*   **Infrastructure & Orchestration:** Docker, Shell scripting, and Makefiles.
+repo is a comprehensive software platform primarily focused on data processing, evaluation pipelines, and machine learning workflows. The project features a robust backend written in Python, responsible for orchestrating complex pipelines, managing configurations, and handling LLM-based evaluation tasks. It is complemented by a TypeScript-based web frontend that provides a user interface for configuration management and result visualization. The codebase is designed with a modular architecture, emphasizing plugin-based extensibility for evaluation metrics and pipeline stages.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
-| `src` | The src module serves as the core engine for a sophisticated LLM training, evalu | — |
+| `src` | The src module serves as the core engine for a comprehensive machine learning or | — |
 | `docker` | The docker module serves as a containerization and infrastructure support layer  | — |
 | `scripts` | The scripts module serves as a centralized repository for utility scripts and au | — |
+| `web` | The web module serves as the frontend interface for the project, providing a com | — |
 ### Entry Points
 - `src/main.py`
 - `docker/mlflow/start.sh`
@@ -34,11 +32,11 @@ repo is a comprehensive Python-based project (comprising over 131k lines of code
 ### Hotspots (High Churn)
 | File | Churn | 90d Commits | Owner |
 |------|-------|-------------|-------|
-| `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 100.0th %ile | 7 | daniil |
-| `src/tests/unit/config/validators/test_cross_validators.py` | 99.8th %ile | 4 | daniil |
-| `src/tests/unit/evaluation/test_system_prompt_loader.py` | 99.7th %ile | 5 | daniil |
-| `src/tests/unit/training/test_trainer_factory_reward_routing.py` | 99.5th %ile | 3 | daniil |
-| `src/tui/screens/runs_list.py` | 99.4th %ile | 7 | daniil |
+| `src/pipeline/orchestrator.py` | 100.0th %ile | 35 | daniil |
+| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.9th %ile | 12 | daniil |
+| `docs/plans/jolly-baking-bird.md` | 99.8th %ile | 4 | daniil |
+| `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 99.7th %ile | 7 | daniil |
+| `src/tests/unit/config/validators/test_cross_validators.py` | 99.5th %ile | 5 | daniil |
 
 ### Repowise MCP Tools
 
@@ -74,7 +72,7 @@ This project has a Repowise MCP server configured. **ALWAYS use these tools befo
 
 ### Codebase Conventions
 **Architectural Decisions:**
-- **Project workspace = experiment-scoped directory with snapshot-per-save config**: Separating "experiment workspace" from "runs" matches how users think (many runs belong to one exper.- **Web backend + frontend as sibling clients to file-based state store (Kubernetes-way)**: Preserves the existing invariant that pipeline state is file-based and crash-safe; allows the API, T.- **Extract ValidationArtifactManager from PipelineOrchestrator**: Reduces orchestrator by ~150 lines. ValidationArtifactManager is now independently testable without .**Commands:**
+- **AttemptController — sole writer of PipelineState**: save_fn over owning a PipelineStateStore: controller needs only save(state) — minimal interface via .- **Decompose PipelineOrchestrator into Facade + 7 Specialized Managers**: Cohesion > artificial separation (MLflow kept as one class because 6 methods share state). Context p.- **LaunchPreparator — pre-loop state assembly via frozen PreparedAttempt**: Frozen value object over mutable self-fields: downstream code reads PreparedAttempt.attempt_director.- **Per-stage log files via LogLayout (flat logs/ directory)**: SRP: every module used to build log paths by hand (4+ places); LogLayout centralizes that. OCP: addi.- **Project workspace = experiment-scoped directory with snapshot-per-save config**: Separating "experiment workspace" from "runs" matches how users think (many runs belong to one exper.- **Pydantic is SSOT; frontend consumes generated OpenAPI TS schema**: openapi-typescript is types-only, FastAPI-3.1 native, featured in FastAPI's official "Generate Clien.- **Remove write-only RunPod active-pods registry**: The registry was a half-finished feature: write-only code with no recovery consumer. Keeping it cost.- **Settings → Providers (reusable, versioned) + ConfigBuilder v2 (two-pane, presets, diff, '/' search)**: Two-pane ToC with content (Rancher / Lens pattern) collapses the "wall of fields" problem; required-.**Commands:**
 - Test: `pytest`
 - Lint: `ruff check .`
 - Format: `ruff format .`
