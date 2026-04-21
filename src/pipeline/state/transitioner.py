@@ -27,11 +27,14 @@ def mark_stage_running(
     started_at: str,
 ) -> None:
     """Mark a stage as running in the attempt state."""
+    prev = attempt.stage_runs.get(stage_name)
+    log_paths = dict(prev.log_paths) if prev else {}
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_RUNNING,
         execution_mode=StageRunState.MODE_EXECUTED,
         started_at=started_at,
+        log_paths=log_paths,
     )
 
 
@@ -83,6 +86,8 @@ def mark_stage_skipped(
     outputs: dict[str, Any] | None = None,
 ) -> None:
     """Mark a stage as skipped with a reason."""
+    prev = attempt.stage_runs.get(stage_name)
+    log_paths = dict(prev.log_paths) if prev else {}
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_SKIPPED,
@@ -91,6 +96,7 @@ def mark_stage_skipped(
         skip_reason=reason,
         started_at=utc_now_iso(),
         completed_at=utc_now_iso(),
+        log_paths=log_paths,
     )
 
 
@@ -101,12 +107,15 @@ def mark_stage_interrupted(
     started_at: str,
 ) -> None:
     """Mark a stage as interrupted (e.g. by SIGINT)."""
+    prev = attempt.stage_runs.get(stage_name)
+    log_paths = dict(prev.log_paths) if prev else {}
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_INTERRUPTED,
         execution_mode=StageRunState.MODE_EXECUTED,
         started_at=started_at,
         completed_at=utc_now_iso(),
+        log_paths=log_paths,
     )
 
 

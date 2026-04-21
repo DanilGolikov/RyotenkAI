@@ -376,7 +376,7 @@ def test_stateful_config_drift_creates_failed_attempt_with_visible_error(tmp_pat
     assert state.pipeline_status == StageRunState.STATUS_FAILED
     assert state.active_attempt_id is None
 
-    log_path = store.next_attempt_dir(attempt.attempt_no) / "pipeline.log"
+    log_path = store.next_attempt_dir(attempt.attempt_no) / "logs" / "pipeline.log"
     assert log_path.exists()
     assert "Launch rejected before stage execution" in log_path.read_text(encoding="utf-8")
 

@@ -4,13 +4,24 @@ Logging configuration with structured logging support.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import colorlog
 from rich.console import Console
+
+from src.utils.logs_layout import LogLayout
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+_current_stage: ContextVar[str | None] = ContextVar("_current_stage", default=None)
 
 
 def _set_aligned_location(record: logging.LogRecord, location_width: int) -> None:
@@ -50,6 +61,25 @@ class AlignedColorFormatter(colorlog.ColoredFormatter):
     def format(self, record: logging.LogRecord) -> str:
         _set_aligned_location(record, self.location_width)
         return super().format(record)
+
+
+class _StageContextFilter(logging.Filter):
+    """Filter that admits records only when _current_stage matches ``stage_name``."""
+
+    def __init__(self, stage_name: str) -> None:
+        super().__init__()
+        self._stage_name = stage_name
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: ARG002 — logging.Filter API
+        return _current_stage.get() == self._stage_name
+
+
+def _build_file_formatter() -> logging.Formatter:
+    return AlignedFormatter(
+        "%(asctime)s  %(location)s  %(levelname)-7s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        location_width=24,
+    )
 
 
 def setup_logger(
@@ -115,13 +145,7 @@ def setup_logger(
 
         file_handler = logging.FileHandler(log_path)
         file_handler.setLevel(level)
-        # File logs - same format as console but without colors
-        file_formatter = AlignedFormatter(
-            "%(asctime)s  %(location)s  %(levelname)-7s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-            location_width=24,
-        )
-        file_handler.setFormatter(file_formatter)
+        file_handler.setFormatter(_build_file_formatter())
         base_logger.addHandler(file_handler)
 
     return base_logger
@@ -159,6 +183,7 @@ console = Console()  # Rich console for UI
 
 _run_name: str | None = None
 _run_log_dir: Path | None = None
+_run_log_layout: LogLayout | None = None
 
 
 def set_log_level(level_name: str) -> logging.Logger:
@@ -175,8 +200,8 @@ def set_log_level(level_name: str) -> logging.Logger:
     os.environ["LOG_LEVEL"] = normalized
 
     log_file: Path | None = None
-    if _enable_file_logs and _run_log_dir is not None:
-        log_file = _run_log_dir / "pipeline.log"
+    if _enable_file_logs and _run_log_layout is not None:
+        log_file = _run_log_layout.pipeline_log
 
     logger = setup_logger("ryotenkai", level=_log_level, log_file=log_file, use_color=False)
     return logger
@@ -188,31 +213,37 @@ def init_run_logging(run_name: str, log_dir: str | Path | None = None) -> Path:
 
     This must be called exactly once per process, early in PipelineOrchestrator,
     after run_name is generated.
+
+    ``log_dir`` is the attempt directory. The aggregated pipeline log lives
+    inside ``<attempt_dir>/logs/`` (owned by LogLayout).
+    Returns the attempt directory (preserved behavior for callers).
     """
-    global _run_name, _run_log_dir, logger
+    global _run_name, _run_log_dir, _run_log_layout, logger
 
     if not isinstance(run_name, str) or not run_name:
         raise ValueError("run_name must be a non-empty string")
 
-    # Support multiple pipeline runs per process (e.g., unit tests, REPL usage).
-    # Still a single source of truth: caller must pass run_name explicitly.
     if _run_name is not None and run_name != _run_name:
         logger.warning(f"Re-initializing run logging: {_run_name!r} -> {run_name!r}")
 
     _run_name = run_name
-    _run_log_dir = Path(log_dir) if log_dir is not None else (_base_log_dir / run_name)
-    _run_log_dir.mkdir(parents=True, exist_ok=True)
+    attempt_dir = Path(log_dir) if log_dir is not None else (_base_log_dir / run_name)
+    attempt_dir.mkdir(parents=True, exist_ok=True)
 
-    log_file = _run_log_dir / "pipeline.log"
+    layout = LogLayout(attempt_dir)
+    layout.ensure_logs_dir()
+
+    _run_log_dir = attempt_dir
+    _run_log_layout = layout
 
     if _enable_file_logs:
-        # Reconfigure base logger to add file handler.
+        log_file = layout.pipeline_log
         logger = setup_logger("ryotenkai", level=_log_level, log_file=log_file, use_color=False)
         logger.info(f"📝 File logging: {log_file} (level: {_log_level_str})")
     else:
         logger.info("📝 File logging disabled (HELIX_NO_FILE_LOGS=1)")
 
-    return _run_log_dir
+    return attempt_dir
 
 
 def get_run_name() -> str:
@@ -227,3 +258,45 @@ def get_run_log_dir() -> Path:
     if _run_log_dir is None:
         raise RuntimeError("Run logging not initialized. Call init_run_logging(run_name) in PipelineOrchestrator.")
     return _run_log_dir
+
+
+def get_run_log_layout() -> LogLayout:
+    """Get the LogLayout for the current run (requires init_run_logging)."""
+    if _run_log_layout is None:
+        raise RuntimeError("Run logging not initialized. Call init_run_logging(run_name) in PipelineOrchestrator.")
+    return _run_log_layout
+
+
+@contextmanager
+def stage_logging_context(stage_name: str, layout: LogLayout) -> Iterator[Path]:
+    """
+    Attach a per-stage FileHandler to the base logger while inside the context.
+
+    Records whose ``_current_stage`` ContextVar equals ``stage_name`` are
+    admitted by the filter; all other records are rejected at this handler.
+    The aggregated ``pipeline.log`` handler remains untouched — every record
+    still lands there.
+    """
+    if not stage_name:
+        raise ValueError("stage_name must be non-empty")
+
+    stage_log_path = layout.stage_log(stage_name)
+    stage_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler: logging.Handler | None = None
+    token = _current_stage.set(stage_name)
+
+    try:
+        if _enable_file_logs:
+            handler = logging.FileHandler(stage_log_path)
+            handler.setLevel(_log_level)
+            handler.setFormatter(_build_file_formatter())
+            handler.addFilter(_StageContextFilter(stage_name))
+            logging.getLogger("ryotenkai").addHandler(handler)
+        yield stage_log_path
+    finally:
+        _current_stage.reset(token)
+        if handler is not None:
+            logging.getLogger("ryotenkai").removeHandler(handler)
+            with contextlib.suppress(Exception):  # pragma: no cover — best-effort cleanup
+                handler.close()

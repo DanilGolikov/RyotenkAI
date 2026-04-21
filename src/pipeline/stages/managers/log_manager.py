@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.pipeline.constants import ENCODING_UTF8, LOG_REMOTE_NOT_FOUND_MSG
-from src.utils.logger import get_logger, get_run_log_dir
+from src.utils.logger import get_logger, get_run_log_layout
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,11 +34,13 @@ class LogManager:
     Manages downloading logs from remote training.
 
     Provider-agnostic: works with any SSH-accessible server.
-    All logs are saved to the run-specific directory:
-    runs/{pipeline_timestamp}/training.log
+    The remote training log is persisted at ``<attempt_dir>/logs/training.log``
+    via LogLayout — the single source of truth for FS layout.
     """
 
     DEFAULT_REMOTE_PATH = "/workspace/training.log"
+    # File name of the remote training log inside the local logs/ directory.
+    # Preserved for backward-compat with consumers that build paths by hand.
     LOCAL_LOG_NAME = "training.log"
 
     def __init__(self, ssh_client: SSHClient, remote_path: str | None = None):
@@ -51,8 +53,9 @@ class LogManager:
         """
         self.ssh = ssh_client
         self._remote_path = remote_path or self.DEFAULT_REMOTE_PATH
-        self._log_dir = get_run_log_dir()
-        self._local_path = self._log_dir / self.LOCAL_LOG_NAME
+        layout = get_run_log_layout()
+        layout.ensure_logs_dir()
+        self._local_path = layout.remote_training_log
         # Track last downloaded size in BYTES (not characters).
         # Used to incrementally append only new bytes on subsequent downloads.
         self._last_size = self._get_local_size_bytes()

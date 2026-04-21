@@ -329,11 +329,10 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with TabbedContent(initial="details"):
-            with TabPane("Details [1]", id="details"):
-                yield Static(id="details-header")
-                yield _StagesTable(id="stages-table", cursor_type="row")
-                yield RichLog(id="stage-detail", highlight=False, markup=False, wrap=True, auto_scroll=False)
+        with TabbedContent(initial="details"), TabPane("Details [1]", id="details"):
+            yield Static(id="details-header")
+            yield _StagesTable(id="stages-table", cursor_type="row")
+            yield RichLog(id="stage-detail", highlight=False, markup=False, wrap=True, auto_scroll=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -536,20 +535,30 @@ class AttemptDetailScreen(_HelpMixin, _InterruptConfirmMixin, _TabbedScreenMixin
 
     def _discover_log_files(self) -> dict[str, Path]:
         attempt_dir = self._run_dir / "attempts" / f"attempt_{self._attempt_no}"
-        log_files: dict[str, Path] = {}
+        discovered: dict[str, Path] = {}
 
-        for filename in _LOG_CANDIDATES:
-            p = attempt_dir / filename
-            if p.exists():
-                log_files[p.name] = p
+        # New layout: everything under <attempt_dir>/logs/
+        logs_dir = attempt_dir / "logs"
+        if logs_dir.is_dir():
+            for p in sorted(logs_dir.glob("*.log")):
+                discovered[p.name] = p
 
-        known = set(_LOG_CANDIDATES)
+        # Legacy layout: logs directly under attempt_dir (pre-LogLayout runs).
         if attempt_dir.exists():
             for p in sorted(attempt_dir.glob("*.log")):
-                if p.name not in known:
-                    log_files[p.name] = p
+                if p.name not in discovered:
+                    discovered[p.name] = p
 
-        return log_files
+        # Well-known files appear first in the requested order; the rest
+        # follow in alphabetical order (already sorted by glob).
+        ordered: dict[str, Path] = {}
+        for name in _LOG_CANDIDATES:
+            if name in discovered:
+                ordered[name] = discovered[name]
+        for name, path in discovered.items():
+            if name not in ordered:
+                ordered[name] = path
+        return ordered
 
     def _sync_log_tabs(self) -> None:
         log_files = self._discover_log_files()

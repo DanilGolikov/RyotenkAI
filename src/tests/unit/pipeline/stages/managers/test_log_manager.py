@@ -7,6 +7,13 @@ import pytest
 
 import src.pipeline.stages.managers.log_manager as lm
 from src.pipeline.stages.managers.log_manager import LogManager
+from src.utils.logs_layout import LogLayout
+
+
+def _layout(attempt_dir: Path) -> LogLayout:
+    layout = LogLayout(attempt_dir)
+    layout.ensure_logs_dir()
+    return layout
 
 
 @dataclass
@@ -18,7 +25,7 @@ class _SSH:
 
 
 def test_download_returns_false_when_log_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     ssh = _SSH(
         responses={
             "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
@@ -30,7 +37,7 @@ def test_download_returns_false_when_log_missing(tmp_path: Path, monkeypatch: py
 
 
 def test_download_writes_file_and_tracks_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     content = "a\nb\n"
     ssh = _SSH(
         responses={
@@ -45,7 +52,7 @@ def test_download_writes_file_and_tracks_size(tmp_path: Path, monkeypatch: pytes
 
 
 def test_download_appends_only_new_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
 
     first = "a\n"
     second = "b\n"
@@ -75,21 +82,21 @@ def test_download_appends_only_new_bytes(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_get_last_lines_returns_empty_on_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     ssh = _SSH(responses={"tail -n 5 /workspace/training.log 2>/dev/null || echo ''": (False, "", "err")})
     mgr = LogManager(ssh)
     assert mgr.get_last_lines(5) == []
 
 
 def test_get_last_lines_splits_lines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     ssh = _SSH(responses={"tail -n 2 /workspace/training.log 2>/dev/null || echo ''": (True, "x\ny\n", "")})
     mgr = LogManager(ssh)
     assert mgr.get_last_lines(2) == ["x", "y"]
 
 
 def test_download_on_error_calls_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(lm, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     ssh = _SSH(responses={"cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "ok\n", "")})
     mgr = LogManager(ssh)
     mgr.download_on_error("boom")

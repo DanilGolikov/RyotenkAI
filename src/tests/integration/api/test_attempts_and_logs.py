@@ -51,5 +51,6 @@ def test_list_log_files(client, seed_completed_run) -> None:
     assert response.status_code == 200
     files = response.json()
     names = {f["name"]: f for f in files}
+    # pipeline.log is always written; other per-stage logs only appear
+    # once the corresponding stage has been entered.
     assert names["pipeline.log"]["exists"] is True
-    assert names["training.log"]["exists"] is False
