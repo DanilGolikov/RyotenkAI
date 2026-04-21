@@ -9,6 +9,7 @@ import pytest
 
 from src.pipeline.launch import PreparedAttempt
 from src.pipeline.orchestrator import PipelineOrchestrator, run_pipeline
+from src.pipeline.execution import StageRegistry
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.state import PipelineStateStore, build_attempt_state
 from src.pipeline.state.models import PipelineState, StageRunState
@@ -27,7 +28,7 @@ def _mk_orchestrator(
     with (
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
-        patch.object(PipelineOrchestrator, "_init_stages", return_value=stages or []),
+        patch.object(StageRegistry, "_build_stages", return_value=stages or []),
     ):
         return PipelineOrchestrator(config_path)
 
@@ -435,7 +436,8 @@ class TestPrintSummaryCleanupAndMetricsCollectionMissingLines:
         good.cleanup.side_effect = lambda: calls.append("good")
 
         # Ensure reverse order cleanup executes "good" first, then "bad"
-        orch.stages = [bad, good]
+        orch._registry._stages[:] = [bad, good]
+        orch.stages = orch._registry._stages
 
         orch._cleanup_resources(success=False)
 
@@ -454,7 +456,8 @@ class TestPrintSummaryCleanupAndMetricsCollectionMissingLines:
         stage_with_cleanup.stage_name = "has_cleanup"
         stage_with_cleanup.cleanup = MagicMock()
 
-        orch.stages = [stage_without_cleanup, stage_with_cleanup]
+        orch._registry._stages[:] = [stage_without_cleanup, stage_with_cleanup]
+        orch.stages = orch._registry._stages
         orch._cleanup_resources(success=False)
 
         stage_with_cleanup.cleanup.assert_called_once()
@@ -482,7 +485,8 @@ def test_cleanup_resources_calls_all_stages_even_if_some_cleanup_raise(boom_idx:
 
         stages.append(st)
 
-    orch.stages = stages
+    orch._registry._stages[:] = stages
+    orch.stages = orch._registry._stages
     orch._cleanup_resources(success=False)
 
     # Reverse order is invariant, and all stages must be attempted

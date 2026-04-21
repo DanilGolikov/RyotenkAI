@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.orchestrator import PipelineOrchestrator
+from src.pipeline.execution import StageRegistry
 from src.utils.result import AppError, Err, Ok, StrategyError
 
 # ========================================================================
@@ -122,11 +123,11 @@ class TestPipelineOrchestratorInitialization:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.orchestrator.DatasetValidator"),
-            patch("src.pipeline.orchestrator.GPUDeployer"),
-            patch("src.pipeline.orchestrator.TrainingMonitor"),
-            patch("src.pipeline.orchestrator.ModelRetriever"),
-            patch("src.pipeline.orchestrator.ModelEvaluator"),
+            patch("src.pipeline.execution.stage_registry.DatasetValidator"),
+            patch("src.pipeline.execution.stage_registry.GPUDeployer"),
+            patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
+            patch("src.pipeline.execution.stage_registry.ModelRetriever"),
+            patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
@@ -169,11 +170,11 @@ class TestPipelineOrchestratorInitialization:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.orchestrator.DatasetValidator"),
-            patch("src.pipeline.orchestrator.GPUDeployer"),
-            patch("src.pipeline.orchestrator.TrainingMonitor"),
-            patch("src.pipeline.orchestrator.ModelRetriever"),
-            patch("src.pipeline.orchestrator.ModelEvaluator"),
+            patch("src.pipeline.execution.stage_registry.DatasetValidator"),
+            patch("src.pipeline.execution.stage_registry.GPUDeployer"),
+            patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
+            patch("src.pipeline.execution.stage_registry.ModelRetriever"),
+            patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
@@ -221,12 +222,12 @@ class TestPipelineOrchestratorInitialization:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.orchestrator.DatasetValidator") as MockValidator,
-            patch("src.pipeline.orchestrator.GPUDeployer") as MockDeployer,
-            patch("src.pipeline.orchestrator.TrainingMonitor") as MockMonitor,
-            patch("src.pipeline.orchestrator.ModelRetriever") as MockRetriever,
-            patch("src.pipeline.orchestrator.InferenceDeployer") as MockInferenceDeployer,
-            patch("src.pipeline.orchestrator.ModelEvaluator") as MockEvaluator,
+            patch("src.pipeline.execution.stage_registry.DatasetValidator") as MockValidator,
+            patch("src.pipeline.execution.stage_registry.GPUDeployer") as MockDeployer,
+            patch("src.pipeline.execution.stage_registry.TrainingMonitor") as MockMonitor,
+            patch("src.pipeline.execution.stage_registry.ModelRetriever") as MockRetriever,
+            patch("src.pipeline.execution.stage_registry.InferenceDeployer") as MockInferenceDeployer,
+            patch("src.pipeline.execution.stage_registry.ModelEvaluator") as MockEvaluator,
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
@@ -265,7 +266,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -298,7 +299,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -331,7 +332,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -369,7 +370,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -407,7 +408,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_gen_report,
         ):
@@ -444,7 +445,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_aggregate_training_metrics") as mock_aggregate,
         ):
@@ -472,7 +473,7 @@ class TestPipelineOrchestratorHappyPath:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_cleanup_resources") as mock_cleanup,
         ):
@@ -513,7 +514,7 @@ class TestPipelineOrchestratorErrorHandling:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -555,7 +556,7 @@ class TestPipelineOrchestratorErrorHandling:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -585,7 +586,7 @@ class TestPipelineOrchestratorErrorHandling:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_cleanup_resources") as mock_cleanup,
         ):
@@ -616,7 +617,7 @@ class TestPipelineOrchestratorErrorHandling:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -647,7 +648,7 @@ class TestPipelineOrchestratorErrorHandling:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -689,7 +690,7 @@ class TestPipelineOrchestratorPartialExecution:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -732,7 +733,7 @@ class TestPipelineOrchestratorPartialExecution:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -765,7 +766,7 @@ class TestPipelineOrchestratorPartialExecution:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -814,7 +815,7 @@ class TestPipelineOrchestratorMLflowLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -850,7 +851,7 @@ class TestPipelineOrchestratorMLflowLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -888,7 +889,7 @@ class TestPipelineOrchestratorMLflowLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -925,7 +926,7 @@ class TestPipelineOrchestratorMLflowLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -971,7 +972,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
         ):
@@ -1010,7 +1011,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
         ):
@@ -1048,7 +1049,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
         ):
@@ -1095,7 +1096,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
@@ -1136,7 +1137,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
@@ -1175,7 +1176,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
@@ -1204,7 +1205,7 @@ class TestPipelineOrchestratorReportGeneration:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
@@ -1242,7 +1243,7 @@ class TestPipelineOrchestratorHelpers:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1283,7 +1284,7 @@ class TestPipelineOrchestratorHelpers:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_config.get_active_provider_name.return_value = "runpod"
@@ -1319,7 +1320,7 @@ class TestPipelineOrchestratorHelpers:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1358,7 +1359,7 @@ class TestPipelineOrchestratorEdgeCases:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1385,7 +1386,7 @@ class TestPipelineOrchestratorEdgeCases:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1415,7 +1416,7 @@ class TestPipelineOrchestratorEdgeCases:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1475,7 +1476,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1524,7 +1525,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1570,7 +1571,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1616,7 +1617,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_aggregate_training_metrics") as mock_aggregate,
         ):
@@ -1654,7 +1655,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
         ):
@@ -1684,7 +1685,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1730,7 +1731,7 @@ class TestPipelineOrchestratorExceptionHandlers:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1769,7 +1770,7 @@ class TestPipelineOrchestratorExceptionHandlers:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1823,7 +1824,7 @@ class TestPipelineOrchestratorPrintSummary:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1863,7 +1864,7 @@ class TestPipelineOrchestratorPrintSummary:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1894,7 +1895,7 @@ class TestPipelineOrchestratorPrintSummary:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1936,7 +1937,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -1970,7 +1971,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -2015,7 +2016,7 @@ class TestPipelineOrchestratorAggregationDetails:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_report,
@@ -2055,7 +2056,7 @@ class TestPipelineOrchestratorAggregationDetails:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_report,
@@ -2094,7 +2095,7 @@ class TestPipelineOrchestratorAggregationDetails:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_report,
@@ -2133,7 +2134,7 @@ class TestPipelineOrchestratorAggregationDetails:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_report,
@@ -2179,7 +2180,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -2206,7 +2207,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
             mock_load_config.return_value = mock_config
@@ -2244,7 +2245,7 @@ class TestPipelineOrchestratorMLflowInternals:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
         ):
             mock_load_config.return_value = mock_config
             mock_load_secrets.return_value = mock_secrets
@@ -2276,7 +2277,7 @@ class TestPipelineOrchestratorMLflowInternals:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch("src.pipeline.orchestrator.MLflowManager", mock_mlflow_manager_class),
         ):
             mock_load_config.return_value = mock_config
@@ -2312,7 +2313,7 @@ class TestPipelineOrchestratorMLflowInternals:
             patch("src.pipeline.orchestrator.load_config") as mock_load_config,
             patch("src.pipeline.orchestrator.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch.object(PipelineOrchestrator, "_init_stages") as mock_init_stages,
+            patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch("src.pipeline.orchestrator.MLflowManager", mock_mlflow_manager_class),
             patch.dict("sys.modules", {"mlflow": MagicMock()}),
         ):

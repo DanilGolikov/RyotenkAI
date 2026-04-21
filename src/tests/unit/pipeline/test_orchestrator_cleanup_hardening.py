@@ -70,12 +70,12 @@ def _build_orchestrator(config_path: Path) -> PipelineOrchestrator:
         patch("src.pipeline.orchestrator.load_config", return_value=cfg),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
         patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
-        patch("src.pipeline.orchestrator.DatasetValidator"),
-        patch("src.pipeline.orchestrator.GPUDeployer"),
-        patch("src.pipeline.orchestrator.TrainingMonitor"),
-        patch("src.pipeline.orchestrator.ModelRetriever"),
-        patch("src.pipeline.orchestrator.InferenceDeployer"),
-        patch("src.pipeline.orchestrator.ModelEvaluator"),
+        patch("src.pipeline.execution.stage_registry.DatasetValidator"),
+        patch("src.pipeline.execution.stage_registry.GPUDeployer"),
+        patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
+        patch("src.pipeline.execution.stage_registry.ModelRetriever"),
+        patch("src.pipeline.execution.stage_registry.InferenceDeployer"),
+        patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
     ):
         return PipelineOrchestrator(config_path)
 

@@ -137,6 +137,7 @@ class TestOrchestratorCallsRelease:
         self, *, terminate_after_retrieval: bool
     ) -> tuple[object, GPUDeployer]:
         """Build a minimal orchestrator mock with a real GPUDeployer."""
+        from src.pipeline.execution import StageRegistry
         from src.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
@@ -145,15 +146,20 @@ class TestOrchestratorCallsRelease:
         mock_provider = MagicMock()
         deployer._provider = mock_provider
 
-        orch.stages = [deployer]
-        orch._mlflow_manager = None
-
         # Config mock that returns cleanup dict
         mock_cfg = MagicMock()
         mock_cfg.get_provider_config.return_value = {
             "cleanup": {"terminate_after_retrieval": terminate_after_retrieval}
         }
         orch.config = mock_cfg
+
+        # StageRegistry owns stages + cleanup policy after PR-A10; tests
+        # that bypass __init__ must wire a registry manually.
+        orch._registry = StageRegistry(
+            config=mock_cfg, stages=[deployer], collectors={}
+        )
+        orch.stages = orch._registry.stages
+        orch._mlflow_manager = None
 
         return orch, deployer
 
@@ -178,15 +184,17 @@ class TestOrchestratorCallsRelease:
 
     def test_release_not_called_when_flag_missing(self) -> None:
         """_maybe_early_release_gpu() must NOT call release() if flag not in config."""
+        from src.pipeline.execution import StageRegistry
         from src.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
         deployer = _make_gpu_deployer()
-        orch.stages = [deployer]
 
         mock_cfg = MagicMock()
         mock_cfg.get_provider_config.return_value = {"cleanup": {}}  # no key
         orch.config = mock_cfg
+        orch._registry = StageRegistry(config=mock_cfg, stages=[deployer], collectors={})
+        orch.stages = orch._registry.stages
 
         orch._maybe_early_release_gpu()  # type: ignore[attr-defined]
 
@@ -194,15 +202,17 @@ class TestOrchestratorCallsRelease:
 
     def test_release_not_called_when_config_raises(self) -> None:
         """_maybe_early_release_gpu() must be silent if config access raises."""
+        from src.pipeline.execution import StageRegistry
         from src.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
         deployer = _make_gpu_deployer()
-        orch.stages = [deployer]
 
         mock_cfg = MagicMock()
         mock_cfg.get_provider_config.side_effect = RuntimeError("config error")
         orch.config = mock_cfg
+        orch._registry = StageRegistry(config=mock_cfg, stages=[deployer], collectors={})
+        orch.stages = orch._registry.stages
 
         orch._maybe_early_release_gpu()  # must not raise
 
@@ -210,6 +220,7 @@ class TestOrchestratorCallsRelease:
 
     def test_only_first_releasable_stage_is_released(self) -> None:
         """If multiple IEarlyReleasable stages exist, only the first one is released."""
+        from src.pipeline.execution import StageRegistry
         from src.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
@@ -219,13 +230,15 @@ class TestOrchestratorCallsRelease:
         deployer2 = _make_gpu_deployer()
         deployer2._provider = MagicMock()
 
-        orch.stages = [deployer1, deployer2]
-
         mock_cfg = MagicMock()
         mock_cfg.get_provider_config.return_value = {
             "cleanup": {"terminate_after_retrieval": True}
         }
         orch.config = mock_cfg
+        orch._registry = StageRegistry(
+            config=mock_cfg, stages=[deployer1, deployer2], collectors={}
+        )
+        orch.stages = orch._registry.stages
 
         orch._maybe_early_release_gpu()  # type: ignore[attr-defined]
 

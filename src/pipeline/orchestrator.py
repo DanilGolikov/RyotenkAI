@@ -16,9 +16,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config.runtime import RuntimeSettings, load_runtime_settings
-from src.pipeline.artifacts import (
-    StageArtifactCollector,
-)
 from src.pipeline.bootstrap import StartupValidator
 from src.pipeline.config_drift import ConfigDriftValidator
 from src.pipeline.constants import (
@@ -28,22 +25,12 @@ from src.pipeline.constants import (
 )
 from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
 from src.pipeline.domain import RunContext
-from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop
+from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop, StageRegistry
 from src.pipeline.executor import StagePlanner, is_inference_runtime_healthy
 from src.pipeline.launch import LaunchPreparationError, LaunchPreparator, PreparedAttempt
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
-from src.pipeline.stages import (
-    DatasetValidator,
-    GPUDeployer,
-    InferenceDeployer,
-    ModelEvaluator,
-    ModelRetriever,
-    PipelineContextKeys,
-    StageNames,
-    TrainingMonitor,
-)
-from src.pipeline.stages.gpu_deployer import IEarlyReleasable
+from src.pipeline.stages import PipelineContextKeys, StageNames
 from src.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
@@ -68,6 +55,7 @@ from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
+    from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.stages.base import PipelineStage
     from src.utils.logs_layout import LogLayout
 
@@ -157,13 +145,13 @@ class PipelineOrchestrator:
         # collaborator instead of four scattered attributes.
         self._mlflow_attempt = MLflowAttemptManager(self.config, self.config_path)
         self._shutdown_signal_name: str | None = None
-        self._cleanup_done: bool = False
 
-        # Stage artifact collectors — one per stage, keyed by StageNames value
-        self._collectors: dict[str, StageArtifactCollector] = self._init_collectors()
-        # Validation artifact accumulation (extracted from orchestrator)
+        # Collectors first — everything downstream references the canonical
+        # mapping (ValidationArtifactManager watches this exact dict).
+        collectors = StageRegistry._build_collectors()
+        self._collectors: dict[str, StageArtifactCollector] = collectors
         self._validation_artifact_mgr = ValidationArtifactManager(
-            collectors=self._collectors,
+            collectors=collectors,
             context=self.context,
         )
         # Stage context propagation (extracted from orchestrator).
@@ -175,8 +163,20 @@ class PipelineOrchestrator:
         # End-of-pipeline reporting (extracted from orchestrator).
         self._summary_reporter = ExecutionSummaryReporter(self.config)
 
-        # Initialize stages (after context + collectors, since stages may reference validation mgr)
-        self.stages: list[PipelineStage] = self._init_stages()
+        # Stage registry: owns the stages list + cleanup policy (uses the
+        # collectors we just built so all downstream components share a
+        # single dict).
+        stages_list = StageRegistry._build_stages(
+            config=self.config,
+            secrets=self.secrets,
+            validation_artifact_mgr=self._validation_artifact_mgr,
+        )
+        self._registry = StageRegistry(
+            config=self.config,
+            stages=stages_list,
+            collectors=collectors,
+        )
+        self.stages: list[PipelineStage] = self._registry.stages
         logger.info(f"Initialized {len(self.stages)} pipeline stages")
 
         # Stage planner: pure stage-ordering logic (extracted from orchestrator).
@@ -240,64 +240,6 @@ class PipelineOrchestrator:
         attempt_mgr = self.__dict__.get("_mlflow_attempt")
         if attempt_mgr is not None:
             attempt_mgr._manager = value
-
-    def _init_stages(self) -> list[PipelineStage]:
-        """Initialize all pipeline stages in execution order."""
-        from src.pipeline.stages.dataset_validator import DatasetValidatorEventCallbacks
-
-        # Create callbacks for DatasetValidator (MLflow integration)
-        vam = self._validation_artifact_mgr
-        validator_callbacks = DatasetValidatorEventCallbacks(
-            on_dataset_scheduled=vam.on_dataset_scheduled,
-            on_dataset_loaded=vam.on_dataset_loaded,
-            on_validation_completed=vam.on_validation_completed,
-            on_validation_failed=vam.on_validation_failed,
-            on_plugin_start=vam.on_plugin_start,
-            on_plugin_complete=vam.on_plugin_complete,
-            on_plugin_failed=vam.on_plugin_failed,
-        )
-
-        stages: list[PipelineStage] = [
-            DatasetValidator(self.config, secrets=self.secrets, callbacks=validator_callbacks),
-            GPUDeployer(self.config, self.secrets),  # Universal provider-based deployer
-            TrainingMonitor(self.config, secrets=self.secrets),
-            ModelRetriever(self.config, self.secrets),
-            InferenceDeployer(self.config, self.secrets),
-            ModelEvaluator(self.config, self.secrets),
-        ]
-
-        return stages
-
-    def _init_collectors(self) -> dict[str, StageArtifactCollector]:
-        """Create one StageArtifactCollector per pipeline stage."""
-        from src.pipeline.stages.constants import StageNames
-
-        return {
-            StageNames.DATASET_VALIDATOR: StageArtifactCollector(
-                stage="dataset_validator",
-                artifact_name="dataset_validator_results.json",
-            ),
-            StageNames.GPU_DEPLOYER: StageArtifactCollector(
-                stage="gpu_deployer",
-                artifact_name="gpu_deployer_results.json",
-            ),
-            StageNames.TRAINING_MONITOR: StageArtifactCollector(
-                stage="training_monitor",
-                artifact_name="training_monitor_results.json",
-            ),
-            StageNames.MODEL_RETRIEVER: StageArtifactCollector(
-                stage="model_retriever",
-                artifact_name="model_retriever_results.json",
-            ),
-            StageNames.INFERENCE_DEPLOYER: StageArtifactCollector(
-                stage="inference_deployer",
-                artifact_name="inference_deployer_results.json",
-            ),
-            StageNames.MODEL_EVALUATOR: StageArtifactCollector(
-                stage="model_evaluator",
-                artifact_name="evaluation_results.json",
-            ),
-        }
 
     def _setup_mlflow(self) -> MLflowManager | None:
         """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager)."""
@@ -714,118 +656,23 @@ class PipelineOrchestrator:
         )
 
     def _flush_pending_collectors(self) -> None:
-        """Flush all collectors that are still open (interrupted / exception).
-
-        Called in the finally block so every stage gets at least a status
-        artifact even when the pipeline is killed mid-run.
-
-        Stages that never started (set_started_at was never called) are skipped:
-        they have no data to preserve and writing an empty interrupted artifact
-        only adds noise to the report issues section.
-        """
-        for stage_name, collector in self._collectors.items():
-            if collector.is_flushed:
-                continue
-            if collector._started_at is None:
-                # Stage never started — skip writing empty artifact
-                logger.debug("[ARTIFACT] skip flush for not-started stage %s", stage_name)
-                continue
-            try:
-                collector.flush_interrupted(
-                    started_at=collector._started_at,
-                    duration_seconds=0.0,
-                    context=self.context,
-                )
-                logger.debug("[ARTIFACT] flush_interrupted for %s", stage_name)
-            except Exception as exc:
-                logger.warning("[ARTIFACT] flush_interrupted failed for %s: %s", stage_name, exc)
+        """Delegate: flush still-open collectors via the registry."""
+        self._registry.flush_pending_collectors(self.context)
 
     def _print_summary(self) -> None:
         """Print a comprehensive summary of the pipeline execution."""
         self._summary_reporter.print_summary(context=self.context)
 
     def _maybe_early_release_gpu(self) -> None:
-        """Terminate training pod early if terminate_after_retrieval=true.
-
-        Called by run() right after ModelRetriever completes successfully.
-        Frees the training pod before InferenceDeployer / ModelEvaluator stages
-        run, avoiding unnecessary GPU billing.
-
-        Uses IEarlyReleasable protocol so any future GPU stage can opt in
-        without changes here.
-        """
-        try:
-            provider_cfg = self.config.get_provider_config()
-            cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-            if not (isinstance(cleanup_cfg, dict) and cleanup_cfg.get("terminate_after_retrieval") is True):
-                return
-        except Exception:
-            return
-
-        for stage in self.stages:
-            if isinstance(stage, IEarlyReleasable):
-                logger.info("[ORCHESTRATOR] terminate_after_retrieval=true: releasing training pod early.")
-                stage.release()
-                return
+        """Delegate: early-release GPU via the registry."""
+        self._registry.maybe_early_release_gpu()
 
     def _cleanup_resources(self, *, success: bool = False) -> None:
-        """
-        Cleanup resources for ALL stages.
-        Called automatically even if pipeline fails.
-
-        Calls cleanup() on all stages in reverse order (last-first).
-        This ensures proper cleanup of dependent resources.
-
-        Args:
-            success: Whether pipeline completed successfully (reserved for future use)
-        """
-        if self._cleanup_done:
-            logger.debug("Cleanup already done, skipping duplicate call")
-            return
-        self._cleanup_done = True
-        logger.info("Cleaning up pipeline resources...")
-
-        if not success:
-            for stage in self.stages:
-                if hasattr(stage, "notify_pipeline_failure"):
-                    try:
-                        stage.notify_pipeline_failure()
-                    except Exception as e:
-                        logger.debug(f"Error notifying pipeline failure to {stage.stage_name}: {e}")
-
-        # Policy: optionally skip provider disconnect on Ctrl+C (SIGINT).
-        skip_gpu_deployer_cleanup = False
-        if self._shutdown_signal_name == "SIGINT":
-            try:
-                provider_name = self.config.get_active_provider_name()
-                provider_cfg = self.config.get_provider_config()
-                cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-                if isinstance(cleanup_cfg, dict) and cleanup_cfg.get("on_interrupt") is False:
-                    skip_gpu_deployer_cleanup = True
-                    logger.warning(
-                        f"[CLEANUP] Skipping GPU provider disconnect on SIGINT "
-                        f"(providers.{provider_name}.cleanup.on_interrupt=false)"
-                    )
-            except Exception:
-                # Best-effort: never crash during cleanup due to config inspection.
-                pass
-
-        # Cleanup stages in reverse order (last-first)
-        # This ensures dependent resources are cleaned up properly
-        for stage in reversed(self.stages):
-            try:
-                if hasattr(stage, "cleanup"):
-                    if skip_gpu_deployer_cleanup and getattr(stage, "stage_name", None) == StageNames.GPU_DEPLOYER:
-                        continue
-                    stage.cleanup()
-                    logger.debug(f"Cleanup complete: {stage.stage_name}")
-            except KeyboardInterrupt:
-                # Second Ctrl+C during cleanup — log and continue so all stages are cleaned up.
-                logger.warning(f"[CLEANUP] Interrupted during cleanup of {stage.stage_name}, continuing...")
-            except Exception as e:
-                logger.warning(f"Error during cleanup of {stage.stage_name}: {e}")
-
-        logger.info("Pipeline cleanup complete")
+        """Delegate: reverse-order cleanup via the registry."""
+        self._registry.cleanup_in_reverse(
+            success=success,
+            shutdown_signal_name=self._shutdown_signal_name,
+        )
 
     def _aggregate_training_metrics(self) -> None:
         """Delegate: aggregate per-phase MLflow metrics into the parent attempt run."""
@@ -846,15 +693,12 @@ class PipelineOrchestrator:
         )
 
     def get_stage_by_name(self, name: str) -> PipelineStage | None:
-        """Get a stage by its name."""
-        for stage in self.stages:
-            if stage.stage_name == name:
-                return stage
-        return None
+        """Delegate: look up a stage by name via the registry."""
+        return self._registry.get_stage_by_name(name)
 
     def list_stages(self) -> list[str]:
-        """List all available stage names."""
-        return [stage.stage_name for stage in self.stages]
+        """Delegate: list stage names via the registry."""
+        return self._registry.list_stage_names()
 
 
 def run_pipeline(config_path: str) -> int:

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.orchestrator import PipelineOrchestrator
+from src.pipeline.execution import StageRegistry
 from src.pipeline.state import PipelineStateStore, StageRunState
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
@@ -161,7 +162,7 @@ def _build_orchestrator(
         patch("src.pipeline.orchestrator.load_config", return_value=config),
         patch("src.pipeline.orchestrator.load_secrets", return_value=secrets),
         patch("src.pipeline.orchestrator.validate_strategy_chain", return_value=Ok(None)),
-        patch.object(PipelineOrchestrator, "_init_stages", return_value=stages),
+        patch.object(StageRegistry, "_build_stages", return_value=stages),
         patch.object(PipelineOrchestrator, "_setup_mlflow", return_value=None),
     ):
         orchestrator = PipelineOrchestrator(config_path, run_directory=run_directory)
