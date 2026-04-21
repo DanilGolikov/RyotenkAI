@@ -205,7 +205,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
 
         with (
             patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
-            patch("src.pipeline.orchestrator.acquire_run_lock", return_value=mock_lock),
+            patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
             patch.object(orch, "_save_state"),
         ):
             res = orch.run()
@@ -255,7 +255,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
 
         with (
             patch.object(orch, "_bootstrap_pipeline_state", side_effect=_fake_bootstrap),
-            patch("src.pipeline.orchestrator.acquire_run_lock", return_value=mock_lock),
+            patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
             patch.object(orch, "_save_state"),
         ):
             orch.run()

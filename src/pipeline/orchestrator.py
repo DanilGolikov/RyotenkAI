@@ -48,17 +48,16 @@ from src.pipeline.stages import (
 from src.pipeline.stages.gpu_deployer import IEarlyReleasable
 from src.pipeline.state import (
     PipelineAttemptState,
-    PipelineRunLock,
     PipelineState,
     PipelineStateError,
     PipelineStateLoadError,
     PipelineStateStore,
     StageLineageRef,
     StageRunState,
-    acquire_run_lock,
     build_attempt_state,
     update_lineage,
 )
+from src.pipeline.state.run_lock_guard import RunLockGuard
 from src.pipeline.state.transitioner import (
     finalize_attempt_state,
     invalidate_lineage_from,
@@ -144,7 +143,9 @@ class PipelineOrchestrator:
         self._state_store: PipelineStateStore | None = None
         self._pipeline_state: PipelineState | None = None
         self._current_attempt: PipelineAttemptState | None = None
-        self._run_lock: PipelineRunLock | None = None
+        # Ownership of the on-disk run.lock. Kept as a RunLockGuard so the
+        # finally block can rely on context-manager semantics (Invariant #1).
+        self._run_lock_guard: RunLockGuard | None = None
 
         logger.info("Initializing Pipeline Orchestrator")
 
@@ -526,12 +527,16 @@ class PipelineOrchestrator:
                     step()
                 except Exception:
                     logger.exception(f"[CLEANUP] step '{step_name}' failed")
-            if self._run_lock:
+            # RunLockGuard.__exit__ is already defensive (swallows release errors,
+            # logs them). Still wrap defensively here in case the guard itself
+            # raises unexpectedly — run_lock release must NEVER skip.
+            guard = self._run_lock_guard
+            self._run_lock_guard = None
+            if guard is not None:
                 try:
-                    self._run_lock.release()
+                    guard.__exit__(None, None, None)
                 except Exception:
-                    logger.exception("[CLEANUP] run lock release failed")
-                self._run_lock = None
+                    logger.exception("[CLEANUP] run lock guard exit failed")
 
     def _prepare_stateful_attempt(
         self,
@@ -547,7 +552,7 @@ class PipelineOrchestrator:
         fully-configured state ready to execute stages. All side effects are
         captured in ``self._state_store``, ``self.run_directory``,
         ``self._current_attempt``, ``self.attempt_directory``, ``self._log_layout``,
-        ``self.context``, and ``self._run_lock``.
+        ``self.context``, and ``self._run_lock_guard``.
         """
         state, requested_action, effective_action, start_stage_name = self._bootstrap_pipeline_state(
             run_dir=run_dir,
@@ -564,7 +569,10 @@ class PipelineOrchestrator:
         start_idx = self._get_stage_index(start_stage_name)
         stop_idx = len(self.stages)
 
-        self._run_lock = acquire_run_lock(self._state_store.lock_path)
+        # Acquire the run.lock via RunLockGuard so release is impossible
+        # to forget in the finally block (Invariant #1 of the architecture).
+        self._run_lock_guard = RunLockGuard(self._state_store.lock_path)
+        self._run_lock_guard.__enter__()
 
         enabled_stage_names = self._compute_enabled_stage_names(start_stage_name=start_stage_name)
         attempt = build_attempt_state(

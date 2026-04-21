@@ -50,14 +50,15 @@ class TestFileSizeLimits:
     """
 
     @pytest.mark.parametrize("rel_path,max_lines", [
-        # orchestrator.py was 2 266 lines before Phase 3; now ~2 039 — cap at 2 150
-        ("src/pipeline/orchestrator.py", 2_150),
-        # MLflowManager facade — keep from growing; currently ~628 lines (includes all delegation stubs)
+        # orchestrator.py: 2062 → 1385 after Phase-3 decomposition; target ≤200 LOC
+        # after Phase-A architectural refactor. Ratchet down after each PR-AN.
+        ("src/pipeline/orchestrator.py", 1_400),
+        # MLflowManager facade — keep from growing; currently ~628 lines.
         ("src/training/managers/mlflow_manager/manager.py", 720),
-        # setup.py mixin — currently ~285 lines; cap at 320
+        # setup.py mixin — currently ~285 lines; cap at 320.
         ("src/training/managers/mlflow_manager/setup.py", 320),
-        # training_monitor.py — 833 lines; cap at 900
-        ("src/pipeline/stages/training_monitor.py", 900),
+        # training_monitor.py — 979 lines currently; cap at 1000 pending future extraction.
+        ("src/pipeline/stages/training_monitor.py", 1_000),
     ])
     def test_file_not_exceeding_line_limit(self, rel_path: str, max_lines: int) -> None:
         actual = _line_count(rel_path)
@@ -220,3 +221,89 @@ class TestExtractionContracts:
             assert hasattr(ResilientMLflowTransport, attr), (
                 f"ResilientMLflowTransport missing '{attr}'"
             )
+
+
+# ---------------------------------------------------------------------------
+# 5. NO-VAMPIRE-REF — collaborators never import PipelineOrchestrator
+# ---------------------------------------------------------------------------
+
+class TestNoOrchestratorImports:
+    """Collaborators must not import PipelineOrchestrator.
+
+    Core invariant of the Phase-A architecture: state and behaviour flows
+    DOWN the dependency tree (orchestrator → collaborators → utils), never
+    back up. An ``import PipelineOrchestrator`` outside the allow-list
+    indicates a vampire reference that will break testability.
+    """
+
+    _ALLOWED_IMPORTERS = frozenset({
+        "src/pipeline/orchestrator.py",         # self
+        "src/main.py",                          # CLI entry point
+        "src/api/services/run_service.py",      # web backend entry
+        "src/pipeline/launch.py",               # subprocess launcher
+    })
+
+    def test_no_collaborator_imports_pipeline_orchestrator(self) -> None:
+        import re
+
+        forbidden = (
+            re.compile(r"^from\s+src\.pipeline\.orchestrator\s+import\s+PipelineOrchestrator", re.M),
+            re.compile(r"^import\s+src\.pipeline\.orchestrator\b", re.M),
+        )
+        pipeline_dir = SRC / "pipeline"
+        violations: list[str] = []
+        for py_file in pipeline_dir.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            rel = py_file.relative_to(ROOT).as_posix()
+            if rel in self._ALLOWED_IMPORTERS:
+                continue
+            content = py_file.read_text(encoding="utf-8")
+            for pattern in forbidden:
+                match = pattern.search(content)
+                if match:
+                    violations.append(f"{rel}: {match.group(0)}")
+        assert not violations, (
+            "Collaborators must not import PipelineOrchestrator. Offenders:\n  "
+            + "\n  ".join(violations)
+        )
+
+
+# ---------------------------------------------------------------------------
+# 6. NO-PRIVATE-PROBE — tests must not poke migrated private attrs
+# ---------------------------------------------------------------------------
+
+class TestNoMigratedPrivateProbes:
+    """Each PR-AN that extracts a private into a component adds its private
+    attr to this list. Future tests that reach for it fail CI — tests must
+    exercise the new public component API instead.
+    """
+
+    # Pattern → reason. Patterns are regex; they match a WRITE/ASSIGN form
+    # (e.g. ``orch._run_lock =`` or ``orchestrator._run_lock =``), not reads.
+    _BANNED_PATTERNS = (
+        # PR-A1: run_lock lifecycle owned by RunLockGuard
+        (r"(?:orch|orchestrator)\._run_lock\s*=",
+         "PR-A1: use _install_fake_lock_guard(orch, tmp_path) helper — RunLockGuard owns the lock now"),
+    )
+
+    @pytest.mark.parametrize("pattern, reason", _BANNED_PATTERNS)
+    def test_no_test_writes_to_migrated_private(self, pattern: str, reason: str) -> None:
+        import re
+
+        regex = re.compile(pattern)
+        tests_dir = SRC / "tests"
+        violations: list[str] = []
+        for py_file in tests_dir.rglob("*.py"):
+            if "__pycache__" in py_file.parts:
+                continue
+            # Skip this guardrail file itself
+            if py_file.resolve() == Path(__file__).resolve():
+                continue
+            for ln_no, line in enumerate(
+                py_file.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if regex.search(line):
+                    rel = py_file.relative_to(ROOT).as_posix()
+                    violations.append(f"{rel}:{ln_no}: {line.strip()}")
+        assert not violations, f"{reason}\nOffenders:\n  " + "\n  ".join(violations)

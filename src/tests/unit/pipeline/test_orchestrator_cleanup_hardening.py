@@ -18,7 +18,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.orchestrator import PipelineOrchestrator
+from src.pipeline.state.run_lock_guard import RunLockGuard
 from src.utils.result import Ok
+
+
+def _install_fake_lock_guard(orch: PipelineOrchestrator, tmp_path: Path) -> MagicMock:
+    """Inject a synthetic RunLockGuard holding a MagicMock lock.
+
+    Returns the fake inner lock so tests can assert ``release.assert_called_once()``.
+    Bypasses real file-level acquire — the guard is purely in-memory.
+    """
+    fake_inner_lock = MagicMock()
+    guard = RunLockGuard(tmp_path / "fake.lock")
+    # Bypass real __enter__ / acquire_run_lock — synthetic guard holds the fake
+    guard._lock = fake_inner_lock
+    orch._run_lock_guard = guard
+    return fake_inner_lock
 
 
 # -----------------------------------------------------------------------------
@@ -80,8 +95,7 @@ class TestFinallyPositive:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         # Trigger finally via a synthetic exception path
         with patch.object(
@@ -93,7 +107,7 @@ class TestFinallyPositive:
         orch._cleanup_resources.assert_called_once()
         orch._teardown_mlflow_attempt.assert_called_once()
         lock.release.assert_called_once()
-        assert orch._run_lock is None
+        assert orch._run_lock_guard is None
 
 
 # =============================================================================
@@ -110,8 +124,7 @@ class TestFinallyNegative:
         orch._flush_pending_collectors = MagicMock(side_effect=RuntimeError("flush broke"))
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep failed")):
             result = orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
@@ -120,7 +133,7 @@ class TestFinallyNegative:
         orch._cleanup_resources.assert_called_once()
         orch._teardown_mlflow_attempt.assert_called_once()
         lock.release.assert_called_once()
-        assert orch._run_lock is None  # finally sets it to None after release
+        assert orch._run_lock_guard is None  # finally sets it to None after release
         assert result.is_failure()
 
     def test_cleanup_exception_still_allows_teardown(self, tmp_path: Path) -> None:
@@ -131,8 +144,7 @@ class TestFinallyNegative:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock(side_effect=RuntimeError("cleanup broke"))
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep failed")):
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
@@ -148,14 +160,13 @@ class TestFinallyNegative:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock(side_effect=RuntimeError("teardown broke"))
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep failed")):
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
 
         lock.release.assert_called_once()
-        assert orch._run_lock is None  # set to None after release
+        assert orch._run_lock_guard is None  # set to None after release
 
 
 # =============================================================================
@@ -172,7 +183,7 @@ class TestFinallyBoundary:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        orch._run_lock = None  # never acquired (prepare failed early)
+        orch._run_lock_guard = None  # never acquired (prepare failed early)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("early")):
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
@@ -186,14 +197,13 @@ class TestFinallyBoundary:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
+        lock = _install_fake_lock_guard(orch, tmp_path)
         lock.release.side_effect = OSError("fs error on release")
-        orch._run_lock = lock
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("x")):
             # Must not propagate the OSError from the finally block
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
-        assert orch._run_lock is None
+        assert orch._run_lock_guard is None
 
 
 # =============================================================================
@@ -215,8 +225,7 @@ class TestFinallyInvariants:
         orch._flush_pending_collectors = MagicMock()
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         getattr(orch, f"_{break_step}").side_effect = RuntimeError(f"{break_step} broke")
 
@@ -236,8 +245,7 @@ class TestFinallyInvariants:
         orch._flush_pending_collectors = MagicMock(side_effect=RuntimeError("a"))
         orch._cleanup_resources = MagicMock(side_effect=RuntimeError("b"))
         orch._teardown_mlflow_attempt = MagicMock(side_effect=RuntimeError("c"))
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("d")):
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
@@ -271,8 +279,7 @@ class TestFinallyDependencyErrors:
         orch._flush_pending_collectors = MagicMock(side_effect=exc)
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep")):
             # Must not propagate ``exc``; result is an Err from the prep RuntimeError handler
@@ -303,8 +310,7 @@ class TestFinallyRegressions:
         )
         orch._cleanup_resources = MagicMock()
         orch._teardown_mlflow_attempt = MagicMock()
-        lock = MagicMock()
-        orch._run_lock = lock
+        lock = _install_fake_lock_guard(orch, tmp_path)
 
         with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep")):
             orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
@@ -335,8 +341,9 @@ def test_combinatorial_finally_matrix(
             mock.side_effect = RuntimeError(f"{step} broke")
         setattr(orch, f"_{step}", mock)
 
-    lock = MagicMock() if has_lock else None
-    orch._run_lock = lock
+    lock = _install_fake_lock_guard(orch, tmp_path) if has_lock else None
+    if not has_lock:
+        orch._run_lock_guard = None
 
     with patch.object(orch, "_prepare_stateful_attempt", side_effect=RuntimeError("prep")):
         orch._run_stateful(run_dir=None, resume=False, restart_from_stage=None)
