@@ -1,18 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _copy_dict(value: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return dict(value)
+
+
+def _copy_str_dict(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): str(v) for k, v in value.items() if isinstance(v, (str, int, float))}
 
 
 @dataclass(slots=True)
@@ -61,6 +67,7 @@ class StageRunState:
     skip_reason: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    log_paths: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +81,7 @@ class StageRunState:
             "skip_reason": self.skip_reason,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "log_paths": dict(self.log_paths),
         }
 
     @classmethod
@@ -89,6 +97,7 @@ class StageRunState:
             skip_reason=data.get("skip_reason"),
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
+            log_paths=_copy_str_dict(data.get("log_paths")),
         )
 
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from src.api.config import ApiSettings
 from src.api.dependencies import get_settings, resolve_run_dir
-from src.api.services.log_service import ALLOWED_LOG_FILES, resolve_log_path
+from src.api.services.log_service import resolve_log_path
 from src.pipeline.live_logs import LiveLogTail
 from src.pipeline.run_queries import effective_pipeline_status
 from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
@@ -27,12 +27,13 @@ async def stream_logs(
     run_dir: Path = Depends(resolve_run_dir),
     settings: ApiSettings = Depends(get_settings),
 ) -> None:
-    if file not in ALLOWED_LOG_FILES:
+    try:
+        log_path = resolve_log_path(run_dir, attempt_no, file)
+    except ValueError:
         await websocket.close(code=4400, reason="unsupported_file")
         return
 
     await websocket.accept()
-    log_path = resolve_log_path(run_dir, attempt_no, file)
     tail = LiveLogTail()
 
     # Resolve starting offset. Default: seek to EOF so client only gets new lines.
