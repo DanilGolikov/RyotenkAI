@@ -38,7 +38,7 @@ from src.pipeline.stages.gpu_deployer import IEarlyReleasable
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
 
     from src.pipeline.context import PipelineContext
     from src.pipeline.stages.base import PipelineStage
