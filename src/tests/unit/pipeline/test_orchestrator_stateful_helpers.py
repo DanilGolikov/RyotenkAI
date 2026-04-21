@@ -350,10 +350,10 @@ def test_is_inference_runtime_healthy_handles_success_and_failure(tmp_path: Path
     response = MagicMock()
     response.__enter__.return_value = MagicMock(status=200)
     response.__exit__.return_value = None
-    with patch("src.pipeline.orchestrator.urlopen", return_value=response):
+    with patch("src.pipeline.executor.stage_planner.urlopen", return_value=response):
         assert orchestrator._is_inference_runtime_healthy() is True
 
-    with patch("src.pipeline.orchestrator.urlopen", side_effect=RuntimeError("boom")):
+    with patch("src.pipeline.executor.stage_planner.urlopen", side_effect=RuntimeError("boom")):
         assert orchestrator._is_inference_runtime_healthy() is False
 
 
