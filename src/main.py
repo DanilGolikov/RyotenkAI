@@ -1,6 +1,18 @@
+"""Main entry point for RyotenkAI CLI.
+
+Keep this module's *top-level* imports lean — every `ryotenkai` invocation
+pays for them, even `--help`. Heavy dependencies (``src.utils.config``,
+``src.pipeline.launch_queries``, the orchestrator, mlflow, torch, …) are
+imported lazily from inside command bodies so the help screen renders in
+<300 ms instead of ~1.7 s.
+
+The only "noisy" top-level dependency we can't avoid is ``src.utils.logger``
+(colorlog configuration). Warnings from transitively-loaded third-party
+packages (e.g. torch's pynvml deprecation) are filtered here so users
+don't get a wall of text before each command runs.
 """
-Main entry point for RyotenkAI CLI.
-"""
+
+from __future__ import annotations
 
 import atexit
 import json
@@ -8,19 +20,32 @@ import os
 import signal
 import sys
 import threading
+import warnings
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import click
-import typer
+# Hide noisy third-party deprecation warnings that surface at import time.
+# Kept narrow so we don't swallow real signal from our own code.
+# Filter must run before the downstream imports that trigger pynvml.
+warnings.filterwarnings(
+    "ignore",
+    message=".*pynvml package is deprecated.*",
+    category=FutureWarning,
+)
 
-from src.cli.run_rendering import (
+import click  # noqa: E402 -- must come after the warnings filter above
+import typer  # noqa: E402
+
+from src.cli.run_rendering import (  # noqa: E402
     render_run_diff_lines,
     render_run_status_snapshot,
 )
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.pipeline.launch_queries import load_restart_point_options
-from src.utils.config import PipelineConfig
-from src.utils.logger import logger
+from src.utils.logger import logger  # noqa: E402
+
+if TYPE_CHECKING:
+    # PipelineConfig pulls the whole pydantic+torch+datasets cascade on
+    # import (~200 ms + noisy warnings). We only use it as a type hint.
+    from src.utils.config import PipelineConfig
 
 # Global orchestrator reference for signal handler — typed loosely to avoid
 # importing PipelineOrchestrator at module level (lazy import in train()).
@@ -96,6 +121,8 @@ signal.signal(signal.SIGTERM, _signal_handler)
 
 def _log_config_summary(config: PipelineConfig) -> None:
     """Log configuration summary at pipeline start."""
+    from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+
     logger.info("=" * 70)
     logger.info("📋 CONFIGURATION SUMMARY")
     logger.info("=" * 70)
@@ -471,6 +498,7 @@ def list_restart_points_cmd(
     from src.cli.context import CLIContext
     from src.cli.errors import die
     from src.cli.renderer import get_renderer
+    from src.pipeline.launch_queries import load_restart_point_options  # heavy: lazy
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -524,6 +552,7 @@ def info(
     from src.cli.context import CLIContext
     from src.cli.errors import die
     from src.cli.renderer import get_renderer
+    from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
     from src.pipeline.orchestrator import PipelineOrchestrator  # lazy: heavy init stack
 
     state = ctx.ensure_object(CLIContext)
@@ -709,8 +738,8 @@ def inspect_run(
     renderer.flush()
 
 
-def _inspect_run_json(data: "RunInspectionData") -> dict:  # type: ignore[name-defined]  # noqa: F821
-    """Build the JSON payload for ``inspect-run -o json``."""
+def _inspect_run_json(data) -> dict:  # type: ignore[no-untyped-def]
+    """Build the JSON payload for ``inspect-run -o json`` (data: RunInspectionData)."""
     from src.cli.formatters import duration_seconds
     from src.pipeline.run_queries import effective_pipeline_status
 
@@ -1053,6 +1082,8 @@ def config_validate(
         ryotenkai config-validate --config config/pipeline.yaml
     """
     import importlib
+
+    from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 
     checks: list[tuple[bool | None, str, str]] = []  # (ok/warn/None, label, detail)
 
