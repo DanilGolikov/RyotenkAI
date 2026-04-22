@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import UTC, datetime
 
+from src.cli.formatters import format_duration  # re-exported for back-compat
 from src.pipeline.run_queries import RunInspectionData, RunSummaryRow, effective_pipeline_status
 from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 
-_SECS_PER_HOUR = 3600
-_SECS_PER_MINUTE = 60
+__all__ = (
+    "RunInspectionRenderer",
+    "format_duration",
+    "render_run_diff_lines",
+    "render_run_inspection_lines",
+    "render_run_status_snapshot",
+    "render_runs_list_lines",
+)
 _STATUS_ICONS: dict[str, str] = {
     StageRunState.STATUS_COMPLETED: "◉",
     StageRunState.STATUS_FAILED: "◉",
@@ -188,30 +194,6 @@ def _render_status_attempt_lines(attempt: PipelineAttemptState) -> list[str]:
         running_marker = " <--" if stage_run.status == StageRunState.STATUS_RUNNING else ""
         lines.append(f"  {icon:3} {stage_run.stage_name:<28} {stage_run.status:<13} {duration}{running_marker}")
     return lines
-
-
-def format_duration(started_at: str | None, completed_at: str | None) -> str:
-    if not started_at:
-        return ""
-    try:
-        start = datetime.fromisoformat(started_at)
-        end = datetime.fromisoformat(completed_at) if completed_at else datetime.now(UTC)
-        if start.tzinfo is None and end.tzinfo is not None:
-            start = start.replace(tzinfo=UTC)
-        elif start.tzinfo is not None and end.tzinfo is None:
-            end = end.replace(tzinfo=UTC)
-        delta = int((end - start).total_seconds())
-        if delta < 0:
-            return ""
-        hours, remainder = divmod(delta, _SECS_PER_HOUR)
-        minutes, seconds = divmod(remainder, _SECS_PER_MINUTE)
-        if hours:
-            return f"{hours}h {minutes}m {seconds}s"
-        if minutes:
-            return f"{minutes}m {seconds}s"
-        return f"{seconds}s"
-    except (TypeError, ValueError):
-        return ""
 
 
 def _format_mode_label(stage_run: StageRunState) -> str:
