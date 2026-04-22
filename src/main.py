@@ -183,6 +183,11 @@ app = typer.Typer(
     help="RyotenkAI - Automated CI/CD for LLM Training",
     add_completion=False,
     context_settings={"help_option_names": ["-h", "--help"]},
+    # Plain Python tracebacks for unhandled errors; commands that expect
+    # user mistakes print a single "error: ..." line via typer.Exit.
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    pretty_exceptions_short=True,
 )
 
 
