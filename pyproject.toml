@@ -198,8 +198,9 @@ external = ["WPS", "DAR"]
 # Loader/catalog use Path both as default arg value and as annotation.
 # inference.py also imports PluginKind for a runtime-visible annotation.
 "src/community/**/*.py" = ["TC001", "TC003"]
-# CLI module uses Path at runtime for typer defaults.
-"src/cli/community.py" = ["TC003"]
+# CLI modules use Path / typer / Protocol types at runtime for typer
+# defaults, renderer method signatures, and Console instantiation.
+"src/cli/**/*.py" = ["TC001", "TC002", "TC003"]
 
 [tool.ruff.format]
 # Use Black-compatible formatting
