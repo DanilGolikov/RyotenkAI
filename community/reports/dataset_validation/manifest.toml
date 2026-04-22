@@ -1,0 +1,13 @@
+[plugin]
+id = "dataset_validation"
+kind = "reports"
+name = "DatasetValidationBlockPlugin"
+version = "1.0.0"
+priority = 40
+category = "report"
+stability = "stable"
+description = "Report block: dataset_validation."
+
+[plugin.entry_point]
+module = "plugin"
+class = "DatasetValidationBlockPlugin"

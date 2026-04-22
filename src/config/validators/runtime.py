@@ -43,11 +43,11 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
     if not eval_cfg or not getattr(eval_cfg, "enabled", False):
         return
 
-    from src.evaluation.plugins.discovery import ensure_evaluation_plugins_discovered
+    from src.community.catalog import catalog
     from src.evaluation.plugins.registry import EvaluatorPluginRegistry
     from src.evaluation.plugins.secrets import SecretsResolver
 
-    ensure_evaluation_plugins_discovered()
+    catalog.ensure_loaded()
 
     resolver = SecretsResolver(secrets)
     for plugin_cfg in eval_cfg.evaluators.plugins:

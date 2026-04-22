@@ -1,0 +1,13 @@
+[plugin]
+id = "model_configuration"
+kind = "reports"
+name = "ModelConfigurationBlockPlugin"
+version = "1.0.0"
+priority = 50
+category = "report"
+stability = "stable"
+description = "Report block: model_configuration."
+
+[plugin.entry_point]
+module = "plugin"
+class = "ModelConfigurationBlockPlugin"

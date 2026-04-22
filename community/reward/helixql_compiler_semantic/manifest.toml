@@ -1,0 +1,28 @@
+[plugin]
+id = "helixql_compiler_semantic"
+kind = "reward"
+name = "HelixQL Compiler Semantic"
+version = "1.0.0"
+priority = 50
+category = "semantic"
+stability = "stable"
+description = "Domain reward for HelixQL GRPO/SAPO: compiles generated queries against the schema and scores semantic similarity to the reference answer."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HelixQLCompilerSemanticRewardPlugin"
+
+[params_schema.validation_backend]
+type = "enum"
+options = ["compile", "semantic_only"]
+default = "compile"
+
+[params_schema.timeout_seconds]
+type = "integer"
+min = 1
+max = 120
+default = 10
+
+[suggested_params]
+validation_backend = "compile"
+timeout_seconds = 10

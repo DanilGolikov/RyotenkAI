@@ -12,8 +12,9 @@ class Secrets(BaseSettings):
     Two layers:
     - Typed system fields (hf_token, runpod_api_key): validated at startup,
       accessible via attribute access.
-    - Arbitrary plugin secrets (EVAL_* keys): stored in model_extra after extra="allow".
-      Accessible via SecretsResolver — plugins declare what they need with @requires_secrets.
+    - Arbitrary plugin secrets (EVAL_*, DTST_* keys): stored in model_extra after extra="allow".
+      Accessible via SecretsResolver — plugins declare what they need in their
+      community ``manifest.toml`` under ``[secrets] required = [...]``.
     """
 
     # Optional: required only when active provider is type=runpod

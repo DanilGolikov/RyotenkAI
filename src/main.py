@@ -184,6 +184,15 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# Community manifest authoring toolchain (scaffold / sync).
+from src.cli.community import community_app  # noqa: E402
+
+app.add_typer(
+    community_app,
+    name="community",
+    help="Scaffold and sync community/ plugin and preset manifests.",
+)
+
 
 def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
     """

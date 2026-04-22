@@ -17,7 +17,7 @@ from src.reports.domain.entities import (
     RunStatus,
 )
 from src.reports.plugins.composer import ReportComposer
-from src.reports.plugins.discovery import ensure_report_plugins_discovered
+from src.community.catalog import catalog
 from src.reports.plugins.interfaces import ReportPluginContext
 from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
 from src.reports.plugins.registry import build_report_plugins
@@ -29,7 +29,7 @@ class _DummyProvider:
 
 
 def _render_report_markdown(*, data: ExperimentData, report) -> str:
-    ensure_report_plugins_discovered(force=True)
+    catalog.reload()
     composer = ReportComposer(build_report_plugins())
     ctx = ReportPluginContext(
         run_id=data.run_id,

@@ -1,0 +1,13 @@
+[plugin]
+id = "helixql_generated_syntax_backend"
+kind = "evaluation"
+name = "HelixQL Generated Syntax Backend"
+version = "1.0.0"
+priority = 8
+category = "syntax_check"
+stability = "stable"
+description = "Validates model_answer via Helix CLI compile (syntax + analysis, no cargo)."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HelixQLGeneratedSyntaxBackendPlugin"

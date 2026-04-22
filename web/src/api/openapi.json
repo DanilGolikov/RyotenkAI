@@ -119,7 +119,7 @@
           "config"
         ],
         "summary": "Presets",
-        "description": "Return curated starter configs from ``configs/presets/*.yaml``.",
+        "description": "Return curated starter configs from ``community/presets/``.\n\nEach preset lives in its own folder with a ``manifest.toml`` (id,\ndisplay name, description, size tier) and the actual config YAML\nreferenced via ``[preset.entry_point]``.",
         "operationId": "config-presets",
         "responses": {
           "200": {
@@ -730,8 +730,53 @@
           "projects"
         ],
         "summary": "Delete Project",
-        "description": "Unregister a project (does not delete files on disk).",
+        "description": "Unregister a project. By default also removes the on-disk\nworkspace — pass ``?delete_files=false`` to keep the directory.",
         "operationId": "projects-delete_project",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "delete_files",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Delete Files"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/description": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Update Description",
+        "operationId": "projects-update_description",
         "parameters": [
           {
             "name": "project_id",
@@ -743,9 +788,26 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectDescriptionRequest"
+              }
+            }
+          }
+        },
         "responses": {
-          "204": {
-            "description": "Successful Response"
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -835,6 +897,98 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SaveConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/env": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Get Project Env",
+        "operationId": "projects-get_project_env",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Save Project Env",
+        "operationId": "projects-save_project_env",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectEnvRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvResponse"
                 }
               }
             }
@@ -1969,6 +2123,11 @@
             "type": "string",
             "title": "Name"
           },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": ""
+          },
           "description": {
             "type": "string",
             "title": "Description",
@@ -1977,6 +2136,11 @@
           "yaml": {
             "type": "string",
             "title": "Yaml"
+          },
+          "size_tier": {
+            "type": "string",
+            "title": "Size Tier",
+            "default": ""
           }
         },
         "type": "object",
@@ -2071,6 +2235,16 @@
             },
             "type": "array",
             "title": "Checks"
+          },
+          "field_errors": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Field Errors"
           }
         },
         "type": "object",
@@ -2738,6 +2912,37 @@
         ],
         "title": "ProjectDetail"
       },
+      "ProjectEnvRequest": {
+        "properties": {
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Env"
+          }
+        },
+        "type": "object",
+        "required": [
+          "env"
+        ],
+        "title": "ProjectEnvRequest"
+      },
+      "ProjectEnvResponse": {
+        "properties": {
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Env",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "title": "ProjectEnvResponse",
+        "description": "Project-scoped environment overrides (``HF_TOKEN`` & friends)."
+      },
       "ProjectSummary": {
         "properties": {
           "id": {
@@ -2880,6 +3085,11 @@
             "title": "Description",
             "default": ""
           },
+          "has_inference": {
+            "type": "boolean",
+            "title": "Has Inference",
+            "default": false
+          },
           "updated_at": {
             "type": "string",
             "title": "Updated At"
@@ -2964,6 +3174,11 @@
             "type": "string",
             "title": "Description",
             "default": ""
+          },
+          "has_inference": {
+            "type": "boolean",
+            "title": "Has Inference",
+            "default": false
           }
         },
         "type": "object",
@@ -3640,6 +3855,18 @@
           "favorite_versions"
         ],
         "title": "ToggleFavoriteResponse"
+      },
+      "UpdateProjectDescriptionRequest": {
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "UpdateProjectDescriptionRequest"
       },
       "ValidationError": {
         "properties": {

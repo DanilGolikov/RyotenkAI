@@ -93,7 +93,8 @@ class EvaluationRunner:
         Args:
             eval_config:      Populated EvaluationConfig from pipeline config.
             callbacks:        Optional event callbacks (MLflow, logging, etc.).
-            secrets_resolver: SecretsResolver instance for plugins that declare @requires_secrets.
+            secrets_resolver: SecretsResolver instance for plugins that declare
+                              ``[secrets] required = [...]`` in their manifest.toml.
                               Pass None if no plugins in the config require secrets.
         """
         self._eval_config = eval_config
@@ -389,10 +390,10 @@ class EvaluationRunner:
 
         Run explicit plugin discovery first, then instantiate enabled plugin instances.
         """
-        from src.evaluation.plugins.discovery import ensure_evaluation_plugins_discovered
+        from src.community.catalog import catalog
         from src.evaluation.plugins.registry import EvaluatorPluginRegistry
 
-        ensure_evaluation_plugins_discovered()
+        catalog.ensure_loaded()
         plugins: list[tuple[Any, EvaluatorPlugin]] = []
 
         for plugin_cfg in self._eval_config.evaluators.plugins:

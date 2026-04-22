@@ -1,0 +1,13 @@
+[plugin]
+id = "deduplication"
+kind = "validation"
+name = "Deduplication (SFT)"
+version = "1.0.0"
+priority = 40
+category = "sft"
+stability = "stable"
+description = "Checks for duplicate examples in the dataset (SFT)."
+
+[plugin.entry_point]
+module = "plugin"
+class = "DeduplicationValidator"

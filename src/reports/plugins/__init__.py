@@ -1,11 +1,11 @@
 """
 Report plugins package.
 
-Provides a modular architecture for building `experiment_report.md` as an
-ordered list of independent blocks (plugins).
+Plugins live under ``community/reports/`` and are loaded by
+``src.community.catalog``. This package provides only the base interfaces
+and the registry populated by the loader.
 """
 
-from .discovery import ensure_report_plugins_discovered
 from .interfaces import IReportBlockPlugin, PluginExecutionRecord, ReportBlock, ReportPluginContext
 from .registry import ReportPluginRegistry, build_report_plugins
 
@@ -16,5 +16,4 @@ __all__ = [
     "ReportPluginContext",
     "ReportPluginRegistry",
     "build_report_plugins",
-    "ensure_report_plugins_discovered",
 ]
