@@ -1,0 +1,13 @@
+[plugin]
+id = "metrics_analysis"
+kind = "reports"
+name = "MetricsAnalysisBlockPlugin"
+version = "1.0.0"
+priority = 90
+category = "report"
+stability = "stable"
+description = "Report block: metrics_analysis."
+
+[plugin.entry_point]
+module = "plugin"
+class = "MetricsAnalysisBlockPlugin"

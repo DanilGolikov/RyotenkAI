@@ -120,3 +120,6 @@ docker/training/build_and_push.log
 # repowise API keys (local)
 /.repowise/
 /.mcp.json
+
+# Community plugin/preset archive extraction cache
+community/.cache/

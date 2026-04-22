@@ -92,3 +92,66 @@ def test_config_default_lists_templates(client) -> None:
     body = response.json()
     assert body["runs_dir"]
     assert isinstance(body["config_templates"], list)
+
+
+def test_config_presets_list_exposes_scope_and_requirements(client) -> None:
+    """GET /config/presets surfaces v2 manifest fields for the three shipped presets."""
+    response = client.get("/api/v1/config/presets")
+    assert response.status_code == 200
+    body = response.json()
+    presets_by_id = {p["name"]: p for p in body["presets"]}
+
+    # All three shipped presets declare scope/requirements after the v2 upgrade.
+    for pid in ("01-small", "02-medium", "03-large"):
+        assert pid in presets_by_id, f"preset {pid!r} missing"
+        p = presets_by_id[pid]
+        assert p["scope"] is not None
+        assert p["scope"]["replaces"] == ["model", "training"]
+        assert "datasets" in p["scope"]["preserves"]
+        assert p["requirements"] is not None
+        # Placeholders surface the dataset-path hint
+        assert any("datasets.default" in path for path in p["placeholders"])
+
+
+def test_config_preview_preserves_user_datasets_and_providers(client) -> None:
+    """POST /config/presets/{id}/preview keeps datasets+providers when the
+    manifest scope lists them under ``preserves``."""
+    user_config = {
+        "model": {"name": "old-model"},
+        "training": {"type": "sft"},
+        "datasets": {"mine": {"source_type": "local"}},
+        "providers": {"my_provider": {"kind": "single_node"}},
+    }
+    response = client.post(
+        "/api/v1/config/presets/01-small/preview",
+        json={"current_config": user_config},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    # model and training are replaced; datasets/providers preserved verbatim
+    assert body["resulting_config"]["model"]["name"] == "Qwen/Qwen2.5-0.5B-Instruct"
+    assert body["resulting_config"]["training"]["type"] == "qlora"
+    assert body["resulting_config"]["datasets"] == user_config["datasets"]
+    assert body["resulting_config"]["providers"] == user_config["providers"]
+
+    # Diff carries reasons per key
+    diff_by_key = {d["key"]: d for d in body["diff"]}
+    assert diff_by_key["model"]["reason"] == "preset_replaced"
+    assert diff_by_key["datasets"]["reason"] == "preset_preserved"
+    assert diff_by_key["providers"]["reason"] == "preset_preserved"
+
+    # Requirements surfaced
+    labels = {r["label"] for r in body["requirements"]}
+    assert "Provider kind" in labels
+
+    # Placeholders surfaced
+    assert any("datasets.default" in ph["path"] for ph in body["placeholders"])
+
+
+def test_config_preview_404_on_unknown_preset(client) -> None:
+    response = client.post(
+        "/api/v1/config/presets/does-not-exist/preview",
+        json={"current_config": {}},
+    )
+    assert response.status_code == 404

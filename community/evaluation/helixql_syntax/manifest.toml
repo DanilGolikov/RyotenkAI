@@ -1,0 +1,22 @@
+[plugin]
+id = "helixql_syntax"
+kind = "evaluation"
+name = "HelixQL Syntax"
+version = "1.0.0"
+priority = 10
+category = "syntax_check"
+stability = "stable"
+description = "Validates HelixQL query syntax in model responses (lightweight heuristic, no full parser)."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HelixQLSyntaxPlugin"
+
+[thresholds_schema.min_valid_ratio]
+type = "float"
+min = 0.0
+max = 1.0
+default = 0.8
+
+[suggested_thresholds]
+min_valid_ratio = 0.8

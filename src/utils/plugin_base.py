@@ -1,37 +1,34 @@
 """
 BasePlugin — lightweight mixin for all plugin systems in this project.
 
-Provides a shared set of ClassVar metadata fields that every plugin type
-(validation, evaluation, reward, report) should carry, plus an optional
-``MANIFEST`` dict surfacing human-readable metadata (description, category,
-suggested params/thresholds) for UI consumption.
+Metadata (name, priority, version, description, params/thresholds schema,
+required secrets) lives in the plugin's ``manifest.toml`` and is attached
+to the class at load time by ``src/community/loader.py``. This mixin only
+exposes the ClassVar slots that runtime code expects to read.
 """
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from src.community.manifest import PluginManifest
 
 
 class BasePlugin:
-    """
-    Mixin that enforces a common metadata contract across all plugin ABCs.
+    """Mixin that reserves metadata slots populated by the community loader.
 
-    All plugin systems in this project share three invariants:
+    All plugin systems share three invariants, injected by the loader from
+    ``manifest.toml``:
+
       - ``name``     — unique string key used by registries for lookup.
       - ``priority`` — execution order hint (lower = runs earlier).
       - ``version``  — semver string, useful for compatibility checks.
-
-    Optional metadata for front-ends / docs:
-      - ``MANIFEST`` — dict with keys:
-            description        (str)
-            category           (str; free-form grouping hint)
-            stability          ("stable" | "beta" | "experimental")
-            params_schema      ({field_name: {"type": ..., "min": ..., "max": ..., "default": ...}})
-            thresholds_schema  (same shape)
-            suggested_params   ({field_name: value})
-            suggested_thresholds ({field_name: value})
-        Every field is optional. ``get_manifest()`` returns a normalised
-        dict merging MANIFEST with ClassVars and filling missing keys.
+      - ``_required_secrets`` — tuple of secret keys the plugin needs.
+      - ``_community_manifest`` — full :class:`PluginManifest` object, available
+        whenever the plugin was loaded via :class:`CommunityCatalog`. Runtime
+        helpers (``get_description`` below) read from this so the manifest
+        stays the single source of truth for human-readable metadata.
 
     This class intentionally carries NO abstract methods and NO ``__init__``
     so it can be inserted into any ABC/Protocol hierarchy without MRO conflicts.
@@ -40,36 +37,24 @@ class BasePlugin:
     name: ClassVar[str] = ""
     priority: ClassVar[int] = 50
     version: ClassVar[str] = "1.0.0"
-
-    MANIFEST: ClassVar[dict[str, Any] | None] = None
+    _required_secrets: ClassVar[tuple[str, ...]] = ()
+    _community_manifest: ClassVar[PluginManifest | None] = None
 
     @classmethod
-    def get_manifest(cls) -> dict[str, Any]:
-        """
-        Return a normalised manifest dict for UI consumption.
+    def get_description(cls) -> str:
+        """Return the plugin description.
 
-        Always includes ``id``, ``name``, ``version``, ``priority``. Additional
-        fields (description, category, stability, params_schema, ...) are
-        pulled from ``cls.MANIFEST`` when present.
+        Default implementation pulls ``manifest.plugin.description`` — authors
+        maintain the text in ``manifest.toml`` and it surfaces identically in
+        the UI (via ``GET /plugins/{kind}``) and in runtime reports.
+
+        Override only if you need a *dynamic* description (depending on params
+        or state); most plugins should leave this alone.
         """
-        base: dict[str, Any] = {
-            "id": cls.name,
-            "name": cls.name,
-            "version": cls.version,
-            "priority": cls.priority,
-            "description": "",
-            "category": "",
-            "stability": "stable",
-            "params_schema": {},
-            "thresholds_schema": {},
-            "suggested_params": {},
-            "suggested_thresholds": {},
-        }
-        manifest = cls.MANIFEST
-        if isinstance(manifest, dict):
-            for key, value in manifest.items():
-                base[key] = value
-        return base
+        manifest = cls._community_manifest
+        if manifest is not None:
+            return manifest.plugin.description
+        return ""
 
 
 __all__ = ["BasePlugin"]

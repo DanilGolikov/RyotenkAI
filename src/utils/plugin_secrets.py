@@ -1,25 +1,9 @@
 """
 Generic plugin secrets infrastructure.
 
-Provides:
-- @requires_secrets(*keys) decorator — declares which secrets a plugin needs.
-- PluginSecretsResolver              — resolves declared keys from Secrets.model_extra
-                                       within a required namespace prefix.
-
-Both evaluation (EVAL_*) and dataset validation (DTST_*) plugin systems
-import from this module and bind their own namespace prefix.
-
-Design:
-    Plugin secrets are stored in secrets.env under a namespace prefix
-    (e.g. EVAL_CEREBRAS_API_KEY, DTST_SCHEMA_VALIDATOR_TOKEN).
-
-    The prefix enforces a hard boundary: plugins can only request secrets
-    from their own namespace, never system secrets (HF_TOKEN, RUNPOD_API_KEY, etc.)
-    which live in typed Secrets fields.
-
-    PluginSecretsResolver reads from Secrets.model_extra (populated by extra="allow"
-    in Secrets pydantic-settings). It does NOT fall back to os.environ — secrets.env
-    is the single source of truth.
+Plugins declare required secrets via ``manifest.toml`` (``[secrets] required = [...]``).
+The community loader attaches them to the plugin class as ``_required_secrets``;
+runners resolve values through ``PluginSecretsResolver`` below.
 """
 
 from __future__ import annotations
@@ -28,33 +12,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.config.secrets.model import Secrets
-
-
-def requires_secrets(*keys: str):
-    """
-    Class decorator: declare which secrets a plugin needs.
-
-    Stores key names as cls._required_secrets (tuple of str).
-    The runner (EvaluationRunner / DatasetValidator) reads this attribute
-    and injects resolved values as plugin._secrets (dict[str, str])
-    before calling evaluate() / validate().
-
-    Prefix validation is NOT enforced at decoration time — only at resolve time
-    by PluginSecretsResolver. This keeps the decorator lightweight and reusable.
-
-    Usage:
-        @requires_secrets("EVAL_CEREBRAS_API_KEY")
-        class MyPlugin(EvaluatorPlugin): ...
-
-        @requires_secrets("DTST_SCHEMA_VALIDATOR_TOKEN")
-        class MyValidationPlugin(ValidationPlugin): ...
-    """
-
-    def decorator(cls: type) -> type:
-        cls._required_secrets = keys  # type: ignore[attr-defined]
-        return cls
-
-    return decorator
 
 
 class PluginSecretsResolver:
@@ -118,5 +75,4 @@ class PluginSecretsResolver:
 
 __all__ = [
     "PluginSecretsResolver",
-    "requires_secrets",
 ]

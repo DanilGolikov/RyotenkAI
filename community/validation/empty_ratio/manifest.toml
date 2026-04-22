@@ -1,0 +1,36 @@
+[plugin]
+id = "empty_ratio"
+kind = "validation"
+name = "Empty Ratio"
+version = "1.0.0"
+priority = 25
+category = "basic"
+stability = "stable"
+description = "Checks the ratio of empty or very short examples."
+
+[plugin.entry_point]
+module = "plugin"
+class = "EmptyRatioValidator"
+
+[params_schema.sample_size]
+type = "integer"
+min = 1
+default = 10000
+
+[params_schema.min_chars]
+type = "integer"
+min = 0
+default = 10
+
+[thresholds_schema.max_ratio]
+type = "float"
+min = 0.0
+max = 1.0
+default = 0.1
+
+[suggested_params]
+sample_size = 10000
+min_chars = 10
+
+[suggested_thresholds]
+max_ratio = 0.1

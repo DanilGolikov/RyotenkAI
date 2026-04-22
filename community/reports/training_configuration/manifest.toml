@@ -1,0 +1,13 @@
+[plugin]
+id = "training_configuration"
+kind = "reports"
+name = "TrainingConfigurationBlockPlugin"
+version = "1.0.0"
+priority = 70
+category = "report"
+stability = "stable"
+description = "Report block: training_configuration."
+
+[plugin.entry_point]
+module = "plugin"
+class = "TrainingConfigurationBlockPlugin"

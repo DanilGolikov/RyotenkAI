@@ -1,0 +1,13 @@
+[plugin]
+id = "helixql_preference_semantics"
+kind = "validation"
+name = "HelixQL Preference Semantics (DPO)"
+version = "1.0.0"
+priority = 35
+category = "dpo"
+stability = "stable"
+description = "Checks that chosen/rejected pairs are domain-consistent and chosen is objectively better than rejected."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HelixQLPreferenceSemanticsValidator"

@@ -1,0 +1,13 @@
+[plugin]
+id = "header"
+kind = "reports"
+name = "HeaderBlockPlugin"
+version = "1.0.0"
+priority = 10
+category = "report"
+stability = "stable"
+description = "Report block: header."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HeaderBlockPlugin"

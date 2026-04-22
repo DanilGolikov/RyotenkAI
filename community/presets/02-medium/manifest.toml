@@ -1,0 +1,22 @@
+[preset]
+id = "02-medium"
+name = "≤ 10B"
+description = "Mid-size models (roughly 2B–10B, the 7B sweet spot). Standard LoRA baseline r=16/α=32 tuned for a single A100/A40. Pick a provider yourself after loading — the preset leaves `training.provider` unset so you can target single_node or a cloud pool."
+size_tier = "medium"
+version = "1.1.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-7B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = []
+min_vram_gb      = 40
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to your training JSONL dataset"

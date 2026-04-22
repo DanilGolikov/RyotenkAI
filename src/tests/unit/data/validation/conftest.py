@@ -8,9 +8,9 @@ from datasets import Dataset
 def ensure_plugins_loaded():
     """Ensure validation plugins are loaded before each test."""
     # Import plugins to register them
-    from src.data.validation.discovery import ensure_validation_plugins_discovered
+    from src.community.catalog import catalog
 
-    ensure_validation_plugins_discovered(force=True)
+    catalog.reload()
 
     yield  # Run the test
 

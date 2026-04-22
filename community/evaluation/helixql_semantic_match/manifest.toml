@@ -1,0 +1,22 @@
+[plugin]
+id = "helixql_semantic_match"
+kind = "evaluation"
+name = "HelixQL Semantic Match"
+version = "1.0.0"
+priority = 20
+category = "semantic"
+stability = "stable"
+description = "Compares the model's HelixQL answer to the expected answer using a deterministic semantic score (sequence ratio + token jaccard + hard-eval hits)."
+
+[plugin.entry_point]
+module = "plugin"
+class = "HelixQLSemanticMatchPlugin"
+
+[thresholds_schema.min_mean_score]
+type = "float"
+min = 0.0
+max = 1.0
+default = 0.7
+
+[suggested_thresholds]
+min_mean_score = 0.7

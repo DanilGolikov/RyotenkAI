@@ -77,6 +77,15 @@ dev = [
     "jupyterlab>=4.3.0",
 ]
 
+# Treat ``src`` as a regular package (not as an sr-layout root). The codebase
+# imports everything via ``from src.xxx import …`` and the ``ryotenkai``
+# entry point resolves to ``src.main:app`` — both require ``src`` to be a
+# top-level package visible on ``sys.path`` via its **parent** directory.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+namespaces = false
+
 [project.scripts]
 ryotenkai = "src.main:app"
 
@@ -181,7 +190,16 @@ external = ["WPS", "DAR"]
     "ARG002",  # Unused method argument (pytest fixtures)
     "S101",    # Use of assert
     "RUF012",  # Mutable class attributes (test classes)
+    "TC003",   # Runtime-needed typing imports (pytest fixture annotations)
 ]
+# Third-party plugins under community/ may legitimately use `Path` at runtime
+# for __file__-relative resource access, so skip TC003 there too.
+"community/**/*.py" = ["TC003"]
+# Loader/catalog use Path both as default arg value and as annotation.
+# inference.py also imports PluginKind for a runtime-visible annotation.
+"src/community/**/*.py" = ["TC001", "TC003"]
+# CLI module uses Path at runtime for typer defaults.
+"src/cli/community.py" = ["TC003"]
 
 [tool.ruff.format]
 # Use Black-compatible formatting

@@ -1,0 +1,35 @@
+[plugin]
+id = "avg_length"
+kind = "validation"
+name = "Average Length"
+version = "1.0.0"
+priority = 20
+category = "basic"
+stability = "stable"
+description = "Checks that the average text length falls within expected bounds."
+
+[plugin.entry_point]
+module = "plugin"
+class = "AvgLengthValidator"
+
+[params_schema.sample_size]
+type = "integer"
+min = 1
+default = 10000
+
+[thresholds_schema.min]
+type = "integer"
+min = 0
+default = 50
+
+[thresholds_schema.max]
+type = "integer"
+min = 1
+default = 8192
+
+[suggested_params]
+sample_size = 10000
+
+[suggested_thresholds]
+min = 50
+max = 8192

@@ -85,10 +85,8 @@ class ValidationPlugin(BasePlugin, ABC):
         get_recommendations(): Generate recommendations on failure
 
     Example:
-        @ValidationPluginRegistry.register
+        # community/validation/min_samples/plugin.py
         class MinSamplesValidator(ValidationPlugin):
-            name = "min_samples"
-
             @classmethod
             def get_description(cls) -> str:
                 return "Checks minimum number of samples"
@@ -101,6 +99,10 @@ class ValidationPlugin(BasePlugin, ABC):
 
             def get_recommendations(self, result):
                 return ["Add more samples", "Use data augmentation"]
+
+    The plugin's ``name`` / ``priority`` / ``version`` are declared in
+    ``community/validation/<id>/manifest.toml`` and attached to the class
+    by ``src.community.loader``. See ``community/validation/README.md``.
     """
 
     # name / priority / version — inherited from BasePlugin
@@ -121,11 +123,9 @@ class ValidationPlugin(BasePlugin, ABC):
         self.thresholds = dict(thresholds or {})
         self._validate_contract()
 
-    @classmethod
-    @abstractmethod
-    def get_description(cls) -> str:
-        """Return a human-readable description of what this plugin checks."""
-        ...
+    # ``get_description()`` is inherited from :class:`BasePlugin`; its default
+    # reads ``manifest.plugin.description``. Override only if you need a
+    # dynamic description.
 
     @abstractmethod
     def validate(

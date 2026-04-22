@@ -1,0 +1,13 @@
+[plugin]
+id = "summary"
+kind = "reports"
+name = "SummaryBlockPlugin"
+version = "1.0.0"
+priority = 20
+category = "report"
+stability = "stable"
+description = "Report block: summary."
+
+[plugin.entry_point]
+module = "plugin"
+class = "SummaryBlockPlugin"
