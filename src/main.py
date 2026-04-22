@@ -182,7 +182,16 @@ app = typer.Typer(
     name="ryotenkai",
     help="RyotenkAI - Automated CI/CD for LLM Training",
     add_completion=False,
+    context_settings={"help_option_names": ["-h", "--help"]},
 )
+
+
+@app.command("help", hidden=True)
+def _help_cmd(ctx: typer.Context) -> None:
+    """Alias for --help so `ryotenkai help` works alongside `ryotenkai --help`."""
+    parent = ctx.parent
+    typer.echo(parent.get_help() if parent is not None else ctx.get_help())
+
 
 # Community manifest authoring toolchain (scaffold / sync).
 from src.cli.community import community_app  # noqa: E402
@@ -190,7 +199,7 @@ from src.cli.community import community_app  # noqa: E402
 app.add_typer(
     community_app,
     name="community",
-    help="Scaffold and sync community/ plugin and preset manifests.",
+    help="Scaffold, sync and pack community/ plugin and preset manifests.",
 )
 
 
