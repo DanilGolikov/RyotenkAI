@@ -21,7 +21,7 @@ from src.cli.run_rendering import (
 )
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.pipeline.launch_queries import load_restart_point_options
-from src.utils.config import PipelineConfig, load_config
+from src.utils.config import PipelineConfig
 from src.utils.logger import logger
 
 # Global orchestrator reference for signal handler — typed loosely to avoid
@@ -181,7 +181,8 @@ def _log_config_summary(config: PipelineConfig) -> None:
 app = typer.Typer(
     name="ryotenkai",
     help="RyotenkAI - Automated CI/CD for LLM Training",
-    add_completion=False,
+    # Completions enabled: users can `ryotenkai --install-completion`.
+    add_completion=True,
     context_settings={"help_option_names": ["-h", "--help"]},
     # Plain Python tracebacks for unhandled errors; commands that expect
     # user mistakes print a single "error: ..." line via typer.Exit.
@@ -191,11 +192,96 @@ app = typer.Typer(
 )
 
 
+# Root callback populates the shared CLIContext on ctx.obj. Downstream
+# commands read `ctx.ensure_object(CLIContext)` to pick up the effective
+# output format / colour / verbosity without redeclaring these flags.
+from src.cli.context import CLIContext  # noqa: E402
+from src.cli.errors import die  # noqa: E402
+from src.cli.style import reconfigure as _reconfigure_style  # noqa: E402
+from src.cli.version import collect_version_info  # noqa: E402
+
+
+def _print_version(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(collect_version_info().format())
+    raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    ctx: typer.Context,
+    version: bool = typer.Option(  # noqa: ARG001 -- consumed by is_eager callback
+        False, "-V", "--version",
+        is_eager=True, callback=_print_version,
+        help="Show version info and exit.",
+    ),
+    output: str = typer.Option(
+        "text", "-o", "--output",
+        envvar="RYOTENKAI_OUTPUT",
+        help="Output format for read commands: text | json.",
+    ),
+    color: bool = typer.Option(
+        True, "--color/--no-color",
+        help="Colored output (honours NO_COLOR env).",
+    ),
+    verbose: int = typer.Option(
+        0, "-v", "--verbose",
+        count=True, help="Increase verbosity (-v, -vv).",
+    ),
+    quiet: bool = typer.Option(
+        False, "-q", "--quiet",
+        help="Suppress non-essential output.",
+    ),
+    log_level: str | None = typer.Option(
+        None, "--log-level",
+        help="Override log level (DEBUG / INFO / WARNING / ERROR).",
+    ),
+) -> None:
+    """Populate ctx.obj with the shared CLI context before any sub-command runs."""
+    if output not in ("text", "json"):
+        raise die(
+            f"invalid --output value: {output!r}",
+            hint="choose one of: text, json",
+        )
+    state = CLIContext(
+        output=output,  # type: ignore[arg-type]
+        color=color,
+        verbose=verbose,
+        quiet=quiet,
+        log_level=log_level,
+    )
+    _reconfigure_style(color=state.use_color)
+    ctx.obj = state
+
+
 @app.command("help", hidden=True)
 def _help_cmd(ctx: typer.Context) -> None:
     """Alias for --help so `ryotenkai help` works alongside `ryotenkai --help`."""
     parent = ctx.parent
     typer.echo(parent.get_help() if parent is not None else ctx.get_help())
+
+
+@app.command("version")
+def version_cmd(ctx: typer.Context) -> None:
+    """Show version info (ryotenkai / python / platform / git sha)."""
+    from src.cli.renderer import get_renderer
+
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
+    info = collect_version_info()
+    if state.is_json:
+        renderer.emit(
+            {
+                "ryotenkai": info.ryotenkai,
+                "python": info.python,
+                "platform": info.platform,
+                "git_sha": info.git_sha,
+            }
+        )
+    else:
+        renderer.text(info.format())
+    renderer.flush()
 
 
 # Community manifest authoring toolchain (scaffold / sync).
@@ -982,14 +1068,6 @@ def serve(
         reload=reload,
         log_level=log_level,
     )
-
-
-@app.command()
-def version():
-    """Show version information."""
-    typer.echo("RyotenkAI")
-    typer.echo("Version: v0.1.0")
-    typer.echo("Author: Golikov Daniil")
 
 
 if __name__ == "__main__":

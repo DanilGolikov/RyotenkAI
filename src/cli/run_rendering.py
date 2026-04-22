@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Iterable
+from collections.abc import Iterable
+from datetime import UTC, datetime
 
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 from src.pipeline.run_queries import RunInspectionData, RunSummaryRow, effective_pipeline_status
+from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 
 _SECS_PER_HOUR = 3600
 _SECS_PER_MINUTE = 60
@@ -195,11 +195,11 @@ def format_duration(started_at: str | None, completed_at: str | None) -> str:
         return ""
     try:
         start = datetime.fromisoformat(started_at)
-        end = datetime.fromisoformat(completed_at) if completed_at else datetime.now(timezone.utc)
+        end = datetime.fromisoformat(completed_at) if completed_at else datetime.now(UTC)
         if start.tzinfo is None and end.tzinfo is not None:
-            start = start.replace(tzinfo=timezone.utc)
+            start = start.replace(tzinfo=UTC)
         elif start.tzinfo is not None and end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
+            end = end.replace(tzinfo=UTC)
         delta = int((end - start).total_seconds())
         if delta < 0:
             return ""
