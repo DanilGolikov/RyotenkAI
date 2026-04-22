@@ -38,12 +38,18 @@ from src.community.sync import SyncResult, sync_plugin_manifest, sync_preset_man
 community_app = typer.Typer(
     no_args_is_help=True,
     help=(
-        "Scaffold, sync and pack community/ plugin and preset manifests.\n\n"
-        "Accepts a single plugin/preset folder, an entire kind folder "
-        "(e.g. community/validation/), or the community/ root."
+        "Scaffold, sync and pack community/ plugin and preset manifests. "
+        "Accepts a single folder, a kind folder (e.g. community/validation/), "
+        "or the community/ root."
     ),
-    rich_markup_mode="rich",
+    # Keep the help rendering plain — no Rich markup in docstrings, no
+    # fancy traceback boxes. Errors exit via ``typer.Exit`` with a one-line
+    # ``error: ...`` message instead.
+    rich_markup_mode=None,
     context_settings={"help_option_names": ["-h", "--help"]},
+    pretty_exceptions_enable=False,
+    pretty_exceptions_show_locals=False,
+    pretty_exceptions_short=True,
 )
 
 
@@ -224,13 +230,11 @@ def _rel(path: Path) -> str:
 
 def _usage_hint() -> str:
     return (
-        "\nExpected one of:\n"
-        "  • a plugin folder with plugin.py "
-        "(e.g. community/validation/min_samples)\n"
-        "  • a preset folder with *.yaml "
-        "(e.g. community/presets/01-small)\n"
-        "  • a kind folder (community/validation, community/presets, …)\n"
-        "  • the community/ root\n"
+        "expected one of:\n"
+        "  - a plugin folder with plugin.py (e.g. community/validation/min_samples)\n"
+        "  - a preset folder with *.yaml  (e.g. community/presets/01-small)\n"
+        "  - a kind folder (community/validation, community/presets, ...)\n"
+        "  - the community/ root"
     )
 
 
@@ -283,19 +287,17 @@ def scaffold_cmd(
         ),
     ] = "auto",
 ) -> None:
-    """Generate fresh manifest.toml files for plugin/preset folders.
+    """Generate a fresh manifest.toml for a plugin or preset folder.
 
-    Fields that can be inferred — entry_point, kind, params/thresholds
-    schema, required secrets, description from class docstring — are
-    filled in automatically. Fields that need human judgement (category,
-    stability, preset description) are emitted with a [bold]# TODO[/bold]
-    marker so nothing sneaks past the author.
+    Inferable fields (entry_point, kind, params/thresholds schema, required
+    secrets, class-docstring description) are filled in automatically;
+    fields that need human judgement get a `# TODO` marker.
 
-    [bold]Examples[/bold]
-
-        ryotenkai community scaffold community/validation/my_plugin
-        ryotenkai community scaffold community/validation   # every plugin without a manifest
-        ryotenkai community scaffold community/ --force     # regenerate everything
+    \b
+    Examples:
+      ryotenkai community scaffold community/validation/my_plugin
+      ryotenkai community scaffold community/validation
+      ryotenkai community scaffold community/ --force
     """
     targets = _resolve_targets_or_die(path, kind_override=kind)
     is_batch = len(targets) > 1 or _classify_path(path) in ("kind_dir", "community_root")
@@ -421,18 +423,16 @@ def sync_cmd(
         typer.Option("--kind", help="'auto' (default) | 'plugin' | 'preset'."),
     ] = "auto",
 ) -> None:
-    """Re-run inference over source code, 3-way-merge with the existing
-    manifest, bump the version, and print/apply the diff.
+    """Re-run inference, 3-way-merge the result with manifest.toml, and bump version.
 
-    Always review the diff first — deletions in ``params_schema`` happen
-    when a parameter is no longer referenced from the plugin's source
-    code.
+    Deletions in `params_schema` mean the parameter is no longer referenced
+    from source — review the diff first (run with --dry-run).
 
-    [bold]Examples[/bold]
-
-        ryotenkai community sync community/validation/min_samples
-        ryotenkai community sync community/validation --dry-run
-        ryotenkai community sync community/ --bump minor
+    \b
+    Examples:
+      ryotenkai community sync community/validation/min_samples
+      ryotenkai community sync community/validation --dry-run
+      ryotenkai community sync community/ --bump minor
     """
     if bump not in ("patch", "minor", "major"):
         raise typer.BadParameter("--bump must be one of: patch, minor, major")
@@ -525,7 +525,7 @@ def _sync_batch(
             else "will change"
         )
         if dry_run:
-            typer.echo(f"  {_style_warn('~')} {rel}  {label} [dry-run]")
+            typer.echo(f"  {_style_warn('~')} {rel}  {label}")
         else:
             manifest_path.write_text(result.new_text, encoding="utf-8")
             typer.echo(f"  {_style_ok('✓')} {rel}  {label}")
@@ -608,19 +608,18 @@ def pack_cmd(
         typer.Option("--dry-run", help="List files, do not create archives."),
     ] = False,
 ) -> None:
-    """Pack plugin/preset folders into zip archives next to each folder.
+    """Zip a plugin/preset folder into `<folder>.zip` next to it.
 
-    Each archive is placed alongside the source folder (inside its kind
-    directory) so the community loader picks it up automatically — the
-    source folder can then be deleted and everything keeps working.
-    Build caches (``__pycache__`` / ``.pytest_cache`` / …) are filtered
-    out. The manifest is validated before packing.
+    The archive sits in the same kind directory so the community loader
+    picks it up automatically — you can delete the source folder and it
+    keeps working. Build caches (__pycache__ etc.) are filtered out; the
+    manifest is validated before packing.
 
-    [bold]Examples[/bold]
-
-        ryotenkai community pack community/validation/min_samples
-        ryotenkai community pack community/validation
-        ryotenkai community pack community/ --force
+    \b
+    Examples:
+      ryotenkai community pack community/validation/min_samples
+      ryotenkai community pack community/validation
+      ryotenkai community pack community/ --force
     """
     targets = _resolve_targets_or_die(path, kind_override=None)
     is_batch = len(targets) > 1 or _classify_path(path) in ("kind_dir", "community_root")
