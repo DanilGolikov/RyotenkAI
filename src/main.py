@@ -14,10 +14,8 @@ import click
 import typer
 
 from src.cli.run_rendering import (
-    RunInspectionRenderer,
     render_run_diff_lines,
     render_run_status_snapshot,
-    render_runs_list_lines,
 )
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from src.pipeline.launch_queries import load_restart_point_options
@@ -456,89 +454,151 @@ def validate_dataset(
 
 @app.command("list-restart-points")
 def list_restart_points_cmd(
+    ctx: typer.Context,
     run_dir: Path = typer.Argument(..., help="Path to an existing logical run directory"),
     config: Path | None = typer.Option(
-        None,
-        "--config",
-        "-c",
-        help="Config YAML (optional if pipeline_state.json contains config_path)",
+        None, "--config", "-c",
+        help="Config YAML (optional if pipeline_state.json contains config_path).",
     ),
 ):
-    """
-    List available restart points for a run without starting the pipeline.
+    """List available restart points for a run without starting the pipeline.
 
-    Example:
-        ryotenkai list-restart-points runs/my-run
-        ryotenkai list-restart-points runs/my-run --config config.yaml
+    \b
+    Examples:
+      ryotenkai list-restart-points runs/my-run
+      ryotenkai list-restart-points runs/my-run -o json
     """
+    from src.cli.context import CLIContext
+    from src.cli.errors import die
+    from src.cli.renderer import get_renderer
+
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
+
     try:
         _, points = load_restart_point_options(run_dir, _resolve_config(config, run_dir))
+    except Exception as exc:
+        raise die(str(exc))
 
-        typer.echo(f"{'#':>3}  {'Stage':<30} {'Available':<10} {'Mode':<12} Reason")
-        typer.echo("-" * 80)
-        for idx, item in enumerate(points, start=1):
-            avail = "yes" if item.available else "no"
-            typer.echo(f"{idx:>3}  {item.stage:<30} {avail:<10} {item.mode:<12} {item.reason}")
-        typer.echo("\nUse # or stage name with --restart-from-stage")
-    except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    if state.is_json:
+        renderer.emit(
+            [
+                {
+                    "index": idx,
+                    "stage": item.stage,
+                    "available": bool(item.available),
+                    "mode": item.mode,
+                    "reason": item.reason,
+                }
+                for idx, item in enumerate(points, start=1)
+            ]
+        )
+    else:
+        renderer.table(
+            headers=["#", "Stage", "Available", "Mode", "Reason"],
+            rows=[
+                (idx, item.stage, "yes" if item.available else "no", item.mode, item.reason)
+                for idx, item in enumerate(points, start=1)
+            ],
+        )
+        renderer.text("")
+        renderer.text("Use # or stage name with --restart-from-stage")
+    renderer.flush()
 
 
 @app.command()
 def info(
+    ctx: typer.Context,
     config: Path = typer.Option(
-        ...,
-        "--config",
-        "-c",
-        help="Path to pipeline configuration file",
+        ..., "--config", "-c",
+        help="Path to pipeline configuration file.",
     ),
 ):
-    """
-    Show pipeline configuration and stage information.
+    """Show pipeline configuration and stage information.
 
-    Example:
-        ryotenkai info --config config.yaml
+    \b
+    Examples:
+      ryotenkai info --config config.yaml
+      ryotenkai info -c config.yaml -o json | jq '.stages'
     """
+    from src.cli.context import CLIContext
+    from src.cli.errors import die
+    from src.cli.renderer import get_renderer
     from src.pipeline.orchestrator import PipelineOrchestrator  # lazy: heavy init stack
+
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
 
     try:
         orchestrator = PipelineOrchestrator(config)
+    except Exception as exc:
+        logger.exception(f"Error: {exc}")
+        raise die(str(exc))
 
-        typer.echo("Pipeline Stages:")
-        for i, stage_name in enumerate(orchestrator.list_stages()):
-            typer.echo(f"  {i}. {stage_name}")
+    model_cfg = orchestrator.config.model
+    training_cfg = orchestrator.config.training
+    adapter_cfg = training_cfg.get_adapter_config()
+    strategies = [s.strategy_type for s in training_cfg.get_strategy_chain()]
 
-        typer.echo("\nModel Configuration:")
-        typer.echo(f"  Model         : {orchestrator.config.model.name}")
-        typer.echo(f"  Training type : {orchestrator.config.training.type}")
-        adapter_cfg = orchestrator.config.training.get_adapter_config()
-        if orchestrator.config.training.type in ("qlora", "lora"):
-            typer.echo(f"  LoRA r        : {adapter_cfg.r}")
-        elif orchestrator.config.training.type == "adalora":
-            typer.echo(f"  AdaLoRA init_r: {adapter_cfg.init_r}")
-        strategies = orchestrator.config.training.get_strategy_chain()
-        if strategies:
-            typer.echo(f"  Strategies    : {' -> '.join(s.strategy_type.upper() for s in strategies)}")
+    # Dataset refs
+    default_ds = orchestrator.config.get_primary_dataset()
+    train_ref = default_ds.get_display_train_ref()
+    if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
+        assert default_ds.source_hf is not None
+        eval_ref = default_ds.source_hf.eval_id or None
+    else:
+        assert default_ds.source_local is not None
+        eval_ref = default_ds.source_local.local_paths.eval or None
 
-        typer.echo("\nDataset Configuration:")
-        default_ds = orchestrator.config.get_primary_dataset()
-        train_ref = default_ds.get_display_train_ref()
+    stages = list(orchestrator.list_stages())
 
-        if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
-            assert default_ds.source_hf is not None
-            eval_ref = default_ds.source_hf.eval_id or "N/A"
-        else:
-            assert default_ds.source_local is not None
-            eval_ref = default_ds.source_local.local_paths.eval or "N/A"
-
-        typer.echo(f"  Train: {train_ref}")
-        typer.echo(f"  Eval : {eval_ref}")
-
-    except Exception as e:
-        logger.exception(f"Error: {e}")
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+    if state.is_json:
+        renderer.emit(
+            {
+                "model": {"name": model_cfg.name, "training_type": training_cfg.type},
+                "adapter": (
+                    {"kind": training_cfg.type, "r": adapter_cfg.r}
+                    if training_cfg.type in ("qlora", "lora")
+                    else {"kind": training_cfg.type, "init_r": getattr(adapter_cfg, "init_r", None)}
+                    if training_cfg.type == "adalora"
+                    else None
+                ),
+                "strategies": strategies,
+                "dataset": {"train": train_ref, "eval": eval_ref},
+                "stages": stages,
+            }
+        )
+    else:
+        renderer.kv(
+            {
+                "Model": model_cfg.name,
+                "Training": training_cfg.type,
+                **(
+                    {"LoRA r": adapter_cfg.r}
+                    if training_cfg.type in ("qlora", "lora")
+                    else {"AdaLoRA init_r": adapter_cfg.init_r}
+                    if training_cfg.type == "adalora"
+                    else {}
+                ),
+                **(
+                    {"Strategies": " → ".join(s.upper() for s in strategies)}
+                    if strategies else {}
+                ),
+            },
+            title="Model",
+        )
+        renderer.text("")
+        renderer.kv(
+            {"Train": train_ref, "Eval": eval_ref or "-"},
+            title="Dataset",
+        )
+        renderer.text("")
+        renderer.table(
+            headers=["#", "Stage"],
+            rows=[(i, name) for i, name in enumerate(stages)],
+            title="Stages",
+        )
+    renderer.flush()
 
 
 @app.command(name="train-local")
@@ -607,50 +667,156 @@ def train_local(
 
 @app.command(name="inspect-run")
 def inspect_run(
+    ctx: typer.Context,
     run_dir: Path = typer.Argument(..., help="Path to an existing logical run directory"),
-    verbose: bool = typer.Option(False, "-v", "--verbose", help="Show stage outputs and lineage"),
+    show_outputs: bool = typer.Option(
+        False, "--outputs",
+        help="Show stage outputs and lineage (text mode only; json always includes them).",
+    ),
     logs: bool = typer.Option(False, "--logs", help="Show tail of pipeline.log for each attempt"),
 ):
-    """
-    Inspect a run directory — show structured info about the run and its attempts.
+    """Inspect a run — show structured info about the run and its attempts.
 
+    \b
     Examples:
-        ryotenkai inspect-run runs/run_20260319_030619_x9so8
-        ryotenkai inspect-run runs/run_20260319_030619_x9so8 -v
-        ryotenkai inspect-run runs/run_20260319_030619_x9so8 --logs
-        ryotenkai inspect-run runs/run_20260319_030619_x9so8 -v --logs
+      ryotenkai inspect-run runs/run_xxx
+      ryotenkai inspect-run runs/run_xxx --outputs --logs
+      ryotenkai inspect-run runs/run_xxx -o json | jq '.attempts[0].stages'
     """
-    from src.pipeline.run_queries import RunInspector
+    from src.cli.context import CLIContext
+    from src.cli.errors import die
+    from src.cli.renderer import get_renderer
+    from src.pipeline.run_queries import RunInspector, effective_pipeline_status
+
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
 
     try:
-        inspector = RunInspector(run_dir)
-        data = inspector.load(include_logs=logs)
-        renderer = RunInspectionRenderer()
-        renderer.render(data, verbose=verbose, include_logs=logs)
+        data = RunInspector(run_dir).load(include_logs=logs)
     except Exception as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1)
+        raise die(str(exc), hint="list available runs with `ryotenkai runs-list`")
+
+    if state.is_json:
+        renderer.emit(_inspect_run_json(data))
+    else:
+        from src.cli.run_rendering import render_run_inspection_lines
+
+        for line in render_run_inspection_lines(data, verbose=show_outputs, include_logs=logs):
+            renderer.text(line)
+    # Silence unused-import warning for effective_pipeline_status when json path
+    # doesn't trigger (it's used inside _inspect_run_json via re-import).
+    _ = effective_pipeline_status
+    renderer.flush()
+
+
+def _inspect_run_json(data: "RunInspectionData") -> dict:  # type: ignore[name-defined]  # noqa: F821
+    """Build the JSON payload for ``inspect-run -o json``."""
+    from src.cli.formatters import duration_seconds
+    from src.pipeline.run_queries import effective_pipeline_status
+
+    pipeline_state = data.state
+    return {
+        "run_id": data.run_dir.name,
+        "logical_run_id": pipeline_state.logical_run_id,
+        "status": effective_pipeline_status(pipeline_state),
+        "config_path": pipeline_state.config_path,
+        "mlflow_run_id": pipeline_state.root_mlflow_run_id,
+        "attempts": [
+            {
+                "attempt_no": attempt.attempt_no,
+                "status": attempt.status,
+                "action": attempt.restart_from_stage or attempt.effective_action,
+                "started_at": attempt.started_at,
+                "completed_at": attempt.completed_at,
+                "duration_s": duration_seconds(attempt.started_at, attempt.completed_at),
+                "error": attempt.error,
+                "stages": [
+                    _stage_json(attempt, stage_name)
+                    for stage_name in (attempt.enabled_stage_names or list(attempt.stage_runs))
+                ],
+            }
+            for attempt in pipeline_state.attempts
+        ],
+    }
+
+
+def _stage_json(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped-def]
+    from src.cli.formatters import duration_seconds
+
+    stage_run = attempt.stage_runs.get(stage_name)
+    if stage_run is None:
+        return {"name": stage_name, "status": "pending"}
+    return {
+        "name": stage_run.stage_name,
+        "status": stage_run.status,
+        "mode": stage_run.execution_mode,
+        "started_at": stage_run.started_at,
+        "completed_at": stage_run.completed_at,
+        "duration_s": duration_seconds(stage_run.started_at, stage_run.completed_at),
+        "error": stage_run.error,
+        "outputs": stage_run.outputs,
+    }
 
 
 @app.command(name="runs-list")
 def runs_list(
+    ctx: typer.Context,
     runs_dir: Path = typer.Argument(
         Path("runs"),
         help="Directory containing run subdirectories (default: ./runs)",
     ),
 ):
-    """
-    List all runs with summary info.
+    """List all runs with summary info.
 
-    Example:
-        ryotenkai runs-list
-        ryotenkai runs-list /path/to/runs
+    \b
+    Examples:
+      ryotenkai runs-list
+      ryotenkai runs-list /path/to/runs
+      ryotenkai runs-list -o json | jq '.[] | select(.status=="failed")'
     """
+    from src.cli.context import CLIContext
+    from src.cli.formatters import duration_seconds, format_duration
+    from src.cli.renderer import get_renderer
     from src.pipeline.run_queries import scan_runs_dir
 
-    rows = scan_runs_dir(runs_dir)
-    for line in render_runs_list_lines(runs_dir, rows):
-        typer.echo(line)
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
+    rows = list(scan_runs_dir(runs_dir))
+
+    if state.is_json:
+        renderer.emit(
+            [
+                {
+                    "run_id": row.run_id,
+                    "status": row.status,
+                    "attempts": row.attempts,
+                    "started_at": row.started_at,
+                    "completed_at": row.completed_at,
+                    "duration_s": duration_seconds(row.started_at, row.completed_at),
+                    "config_name": row.config_name,
+                }
+                for row in rows
+            ]
+        )
+    elif not rows:
+        renderer.text(f"No runs found in {runs_dir}")
+    else:
+        renderer.heading(f"Runs in {runs_dir}/")
+        renderer.text("")
+        renderer.table(
+            headers=["Run ID", "Status", "Att", "Duration", "Config"],
+            rows=[
+                (
+                    row.run_id,
+                    row.status,
+                    row.attempts,
+                    format_duration(row.started_at, row.completed_at) or "-",
+                    row.config_name,
+                )
+                for row in rows
+            ],
+        )
+    renderer.flush()
 
 
 @app.command(name="logs")
@@ -713,38 +879,46 @@ def show_logs(
 
 @app.command(name="run-diff")
 def run_diff(
+    ctx: typer.Context,
     run_dir: Path = typer.Argument(..., help="Path to the run directory"),
     attempt: list[int] = typer.Option(
-        [],
-        "--attempt",
+        [], "--attempt",
         help="Attempt numbers to compare (use twice: --attempt 1 --attempt 3). Default: first vs last.",
     ),
 ):
-    """
-    Compare config hashes between attempts.
+    """Compare config hashes between attempts.
 
+    \b
     Examples:
-        ryotenkai run-diff runs/run_xxx
-        ryotenkai run-diff runs/run_xxx --attempt 1 --attempt 3
+      ryotenkai run-diff runs/run_xxx
+      ryotenkai run-diff runs/run_xxx --attempt 1 --attempt 3
+      ryotenkai run-diff runs/run_xxx -o json
     """
+    from src.cli.context import CLIContext
+    from src.cli.errors import die
+    from src.cli.renderer import get_renderer
     from src.pipeline.run_queries import diff_attempts
     from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
+    state_ctx = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state_ctx)
     run_path = run_dir.expanduser().resolve()
-    store = PipelineStateStore(run_path)
 
     try:
-        state = store.load()
+        state = PipelineStateStore(run_path).load()
     except (PipelineStateLoadError, Exception) as exc:
-        typer.echo(f"Cannot load state: {exc}", err=True)
-        raise typer.Exit(1)
+        raise die(f"cannot load state: {exc}")
 
-    if len(state.attempts) < 2:  # noqa: WPS432
-        typer.echo("Only one attempt — nothing to compare.")
+    if len(state.attempts) < 2:
+        if state_ctx.is_json:
+            renderer.emit({"status": "single_attempt", "attempts": len(state.attempts)})
+        else:
+            renderer.text("Only one attempt — nothing to compare.")
+        renderer.flush()
         return
 
     attempt_nos = list(attempt)
-    if len(attempt_nos) == 0:
+    if not attempt_nos:
         attempt_a = state.attempts[0].attempt_no
         attempt_b = state.attempts[-1].attempt_no
     elif len(attempt_nos) == 1:
@@ -756,49 +930,104 @@ def run_diff(
     diff = diff_attempts(state, attempt_a, attempt_b)
 
     if not diff["found_a"] or not diff["found_b"]:
-        typer.echo(f"Attempt {attempt_a} or {attempt_b} not found in state.", err=True)
-        raise typer.Exit(1)
-    for line in render_run_diff_lines(diff, attempt_a, attempt_b):
-        typer.echo(line)
+        raise die(f"attempt {attempt_a} or {attempt_b} not found in state")
+
+    if state_ctx.is_json:
+        renderer.emit(
+            {
+                "attempt_a": attempt_a,
+                "attempt_b": attempt_b,
+                "training_critical_changed": bool(diff["training_critical_changed"]),
+                "late_stage_changed": bool(diff["late_stage_changed"]),
+                "hash_a_critical": diff.get("hash_a_critical"),
+                "hash_b_critical": diff.get("hash_b_critical"),
+                "hash_a_late": diff.get("hash_a_late"),
+                "hash_b_late": diff.get("hash_b_late"),
+            }
+        )
+    else:
+        for line in render_run_diff_lines(diff, attempt_a, attempt_b):
+            renderer.text(line)
+    renderer.flush()
 
 
 @app.command(name="run-status")
 def run_status(
+    ctx: typer.Context,
     run_dir: Path = typer.Argument(..., help="Path to the run directory"),
-    interval: float = typer.Option(5.0, "--interval", "-i", help="Polling interval in seconds"),
+    interval: float = typer.Option(5.0, "--interval", "-i", help="Polling interval in seconds (text mode only)."),
+    once: bool = typer.Option(False, "--once", help="Print one snapshot and exit (implied by -o json)."),
 ):
-    """
-    Live monitoring of a running pipeline (polls pipeline_state.json).
+    """Show pipeline status — one snapshot or live-polling until Ctrl+C.
 
-    Press Ctrl+C to stop monitoring.
-
-    Example:
-        ryotenkai run-status runs/run_xxx
+    \b
+    Examples:
+      ryotenkai run-status runs/run_xxx
+      ryotenkai run-status runs/run_xxx --once
+      ryotenkai run-status runs/run_xxx -o json
     """
     import time
 
+    from src.cli.context import CLIContext
+    from src.cli.errors import die
+    from src.cli.formatters import duration_seconds
+    from src.cli.renderer import get_renderer
     from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
+    state_ctx = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state_ctx)
     run_path = run_dir.expanduser().resolve()
     store = PipelineStateStore(run_path)
 
-    def _print_status() -> None:
+    def _load_state():
         try:
-            state = store.load()
+            return store.load()
         except (PipelineStateLoadError, Exception) as exc:
-            typer.echo(f"Error reading state: {exc}")
-            return
-        for line in render_run_status_snapshot(run_path.name, state):
-            typer.echo(line)
+            raise die(f"cannot read state: {exc}")
+
+    def _status_json(state) -> dict:
+        current = state.attempts[-1] if state.attempts else None
+        return {
+            "run_id": run_path.name,
+            "status": state.pipeline_status,
+            "attempts_total": len(state.attempts),
+            "current_attempt": current.attempt_no if current else None,
+            "stages": [
+                {
+                    "name": stage_name,
+                    "status": (current.stage_runs.get(stage_name).status
+                               if current and current.stage_runs.get(stage_name) else "pending"),
+                    "duration_s": duration_seconds(
+                        current.stage_runs.get(stage_name).started_at if current and current.stage_runs.get(stage_name) else None,
+                        current.stage_runs.get(stage_name).completed_at if current and current.stage_runs.get(stage_name) else None,
+                    ) if current and current.stage_runs.get(stage_name) else None,
+                }
+                for stage_name in (current.enabled_stage_names or list(current.stage_runs))
+            ] if current else [],
+        }
+
+    # JSON mode is always a single snapshot.
+    if state_ctx.is_json:
+        renderer.emit(_status_json(_load_state()))
+        renderer.flush()
+        return
+
+    if once:
+        for line in render_run_status_snapshot(run_path.name, _load_state()):
+            renderer.text(line)
+        renderer.flush()
+        return
 
     try:
         while True:
             print("\033[H\033[2J", end="")  # clear screen
-            _print_status()
-            typer.echo(f"Refreshing every {interval}s — Ctrl+C to stop")
+            for line in render_run_status_snapshot(run_path.name, _load_state()):
+                renderer.text(line)
+            renderer.text(f"Refreshing every {interval}s — Ctrl+C to stop")
             time.sleep(interval)
     except KeyboardInterrupt:
-        typer.echo("\nStopped monitoring.")
+        renderer.text("")
+        renderer.text("Stopped monitoring.")
 
 
 @app.command(name="config-validate")
@@ -910,24 +1139,52 @@ def config_validate(
         else:
             _ok("Stage consistency")
 
-    any_fail = False
-    for ok, label, detail in checks:
-        if ok is True:
-            marker = "[ OK ]"
-        elif ok is False:
-            marker = "[FAIL]"
-            any_fail = True
-        else:
-            marker = "[WARN]"
-        detail_str = f"  {detail}" if detail else ""
-        typer.echo(f"{marker} {label}{detail_str}")
+    from src.cli.context import CLIContext
+    from src.cli.renderer import get_renderer
+    from src.cli.style import COLOR_ERR, COLOR_OK, COLOR_WARN, ICONS
 
-    typer.echo("")
-    if any_fail:
-        typer.echo("Result: not ready — fix errors above", err=True)
-        raise typer.Exit(1)
+    ctx = click.get_current_context()
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
+
+    def _status(ok: bool | None) -> str:
+        if ok is True:
+            return "ok"
+        if ok is False:
+            return "fail"
+        return "warn"
+
+    any_fail = any(ok is False for ok, _, _ in checks)
+
+    if state.is_json:
+        renderer.emit(
+            {
+                "ok": not any_fail,
+                "checks": [
+                    {"label": label, "status": _status(ok), "detail": detail}
+                    for ok, label, detail in checks
+                ],
+            }
+        )
     else:
-        typer.echo("Result: ready to run")
+        marker_for = {
+            "ok":   f"[{COLOR_OK}]{ICONS.ok}[/{COLOR_OK}]",
+            "fail": f"[{COLOR_ERR}]{ICONS.err}[/{COLOR_ERR}]",
+            "warn": f"[{COLOR_WARN}]{ICONS.warn}[/{COLOR_WARN}]",
+        }
+        for ok, label, detail in checks:
+            line = f"  {marker_for[_status(ok)]}  {label}"
+            if detail:
+                line += f"  [dim]{detail}[/dim]"
+            renderer.text(line)
+        renderer.text("")
+        if any_fail:
+            renderer.text(f"[{COLOR_ERR}]Result: not ready — fix errors above[/{COLOR_ERR}]")
+        else:
+            renderer.text(f"[{COLOR_OK}]Result: ready to run[/{COLOR_OK}]")
+    renderer.flush()
+    if any_fail:
+        raise typer.Exit(1)
 
 
 @app.command(name="report")
