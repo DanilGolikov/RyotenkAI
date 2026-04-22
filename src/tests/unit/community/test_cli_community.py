@@ -158,7 +158,7 @@ def test_pack_dry_run_lists_files(runner: CliRunner, tmp_path: Path) -> None:
 
     result = runner.invoke(community_app, ["pack", str(plugin_dir), "--dry-run"])
     assert result.exit_code == 0, result.output
-    assert "[dry-run]" in result.output
+    assert "would write" in result.output
     assert "my_plugin/plugin.py" in result.output
     assert not (plugin_dir.parent / "my_plugin.zip").exists()
 
@@ -195,3 +195,139 @@ def test_pack_rejects_missing_manifest(runner: CliRunner, tmp_path: Path) -> Non
     assert result.exit_code == 1
     combined = result.output + (result.stderr or "")
     assert "manifest.toml" in combined
+
+
+# ---------------------------------------------------------------------------
+# help alias
+# ---------------------------------------------------------------------------
+
+
+def test_help_subcommand_is_alias_for_dash_dash_help(runner: CliRunner) -> None:
+    """`ryotenkai community help` should print the group help (not error)."""
+    result = runner.invoke(community_app, ["help"])
+    assert result.exit_code == 0, result.output
+    # The group help contains the sub-command names.
+    assert "scaffold" in result.output
+    assert "sync" in result.output
+    assert "pack" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Batch mode — kind folders
+# ---------------------------------------------------------------------------
+
+
+def _make_community_tree(tmp_path: Path) -> Path:
+    """Build a miniature community/ tree with two validators and one preset."""
+    community = tmp_path / "community"
+    (community / "validation" / "p1").mkdir(parents=True)
+    (community / "validation" / "p1" / "plugin.py").write_text(_PLUGIN_SRC)
+    (community / "validation" / "p2").mkdir(parents=True)
+    (community / "validation" / "p2" / "plugin.py").write_text(_PLUGIN_SRC)
+    (community / "presets" / "starter").mkdir(parents=True)
+    (community / "presets" / "starter" / "preset.yaml").write_text("model: {}\n")
+    return community
+
+
+def test_scaffold_batch_on_kind_dir(runner: CliRunner, tmp_path: Path) -> None:
+    """`scaffold community/validation` should generate a manifest for each plugin."""
+    community = _make_community_tree(tmp_path)
+    result = runner.invoke(community_app, ["scaffold", str(community / "validation")])
+    assert result.exit_code == 0, result.output
+    assert (community / "validation" / "p1" / "manifest.toml").exists()
+    assert (community / "validation" / "p2" / "manifest.toml").exists()
+    # Summary line mentions the count.
+    assert "2 written" in result.output
+
+
+def test_scaffold_batch_skips_existing_without_force(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    community = _make_community_tree(tmp_path)
+    # Pre-populate one manifest manually.
+    (community / "validation" / "p1" / "manifest.toml").write_text('[plugin]\nid="p1"\n')
+    result = runner.invoke(community_app, ["scaffold", str(community / "validation")])
+    assert result.exit_code == 0, result.output
+    assert (community / "validation" / "p2" / "manifest.toml").exists()
+    # p1 was left alone.
+    assert 'id="p1"' in (community / "validation" / "p1" / "manifest.toml").read_text()
+    assert "1 written" in result.output
+    assert "1 skipped" in result.output
+
+
+def test_sync_batch_on_kind_dir(runner: CliRunner, tmp_path: Path) -> None:
+    community = _make_community_tree(tmp_path)
+    runner.invoke(community_app, ["scaffold", str(community / "validation")])
+
+    result = runner.invoke(
+        community_app, ["sync", str(community / "validation"), "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    # Both plugins listed with the dry-run marker.
+    assert "p1" in result.output
+    assert "p2" in result.output
+    assert "dry-run" in result.output.lower()
+    # Dry-run must not modify files.
+    for leaf in ("p1", "p2"):
+        assert 'version = "0.1.0"' in (
+            community / "validation" / leaf / "manifest.toml"
+        ).read_text()
+
+
+def test_sync_batch_flags_missing_manifests(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    community = _make_community_tree(tmp_path)
+    # Scaffold just p1 — p2 is left without a manifest.
+    runner.invoke(
+        community_app, ["scaffold", str(community / "validation" / "p1")]
+    )
+
+    result = runner.invoke(
+        community_app, ["sync", str(community / "validation"), "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    # p2 should be flagged, not crash.
+    assert "no manifest.toml" in result.output
+    assert "1 missing manifest" in result.output
+
+
+def test_sync_batch_on_community_root(runner: CliRunner, tmp_path: Path) -> None:
+    community = _make_community_tree(tmp_path)
+    runner.invoke(community_app, ["scaffold", str(community)])
+
+    result = runner.invoke(
+        community_app, ["sync", str(community), "--dry-run"]
+    )
+    assert result.exit_code == 0, result.output
+    # All three targets (2 plugins + 1 preset) visited.
+    assert "3 folders" in result.output or "3 changed" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Error messages
+# ---------------------------------------------------------------------------
+
+
+def test_sync_on_plugin_folder_without_manifest_suggests_scaffold(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    plugin_dir = _make_plugin_dir(tmp_path)
+    # No manifest.toml created.
+    result = runner.invoke(community_app, ["sync", str(plugin_dir)])
+    assert result.exit_code == 1
+    combined = result.output + (result.stderr or "")
+    assert "no manifest.toml" in combined
+    # The hint references the scaffold command, not a raw stack trace.
+    assert "scaffold" in combined
+
+
+def test_sync_on_unknown_dir_shows_usage_hint(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    bogus = tmp_path / "bogus"
+    bogus.mkdir()
+    result = runner.invoke(community_app, ["sync", str(bogus)])
+    assert result.exit_code == 1
+    combined = result.output + (result.stderr or "")
+    assert "cannot tell" in combined or "Expected one of" in combined
