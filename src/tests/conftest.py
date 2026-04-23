@@ -84,6 +84,26 @@ def _isolate_mlflow_tracking_uri(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     yield
 
 # =============================================================================
+# GLOBAL TEST HYGIENE
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _isolate_hf_secret_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep ``HF_TOKEN`` and friends out of the shared process env.
+
+    Several tests exercise ``StartupValidator.set_hf_token_env`` or construct
+    pipelines that mutate ``os.environ["HF_TOKEN"]``. Without isolation those
+    writes leak into the ``load_secrets`` happy-path tests, whose assertions
+    expect a completely empty token. ``monkeypatch.delenv`` is automatically
+    reverted on teardown, so tests that *want* ``HF_TOKEN`` set can still
+    opt in explicitly.
+    """
+    for key in ("HF_TOKEN", "RUNPOD_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+
+# =============================================================================
 # PATH FIXTURES
 # =============================================================================
 

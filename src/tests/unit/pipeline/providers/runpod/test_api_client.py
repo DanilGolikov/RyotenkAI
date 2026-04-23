@@ -32,20 +32,19 @@ class FakeSDK:
 
 def test_create_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
-    fake_sdk = FakeSDK(
-        create_result=Ok(
-            {
-                "id": "pod-1",
-                "desiredStatus": "RUNNING",
-                "imageName": "img",
-                "gpuCount": 1,
-                "vcpuCount": 8,
-                "memoryInGb": 32,
-                "costPerHr": 0.79,
-                "machine": {"podHostId": "host-1"},
-            }
-        )
-    )
+    pod_payload = {
+        "id": "pod-1",
+        "desiredStatus": "RUNNING",
+        "imageName": "img",
+        "gpuCount": 1,
+        "vcpuCount": 8,
+        "memoryInGb": 32,
+        "costPerHr": 0.79,
+        "machine": {"podHostId": "host-1"},
+    }
+    # create_pod now enriches with a follow-up get_pod call; give the fake
+    # SDK the same payload so the enriched branch doesn't crash on ``None``.
+    fake_sdk = FakeSDK(create_result=Ok(pod_payload), get_result=Ok(pod_payload))
     monkeypatch.setattr(client, "_sdk", fake_sdk)
 
     cfg = RunPodProviderConfig(

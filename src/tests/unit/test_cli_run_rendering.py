@@ -69,8 +69,14 @@ def _build_state(*attempts: PipelineAttemptState) -> PipelineState:
     )
 
 
-def test_format_duration_returns_empty_for_negative_delta() -> None:
-    assert format_duration("2026-03-30T00:02:00+00:00", "2026-03-30T00:01:00+00:00") == ""
+def test_format_duration_clamps_negative_delta_to_zero() -> None:
+    """Clock drift / stale timestamps land on ``"0s"`` instead of an empty slot.
+
+    Previously the helper returned ``""`` for negative deltas; after the
+    rewrite through ``duration_seconds`` (which clamps via ``max(delta, 0)``)
+    we render ``"0s"`` — readable and never confused with "no data".
+    """
+    assert format_duration("2026-03-30T00:02:00+00:00", "2026-03-30T00:01:00+00:00") == "0s"
 
 
 def test_render_run_inspection_lines_includes_logs_verbose_outputs_and_reused_suffix() -> None:

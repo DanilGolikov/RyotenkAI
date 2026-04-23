@@ -294,7 +294,7 @@ class TestRegressions:
         ):
             MockGen.return_value.generate.return_value = ""
             ExecutionSummaryReporter.generate_experiment_report(run_id="rid", mlflow_manager=mgr)
-        MockGen.assert_called_once_with("http://public-uri")
+        MockGen.assert_called_once_with("http://public-uri", sections=None)
 
 
 # =============================================================================

@@ -75,11 +75,8 @@ def test_dataset_local_paths_train_required():
 
 
 def test_lora_config_qlora_params_have_defaults():
-    """
-    Regression: QLoRA params keep defaults in v6.0.
-    Not a breaking change for QLoRA params.
-    """
-    config = LoraConfig(
+    """QLoRA-specific bnb_4bit_* knobs live on ``QLoRAConfig`` (subclass)."""
+    config = QLoRAConfig(
         r=16,
         lora_alpha=32,
         lora_dropout=0.05,

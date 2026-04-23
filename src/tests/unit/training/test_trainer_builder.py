@@ -144,12 +144,19 @@ def test_create_trainer_uses_reward_plugin_for_sapo(monkeypatch: pytest.MonkeyPa
     strategy_instance.get_config_class.return_value = lambda **kw: DummyTrainConfig(kw)
     strategy_instance.build_config_kwargs.return_value = {}
 
+    # GRPO/SAPO trainer builder inspects ``train_dataset.column_names`` now to
+    # convert plain-text prompts to conversational format; provide a dataset
+    # without a ``prompt`` column so that branch is skipped safely.
+    dataset = MagicMock()
+    dataset.column_names = []
+    tokenizer = MagicMock(chat_template=None)
+
     trainer = tb.create_trainer(
         config=cfg,
         strategy=strategy,
         model=object(),
-        tokenizer=object(),
-        train_dataset=object(),
+        tokenizer=tokenizer,
+        train_dataset=dataset,
         peft_config=None,
         eval_dataset=None,
         strategy_instance=strategy_instance,

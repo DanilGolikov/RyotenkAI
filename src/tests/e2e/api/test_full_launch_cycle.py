@@ -28,7 +28,7 @@ def _fake_spawn_writes_state(run_dir: Path):
     """Return a spawn fn that writes a valid pipeline_state.json via a real
     subprocess (so we exercise the detached-process path end-to-end)."""
 
-    def _spawn(request, *, python_executable=None):  # type: ignore[no-untyped-def]
+    def _spawn(request, *, python_executable=None, extra_env=None, **_ignored):  # type: ignore[no-untyped-def]
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "attempts" / "attempt_1").mkdir(parents=True, exist_ok=True)
         state_payload = {

@@ -11,8 +11,8 @@ from src.pipeline import launch as pipeline_launch
 def _fake_spawn(monkeypatch: pytest.MonkeyPatch, *, pid: int = 42424, command: tuple[str, ...] = ("python3",)) -> list[dict]:
     calls: list[dict] = []
 
-    def _spawn(request, *, python_executable=None):  # type: ignore[no-untyped-def]
-        calls.append({"request": request, "python": python_executable})
+    def _spawn(request, *, python_executable=None, extra_env=None, **_ignored):  # type: ignore[no-untyped-def]
+        calls.append({"request": request, "python": python_executable, "extra_env": extra_env})
         launcher_log = request.run_dir / "tui_launch.log"
         launcher_log.parent.mkdir(parents=True, exist_ok=True)
         launcher_log.write_text("[fake] spawned\n", encoding="utf-8")

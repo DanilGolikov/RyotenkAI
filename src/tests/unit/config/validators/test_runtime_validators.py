@@ -49,6 +49,20 @@ def _make_secrets(extra: dict) -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _reset_community_catalog_for_eval_plugin_tests() -> None:
+    """Other suites may call ``catalog.reload()`` which re-imports plugin
+    classes under synthetic module names — including ``cerebras_judge`` with
+    a fresh ``_required_secrets`` attribute. When the process has already
+    loaded the catalog the ``ensure_loaded()`` path used by
+    ``validate_eval_plugin_secrets`` becomes a no-op, so ask for an explicit
+    reload here to make sure our lookup resolves to the up-to-date class.
+    """
+    from src.community.catalog import catalog
+
+    catalog.reload()
+
+
 class TestValidateEvalPluginSecrets:
     def test_passes_when_evaluation_disabled(self):
         """No validation occurs when evaluation.enabled=False."""

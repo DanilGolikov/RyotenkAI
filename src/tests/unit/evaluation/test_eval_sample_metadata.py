@@ -336,8 +336,22 @@ class TestLogicSpecific:
         assert isinstance(meta, dict)
 
     def test_reserved_fields_constant_contains_expected_keys(self):
-        """_RESERVED_FIELDS must contain all five expected reserved keys."""
-        expected = {"question", "expected_answer", "answer", "context", "messages"}
+        """_RESERVED_FIELDS must contain every canonical eval field.
+
+        The set now tracks all Q/A aliases (``prompt``/``completion``/
+        ``reference_answer``) alongside the original flat keys so that
+        metadata extraction skips them under any supported dataset layout.
+        """
+        expected = {
+            "question",
+            "prompt",
+            "expected_answer",
+            "answer",
+            "completion",
+            "reference_answer",
+            "context",
+            "messages",
+        }
         assert EvaluationRunner._RESERVED_FIELDS == expected
 
 

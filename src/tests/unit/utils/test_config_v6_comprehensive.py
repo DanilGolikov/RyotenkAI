@@ -28,6 +28,7 @@ from src.utils.config import (
     LoraConfig,
     ModelConfig,
     PhaseHyperparametersConfig,
+    QLoRAConfig,
 )
 
 # =============================================================================
@@ -69,10 +70,21 @@ def test_lora_config_minimal_valid():
     assert config.use_dora is False
     assert config.use_rslora is False
     assert config.init_lora_weights == "gaussian"
-    # QLoRA parameters have defaults
-    assert config.bnb_4bit_quant_type == "nf4"
-    assert config.bnb_4bit_compute_dtype == "bfloat16"
-    assert config.bnb_4bit_use_double_quant is True
+    # QLoRA parameters live on ``QLoRAConfig`` (subclass); plain LoraConfig
+    # intentionally rejects ``bnb_4bit_*``.
+    qconfig = QLoRAConfig(
+        r=16,
+        lora_alpha=32,
+        lora_dropout=0.05,
+        bias="none",
+        target_modules="all-linear",
+        use_dora=False,
+        use_rslora=False,
+        init_lora_weights="gaussian",
+    )
+    assert qconfig.bnb_4bit_quant_type == "nf4"
+    assert qconfig.bnb_4bit_compute_dtype == "bfloat16"
+    assert qconfig.bnb_4bit_use_double_quant is True
 
 
 def test_adalora_config_minimal_valid():
