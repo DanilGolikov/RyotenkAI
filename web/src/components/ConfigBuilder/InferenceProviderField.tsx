@@ -6,6 +6,17 @@ interface Props {
   onChange: (next: unknown) => void
   onFocus?: () => void
   onBlur?: () => void
+  /** Root form value — supplied by FieldRenderer when available; used
+   *  here to keep ``inference.enabled`` in sync with ``inference.provider``
+   *  (PR3: ``enabled`` is hidden from the form and derived from provider
+   *  selection, so YAML round-trips stay consistent without a separate
+   *  switch). */
+  rootValue?: Record<string, unknown>
+  onRootChange?: (next: Record<string, unknown>) => void
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /**
@@ -16,18 +27,44 @@ interface Props {
  *
  * Empty by default (dash placeholder). Providers without an inference
  * runtime are hidden — to add one, the user opens Settings → Providers.
+ *
+ * When ``rootValue``/``onRootChange`` are supplied, this also writes
+ * ``inference.enabled`` atomically — the backend schema still carries
+ * ``enabled``, but the FE is the single source of truth and keeps the
+ * two fields consistent.
  */
-export function InferenceProviderField({ value, onChange, onFocus, onBlur }: Props) {
+export function InferenceProviderField({
+  value,
+  onChange,
+  onFocus,
+  onBlur,
+  rootValue,
+  onRootChange,
+}: Props) {
   const providersQuery = useProviders()
   const providers = providersQuery.data ?? []
 
   const eligible = providers.filter((p) => p.has_inference)
   const rawValue = typeof value === 'string' ? value : ''
-  // Hide legacy/unknown values so the user sees a dash instead of a
-  // provider id that doesn't exist in Settings. The actual value is still
-  // in state (round-trips through YAML) until the user picks a real one.
   const isEligible = !rawValue || eligible.some((p) => p.id === rawValue)
   const displayValue = isEligible ? rawValue : ''
+
+  function handleChange(next: string) {
+    const providerId = next === '' ? undefined : next
+    if (rootValue && onRootChange) {
+      const inference = isRecord(rootValue.inference) ? rootValue.inference : {}
+      onRootChange({
+        ...rootValue,
+        inference: {
+          ...inference,
+          provider: providerId,
+          enabled: Boolean(providerId),
+        },
+      })
+    } else {
+      onChange(providerId)
+    }
+  }
 
   if (providersQuery.isLoading && eligible.length === 0) {
     return (
@@ -44,7 +81,7 @@ export function InferenceProviderField({ value, onChange, onFocus, onBlur }: Pro
         value: p.id,
         label: `${p.name} (${p.type})`,
       }))}
-      onChange={(next) => onChange(next === '' ? undefined : next)}
+      onChange={handleChange}
       allowEmpty
       placeholder="—"
       footer={<AddProviderRow />}

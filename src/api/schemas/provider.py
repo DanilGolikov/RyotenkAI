@@ -28,6 +28,10 @@ class ProviderSummary(BaseModel):
     # the UI can filter without fetching each config individually. Stays
     # False when the block is absent or has no meaningful content.
     has_inference: bool = False
+    has_training: bool = False
+    # True when an encrypted token has been uploaded for this provider
+    # (e.g. RUNPOD_API_KEY). Does NOT expose the token itself.
+    has_token: bool = False
 
 
 class ProviderDetail(ProviderSummary):

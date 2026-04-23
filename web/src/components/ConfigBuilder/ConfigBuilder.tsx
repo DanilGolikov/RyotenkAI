@@ -171,6 +171,8 @@ export function ConfigBuilder({
         onChange={setKey}
         path={activeKey}
         hashPrefix={hashPrefix}
+        rootValue={value}
+        onRootChange={onChange}
       />
     )
   }

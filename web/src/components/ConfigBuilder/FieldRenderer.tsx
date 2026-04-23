@@ -5,7 +5,9 @@ import { FieldAnchor } from './FieldAnchor'
 import { HelpTooltip } from './HelpTooltip'
 import { AlertIcon } from '../icons'
 import { HFModelField } from './HFModelField'
+import { HuggingFaceIntegrationField } from './HuggingFaceIntegrationField'
 import { InferenceProviderField } from './InferenceProviderField'
+import { MLflowIntegrationField } from './MLflowIntegrationField'
 import { SelectField } from './SelectField'
 import { TrainingProviderField } from './TrainingProviderField'
 import { UnionField } from './UnionField'
@@ -26,6 +28,11 @@ type CustomFieldProps = {
    *  into their main focusable element (input / trigger). */
   onFocus?: () => void
   onBlur?: () => void
+  /** The whole form value — only needed by renderers that cross-edit
+   *  sibling fields (e.g. ``inference.provider`` keeping
+   *  ``inference.enabled`` in sync). Optional; other renderers ignore. */
+  rootValue?: Record<string, unknown>
+  onRootChange?: (next: Record<string, unknown>) => void
 }
 const CUSTOM_FIELD_RENDERERS: Record<
   string,
@@ -34,6 +41,8 @@ const CUSTOM_FIELD_RENDERERS: Record<
   'training.provider': TrainingProviderField,
   'inference.provider': InferenceProviderField,
   'model.name': HFModelField,
+  'experiment_tracking.mlflow.integration': MLflowIntegrationField,
+  'experiment_tracking.huggingface.integration': HuggingFaceIntegrationField,
 }
 import {
   detectKind,
@@ -57,6 +66,11 @@ type FieldProps = {
   depth?: number
   path?: string
   hashPrefix?: string
+  /** The whole form value — threaded down so cross-editing custom
+   *  renderers (e.g. ``inference.provider`` syncing
+   *  ``inference.enabled``) can update sibling fields atomically. */
+  rootValue?: Record<string, unknown>
+  onRootChange?: (next: Record<string, unknown>) => void
 }
 
 /**
@@ -284,7 +298,13 @@ export function FieldRenderer(props: FieldProps) {
   if (Custom) {
     return wrapAnchor(
       <LabelledRow label={label} description={description} required={required} path={path} value={fallback}>
-        <Custom value={fallback} onChange={onChange} {...focusHandlers} />
+        <Custom
+          value={fallback}
+          onChange={onChange}
+          rootValue={props.rootValue}
+          onRootChange={props.onRootChange}
+          {...focusHandlers}
+        />
       </LabelledRow>,
     )
   }
@@ -446,6 +466,8 @@ export function FieldRenderer(props: FieldProps) {
               depth={depth + 1}
               pathPrefix={path}
               hashPrefix={hashPrefix}
+              rootValue={props.rootValue}
+              onRootChange={props.onRootChange}
             />
           )}
         />,
@@ -500,6 +522,8 @@ export function FieldRenderer(props: FieldProps) {
             depth={depth + 1}
             pathPrefix={path}
             hashPrefix={hashPrefix}
+            rootValue={props.rootValue}
+            onRootChange={props.onRootChange}
           />
         </div>
       )
@@ -525,6 +549,8 @@ export function FieldRenderer(props: FieldProps) {
           depth={depth + 1}
           pathPrefix={path}
           hashPrefix={hashPrefix}
+          rootValue={props.rootValue}
+          onRootChange={props.onRootChange}
         />
       </CollapsibleCard>,
     )
@@ -570,6 +596,8 @@ export function ObjectFields({
   depth,
   pathPrefix = '',
   hashPrefix = '',
+  rootValue,
+  onRootChange,
 }: {
   root: PipelineJsonSchema
   node: JsonSchemaNode
@@ -578,11 +606,45 @@ export function ObjectFields({
   depth: number
   pathPrefix?: string
   hashPrefix?: string
+  rootValue?: Record<string, unknown>
+  onRootChange?: (next: Record<string, unknown>) => void
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
   const currentValue = isPlainRecord(value) ? (value as Record<string, unknown>) : {}
   const override = getRequiredOverride(pathPrefix, currentValue)
+
+  // ``inlineSingleChild``: when this object has exactly one property and
+  // that property is itself an object, promote the grandchildren so the
+  // user doesn't see an extra ``CollapsibleCard`` wrapper (e.g. the
+  // ``connect`` block of a provider where the only field is ``ssh``).
+  const propKeys = Object.keys(props)
+  if (override?.inlineSingleChild && propKeys.length === 1) {
+    const onlyKey = propKeys[0]
+    const onlyNode = resolveRef(root, props[onlyKey])
+    const childIsObject =
+      detectKind(onlyNode) === 'object' ||
+      (Array.isArray(onlyNode.anyOf) && onlyNode.anyOf.some((b) => detectKind(resolveRef(root, b)) === 'object'))
+    if (childIsObject) {
+      const childValue = isPlainRecord(currentValue[onlyKey])
+        ? (currentValue[onlyKey] as Record<string, unknown>)
+        : {}
+      return (
+        <ObjectFields
+          root={root}
+          node={onlyNode}
+          value={childValue}
+          onChange={(next) => onChange({ ...currentValue, [onlyKey]: next })}
+          depth={depth}
+          pathPrefix={pathPrefix ? `${pathPrefix}.${onlyKey}` : onlyKey}
+          hashPrefix={hashPrefix}
+          rootValue={rootValue}
+          onRootChange={onRootChange}
+        />
+      )
+    }
+  }
+
   const requiredSet = new Set<string>(Array.isArray(node.required) ? node.required : [])
   override?.requires?.forEach((k) => requiredSet.add(k))
   override?.optional?.forEach((k) => requiredSet.delete(k))
@@ -711,6 +773,8 @@ export function ObjectFields({
         depth={depth}
         path={pathPrefix ? `${pathPrefix}.${key}` : key}
         hashPrefix={hashPrefix}
+        rootValue={rootValue}
+        onRootChange={onRootChange}
       />
     )
   }

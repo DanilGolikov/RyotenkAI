@@ -23,24 +23,11 @@ interface EnvSpec {
 
 const CATALOG: EnvSpec[] = [
   {
-    key: 'HF_TOKEN',
-    kind: 'secret',
-    placeholder: 'token',
-    description:
-      'Hugging Face access token. Required for private models/datasets and for pushing adapters.',
-  },
-  {
-    key: 'RUNPOD_API_KEY',
-    kind: 'secret',
-    placeholder: 'key',
-    description:
-      'RunPod API key. Required when the training provider is runpod; ignored for single_node.',
-  },
-  {
     key: 'MLFLOW_TRACKING_URI',
     kind: 'text',
     placeholder: 'http://localhost:5000',
-    description: 'MLflow tracking server. Leave empty to let the pipeline auto-detect.',
+    description:
+      'Optional runtime override for MLflow tracking URI — wins over the integration value when set. Useful in CI.',
   },
   {
     key: 'LOG_LEVEL',
@@ -124,10 +111,49 @@ export function SettingsTab({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-ink-3 max-w-2xl">
-        Values merged into the process env at run-time. Stored as{' '}
-        <code className="font-mono text-ink-2">env.json</code> inside the project
-        workspace — not committed to the shared config.
+        Values merged into the training subprocess env at launch time, on top
+        of the parent process. Stored as{' '}
+        <code className="font-mono text-ink-2">env.json</code> inside the
+        project workspace — not committed to the shared config.
       </p>
+      <div className="text-2xs text-ink-3 border border-line-1 rounded-md px-3 py-2 max-w-2xl bg-surface-1 space-y-1.5">
+        <div>
+          <span className="font-medium text-ink-2">Precedence at run-time</span>{' '}
+          (highest → lowest):
+        </div>
+        <ol className="list-decimal list-inside space-y-0.5">
+          <li>
+            <span className="text-ink-2">Encrypted tokens</span> from{' '}
+            <a
+              href="/settings/integrations"
+              className="text-brand-alt hover:underline"
+            >
+              Settings → Integrations
+            </a>{' '}
+            (HF) and{' '}
+            <a
+              href="/settings/providers"
+              className="text-brand-alt hover:underline"
+            >
+              Settings → Providers
+            </a>{' '}
+            (RunPod) — resolved per‑integration at the point of use
+          </li>
+          <li>
+            <span className="text-ink-2">Project env.json</span> (this tab) —
+            per‑project override, wins over repo defaults
+          </li>
+          <li>
+            <span className="text-ink-2">Repo‑root secrets.env</span> — shared
+            team defaults; a mismatch warning is logged when a project
+            override shadows it
+          </li>
+          <li>
+            <span className="text-ink-2">Ambient shell env</span> — pre‑server
+            environment; lowest precedence
+          </li>
+        </ol>
+      </div>
 
       <div className="space-y-0.5">
         {CATALOG.map((spec) => (

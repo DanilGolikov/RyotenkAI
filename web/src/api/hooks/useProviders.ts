@@ -6,6 +6,7 @@ import type {
   ConfigVersionDetail,
   ConfigVersionsResponse,
   ConfigResponse,
+  ConnectionTestResult,
   CreateProviderRequest,
   ProviderDetail,
   ProviderSummary,
@@ -122,5 +123,38 @@ export function useDeleteProvider() {
   return useMutation({
     mutationFn: (providerId: string) => api.del<void>(`/providers/${encodeURIComponent(providerId)}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.providers() }),
+  })
+}
+
+export function useSetProviderToken(providerId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (token: string) =>
+      api.put<void>(`/providers/${encodeURIComponent(providerId)}/token`, { token }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.provider(providerId) })
+      qc.invalidateQueries({ queryKey: qk.providers() })
+    },
+  })
+}
+
+export function useDeleteProviderToken(providerId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      api.del<void>(`/providers/${encodeURIComponent(providerId)}/token`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.provider(providerId) })
+      qc.invalidateQueries({ queryKey: qk.providers() })
+    },
+  })
+}
+
+export function useTestProviderConnection(providerId: string) {
+  return useMutation({
+    mutationFn: () =>
+      api.post<ConnectionTestResult>(
+        `/providers/${encodeURIComponent(providerId)}/test-connection`,
+      ),
   })
 }

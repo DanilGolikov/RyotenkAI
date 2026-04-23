@@ -138,13 +138,17 @@ class TestSecretsLoaderExtraKeys:
         secrets = _load_with_file(env)
         assert "RUNPOD_API_KEY" not in (secrets.model_extra or {})
 
-    def test_invariant_hf_token_still_required_even_with_extra_keys(
+    def test_hf_token_optional_since_pr4_even_with_extra_keys(
         self, tmp_path: Path
     ) -> None:
-        """HF_TOKEN must still be required when extra keys are present."""
+        """PR4: HF_TOKEN is no longer required at top level. Loading must
+        succeed without it so projects that configure HF via a Settings
+        integration don't trip over a missing env var. Extra keys still
+        flow through ``model_extra``."""
         env = _write_env(tmp_path, "HF_HUB_DISABLE_XET=1\n")  # no HF_TOKEN
-        with pytest.raises(ValueError, match="HF_TOKEN"):
-            _load_with_file(env)
+        secrets = _load_with_file(env)
+        assert secrets.hf_token is None
+        assert (secrets.model_extra or {}).get("HF_HUB_DISABLE_XET") == "1"
 
     def test_invariant_hf_token_accessible_via_attribute(self, tmp_path: Path) -> None:
         env = _write_env(tmp_path, "HF_TOKEN=hf_token_abc\nHF_HUB_DISABLE_XET=1\n")

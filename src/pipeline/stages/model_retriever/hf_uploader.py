@@ -75,7 +75,10 @@ class HFModelUploader:
         self.hf_repo_id: str | None = hf_cfg.repo_id if hf_cfg else None
         self.hf_private: bool | None = hf_cfg.private if hf_cfg else None
 
-        self.hf_api: HfApi = hf_api or HfApi(token=secrets.hf_token)
+        # PR4: prefer per-integration token; fall back to HF_TOKEN env.
+        integration_id = hf_cfg.integration if hf_cfg else None
+        token = secrets.get_hf_token(integration_id)
+        self.hf_api: HfApi = hf_api or HfApi(token=token)
 
         # Set by caller after SSH connection is established
         self._ssh_client: SSHClient | None = None

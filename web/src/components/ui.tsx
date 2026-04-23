@@ -31,11 +31,11 @@ export function SectionHeader({
 }) {
   return (
     <div className="flex items-end justify-between gap-4 mb-3">
-      <div>
+      <div className="min-w-0 flex-1">
         <h2 className="text-sm font-medium text-ink">{title}</h2>
         {subtitle && <div className="text-2xs text-ink-3 mt-0.5">{subtitle}</div>}
       </div>
-      {action}
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }

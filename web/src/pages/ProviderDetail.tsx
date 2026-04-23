@@ -52,27 +52,29 @@ export function ProviderDetailPage() {
               {provider.path}
             </div>
           </div>
-          <button
-            type="button"
-            disabled={deleteMut.isPending}
-            onClick={async () => {
-              const ok = window.confirm(
-                `Unregister provider "${provider.name}"?\n\n` +
-                  `Files on disk at ${provider.path} are preserved — you can re-register ` +
-                  `the same id later. Projects that already inlined this provider are not affected.`,
-              )
-              if (!ok) return
-              try {
-                await deleteMut.mutateAsync(provider.id)
-                navigate('/settings/providers')
-              } catch {
-                /* error already surfaced via hook state */
-              }
-            }}
-            className="shrink-0 rounded-md border border-err/50 px-3 py-1.5 text-2xs text-err hover:bg-err/10 hover:border-err transition disabled:opacity-50"
-          >
-            {deleteMut.isPending ? 'Deleting…' : 'Delete'}
-          </button>
+          <div className="shrink-0 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={deleteMut.isPending}
+              onClick={async () => {
+                const ok = window.confirm(
+                  `Unregister provider "${provider.name}"?\n\n` +
+                    `Files on disk at ${provider.path} are preserved — you can re-register ` +
+                    `the same id later. Projects that already inlined this provider are not affected.`,
+                )
+                if (!ok) return
+                try {
+                  await deleteMut.mutateAsync(provider.id)
+                  navigate('/settings/providers')
+                } catch {
+                  /* error already surfaced via hook state */
+                }
+              }}
+              className="rounded-md border border-err/50 px-3 py-1.5 text-2xs text-err hover:bg-err/10 hover:border-err transition disabled:opacity-50"
+            >
+              {deleteMut.isPending ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
         </div>
         {deleteMut.error ? (
           <div className="mt-2 text-err text-2xs">

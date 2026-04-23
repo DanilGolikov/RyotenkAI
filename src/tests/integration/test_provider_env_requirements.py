@@ -100,7 +100,7 @@ datasets:
 
 experiment_tracking:
   mlflow:
-    tracking_uri: http://127.0.0.1:5002
+    integration: mlflow-test
     experiment_name: test-exp
 """,
     )
@@ -184,7 +184,7 @@ datasets:
 
 experiment_tracking:
   mlflow:
-    tracking_uri: http://127.0.0.1:5002
+    integration: mlflow-test
     experiment_name: test-exp
 """,
     )
@@ -289,7 +289,7 @@ datasets:
 
 experiment_tracking:
   mlflow:
-    tracking_uri: http://127.0.0.1:5002
+    integration: mlflow-test
     experiment_name: test-exp
 """,
     )

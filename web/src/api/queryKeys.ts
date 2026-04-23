@@ -26,5 +26,12 @@ export const qk = {
   providerConfigVersions: (id: string) => ['providers', id, 'config', 'versions'] as const,
   providerConfigVersion: (id: string, filename: string) =>
     ['providers', id, 'config', 'versions', filename] as const,
+  integrations: () => ['integrations'] as const,
+  integration: (id: string) => ['integrations', id] as const,
+  integrationTypes: () => ['integrations', 'types'] as const,
+  integrationConfig: (id: string) => ['integrations', id, 'config'] as const,
+  integrationConfigVersions: (id: string) => ['integrations', id, 'config', 'versions'] as const,
+  integrationConfigVersion: (id: string, filename: string) =>
+    ['integrations', id, 'config', 'versions', filename] as const,
   configPresets: () => ['config', 'presets'] as const,
 }

@@ -135,10 +135,13 @@ export type PluginListResponse =
 
 export type ProviderTypeInfo = S['ProviderTypeInfo']
 export type ProviderTypesResponse = S['ProviderTypesResponse']
-// Augment with has_inference until the OpenAPI spec is regenerated. The
-// field is populated by the backend in provider_service.list_summaries;
-// frontend filters use it directly (e.g. InferenceProviderField).
-export type ProviderSummary = S['ProviderSummary'] & { has_inference?: boolean }
+// Augment with capability flags + has_token until the OpenAPI spec is
+// regenerated. Populated by the backend in provider_service.list_summaries.
+export type ProviderSummary = S['ProviderSummary'] & {
+  has_inference?: boolean
+  has_training?: boolean
+  has_token?: boolean
+}
 export type ProviderDetail = S['ProviderDetail']
 export type CreateProviderRequest = S['CreateProviderRequest']
 export type ProviderConfigResponse = S['ProviderConfigResponse']
@@ -147,6 +150,62 @@ export type ProviderSaveConfigResponse = S['ProviderSaveConfigResponse']
 export type ProviderConfigVersion = S['ProviderConfigVersion']
 export type ProviderConfigVersionsResponse = S['ProviderConfigVersionsResponse']
 export type ProviderConfigVersionDetail = S['ProviderConfigVersionDetail']
+
+// ───────── Integrations (HuggingFace / MLflow workspaces) ─────────
+//
+// Shapes mirror the provider ones on the backend. Until the OpenAPI is
+// regenerated we hand-author the types — they're narrow enough for the
+// current scope (registry + tokens + test-connection).
+
+export interface IntegrationTypeInfo {
+  id: string
+  label: string
+  requires_token: boolean
+  json_schema: Record<string, unknown>
+}
+
+export interface IntegrationTypesResponse {
+  types: IntegrationTypeInfo[]
+}
+
+export interface IntegrationSummary {
+  id: string
+  name: string
+  type: string
+  path: string
+  created_at: string
+  description: string
+  has_token: boolean
+}
+
+export interface IntegrationDetail extends IntegrationSummary {
+  updated_at: string
+  current_config_yaml: string
+}
+
+export interface CreateIntegrationRequest {
+  name: string
+  type: string
+  id?: string
+  path?: string
+  description?: string
+}
+
+export interface IntegrationConfigVersion {
+  filename: string
+  created_at: string
+  size_bytes: number
+}
+
+export interface IntegrationConfigVersionsResponse {
+  versions: IntegrationConfigVersion[]
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  latency_ms: number | null
+  detail: string
+}
 
 // ───────── Config presets ─────────
 

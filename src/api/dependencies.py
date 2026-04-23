@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import Depends, HTTPException
 
 from src.api.config import ApiSettings
 from src.pipeline.project import ProjectRegistry
+from src.pipeline.settings.integrations import IntegrationRegistry
 from src.pipeline.settings.providers import ProviderRegistry
 from src.pipeline.state import PipelineStateStore
+
+if TYPE_CHECKING:
+    from src.api.services.token_crypto import TokenCrypto
 
 
 @lru_cache(maxsize=1)
@@ -51,3 +56,22 @@ def get_project_registry(settings: ApiSettings = Depends(get_settings)) -> Proje
 def get_provider_registry(settings: ApiSettings = Depends(get_settings)) -> ProviderRegistry:
     """Reusable provider registry. Shares the same workspace root as projects."""
     return ProviderRegistry(settings.projects_root_resolved)
+
+
+def get_integration_registry(
+    settings: ApiSettings = Depends(get_settings),
+) -> IntegrationRegistry:
+    """Reusable integration registry. Same workspace root as projects/providers."""
+    return IntegrationRegistry(settings.projects_root_resolved)
+
+
+@lru_cache(maxsize=1)
+def get_token_crypto() -> TokenCrypto:
+    """AES-GCM wrapper tied to the master key.
+
+    Cached — one instance per process. The master key is auto-generated
+    on first call when absent (see ``token_crypto.load_or_create_master_key``).
+    """
+    from src.api.services.token_crypto import TokenCrypto as _TokenCrypto
+
+    return _TokenCrypto()

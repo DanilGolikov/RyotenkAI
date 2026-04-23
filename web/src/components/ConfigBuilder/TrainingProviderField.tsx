@@ -1,10 +1,5 @@
-import { useQueries } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { useParams } from 'react-router-dom'
-import { api } from '../../api/client'
+import { useNavigate, useParams } from 'react-router-dom'
 import { useProviders } from '../../api/hooks/useProviders'
-import { qk } from '../../api/queryKeys'
-import type { ConfigResponse } from '../../api/types'
 import { ProviderStatusChip } from './ProviderStatusChip'
 import { SelectField } from './SelectField'
 
@@ -16,11 +11,9 @@ interface Props {
 }
 
 /**
- * Dropdown for ``training.provider``. Populated from Settings providers,
- * filtered to those whose saved config has a non-empty ``training``
- * block — so the user only sees providers actually wired up for
- * training. Free-form text is not allowed; to add a new provider the
- * user goes to Settings → Providers.
+ * Dropdown for ``training.provider``. Uses the backend-computed
+ * ``has_training`` flag on every provider summary (PR1) so we don't
+ * fetch per-provider configs in a N+1 loop.
  */
 export function TrainingProviderField({ value, onChange, onFocus, onBlur }: Props) {
   const providersQuery = useProviders()
@@ -31,28 +24,10 @@ export function TrainingProviderField({ value, onChange, onFocus, onBlur }: Prop
     if (projectId) navigate(`/projects/${encodeURIComponent(projectId)}/settings`)
   }
 
-  const configQueries = useQueries({
-    queries: providers.map((p) => ({
-      queryKey: qk.providerConfig(p.id),
-      queryFn: () =>
-        api.get<ConfigResponse>(`/providers/${encodeURIComponent(p.id)}/config`),
-    })),
-  })
-
-  const loading =
-    providersQuery.isLoading || configQueries.some((q) => q.isLoading && !q.data)
-
-  const eligible = providers
-    .map((p, i) => ({ provider: p, config: configQueries[i]?.data }))
-    .filter(({ config }) => {
-      const t = config?.parsed_json?.training
-      return t && typeof t === 'object' && !Array.isArray(t) && Object.keys(t).length > 0
-    })
-    .map(({ provider }) => provider)
-
+  const eligible = providers.filter((p) => p.has_training)
   const current = typeof value === 'string' ? value : ''
 
-  if (loading && eligible.length === 0) {
+  if (providersQuery.isLoading && eligible.length === 0) {
     return (
       <div className="h-8 inline-flex items-center px-2.5 rounded border border-line-1 bg-surface-1 text-xs text-ink-3">
         Loading providers…

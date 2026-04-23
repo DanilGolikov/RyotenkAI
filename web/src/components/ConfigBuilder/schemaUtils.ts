@@ -100,6 +100,11 @@ const TOP_LEVEL_LABELS: Record<string, string> = {
   inference: 'Inference',
   evaluation: 'Evaluation',
   experiment_tracking: 'Experiment tracking',
+  // Provider-scoped sections — reuse the same label path so the
+  // ConfigBuilder section header reads "Connect" / "Cleanup" instead
+  // of the bare YAML key.
+  connect: 'Connect',
+  cleanup: 'Cleanup',
 }
 
 /**
@@ -159,6 +164,12 @@ export interface RequiredOverride {
    *  round-trip so saved YAML keeps them). Use when a field is managed
    *  elsewhere or is out of scope for a given mode. */
   hidden?: string[]
+  /** When the object has exactly one child and that child is itself an
+   *  object, render the grandchildren inline instead of wrapping them
+   *  in a ``CollapsibleCard``. Useful for provider ``connect`` blocks
+   *  where the only field is ``ssh`` — the extra accordion reads as
+   *  noise. The single-child key is preserved in the saved YAML. */
+  inlineSingleChild?: boolean
 }
 
 /**
@@ -201,22 +212,27 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
     defaultCollapsed: true,
   },
   inference: (v) => {
-    const enabled = v.enabled === true
-    if (enabled) {
+    // PR3: ``enabled`` is hidden — the FE derives it from ``provider``
+    // and writes it on every selection change (see
+    // ``InferenceProviderField``), so it stays consistent in YAML.
+    const active = typeof v.provider === 'string' && v.provider.length > 0
+    if (active) {
       return {
-        requires: ['enabled', 'provider', 'engine'],
+        requires: ['provider', 'engine'],
         optional: ['common', 'engines'],
         alwaysVisible: ['common', 'engines'],
-        fieldOrder: ['enabled', 'provider', 'engine', 'common', 'engines'],
+        fieldOrder: ['provider', 'engine', 'common', 'engines'],
         expandOptional: true,
+        hidden: ['enabled'],
       }
     }
-    // Disabled: hide everything else behind "Show N optional" so the tab
-    // reads as "just flip the switch, the rest doesn't matter yet".
+    // Inactive: only the provider picker is visible — picking one reveals
+    // the rest of the form.
     return {
-      requires: ['enabled'],
-      optional: ['provider', 'engine', 'engines', 'common'],
-      fieldOrder: ['enabled', 'provider', 'engine', 'common', 'engines'],
+      requires: ['provider'],
+      optional: ['engine', 'engines', 'common'],
+      fieldOrder: ['provider', 'engine', 'common', 'engines'],
+      hidden: ['enabled'],
     }
   },
   // Inference leaf configs: knobs only, no sub-sections worth hiding.
@@ -248,6 +264,17 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
     }
   },
   'evaluation.dataset': { expandOptional: true, defaultCollapsed: false },
+  // Provider sections — once the user is on the dedicated TocRail
+  // tab for a section, show everything immediately. Hiding fields
+  // behind a second "Show N optional fields" toggle is pointless when
+  // the user already navigated *into* the section.
+  cleanup: { expandOptional: true },
+  // Provider ``connect`` typically contains a single ``ssh`` sub-object;
+  // wrapping it in a CollapsibleCard adds a header that reads as noise.
+  // ``inlineSingleChild`` promotes the grandchildren to top-level so the
+  // user sees the SSH fields directly. ``expandOptional`` prevents the
+  // optional-fields toggle.
+  connect: { inlineSingleChild: true, expandOptional: true },
   // Experiment tracking: both backends are optional in the schema, but
   // the whole tab is empty otherwise. Pin them as always-visible so the
   // user sees the available backends immediately on tab entry.
@@ -255,10 +282,45 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
     alwaysVisible: ['mlflow', 'huggingface'],
     fieldOrder: ['mlflow', 'huggingface'],
   },
-  'experiment_tracking.mlflow': { expandOptional: true, defaultCollapsed: true },
-  'experiment_tracking.huggingface': {
-    expandOptional: true,
-    defaultCollapsed: true,
+  // MLflow block — PR3: only ``integration`` is visible until a value
+  // is picked; ``experiment_name`` (+ optional ``run_description_file``)
+  // are revealed once an integration is chosen.
+  'experiment_tracking.mlflow': (v) => {
+    const active = typeof v.integration === 'string' && v.integration.length > 0
+    if (active) {
+      return {
+        requires: ['integration', 'experiment_name'],
+        alwaysVisible: ['run_description_file'],
+        fieldOrder: ['integration', 'experiment_name', 'run_description_file'],
+        expandOptional: true,
+      }
+    }
+    return {
+      requires: ['integration'],
+      optional: ['experiment_name', 'run_description_file'],
+      fieldOrder: ['integration', 'experiment_name', 'run_description_file'],
+      hidden: ['experiment_name', 'run_description_file'],
+    }
+  },
+  // HuggingFace block — PR3: no more ``enabled`` flag. Only the
+  // ``integration`` picker is visible until a value is selected; then
+  // ``repo_id`` + ``private`` appear.
+  'experiment_tracking.huggingface': (v) => {
+    const active = typeof v.integration === 'string' && v.integration.length > 0
+    if (active) {
+      return {
+        requires: ['integration', 'repo_id'],
+        alwaysVisible: ['private'],
+        fieldOrder: ['integration', 'repo_id', 'private'],
+        expandOptional: true,
+      }
+    }
+    return {
+      requires: ['integration'],
+      optional: ['repo_id', 'private'],
+      fieldOrder: ['integration', 'repo_id', 'private'],
+      hidden: ['repo_id', 'private'],
+    }
   },
 }
 

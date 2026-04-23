@@ -17,6 +17,11 @@ from src.api.schemas.provider import (
     ProviderTypeInfo,
     ProviderTypesResponse,
 )
+from src.api.services.token_crypto import (
+    TokenCrypto,
+    delete_token_file,
+    write_token_file,
+)
 from src.config.providers.registry import PROVIDER_TYPES
 from src.pipeline.settings.providers import (
     ProviderMetadata,
@@ -80,13 +85,15 @@ def list_summaries(registry: ProviderRegistry) -> list[ProviderSummary]:
     for entry in registry.list():
         store = ProviderStore(Path(entry.path))
         description = ""
-        has_inference = False
+        capabilities = {"training": False, "inference": False}
+        has_token = False
         if store.exists():
             try:
                 description = store.load().description
             except (OSError, ValueError):
                 description = ""
-            has_inference = _provider_has_inference(store)
+            capabilities = _provider_capabilities(store)
+            has_token = _provider_has_token(store)
         summaries.append(
             ProviderSummary(
                 id=entry.id,
@@ -95,38 +102,50 @@ def list_summaries(registry: ProviderRegistry) -> list[ProviderSummary]:
                 path=entry.path,
                 created_at=entry.created_at,
                 description=description,
-                has_inference=has_inference,
+                has_inference=capabilities["inference"],
+                has_training=capabilities["training"],
+                has_token=has_token,
             )
         )
     return summaries
 
 
-def _provider_has_inference(store: ProviderStore) -> bool:
-    """Return True when this provider's YAML has a non-empty ``inference``
-    block. Used by the UI to filter the inference-provider dropdown to
-    providers that actually expose an inference runtime."""
+def _provider_capabilities(store: ProviderStore) -> dict[str, bool]:
+    """Return capability flags computed from the provider's saved YAML.
+
+    ``inference`` / ``training`` each resolve to True when the saved YAML
+    contains a non-empty block of that name (a bare ``{}`` or an
+    ``enabled: false``-only block does not count). Centralises the logic
+    so UI-facing flags cannot drift between capabilities.
+    """
+    flags = {"training": False, "inference": False}
     try:
         text = store.current_yaml_text()
     except OSError:
-        return False
+        return flags
     if not text.strip():
-        return False
+        return flags
     try:
         import yaml
 
         parsed = yaml.safe_load(text)
     except yaml.YAMLError:
-        return False
+        return flags
     if not isinstance(parsed, dict):
-        return False
-    inference = parsed.get("inference")
-    if not isinstance(inference, dict):
-        return False
-    # Require at least one meaningful knob — a bare `inference: {}` or
-    # just `enabled: false` doesn't count as "inference provider
-    # available".
-    meaningful = {k: v for k, v in inference.items() if k != "enabled"}
-    return bool(meaningful) or inference.get("enabled") is True
+        return flags
+
+    for key in flags:
+        block = parsed.get(key)
+        if not isinstance(block, dict):
+            continue
+        meaningful = {k: v for k, v in block.items() if k != "enabled"}
+        flags[key] = bool(meaningful) or block.get("enabled") is True
+    return flags
+
+
+def _provider_has_token(store: ProviderStore) -> bool:
+    """True when ``token.enc`` exists in the provider's workspace."""
+    return (store.root / "token.enc").is_file()
 
 
 def get_detail(registry: ProviderRegistry, provider_id: str) -> ProviderDetail:
@@ -241,7 +260,7 @@ def validate_yaml(
     try:
         provider_type.schema(**(parsed or {}))
         checks.append(ConfigCheck(label=f"{provider_type.schema_name} schema", status="ok"))
-    except Exception as exc:  # noqa: BLE001 — surface full details to UI
+    except Exception as exc:
         checks.append(
             ConfigCheck(
                 label=f"{provider_type.schema_name} schema",
@@ -279,9 +298,28 @@ def restore_version(registry: ProviderRegistry, provider_id: str, filename: str)
         raise ProviderServiceError(str(exc)) from exc
 
 
+# ---------- Tokens --------------------------------------------------------
+
+
+def set_token(
+    registry: ProviderRegistry,
+    provider_id: str,
+    plaintext: str,
+    crypto: TokenCrypto,
+) -> None:
+    _, store, _ = _load_provider(registry, provider_id)
+    write_token_file(store.root / "token.enc", plaintext, crypto)
+
+
+def delete_token(registry: ProviderRegistry, provider_id: str) -> bool:
+    _, store, _ = _load_provider(registry, provider_id)
+    return delete_token_file(store.root / "token.enc")
+
+
 __all__ = [
     "ProviderServiceError",
     "create_provider",
+    "delete_token",
     "get_config",
     "get_detail",
     "list_summaries",
@@ -290,6 +328,7 @@ __all__ = [
     "read_version",
     "restore_version",
     "save_config",
+    "set_token",
     "slugify",
     "unregister",
     "validate_yaml",

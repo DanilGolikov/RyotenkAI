@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_provider_registry
+from src.api.dependencies import get_provider_registry, get_token_crypto
 from src.api.schemas.config_validate import ConfigValidationResult
+from src.api.schemas.integration import ConnectionTestResult, IntegrationTokenRequest
 from src.api.schemas.provider import (
     CreateProviderRequest,
     ProviderConfigResponse,
@@ -16,8 +20,10 @@ from src.api.schemas.provider import (
     ProviderTypesResponse,
 )
 from src.api.services import provider_service
+from src.api.services.connection_test import test_provider
 from src.api.services.provider_service import ProviderServiceError
-from src.pipeline.settings.providers import ProviderRegistry
+from src.api.services.token_crypto import TokenCrypto, read_token_file
+from src.pipeline.settings.providers import ProviderRegistry, ProviderStore
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -150,3 +156,60 @@ def restore_version(
     except ProviderServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ProviderSaveConfigResponse(ok=True, snapshot_filename=snapshot)
+
+
+# ---------- Tokens & test-connection --------------------------------------
+
+
+@router.put("/{provider_id}/token", status_code=204)
+def set_token(
+    provider_id: str,
+    body: IntegrationTokenRequest,
+    registry: ProviderRegistry = Depends(get_provider_registry),
+    crypto: TokenCrypto = Depends(get_token_crypto),
+) -> None:
+    """Write-only token upload (e.g. RUNPOD_API_KEY). Never echoed back."""
+    try:
+        provider_service.set_token(registry, provider_id, body.token, crypto)
+    except ProviderServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{provider_id}/token", status_code=204)
+def delete_token(
+    provider_id: str,
+    registry: ProviderRegistry = Depends(get_provider_registry),
+) -> None:
+    try:
+        provider_service.delete_token(registry, provider_id)
+    except ProviderServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{provider_id}/test-connection", response_model=ConnectionTestResult)
+def test_connection(
+    provider_id: str,
+    registry: ProviderRegistry = Depends(get_provider_registry),
+    crypto: TokenCrypto = Depends(get_token_crypto),
+) -> ConnectionTestResult:
+    try:
+        entry = registry.resolve(provider_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    store = ProviderStore(Path(entry.path))
+    if not store.exists():
+        raise HTTPException(
+            status_code=404, detail=f"provider workspace missing: {store.root}"
+        )
+
+    yaml_text = store.current_yaml_text()
+    try:
+        parsed = yaml.safe_load(yaml_text) if yaml_text.strip() else {}
+    except yaml.YAMLError:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    token = read_token_file(store.root / "token.enc", crypto)
+    return test_provider(entry.type, parsed, token)

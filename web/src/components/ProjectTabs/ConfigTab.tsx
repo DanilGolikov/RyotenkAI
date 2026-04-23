@@ -21,7 +21,7 @@ import {
   SETTINGS_JUMP_TARGET,
 } from '../ConfigBuilder/validationMap'
 import { VersionDiffModal } from '../ConfigBuilder/VersionDiffModal'
-import { YamlEditor } from '../YamlEditor'
+import { YamlView } from '../YamlView'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { useConfigDraft } from '../../hooks/useConfigDraft'
 import { Spinner } from '../ui'
@@ -229,18 +229,6 @@ export function ConfigTab({ projectId }: { projectId: string }) {
     setYamlParseError(null)
   }
 
-  function applyYamlChange(next: string) {
-    setYamlText(next)
-    setDirty(true)
-    const parsed = safeYamlParse(next)
-    if (parsed == null) {
-      setYamlParseError('YAML is not a mapping. Form view is disabled until it parses.')
-    } else {
-      setFormValue(parsed)
-      setYamlParseError(null)
-    }
-  }
-
   if (configQuery.isLoading || schemaQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-ink-3">
@@ -402,7 +390,11 @@ export function ConfigTab({ projectId }: { projectId: string }) {
       ) : view === 'form' && schemaQuery.error ? (
         <div className="text-sm text-err">{(schemaQuery.error as Error).message}</div>
       ) : (
-        <YamlEditor value={yamlText} onChange={applyYamlChange} />
+        // YAML view is read-only for now (editing blocked at UI layer —
+        // Form view is the authoritative editor). Toolbar stays —
+        // Collapse/Expand all + fullscreen + READ-ONLY pill are
+        // navigation/reading aids, not editing.
+        <YamlView text={yamlText} maxHeight="max-h-[640px]" />
       )}
 
       {(() => {
