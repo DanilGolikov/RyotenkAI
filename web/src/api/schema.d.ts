@@ -262,6 +262,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins/reports/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Report Defaults */
+        get: operations["plugins-get_report_defaults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{kind}": {
         parameters: {
             query?: never;
@@ -1317,6 +1334,16 @@ export interface components {
             /** Types */
             types: components["schemas"]["ProviderTypeInfo"][];
         };
+        /**
+         * ReportDefaultsResponse
+         * @description The built-in report-section order used when the pipeline config
+         *     doesn't declare ``reports.sections``. Surfaced so the frontend can
+         *     pre-fill its reports section with a sensible starting list.
+         */
+        ReportDefaultsResponse: {
+            /** Sections */
+            sections: string[];
+        };
         /** ReportResponse */
         ReportResponse: {
             /** Path */
@@ -1958,6 +1985,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "plugins-get_report_defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportDefaultsResponse"];
                 };
             };
         };

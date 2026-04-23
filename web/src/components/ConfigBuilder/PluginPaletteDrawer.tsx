@@ -1,5 +1,5 @@
 import { useDraggable } from '@dnd-kit/core'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { PluginKind, PluginManifest } from '../../api/types'
 import { useAllPlugins } from '../../api/hooks/usePlugins'
 
@@ -14,11 +14,14 @@ interface Props {
   onInfoClick?: (plugin: PluginManifest) => void
 }
 
-const KIND_ORDER: PluginKind[] = ['validation', 'evaluation', 'reward', 'reports']
+// Project-wide kind order: Validation → Reward → Evaluation → Reports.
+// Mirrors ``KIND_SECTIONS`` in ``PluginsTab`` so the palette reads in
+// the same sequence as the drop zones on the left.
+const KIND_ORDER: PluginKind[] = ['validation', 'reward', 'evaluation', 'reports']
 const KIND_LABELS: Record<PluginKind, string> = {
   validation: 'Validation',
-  evaluation: 'Evaluation',
   reward: 'Reward',
+  evaluation: 'Evaluation',
   reports: 'Reports',
 }
 
@@ -43,6 +46,10 @@ export function PluginPaletteDrawer({
 }: Props) {
   const { byKind, isLoading, error } = useAllPlugins()
   const [query, setQuery] = useState('')
+  // Collapsed by default — all four accordion groups closed so the
+  // palette doesn't dump 30+ chips on the user at once. A non-empty
+  // search auto-opens the matching groups (see effect below).
+  const [openKinds, setOpenKinds] = useState<Set<PluginKind>>(new Set())
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -68,12 +75,41 @@ export function PluginPaletteDrawer({
     return out
   }, [byKind, query, attachedIdsByKind])
 
+  // Search auto-expands groups that have any match — otherwise typing
+  // into the search box would look broken with everything collapsed.
+  useEffect(() => {
+    if (!query.trim()) return
+    const toOpen = new Set<PluginKind>()
+    for (const kind of KIND_ORDER) {
+      if (filtered[kind].length > 0) toOpen.add(kind)
+    }
+    setOpenKinds(toOpen)
+  }, [query, filtered])
+
+  function toggleKind(kind: PluginKind) {
+    setOpenKinds((prev) => {
+      const next = new Set(prev)
+      if (next.has(kind)) next.delete(kind)
+      else next.add(kind)
+      return next
+    })
+  }
+
+  // Card-style palette — ``rounded-md border border-line-1`` matches
+  // the project's ``.card`` token so the aside reads as part of the
+  // same design language as the Providers / Catalog cards. The earlier
+  // ``border-l only`` treatment looked like an un-themed side panel.
+  //
+  // ``self-start + sticky top-0`` pins the palette to the top of the
+  // scrolling tab panel. ``top-0`` because the scrolling ancestor is
+  // ``<div className="p-5 overflow-y-auto">`` in ProjectDetail, not
+  // the viewport; any offset above 0 just leaves a gap.
   return (
-    <aside className="w-64 shrink-0 border-l border-line-1 bg-surface-1 flex flex-col max-h-[calc(100vh-8rem)] sticky top-20">
-      <div className="px-3 py-2 border-b border-line-1">
-        <div className="text-2xs font-semibold text-ink-1">Plugin palette</div>
-        <div className="text-[0.65rem] text-ink-3 mt-0.5 leading-snug">
-          Drag a plugin into a section on the left to add it to your project.
+    <aside className="w-64 shrink-0 rounded-md border border-line-1 bg-surface-1 shadow-card flex flex-col max-h-[calc(100vh-9rem)] self-start sticky top-0 overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-line-1">
+        <div className="flex items-baseline justify-between">
+          <div className="text-xs font-semibold text-ink-1">Palette</div>
+          <div className="text-[0.6rem] text-ink-4">drag to attach</div>
         </div>
         <input
           type="text"
@@ -85,7 +121,7 @@ export function PluginPaletteDrawer({
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-3">
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {error && (
           <div className="text-xs text-err">{(error as Error).message}</div>
         )}
@@ -93,46 +129,68 @@ export function PluginPaletteDrawer({
 
         {!isLoading && KIND_ORDER.map((kind) => {
           const list = filtered[kind]
-          if (list.length === 0) return null
+          const isOpen = openKinds.has(kind)
           return (
             <div key={kind} className="space-y-1">
-              <div className="flex items-baseline justify-between px-1">
-                <div className="text-[0.65rem] font-semibold text-ink-2 uppercase tracking-wide">
-                  {KIND_LABELS[kind]}
+              <button
+                type="button"
+                onClick={() => toggleKind(kind)}
+                className="w-full flex items-center justify-between px-1 py-1 rounded hover:bg-surface-2 transition text-left"
+                aria-expanded={isOpen}
+                aria-controls={`palette-${kind}`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`text-[0.65rem] text-ink-4 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                    aria-hidden="true"
+                  >
+                    ▸
+                  </span>
+                  <span className="text-[0.65rem] font-semibold text-ink-2 uppercase tracking-wide">
+                    {KIND_LABELS[kind]}
+                  </span>
                 </div>
-                <div className="text-[0.6rem] text-ink-4">{list.length}</div>
-              </div>
-              <div className="space-y-1">
-                {list.map((p) => {
-                  const attached = attachedIdsByKind[kind].has(p.id)
-                  const rewardMismatch =
-                    kind === 'reward'
-                    && p.supported_strategies
-                    && p.supported_strategies.length > 0
-                    && !p.supported_strategies.some((s) =>
-                      activeStrategyTypes.has(s.toLowerCase()),
-                    )
-                  return (
-                    <PalettePluginChip
-                      key={p.id}
-                      plugin={p}
-                      kind={kind}
-                      disabled={!!rewardMismatch}
-                      disabledReason={
-                        rewardMismatch
-                          ? `Incompatible with current strategies (${
-                            [...activeStrategyTypes].join(', ') || 'none'
-                          }). Supported: ${p.supported_strategies?.join(', ')}`
-                          : undefined
-                      }
-                      attachedHint={attached && kind !== 'reports'
-                        ? 'Already attached — drop again to add another instance.'
-                        : undefined}
-                      onInfoClick={onInfoClick ? () => onInfoClick(p) : undefined}
-                    />
-                  )
-                })}
-              </div>
+                <span className="text-[0.6rem] text-ink-4">{list.length}</span>
+              </button>
+              {isOpen && (
+                <div id={`palette-${kind}`} className="space-y-1 pl-1">
+                  {list.length === 0 ? (
+                    <div className="text-[0.65rem] text-ink-4 px-1 py-1">
+                      {query ? 'No matches' : 'Nothing to add — everything is attached or the catalog is empty.'}
+                    </div>
+                  ) : (
+                    list.map((p) => {
+                      const attached = attachedIdsByKind[kind].has(p.id)
+                      const rewardMismatch =
+                        kind === 'reward'
+                        && p.supported_strategies
+                        && p.supported_strategies.length > 0
+                        && !p.supported_strategies.some((s) =>
+                          activeStrategyTypes.has(s.toLowerCase()),
+                        )
+                      return (
+                        <PalettePluginChip
+                          key={p.id}
+                          plugin={p}
+                          kind={kind}
+                          disabled={!!rewardMismatch}
+                          disabledReason={
+                            rewardMismatch
+                              ? `Incompatible with current strategies (${
+                                [...activeStrategyTypes].join(', ') || 'none'
+                              }). Supported: ${p.supported_strategies?.join(', ')}`
+                              : undefined
+                          }
+                          attachedHint={attached && kind !== 'reports'
+                            ? 'Already attached — drop again to add another instance.'
+                            : undefined}
+                          onInfoClick={onInfoClick ? () => onInfoClick(p) : undefined}
+                        />
+                      )
+                    })
+                  )}
+                </div>
+              )}
             </div>
           )
         })}

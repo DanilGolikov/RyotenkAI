@@ -241,7 +241,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3">
+      <div className="pb-3 border-b border-line-1 space-y-3">
       <div className="flex items-center gap-2">
         <div className="inline-flex rounded-md border border-line-1 overflow-hidden text-2xs">
           <button

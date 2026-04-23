@@ -18,6 +18,8 @@ from src.pipeline.state.store import (
     build_attempt_id,
     build_attempt_state,
     hash_payload,
+    read_lock_pid,
+    remove_stale_lock,
     update_lineage,
 )
 
@@ -39,5 +41,7 @@ __all__ = [
     "build_attempt_id",
     "build_attempt_state",
     "hash_payload",
+    "read_lock_pid",
+    "remove_stale_lock",
     "update_lineage",
 ]

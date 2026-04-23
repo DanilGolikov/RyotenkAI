@@ -3,11 +3,8 @@ Detached pipeline launch and interrupt mechanics.
 
 This module owns the subprocess lifecycle for starting a pipeline run out-of-process.
 Launched processes use start_new_session=True so that they survive the launcher
-(TUI or web backend) dying, which preserves the Shared-State architecture: the
-source of truth is on disk (pipeline_state.json + run.lock), not in-memory.
-
-Previously lived in src/tui/launch.py. That path now exposes a shim for backward
-compatibility with existing TUI imports.
+(web backend) dying, which preserves the Shared-State architecture: the source
+of truth is on disk (pipeline_state.json + run.lock), not in-memory.
 """
 
 from __future__ import annotations
@@ -172,17 +169,15 @@ def is_process_alive(pid: int | None) -> bool:
 
 
 def read_lock_pid(run_dir: Path) -> int | None:
-    lock_path = run_dir.expanduser().resolve() / "run.lock"
-    try:
-        content = lock_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in content.splitlines():
-        line = line.strip()
-        if line.startswith("pid="):
-            with contextlib.suppress(ValueError):
-                return int(line.split("=", 1)[1])
-    return None
+    """Read the owning PID from a run-dir's ``run.lock``.
+
+    Thin adapter over the canonical reader in ``src.pipeline.state.store``.
+    Kept here for ``src.pipeline.launch``-based callers that pass a
+    ``run_dir`` rather than an explicit lock path.
+    """
+    from src.pipeline.state.store import read_lock_pid as _read_lock_pid
+
+    return _read_lock_pid(run_dir.expanduser().resolve() / "run.lock")
 
 
 def build_train_command(request: LaunchRequest, *, python_executable: str | None = None) -> list[str]:

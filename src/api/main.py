@@ -91,7 +91,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         version="v0.1.0",
         description=(
             "Sibling client to the RyotenkAI file-based pipeline state store. "
-            "Equal citizen with CLI and TUI — reads pipeline_state.json directly, "
+            "Equal citizen with the CLI — reads pipeline_state.json directly, "
             "launches pipeline runs as detached subprocesses."
         ),
         generate_unique_id_function=_stable_operation_id,

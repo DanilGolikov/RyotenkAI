@@ -51,7 +51,6 @@ make fix-all       # auto-fix all fixable issues
 - `src/evaluation/` — Model evaluation plugins
 - `src/data/` — Dataset handling and validation
 - `src/reports/` — Report generation plugins
-- `src/tui/` — Terminal UI (Textual)
 
 ## Reporting Issues
 

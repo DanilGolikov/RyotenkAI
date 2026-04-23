@@ -258,9 +258,16 @@ function Section({
 }) {
   return (
     <div className="space-y-1.5">
-      <div className="flex items-baseline gap-2">
-        <span className="text-2xs font-semibold text-ink-1">{title}</span>
-        {count !== null && <span className="text-[0.6rem] text-ink-4">{count}</span>}
+      <div className="flex items-baseline gap-2 border-b border-line-1 pb-1">
+        <span className="text-xs font-semibold text-ink-1">
+          {title}
+          {count !== null && (
+            <>
+              <span className="text-ink-4"> · </span>
+              <span className="text-ink-3">{count}</span>
+            </>
+          )}
+        </span>
       </div>
       {children}
     </div>

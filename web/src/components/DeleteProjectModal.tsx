@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProjectSummary } from '../api/types'
+import { Toggle } from './ui'
 
 interface Props {
   project: ProjectSummary
@@ -80,20 +81,25 @@ export function DeleteProjectModal({ project, onClose, onConfirm, pending }: Pro
             for this project will be permanently removed.
           </p>
 
-          <label className="flex items-start gap-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={deleteFiles}
-              onChange={(e) => setDeleteFiles(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded-[2px] border border-line-2 bg-surface-1 accent-err hover:border-ink-3 transition-colors"
-            />
-            <span className="text-xs text-ink-2">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5">
+              <Toggle
+                checked={deleteFiles}
+                onChange={setDeleteFiles}
+                variant="danger"
+                aria-label="Also delete workspace on disk"
+              />
+            </div>
+            <label
+              className="text-xs text-ink-2 cursor-pointer select-none"
+              onClick={() => setDeleteFiles((v) => !v)}
+            >
               <span className="text-ink-1 font-medium">Also delete workspace on disk</span>
               <span className="block text-2xs text-ink-4 font-mono mt-0.5 break-all">
                 {project.path}
               </span>
-            </span>
-          </label>
+            </label>
+          </div>
 
           <div>
             <label className="text-2xs text-ink-3 font-medium block mb-1.5">

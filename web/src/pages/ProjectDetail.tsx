@@ -100,10 +100,20 @@ function DescriptionEditor({ project }: { project: ProjectDetail }) {
   const [focused, setFocused] = useState(false)
 
   // Sync draft with server on remount or background refetch — but leave
-  // the user's in-flight typing alone while the field is focused.
+  // the user's in-flight typing alone while the field is focused, AND
+  // don't clobber a freshly-saved value while the project query is
+  // still refetching. Previously clicking Save blurred the textarea →
+  // this effect fired with the stale ``project.description`` and
+  // overwrote the user's edit before refetch completed, making it look
+  // like Save reverted the change. ``mut.data`` is the ProjectDetail
+  // the backend returned from the latest save, so if the draft matches
+  // it we're already in sync and can skip the overwrite.
   useEffect(() => {
-    if (!focused) setDraft(project.description)
-  }, [project.description, focused])
+    if (focused) return
+    if (mut.data && draft === mut.data.description) return
+    setDraft(project.description)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.description, focused, mut.data])
 
   const dirty = draft !== project.description
 
@@ -220,15 +230,14 @@ export function ProjectDetailPage() {
                   'border border-b-2',
                   'transition-colors duration-150',
                   isActive
-                    // Three concurrent signals on active — matches the
-                    // NN/g recommendation of "active needs ~3× weight
-                    // over inactive":
+                    // Active signals:
                     //   1) brighter text (ink-1) + medium weight
-                    //   2) burgundy bottom "полоска" (2px)
-                    //   3) soft side+top frame (line-2) + bg lift to
-                    //      surface-3, so the tab silhouette reads
-                    //      as a card popping out of the strip.
-                    ? 'text-ink-1 font-medium bg-surface-3 border-[#3c4046] border-b-brand-warm'
+                    //   2) violet bottom "полоска" (2px) — matches the
+                    //      cool brand used across CTAs and nav-active
+                    //      instead of the warm burgundy token.
+                    // Side / top frame and the bg lift dropped by user
+                    // request — the underline alone is enough contrast.
+                    ? 'text-ink-1 font-medium border-transparent border-b-brand'
                     : 'text-ink-3 hover:text-ink-1 hover:bg-surface-2/50 border-transparent',
                 ].join(' ')
               }

@@ -2,9 +2,9 @@
 
 Kubernetes-way architecture: the FastAPI backend (`ryotenkai serve`) and the
 React frontend (`web/`) are **sibling clients** to the same file-based pipeline
-state store (`runs/<id>/pipeline_state.json` + `run.lock`) that the CLI and TUI
-already use. Nothing wraps the CLI through subprocess for read paths — the
-backend imports `src.pipeline` directly.
+state store (`runs/<id>/pipeline_state.json` + `run.lock`) that the CLI already
+uses. Nothing wraps the CLI through subprocess for read paths — the backend
+imports `src.pipeline` directly.
 
 See [docs/plans/jolly-baking-bird.md](plans/jolly-baking-bird.md) for the full
 architecture rationale and reuse map.
@@ -57,9 +57,12 @@ Base: `/api/v1`.
   written by the orchestrator) + `os.kill(pid, 0)` liveness. Backend holds no
   in-memory registry between requests.
 - Interrupt reads pid from `run.lock` and forwards SIGINT via
-  `interrupt_launch_process` — same path the TUI uses.
+  `interrupt_launch_process`.
 - Stale lock (pid not alive): `/interrupt` reports `process_not_found` and
-  removes the lock best-effort so subsequent launches aren't blocked.
+  routes cleanup through `PipelineStateStore.remove_stale_lock` — this
+  re-reads the pid inside the store module right before `unlink`, so if
+  another process legitimately grabbed the lock in the meantime the file is
+  left untouched.
 - Launch rejects with `409 run_already_running` when an active lock exists.
 
 ## WebSocket log protocol
@@ -91,8 +94,8 @@ Prefix `RYOTENKAI_API_`:
 | `SERVE_SPA` | `true` |
 | `WEB_DIST_DIR` | `web/dist` |
 
-## Coexistence with CLI and TUI
+## Coexistence with CLI
 
-All three read and write the same state store. You can start a run in the
-browser and inspect it in `ryotenkai tui` or vice versa. No feature flags —
-orthogonal clients.
+Both the web UI and the CLI read and write the same state store. You can start
+a run in the browser and inspect it with `ryotenkai inspect-run <run_dir>` or
+vice versa. No feature flags — orthogonal clients.

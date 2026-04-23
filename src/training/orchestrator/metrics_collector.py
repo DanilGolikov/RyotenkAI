@@ -16,7 +16,23 @@ from src.training.constants import (
     KEY_TRAIN_SAMPLES_PER_SECOND,
     KEY_TRAIN_STEPS_PER_SECOND,
 )
+from src.training.metrics_models import PhasesMetricsAggregate, TrainingMetricsSnapshot
 from src.utils.logger import logger
+
+
+def _as_float(value: Any) -> float | None:
+    """Coerce trainer log value to a plain float. Handles numpy/torch scalars."""
+    if value is None:
+        return None
+    if hasattr(value, "item"):
+        try:
+            return float(value.item())
+        except Exception:
+            return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class MetricsCollector:
@@ -30,16 +46,15 @@ class MetricsCollector:
 
     Example:
         collector = MetricsCollector()
-        metrics = collector.extract_from_trainer(trainer)
-        print(metrics)
-        # {'train_loss': 0.5, 'global_step': 100, 'epoch': 1.0}
+        snapshot = collector.extract_from_trainer(trainer)
+        print(snapshot.train_loss, snapshot.global_step)
     """
 
     def __init__(self) -> None:
         """Initialize MetricsCollector."""
         logger.debug("[MC:INIT] MetricsCollector initialized")
 
-    def extract_from_trainer(self, trainer: Any) -> dict[str, Any]:
+    def extract_from_trainer(self, trainer: Any) -> TrainingMetricsSnapshot:
         """
         Extract training metrics from trainer state.
 
@@ -51,69 +66,66 @@ class MetricsCollector:
             trainer: TRL trainer after training
 
         Returns:
-            Dict with metrics (train_loss, train_runtime, global_step, epoch, peak_memory_gb)
+            Populated ``TrainingMetricsSnapshot``. Empty snapshot if trainer
+            has no state.
         """
-        metrics: dict[str, Any] = {}
-
         if not hasattr(trainer, "state") or trainer.state is None:
             logger.debug("[MC:NO_STATE] Trainer has no state")
-            return metrics
+            return TrainingMetricsSnapshot()
 
         state = trainer.state
 
-        # Search log_history in reverse to find most recent values
+        # Pre-fill with fields that come directly from state — more reliable
+        snapshot = TrainingMetricsSnapshot(
+            global_step=getattr(state, "global_step", None),
+            epoch=_as_float(getattr(state, "epoch", None)),
+            peak_memory_gb=self._get_peak_memory_gb(),
+        )
+
+        # Search log_history in reverse to find most recent values.
         # HuggingFace Trainer logs:
         #   - "loss" = per-step loss (every logging_steps)
         #   - "train_loss" = average loss (in final summary entry)
-        if state.log_history:
-            for log_entry in reversed(state.log_history):
-                # Priority 1: train_loss from final summary (most reliable)
-                if KEY_TRAIN_LOSS in log_entry and metrics.get(KEY_TRAIN_LOSS) is None:
-                    metrics[KEY_TRAIN_LOSS] = log_entry[KEY_TRAIN_LOSS]
+        log_history = getattr(state, "log_history", None) or []
+        for log_entry in reversed(log_history):
+            # Priority 1: train_loss from final summary (most reliable)
+            if snapshot.train_loss is None and KEY_TRAIN_LOSS in log_entry:
+                snapshot.train_loss = _as_float(log_entry[KEY_TRAIN_LOSS])
 
-                # Priority 2: loss from per-step logging (fallback)
-                if "loss" in log_entry and metrics.get(KEY_TRAIN_LOSS) is None:
-                    metrics[KEY_TRAIN_LOSS] = log_entry["loss"]
+            # Priority 2: loss from per-step logging (fallback)
+            if snapshot.train_loss is None and "loss" in log_entry:
+                snapshot.train_loss = _as_float(log_entry["loss"])
 
-                # Get train_runtime (logged at end of training)
-                if KEY_TRAIN_RUNTIME in log_entry and metrics.get(KEY_TRAIN_RUNTIME) is None:
-                    metrics[KEY_TRAIN_RUNTIME] = log_entry[KEY_TRAIN_RUNTIME]
+            if snapshot.train_runtime is None and KEY_TRAIN_RUNTIME in log_entry:
+                snapshot.train_runtime = _as_float(log_entry[KEY_TRAIN_RUNTIME])
 
-                # Get learning_rate (logged per step)
-                if KEY_LEARNING_RATE in log_entry and metrics.get(KEY_LEARNING_RATE) is None:
-                    metrics[KEY_LEARNING_RATE] = log_entry[KEY_LEARNING_RATE]
+            if snapshot.learning_rate is None and KEY_LEARNING_RATE in log_entry:
+                snapshot.learning_rate = _as_float(log_entry[KEY_LEARNING_RATE])
 
-                # Get eval_loss if available
-                if KEY_EVAL_LOSS in log_entry and metrics.get(KEY_EVAL_LOSS) is None:
-                    metrics[KEY_EVAL_LOSS] = log_entry[KEY_EVAL_LOSS]
+            if snapshot.eval_loss is None and KEY_EVAL_LOSS in log_entry:
+                snapshot.eval_loss = _as_float(log_entry[KEY_EVAL_LOSS])
 
-                # Get throughput metrics if available
-                if KEY_TRAIN_SAMPLES_PER_SECOND in log_entry and metrics.get(KEY_TRAIN_SAMPLES_PER_SECOND) is None:
-                    metrics[KEY_TRAIN_SAMPLES_PER_SECOND] = log_entry[KEY_TRAIN_SAMPLES_PER_SECOND]
+            if snapshot.train_samples_per_second is None and KEY_TRAIN_SAMPLES_PER_SECOND in log_entry:
+                snapshot.train_samples_per_second = _as_float(log_entry[KEY_TRAIN_SAMPLES_PER_SECOND])
 
-                if KEY_TRAIN_STEPS_PER_SECOND in log_entry and metrics.get(KEY_TRAIN_STEPS_PER_SECOND) is None:
-                    metrics[KEY_TRAIN_STEPS_PER_SECOND] = log_entry[KEY_TRAIN_STEPS_PER_SECOND]
+            if snapshot.train_steps_per_second is None and KEY_TRAIN_STEPS_PER_SECOND in log_entry:
+                snapshot.train_steps_per_second = _as_float(log_entry[KEY_TRAIN_STEPS_PER_SECOND])
 
-                # Early exit if we found all important metrics
-                if all(metrics.get(k) is not None for k in [KEY_TRAIN_LOSS, KEY_TRAIN_RUNTIME, KEY_LEARNING_RATE]):
-                    break
-
-        # Always get these from state (more reliable)
-        metrics["global_step"] = state.global_step
-        metrics["epoch"] = state.epoch
-
-        # Get peak GPU memory if available
-        peak_memory_gb = self._get_peak_memory_gb()
-        if peak_memory_gb is not None:
-            metrics["peak_memory_gb"] = peak_memory_gb
+            # Early exit when the core trio has been recovered.
+            if (
+                snapshot.train_loss is not None
+                and snapshot.train_runtime is not None
+                and snapshot.learning_rate is not None
+            ):
+                break
 
         logger.debug(
-            f"[MC:EXTRACTED] loss={metrics.get('train_loss')}, "
-            f"steps={metrics.get('global_step')}, epoch={metrics.get('epoch')}, "
-            f"peak_mem={metrics.get('peak_memory_gb')}"
+            f"[MC:EXTRACTED] loss={snapshot.train_loss}, "
+            f"steps={snapshot.global_step}, epoch={snapshot.epoch}, "
+            f"peak_mem={snapshot.peak_memory_gb}"
         )
 
-        return metrics
+        return snapshot
 
     @staticmethod
     def _get_peak_memory_gb() -> float | None:
@@ -139,34 +151,41 @@ class MetricsCollector:
         return None
 
     @staticmethod
-    def aggregate_phases(phase_metrics: list[dict[str, Any]]) -> dict[str, Any]:
+    def aggregate_phases(
+        phase_metrics: list[TrainingMetricsSnapshot],
+    ) -> PhasesMetricsAggregate:
         """
         Aggregate metrics across multiple phases.
 
         Args:
-            phase_metrics: List of metrics dicts from each phase
+            phase_metrics: List of per-phase metric snapshots.
 
         Returns:
-            Aggregated metrics summary
+            ``PhasesMetricsAggregate`` with summary fields and the original
+            per-phase snapshots. Returns an empty aggregate when the input is
+            empty.
         """
         if not phase_metrics:
-            return {}
+            return PhasesMetricsAggregate()
 
-        total_steps = sum(m.get("global_step", 0) for m in phase_metrics)
-        total_runtime = sum(m.get("train_runtime", 0) or 0 for m in phase_metrics)
-        final_loss = phase_metrics[-1].get("train_loss")
+        total_steps = sum(m.global_step or 0 for m in phase_metrics)
+        total_runtime = sum(m.train_runtime or 0.0 for m in phase_metrics)
+        final_loss = phase_metrics[-1].train_loss
 
-        summary = {
-            "total_phases": len(phase_metrics),
-            "total_steps": total_steps,
-            "total_runtime_seconds": total_runtime,
-            "final_loss": final_loss,
-            "per_phase": phase_metrics,
-        }
+        aggregate = PhasesMetricsAggregate(
+            total_phases=len(phase_metrics),
+            total_steps=total_steps,
+            total_runtime_seconds=total_runtime,
+            final_loss=final_loss,
+            per_phase=list(phase_metrics),
+        )
 
-        logger.debug(f"[MC:AGGREGATED] phases={len(phase_metrics)}, total_steps={total_steps}, final_loss={final_loss}")
+        logger.debug(
+            f"[MC:AGGREGATED] phases={aggregate.total_phases}, "
+            f"total_steps={aggregate.total_steps}, final_loss={aggregate.final_loss}"
+        )
 
-        return summary
+        return aggregate
 
 
 __all__ = ["MetricsCollector"]

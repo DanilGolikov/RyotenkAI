@@ -66,3 +66,74 @@ export function Spinner() {
     />
   )
 }
+
+/**
+ * Pill-style switch (thumb slides left → right).
+ *
+ * Replacement for native ``<input type="checkbox">`` across the app so
+ * on/off state is visually unambiguous. Semantically a WAI-ARIA switch
+ * (``role="switch"`` + ``aria-checked``) — screen readers read it as
+ * "on/off" rather than "checked/unchecked", which matches the intent.
+ *
+ * ``variant="danger"`` uses the error colour when the switch is on —
+ * for destructive opt-ins (e.g. "also delete workspace on disk").
+ */
+export function Toggle({
+  checked,
+  onChange,
+  disabled = false,
+  variant = 'brand',
+  id,
+  'aria-label': ariaLabel,
+  'aria-labelledby': ariaLabelledby,
+  title,
+  onFocus,
+  onBlur,
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+  disabled?: boolean
+  variant?: 'brand' | 'danger'
+  id?: string
+  'aria-label'?: string
+  'aria-labelledby'?: string
+  title?: string
+  onFocus?: () => void
+  onBlur?: () => void
+}) {
+  const onColor = variant === 'danger' ? 'bg-err' : 'bg-brand'
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledby}
+      disabled={disabled}
+      id={id}
+      title={title}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onClick={(e) => {
+        e.stopPropagation()
+        onChange(!checked)
+      }}
+      className={[
+        'relative inline-flex h-4 w-7 shrink-0 items-center rounded-full',
+        'border transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-brand',
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
+        checked
+          ? `${onColor} border-transparent`
+          : 'bg-surface-1 border-line-2 hover:border-ink-3',
+      ].join(' ')}
+    >
+      <span
+        aria-hidden
+        className={[
+          'inline-block h-3 w-3 rounded-full bg-white shadow transition-transform',
+          checked ? 'translate-x-[14px]' : 'translate-x-[2px]',
+        ].join(' ')}
+      />
+    </button>
+  )
+}

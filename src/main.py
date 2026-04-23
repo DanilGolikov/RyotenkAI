@@ -15,7 +15,6 @@ don't get a wall of text before each command runs.
 from __future__ import annotations
 
 import atexit
-import json
 import os
 import signal
 import sys
@@ -332,14 +331,18 @@ def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
         return config
 
     if run_dir is not None:
-        state_file = run_dir.expanduser().resolve() / "pipeline_state.json"
-        if not state_file.exists():
+        # Lazy import keeps `ryotenkai --help` / non-resume commands fast — the
+        # state/models module pulls the whole pipeline-state type tree on import.
+        from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+
+        store = PipelineStateStore(run_dir.expanduser().resolve())
+        if not store.exists():
             raise ValueError(f"pipeline_state.json not found in run directory: {run_dir}")
         try:
-            raw = json.loads(state_file.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Corrupt pipeline_state.json in {run_dir}: {exc}") from exc
-        config_path_str = raw.get("config_path", "")
+            state = store.load()
+        except PipelineStateLoadError as exc:
+            raise ValueError(f"Cannot load pipeline state for {run_dir}: {exc}") from exc
+        config_path_str = state.config_path
         if not config_path_str:
             raise ValueError(
                 f"Run '{run_dir.name}' was created before config tracking was added.\n"
@@ -349,7 +352,7 @@ def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
         resolved = Path(config_path_str)
         if not resolved.exists():
             raise ValueError(
-                f"Config from state no longer exists: {resolved}\n" f"Pass --config explicitly to override."
+                f"Config from state no longer exists: {resolved}\nPass --config explicitly to override."
             )
         return resolved
 
@@ -1267,71 +1270,6 @@ def generate_report(
         raise typer.Exit(1)
 
 
-@app.command(name="tui")
-def ryotenkai_tui(
-    run_dir: Path | None = typer.Argument(
-        None,
-        help="Optional run directory. When provided, opens live-monitor for that run directly.",
-    ),
-    interval: float = typer.Option(
-        5.0,
-        "--interval",
-        "-i",
-        help="Auto-refresh interval in seconds for the live monitor.",
-    ),
-    log_level: str = typer.Option(
-        "INFO",
-        "--log-level",
-        help="TUI log level: INFO or DEBUG.",
-    ),
-):
-    """
-    Interactive TUI for pipeline run inspection.
-
-    Without arguments — opens the runs browser:
-        Navigable table of all runs. Arrow keys to move, Enter to inspect,
-        M to open live monitor, R to refresh, ? for help, Q to quit.
-
-    With a run directory — opens the live monitor for that run:
-        Auto-refreshing dashboard showing stage statuses.
-
-    Looks for runs in ./runs relative to the current working directory.
-
-    Examples:
-        ryotenkai tui
-        ryotenkai tui runs/run_20260319_030619_x9so8
-        ryotenkai tui runs/run_20260319_030619_x9so8 --interval 10
-    """
-    normalized_log_level = log_level.upper()
-    if normalized_log_level not in {"INFO", "DEBUG"}:
-        raise typer.BadParameter("log level must be INFO or DEBUG", param_hint="--log-level")
-
-    from src.tui.apps import RyotenkaiApp
-    from src.tui.runtime import (
-        TuiRuntimeConfig,
-        default_errors_log_path,
-        default_tui_log_path,
-        run_tui_with_restart,
-    )
-    from src.utils.logger import set_log_level
-
-    set_log_level(normalized_log_level)
-
-    runs_dir = Path("runs").resolve()
-    resolved_run_dir = run_dir.expanduser().resolve() if run_dir is not None else None
-    run_tui_with_restart(
-        lambda: RyotenkaiApp(
-            runs_dir=runs_dir,
-            initial_run_dir=resolved_run_dir,
-            interval=interval,
-        ),
-        config=TuiRuntimeConfig(
-            errors_log_path=default_errors_log_path(runs_dir),
-            tui_log_path=default_tui_log_path(runs_dir),
-        ),
-    )
-
-
 @app.command(name="serve")
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host (use 0.0.0.0 for remote access)"),
@@ -1345,7 +1283,7 @@ def serve(
     reload: bool = typer.Option(False, "--reload", help="Dev auto-reload"),
     log_level: str = typer.Option("info", "--log-level", help="uvicorn log level"),
 ):
-    """Run the FastAPI web backend (CLI/TUI/web share the runs/ directory)."""
+    """Run the FastAPI web backend (CLI and web share the runs/ directory)."""
     from src.api.cli import run_server
 
     run_server(

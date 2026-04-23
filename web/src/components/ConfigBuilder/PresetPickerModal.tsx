@@ -35,7 +35,6 @@ const TIER_STYLE: Record<string, { label: string; cls: string }> = {
 // Tokens come from the existing Tailwind theme (brand, ok, warn, err,
 // ink, surface) — no new colours added.
 const CHIP_BASE = 'inline-flex items-center rounded px-1.5 py-0.5 text-[0.6rem]'
-const CHIP_NEUTRAL = `${CHIP_BASE} bg-surface-2 text-ink-3`
 // VRAM — most important requirement, brand accent.
 const CHIP_VRAM = `${CHIP_BASE} bg-brand-alt/10 text-brand-alt border border-brand-alt/20`
 // Hub model — mono font on a dim tile, neutral semantics (identifier).

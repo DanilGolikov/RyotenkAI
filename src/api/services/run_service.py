@@ -6,22 +6,20 @@ from pathlib import Path
 from typing import Any
 
 from src.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
-from src.api.schemas.run import LineageRefSchema, RunDetail, RunSummary, RunsListResponse
+from src.api.schemas.run import LineageRefSchema, RunDetail, RunsListResponse, RunSummary
 from src.pipeline.launch import is_process_alive, read_lock_pid
+from src.pipeline.presentation import (
+    STATUS_COLORS,
+    STATUS_ICONS,
+    format_mode_label,
+)
 from src.pipeline.run_queries import (
-    RunInspectionData,
-    RunInspector,
     RunSummaryRow,
     effective_pipeline_status,
     scan_runs_dir_grouped,
 )
-from src.pipeline.presentation import (
-    STATUS_COLORS,
-    STATUS_ICONS,
-    format_duration,
-    format_mode_label,
-)
-from src.pipeline.state import PipelineState, PipelineStateStore
+from src.pipeline.state import PipelineState
+from src.pipeline.state.cache import StateSnapshot, load_state_snapshot
 from src.pipeline.state.queries import (
     find_running_attempt_no,
     get_attempt_by_no,
@@ -80,8 +78,7 @@ def _summary_row_to_schema(row: RunSummaryRow, runs_dir: Path) -> RunSummary:
 def list_runs(runs_dir: Path) -> RunsListResponse:
     grouped = scan_runs_dir_grouped(runs_dir)
     groups: dict[str, list[RunSummary]] = {
-        group: [_summary_row_to_schema(row, runs_dir) for row in rows]
-        for group, rows in grouped.items()
+        group: [_summary_row_to_schema(row, runs_dir) for row in rows] for group, rows in grouped.items()
     }
     return RunsListResponse(runs_dir=str(runs_dir), groups=groups)
 
@@ -135,8 +132,7 @@ def _run_detail(state: PipelineState, run_dir: Path, runs_dir: Path) -> RunDetai
         mlflow_ca_bundle_path=state.mlflow_ca_bundle_path,
         attempts=[attempt.to_dict() for attempt in state.attempts],
         current_output_lineage={
-            name: LineageRefSchema.model_validate(ref.to_dict())
-            for name, ref in state.current_output_lineage.items()
+            name: LineageRefSchema.model_validate(ref.to_dict()) for name, ref in state.current_output_lineage.items()
         },
         status=effective_status,
         status_icon=STATUS_ICONS.get(effective_status),
@@ -148,18 +144,29 @@ def _run_detail(state: PipelineState, run_dir: Path, runs_dir: Path) -> RunDetai
     )
 
 
-def get_run_detail(run_dir: Path, runs_dir: Path) -> RunDetail:
-    inspection: RunInspectionData = RunInspector(run_dir).load(include_logs=False)
-    return _run_detail(inspection.state, run_dir, runs_dir)
+def get_run_detail(run_dir: Path, runs_dir: Path) -> tuple[RunDetail, StateSnapshot]:
+    """Read the run's state and return the view paired with its ``mtime_ns``.
+
+    ``mtime_ns`` is needed by the router to emit ETag / Last-Modified headers
+    and short-circuit polling with ``304 Not Modified``.
+    """
+    snapshot = load_state_snapshot(run_dir)
+    return _run_detail(snapshot.state, run_dir, runs_dir), snapshot
 
 
-def get_attempt_detail(run_dir: Path, attempt_no: int) -> AttemptDetail:
-    state = PipelineStateStore(run_dir).load()
+def get_attempt_detail(run_dir: Path, attempt_no: int) -> tuple[AttemptDetail, StateSnapshot]:
+    snapshot = load_state_snapshot(run_dir)
+    return _attempt_detail(snapshot.state, attempt_no, run_dir), snapshot
+
+
+def _attempt_detail(state: PipelineState, attempt_no: int, run_dir: Path) -> AttemptDetail:
     attempt = get_attempt_by_no(state, attempt_no)
     if attempt is None:
         raise FileNotFoundError(f"attempt {attempt_no} not found in {run_dir}")
     duration = _duration_seconds(attempt.started_at, attempt.completed_at)
-    stage_runs = {name: _stage_run_to_schema(run, started_fallback=attempt.started_at) for name, run in attempt.stage_runs.items()}
+    stage_runs = {
+        name: _stage_run_to_schema(run, started_fallback=attempt.started_at) for name, run in attempt.stage_runs.items()
+    }
     return AttemptDetail(
         attempt_id=attempt.attempt_id,
         attempt_no=attempt.attempt_no,
@@ -185,8 +192,12 @@ def get_attempt_detail(run_dir: Path, attempt_no: int) -> AttemptDetail:
     )
 
 
-def get_attempt_stages(run_dir: Path, attempt_no: int) -> StagesResponse:
-    detail = get_attempt_detail(run_dir, attempt_no)
+def get_attempt_stages(run_dir: Path, attempt_no: int) -> tuple[StagesResponse, StateSnapshot]:
+    detail, snapshot = get_attempt_detail(run_dir, attempt_no)
+    return _build_stages_response(detail), snapshot
+
+
+def _build_stages_response(detail: AttemptDetail) -> StagesResponse:
     ordered_names = detail.enabled_stage_names or list(detail.stage_runs.keys())
     stages: list[StageRun] = []
     for name in ordered_names:
@@ -220,8 +231,8 @@ def validate_run_id(run_id: str) -> str:
 
 
 def build_suggested_run_id() -> str:
-    from datetime import datetime
     import secrets
+    from datetime import datetime
 
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     suffix = secrets.token_hex(4)

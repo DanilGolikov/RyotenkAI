@@ -6,6 +6,7 @@ import {
   PointerSensor,
   closestCenter,
   pointerWithin,
+  useDndContext,
   useDroppable,
   useSensor,
   useSensors,
@@ -22,6 +23,7 @@ import {
   useSaveProjectConfig,
 } from '../../api/hooks/useProjects'
 import { useAllPlugins } from '../../api/hooks/usePlugins'
+import { useReportDefaults } from '../../api/hooks/useReportDefaults'
 import type { PluginKind, PluginManifest } from '../../api/types'
 import { dumpYaml } from '../../lib/yaml'
 import { Spinner } from '../ui'
@@ -52,8 +54,8 @@ const KIND_SECTIONS: {
   sortable: boolean
 }[] = [
   { kind: 'validation', label: 'Validation', help: 'Dataset pre-flight checks.', sortable: true },
-  { kind: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.', sortable: true },
   { kind: 'reward', label: 'Reward', help: 'Reward plugin for GRPO/SAPO/DPO/ORPO strategies. Matched against each phase\'s strategy_type.', sortable: false },
+  { kind: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.', sortable: true },
   { kind: 'reports', label: 'Reports', help: 'Sections rendered in the run report — drag to reorder.', sortable: true },
 ]
 
@@ -77,6 +79,7 @@ const KIND_SECTIONS: {
 export function PluginsTab({ projectId }: Props) {
   const configQuery = useProjectConfig(projectId)
   const pluginsAll = useAllPlugins()
+  const reportDefaultsQuery = useReportDefaults()
   const saveMut = useSaveProjectConfig(projectId)
   const parsed = configQuery.data?.parsed_json ?? {}
 
@@ -102,15 +105,53 @@ export function PluginsTab({ projectId }: Props) {
 
   // ---------- derived data ----------
 
+  // When the pipeline config omits ``reports.sections`` the backend
+  // falls back to ``DEFAULT_REPORT_SECTIONS``. Showing an empty Reports
+  // section here would be misleading ("I thought I had reports?") and
+  // makes drag-to-reorder impossible. We mirror the backend fallback:
+  // render defaults when sections is empty, and materialize them into
+  // the config on the first mutation (see ``maybeMaterializeReports``
+  // below).
+  const reportsInstancesMaterialized = useMemo(() => {
+    const explicit = readInstances('reports', parsed)
+    if (explicit.length > 0) return explicit
+    const defaults = reportDefaultsQuery.data?.sections ?? []
+    return defaults.map((id) => ({ instanceId: id, pluginId: id }))
+  }, [parsed, reportDefaultsQuery.data])
+
+  const reportsAreMaterialized = useMemo(() => {
+    const explicit = readInstances('reports', parsed)
+    return explicit.length > 0
+  }, [parsed])
+
   const instancesByKind = useMemo(() => {
-    const out: Record<PluginKind, { instanceId: string; pluginId: string }[]> = {
+    const out: Record<PluginKind, { instanceId: string; pluginId: string; enabled?: boolean }[]> = {
       validation: readInstances('validation', parsed),
       evaluation: readInstances('evaluation', parsed),
       reward: readInstances('reward', parsed),
-      reports: readInstances('reports', parsed),
+      reports: reportsInstancesMaterialized,
     }
     return out
-  }, [parsed])
+  }, [parsed, reportsInstancesMaterialized])
+
+  /** Returns a parsed config with the rendered (possibly default) reports
+   *  list written into ``reports.sections`` so the first add/remove/
+   *  reorder doesn't silently lose the defaults the user was staring at. */
+  const materializeReportsIfNeeded = useCallback(
+    (source: Record<string, unknown>): Record<string, unknown> => {
+      if (reportsAreMaterialized) return source
+      const defaults = reportDefaultsQuery.data?.sections
+      if (!defaults || defaults.length === 0) return source
+      const next = structuredClone(source) as Record<string, unknown>
+      const reports = (next.reports && typeof next.reports === 'object' && !Array.isArray(next.reports))
+        ? (next.reports as Record<string, unknown>)
+        : {}
+      reports.sections = [...defaults]
+      next.reports = reports
+      return next
+    },
+    [reportsAreMaterialized, reportDefaultsQuery.data],
+  )
 
   const attachedIdsByKind = useMemo(() => {
     const out: Record<PluginKind, Set<string>> = {
@@ -155,26 +196,29 @@ export function PluginsTab({ projectId }: Props) {
     async (kind: PluginKind, pluginId: string) => {
       const manifest = manifestById.get(pluginId)
       if (!manifest) return
-      const { next } = addInstance(kind, parsed, manifest)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const { next } = addInstance(kind, base, manifest)
       await commit(next)
     },
-    [commit, manifestById, parsed],
+    [commit, manifestById, parsed, materializeReportsIfNeeded],
   )
 
   const handleRemove = useCallback(
     async (kind: PluginKind, instanceId: string) => {
-      const next = removeInstance(kind, parsed, instanceId)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const next = removeInstance(kind, base, instanceId)
       await commit(next)
     },
-    [commit, parsed],
+    [commit, parsed, materializeReportsIfNeeded],
   )
 
   const handleReorder = useCallback(
     async (kind: PluginKind, orderedIds: string[]) => {
-      const next = reorderInstances(kind, parsed, orderedIds)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const next = reorderInstances(kind, base, orderedIds)
       await commit(next)
     },
-    [commit, parsed],
+    [commit, parsed, materializeReportsIfNeeded],
   )
 
   const handleSaveConfigure = useCallback(
@@ -190,6 +234,21 @@ export function PluginsTab({ projectId }: Props) {
     },
     [commit, parsed],
   )
+
+  /** Drop ``reports.sections`` from the config so the backend falls
+   *  back to ``DEFAULT_REPORT_SECTIONS`` again. Used by the reports
+   *  empty-state "Reset to defaults" CTA: removing the key (not
+   *  writing defaults literally) means future releases shipping new
+   *  built-in sections automatically flow to this user. */
+  const handleResetReports = useCallback(async () => {
+    const next = structuredClone(parsed) as Record<string, unknown>
+    if (next.reports && typeof next.reports === 'object' && !Array.isArray(next.reports)) {
+      const reports = next.reports as Record<string, unknown>
+      delete reports.sections
+      if (Object.keys(reports).length === 0) delete next.reports
+    }
+    await commit(next)
+  }, [commit, parsed])
 
   // ---------- DnD glue ----------
 
@@ -254,7 +313,14 @@ export function PluginsTab({ projectId }: Props) {
 
   // ---------- render ----------
 
-  if (configQuery.isLoading) {
+  // Gate the tab on BOTH config AND the plugin catalog. Without the
+  // second condition we render rows with an empty ``manifestById`` for
+  // ~1 frame on first mount — every row lights up amber (``isStale``)
+  // until the plugin queries resolve. Waiting another beat on the
+  // spinner is preferable to a golden flash. ``reportDefaultsQuery``
+  // also contributes: reports.sections falls back to the server's
+  // defaults, which we don't want to briefly render as empty either.
+  if (configQuery.isLoading || pluginsAll.isLoading || reportDefaultsQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-ink-3">
         <Spinner /> loading config
@@ -276,17 +342,18 @@ export function PluginsTab({ projectId }: Props) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      <div className="flex gap-4">
+      {/* Save errors block — rendered only when non-empty, so it
+          doesn't push the first section down when everything is fine.
+          In-flight "Saving…" / "Saved" state was dropped entirely: it
+          flickered for ~100ms per action and added no value beyond
+          what the row-level optimistic update already conveys. */}
+      {saveMut.error && (
+        <div className="rounded-md border border-err/40 bg-err/10 text-err text-xs px-3 py-2 mb-3">
+          {(saveMut.error as Error).message}
+        </div>
+      )}
+      <div className="flex gap-4 items-start">
         <div className="flex-1 min-w-0 space-y-5">
-          <div className="text-2xs text-ink-3">
-            {saveMut.isPending ? 'Saving…' : saveMut.isSuccess ? 'Saved' : ''}
-          </div>
-          {saveMut.error && (
-            <div className="rounded-md border border-err/40 bg-err/10 text-err text-xs px-3 py-2">
-              {(saveMut.error as Error).message}
-            </div>
-          )}
-
           {KIND_SECTIONS.map((section) => (
             <KindSection
               key={section.kind}
@@ -303,6 +370,15 @@ export function PluginsTab({ projectId }: Props) {
                 instanceId: inst.instanceId,
                 pluginId: inst.pluginId,
               })}
+              onInfo={(inst) => {
+                const m = manifestById.get(inst.pluginId)
+                if (m) setInfoPlugin(m)
+              }}
+              onResetToDefaults={
+                section.kind === 'reports' && reportsAreMaterialized
+                  ? () => void handleResetReports()
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -366,21 +442,48 @@ function KindSection({
   activeStrategyTypes,
   onRemove,
   onConfigure,
+  onInfo,
+  onResetToDefaults,
 }: {
   kind: PluginKind
   label: string
   help: string
   sortable: boolean
-  instances: { instanceId: string; pluginId: string }[]
+  instances: { instanceId: string; pluginId: string; enabled?: boolean }[]
   manifestById: Map<string, PluginManifest>
   activeStrategyTypes: Set<string>
   onRemove: (instanceId: string) => void
   onConfigure: (instance: { instanceId: string; pluginId: string }) => void
+  onInfo: (instance: { instanceId: string; pluginId: string }) => void
+  /** Optional "Reset to defaults" action — only wired for ``reports``,
+   *  where emptying the list is valid but the user usually wants the
+   *  built-in section order back. Other kinds don't have defaults. */
+  onResetToDefaults?: () => void
 }) {
-  const { isOver, setNodeRef } = useDroppable({
+  const { setNodeRef } = useDroppable({
     id: `container:${kind}`,
     data: { source: 'container', kind },
   })
+  // The active drag's payload — used to decide whether THIS section is
+  // a valid drop target and to compute "is hover". ``useDroppable.isOver``
+  // only fires when the cursor is literally over the container element;
+  // it stays ``false`` while the cursor hovers one of the sortable
+  // child rows, because the nearest droppable then is the row itself.
+  // We derive ``isOverSection`` from ``dnd.over`` instead, which
+  // exposes the true resolved target — either our container or any
+  // instance belonging to our kind.
+  const dnd = useDndContext()
+  const activeData = dnd.active?.data?.current as
+    | { source?: 'palette' | 'instance'; kind?: PluginKind }
+    | undefined
+  const overData = dnd.over?.data?.current as
+    | { source?: 'container' | 'instance'; kind?: PluginKind }
+    | undefined
+  const isOverSection =
+    !!dnd.over
+    && (dnd.over.id === `container:${kind}` || overData?.kind === kind)
+  const canAccept = isOverSection && (!activeData || activeData.kind === kind)
+  const willReject = isOverSection && !!activeData && activeData.kind !== kind
   const itemIds = instances.map((i) => `instance:${kind}:${i.instanceId}`)
 
   return (
@@ -395,12 +498,31 @@ function KindSection({
           ref={setNodeRef}
           className={[
             'rounded-md border-2 border-dashed bg-surface-1/50 p-2 space-y-1.5 min-h-[64px] transition',
-            isOver ? 'border-brand-alt bg-brand-alt/5' : 'border-line-1',
+            canAccept
+              ? 'border-brand-alt bg-brand-alt/5'
+              : willReject
+                ? 'border-err/60 bg-err/5 cursor-not-allowed'
+                : 'border-line-1',
           ].join(' ')}
+          aria-disabled={willReject || undefined}
         >
           {instances.length === 0 ? (
-            <div className="text-[0.65rem] text-ink-3 px-2 py-3 text-center">
-              Drop a {label.toLowerCase()} plugin here from the palette.
+            <div className="px-2 py-3 text-center space-y-2">
+              <div className="text-[0.65rem] text-ink-3">
+                {onResetToDefaults
+                  ? 'No sections — the report will render empty.'
+                  : `Drop a ${label.toLowerCase()} plugin here from the palette.`}
+              </div>
+              {onResetToDefaults && (
+                <button
+                  type="button"
+                  onClick={onResetToDefaults}
+                  className="btn-ghost h-7 text-[0.65rem] px-2"
+                  title="Restore the built-in section order."
+                >
+                  ↺ Reset to defaults
+                </button>
+              )}
             </div>
           ) : (
             instances.map((inst) => {
@@ -414,8 +536,10 @@ function KindSection({
                   manifest={manifest}
                   kind={kind}
                   sortable={sortable}
+                  enabled={inst.enabled}
                   onRemove={() => onRemove(inst.instanceId)}
                   onConfigure={manifest ? () => onConfigure(inst) : undefined}
+                  onInfo={manifest ? () => onInfo(inst) : undefined}
                   warning={warning}
                 />
               )

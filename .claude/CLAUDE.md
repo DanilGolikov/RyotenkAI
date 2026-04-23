@@ -11,20 +11,27 @@
 > They deliver richer context — documentation, ownership, history, decisions —
 > in a single call. Raw `read_file` calls are a last resort only.
 
-Last indexed: 2026-04-21. Confidence: 100%.
+Last indexed: 2026-04-23. Confidence: 100%.
 ### Architecture
-repo is a comprehensive software platform primarily focused on data processing, evaluation pipelines, and machine learning workflows. The project features a robust backend written in Python, responsible for orchestrating complex pipelines, managing configurations, and handling LLM-based evaluation tasks. It is complemented by a TypeScript-based web frontend that provides a user interface for configuration management and result visualization. The codebase is designed with a modular architecture, emphasizing plugin-based extensibility for evaluation metrics and pipeline stages.
+repo is a comprehensive software platform primarily focused on machine learning pipelines, evaluation frameworks, and API-driven orchestration. With a codebase spanning over 184,000 lines, the project integrates a robust Python-based backend for data processing and pipeline management with a modern TypeScript-based web interface. The project is designed to handle complex evaluation tasks, as evidenced by its specialized community plugins and integrated MLflow support. The project utilizes a polyglot architecture with a strong emphasis on Python for core logic and TypeScript for the frontend.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
-| `src` | The src module serves as the core engine for a comprehensive machine learning or | — |
+| `src` | The src module serves as the core integration layer for the application's plugin | — |
 | `docker` | The docker module serves as a containerization and infrastructure support layer  | — |
 | `scripts` | The scripts module serves as a centralized repository for utility scripts and au | — |
-| `web` | The web module serves as the frontend interface for the project, providing a com | — |
+| `web` | The web module serves as the primary frontend interface for the application, bui | — |
+| `community` | The community module serves as an extensible ecosystem for community-contributed | — |
 ### Entry Points
+- `web/src/App.tsx`
+- `src/api/main.py`
+- `src/api/schemas/run.py`
 - `src/main.py`
 - `docker/mlflow/start.sh`
 - `run.sh`
+- `web/scripts/start.sh`
+- `web/src/components/icons/index.tsx`
+- `web/src/main.tsx`
 ### Tech Stack
 **Languages:** Python
 **Frameworks:** FastAPI, PyTorch, Pydantic
@@ -32,11 +39,11 @@ repo is a comprehensive software platform primarily focused on data processing, 
 ### Hotspots (High Churn)
 | File | Churn | 90d Commits | Owner |
 |------|-------|-------------|-------|
-| `src/pipeline/orchestrator.py` | 100.0th %ile | 35 | daniil |
-| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.9th %ile | 12 | daniil |
+| `src/pipeline/orchestrator.py` | 100.0th %ile | 36 | daniil |
+| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.9th %ile | 17 | daniil |
 | `docs/plans/jolly-baking-bird.md` | 99.8th %ile | 4 | daniil |
 | `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 99.7th %ile | 7 | daniil |
-| `src/tests/unit/config/validators/test_cross_validators.py` | 99.5th %ile | 5 | daniil |
+| `src/tests/unit/config/validators/test_cross_validators.py` | 99.6th %ile | 5 | daniil |
 
 ### Repowise MCP Tools
 
@@ -72,7 +79,7 @@ This project has a Repowise MCP server configured. **ALWAYS use these tools befo
 
 ### Codebase Conventions
 **Architectural Decisions:**
-- **AttemptController — sole writer of PipelineState**: save_fn over owning a PipelineStateStore: controller needs only save(state) — minimal interface via .- **Decompose PipelineOrchestrator into Facade + 7 Specialized Managers**: Cohesion > artificial separation (MLflow kept as one class because 6 methods share state). Context p.- **LaunchPreparator — pre-loop state assembly via frozen PreparedAttempt**: Frozen value object over mutable self-fields: downstream code reads PreparedAttempt.attempt_director.- **Per-stage log files via LogLayout (flat logs/ directory)**: SRP: every module used to build log paths by hand (4+ places); LogLayout centralizes that. OCP: addi.- **Project workspace = experiment-scoped directory with snapshot-per-save config**: Separating "experiment workspace" from "runs" matches how users think (many runs belong to one exper.- **Pydantic is SSOT; frontend consumes generated OpenAPI TS schema**: openapi-typescript is types-only, FastAPI-3.1 native, featured in FastAPI's official "Generate Clien.- **Remove write-only RunPod active-pods registry**: The registry was a half-finished feature: write-only code with no recovery consumer. Keeping it cost.- **Settings → Providers (reusable, versioned) + ConfigBuilder v2 (two-pane, presets, diff, '/' search)**: Two-pane ToC with content (Rancher / Lens pattern) collapses the "wall of fields" problem; required-.**Commands:**
+- **AttemptController — sole writer of PipelineState**: save_fn over owning a PipelineStateStore: controller needs only save(state) — minimal interface via .- **Decompose PipelineOrchestrator into Facade + 7 Specialized Managers**: Cohesion > artificial separation (MLflow kept as one class because 6 methods share state). Context p.- **LaunchPreparator — pre-loop state assembly via frozen PreparedAttempt**: Frozen value object over mutable self-fields: downstream code reads PreparedAttempt.attempt_director.- **Per-stage log capture completeness — slug filenames + root-logger + third-party propagation**: Industry-standard pattern (Python Logging Cookbook, structlog, OpenTelemetry middleware): ContextVar.- **Per-stage log files via LogLayout (flat logs/ directory)**: SRP: every module used to build log paths by hand (4+ places); LogLayout centralizes that. OCP: addi.- **Persistence of log_paths during stage transitions**: log_paths describes the physical file, not the stage status.- **Persistence of log_paths during stage transitions**: log_paths describes the physical file, not the stage status.- **Persistence of log_paths during stage transitions**: log_paths describes the physical file, not the stage status.**Commands:**
 - Test: `pytest`
 - Lint: `ruff check .`
 - Format: `ruff format .`

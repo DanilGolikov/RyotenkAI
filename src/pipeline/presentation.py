@@ -1,8 +1,7 @@
 """Domain-level formatters for pipeline state.
 
 Status icons/colors and human-friendly formatters for stage/run metadata.
-Not UI-framework specific — used by TUI, web API enrichment, and CLI renderers.
-Previously lived in src/tui/adapters/presentation.py.
+Not UI-framework specific — used by web API enrichment and CLI renderers.
 """
 
 from __future__ import annotations

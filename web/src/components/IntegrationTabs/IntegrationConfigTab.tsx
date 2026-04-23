@@ -9,7 +9,7 @@ import {
 } from '../../api/hooks/useIntegrations'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { HelpTooltip } from '../ConfigBuilder/HelpTooltip'
-import { Spinner } from '../ui'
+import { Spinner, Toggle } from '../ui'
 
 const INPUT_CLS =
   'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors'
@@ -294,19 +294,13 @@ function MLflowForm({ integrationId }: { integrationId: string }) {
           label="Callback enabled"
           description="Enable SystemMetricsCallback — manual GPU/CPU tracking via pynvml/psutil. May hang on some cloud GPU images; keep off unless MLflow's built-in metrics miss what you need."
         >
-          <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={values.system_metrics_callback_enabled}
-              onChange={(e) =>
-                update('system_metrics_callback_enabled', e.target.checked)
-              }
-              className="h-4 w-4 rounded-[2px] border border-line-2 bg-surface-1 accent-brand hover:border-ink-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand transition-colors"
-            />
-            <span className="font-mono text-ink-2">
-              {String(values.system_metrics_callback_enabled)}
-            </span>
-          </label>
+          <Toggle
+            checked={values.system_metrics_callback_enabled}
+            onChange={(next) =>
+              update('system_metrics_callback_enabled', next)
+            }
+            aria-label="Callback enabled"
+          />
         </FieldRow>
 
         <FieldRow

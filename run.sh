@@ -25,10 +25,6 @@
 #   ./run.sh /path/to/configs --smoke --stagger 10             — 10s between launches (default: 5)
 #   ./run.sh /path/to/configs --smoke --dry-run                — list configs only
 #
-# ryotenkai TUI (interactive terminal UI):
-#   ./run.sh --tui                                             — browse all runs (uses ./runs)
-#   ./run.sh runs/<id> --tui                                   — live monitor for a run
-#   ./run.sh runs/<id> --tui --interval 10                     — refresh interval
 set -e
 cd "$(dirname "$0")"
 
@@ -54,11 +50,6 @@ Inspect and diagnostics:
   ./run.sh runs/<id> --show-logs [--attempt N] [--follow]  — view/stream logs
   ./run.sh runs/<id> --report                              — generate markdown report
   ./run.sh --list-runs [runs/]                             — list all runs
-
-ryotenkai TUI (interactive browser):
-  ./run.sh --tui                                           — browse all runs (./runs)
-  ./run.sh runs/<id> --tui                                 — live monitor for a run
-  ./run.sh runs/<id> --tui --interval 10                   — refresh interval 10s
 
 Batch smoke testing:
   ./run.sh /path/to/configs --smoke                        — run all *.yaml configs in parallel
@@ -93,7 +84,6 @@ RUN_DIFF=false
 RUN_STATUS=false
 VALIDATE_CONFIG=false
 REPORT=false
-TUI=false
 SMOKE=false
 SMOKE_WORKERS=""
 SMOKE_TIMEOUT=""
@@ -133,9 +123,6 @@ while [[ $i -lt ${#args[@]} ]]; do
             ;;
         --report)
             REPORT=true
-            ;;
-        --tui)
-            TUI=true
             ;;
         --smoke)
             SMOKE=true
@@ -227,7 +214,7 @@ done
 IS_QUERY=$([[ "$LIST_RESTART_POINTS" == true || "$INSPECT" == true || "$LIST_RUNS" == true || \
               "$SHOW_LOGS" == true || "$RUN_DIFF" == true || "$RUN_STATUS" == true || \
               "$VALIDATE_ONLY" == true || "$VALIDATE_CONFIG" == true || "$REPORT" == true || \
-              "$TUI" == true || "$SMOKE" == true ]] && echo true || echo false)
+              "$SMOKE" == true ]] && echo true || echo false)
 
 if [[ -z "$CONFIG" && -z "$RUN_DIR" && "$IS_QUERY" == false ]]; then
     _show_help
@@ -324,11 +311,6 @@ elif [[ "$REPORT" == true ]]; then
         exit 1
     fi
     python -m src.main report "$RUN_DIR" "${PASSTHROUGH[@]}"
-
-elif [[ "$TUI" == true ]]; then
-    ARGS=()
-    [[ -n "$RUN_DIR" ]] && ARGS+=("$RUN_DIR")
-    python -m src.main tui "${ARGS[@]}" "${PASSTHROUGH[@]}"
 
 elif [[ "$SMOKE" == true ]]; then
     # Smoke requires a directory with configs (passed as CONFIG or RUN_DIR positional)

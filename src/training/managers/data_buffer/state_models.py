@@ -19,9 +19,8 @@ from src.training.managers.constants import (
     KEY_STARTED_AT,
     KEY_STATUS,
 )
+from src.training.metrics_models import TrainingMetricsSnapshot
 from src.utils.logger import logger
-
-from src.training.managers.data_buffer.checkpoint_utils import _sanitize_metrics
 
 
 class PhaseStatus(Enum):
@@ -52,7 +51,7 @@ class PhaseState:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
-    metrics: dict[str, Any] = field(default_factory=dict)
+    metrics: TrainingMetricsSnapshot = field(default_factory=TrainingMetricsSnapshot)
 
     # Config that was used for this phase
     epochs: int = 1
@@ -68,8 +67,7 @@ class PhaseState:
         """Convert to dictionary for JSON serialization."""
         data = asdict(self)
         data[KEY_STATUS] = self.status.value
-        # Sanitize metrics to ensure JSON-serializable types
-        data["metrics"] = _sanitize_metrics(self.metrics)
+        data["metrics"] = self.metrics.to_dict()
         # Convert datetime to ISO string
         if self.started_at:
             data[KEY_STARTED_AT] = self.started_at.isoformat()
@@ -82,6 +80,8 @@ class PhaseState:
         """Create from dictionary (JSON deserialization).
 
         Handles forward/backward compatibility by filtering unknown fields.
+        Accepts either a ``TrainingMetricsSnapshot`` or a legacy dict payload
+        for ``metrics``.
         """
         # FIX BUG-001: Filter only known fields to handle version migrations
         known_fields = {f.name for f in dataclasses.fields(cls)}
@@ -105,6 +105,20 @@ class PhaseState:
             filtered_data[KEY_STARTED_AT] = datetime.fromisoformat(filtered_data[KEY_STARTED_AT])
         if filtered_data.get(KEY_COMPLETED_AT):
             filtered_data[KEY_COMPLETED_AT] = datetime.fromisoformat(filtered_data[KEY_COMPLETED_AT])
+
+        # Accept legacy dict or an already-typed snapshot
+        raw_metrics = filtered_data.get("metrics")
+        if isinstance(raw_metrics, TrainingMetricsSnapshot):
+            pass
+        elif isinstance(raw_metrics, dict):
+            filtered_data["metrics"] = TrainingMetricsSnapshot.from_dict(raw_metrics)
+        elif raw_metrics is None:
+            filtered_data.pop("metrics", None)
+        else:
+            logger.warning(
+                f"[DB:COMPAT] Unexpected metrics type {type(raw_metrics).__name__}, resetting to empty snapshot"
+            )
+            filtered_data["metrics"] = TrainingMetricsSnapshot()
 
         return cls(**filtered_data)
 

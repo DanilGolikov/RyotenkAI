@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from src.training.managers.data_buffer import DataBuffer, PhaseStatus
+from src.training.metrics_models import TrainingMetricsSnapshot
 from src.training.orchestrator.phase_executor import PhaseExecutor
 from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.result import Ok
@@ -76,7 +77,7 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
     trainer_factory.create_from_phase.return_value = trainer
 
     metrics_collector = MagicMock()
-    metrics_collector.extract_from_trainer.return_value = {"train_loss": 0.123}
+    metrics_collector.extract_from_trainer.return_value = TrainingMetricsSnapshot(train_loss=0.123)
 
     executor = PhaseExecutor(
         tokenizer=MagicMock(),
@@ -156,7 +157,7 @@ def test_phase_executor_redirects_logging_through_tqdm_context(
     trainer_factory.create_from_phase.return_value = trainer
 
     metrics_collector = MagicMock()
-    metrics_collector.extract_from_trainer.return_value = {"train_loss": 0.123}
+    metrics_collector.extract_from_trainer.return_value = TrainingMetricsSnapshot(train_loss=0.123)
 
     events: list[str] = []
 
