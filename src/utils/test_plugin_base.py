@@ -6,7 +6,7 @@ Coverage:
 - Subclass override
 - MRO safety with ABC
 - Cooperative use with other ABCs (ValidationPlugin, RewardPlugin)
-- Invariants: name/priority/version are ClassVar not instance vars
+- Invariants: name/version are ClassVar not instance vars
 """
 
 from __future__ import annotations
@@ -26,9 +26,6 @@ from src.utils.plugin_base import BasePlugin
 class TestBasePluginDefaults:
     def test_name_default_is_empty_string(self) -> None:
         assert BasePlugin.name == ""
-
-    def test_priority_default_is_50(self) -> None:
-        assert BasePlugin.priority == 50  # noqa: WPS432
 
     def test_version_default_is_1_0_0(self) -> None:
         assert BasePlugin.version == "1.0.0"
@@ -60,12 +57,6 @@ class TestBasePluginSubclass:
 
         assert MyPlugin.name == "my_plugin"
 
-    def test_subclass_can_override_priority(self) -> None:
-        class HighPriorityPlugin(BasePlugin):
-            priority: ClassVar[int] = 10
-
-        assert HighPriorityPlugin.priority == 10
-
     def test_subclass_can_override_version(self) -> None:
         class VersionedPlugin(BasePlugin):
             version: ClassVar[str] = "2.5.0"
@@ -76,20 +67,16 @@ class TestBasePluginSubclass:
         class MinimalPlugin(BasePlugin):
             name: ClassVar[str] = "minimal"
 
-        assert MinimalPlugin.priority == 50  # noqa: WPS432
         assert MinimalPlugin.version == "1.0.0"
 
     def test_different_subclasses_have_independent_classvars(self) -> None:
         class PluginA(BasePlugin):
             name: ClassVar[str] = "plugin_a"
-            priority: ClassVar[int] = 10
 
         class PluginB(BasePlugin):
             name: ClassVar[str] = "plugin_b"
-            priority: ClassVar[int] = 90
 
         assert PluginA.name != PluginB.name
-        assert PluginA.priority != PluginB.priority
 
 
 # ---------------------------------------------------------------------------
@@ -162,20 +149,3 @@ class TestBasePluginInRealABCs:
         assert hasattr(ValidationPlugin, "version")
 
 
-# ---------------------------------------------------------------------------
-# Boundary: priority edge cases
-# ---------------------------------------------------------------------------
-
-
-class TestBasePluginPriorityBoundaries:
-    @pytest.mark.parametrize("priority", [0, 1, 50, 99, 100])  # noqa: WPS432
-    def test_valid_priority_values(self, priority: int) -> None:
-        class P(BasePlugin):
-            name: ClassVar[str] = "p"
-
-        P.priority = priority  # type: ignore[assignment]
-        assert P.priority == priority
-
-    def test_base_default_priority_is_midpoint(self) -> None:
-        # 50 is semantically the "neutral" middle priority
-        assert BasePlugin.priority == 50  # noqa: WPS432

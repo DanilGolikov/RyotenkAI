@@ -3,7 +3,6 @@ id = "cerebras_judge"
 kind = "evaluation"
 name = "Cerebras Judge"
 version = "1.0.0"
-priority = 60
 category = "llm_judge"
 stability = "stable"
 description = "LLM-as-judge: uses Cerebras to score model answers on a 1–5 scale against expected answers. Normalizes scores to [0, 1]."

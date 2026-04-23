@@ -3,7 +3,6 @@ id = "helixql_sapo_prompt_contract"
 kind = "validation"
 name = "HelixQL SAPO Prompt Contract"
 version = "1.0.0"
-priority = 25
 category = "sapo"
 stability = "stable"
 description = "Checks that the sample is suitable for prompt-only GRPO/SAPO mode."

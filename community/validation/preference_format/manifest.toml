@@ -3,7 +3,6 @@ id = "preference_format"
 kind = "validation"
 name = "Preference Format (DPO)"
 version = "1.0.0"
-priority = 15
 category = "dpo"
 stability = "stable"
 description = "Validates DPO dataset format (chosen/rejected pairs)."

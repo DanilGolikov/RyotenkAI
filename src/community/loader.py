@@ -155,7 +155,6 @@ def _attach_community_metadata(
 ) -> None:
     """Mirror manifest fields onto the plugin class so runtime code can read them."""
     plugin_cls.name = manifest.plugin.id  # type: ignore[attr-defined]
-    plugin_cls.priority = manifest.plugin.priority  # type: ignore[attr-defined]
     plugin_cls.version = manifest.plugin.version  # type: ignore[attr-defined]
     plugin_cls._required_secrets = tuple(manifest.secrets.required)  # type: ignore[attr-defined]
     plugin_cls._community_manifest = manifest  # type: ignore[attr-defined]

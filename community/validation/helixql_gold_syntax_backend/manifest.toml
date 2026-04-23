@@ -3,7 +3,6 @@ id = "helixql_gold_syntax_backend"
 kind = "validation"
 name = "HelixQL Gold Syntax Backend (SFT)"
 version = "1.0.0"
-priority = 40
 category = "sft"
 stability = "stable"
 description = "Validates gold HelixQL via Helix CLI compile (syntax + analysis, no cargo)."

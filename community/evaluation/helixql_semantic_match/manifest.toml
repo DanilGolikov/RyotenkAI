@@ -3,7 +3,6 @@ id = "helixql_semantic_match"
 kind = "evaluation"
 name = "HelixQL Semantic Match"
 version = "1.0.0"
-priority = 20
 category = "semantic"
 stability = "stable"
 description = "Compares the model's HelixQL answer to the expected answer using a deterministic semantic score (sequence ratio + token jaccard + hard-eval hits)."

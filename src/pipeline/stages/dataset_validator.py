@@ -192,8 +192,8 @@ class DatasetValidator(PipelineStage):
                 logger.error(f"[VALIDATOR] Failed to load plugin: {e}. Available: {available}")
                 raise
 
-        plugins.sort(key=lambda item: item[2].priority)
-
+        # Plugins run in user-declared order (config YAML list is order-preserving).
+        # Default plugins come from _get_default_plugins() in a deliberate order.
         return plugins
 
     def _build_secrets_resolver(self):

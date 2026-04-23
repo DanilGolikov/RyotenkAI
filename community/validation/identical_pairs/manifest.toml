@@ -3,7 +3,6 @@ id = "identical_pairs"
 kind = "validation"
 name = "Identical Pairs (DPO)"
 version = "1.0.0"
-priority = 35
 category = "dpo"
 stability = "stable"
 description = "Checks that chosen/rejected pairs differ (DPO)."

@@ -3,7 +3,6 @@ id = "min_samples"
 kind = "validation"
 name = "Minimum Samples"
 version = "1.0.0"
-priority = 10
 category = "basic"
 stability = "stable"
 description = "Checks that the dataset has at least N examples."
