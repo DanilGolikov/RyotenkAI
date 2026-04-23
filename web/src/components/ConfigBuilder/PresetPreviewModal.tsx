@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { usePresetPreview } from '../../api/hooks/usePresetPreview'
+import { HelpTooltip } from './HelpTooltip'
 import type {
   ConfigPreset,
   PresetDiffEntry,
@@ -19,9 +20,9 @@ interface Props {
 }
 
 const STATUS_STYLE: Record<PresetRequirementCheck['status'], string> = {
-  ok: 'bg-ok/15 text-ok border-ok/30',
-  warning: 'bg-warn/15 text-warn border-warn/30',
-  missing: 'bg-err/15 text-err border-err/30',
+  ok: 'bg-ok/10 text-ok border-ok/30',
+  warning: 'bg-warn/10 text-warn border-warn/30',
+  missing: 'bg-err/10 text-err border-err/30',
 }
 
 const STATUS_GLYPH: Record<PresetRequirementCheck['status'], string> = {
@@ -30,20 +31,70 @@ const STATUS_GLYPH: Record<PresetRequirementCheck['status'], string> = {
   missing: '✗',
 }
 
-/** Reason → short prefix chip next to each changed key. */
-const REASON_STYLE: Record<PresetDiffEntry['reason'], { label: string; cls: string }> = {
-  preset_replaced: { label: 'replaced', cls: 'bg-brand-alt/15 text-brand-alt border-brand-alt/30' },
-  preset_added:    { label: 'added',    cls: 'bg-ok/15 text-ok border-ok/30' },
-  preset_preserved:{ label: 'preserved',cls: 'bg-surface-2 text-ink-3 border-line-2' },
-  no_scope:        { label: 'overwrite',cls: 'bg-warn/15 text-warn border-warn/30' },
+const STATUS_TITLE: Record<PresetRequirementCheck['status'], string> = {
+  ok: 'OK — this requirement is satisfied.',
+  warning:
+    'Warning — preset will apply, but something is off (e.g. missing auth token or VRAM headroom). Check the detail.',
+  missing:
+    'Missing — preset relies on this and nothing matching is configured. Fix before Apply or expect failures at runtime.',
 }
 
-function formatVal(v: unknown): string {
+/** Reason → chip label + colour class + tooltip. Tooltips explain the
+ *  backend's reason enum in plain English. */
+const REASON_STYLE: Record<
+  PresetDiffEntry['reason'],
+  { label: string; cls: string; title: string }
+> = {
+  preset_replaced: {
+    label: 'replaced',
+    cls: 'bg-brand-alt/15 text-brand-alt border-brand-alt/30',
+    title:
+      'This key existed in your current config and the preset overwrites it.',
+  },
+  preset_added: {
+    label: 'added',
+    cls: 'bg-ok/15 text-ok border-ok/30',
+    title:
+      'New key — your config did not have this; the preset is introducing it.',
+  },
+  preset_preserved: {
+    label: 'preserved',
+    cls: 'bg-surface-2 text-ink-3 border-line-2',
+    title:
+      'Preset explicitly declared this key as preserved — your current value stays untouched.',
+  },
+  no_scope: {
+    label: 'overwrite',
+    cls: 'bg-warn/15 text-warn border-warn/30',
+    title:
+      'Legacy v1 preset — no scope declared, so the entire top-level block is overwritten. Review carefully.',
+  },
+}
+
+const SECTION_HELP = {
+  requirements:
+    'Readiness checks the backend ran against your current environment. Green = satisfied; amber = works with caveats; red = preset depends on this and nothing matching is set up.',
+  changes:
+    'Keys this preset will write into your config. Existing values are overwritten; new keys are appended. Red strikethrough line is what you have now; green line is what the preset puts in its place.',
+  preserved:
+    'Keys the preset author declared as "preserves" — these stay exactly as you have them even though the preset nominally touches their block. Useful for keeping things like dataset paths or project-specific overrides.',
+  placeholders:
+    'Paths the preset intentionally leaves empty or marked as "TODO" — you need to fill them in manually after Apply. Typical examples: dataset JSONL path, HF model name, project-specific output directory.',
+}
+
+/** Pretty-print arbitrary JSON-ish values for the diff rows.
+ *  - Strings: rendered as-is so multi-line strings stay readable.
+ *  - Scalars: ``String(v)``.
+ *  - Objects/arrays: ``JSON.stringify(v, null, 2)`` so nested structure
+ *    is readable across multiple lines rather than one truncated blob.
+ *  Capped via CSS ``max-height`` + scroll on the row, so a huge training
+ *  block doesn't blow out the modal. */
+function formatDiffValue(v: unknown): string {
   if (v === undefined || v === null) return '—'
   if (typeof v === 'string') return v
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   try {
-    const s = JSON.stringify(v)
-    return s.length > 80 ? s.slice(0, 79) + '…' : s
+    return JSON.stringify(v, null, 2)
   } catch {
     return String(v)
   }
@@ -63,8 +114,10 @@ function formatVal(v: unknown): string {
  * 4. **Placeholders to fill** — paths you'll still need to edit after
  *    Apply (e.g. dataset JSONL path).
  *
- * A banner at the top surfaces any warnings (e.g. v1 "full overwrite"
- * legacy behaviour when the preset has no scope).
+ * Every section title has a ``?`` tooltip explaining it in plain
+ * English; every chip has a ``title=`` hover hint. A banner at the
+ * top surfaces any warnings (e.g. v1 "full overwrite" legacy behaviour
+ * when the preset has no scope).
  */
 export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }: Props) {
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -109,14 +162,40 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
               </span>
               ?
             </div>
-            <div className="text-2xs text-ink-3">
-              {isLoading
-                ? 'Computing diff…'
-                : `${changedEntries.length} change${changedEntries.length === 1 ? '' : 's'}`
-                  + ` · ${preservedEntries.length} preserved`
-                  + ` · ${placeholders.length} to fill`}
+            <div className="text-2xs text-ink-3 flex items-center gap-2 flex-wrap">
+              {isLoading ? (
+                <span>Computing diff…</span>
+              ) : (
+                <>
+                  <span
+                    title="Number of keys this preset will overwrite or add to your config."
+                    className="cursor-help"
+                  >
+                    <span className="text-ink-1 font-medium">{changedEntries.length}</span>{' '}
+                    change{changedEntries.length === 1 ? '' : 's'}
+                  </span>
+                  <span className="text-ink-4">·</span>
+                  <span
+                    title="Keys the preset explicitly keeps from your current config, even though its block nominally covers them."
+                    className="cursor-help"
+                  >
+                    <span className="text-ink-1 font-medium">{preservedEntries.length}</span>{' '}
+                    preserved
+                  </span>
+                  <span className="text-ink-4">·</span>
+                  <span
+                    title="Paths you'll still need to fill manually after Apply (e.g. dataset file)."
+                    className="cursor-help"
+                  >
+                    <span className="text-ink-1 font-medium">{placeholders.length}</span> to fill
+                  </span>
+                </>
+              )}
               {dirty && (
-                <span className="ml-2 text-brand-strong">
+                <span
+                  className="ml-2 text-brand-strong cursor-help"
+                  title="You edited the form without saving — clicking Apply will overwrite those edits."
+                >
                   You have unsaved changes that will be overwritten.
                 </span>
               )}
@@ -126,6 +205,7 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
             type="button"
             onClick={onCancel}
             className="text-ink-3 hover:text-ink-1 text-xs"
+            title="Close the preview and return to the preset picker."
           >
             close
           </button>
@@ -147,7 +227,10 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
 
           {/* 0. Warnings banner (e.g. legacy v1 full-overwrite) */}
           {warnings.length > 0 && (
-            <div className="rounded-md border border-warn/40 bg-warn/10 text-warn text-2xs px-3 py-2 space-y-1">
+            <div
+              className="rounded-md border border-warn/40 bg-warn/10 text-warn text-2xs px-3 py-2 space-y-1"
+              title="Caveats the backend wants you to see before applying — usually legacy-compat quirks."
+            >
               {warnings.map((w, i) => (
                 <div key={i}>{w}</div>
               ))}
@@ -156,14 +239,15 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
 
           {/* 1. Requirements */}
           {requirements.length > 0 && (
-            <Section title="Requirements" count={requirements.length}>
+            <Section title="Requirements" count={requirements.length} help={SECTION_HELP.requirements}>
               <div className="space-y-1.5">
                 {requirements.map((r, i) => (
                   <div
                     key={i}
                     className={`rounded-md border px-2.5 py-1.5 flex items-baseline gap-2 ${STATUS_STYLE[r.status]}`}
+                    title={STATUS_TITLE[r.status]}
                   >
-                    <span className="font-mono text-2xs" aria-hidden="true">
+                    <span className="font-mono text-2xs w-4 text-center" aria-hidden="true">
                       {STATUS_GLYPH[r.status]}
                     </span>
                     <span className="text-2xs font-medium">{r.label}</span>
@@ -177,7 +261,7 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
           )}
 
           {/* 2. What changes */}
-          <Section title="What changes" count={changedEntries.length}>
+          <Section title="What changes" count={changedEntries.length} help={SECTION_HELP.changes}>
             {changedEntries.length === 0 ? (
               <Empty>No changes — preset matches your current config for these keys.</Empty>
             ) : (
@@ -190,7 +274,11 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
           </Section>
 
           {/* 3. What's preserved */}
-          <Section title="Preserved from your config" count={preservedEntries.length}>
+          <Section
+            title="Preserved from your config"
+            count={preservedEntries.length}
+            help={SECTION_HELP.preserved}
+          >
             {preservedEntries.length === 0 ? (
               <Empty>
                 Nothing preserved — this preset didn't declare any{' '}
@@ -202,7 +290,7 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
                   <span
                     key={d.key}
                     className="inline-flex items-center rounded border border-line-2 bg-surface-2 px-1.5 py-0.5 text-[0.65rem] font-mono text-ink-2"
-                    title="Kept from your config — preset declared this key as preserved."
+                    title={`'${d.key}' is kept from your config — preset declared this key as preserved.`}
                   >
                     {d.key}
                   </span>
@@ -213,12 +301,17 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
 
           {/* 4. Placeholders */}
           {placeholders.length > 0 && (
-            <Section title="Fields you'll still need to fill" count={placeholders.length}>
+            <Section
+              title="Fields you'll still need to fill"
+              count={placeholders.length}
+              help={SECTION_HELP.placeholders}
+            >
               <div className="space-y-1.5">
                 {placeholders.map((p) => (
                   <div
                     key={p.path}
                     className="rounded-md border border-warn/30 bg-warn/5 px-2.5 py-1.5 space-y-0.5"
+                    title={p.hint || 'Placeholder left empty by the preset — fill in before launching.'}
                   >
                     <div className="font-mono text-2xs text-warn">{p.path}</div>
                     {p.hint && (
@@ -237,6 +330,7 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
             type="button"
             onClick={onCancel}
             className="btn-ghost h-8 text-xs flex items-center gap-1"
+            title="Go back to the preset picker — nothing is applied."
           >
             <span aria-hidden="true">←</span> Back
           </button>
@@ -246,6 +340,11 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
             onClick={onApply}
             disabled={isLoading}
             className="btn-primary h-8 text-xs px-3 disabled:opacity-60"
+            title={
+              dirty
+                ? 'Apply this preset — your unsaved edits in overlapping keys will be overwritten.'
+                : 'Apply this preset to your config.'
+            }
           >
             {dirty ? 'Overwrite & apply' : 'Apply preset'}
           </button>
@@ -263,10 +362,12 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
 function Section({
   title,
   count,
+  help,
   children,
 }: {
   title: string
   count: number
+  help?: string
   children: React.ReactNode
 }) {
   return (
@@ -274,6 +375,7 @@ function Section({
       <div className="flex items-baseline gap-2">
         <span className="text-2xs font-semibold text-ink-1">{title}</span>
         <span className="text-[0.6rem] text-ink-4">{count}</span>
+        {help && <HelpTooltip text={help} label={`${title} help`} />}
       </div>
       {children}
     </div>
@@ -288,28 +390,54 @@ function Empty({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** Single row in "What changes" — restores the old github-style coloured
+ *  diff (red-tinted ``−`` line + green-tinted ``+`` line) with the new
+ *  reason chip (``REPLACED`` / ``ADDED`` / ``OVERWRITE``) layered on top.
+ *  Complex values are pretty-printed as multi-line ``<pre>`` blocks so
+ *  the user can actually read nested objects instead of a truncated
+ *  one-liner. */
 function DiffRow({ entry }: { entry: PresetDiffEntry }) {
   const reason = REASON_STYLE[entry.reason]
+  const hasBefore = entry.before !== undefined && entry.before !== null
+  const hasAfter = entry.after !== undefined && entry.after !== null
   return (
-    <div className="rounded-md border border-line-1 bg-surface-0 p-2">
-      <div className="flex items-baseline gap-2">
+    <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
+      <div className="flex items-baseline gap-2 px-2 py-1.5 border-b border-line-1 bg-surface-1">
         <span
-          className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wide ${reason.cls}`}
+          className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wide cursor-help ${reason.cls}`}
+          title={reason.title}
         >
           {reason.label}
         </span>
-        <span className="font-mono text-xs text-ink-1">{entry.key}</span>
+        <span className="font-mono text-xs text-ink-1" title={`Config path: ${entry.key}`}>
+          {entry.key}
+        </span>
       </div>
-      <div className="mt-1 font-mono text-2xs space-y-0.5">
-        {entry.before !== undefined && entry.before !== null && (
-          <div className="text-ink-3">
-            <span className="text-err/80">−</span> {formatVal(entry.before)}
+      <div className="font-mono text-2xs">
+        {hasBefore && (
+          <div
+            className="flex gap-1.5 px-2 py-1 bg-err/10 border-l-2 border-err/60 text-err"
+            title="Your current value — will be removed."
+          >
+            <span className="select-none opacity-60">−</span>
+            <pre className="flex-1 whitespace-pre-wrap break-all leading-snug max-h-32 overflow-y-auto m-0">
+              {formatDiffValue(entry.before)}
+            </pre>
           </div>
         )}
-        {entry.after !== undefined && entry.after !== null && (
-          <div className="text-ink-3">
-            <span className="text-ok/80">+</span> {formatVal(entry.after)}
+        {hasAfter && (
+          <div
+            className="flex gap-1.5 px-2 py-1 bg-ok/10 border-l-2 border-ok/60 text-ok"
+            title="Value the preset will write in place."
+          >
+            <span className="select-none opacity-60">+</span>
+            <pre className="flex-1 whitespace-pre-wrap break-all leading-snug max-h-32 overflow-y-auto m-0">
+              {formatDiffValue(entry.after)}
+            </pre>
           </div>
+        )}
+        {!hasBefore && !hasAfter && (
+          <div className="px-2 py-1 text-ink-4">(empty value)</div>
         )}
       </div>
     </div>
