@@ -28,10 +28,10 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
-    LoraConfig,
-    MLflowConfig,
+    MLflowTrackingRef,
     ModelConfig,
     PipelineConfig,
+    QLoRAConfig,
     TrainingOnlyConfig,
 )
 from src.utils.result import ConfigError, Err, Failure, Ok, ProviderError
@@ -61,8 +61,8 @@ RUNPOD_PROVIDER_CFG: dict[str, Any] = {
 
 def _mk_experiment_tracking() -> ExperimentTrackingConfig:
     return ExperimentTrackingConfig(
-        mlflow=MLflowConfig(
-            tracking_uri="http://127.0.0.1:5002",
+        mlflow=MLflowTrackingRef(
+            integration="mlflow-test",
             experiment_name="test-exp",
         )
     )
@@ -88,7 +88,7 @@ def base_config() -> PipelineConfig:
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -144,7 +144,7 @@ def config_multi_dataset() -> PipelineConfig:
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -276,7 +276,7 @@ def test_deploy_files_dataset_not_found_returns_err(secrets: DummySecrets):
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -404,7 +404,7 @@ def test_deploy_files_skips_unused_datasets(secrets: DummySecrets):
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -794,7 +794,7 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -869,7 +869,7 @@ def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets:
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -1382,7 +1382,7 @@ def test_deploy_files_huggingface_only_uploads_config_and_syncs_code(secrets: Du
         training=TrainingOnlyConfig(
             provider="single_node",
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

@@ -36,7 +36,7 @@ def mock_config_with_hf() -> MagicMock:
 
     # Experiment tracking (HF config)
     cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(
-        enabled=True,
+        integration="hf-test",
         repo_id="org/test-model",
         private=True,
     )
@@ -87,7 +87,7 @@ class TestModelRetrieverHelpers:
         cfg = MagicMock()
         cfg.get_active_provider_name.return_value = "single_node"
         cfg.get_provider_config.return_value = {"gpu_type": "NVIDIA_TEST", "mock_mode": False}
-        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(enabled=True, repo_id="org/test-model", private=True)
+        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(integration="hf-test", repo_id="org/test-model", private=True)
         cfg.model.name = "base"
         cfg.training.type = "qlora"
         cfg.training.hyperparams = PhaseHyperparametersConfig(epochs=1, per_device_train_batch_size=1)
@@ -703,7 +703,7 @@ class TestModelRetrieverInit:
         cfg.get_active_provider_name.return_value = "single_node"
         cfg.get_provider_config.return_value = {"gpu_type": "A100", "mock_mode": False}
         cfg.get_provider_training_config.side_effect = RuntimeError("unavailable")
-        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(enabled=True, repo_id="org/m", private=True)
+        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(integration="hf-test", repo_id="org/m", private=True)
         cfg.model.name = "base"
         cfg.training.type = "qlora"
         cfg.training.hyperparams = PhaseHyperparametersConfig(epochs=1, per_device_train_batch_size=1)
@@ -719,7 +719,7 @@ class TestModelRetrieverInit:
         cfg.get_active_provider_name.return_value = "single_node"
         cfg.get_provider_config.return_value = {"gpu_type": "A100", "mock_mode": False}
         cfg.get_provider_training_config.return_value = "not_a_dict"  # non-dict return
-        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(enabled=True, repo_id="org/m", private=True)
+        cfg.experiment_tracking.huggingface = HuggingFaceHubConfig(integration="hf-test", repo_id="org/m", private=True)
         cfg.model.name = "base"
         cfg.training.type = "qlora"
         cfg.training.hyperparams = PhaseHyperparametersConfig(epochs=1, per_device_train_batch_size=1)

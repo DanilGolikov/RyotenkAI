@@ -328,11 +328,11 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
         return Ok(None)
 
     hf_cfg = getattr(cfg.experiment_tracking, "huggingface", None)
-    if hf_cfg is None or not hf_cfg.enabled:
+    if hf_cfg is None or not hf_cfg.integration:
         return _config_error(
             (
-                "adapter_cache.enabled=true requires experiment_tracking.huggingface to be configured and enabled. "
-                "Add experiment_tracking.huggingface section with enabled: true, repo_id, and private fields."
+                "adapter_cache.enabled=true requires experiment_tracking.huggingface to be configured with an integration. "
+                "Add experiment_tracking.huggingface section with integration (pointing at a Settings → Integrations entry), repo_id, and private fields."
             ),
             "CONFIG_ADAPTER_CACHE_HF_REQUIRED",
         )

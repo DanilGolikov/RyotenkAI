@@ -29,6 +29,7 @@ from .integrations import (
     HuggingFaceConfig,
     HuggingFaceHubConfig,
     MLflowConfig,
+    MLflowTrackingRef,
 )
 from .model import ModelConfig
 from .pipeline import PipelineConfig, load_config
@@ -76,6 +77,7 @@ __all__ = [
     "LoRAConfig",
     "LoraConfig",
     "MLflowConfig",
+    "MLflowTrackingRef",
     "ModelConfig",
     "PhaseHyperparametersConfig",
     "PipelineConfig",

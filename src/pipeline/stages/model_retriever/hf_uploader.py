@@ -102,7 +102,7 @@ class HFModelUploader:
         - To enforce `private: true/false`, we must call `update_repo_settings(private=...)`.
         """
         hf_cfg = self.config.experiment_tracking.huggingface
-        if not hf_cfg or not hf_cfg.enabled:
+        if not hf_cfg or not hf_cfg.integration:
             return Err(ModelError(message="HuggingFace upload disabled", code="HF_UPLOAD_DISABLED"))
         if not self.hf_repo_id:
             return Err(ModelError(message="HF repo_id not configured", code="HF_REPO_ID_MISSING"))
