@@ -3,7 +3,6 @@ id = "diversity_score"
 kind = "validation"
 name = "Vocabulary Diversity"
 version = "1.0.0"
-priority = 30
 category = "basic"
 stability = "stable"
 description = "Checks dataset vocabulary diversity (lexical richness)."

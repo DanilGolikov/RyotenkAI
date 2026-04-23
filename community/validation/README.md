@@ -42,7 +42,6 @@ id = "my_validator"            # unique within validation/, used in pipeline YAM
 kind = "validation"            # required literal
 name = "My Validator"          # human-readable (defaults to id)
 version = "1.0.0"
-priority = 30                  # lower = runs earlier
 category = "basic"             # free-form grouping hint for the UI
 stability = "stable"           # stable | beta | experimental
 description = "Checks that …"

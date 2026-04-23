@@ -3,7 +3,6 @@ id = "helixql_syntax"
 kind = "evaluation"
 name = "HelixQL Syntax"
 version = "1.0.0"
-priority = 10
 category = "syntax_check"
 stability = "stable"
 description = "Validates HelixQL query syntax in model responses (lightweight heuristic, no full parser)."

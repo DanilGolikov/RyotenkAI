@@ -3,7 +3,6 @@ id = "empty_ratio"
 kind = "validation"
 name = "Empty Ratio"
 version = "1.0.0"
-priority = 25
 category = "basic"
 stability = "stable"
 description = "Checks the ratio of empty or very short examples."

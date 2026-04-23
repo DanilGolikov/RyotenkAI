@@ -160,8 +160,10 @@ class EvaluationRunner:
             summary.duration_seconds = time.time() - start
             return summary
 
-        # Step 4: Run plugins in priority order
-        for plugin_cfg, plugin in sorted(plugins, key=lambda item: item[1].priority):
+        # Step 4: Run plugins in user-declared order (config YAML list is
+        # order-preserving). No more priority-based sort — the manifest
+        # field was dead weight for evaluation.
+        for plugin_cfg, plugin in plugins:
             plugin_id = plugin_cfg.id
             # Skip plugin if it requires expected_answer but none are available
             if plugin.requires_expected_answer:

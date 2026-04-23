@@ -26,7 +26,6 @@ id = "my_reward"
 kind = "reward"
 name = "My Reward"
 version = "1.0.0"
-priority = 50                  # informational; no ordering between reward plugins
 category = "semantic"
 stability = "stable"
 description = "Scores completions by …"

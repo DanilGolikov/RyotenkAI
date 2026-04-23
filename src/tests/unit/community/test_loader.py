@@ -20,7 +20,6 @@ def _build_plugin_folder(root: Path, kind: str, plugin_id: str, *, class_name: s
             id = "{plugin_id}"
             kind = "{kind}"
             version = "1.0.0"
-            priority = 42
 
             [plugin.entry_point]
             module = "plugin"
@@ -47,9 +46,11 @@ def test_load_plugins_imports_class_and_attaches_metadata(tmp_path: Path) -> Non
     assert entry.manifest.plugin.id == "dummy"
     cls = entry.plugin_cls
     assert cls.name == "dummy"
-    assert cls.priority == 42
+    assert cls.version == "1.0.0"
     assert cls._required_secrets == ("EVAL_DUMMY",)
     assert cls.greeting == "hi"
+    # priority no longer exists on PluginSpec.
+    assert not hasattr(entry.manifest.plugin, "priority")
 
 
 def test_load_plugins_duplicate_id_raises(tmp_path: Path) -> None:

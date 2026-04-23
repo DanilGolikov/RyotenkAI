@@ -27,7 +27,6 @@ id = "my_judge"
 kind = "evaluation"
 name = "My Judge"
 version = "1.0.0"
-priority = 40
 category = "semantic"          # semantic | syntax_check | llm_judge | custom
 stability = "stable"
 description = "Scores answers against the reference …"

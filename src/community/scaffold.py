@@ -18,6 +18,7 @@ _PLUGIN_TODO_FIELDS = frozenset(
         "plugin.category",
         "plugin.stability",
         "compat.min_core_version",
+        "reports.order",
     }
 )
 
@@ -54,7 +55,6 @@ def build_plugin_manifest_dict(
             "kind": inferred.kind,
             "name": plugin_id,
             "version": "0.1.0",
-            "priority": 50,
             "category": "",
             "stability": "experimental",
             "description": inferred.description,
@@ -78,6 +78,11 @@ def build_plugin_manifest_dict(
         manifest["suggested_thresholds"] = suggested_thresholds
     if inferred.required_secrets:
         manifest["secrets"] = {"required": list(inferred.required_secrets)}
+    # Report plugins get a [reports] block with a placeholder order. Authors
+    # must fill in the actual section order manually — it's unique per
+    # report plugin and drives Markdown section ordering.
+    if inferred.kind == "reports":
+        manifest["reports"] = {"order": 50}
     # ``[compat]`` is intentionally omitted: adding an empty block just makes
     # noise in the rendered TOML. Authors can add it by hand when they have a
     # real ``min_core_version`` to pin.

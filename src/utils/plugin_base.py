@@ -1,10 +1,16 @@
 """
 BasePlugin — lightweight mixin for all plugin systems in this project.
 
-Metadata (name, priority, version, description, params/thresholds schema,
-required secrets) lives in the plugin's ``manifest.toml`` and is attached
-to the class at load time by ``src/community/loader.py``. This mixin only
+Metadata (name, version, description, params/thresholds schema, required
+secrets) lives in the plugin's ``manifest.toml`` and is attached to the
+class at load time by ``src/community/loader.py``. This mixin only
 exposes the ClassVar slots that runtime code expects to read.
+
+Report plugins have their own ordering contract via the ``[reports]``
+block's ``order`` field, wired in ``src/reports/plugins/registry.py``.
+All other plugin kinds (validation / evaluation / reward) execute in
+the order declared in the user's config YAML — we do **not** carry a
+global priority field any more.
 """
 
 from __future__ import annotations
@@ -18,11 +24,10 @@ if TYPE_CHECKING:
 class BasePlugin:
     """Mixin that reserves metadata slots populated by the community loader.
 
-    All plugin systems share three invariants, injected by the loader from
+    All plugin systems share these invariants, injected by the loader from
     ``manifest.toml``:
 
       - ``name``     — unique string key used by registries for lookup.
-      - ``priority`` — execution order hint (lower = runs earlier).
       - ``version``  — semver string, useful for compatibility checks.
       - ``_required_secrets`` — tuple of secret keys the plugin needs.
       - ``_community_manifest`` — full :class:`PluginManifest` object, available
@@ -35,7 +40,6 @@ class BasePlugin:
     """
 
     name: ClassVar[str] = ""
-    priority: ClassVar[int] = 50
     version: ClassVar[str] = "1.0.0"
     _required_secrets: ClassVar[tuple[str, ...]] = ()
     _community_manifest: ClassVar[PluginManifest | None] = None

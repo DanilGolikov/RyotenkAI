@@ -67,7 +67,6 @@ class PluginSpec(BaseModel):
     kind: PluginKind
     name: str = ""
     version: str = "1.0.0"
-    priority: int = 50
     category: str = ""
     stability: Stability = "stable"
     description: str = ""
@@ -143,7 +142,6 @@ class PluginManifest(BaseModel):
             "id": self.plugin.id,
             "name": self.plugin.name,
             "version": self.plugin.version,
-            "priority": self.plugin.priority,
             "description": self.plugin.description,
             "category": self.plugin.category,
             "stability": self.plugin.stability,

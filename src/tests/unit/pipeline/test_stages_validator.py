@@ -50,7 +50,7 @@ def test_loads_default_plugins_when_no_plugins_configured(mock_registry, mock_lo
     cfg = _mk_primary_only_config(ds)
 
     # Default plugin load calls registry.get_plugin(...) 4 times
-    mock_registry.get_plugin.return_value = MagicMock(priority=1, name="x")
+    mock_registry.get_plugin.return_value = MagicMock(name="x")
 
     _ = DatasetValidator(cfg)
     assert mock_registry.get_plugin.call_count == 4
@@ -69,7 +69,7 @@ def test_loads_configured_plugins_only(mock_registry, mock_loader_factory) -> No
     )
     cfg = _mk_primary_only_config(ds)
 
-    mock_registry.get_plugin.return_value = MagicMock(priority=1, name="x")
+    mock_registry.get_plugin.return_value = MagicMock(name="x")
     _ = DatasetValidator(cfg)
     assert mock_registry.get_plugin.call_count == 2
 

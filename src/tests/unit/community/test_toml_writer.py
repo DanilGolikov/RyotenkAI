@@ -14,7 +14,6 @@ def test_plugin_manifest_round_trip() -> None:
             "kind": "validation",
             "name": "Demo",
             "version": "0.1.0",
-            "priority": 50,
             "description": "hi",
             "entry_point": {"module": "plugin", "class": "DemoPlugin"},
         },
@@ -29,12 +28,12 @@ def test_plugin_manifest_round_trip() -> None:
 
 
 def test_plugin_section_order_is_stable() -> None:
-    """``[plugin]`` scalars follow a fixed priority (id → kind → name → version …)."""
+    """``[plugin]`` scalars follow a fixed order (id → kind → name → version …)."""
     manifest = {
         "plugin": {
             "description": "x",
             "version": "0.1.0",
-            "priority": 20,
+            "category": "basic",
             "name": "Name",
             "kind": "evaluation",
             "id": "x",
@@ -43,9 +42,26 @@ def test_plugin_section_order_is_stable() -> None:
     }
     text = dump_manifest_toml(manifest)
     lines = [line for line in text.splitlines() if "=" in line and not line.startswith("[")]
-    # `id`, `kind`, `name`, `version`, `priority` must appear in that fixed order.
+    # `id`, `kind`, `name`, `version`, `category` must appear in that fixed order.
     idx = {key: i for i, line in enumerate(lines) for key in [line.split("=", 1)[0].strip()]}
-    assert idx["id"] < idx["kind"] < idx["name"] < idx["version"] < idx["priority"]
+    assert idx["id"] < idx["kind"] < idx["name"] < idx["version"] < idx["category"]
+
+
+def test_reports_block_renders_after_plugin() -> None:
+    """Report manifests get a dedicated [reports] section with `order`."""
+    manifest = {
+        "plugin": {
+            "id": "header",
+            "kind": "reports",
+            "entry_point": {"module": "plugin", "class": "HeaderPlugin"},
+        },
+        "reports": {"order": 10},
+    }
+    text = dump_manifest_toml(manifest)
+    assert "[reports]" in text
+    assert "order = 10" in text
+    # reports section should land after the plugin section.
+    assert text.index("[plugin]") < text.index("[reports]")
 
 
 def test_nested_tables_never_inline() -> None:

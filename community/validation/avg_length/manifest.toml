@@ -3,7 +3,6 @@ id = "avg_length"
 kind = "validation"
 name = "Average Length"
 version = "1.0.0"
-priority = 20
 category = "basic"
 stability = "stable"
 description = "Checks that the average text length falls within expected bounds."
