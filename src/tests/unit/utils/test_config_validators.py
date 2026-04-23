@@ -23,8 +23,9 @@ from src.utils.config import (
     LoraConfig,
     MLflowConfig,
     ModelConfig,
-    PipelineConfig,
     PhaseHyperparametersConfig,
+    PipelineConfig,
+    QLoRAConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
@@ -55,6 +56,21 @@ def _lora_cfg(**overrides) -> LoraConfig:
     return LoraConfig(**data)
 
 
+def _qlora_cfg(**overrides) -> QLoRAConfig:
+    data = {
+        "r": 8,
+        "lora_alpha": 16,
+        "lora_dropout": 0.05,
+        "bias": "none",
+        "target_modules": "all-linear",
+        "use_dora": False,
+        "use_rslora": False,
+        "init_lora_weights": "gaussian",
+    }
+    data.update(overrides)
+    return QLoRAConfig(**data)
+
+
 def _hp_global_cfg(**overrides) -> GlobalHyperparametersConfig:
     data = {
         "per_device_train_batch_size": 1,
@@ -70,7 +86,7 @@ def _hp_global_cfg(**overrides) -> GlobalHyperparametersConfig:
 def _training_cfg(**overrides) -> TrainingOnlyConfig:
     data = {
         "type": "qlora",
-        "qlora": _lora_cfg(),
+        "qlora": _qlora_cfg(),
         "hyperparams": _hp_global_cfg(),
         "strategies": [StrategyPhaseConfig(strategy_type="sft")],
     }
@@ -80,7 +96,7 @@ def _training_cfg(**overrides) -> TrainingOnlyConfig:
         data.setdefault("lora", _lora_cfg())
         data.pop("qlora", None)
     elif training_type == "qlora":
-        data.setdefault("qlora", _lora_cfg())
+        data.setdefault("qlora", _qlora_cfg())
         data.pop("lora", None)
     elif training_type == "adalora":
         data.pop("lora", None)

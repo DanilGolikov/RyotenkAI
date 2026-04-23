@@ -19,10 +19,10 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
-    LoraConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
+    QLoRAConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
@@ -62,7 +62,7 @@ def _mk_cfg(
         training=TrainingOnlyConfig(
             type="qlora",
             provider=training_provider,
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

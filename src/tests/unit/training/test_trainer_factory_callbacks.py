@@ -20,10 +20,10 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
-    LoraConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
+    QLoRAConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
@@ -87,7 +87,7 @@ def _mk_cfg(*, callback_enabled: bool, callback_interval: int) -> PipelineConfig
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         training=TrainingOnlyConfig(
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

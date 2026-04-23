@@ -11,8 +11,8 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
-    LoraConfig,
     MLflowConfig,
+    QLoRAConfig,
     ModelConfig,
     PipelineConfig,
     StrategyPhaseConfig,
@@ -28,8 +28,8 @@ def _model_cfg() -> ModelConfig:
     )
 
 
-def _lora_cfg() -> LoraConfig:
-    return LoraConfig(
+def _lora_cfg() -> QLoRAConfig:
+    return QLoRAConfig(
         r=8,
         lora_alpha=16,
         lora_dropout=0.05,

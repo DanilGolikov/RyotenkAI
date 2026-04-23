@@ -72,7 +72,7 @@ class _AdapterCacheStub:
 
 @dataclass
 class _HFCfg:
-    enabled: bool
+    integration: str | None
     repo_id: str
 
 
@@ -97,9 +97,10 @@ def _pipeline(
     hf_enabled: bool = True,
     hf_repo: str = "org/final-model",
 ) -> _Pipeline:
+    integration = "hf-test" if hf_enabled else None
     return _Pipeline(
         training=_Training(strategies=strategies),
-        experiment_tracking=_ETCfg(huggingface=_HFCfg(enabled=hf_enabled, repo_id=hf_repo)),
+        experiment_tracking=_ETCfg(huggingface=_HFCfg(integration=integration, repo_id=hf_repo)),
     )
 
 

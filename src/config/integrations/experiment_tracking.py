@@ -93,11 +93,17 @@ class ExperimentTrackingConfig(StrictBaseModel):
     def get_report_to(self) -> list[str]:
         """Get list of trackers for HuggingFace Trainer.
 
-        ``mlflow`` is considered active iff an integration id is set.
+        ``mlflow`` is considered active when either the tracking ref carries
+        an integration id or the resolved config already has a tracking URI.
         """
-        if self.mlflow is None or not self.mlflow.integration:
+        if self.mlflow is None:
             return ["none"]
-        return ["mlflow"]
+        if isinstance(self.mlflow, MLflowTrackingRef):
+            return ["mlflow"] if self.mlflow.integration else ["none"]
+        # Resolved ``MLflowConfig`` — inactive only if it somehow has no URIs.
+        if self.mlflow.tracking_uri or self.mlflow.local_tracking_uri:
+            return ["mlflow"]
+        return ["none"]
 
 
 __all__ = [
