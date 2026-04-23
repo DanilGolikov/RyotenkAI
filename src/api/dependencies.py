@@ -31,15 +31,19 @@ def get_runs_dir(settings: ApiSettings = Depends(get_settings)) -> Path:
 def resolve_run_dir(run_id: str, runs_dir: Path = Depends(get_runs_dir)) -> Path:
     """Resolve a run_id (directory name, possibly nested under a subgroup) to an
     absolute Path, rejecting path traversal.
+
+    Defence-in-depth: both sides of the containment check are fully resolved
+    (symlinks followed) so a symlink farm under ``runs_dir`` can't let a
+    crafted ``run_id`` escape the configured root. ``get_runs_dir`` already
+    returns a resolved path, but callers that bypass the dep (tests, future
+    middleware) must still be safe.
     """
     if not run_id or ".." in run_id.replace("\\", "/").split("/"):
         raise HTTPException(status_code=400, detail="invalid_run_id")
-    run_dir = (runs_dir / run_id).resolve()
-    # Ensure path stays inside runs_dir
-    try:
-        run_dir.relative_to(runs_dir)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="run_id_outside_runs_dir") from exc
+    runs_root = runs_dir.resolve()
+    run_dir = (runs_root / run_id).resolve()
+    if not run_dir.is_relative_to(runs_root):
+        raise HTTPException(status_code=400, detail="run_id_outside_runs_dir")
     if not run_dir.exists() or not run_dir.is_dir():
         raise HTTPException(status_code=404, detail="run_not_found")
     return run_dir

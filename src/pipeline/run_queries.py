@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.pipeline.state import PipelineState, PipelineStateLoadError, PipelineStateStore
+from src.pipeline.state.cache import load_state_snapshot
 
 _LOG_TAIL_LINES = 30
 ROOT_GROUP = "(root)"
@@ -65,7 +66,10 @@ class RunInspector:
         self._store = PipelineStateStore(self._run_dir)
 
     def load(self, *, include_logs: bool = False) -> RunInspectionData:
-        state = self._store.load()
+        # Cached load — the API polls this hundreds of times per minute across
+        # open clients. Cache key (state_path, mtime_ns) guarantees freshness.
+        snapshot = load_state_snapshot(self._run_dir)
+        state = snapshot.state
         log_tails: dict[int, list[str]] = {}
         if include_logs:
             for attempt in state.attempts:
@@ -118,7 +122,9 @@ def build_run_summary_row(entry: Path, *, group: str = ROOT_GROUP) -> RunSummary
     created_at = _format_created_at(created_ts)
 
     try:
-        state = PipelineStateStore(entry).load()
+        # Cached: ``list_runs`` fans out to every run on disk — without this
+        # a 50-run workspace costs 50 JSON parses per HTTP GET.
+        state = load_state_snapshot(entry).state
     except (PipelineStateLoadError, Exception) as exc:
         return RunSummaryRow(
             run_id=entry.name,
