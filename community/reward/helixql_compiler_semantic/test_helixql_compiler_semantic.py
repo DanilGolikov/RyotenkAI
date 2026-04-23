@@ -22,6 +22,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+import plugin as plugin_mod
 from plugin import (
     HelixQLCompilerSemanticRewardPlugin,
     _coerce_column,
@@ -54,15 +55,24 @@ def _make_plugin(params: dict[str, Any] | None = None) -> HelixQLCompilerSemanti
 
 class TestHelixQLCompilerSemanticRewardPluginRegistration:
     def test_is_registered_under_correct_name(self) -> None:
-        import src.training.reward_plugins.plugins  # noqa: F401  # type: ignore[import]
+        from src.community.catalog import catalog
+
+        catalog.ensure_loaded()
 
         assert "helixql_compiler_semantic" in RewardPluginRegistry._registry
 
     def test_registered_class_is_correct(self) -> None:
-        import src.training.reward_plugins.plugins  # noqa: F401  # type: ignore[import]
+        from src.community.catalog import catalog
+
+        catalog.ensure_loaded()
 
         cls = RewardPluginRegistry._registry.get("helixql_compiler_semantic")
-        assert cls is HelixQLCompilerSemanticRewardPlugin
+        # Community plugins are loaded under a synthetic module namespace, so
+        # identity (``cls is HelixQLCompilerSemanticRewardPlugin``) does not
+        # hold. Compare by class name instead — the catalog guarantees a
+        # single plugin id maps to a single class.
+        assert cls is not None
+        assert cls.__name__ == HelixQLCompilerSemanticRewardPlugin.__name__
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +272,8 @@ class TestCompilerRewardFunction:
 
 class TestSemanticRewardFunction:
     @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
-    def test_helix_missing_returns_zero(self, _mock_which: Any) -> None:
+    def test_semantic_does_not_require_helix_cli(self, _mock_which: Any) -> None:
+        """Semantic reward is a pure string/semantic metric and must work without the helix CLI."""
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
         result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
@@ -272,7 +283,8 @@ class TestSemanticRewardFunction:
             prompt=["```helixschema\nNode User {}\n```"],
             reference_answer=["QUERY Get () => items <- N<User> RETURN items"],
         )
-        assert scores == [0.0]
+        # Identical candidate and reference should score the full semantic credit.
+        assert scores == [1.0]
 
     def test_empty_completions_returns_empty(self) -> None:
         plugin = _make_plugin()
@@ -282,15 +294,15 @@ class TestSemanticRewardFunction:
         scores = semantic_reward(completions=[])
         assert scores == []
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
-    def test_empty_schema_returns_zero(self, _mock_which: Any) -> None:
+    def test_empty_output_returns_zero(self) -> None:
+        """Blank completion short-circuits to 0.0 without needing helix."""
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
         result = plugin.build_trainer_kwargs(train_dataset=ds, phase_config=MagicMock(), pipeline_config=MagicMock())
         semantic_reward = result["reward_funcs"][1]
         scores = semantic_reward(
-            completions=["QUERY Get () => x <- N<User> RETURN x"],
-            prompt=["no schema here at all"],
+            completions=["   "],
+            prompt=["```helixschema\nNode User {}\n```"],
             reference_answer=["QUERY Get () => x <- N<User> RETURN x"],
         )
         assert scores == [0.0]
@@ -406,13 +418,15 @@ class TestSetupLifecycle:
         plugin = _make_plugin({"validation_backend": "semantic_only"})
         plugin.setup()  # should be no-op, no exception
 
-    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
-    def test_setup_skipped_when_helix_already_on_path(self, _mock: Any) -> None:
+    @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
+    @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
+    def test_setup_skipped_when_helix_already_on_path(self, _mock_which: Any, _mock_works: Any) -> None:
         plugin = _make_plugin({"validation_backend": "compile"})
         plugin.setup()  # should skip install
 
-    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
-    def test_setup_idempotent(self, _mock: Any) -> None:
+    @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
+    @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
+    def test_setup_idempotent(self, _mock_which: Any, _mock_works: Any) -> None:
         plugin = _make_plugin({"validation_backend": "compile"})
         plugin.setup()
         plugin.setup()  # second call is safe
@@ -428,8 +442,9 @@ class TestSetupLifecycle:
 
 
 class TestFactoryCallsSetup:
-    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
-    def test_build_reward_plugin_result_calls_setup(self, _mock: Any) -> None:
+    @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
+    @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
+    def test_build_reward_plugin_result_calls_setup(self, _mock_which: Any, _mock_works: Any) -> None:
         from src.training.reward_plugins.factory import build_reward_plugin_result
 
         phase_config = MagicMock()
@@ -449,8 +464,9 @@ class TestFactoryCallsSetup:
         assert result.plugin is not None
         assert result.plugin.name == "helixql_compiler_semantic"
 
-    @patch("src.training.reward_plugins.plugins.helixql_compiler_semantic.shutil.which", return_value="/usr/bin/helix")
-    def test_result_plugin_has_teardown(self, _mock: Any) -> None:
+    @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
+    @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
+    def test_result_plugin_has_teardown(self, _mock_which: Any, _mock_works: Any) -> None:
         from src.training.reward_plugins.factory import build_reward_plugin_result
 
         phase_config = MagicMock()
