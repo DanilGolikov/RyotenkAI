@@ -13,6 +13,7 @@ interface Props {
   sortable: boolean
   onRemove: () => void
   onConfigure?: () => void
+  onInfo?: () => void
   /** Extra warning text (e.g. reward incompatible with current
    *  strategy). Rendered inline below the row. */
   warning?: string
@@ -41,6 +42,7 @@ export function PluginInstanceRow({
   sortable,
   onRemove,
   onConfigure,
+  onInfo,
   warning,
 }: Props) {
   const {
@@ -106,6 +108,18 @@ export function PluginInstanceRow({
             <div className="text-[0.65rem] text-ink-3 truncate">{manifest.name}</div>
           ) : null}
         </div>
+        {onInfo && (
+          <button
+            type="button"
+            disabled={isStale}
+            onClick={onInfo}
+            className="w-6 h-6 rounded-full border border-line-2 text-ink-3 hover:text-ink-1 hover:border-brand-alt text-[0.7rem] font-semibold flex items-center justify-center shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+            title={isStale ? 'Plugin missing — no catalog entry' : 'Show plugin details'}
+            aria-label={`Show details for ${pluginId}`}
+          >
+            i
+          </button>
+        )}
         <button
           type="button"
           disabled={isStale}

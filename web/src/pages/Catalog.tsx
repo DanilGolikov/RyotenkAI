@@ -10,8 +10,8 @@ import type { PluginKind, PluginManifest } from '../api/types'
 const KIND_FILTERS: { key: PluginKind | 'presets' | 'all'; label: string }[] = [
   { key: 'all', label: 'All' },
   { key: 'validation', label: 'Validation' },
-  { key: 'evaluation', label: 'Evaluation' },
   { key: 'reward', label: 'Reward' },
+  { key: 'evaluation', label: 'Evaluation' },
   { key: 'reports', label: 'Reports' },
   { key: 'presets', label: 'Presets' },
 ]
@@ -85,8 +85,8 @@ export function CatalogPage() {
 
   const pluginSections: Array<{ kind: PluginKind; label: string; plugins: PluginManifest[] }> = [
     { kind: 'validation', label: 'Validation', plugins: filtered.validation },
-    { kind: 'evaluation', label: 'Evaluation', plugins: filtered.evaluation },
     { kind: 'reward', label: 'Reward', plugins: filtered.reward },
+    { kind: 'evaluation', label: 'Evaluation', plugins: filtered.evaluation },
     { kind: 'reports', label: 'Reports', plugins: filtered.reports },
   ]
 
