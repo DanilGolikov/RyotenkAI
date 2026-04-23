@@ -1,4 +1,4 @@
-"""Tests for the mtime-keyed ``PipelineState`` cache used by API/TUI."""
+"""Tests for the mtime-keyed ``PipelineState`` cache used by the web API."""
 
 from __future__ import annotations
 

@@ -2,9 +2,7 @@
 
 Deletes a local run directory (and any nested runs) and, when configured,
 cascades deletion to the MLflow experiment tree rooted at the run's
-root_mlflow_run_id. Previously lived in src/tui/adapters/delete_backend.py
-as TuiDeleteBackend; the new name reflects that it is a generic domain
-service used by CLI, TUI, and the web API alike.
+root_mlflow_run_id. Shared domain service used by both the CLI and the web API.
 """
 
 from __future__ import annotations

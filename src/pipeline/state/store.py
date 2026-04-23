@@ -53,6 +53,48 @@ def acquire_run_lock(lock_path: Path) -> PipelineRunLock:
     return PipelineRunLock(path=lock_path, fd=fd)
 
 
+def read_lock_pid(lock_path: Path) -> int | None:
+    """Read the ``pid=<n>`` line from a ``run.lock`` file.
+
+    Returns ``None`` if the file is missing, unreadable, or doesn't carry
+    a parseable ``pid=`` line. Pure read — never mutates the filesystem.
+    """
+    try:
+        content = lock_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line.startswith("pid="):
+            with suppress(ValueError):
+                return int(line.split("=", 1)[1])
+    return None
+
+
+def remove_stale_lock(lock_path: Path, *, expected_pid: int) -> bool:
+    """Unlink a ``run.lock`` whose current ``pid`` matches ``expected_pid``.
+
+    Invariant #1 of the pipeline architecture says only this module owns the
+    lock-file lifecycle. API/CLI consumers that detect a stale lock (owner
+    process is gone) must call this helper instead of hardcoding ``unlink``.
+
+    Race-safe: re-reads the ``pid=`` line immediately before unlink. If the
+    pid drifted (another process legitimately took the lock between the
+    caller's liveness check and this call), the file is left untouched.
+
+    Returns True if the file was unlinked, False if the pid didn't match
+    or the file was already gone (both are safe, idempotent outcomes).
+    """
+    current = read_lock_pid(lock_path)
+    if current != expected_pid:
+        return False
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, encoding="utf-8") as tmp_file:

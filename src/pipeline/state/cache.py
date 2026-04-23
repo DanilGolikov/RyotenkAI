@@ -1,7 +1,7 @@
 """Process-local mtime-keyed cache for ``PipelineState``.
 
-Sibling clients (web API, TUI) poll pipeline state frequently — every few
-seconds per open client, per run. Each poll re-reads ``pipeline_state.json``,
+The web API polls pipeline state frequently — every few seconds per open
+client, per run. Each poll re-reads ``pipeline_state.json``,
 parses JSON and re-builds dataclasses. For read-heavy workloads this is
 wasteful: the file only changes when the pipeline writes a new state (stage
 transitions, attempt boundaries).
@@ -133,8 +133,8 @@ _SINGLETON = _StateCache()
 def load_state_snapshot(run_dir: Path) -> StateSnapshot:
     """Return a ``StateSnapshot`` for ``run_dir`` via the process-local cache.
 
-    Prefer this over ``PipelineStateStore(run_dir).load()`` on the API / TUI
-    read path. Writers must continue using the store directly.
+    Prefer this over ``PipelineStateStore(run_dir).load()`` on the API read
+    path. Writers must continue using the store directly.
     """
     return _SINGLETON.load(Path(run_dir).expanduser().resolve())
 

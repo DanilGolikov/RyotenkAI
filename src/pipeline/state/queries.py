@@ -1,9 +1,7 @@
 """Query helpers over PipelineState / PipelineStateStore.
 
-Thin wrappers used by CLI, TUI and web backend to answer common questions
-about a run directory without poking at PipelineStateStore directly. Moved
-from src/tui/adapters/state.py so the web backend does not depend on the
-TUI package.
+Thin wrappers used by the CLI and web backend to answer common questions
+about a run directory without poking at PipelineStateStore directly.
 """
 
 from __future__ import annotations

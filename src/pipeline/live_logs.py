@@ -1,8 +1,8 @@
 """Offset-based live log tail.
 
 Domain-agnostic infrastructure: given a file path, read new lines since the last
-call via a persistent byte offset. Shared by TUI live monitor, web WebSocket
-stream, and any future client. Previously lived in src/tui/live_logs.py.
+call via a persistent byte offset. Used by the web WebSocket stream and any
+future client that needs a persistent tail cursor.
 """
 
 from __future__ import annotations

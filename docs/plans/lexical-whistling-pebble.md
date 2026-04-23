@@ -1,73 +1,175 @@
-# Page Chrome Separation в ConfigTab
+# Починка sibling-invariant для run.lock + удаление TUI
 
 ## Контекст
 
-На странице проекта (`/projects/<id>/config`) в табе Config сейчас toolbar (переключатель Form/YAML + DiffBadge + PresetPickerModal + StatusPill), `ValidationBanner` и блок draft-restore визуально сливаются с формой ниже — всё живёт на одной поверхности `surface-2` без какой-либо разделительной линии. Пользователь жалуется: «нет границ, все в одном блоке — и поля, и вкладки».
+Активная ADR «Sibling Client Architecture for Pipeline State» декларирует: `PipelineStateStore` (src/pipeline/state/store.py) — единственный канонический writer для `pipeline_state.json` и `run.lock`. Канонический lifecycle lock — через `acquire_run_lock()` и `PipelineRunLock.release()` / `RunLockGuard`. Invariant #1 из [run_lock_guard.py](../../src/pipeline/state/run_lock_guard.py): «every acquired run.lock must be released through the guarded path».
 
-Плановый документ [docs/plans/humble-frolicking-acorn.md §5](../../.claude/worktrees/jolly-lichterman-01f936/docs/plans/humble-frolicking-acorn.md) предлагает обернуть toolbar + `ValidationBanner` в явную «page chrome»-область, отделённую от формы одной тонкой hairline-линией (`border-b border-line-1`). Decision record «Page Chrome Separation» (proposed, confidence 60%) требует именно этого. Цель — чтобы пользователь читал toolbar + banner как «управление над страницей», а форму — как основное содержимое.
+Дипсинк выявил две категории проблем:
 
-Изменение касается только одного файла и никак не трогает sibling-табы (ProviderConfigTab, IntegrationConfigTab), потому что там нет пары toolbar + ValidationBanner.
+**1. Sibling-инвариант нарушен в нескольких точках:**
 
-## Изменение
+- `src/api/services/launch_service.py:97` — API при `interrupt()` напрямую делает `(run_dir / "run.lock").unlink()` для cleanup stale-lock. Это обходит PipelineStateStore, хардкодит имя файла, и не делает content-match (читает pid, проверяет alive, а между этими шагами другой процесс может захватить lock заново — теоретическая race).
+- `src/main.py:335` — CLI-утилита `_load_config_for_run()` читает `pipeline_state.json` напрямую через `json.loads(state_file.read_text())` вместо `PipelineStateStore(run_dir).load()`. Дублирует десериализационную логику и не проверяет schema_version.
 
-**Единственная правка:** `web/src/components/ProjectTabs/ConfigTab.tsx`, строка 244.
+**2. TUI — устаревшая функциональность:**
 
-Сейчас:
-```tsx
-<div className="space-y-3">
+Web — основной UI. TUI (`src/tui/`, ~1177 LOC + 11 тестов на ~2141 LOC) не нужен. Единственный внешний потребитель — CLI-команда `ryotenkai tui` в `src/main.py:1270-1332`. Зависимость `textual[syntax]>=8.1.0,<9.0.0` используется только TUI. Упоминания в README.md (TUI-секция + 3 скриншота), CONTRIBUTING.md, run.sh, docs/web-ui.md.
+
+## Изменения
+
+### Часть A: Sibling-invariant fix
+
+**A1. Новая функция в [src/pipeline/state/store.py](../../src/pipeline/state/store.py):**
+
+Добавить рядом с `acquire_run_lock()`:
+
+```python
+def read_lock_pid(lock_path: Path) -> int | None:
+    """Read pid= line from a run.lock file. None if missing/corrupt."""
+    try:
+        content = lock_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("pid="):
+            with contextlib.suppress(ValueError):
+                return int(line.split("=", 1)[1])
+    return None
+
+
+def remove_stale_lock(lock_path: Path, *, expected_pid: int) -> bool:
+    """Best-effort unlink of a run.lock whose current pid matches expected_pid.
+    Returns True if unlinked, False if pid drifted (another process took the lock) or file gone.
+    Race-safe: re-reads pid from the file right before unlink; skips if it changed.
+    """
+    current = read_lock_pid(lock_path)
+    if current != expected_pid:
+        return False
+    with contextlib.suppress(FileNotFoundError):
+        lock_path.unlink()
+    return True
 ```
 
-Станет:
-```tsx
-<div className="pb-3 border-b border-line-1 space-y-3">
+Канонический `read_lock_pid` переезжает из `src/pipeline/launch/runtime.py:174-185` в `store.py` (лучшее место: read/write lock-файла в одном модуле). Старое место превращается в re-export (`from src.pipeline.state.store import read_lock_pid`), чтобы не ломать API `src.pipeline.launch`.
+
+**A2. Обновить API-сервис:**
+
+В [src/api/services/launch_service.py](../../src/api/services/launch_service.py) строки 90-102:
+
+```python
+def interrupt(run_dir: Path) -> InterruptResponse:
+    store = PipelineStateStore(run_dir)
+    pid = read_lock_pid(store.lock_path)
+    if pid is None:
+        return InterruptResponse(interrupted=False, pid=None, reason="no_lock_file")
+    if not is_process_alive(pid):
+        remove_stale_lock(store.lock_path, expected_pid=pid)
+        return InterruptResponse(interrupted=False, pid=pid, reason="process_not_found")
+    ok = interrupt_launch_process(pid)
+    if not ok:
+        return InterruptResponse(interrupted=False, pid=pid, reason="signal_failed")
+    return InterruptResponse(interrupted=True, pid=pid, reason=None)
 ```
 
-Всё остальное в файле остаётся как есть.
+Замена: `(run_dir / "run.lock").unlink()` → `remove_stale_lock(store.lock_path, expected_pid=pid)`. Импорты: `PipelineStateStore`, `read_lock_pid`, `remove_stale_lock` из `src.pipeline.state.store` (или через `src.pipeline.launch` для read_lock_pid, т.к. он там reexport).
 
-### Детали дизайна
+**A3. CLI-утилита `_load_config_for_run` в [src/main.py](../../src/main.py):330-354:**
 
-1. **Без `mb-3`.** Плановый документ предлагает `pb-3 border-b border-line-1 mb-3 space-y-3`, но внешний враппер уже имеет `space-y-4` (строка 243), который даёт `margin-top: 16px` каждому следующему ребёнку. Добавление `mb-3` (12 px) сложится с этим в ~28 px воздуха между hairline и формой — это перебор. `pb-3 border-b border-line-1` достаточно: 12 px внутреннего отступа, тонкая линия, затем естественный 16-px промежуток от `space-y-4`.
+Заменить ручное чтение `pipeline_state.json` на `PipelineStateStore(run_dir).load()`:
 
-2. **Draft-restore блок остаётся внутри chrome.** Блок «Local draft available» (строки 331-370) — это page-level state (восстановить локальный черновик), а не содержимое формы. Семантически он принадлежит chrome. К тому же он условный — в обычном случае его нет, и hairline сразу упирается в форму.
+```python
+if run_dir is not None:
+    try:
+        state = PipelineStateStore(run_dir.expanduser().resolve()).load()
+    except PipelineStateLoadError as exc:
+        raise ValueError(f"Cannot load state for {run_dir}: {exc}") from exc
+    config_path_str = state.config_path
+    if not config_path_str:
+        raise ValueError(
+            f"Run '{run_dir.name}' was created before config tracking was added.\n"
+            f"Pass the config explicitly:\n"
+            f"  ./run.sh /path/to/config.yaml {run_dir}"
+        )
+    resolved = Path(config_path_str)
+    if not resolved.exists():
+        raise ValueError(
+            f"Config from state no longer exists: {resolved}\nPass --config explicitly to override."
+        )
+    return resolved
+```
 
-3. **Scope строго ConfigTab.tsx.** ProviderConfigTab и IntegrationConfigTab не трогаем — там нет переключателя Form/YAML + ValidationBanner, chrome-область нерелевантна.
+### Часть B: Hard-remove TUI
+
+**B1. Удалить каталоги целиком:**
+- `src/tui/` (весь)
+- `src/tests/unit/tui/` (весь)
+
+**B2. Удалить CLI-команду `tui` из [src/main.py](../../src/main.py):1270-1332** (Typer `@app.command(name="tui")` функция `ryotenkai_tui` + её хелперы; ~63 строки).
+
+Проверить и удалить относящиеся к ней тесты в `src/tests/unit/test_main_cli.py` (grep по `tui` / `ryotenkai_tui`).
+
+**B3. Удалить зависимость из [pyproject.toml](../../pyproject.toml):**
+
+Убрать строку `"textual[syntax]>=8.1.0,<9.0.0",` (строка 28).
+
+**B4. Документация:**
+
+- [README.md](../../README.md) — удалить TUI-секцию «### Interactive TUI», все упоминания `ryotenkai tui`, ссылки на `tui_runs_list.png`, `tui_run_detail.png`, `tui_eval_answers.png` + сами файлы скриншотов, строку `├── tui/             # Terminal UI (Textual)` из дерева модулей.
+- [CONTRIBUTING.md](../../CONTRIBUTING.md) — удалить строку `- 'src/tui/' — Terminal UI (Textual)`.
+- [run.sh](../../run.sh) — удалить ~6 строк документации TUI-команды и примеров.
+- [docs/web-ui.md](../../docs/web-ui.md) — переписать строки 5, 60, 94-97: вместо «CLI/TUI/Web UI coexist» → «CLI/Web UI coexist»; удалить параллели с TUI как активным клиентом.
+
+### Часть C: Обновление ADR
+
+**C1.** Добавить **active** ADR: `TUI removed — web is the canonical interactive UI` (context + decision + rationale + consequences), с affected_files = удалённые пути.
+
+**C2.** Обновить **существующую active ADR** `Sibling Client Architecture for Pipeline State` (id поиск через `update_decision_records(action="list", filter_tag="architecture")`): в `decision` убрать упоминание TUI; в `consequences` добавить «TUI removed 2026-04; CLI + Web UI are the two sibling clients going forward». Добавить `src/pipeline/state/store.py` (со ссылкой на `remove_stale_lock`) в affected_files.
 
 ## Критические файлы
 
-- **Изменяется:** [`web/src/components/ProjectTabs/ConfigTab.tsx`](../../.claude/worktrees/jolly-lichterman-01f936/web/src/components/ProjectTabs/ConfigTab.tsx) — строка 244
-- **Только для сверки (не менять):** [`web/src/components/ProjectTabs/ProviderConfigTab.tsx`](../../.claude/worktrees/jolly-lichterman-01f936/web/src/components/ProjectTabs/ProviderConfigTab.tsx), [`web/src/components/ProjectTabs/IntegrationConfigTab.tsx`](../../.claude/worktrees/jolly-lichterman-01f936/web/src/components/ProjectTabs/IntegrationConfigTab.tsx)
-- **Evidence doc:** [`docs/plans/humble-frolicking-acorn.md`](../../.claude/worktrees/jolly-lichterman-01f936/docs/plans/humble-frolicking-acorn.md) §5 (строки 97-108)
+**Изменяются:**
+- [src/pipeline/state/store.py](../../src/pipeline/state/store.py) — добавить `read_lock_pid`, `remove_stale_lock`
+- [src/pipeline/launch/runtime.py](../../src/pipeline/launch/runtime.py) — `read_lock_pid` становится re-export
+- [src/api/services/launch_service.py](../../src/api/services/launch_service.py) — использовать новые функции
+- [src/main.py](../../src/main.py) — заменить ручной load на `PipelineStateStore.load()`, удалить `tui`-команду
+- [pyproject.toml](../../pyproject.toml) — убрать `textual[syntax]`
+- [README.md](../../README.md), [CONTRIBUTING.md](../../CONTRIBUTING.md), [run.sh](../../run.sh), [docs/web-ui.md](../../docs/web-ui.md)
 
-Тестов, покрывающих layout ConfigTab, в коде нет — верификация ручная через preview.
+**Удаляются целиком:**
+- `src/tui/`
+- `src/tests/unit/tui/`
+
+**Только для сверки (не менять):**
+- [src/pipeline/state/run_lock_guard.py](../../src/pipeline/state/run_lock_guard.py) — Invariant #1 reference
+- [src/api/services/delete_service.py](../../src/api/services/delete_service.py), [src/api/services/run_service.py](../../src/api/services/run_service.py) — используют `read_lock_pid` только для чтения, safe
+
+**Для follow-up (вне этого плана):**
+- `scripts/batch_smoke.py:151` — читает `pipeline_state.json` напрямую; оставить на будущее, это вспомогательный скрипт.
+- `src/pipeline/state/queries.py`, `src/pipeline/run_queries.py` — `.exists()` на state-файле при скане run-директорий; read-only, приемлемо.
 
 ## Verification
 
-1. Запустить preview-сервер (`preview_start` с конфигурацией web-dev из `.claude/launch.json`), открыть `/projects/<any>/config`.
+1. **Тесты:** `pytest` — всё должно проходить. Особенно:
+   - `src/tests/integration/api/test_launch_and_interrupt.py` — покрывает interrupt() со stale-lock (строка 77, 106-112).
+   - `src/tests/e2e/api/test_full_launch_cycle.py` — e2e flow, строка 173 проверяет что run.lock удаляется после "stale" pid=999999.
 
-2. Через `preview_inspect` проверить на chrome-враппере (`.space-y-4 > .space-y-3`):
-   - `border-bottom-width: 1px`
-   - `border-bottom-style: solid`
-   - `padding-bottom: 12px`
-   - `margin-bottom: 0px` (подтверждает, что `mb-3` корректно опущен)
+2. **Lint/Type:** `ruff check .` + `ruff format .` + `mypy .` — без ошибок.
 
-3. Через `preview_inspect` на форме (второй ребёнок `.space-y-4`): `margin-top: 16px` (штатный зазор `space-y-4`).
+3. **Grep-проверки после удаления TUI:**
+   ```
+   grep -R "src\.tui\|from src\.tui\|import src\.tui" src/ tests/ scripts/ docs/ web/ README.md CONTRIBUTING.md run.sh
+   ```
+   Ожидание: 0 матчей (кроме plan-файлов в docs/plans/).
+   ```
+   grep -R "textual" src/ scripts/
+   ```
+   Ожидание: 0 матчей.
 
-4. `preview_screenshot` во Form- и YAML-режимах: hairline занимает всю ширину content-pane, не смещается при переключении. Блок Save/Validate ниже визуально не изменился.
+4. **CLI:** после изменений запустить `python -m src.main --help` — команды `tui` быть не должно, остальные команды присутствуют.
 
-5. Если удастся вызвать draft-restore (сохранить локальный черновик и перезагрузить страницу): блок draft-restore помещается внутри chrome с 12-px зазором до hairline.
+5. **Integration smoke:** поднять web-backend (`python -m src.main serve ...`), убедиться что `/api/v1/runs/<id>/interrupt` нормально работает и корректно удаляет stale lock (можно подделать через `(run_dir / "run.lock").write_text("pid=999999\n...")`).
 
 ## Обязательный пост-шаг
 
-После правки записать в Repowise новую ADR через `update_decision_records(action="create")`:
-
-- `title`: "ConfigTab page-chrome separation"
-- `status`: `active`
-- `context`: краткое описание проблемы (toolbar + banner сливались с формой)
-- `decision`: wrap в `pb-3 border-b border-line-1 space-y-3`, без `mb-3`
-- `rationale`: single hairline = Notion/Shopify content-pane pattern; outer `space-y-4` уже держит вертикальный ритм
-- `alternatives`: две линии (over-box), draft-restore снаружи (слишком большой зазор), `mb-3` буквально по плану (стекается до 28 px)
-- `consequences`: 12 + 16 = 28 px зазор chrome→form; sibling-табы не затронуты
-- `affected_files`: `["web/src/components/ProjectTabs/ConfigTab.tsx"]`
-- `tags`: `["ui", "layout", "project-config"]`
-
-Существующую proposed-ADR «Page Chrome Separation» (readme_mining, 60%) перевести в `superseded` со ссылкой на новую.
+После завершения правок: `update_decision_records` — создание ADR «TUI removed» и обновление существующего «Sibling Client Architecture» (см. §C).

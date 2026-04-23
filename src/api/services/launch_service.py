@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +21,7 @@ from src.pipeline.launch import (
     validate_resume_run,
 )
 from src.pipeline.project.store import ProjectStore, ProjectStoreError
+from src.pipeline.state import PipelineStateStore, remove_stale_lock
 
 
 def _project_env_for_run_dir(run_dir: Path) -> dict[str, str]:
@@ -92,9 +91,11 @@ def interrupt(run_dir: Path) -> InterruptResponse:
     if pid is None:
         return InterruptResponse(interrupted=False, pid=None, reason="no_lock_file")
     if not is_process_alive(pid):
-        # Stale lock — remove it (best-effort) so subsequent launches aren't blocked.
-        with contextlib.suppress(OSError):
-            (run_dir / "run.lock").unlink()
+        # Stale lock — route removal through PipelineStateStore so the sibling-client
+        # invariant (only state.store owns run.lock lifecycle) is preserved.
+        # remove_stale_lock re-reads the pid right before unlink; if another process
+        # legitimately acquired the lock in the meantime the file is left untouched.
+        remove_stale_lock(PipelineStateStore(run_dir).lock_path, expected_pid=pid)
         return InterruptResponse(interrupted=False, pid=pid, reason="process_not_found")
     ok = interrupt_launch_process(pid)
     if not ok:

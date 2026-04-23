@@ -339,14 +339,6 @@ ryotenkai train --config my_config.yaml
 ryotenkai train-local --config my_config.yaml
 ```
 
-### Interactive TUI
-
-```bash
-ryotenkai tui
-```
-
-The TUI provides a navigable dashboard for browsing runs, inspecting stage statuses, and monitoring live pipelines.
-
 ---
 
 ## Configuration
@@ -487,7 +479,6 @@ Build locally or push to Docker Hub. See [`docker/training/README.md`](docker/tr
 | `ryotenkai validate-dataset --config <path>` | Run dataset validation only |
 | `ryotenkai config-validate --config <path>` | Static config pre-flight checks |
 | `ryotenkai info --config <path>` | Show pipeline and model configuration |
-| `ryotenkai tui [run_dir]` | Launch interactive TUI |
 | `ryotenkai inspect-run <run_dir>` | Inspect a run directory |
 | `ryotenkai runs-list [dir]` | List all runs with summary |
 | `ryotenkai logs <run_dir>` | Show pipeline log for a run |
@@ -499,40 +490,9 @@ Build locally or push to Docker Hub. See [`docker/training/README.md`](docker/tr
 
 ---
 
-## Terminal UI (TUI)
-
-RyotenkAI includes a built-in terminal interface for monitoring and inspecting training runs:
-
-```bash
-ryotenkai tui            # browse all runs
-ryotenkai tui <run_dir>  # open a specific run
-```
-
-**Runs list** — overview of all pipeline runs with status, duration, and config name:
-
-<p align="center">
-  <img src="docs/screenshots/tui_runs_list.png" alt="TUI Runs List" width="800">
-</p>
-
-**Run detail** — drill into any run to see stages, timing, outputs, and validation results:
-
-<p align="center">
-  <img src="docs/screenshots/tui_run_detail.png" alt="TUI Run Detail" width="800">
-</p>
-
-**Evaluation answers** — review model outputs side-by-side with expected answers:
-
-<p align="center">
-  <img src="docs/screenshots/tui_eval_answers.png" alt="TUI Evaluation Answers" width="800">
-</p>
-
-The TUI provides tabs for **Details**, **Logs**, **Inference**, **Eval**, and **Report** — everything needed to understand a training run without leaving the terminal.
-
----
-
 ## Web UI
 
-Browser-based control plane for the pipeline. The FastAPI backend and React frontend are sibling clients to the same file-based state store used by the CLI and TUI — they don't wrap the CLI via subprocess.
+Browser-based control plane for the pipeline. The FastAPI backend and React frontend are sibling clients to the same file-based state store used by the CLI — they don't wrap the CLI via subprocess.
 
 ```bash
 # Backend
@@ -598,7 +558,6 @@ ryotenkai/
 │   ├── evaluation/      # Model evaluation plugins
 │   ├── data/            # Dataset handling and validation plugins
 │   ├── reports/         # Report generation plugins
-│   ├── tui/             # Terminal UI (Textual)
 │   ├── utils/           # Shared utilities
 │   └── tests/           # Test suite
 ├── docker/
