@@ -88,3 +88,138 @@ def test_reports_block_is_not_accepted_on_any_kind() -> None:
     body["reports"] = {"order": 10}
     with pytest.raises(ValidationError):
         PluginManifest.model_validate(body)
+
+
+# ---------------------------------------------------------------------------
+# Schema v3 — ParamFieldSchema & JSON Schema transform.
+# ---------------------------------------------------------------------------
+
+
+def test_param_field_schema_required_and_default_are_mutually_exclusive() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {
+        "foo": {"type": "integer", "required": True, "default": 10},
+    }
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_enum_requires_options() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "enum"}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_options_invalid_for_non_enum() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "integer", "options": [1, 2, 3]}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_min_greater_than_max() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "integer", "min": 10, "max": 5}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_default_out_of_range() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "integer", "min": 0, "max": 10, "default": 100}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_default_not_in_enum() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {
+        "mode": {"type": "enum", "options": ["a", "b"], "default": "c"},
+    }
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_min_max_only_for_numeric() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "string", "min": 0}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_param_field_schema_secret_only_for_string() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"foo": {"type": "integer", "secret": True}}
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_ui_manifest_emits_json_schema_for_params() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {
+        "sample_size": {
+            "type": "integer",
+            "min": 1,
+            "max": 1000,
+            "default": 10,
+            "title": "Sample size",
+            "description": "Rows drawn for the check.",
+        },
+        "mode": {
+            "type": "enum",
+            "options": ["compile", "semantic_only"],
+            "default": "compile",
+        },
+        "must_set": {"type": "string", "required": True},
+    }
+    ui = PluginManifest.model_validate(body).ui_manifest()
+    js = ui["params_schema"]
+    assert js["type"] == "object"
+    assert js["additionalProperties"] is False
+    assert js["required"] == ["must_set"]  # only required=True fields
+    assert js["properties"]["sample_size"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "default": 10,
+        "title": "Sample size",
+        "description": "Rows drawn for the check.",
+    }
+    assert js["properties"]["mode"] == {
+        "type": "string",
+        "enum": ["compile", "semantic_only"],
+        "default": "compile",
+    }
+    assert js["properties"]["must_set"] == {"type": "string"}
+
+
+def test_ui_manifest_marks_secret_fields() -> None:
+    body = _base_plugin_body()
+    body["params_schema"] = {"api_key": {"type": "string", "secret": True, "required": True}}
+    ui = PluginManifest.model_validate(body).ui_manifest()
+    assert ui["params_schema"]["properties"]["api_key"]["x-secret"] is True
+
+
+# ---------------------------------------------------------------------------
+# supported_strategies — reward-only, required.
+# ---------------------------------------------------------------------------
+
+
+def test_reward_plugin_requires_supported_strategies() -> None:
+    body = _base_plugin_body(kind="reward")
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)
+
+
+def test_reward_plugin_accepts_supported_strategies() -> None:
+    body = _base_plugin_body(kind="reward", supported_strategies=["grpo", "sapo"])
+    manifest = PluginManifest.model_validate(body)
+    assert manifest.plugin.supported_strategies == ["grpo", "sapo"]
+    assert manifest.ui_manifest()["supported_strategies"] == ["grpo", "sapo"]
+
+
+def test_validation_plugin_rejects_supported_strategies() -> None:
+    body = _base_plugin_body(kind="validation", supported_strategies=["grpo"])
+    with pytest.raises(ValidationError):
+        PluginManifest.model_validate(body)

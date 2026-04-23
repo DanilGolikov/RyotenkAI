@@ -7,7 +7,7 @@ from src.api.services import plugin_service
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
-_KINDS: tuple[PluginKind, ...] = ("reward", "validation", "evaluation")
+_KINDS: tuple[PluginKind, ...] = ("reward", "validation", "evaluation", "reports")
 
 
 @router.get("/{kind}", response_model=PluginListResponse)

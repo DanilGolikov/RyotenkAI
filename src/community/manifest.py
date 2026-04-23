@@ -1,4 +1,13 @@
-"""Pydantic models for community manifests (plugins and presets)."""
+"""Pydantic models for community manifests (plugins and presets).
+
+Schema v3 (2026-04): plugin params/thresholds are described via
+:class:`ParamFieldSchema` — a typed, field-level description that the
+UI can render as a proper form (labels, descriptions, defaults,
+required-markers) using the same ``FieldRenderer`` as the main
+config builder. At API boundary :meth:`PluginManifest.ui_manifest`
+emits the schemas in JSON Schema shape so the frontend does not
+need to know about our TOML-specific keys.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 PluginKind = Literal["validation", "evaluation", "reward", "reports"]
 
 Stability = Literal["stable", "beta", "experimental"]
+
+#: Leaf types accepted in ``[params_schema.X] type``. ``enum`` is rendered
+#: as a JSON-Schema string with an ``enum`` list; everything else maps
+#: directly to the same-named JSON Schema type.
+ParamFieldType = Literal["integer", "number", "string", "boolean", "enum"]
 
 
 class EntryPoint(BaseModel):
@@ -43,6 +57,123 @@ class CompatSpec(BaseModel):
     min_core_version: str = ""
 
 
+class ParamFieldSchema(BaseModel):
+    """Description of a single params/thresholds field.
+
+    One source-of-truth for everything the UI needs to render a field:
+    its type, bounds, default, label, help text, and whether the user
+    MUST supply a value. Transformed into JSON Schema via
+    :func:`field_to_json_schema` when the manifest goes over the wire.
+
+    Invariants (enforced in ``_check_constraints``):
+
+    - ``type == "enum"`` ⇒ ``options`` is a non-empty list.
+    - ``options`` is only valid when ``type == "enum"``.
+    - ``min`` / ``max`` are only valid for numeric types
+      (``integer`` / ``number``). ``min`` ≤ ``max``.
+    - ``required=True`` + ``default is not None`` is contradictory —
+      reject it so authors pick one intention (see R6 in the plan).
+    - ``default`` must fall inside ``options`` / ``[min, max]`` when
+      relevant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: ParamFieldType
+    title: str = ""
+    description: str = ""
+    default: Any = None
+    min: float | int | None = None
+    max: float | int | None = None
+    options: list[Any] = Field(default_factory=list)
+    required: bool = False
+    secret: bool = False
+
+    @model_validator(mode="after")
+    def _check_constraints(self) -> ParamFieldSchema:
+        # enum / options wiring
+        if self.type == "enum":
+            if not self.options:
+                raise ValueError("type='enum' requires a non-empty 'options' list")
+        elif self.options:
+            raise ValueError("'options' is only valid for type='enum'")
+
+        # min / max only for numeric scalars
+        numeric_types = {"integer", "number"}
+        if self.min is not None or self.max is not None:
+            if self.type not in numeric_types:
+                raise ValueError(
+                    f"'min'/'max' are only valid for numeric types "
+                    f"(integer/number); got type={self.type!r}"
+                )
+            if self.min is not None and self.max is not None and self.min > self.max:
+                raise ValueError(f"'min' ({self.min}) is greater than 'max' ({self.max})")
+
+        # required + default — contradictory
+        if self.required and self.default is not None:
+            raise ValueError(
+                "'required=true' forbids 'default' — pick one: either the "
+                "user must supply a value, or you offer a sensible default"
+            )
+
+        # default range checks
+        if self.default is not None:
+            if self.type == "enum" and self.default not in self.options:
+                raise ValueError(
+                    f"default={self.default!r} is not in options={self.options}"
+                )
+            if self.type in numeric_types:
+                if self.min is not None and self.default < self.min:
+                    raise ValueError(f"default={self.default} is below min={self.min}")
+                if self.max is not None and self.default > self.max:
+                    raise ValueError(f"default={self.default} is above max={self.max}")
+
+        # secret only makes sense for strings (passwords, tokens, URLs)
+        if self.secret and self.type != "string":
+            raise ValueError("'secret=true' is only valid for type='string'")
+
+        return self
+
+
+def field_to_json_schema(field: ParamFieldSchema) -> dict[str, Any]:
+    """Render one :class:`ParamFieldSchema` as a JSON Schema node."""
+    node: dict[str, Any] = {}
+    # enum → string with an enum list (standard JSON Schema idiom).
+    if field.type == "enum":
+        node["type"] = "string"
+        node["enum"] = list(field.options)
+    else:
+        node["type"] = field.type
+    if field.title:
+        node["title"] = field.title
+    if field.description:
+        node["description"] = field.description
+    if field.default is not None:
+        node["default"] = field.default
+    if field.min is not None:
+        node["minimum"] = field.min
+    if field.max is not None:
+        node["maximum"] = field.max
+    # Custom extension — UI uses this to render <input type="password">
+    # and to hide the value from logs. Namespaced to avoid collision
+    # with any future standard JSON Schema keyword.
+    if field.secret:
+        node["x-secret"] = True
+    return node
+
+
+def params_to_json_schema(
+    fields: dict[str, ParamFieldSchema],
+) -> dict[str, Any]:
+    """Render a group of fields as a JSON Schema object."""
+    return {
+        "type": "object",
+        "properties": {name: field_to_json_schema(f) for name, f in fields.items()},
+        "required": sorted(name for name, f in fields.items() if f.required),
+        "additionalProperties": False,
+    }
+
+
 class PluginSpec(BaseModel):
     """Body of [plugin] section in plugin manifest.toml."""
 
@@ -56,11 +187,32 @@ class PluginSpec(BaseModel):
     stability: Stability = "stable"
     description: str = ""
     entry_point: EntryPoint
+    #: For kind="reward" this MUST be a non-empty list of strategy types
+    #: the plugin is compatible with (e.g. ``["grpo", "sapo"]``). For
+    #: every other kind the field MUST be empty — a validation plugin
+    #: has no business declaring strategy compatibility.
+    supported_strategies: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _fill_name(self) -> PluginSpec:
         if not self.name:
             object.__setattr__(self, "name", self.id)
+        return self
+
+    @model_validator(mode="after")
+    def _check_supported_strategies(self) -> PluginSpec:
+        if self.kind == "reward":
+            if not self.supported_strategies:
+                raise ValueError(
+                    "reward plugins must declare 'supported_strategies' "
+                    "(e.g. ['grpo', 'sapo']) — this field is how the UI "
+                    "knows which strategies can attach this plugin"
+                )
+        elif self.supported_strategies:
+            raise ValueError(
+                f"'supported_strategies' is only meaningful for reward plugins; "
+                f"plugin kind is {self.kind!r}"
+            )
         return self
 
 
@@ -70,8 +222,8 @@ class PluginManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     plugin: PluginSpec
-    params_schema: dict[str, Any] = Field(default_factory=dict)
-    thresholds_schema: dict[str, Any] = Field(default_factory=dict)
+    params_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
+    thresholds_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
     suggested_params: dict[str, Any] = Field(default_factory=dict)
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
     secrets: SecretsSpec = Field(default_factory=SecretsSpec)
@@ -92,7 +244,7 @@ class PluginManifest(BaseModel):
     @staticmethod
     def _assert_keys_subset(
         suggestions: dict[str, Any],
-        schema: dict[str, Any],
+        schema: dict[str, ParamFieldSchema],
         *,
         label: str,
     ) -> None:
@@ -105,7 +257,12 @@ class PluginManifest(BaseModel):
             )
 
     def ui_manifest(self) -> dict[str, Any]:
-        """Flatten into the shape consumed by the web UI / ``/plugins`` API."""
+        """Flatten into the shape consumed by the web UI / ``/plugins`` API.
+
+        ``params_schema`` / ``thresholds_schema`` come out as JSON Schema
+        ``object`` nodes ready to drop into the same ``FieldRenderer``
+        that powers the main config builder.
+        """
         return {
             "id": self.plugin.id,
             "name": self.plugin.name,
@@ -113,8 +270,10 @@ class PluginManifest(BaseModel):
             "description": self.plugin.description,
             "category": self.plugin.category,
             "stability": self.plugin.stability,
-            "params_schema": dict(self.params_schema),
-            "thresholds_schema": dict(self.thresholds_schema),
+            "kind": self.plugin.kind,
+            "supported_strategies": list(self.plugin.supported_strategies),
+            "params_schema": params_to_json_schema(self.params_schema),
+            "thresholds_schema": params_to_json_schema(self.thresholds_schema),
             "suggested_params": dict(self.suggested_params),
             "suggested_thresholds": dict(self.suggested_thresholds),
         }
@@ -203,6 +362,8 @@ class PresetManifest(BaseModel):
 __all__ = [
     "CompatSpec",
     "EntryPoint",
+    "ParamFieldSchema",
+    "ParamFieldType",
     "PluginKind",
     "PluginManifest",
     "PluginSpec",
@@ -213,4 +374,6 @@ __all__ = [
     "PresetSpec",
     "SecretsSpec",
     "Stability",
+    "field_to_json_schema",
+    "params_to_json_schema",
 ]

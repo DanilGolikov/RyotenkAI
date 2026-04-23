@@ -105,6 +105,13 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         else:
             checks.append(ConfigCheck(label="Evaluation disabled — plugin check skipped", status="ok"))
 
+        # Reward ↔ strategy compatibility. Each training phase with a
+        # reward_plugin must reference a community reward plugin whose
+        # [plugin].supported_strategies contains the phase's strategy_type.
+        # Unlike pure schema checks, this one needs the community catalog,
+        # so it lives here (not in Pydantic validators).
+        _check_reward_strategy_compat(cfg, checks, field_errors)
+
         # Stage consistency
         inference_enabled = getattr(getattr(cfg, "inference", None), "enabled", False)
         eval_enabled = eval_cfg and getattr(eval_cfg, "enabled", False)
@@ -126,6 +133,93 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         checks=checks,
         field_errors=field_errors,
     )
+
+
+def _check_reward_strategy_compat(
+    cfg: object,
+    checks: list[ConfigCheck],
+    field_errors: dict[str, list[str]],
+) -> None:
+    """Ensure every training phase's ``reward_plugin`` is compatible with
+    the phase's ``strategy_type``.
+
+    Cross-validator — lives outside Pydantic because it needs the
+    community catalog (reward plugin's ``supported_strategies`` comes
+    from the manifest, not the YAML). Mirrors existing validator pattern
+    in :mod:`src.config.validators.runtime`.
+    """
+    training = getattr(cfg, "training", None)
+    if training is None:
+        return
+    strategies = getattr(training, "strategies", None) or []
+    if not strategies:
+        return
+
+    # Load once per validation — cheap and uses the mtime-fingerprint
+    # cache already in CommunityCatalog.
+    from src.community.catalog import catalog
+
+    catalog.ensure_loaded()
+    reward_plugins = {entry.manifest.plugin.id: entry.manifest.plugin for entry in catalog.plugins("reward")}
+
+    any_issue = False
+    for idx, strat in enumerate(strategies):
+        params = getattr(strat, "params", {}) or {}
+        reward_id = params.get("reward_plugin") if isinstance(params, dict) else None
+        if not reward_id:
+            continue
+        strategy_type = (getattr(strat, "strategy_type", "") or "").lower()
+        path = f"training.strategies.{idx}.params.reward_plugin"
+
+        spec = reward_plugins.get(reward_id)
+        if spec is None:
+            any_issue = True
+            msg = (
+                f"Reward plugin '{reward_id}' is not in the community catalog. "
+                f"Install it under community/reward/ or pick another plugin."
+            )
+            field_errors.setdefault(path, []).append(msg)
+            checks.append(
+                ConfigCheck(
+                    label=f"Strategy #{idx + 1} ({strategy_type}) reward plugin missing",
+                    status="fail",
+                    detail=f"{reward_id} (not found)",
+                )
+            )
+            continue
+
+        supported = [s.lower() for s in spec.supported_strategies]
+        if strategy_type not in supported:
+            any_issue = True
+            msg = (
+                f"Reward plugin '{reward_id}' supports {supported} but "
+                f"strategy_type is {strategy_type!r}. Either pick a compatible "
+                f"reward plugin or change the strategy."
+            )
+            field_errors.setdefault(path, []).append(msg)
+            checks.append(
+                ConfigCheck(
+                    label=f"Strategy #{idx + 1} reward/strategy mismatch",
+                    status="fail",
+                    detail=f"{reward_id} supports {supported}, phase uses {strategy_type}",
+                )
+            )
+        else:
+            checks.append(
+                ConfigCheck(
+                    label=f"Strategy #{idx + 1} reward plugin compatible",
+                    status="ok",
+                    detail=f"{reward_id} → {strategy_type}",
+                )
+            )
+
+    if not any_issue and not any(
+        (getattr(s, "params", None) or {}).get("reward_plugin")
+        if isinstance(getattr(s, "params", None), dict) else False
+        for s in strategies
+    ):
+        # No reward plugins in use — not a failure, just a neutral note.
+        checks.append(ConfigCheck(label="No reward plugins configured", status="ok"))
 
 
 __all__ = ["validate_config"]

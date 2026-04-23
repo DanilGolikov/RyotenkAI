@@ -36,7 +36,7 @@ module = "plugin"
 class  = "MyJudgePlugin"
 
 [thresholds_schema.min_mean_score]
-type = "float"
+type = "number"
 min = 0.0
 max = 1.0
 default = 0.7

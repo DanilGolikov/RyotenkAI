@@ -41,8 +41,8 @@ def test_scaffold_plugin_is_fully_valid(tmp_path: Path) -> None:
     assert manifest.plugin.entry_point.class_name == "MyValidator"
     assert manifest.plugin.description == "Checks the thing."
     assert manifest.plugin.version == "0.1.0"
-    assert manifest.params_schema["sample_size"]["default"] == 5000
-    assert manifest.thresholds_schema["threshold"]["default"] == 100
+    assert manifest.params_schema["sample_size"].default == 5000
+    assert manifest.thresholds_schema["threshold"].default == 100
     assert manifest.suggested_params == {"sample_size": 5000}
     assert manifest.suggested_thresholds == {"threshold": 100}
 

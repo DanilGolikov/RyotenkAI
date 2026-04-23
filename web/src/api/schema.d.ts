@@ -1006,13 +1006,13 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "reward" | "validation" | "evaluation";
+            kind: "reward" | "validation" | "evaluation" | "reports";
             /** Plugins */
             plugins: components["schemas"]["PluginManifest"][];
         };
         /**
          * PluginManifest
-         * @description Normalised manifest surfaced to the web UI (Grafana-style).
+         * @description Normalised manifest surfaced to the web UI.
          */
         PluginManifest: {
             /** Id */
@@ -1024,11 +1024,6 @@ export interface components {
              * @default 1.0.0
              */
             version: string;
-            /**
-             * Priority
-             * @default 50
-             */
-            priority: number;
             /**
              * Description
              * @default
@@ -1044,6 +1039,13 @@ export interface components {
              * @default stable
              */
             stability: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "reward" | "validation" | "evaluation" | "reports";
+            /** Supported Strategies */
+            supported_strategies?: string[];
             /** Params Schema */
             params_schema?: {
                 [key: string]: unknown;
@@ -1965,7 +1967,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                kind: "reward" | "validation" | "evaluation";
+                kind: "reward" | "validation" | "evaluation" | "reports";
             };
             cookie?: never;
         };

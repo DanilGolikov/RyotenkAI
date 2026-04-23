@@ -11,11 +11,16 @@ from src.community.catalog import CommunityCatalog
 def _make_plugin(root: Path, kind: str, plugin_id: str, class_name: str) -> None:
     plugin_dir = root / kind / plugin_id
     plugin_dir.mkdir(parents=True)
+    # Reward plugins must declare ``supported_strategies`` — the schema
+    # rejects empty for kind="reward" (see PluginSpec._check_supported_strategies).
+    extra_spec = ""
+    if kind == "reward":
+        extra_spec = '\nsupported_strategies = ["grpo", "sapo"]'
     (plugin_dir / "manifest.toml").write_text(
         textwrap.dedent(f"""
             [plugin]
             id = "{plugin_id}"
-            kind = "{kind}"
+            kind = "{kind}"{extra_spec}
 
             [plugin.entry_point]
             module = "plugin"

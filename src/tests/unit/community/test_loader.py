@@ -105,6 +105,7 @@ def test_load_plugins_archive(tmp_path: Path) -> None:
                 [plugin]
                 id = "zipped"
                 kind = "reward"
+                supported_strategies = ["grpo"]
 
                 [plugin.entry_point]
                 module = "plugin"
@@ -197,6 +198,7 @@ def test_archive_only_plugin_still_loads(tmp_path: Path) -> None:
                 [plugin]
                 id = "only_zip"
                 kind = "reward"
+                supported_strategies = ["grpo"]
 
                 [plugin.entry_point]
                 module = "plugin"
