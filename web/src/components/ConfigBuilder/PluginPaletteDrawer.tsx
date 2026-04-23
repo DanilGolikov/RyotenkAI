@@ -95,19 +95,21 @@ export function PluginPaletteDrawer({
     })
   }
 
+  // Card-style palette — ``rounded-md border border-line-1`` matches
+  // the project's ``.card`` token so the aside reads as part of the
+  // same design language as the Providers / Catalog cards. The earlier
+  // ``border-l only`` treatment looked like an un-themed side panel.
+  //
   // ``self-start + sticky top-0`` pins the palette to the top of the
-  // scrolling tab panel. ``top-0`` (not ``top-20``) because the parent
-  // ``<div className="p-5 ... overflow-y-auto">`` in ProjectDetail is
-  // the scrollable ancestor — sticky offsets are measured relative to
-  // THAT container, not the viewport. Any value above 0 just pushes
-  // the palette down visually and leaves a gap at the top of the tab
-  // (reported: "у палитры отступ сверху большой").
+  // scrolling tab panel. ``top-0`` because the scrolling ancestor is
+  // ``<div className="p-5 overflow-y-auto">`` in ProjectDetail, not
+  // the viewport; any offset above 0 just leaves a gap.
   return (
-    <aside className="w-64 shrink-0 border-l border-line-1 bg-surface-1 flex flex-col max-h-full self-start sticky top-0">
-      <div className="px-3 py-2 border-b border-line-1">
-        <div className="text-2xs font-semibold text-ink-1">Plugin palette</div>
-        <div className="text-[0.65rem] text-ink-3 mt-0.5 leading-snug">
-          Expand a group below and drag a plugin into the matching section on the left.
+    <aside className="w-64 shrink-0 rounded-md border border-line-1 bg-surface-1 shadow-card flex flex-col max-h-[calc(100vh-9rem)] self-start sticky top-0 overflow-hidden">
+      <div className="px-3 py-2.5 border-b border-line-1">
+        <div className="flex items-baseline justify-between">
+          <div className="text-xs font-semibold text-ink-1">Palette</div>
+          <div className="text-[0.6rem] text-ink-4">drag to attach</div>
         </div>
         <input
           type="text"

@@ -334,17 +334,20 @@ export function PluginsTab({ projectId }: Props) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      <div className="flex gap-4">
+      {/* Save-state indicator floats top-right above the flex row so it
+          doesn't push the first section down — previously an always-
+          rendered status line forced the Validation header to sit lower
+          than the palette header, breaking vertical alignment. */}
+      <div className="flex items-center justify-end h-5 mb-2 text-2xs text-ink-3">
+        {saveMut.isPending ? 'Saving…' : saveMut.isSuccess ? 'Saved' : null}
+      </div>
+      {saveMut.error && (
+        <div className="rounded-md border border-err/40 bg-err/10 text-err text-xs px-3 py-2 mb-3">
+          {(saveMut.error as Error).message}
+        </div>
+      )}
+      <div className="flex gap-4 items-start">
         <div className="flex-1 min-w-0 space-y-5">
-          <div className="text-2xs text-ink-3">
-            {saveMut.isPending ? 'Saving…' : saveMut.isSuccess ? 'Saved' : ''}
-          </div>
-          {saveMut.error && (
-            <div className="rounded-md border border-err/40 bg-err/10 text-err text-xs px-3 py-2">
-              {(saveMut.error as Error).message}
-            </div>
-          )}
-
           {KIND_SECTIONS.map((section) => (
             <KindSection
               key={section.kind}
