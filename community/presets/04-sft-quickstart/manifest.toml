@@ -1,0 +1,22 @@
+[preset]
+id = "04-sft-quickstart"
+name = "SFT quickstart"
+description = "Minimal SFT loop on Qwen2.5-0.5B-Instruct — pure LoRA (not QLoRA), 1 epoch, batch 2 × grad_accum 1. Designed for a first dry run on a new dataset: fast iteration (<10 min on a 24 GB card), low LR, short sequences. Swap the dataset path, hit run, see whether your data even loads before you commit to long training."
+size_tier = "small"
+version = "1.0.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-0.5B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = []
+min_vram_gb      = 12
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to your training JSONL dataset"

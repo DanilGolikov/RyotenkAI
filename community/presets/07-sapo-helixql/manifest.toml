@@ -1,0 +1,26 @@
+[preset]
+id = "07-sapo-helixql"
+name = "SAPO · HelixQL"
+description = "Self-play adversarial prompt optimization on Qwen2.5-3B-Instruct, wired for the HelixQL DSL task. Uses the `helixql_sapo_prompt_contract` validator to enforce prompt shape, `helixql_gold_syntax_backend` for gold-answer validation, and the HelixQL-specific evaluation suite. Starting point for anyone training a structured-DSL code model — rewrite the `[evaluation]` / `[validation]` blocks for other DSLs, leaving the strategy untouched."
+size_tier = "medium"
+version = "1.0.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-3B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = [
+  "validation:helixql_sapo_prompt_contract",
+  "validation:helixql_gold_syntax_backend",
+  "evaluation:helixql_generated_syntax_backend",
+]
+min_vram_gb      = 24
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to SAPO JSONL (prompt + chosen + rejected with HelixQL-shaped chosen/rejected fields)"

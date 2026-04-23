@@ -119,7 +119,7 @@
           "config"
         ],
         "summary": "Presets",
-        "description": "Return curated starter configs from ``community/presets/``.\n\nEach preset lives in its own folder with a ``manifest.toml`` (id,\ndisplay name, description, size tier) and the actual config YAML\nreferenced via ``[preset.entry_point]``.",
+        "description": "Return curated starter configs from ``community/presets/``.\n\nEach preset lives in its own folder with a ``manifest.toml`` (id,\ndisplay name, description, size tier, optional v2 scope/requirements/\nplaceholders) and the actual config YAML referenced via\n``[preset.entry_point]``.",
         "operationId": "config-presets",
         "responses": {
           "200": {
@@ -128,6 +128,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ConfigPresetsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/presets/{preset_id}/preview": {
+      "post": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Preview Preset",
+        "description": "Dry-run: apply ``preset_id`` to ``current_config`` and return the\nresulting config plus a structured diff, requirements check, and\nplaceholder hints.\n\nThe endpoint never writes anything — it's what the frontend calls to\npopulate the Apply-preset modal (three sections: what changes / what's\npreserved / what the user still needs to fill).",
+        "operationId": "config-preview_preset",
+        "parameters": [
+          {
+            "name": "preset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Preset Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresetPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresetPreviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2141,6 +2194,33 @@
             "type": "string",
             "title": "Size Tier",
             "default": ""
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresetScopeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresetRequirementsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "placeholders": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Placeholders"
           }
         },
         "type": "object",
@@ -2868,6 +2948,209 @@
         ],
         "title": "PluginManifest",
         "description": "Normalised manifest surfaced to the web UI (Grafana-style)."
+      },
+      "PresetDiffEntry": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "added",
+              "removed",
+              "changed",
+              "unchanged"
+            ],
+            "title": "Kind"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "preset_replaced",
+              "preset_added",
+              "preset_preserved",
+              "no_scope"
+            ],
+            "title": "Reason"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "after": {
+            "title": "After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "kind",
+          "reason"
+        ],
+        "title": "PresetDiffEntry"
+      },
+      "PresetPlaceholderHint": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "hint": {
+            "type": "string",
+            "title": "Hint"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "hint"
+        ],
+        "title": "PresetPlaceholderHint"
+      },
+      "PresetPreviewRequest": {
+        "properties": {
+          "current_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Current Config"
+          }
+        },
+        "type": "object",
+        "title": "PresetPreviewRequest"
+      },
+      "PresetPreviewResponse": {
+        "properties": {
+          "resulting_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Resulting Config"
+          },
+          "diff": {
+            "items": {
+              "$ref": "#/components/schemas/PresetDiffEntry"
+            },
+            "type": "array",
+            "title": "Diff"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/PresetRequirementCheck"
+            },
+            "type": "array",
+            "title": "Requirements"
+          },
+          "placeholders": {
+            "items": {
+              "$ref": "#/components/schemas/PresetPlaceholderHint"
+            },
+            "type": "array",
+            "title": "Placeholders"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resulting_config",
+          "diff",
+          "requirements",
+          "placeholders"
+        ],
+        "title": "PresetPreviewResponse"
+      },
+      "PresetRequirementCheck": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "missing",
+              "warning"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "status"
+        ],
+        "title": "PresetRequirementCheck"
+      },
+      "PresetRequirementsOut": {
+        "properties": {
+          "hub_models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hub Models"
+          },
+          "provider_kind": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Provider Kind"
+          },
+          "required_plugins": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Plugins"
+          },
+          "min_vram_gb": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Vram Gb"
+          }
+        },
+        "type": "object",
+        "title": "PresetRequirementsOut",
+        "description": "Environmental prerequisites surfaced to the UI."
+      },
+      "PresetScopeOut": {
+        "properties": {
+          "replaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Replaces"
+          },
+          "preserves": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Preserves"
+          }
+        },
+        "type": "object",
+        "title": "PresetScopeOut",
+        "description": "Declared authority of a preset over top-level config keys."
       },
       "ProjectDetail": {
         "properties": {
