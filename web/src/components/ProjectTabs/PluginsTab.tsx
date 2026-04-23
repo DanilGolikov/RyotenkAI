@@ -22,6 +22,7 @@ import {
   useSaveProjectConfig,
 } from '../../api/hooks/useProjects'
 import { useAllPlugins } from '../../api/hooks/usePlugins'
+import { useReportDefaults } from '../../api/hooks/useReportDefaults'
 import type { PluginKind, PluginManifest } from '../../api/types'
 import { dumpYaml } from '../../lib/yaml'
 import { Spinner } from '../ui'
@@ -77,6 +78,7 @@ const KIND_SECTIONS: {
 export function PluginsTab({ projectId }: Props) {
   const configQuery = useProjectConfig(projectId)
   const pluginsAll = useAllPlugins()
+  const reportDefaultsQuery = useReportDefaults()
   const saveMut = useSaveProjectConfig(projectId)
   const parsed = configQuery.data?.parsed_json ?? {}
 
@@ -102,15 +104,53 @@ export function PluginsTab({ projectId }: Props) {
 
   // ---------- derived data ----------
 
+  // When the pipeline config omits ``reports.sections`` the backend
+  // falls back to ``DEFAULT_REPORT_SECTIONS``. Showing an empty Reports
+  // section here would be misleading ("I thought I had reports?") and
+  // makes drag-to-reorder impossible. We mirror the backend fallback:
+  // render defaults when sections is empty, and materialize them into
+  // the config on the first mutation (see ``maybeMaterializeReports``
+  // below).
+  const reportsInstancesMaterialized = useMemo(() => {
+    const explicit = readInstances('reports', parsed)
+    if (explicit.length > 0) return explicit
+    const defaults = reportDefaultsQuery.data?.sections ?? []
+    return defaults.map((id) => ({ instanceId: id, pluginId: id }))
+  }, [parsed, reportDefaultsQuery.data])
+
+  const reportsAreMaterialized = useMemo(() => {
+    const explicit = readInstances('reports', parsed)
+    return explicit.length > 0
+  }, [parsed])
+
   const instancesByKind = useMemo(() => {
     const out: Record<PluginKind, { instanceId: string; pluginId: string }[]> = {
       validation: readInstances('validation', parsed),
       evaluation: readInstances('evaluation', parsed),
       reward: readInstances('reward', parsed),
-      reports: readInstances('reports', parsed),
+      reports: reportsInstancesMaterialized,
     }
     return out
-  }, [parsed])
+  }, [parsed, reportsInstancesMaterialized])
+
+  /** Returns a parsed config with the rendered (possibly default) reports
+   *  list written into ``reports.sections`` so the first add/remove/
+   *  reorder doesn't silently lose the defaults the user was staring at. */
+  const materializeReportsIfNeeded = useCallback(
+    (source: Record<string, unknown>): Record<string, unknown> => {
+      if (reportsAreMaterialized) return source
+      const defaults = reportDefaultsQuery.data?.sections
+      if (!defaults || defaults.length === 0) return source
+      const next = structuredClone(source) as Record<string, unknown>
+      const reports = (next.reports && typeof next.reports === 'object' && !Array.isArray(next.reports))
+        ? (next.reports as Record<string, unknown>)
+        : {}
+      reports.sections = [...defaults]
+      next.reports = reports
+      return next
+    },
+    [reportsAreMaterialized, reportDefaultsQuery.data],
+  )
 
   const attachedIdsByKind = useMemo(() => {
     const out: Record<PluginKind, Set<string>> = {
@@ -155,26 +195,29 @@ export function PluginsTab({ projectId }: Props) {
     async (kind: PluginKind, pluginId: string) => {
       const manifest = manifestById.get(pluginId)
       if (!manifest) return
-      const { next } = addInstance(kind, parsed, manifest)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const { next } = addInstance(kind, base, manifest)
       await commit(next)
     },
-    [commit, manifestById, parsed],
+    [commit, manifestById, parsed, materializeReportsIfNeeded],
   )
 
   const handleRemove = useCallback(
     async (kind: PluginKind, instanceId: string) => {
-      const next = removeInstance(kind, parsed, instanceId)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const next = removeInstance(kind, base, instanceId)
       await commit(next)
     },
-    [commit, parsed],
+    [commit, parsed, materializeReportsIfNeeded],
   )
 
   const handleReorder = useCallback(
     async (kind: PluginKind, orderedIds: string[]) => {
-      const next = reorderInstances(kind, parsed, orderedIds)
+      const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
+      const next = reorderInstances(kind, base, orderedIds)
       await commit(next)
     },
-    [commit, parsed],
+    [commit, parsed, materializeReportsIfNeeded],
   )
 
   const handleSaveConfigure = useCallback(
@@ -303,6 +346,10 @@ export function PluginsTab({ projectId }: Props) {
                 instanceId: inst.instanceId,
                 pluginId: inst.pluginId,
               })}
+              onInfo={(inst) => {
+                const m = manifestById.get(inst.pluginId)
+                if (m) setInfoPlugin(m)
+              }}
             />
           ))}
         </div>
@@ -366,6 +413,7 @@ function KindSection({
   activeStrategyTypes,
   onRemove,
   onConfigure,
+  onInfo,
 }: {
   kind: PluginKind
   label: string
@@ -376,6 +424,7 @@ function KindSection({
   activeStrategyTypes: Set<string>
   onRemove: (instanceId: string) => void
   onConfigure: (instance: { instanceId: string; pluginId: string }) => void
+  onInfo: (instance: { instanceId: string; pluginId: string }) => void
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `container:${kind}`,
@@ -416,6 +465,7 @@ function KindSection({
                   sortable={sortable}
                   onRemove={() => onRemove(inst.instanceId)}
                   onConfigure={manifest ? () => onConfigure(inst) : undefined}
+                  onInfo={manifest ? () => onInfo(inst) : undefined}
                   warning={warning}
                 />
               )

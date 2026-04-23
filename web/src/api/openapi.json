@@ -626,6 +626,27 @@
         }
       }
     },
+    "/api/v1/plugins/reports/defaults": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Get Report Defaults",
+        "operationId": "plugins-get_report_defaults",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDefaultsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{kind}": {
       "get": {
         "tags": [
@@ -3528,6 +3549,23 @@
           "types"
         ],
         "title": "ProviderTypesResponse"
+      },
+      "ReportDefaultsResponse": {
+        "properties": {
+          "sections": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Sections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sections"
+        ],
+        "title": "ReportDefaultsResponse",
+        "description": "The built-in report-section order used when the pipeline config\ndoesn't declare ``reports.sections``. Surfaced so the frontend can\npre-fill its reports section with a sensible starting list."
       },
       "ReportResponse": {
         "properties": {
