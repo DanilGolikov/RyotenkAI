@@ -73,9 +73,6 @@ class TestDPOValidatorRegistration:
     def test_name_classvar(self) -> None:
         assert HelixQLPreferenceSemanticsValidator.name == "helixql_preference_semantics"
 
-    def test_priority_classvar(self) -> None:
-        assert HelixQLPreferenceSemanticsValidator.priority == 35  # noqa: WPS432
-
 
 # ---------------------------------------------------------------------------
 # _validate_contract

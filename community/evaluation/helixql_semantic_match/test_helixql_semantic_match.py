@@ -59,9 +59,6 @@ class TestSemanticMatchPluginRegistration:
     def test_name_classvar(self) -> None:
         assert HelixQLSemanticMatchPlugin.name == "helixql_semantic_match"
 
-    def test_priority_classvar(self) -> None:
-        assert HelixQLSemanticMatchPlugin.priority == 20
-
     def test_requires_expected_answer(self) -> None:
         assert HelixQLSemanticMatchPlugin.requires_expected_answer is True
 

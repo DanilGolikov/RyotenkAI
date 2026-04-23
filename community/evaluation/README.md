@@ -1,6 +1,6 @@
 # Evaluation plugins
 
-**What they do.** Score a trained model's answers on a held-out eval dataset. The runner [`src/evaluation/runner.py`](../../src/evaluation/runner.py) collects model outputs once (via `IModelInference`), then hands the complete list of `EvalSample`s to each enabled plugin sorted by `priority`. Each plugin returns an `EvalResult` with a pass/fail verdict, numeric metrics, and recommendations.
+**What they do.** Score a trained model's answers on a held-out eval dataset. The runner [`src/evaluation/runner.py`](../../src/evaluation/runner.py) collects model outputs once (via `IModelInference`), then hands the complete list of `EvalSample`s to each enabled plugin in the order declared in the pipeline config YAML. Each plugin returns an `EvalResult` with a pass/fail verdict, numeric metrics, and recommendations.
 
 Plugins **do not call inference themselves** — answers are already in `EvalSample.model_answer` when `evaluate()` is called.
 
