@@ -124,7 +124,7 @@ export function PluginsTab({ projectId }: Props) {
   }, [parsed])
 
   const instancesByKind = useMemo(() => {
-    const out: Record<PluginKind, { instanceId: string; pluginId: string }[]> = {
+    const out: Record<PluginKind, { instanceId: string; pluginId: string; enabled?: boolean }[]> = {
       validation: readInstances('validation', parsed),
       evaluation: readInstances('evaluation', parsed),
       reward: readInstances('reward', parsed),
@@ -233,6 +233,21 @@ export function PluginsTab({ projectId }: Props) {
     },
     [commit, parsed],
   )
+
+  /** Drop ``reports.sections`` from the config so the backend falls
+   *  back to ``DEFAULT_REPORT_SECTIONS`` again. Used by the reports
+   *  empty-state "Reset to defaults" CTA: removing the key (not
+   *  writing defaults literally) means future releases shipping new
+   *  built-in sections automatically flow to this user. */
+  const handleResetReports = useCallback(async () => {
+    const next = structuredClone(parsed) as Record<string, unknown>
+    if (next.reports && typeof next.reports === 'object' && !Array.isArray(next.reports)) {
+      const reports = next.reports as Record<string, unknown>
+      delete reports.sections
+      if (Object.keys(reports).length === 0) delete next.reports
+    }
+    await commit(next)
+  }, [commit, parsed])
 
   // ---------- DnD glue ----------
 
@@ -350,6 +365,11 @@ export function PluginsTab({ projectId }: Props) {
                 const m = manifestById.get(inst.pluginId)
                 if (m) setInfoPlugin(m)
               }}
+              onResetToDefaults={
+                section.kind === 'reports' && reportsAreMaterialized
+                  ? () => void handleResetReports()
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -414,17 +434,22 @@ function KindSection({
   onRemove,
   onConfigure,
   onInfo,
+  onResetToDefaults,
 }: {
   kind: PluginKind
   label: string
   help: string
   sortable: boolean
-  instances: { instanceId: string; pluginId: string }[]
+  instances: { instanceId: string; pluginId: string; enabled?: boolean }[]
   manifestById: Map<string, PluginManifest>
   activeStrategyTypes: Set<string>
   onRemove: (instanceId: string) => void
   onConfigure: (instance: { instanceId: string; pluginId: string }) => void
   onInfo: (instance: { instanceId: string; pluginId: string }) => void
+  /** Optional "Reset to defaults" action — only wired for ``reports``,
+   *  where emptying the list is valid but the user usually wants the
+   *  built-in section order back. Other kinds don't have defaults. */
+  onResetToDefaults?: () => void
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `container:${kind}`,
@@ -448,8 +473,22 @@ function KindSection({
           ].join(' ')}
         >
           {instances.length === 0 ? (
-            <div className="text-[0.65rem] text-ink-3 px-2 py-3 text-center">
-              Drop a {label.toLowerCase()} plugin here from the palette.
+            <div className="px-2 py-3 text-center space-y-2">
+              <div className="text-[0.65rem] text-ink-3">
+                {onResetToDefaults
+                  ? 'No sections — the report will render empty.'
+                  : `Drop a ${label.toLowerCase()} plugin here from the palette.`}
+              </div>
+              {onResetToDefaults && (
+                <button
+                  type="button"
+                  onClick={onResetToDefaults}
+                  className="btn-ghost h-7 text-[0.65rem] px-2"
+                  title="Restore the built-in section order."
+                >
+                  ↺ Reset to defaults
+                </button>
+              )}
             </div>
           ) : (
             instances.map((inst) => {
@@ -463,6 +502,7 @@ function KindSection({
                   manifest={manifest}
                   kind={kind}
                   sortable={sortable}
+                  enabled={inst.enabled}
                   onRemove={() => onRemove(inst.instanceId)}
                   onConfigure={manifest ? () => onConfigure(inst) : undefined}
                   onInfo={manifest ? () => onInfo(inst) : undefined}
