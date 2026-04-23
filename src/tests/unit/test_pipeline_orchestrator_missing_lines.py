@@ -255,7 +255,6 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             orch._attempt_controller.adopt_state(mock_state)
             prepared = _mk_prepared_attempt(mock_state, tmp_path, orch._state_store)
             # Mirror the side-effects the real _prepare_stateful_attempt performs.
-            orch.attempt_directory = prepared.attempt_directory
             orch._log_layout = prepared.log_layout
             orch._attempt_controller.register_attempt(prepared.attempt)
             return prepared
@@ -317,7 +316,6 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             orch._attempt_controller.adopt_state(mock_state)
             prepared = _mk_prepared_attempt(mock_state, tmp_path, orch._state_store)
             # Mirror the side-effects the real _prepare_stateful_attempt performs.
-            orch.attempt_directory = prepared.attempt_directory
             orch._log_layout = prepared.log_layout
             orch._attempt_controller.register_attempt(prepared.attempt)
             return prepared
