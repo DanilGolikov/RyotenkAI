@@ -34,7 +34,10 @@ def test_list_validation_plugins_contains_seed(client: TestClient) -> None:
 
     avg = _manifest_by_id(plugins, "avg_length")
     assert avg is not None
-    assert set(avg["thresholds_schema"].keys()) == {"min", "max"}
+    # Manifest v3: thresholds_schema is a JSON Schema object; field names
+    # live under .properties.
+    assert avg["thresholds_schema"]["type"] == "object"
+    assert set(avg["thresholds_schema"]["properties"].keys()) == {"min", "max"}
 
 
 def test_list_evaluation_plugins_contains_seed(client: TestClient) -> None:
@@ -53,7 +56,7 @@ def test_unknown_plugin_kind_is_rejected(client: TestClient) -> None:
 
 
 def test_baseline_plugin_has_minimal_manifest(client: TestClient) -> None:
-    """Plugins without MANIFEST still return id/name/version with empty extras."""
+    """Every plugin response carries the standard ui_manifest keys."""
     resp = client.get("/api/v1/plugins/validation")
     assert resp.status_code == 200
     plugins = resp.json()["plugins"]
@@ -63,6 +66,8 @@ def test_baseline_plugin_has_minimal_manifest(client: TestClient) -> None:
     sample_id = next(iter(baseline_ids))
     sample = _manifest_by_id(plugins, sample_id)
     assert sample is not None
-    # baseline shape
-    for key in ("id", "name", "version", "priority", "params_schema", "thresholds_schema"):
+    # Schema v3: no ``priority`` field, params/thresholds are JSON Schema objects.
+    assert "priority" not in sample
+    for key in ("id", "name", "version", "kind", "supported_strategies",
+                "params_schema", "thresholds_schema"):
         assert key in sample

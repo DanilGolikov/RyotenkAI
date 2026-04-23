@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "semantic"
 stability = "stable"
 description = "Domain reward for HelixQL GRPO/SAPO: compiles generated queries against the schema and scores semantic similarity to the reference answer."
+supported_strategies = ["grpo", "sapo"]
 
 [plugin.entry_point]
 module = "plugin"

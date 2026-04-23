@@ -22,7 +22,7 @@ min = 0
 default = 10
 
 [thresholds_schema.max_ratio]
-type = "float"
+type = "number"
 min = 0.0
 max = 1.0
 default = 0.1

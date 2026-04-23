@@ -182,7 +182,7 @@ def infer_docstring_summary(node: ast.ClassDef) -> str:
 
 _TYPE_BY_PY: dict[type, str] = {
     int: "integer",
-    float: "float",
+    float: "number",
     bool: "boolean",
     str: "string",
     list: "array",

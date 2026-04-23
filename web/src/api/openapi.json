@@ -642,7 +642,8 @@
               "enum": [
                 "reward",
                 "validation",
-                "evaluation"
+                "evaluation",
+                "reports"
               ],
               "type": "string",
               "title": "Kind"
@@ -2866,7 +2867,8 @@
             "enum": [
               "reward",
               "validation",
-              "evaluation"
+              "evaluation",
+              "reports"
             ],
             "title": "Kind"
           },
@@ -2900,11 +2902,6 @@
             "title": "Version",
             "default": "1.0.0"
           },
-          "priority": {
-            "type": "integer",
-            "title": "Priority",
-            "default": 50
-          },
           "description": {
             "type": "string",
             "title": "Description",
@@ -2919,6 +2916,23 @@
             "type": "string",
             "title": "Stability",
             "default": "stable"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reward",
+              "validation",
+              "evaluation",
+              "reports"
+            ],
+            "title": "Kind"
+          },
+          "supported_strategies": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supported Strategies"
           },
           "params_schema": {
             "additionalProperties": true,
@@ -2944,10 +2958,11 @@
         "type": "object",
         "required": [
           "id",
-          "name"
+          "name",
+          "kind"
         ],
         "title": "PluginManifest",
-        "description": "Normalised manifest surfaced to the web UI (Grafana-style)."
+        "description": "Normalised manifest surfaced to the web UI."
       },
       "PresetDiffEntry": {
         "properties": {

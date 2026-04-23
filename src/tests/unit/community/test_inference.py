@@ -97,7 +97,7 @@ def test_infer_evaluation_params_via_params_get(tmp_path: Path) -> None:
     plugin_dir = _write_plugin(tmp_path, source=src)
     inferred = infer_plugin(plugin_dir)
     assert inferred.kind == "evaluation"
-    assert inferred.params["temperature"].type == "float"
+    assert inferred.params["temperature"].type == "number"
     assert inferred.params["temperature"].default == 0.5
 
 

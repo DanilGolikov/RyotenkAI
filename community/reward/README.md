@@ -29,6 +29,10 @@ version = "1.0.0"
 category = "semantic"
 stability = "stable"
 description = "Scores completions by …"
+# Required for kind="reward": list the strategy_type values this plugin
+# is compatible with. The UI uses this to filter the palette when
+# attaching a reward plugin to a training strategy.
+supported_strategies = ["grpo", "sapo"]
 
 [plugin.entry_point]
 module = "plugin"

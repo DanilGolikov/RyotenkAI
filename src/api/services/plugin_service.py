@@ -11,7 +11,7 @@ from src.community.catalog import catalog
 
 
 def list_plugins(kind: PluginKind) -> PluginListResponse:
-    if kind not in ("reward", "validation", "evaluation"):
+    if kind not in ("reward", "validation", "evaluation", "reports"):
         raise ValueError(f"unknown plugin kind: {kind!r}")
 
     catalog.ensure_loaded()

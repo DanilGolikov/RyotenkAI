@@ -17,7 +17,7 @@ min = 1
 default = 10000
 
 [thresholds_schema.min_score]
-type = "float"
+type = "number"
 min = 0.0
 max = 1.0
 default = 0.7

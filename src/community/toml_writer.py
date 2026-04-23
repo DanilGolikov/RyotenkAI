@@ -25,16 +25,29 @@ _TOP_KEY_ORDER = (
     "stability",
     "size_tier",
     "description",
+    # Reward-only (appended last in [plugin] so existing non-reward
+    # manifests don't shift).
+    "supported_strategies",
     # Entry point — module before class.
     "module",
     "class",
     "file",
-    # Schema entry fields — type and default first, then constraints.
+)
+
+#: Schema-field (``[params_schema.X]`` / ``[thresholds_schema.X]``)
+#: key order. Kept separate from ``_TOP_KEY_ORDER`` because ``title``
+#: / ``description`` need to land AFTER the type/constraint block in
+#: schema fields, not in the [plugin]-body position.
+_SCHEMA_FIELD_KEY_ORDER = (
     "type",
     "default",
     "min",
     "max",
     "options",
+    "title",
+    "description",
+    "required",
+    "secret",
 )
 
 # Top-level section order of a plugin manifest.
@@ -81,17 +94,28 @@ def _format_scalar(value: Any) -> str:
     )
 
 
-def _sort_keys(keys: Iterable[str]) -> list[str]:
-    priority = {k: i for i, k in enumerate(_TOP_KEY_ORDER)}
+def _sort_keys(keys: Iterable[str], *, schema_field: bool = False) -> list[str]:
+    order = _SCHEMA_FIELD_KEY_ORDER if schema_field else _TOP_KEY_ORDER
+    priority = {k: i for i, k in enumerate(order)}
 
     def key_fn(k: str) -> tuple[int, str]:
-        return (priority.get(k, len(_TOP_KEY_ORDER)), k)
+        return (priority.get(k, len(order)), k)
 
     return sorted(keys, key=key_fn)
 
 
+def _is_schema_field_section(path: str) -> bool:
+    """True for dotted paths like ``params_schema.sample_size`` — leaves under
+    a ``*_schema`` parent. These render a :class:`ParamFieldSchema` and need
+    the schema-field key order, not the plugin-body one."""
+    parts = path.split(".")
+    return len(parts) >= 2 and parts[-2] in {"params_schema", "thresholds_schema"}
+
+
 def _split_scalars_and_tables(
     body: Mapping[str, Any],
+    *,
+    schema_field: bool = False,
 ) -> tuple[list[str], list[str]]:
     scalar_keys: list[str] = []
     table_keys: list[str] = []
@@ -100,7 +124,10 @@ def _split_scalars_and_tables(
             table_keys.append(key)
         else:
             scalar_keys.append(key)
-    return _sort_keys(scalar_keys), _sort_keys(table_keys)
+    return (
+        _sort_keys(scalar_keys, schema_field=schema_field),
+        _sort_keys(table_keys, schema_field=schema_field),
+    )
 
 
 def _emit_scalars(
@@ -133,7 +160,8 @@ def _emit_section(
     Nested dict children whose full path is listed in ``scheduled`` are skipped
     — they'll be emitted later in the top-level order pass.
     """
-    scalar_keys, table_keys = _split_scalars_and_tables(body)
+    schema_field = _is_schema_field_section(header)
+    scalar_keys, table_keys = _split_scalars_and_tables(body, schema_field=schema_field)
 
     lines.append(f"[{header}]")
     _emit_scalars(lines, header, body, scalar_keys, todo_fields=todo_fields)
@@ -188,7 +216,8 @@ def dump_manifest_toml(
         body = _resolve(manifest, path)
         if not body:
             continue
-        scalar_keys, table_keys = _split_scalars_and_tables(body)
+        schema_field = _is_schema_field_section(path)
+        scalar_keys, table_keys = _split_scalars_and_tables(body, schema_field=schema_field)
         # Skip emitting an empty header when the section has no scalar
         # content of its own (e.g. [params_schema] only holds sub-sections).
         if scalar_keys:
