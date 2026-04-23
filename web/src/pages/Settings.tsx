@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 
 const SUBTABS: { to: string; label: string; disabled?: boolean; hint?: string }[] = [
   { to: 'providers', label: 'Providers' },
+  { to: 'catalog', label: 'Catalog' },
   { to: 'datasets', label: 'Datasets', disabled: true, hint: 'soon' },
   { to: 'models', label: 'Models', disabled: true, hint: 'soon' },
 ]

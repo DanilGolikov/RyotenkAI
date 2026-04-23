@@ -10,6 +10,7 @@ import { ProjectDetailPage } from './pages/ProjectDetail'
 import { SettingsPage } from './pages/Settings'
 import { ProvidersPage } from './pages/Providers'
 import { ProviderDetailPage } from './pages/ProviderDetail'
+import { CatalogPage } from './pages/Catalog'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +42,7 @@ export default function App() {
               <Route index element={<Navigate to="providers" replace />} />
               <Route path="providers" element={<ProvidersPage />} />
               <Route path="providers/:id/*" element={<ProviderDetailPage />} />
+              <Route path="catalog" element={<CatalogPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
