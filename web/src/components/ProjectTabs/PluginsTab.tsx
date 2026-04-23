@@ -334,13 +334,11 @@ export function PluginsTab({ projectId }: Props) {
       onDragEnd={onDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      {/* Save-state indicator floats top-right above the flex row so it
-          doesn't push the first section down — previously an always-
-          rendered status line forced the Validation header to sit lower
-          than the palette header, breaking vertical alignment. */}
-      <div className="flex items-center justify-end h-5 mb-2 text-2xs text-ink-3">
-        {saveMut.isPending ? 'Saving…' : saveMut.isSuccess ? 'Saved' : null}
-      </div>
+      {/* Save errors block — rendered only when non-empty, so it
+          doesn't push the first section down when everything is fine.
+          In-flight "Saving…" / "Saved" state was dropped entirely: it
+          flickered for ~100ms per action and added no value beyond
+          what the row-level optimistic update already conveys. */}
       {saveMut.error && (
         <div className="rounded-md border border-err/40 bg-err/10 text-err text-xs px-3 py-2 mb-3">
           {(saveMut.error as Error).message}

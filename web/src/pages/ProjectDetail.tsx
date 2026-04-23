@@ -100,10 +100,20 @@ function DescriptionEditor({ project }: { project: ProjectDetail }) {
   const [focused, setFocused] = useState(false)
 
   // Sync draft with server on remount or background refetch — but leave
-  // the user's in-flight typing alone while the field is focused.
+  // the user's in-flight typing alone while the field is focused, AND
+  // don't clobber a freshly-saved value while the project query is
+  // still refetching. Previously clicking Save blurred the textarea →
+  // this effect fired with the stale ``project.description`` and
+  // overwrote the user's edit before refetch completed, making it look
+  // like Save reverted the change. ``mut.data`` is the ProjectDetail
+  // the backend returned from the latest save, so if the draft matches
+  // it we're already in sync and can skip the overwrite.
   useEffect(() => {
-    if (!focused) setDraft(project.description)
-  }, [project.description, focused])
+    if (focused) return
+    if (mut.data && draft === mut.data.description) return
+    setDraft(project.description)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.description, focused, mut.data])
 
   const dirty = draft !== project.description
 
