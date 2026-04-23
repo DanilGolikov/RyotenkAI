@@ -10,6 +10,3 @@ description = "Report block: footer."
 [plugin.entry_point]
 module = "plugin"
 class = "FooterBlockPlugin"
-
-[reports]
-order = 120

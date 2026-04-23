@@ -174,19 +174,6 @@ def _merge_plugin_manifest(
     if existing_compat.get("min_core_version"):
         merged["compat"] = {"min_core_version": existing_compat["min_core_version"]}
 
-    # reports — fully user-owned. Preserve existing [reports] block verbatim
-    # for report plugins; for other kinds, drop it (the cross-field validator
-    # in PluginManifest forbids it there anyway).
-    existing_reports = existing.get("reports")
-    if inferred.kind == "reports":
-        if existing_reports is not None:
-            merged["reports"] = dict(existing_reports)
-        else:
-            # Scaffold default — authors must pick a real order number.
-            merged["reports"] = {"order": 50}
-    else:
-        merged.pop("reports", None)
-
     return merged
 
 

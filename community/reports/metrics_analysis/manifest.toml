@@ -10,6 +10,3 @@ description = "Report block: metrics_analysis."
 [plugin.entry_point]
 module = "plugin"
 class = "MetricsAnalysisBlockPlugin"
-
-[reports]
-order = 90

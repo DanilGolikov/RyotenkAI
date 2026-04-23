@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +41,7 @@ def _phase(idx: int, start: datetime, end: datetime, *, loss_values: list[float]
 
 class TestReportBuilderEndToEnd:
     def test_build_includes_sliced_phase_resources_and_validation_and_issues(self) -> None:
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         end = start + timedelta(seconds=10)
 
         p = _phase(0, start, end, loss_values=[1.0, 1.2])  # loss increased -> BAD -> issue
@@ -120,7 +120,7 @@ class TestReportBuilderEndToEnd:
 
 class TestResourceHistorySlicing:
     def test_slice_returns_nearest_point_when_no_points_in_window_but_close(self) -> None:
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         end = start + timedelta(seconds=5)
 
         # point is 10s away from center (~2.5s) -> within 30s window
@@ -144,7 +144,7 @@ class TestResourceHistorySlicing:
         assert out.values == [1.0]
 
     def test_slice_returns_none_when_nearest_point_is_too_far(self) -> None:
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         end = start + timedelta(seconds=5)
 
         # point is 60s away from center -> too far
@@ -168,7 +168,7 @@ class TestResourceHistorySlicing:
 
 class TestResourcesFallbackAggregation:
     def test_build_resources_falls_back_to_phase_metrics_when_no_global_history(self) -> None:
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         end = start + timedelta(seconds=10)
         p = _phase(0, start, end, loss_values=[1.0, 0.5])
         # No history for the key -> fallback to scalar metric value
@@ -194,7 +194,7 @@ class TestResourcesFallbackAggregation:
 class TestValidationParsing:
     def test_parse_dataset_validation_handles_failed_load_when_only_scheduled(self) -> None:
         """New behavior: no validation_results → None returned."""
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         data = ExperimentData(
             run_id="r",
             run_name="r",
@@ -211,7 +211,7 @@ class TestValidationParsing:
 
     def test_parse_dataset_validation_failed_plugin_bad_recommendations_json_is_ignored(self) -> None:
         """Plugin with errors but no recommendations still parses cleanly."""
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         data = ExperimentData(
             run_id="r",
             run_name="r",
@@ -256,7 +256,7 @@ class TestValidationParsing:
 
     def test_validation_failures_generate_warnings_in_issues(self) -> None:
         """Test that failed dataset validations generate WARN issues."""
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
 
         data = ExperimentData(
             run_id="r",
@@ -309,7 +309,7 @@ class TestValidationParsing:
 
     def test_partial_failure_generates_warning_in_issues(self) -> None:
         """Test that partial dataset validation failures generate WARN issues."""
-        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
 
         data = ExperimentData(
             run_id="r",

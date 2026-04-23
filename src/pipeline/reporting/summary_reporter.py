@@ -14,6 +14,9 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.pipeline.constants import (
     CTX_PROVIDER_NAME_UNKNOWN,
@@ -322,8 +325,14 @@ class ExecutionSummaryReporter:
         *,
         run_id: str | None,
         mlflow_manager: MLflowManager | None,
+        sections: Sequence[str] | None = None,
     ) -> None:
-        """Generate a full experiment Markdown report after pipeline completion."""
+        """Generate a full experiment Markdown report after pipeline completion.
+
+        ``sections`` is the ordered list of report plugin ids to render,
+        threaded from ``PipelineConfig.reports.sections``. ``None`` falls
+        back to ``DEFAULT_REPORT_SECTIONS``.
+        """
         if not run_id:
             logger.warning("[REPORT] Cannot generate report: no run_id provided")
             return
@@ -332,7 +341,7 @@ class ExecutionSummaryReporter:
             tracking_uri = (mlflow_manager.tracking_uri or "") if mlflow_manager else ""
             local_logs_dir = get_run_log_dir()
             logger.info(f"[REPORT] Generating experiment report for run {run_id[:8]}...")
-            generator = ExperimentReportGenerator(tracking_uri)
+            generator = ExperimentReportGenerator(tracking_uri, sections=sections)
             report = generator.generate(run_id=run_id, local_logs_dir=local_logs_dir)
             logger.info(f"[REPORT] Report generated ({len(report)} chars)")
             logger.info(f"[REPORT] Saved to: {local_logs_dir / 'experiment_report.md'}")

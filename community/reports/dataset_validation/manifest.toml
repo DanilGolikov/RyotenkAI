@@ -10,6 +10,3 @@ description = "Report block: dataset_validation."
 [plugin.entry_point]
 module = "plugin"
 class = "DatasetValidationBlockPlugin"
-
-[reports]
-order = 40

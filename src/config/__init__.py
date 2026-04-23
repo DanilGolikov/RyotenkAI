@@ -33,6 +33,7 @@ from .integrations import (
 from .model import ModelConfig
 from .pipeline import PipelineConfig, load_config
 from .providers.ssh import SSHConfig, SSHConnectSettings
+from .reports import ReportsConfig
 from .runtime import RuntimeSettings, load_runtime_settings
 from .secrets import Secrets, load_secrets
 from .training import (
@@ -79,6 +80,7 @@ __all__ = [
     "PhaseHyperparametersConfig",
     "PipelineConfig",
     "QLoRAConfig",
+    "ReportsConfig",
     "RuntimeSettings",
     "SSHConfig",
     "SSHConnectSettings",

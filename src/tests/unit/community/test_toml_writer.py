@@ -47,21 +47,6 @@ def test_plugin_section_order_is_stable() -> None:
     assert idx["id"] < idx["kind"] < idx["name"] < idx["version"] < idx["category"]
 
 
-def test_reports_block_renders_after_plugin() -> None:
-    """Report manifests get a dedicated [reports] section with `order`."""
-    manifest = {
-        "plugin": {
-            "id": "header",
-            "kind": "reports",
-            "entry_point": {"module": "plugin", "class": "HeaderPlugin"},
-        },
-        "reports": {"order": 10},
-    }
-    text = dump_manifest_toml(manifest)
-    assert "[reports]" in text
-    assert "order = 10" in text
-    # reports section should land after the plugin section.
-    assert text.index("[plugin]") < text.index("[reports]")
 
 
 def test_nested_tables_never_inline() -> None:

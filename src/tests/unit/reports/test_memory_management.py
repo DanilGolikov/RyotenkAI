@@ -10,6 +10,7 @@ from datetime import datetime
 
 import pytest
 
+from src.community.catalog import catalog
 from src.reports.core.builder import ReportBuilder
 from src.reports.domain.entities import (
     ExperimentData,
@@ -17,7 +18,6 @@ from src.reports.domain.entities import (
     RunStatus,
 )
 from src.reports.plugins.composer import ReportComposer
-from src.community.catalog import catalog
 from src.reports.plugins.interfaces import ReportPluginContext
 from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
 from src.reports.plugins.registry import build_report_plugins
