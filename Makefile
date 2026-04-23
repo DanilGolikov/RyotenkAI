@@ -1,6 +1,25 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync
+.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
 
-PYTHON := python3
+# Pin all Python tooling to the project-local venv so `make` works regardless
+# of which venv is active in the shell. Override with e.g. `make VENV=.venv2`.
+VENV       := .venv
+VENV_BIN   := $(VENV)/bin
+PYTHON     := $(VENV_BIN)/python
+PIP        := $(PYTHON) -m pip
+PYTEST     := $(PYTHON) -m pytest
+RUFF       := $(PYTHON) -m ruff
+MYPY       := $(PYTHON) -m mypy
+BLACK      := $(PYTHON) -m black
+PRECOMMIT  := $(VENV_BIN)/pre-commit
+RYOTENKAI  := $(VENV_BIN)/ryotenkai
+
+# Fail fast with a clear message if the venv is missing.
+_check-venv:
+	@test -x "$(PYTHON)" || { \
+		echo "error: $(PYTHON) not found. Create the venv first:"; \
+		echo "  python3 -m venv $(VENV) && $(PIP) install -e \".[dev]\""; \
+		exit 1; \
+	}
 
 # ============================================
 # Help
@@ -53,66 +72,67 @@ help:
 # ============================================
 
 setup:
-	pip install --upgrade pip
-	pip install -e ".[dev]"
+	@test -x "$(PYTHON)" || python3 -m venv $(VENV)
+	$(PIP) install --upgrade pip
+	$(PIP) install -e ".[dev]"
 	@echo "Setup complete"
 
-install-hooks:
-	pip install pre-commit
-	pre-commit install
-	pre-commit install --hook-type commit-msg
+install-hooks: _check-venv
+	$(PIP) install pre-commit
+	$(PRECOMMIT) install
+	$(PRECOMMIT) install --hook-type commit-msg
 	@echo "Hooks installed"
 
 # ============================================
 # Testing
 # ============================================
 
-test:
-	pytest
+test: _check-venv
+	$(PYTEST)
 
-test-fast:
-	pytest -m "not slow"
+test-fast: _check-venv
+	$(PYTEST) -m "not slow"
 
-test-unit:
-	pytest src/tests/unit -v
+test-unit: _check-venv
+	$(PYTEST) src/tests/unit -v
 
-test-cov:
-	pytest --cov=src --cov-report=html:src/tests/coverage/htmlcov --cov-report=term-missing
+test-cov: _check-venv
+	$(PYTEST) --cov=src --cov-report=html:src/tests/coverage/htmlcov --cov-report=term-missing
 	@echo "Report: src/tests/coverage/htmlcov/index.html"
 
 # ============================================
 # Code Quality
 # ============================================
 
-lint:
-	@ruff check src/ || true
-	@ruff format --check src/ || true
-	@mypy src/ --config-file pyproject.toml || true
+lint: _check-venv
+	@$(RUFF) check src/ || true
+	@$(RUFF) format --check src/ || true
+	@$(MYPY) src/ --config-file pyproject.toml || true
 
-format:
-	ruff check --fix src/
-	ruff format src/
-	black src/
+format: _check-venv
+	$(RUFF) check --fix src/
+	$(RUFF) format src/
+	$(BLACK) src/
 
-fix-all:
+fix-all: _check-venv
 	@echo "Auto-fixing..."
-	ruff check --fix --unsafe-fixes src/ || true
-	ruff format src/
-	black src/
+	$(RUFF) check --fix --unsafe-fixes src/ || true
+	$(RUFF) format src/
+	$(BLACK) src/
 	@echo "Done. Run 'make lint' to verify"
 
-pre-commit:
-	pre-commit run --all-files
+pre-commit: _check-venv
+	$(PRECOMMIT) run --all-files
 
 # ============================================
 # Pipeline
 # ============================================
 
-tui:
-	ryotenkai tui
+tui: _check-venv
+	$(RYOTENKAI) tui
 
-validate:
-	ryotenkai config-validate --config $(CONFIG)
+validate: _check-venv
+	$(RYOTENKAI) config-validate --config $(CONFIG)
 
 # ============================================
 # Infrastructure
