@@ -1,0 +1,22 @@
+[preset]
+id = "06-grpo-reasoning"
+name = "GRPO reasoning"
+description = "Group-Relative Policy Optimization on Qwen2.5-3B-Instruct for reasoning-heavy tasks. Rollouts = 8 per prompt, reward via a plug-in. Use this as a starting point when you want the model to learn from a reward signal rather than from preference pairs — ships wired to the `helixql_compiler_semantic` reward plugin, swap it for your own in `training.strategies[].reward_plugin`."
+size_tier = "medium"
+version = "1.0.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-3B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = ["reward:helixql_compiler_semantic"]
+min_vram_gb      = 24
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to prompt JSONL (single `prompt` field per row)"

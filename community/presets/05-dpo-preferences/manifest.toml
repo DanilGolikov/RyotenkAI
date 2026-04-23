@@ -1,0 +1,22 @@
+[preset]
+id = "05-dpo-preferences"
+name = "DPO preferences"
+description = "Direct Preference Optimization on an already-SFT'd Qwen2.5-7B-Instruct. Expects a preference dataset (prompt + chosen + rejected). Conservative LR (5e-7) and beta=0.1 — standard DPO defaults that don't over-shoot on the reference model. Preserves your existing providers / evaluation setup, only rewrites [model] and [training]."
+size_tier = "medium"
+version = "1.0.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-7B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = ["validation:preference_format", "validation:identical_pairs"]
+min_vram_gb      = 40
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to preference JSONL (with prompt/chosen/rejected fields)"

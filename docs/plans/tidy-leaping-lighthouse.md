@@ -5,6 +5,21 @@
 > порядок секций отчёта теперь берётся из `PipelineConfig.reports.sections`
 > (single source of truth). Ниже — архив плана на момент старта.
 
+## Финальный контракт reports (согласован)
+
+Пользователь уточнил семантику — фиксируем:
+
+1. **Source of truth — конфиг.** `PipelineConfig.reports.sections: list[str] | None`.
+2. **Системные плагины** (13 наших встроенных в `community/reports/`) зафиксированы в `src/reports/plugins/defaults.py::DEFAULT_REPORT_SECTIONS`. Это **не** hardcode для поддержки старых конфигов, а декларация «что считается системным стандартом из коробки».
+3. **Правило применения:**
+   - Блок `reports` не заполнен в YAML (или `sections=null`) → применяется `DEFAULT_REPORT_SECTIONS`.
+   - Блок `reports.sections` заполнен → используется строго он (filter + reorder).
+4. **Third-party плагины** не попадают в `DEFAULT_REPORT_SECTIONS`. Автор/пользователь добавляет их в свой `reports.sections` явно.
+5. **Добавление нового встроенного плагина** — единственная точка правки: добавить id в `DEFAULT_REPORT_SECTIONS` на нужную позицию. Manifest сам по себе контроля над порядком не имеет.
+
+Это ровно то, что реализовано коммитом `bf0b9e6` (merge `65c42d9` в RESEACRH). **Дополнительных изменений не требуется** — код совпадает с описанием.
+
+---
 
 
 ## Context

@@ -12,7 +12,7 @@ import { useConfigSchema } from '../../api/hooks/useConfigSchema'
 import type { ConfigValidationResult } from '../../api/types'
 import { ConfigBuilder } from '../ConfigBuilder/ConfigBuilder'
 import { DiffBadge } from '../ConfigBuilder/DiffBadge'
-import { PresetDropdown } from '../ConfigBuilder/PresetDropdown'
+import { PresetPickerModal } from '../ConfigBuilder/PresetPickerModal'
 import { ProviderPickerField } from '../ConfigBuilder/ProviderPickerField'
 import { ValidationBanner } from '../ConfigBuilder/ValidationBanner'
 import { ValidationProvider } from '../ConfigBuilder/ValidationContext'
@@ -85,10 +85,9 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   const validateMut = useValidateProjectConfig(projectId)
 
   const [view, setView] = useState<ViewMode>('form')
-  // Monotonic signal we bump on view toggle so PresetDropdown can
-  // force-close itself. Outside-mousedown doesn't fire on these in-page
-  // button clicks, so the dropdown would otherwise linger overlapping
-  // the new view.
+  // Monotonic signal we bump on view toggle so the open preset-picker
+  // modal force-closes itself — otherwise the modal lingers over the
+  // new view while the user is trying to interact with it.
   const [presetCloseToken, setPresetCloseToken] = useState(0)
   const [yamlText, setYamlText] = useState<string>('')
   const [formValue, setFormValue] = useState<Record<string, unknown>>({})
@@ -286,7 +285,7 @@ export function ConfigTab({ projectId }: { projectId: string }) {
               onClear={() => setPresetBaseline(null)}
             />
           )}
-          <PresetDropdown
+          <PresetPickerModal
             dirty={dirty}
             closeToken={presetCloseToken}
             current={formValue}

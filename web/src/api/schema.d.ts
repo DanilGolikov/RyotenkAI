@@ -84,11 +84,42 @@ export interface paths {
         };
         /**
          * Presets
-         * @description Return curated starter configs from ``configs/presets/*.yaml``.
+         * @description Return curated starter configs from ``community/presets/``.
+         *
+         *     Each preset lives in its own folder with a ``manifest.toml`` (id,
+         *     display name, description, size tier, optional v2 scope/requirements/
+         *     placeholders) and the actual config YAML referenced via
+         *     ``[preset.entry_point]``.
          */
         get: operations["config-presets"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/config/presets/{preset_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Preset
+         * @description Dry-run: apply ``preset_id`` to ``current_config`` and return the
+         *     resulting config plus a structured diff, requirements check, and
+         *     placeholder hints.
+         *
+         *     The endpoint never writes anything — it's what the frontend calls to
+         *     populate the Apply-preset modal (three sections: what changes / what's
+         *     preserved / what the user still needs to fill).
+         */
+        post: operations["config-preview_preset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -279,9 +310,27 @@ export interface paths {
         post?: never;
         /**
          * Delete Project
-         * @description Unregister a project (does not delete files on disk).
+         * @description Unregister a project. By default also removes the on-disk
+         *     workspace — pass ``?delete_files=false`` to keep the directory.
          */
         delete: operations["projects-delete_project"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/description": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Description */
+        put: operations["projects-update_description"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -298,6 +347,24 @@ export interface paths {
         get: operations["projects-get_config"];
         /** Save Config */
         put: operations["projects-save_config"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Env */
+        get: operations["projects-get_project_env"];
+        /** Save Project Env */
+        put: operations["projects-save_project_env"];
         post?: never;
         delete?: never;
         options?: never;
@@ -673,6 +740,17 @@ export interface components {
             description: string;
             /** Yaml */
             yaml: string;
+            /**
+             * Size Tier
+             * @default
+             */
+            size_tier: string;
+            scope?: components["schemas"]["PresetScopeOut"] | null;
+            requirements?: components["schemas"]["PresetRequirementsOut"] | null;
+            /** Placeholders */
+            placeholders?: {
+                [key: string]: string;
+            };
         };
         /** ConfigPresetsResponse */
         ConfigPresetsResponse: {
@@ -708,6 +786,10 @@ export interface components {
             config_path: string;
             /** Checks */
             checks?: components["schemas"]["ConfigCheck"][];
+            /** Field Errors */
+            field_errors?: {
+                [key: string]: string[];
+            };
         };
         /** ConfigVersion */
         ConfigVersion: {
@@ -979,6 +1061,93 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** PresetDiffEntry */
+        PresetDiffEntry: {
+            /** Key */
+            key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "added" | "removed" | "changed" | "unchanged";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "preset_replaced" | "preset_added" | "preset_preserved" | "no_scope";
+            /** Before */
+            before?: unknown;
+            /** After */
+            after?: unknown;
+        };
+        /** PresetPlaceholderHint */
+        PresetPlaceholderHint: {
+            /** Path */
+            path: string;
+            /** Hint */
+            hint: string;
+        };
+        /** PresetPreviewRequest */
+        PresetPreviewRequest: {
+            /** Current Config */
+            current_config?: {
+                [key: string]: unknown;
+            };
+        };
+        /** PresetPreviewResponse */
+        PresetPreviewResponse: {
+            /** Resulting Config */
+            resulting_config: {
+                [key: string]: unknown;
+            };
+            /** Diff */
+            diff: components["schemas"]["PresetDiffEntry"][];
+            /** Requirements */
+            requirements: components["schemas"]["PresetRequirementCheck"][];
+            /** Placeholders */
+            placeholders: components["schemas"]["PresetPlaceholderHint"][];
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** PresetRequirementCheck */
+        PresetRequirementCheck: {
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "missing" | "warning";
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+        };
+        /**
+         * PresetRequirementsOut
+         * @description Environmental prerequisites surfaced to the UI.
+         */
+        PresetRequirementsOut: {
+            /** Hub Models */
+            hub_models?: string[];
+            /** Provider Kind */
+            provider_kind?: string[];
+            /** Required Plugins */
+            required_plugins?: string[];
+            /** Min Vram Gb */
+            min_vram_gb?: number | null;
+        };
+        /**
+         * PresetScopeOut
+         * @description Declared authority of a preset over top-level config keys.
+         */
+        PresetScopeOut: {
+            /** Replaces */
+            replaces?: string[];
+            /** Preserves */
+            preserves?: string[];
+        };
         /** ProjectDetail */
         ProjectDetail: {
             /** Id */
@@ -998,6 +1167,26 @@ export interface components {
              * @default
              */
             current_config_yaml: string;
+        };
+        /** ProjectEnvRequest */
+        ProjectEnvRequest: {
+            /** Env */
+            env: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * ProjectEnvResponse
+         * @description Project-scoped environment overrides (``HF_TOKEN`` & friends).
+         */
+        ProjectEnvResponse: {
+            /**
+             * Env
+             * @default {}
+             */
+            env: {
+                [key: string]: string;
+            };
         };
         /** ProjectSummary */
         ProjectSummary: {
@@ -1062,6 +1251,11 @@ export interface components {
              * @default
              */
             description: string;
+            /**
+             * Has Inference
+             * @default false
+             */
+            has_inference: boolean;
             /** Updated At */
             updated_at: string;
             /**
@@ -1099,6 +1293,11 @@ export interface components {
              * @default
              */
             description: string;
+            /**
+             * Has Inference
+             * @default false
+             */
+            has_inference: boolean;
         };
         /** ProviderTypeInfo */
         ProviderTypeInfo: {
@@ -1321,6 +1520,14 @@ export interface components {
             /** Favorite Versions */
             favorite_versions: string[];
         };
+        /** UpdateProjectDescriptionRequest */
+        UpdateProjectDescriptionRequest: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -1450,6 +1657,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigPresetsResponse"];
+                };
+            };
+        };
+    };
+    "config-preview_preset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                preset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PresetPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PresetPreviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1835,7 +2077,9 @@ export interface operations {
     };
     "projects-delete_project": {
         parameters: {
-            query?: never;
+            query?: {
+                delete_files?: boolean;
+            };
             header?: never;
             path: {
                 project_id: string;
@@ -1850,6 +2094,41 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects-update_description": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProjectDescriptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetail"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -1915,6 +2194,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SaveConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects-get_project_env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectEnvResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "projects-save_project_env": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectEnvRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectEnvResponse"];
                 };
             };
             /** @description Validation Error */

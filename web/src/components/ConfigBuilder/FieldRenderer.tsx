@@ -505,8 +505,8 @@ export function FieldRenderer(props: FieldProps) {
       )
     }
     // Per-block recommendation chips were removed — starter values
-    // now ship as top-level config presets (configs/presets/*.yaml,
-    // loaded via the PresetDropdown in ConfigTab). Keeps the form
+    // now ship as top-level config presets (community/presets/*/preset.yaml,
+    // loaded via the PresetPickerModal in ConfigTab). Keeps the form
     // chromeless inside groups and moves "I want a sensible starting
     // point" up one level where it belongs.
     return wrapAnchor(
