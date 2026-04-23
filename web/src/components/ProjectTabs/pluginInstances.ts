@@ -332,3 +332,253 @@ export function generateInstanceId(pluginId: string, taken: Set<string>): string
   while (taken.has(`${pluginId}_${n}`)) n += 1
   return `${pluginId}_${n}`
 }
+
+// ---------------------------------------------------------------------------
+// Per-instance params / thresholds / instance-level settings
+// ---------------------------------------------------------------------------
+
+/** Flattened view of the per-instance settings the Configure modal
+ *  needs. Which of the optional fields are meaningful depends on ``kind``. */
+export interface PluginInstanceDetails {
+  /** Unique id within its kind's list (same as reports plugin id). */
+  instanceId: string
+  /** Catalog plugin id this instance references. */
+  pluginId: string
+  /** Free-form params dict — edited through ``FieldRenderer`` against
+   *  the plugin's ``params_schema``. */
+  params: Record<string, unknown>
+  /** Free-form thresholds dict — same mechanism with ``thresholds_schema``. */
+  thresholds: Record<string, unknown>
+  /** kind=validation: which dataset phases to apply to (train / eval). */
+  apply_to?: string[]
+  /** kind=validation|evaluation: whether this instance runs on launch. */
+  enabled?: boolean
+  /** kind=validation: whether a failing validation aborts the run. */
+  fail_on_error?: boolean
+  /** kind=evaluation: whether to persist the plugin's per-sample report. */
+  save_report?: boolean
+}
+
+function findEvaluationEntry(
+  parsed: Record<string, unknown>,
+  instanceId: string,
+): { list: unknown[]; idx: number } | null {
+  const evalCfg = isRecord(parsed.evaluation) ? parsed.evaluation : {}
+  const evaluators = isRecord(evalCfg.evaluators) ? evalCfg.evaluators : {}
+  const list = Array.isArray(evaluators.plugins) ? [...(evaluators.plugins as unknown[])] : []
+  const idx = list.findIndex((e) => isRecord(e) && e.id === instanceId)
+  return idx >= 0 ? { list, idx } : null
+}
+
+function findValidationEntry(
+  parsed: Record<string, unknown>,
+  instanceId: string,
+): { datasetKey: string; list: unknown[]; idx: number } | null {
+  const datasets = isRecord(parsed.datasets) ? parsed.datasets : {}
+  const key = firstDatasetKey(parsed)
+  const ds = isRecord(datasets[key]) ? (datasets[key] as Record<string, unknown>) : {}
+  const validations = isRecord(ds.validations) ? ds.validations : {}
+  const list = Array.isArray(validations.plugins) ? [...(validations.plugins as unknown[])] : []
+  const idx = list.findIndex((e) => isRecord(e) && e.id === instanceId)
+  return idx >= 0 ? { datasetKey: key, list, idx } : null
+}
+
+/** Read the full per-instance details for the Configure modal. Returns
+ *  ``null`` when the instance can't be located (e.g. racing with a
+ *  concurrent edit). */
+export function readInstanceDetails(
+  kind: PluginKind,
+  parsed: Record<string, unknown>,
+  instanceId: string,
+): PluginInstanceDetails | null {
+  if (kind === 'reports') {
+    const instances = readInstances('reports', parsed)
+    const hit = instances.find((i) => i.instanceId === instanceId)
+    return hit ? { ...hit, params: {}, thresholds: {} } : null
+  }
+
+  if (kind === 'reward') {
+    // Reward params live on every matching strategy; we pick the first
+    // phase that references this plugin and use its params (minus the
+    // reward_plugin marker itself). The modal writes back to all.
+    const training = isRecord(parsed.training) ? parsed.training : {}
+    const strategies = Array.isArray(training.strategies) ? (training.strategies as unknown[]) : []
+    for (const s of strategies) {
+      if (!isRecord(s)) continue
+      const p = isRecord(s.params) ? s.params : {}
+      if (p.reward_plugin !== instanceId) continue
+      const params: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(p)) {
+        if (k !== 'reward_plugin') params[k] = v
+      }
+      return { instanceId, pluginId: instanceId, params, thresholds: {} }
+    }
+    return null
+  }
+
+  if (kind === 'evaluation') {
+    const hit = findEvaluationEntry(parsed, instanceId)
+    if (!hit) return null
+    const entry = hit.list[hit.idx] as Record<string, unknown>
+    return {
+      instanceId,
+      pluginId: typeof entry.plugin === 'string' ? entry.plugin : '',
+      params: isRecord(entry.params) ? { ...entry.params } : {},
+      thresholds: isRecord(entry.thresholds) ? { ...entry.thresholds } : {},
+      enabled: typeof entry.enabled === 'boolean' ? entry.enabled : true,
+      save_report: typeof entry.save_report === 'boolean' ? entry.save_report : true,
+    }
+  }
+
+  // validation
+  const hit = findValidationEntry(parsed, instanceId)
+  if (!hit) return null
+  const entry = hit.list[hit.idx] as Record<string, unknown>
+  return {
+    instanceId,
+    pluginId: typeof entry.plugin === 'string' ? entry.plugin : '',
+    params: isRecord(entry.params) ? { ...entry.params } : {},
+    thresholds: isRecord(entry.thresholds) ? { ...entry.thresholds } : {},
+    apply_to: Array.isArray(entry.apply_to)
+      ? (entry.apply_to.filter((x) => typeof x === 'string') as string[])
+      : undefined,
+    enabled: typeof entry.enabled === 'boolean' ? entry.enabled : true,
+    fail_on_error: typeof entry.fail_on_error === 'boolean' ? entry.fail_on_error : undefined,
+  }
+}
+
+/** Write instance details back. Instance-level fields are only written
+ *  when the provided value differs from ``undefined`` — callers that
+ *  don't edit (say) ``save_report`` can omit it.
+ *
+ *  For reward, params are mirrored to every phase that already
+ *  references this reward plugin (we don't create new strategy phases;
+ *  if the user wants a phase added they do it in the strategies
+ *  section of the config builder). */
+export function writeInstanceDetails(
+  kind: PluginKind,
+  parsed: Record<string, unknown>,
+  details: PluginInstanceDetails,
+): Record<string, unknown> {
+  const next = cloneParsed(parsed)
+
+  if (kind === 'reports') return next // reports carry no per-instance state
+
+  if (kind === 'reward') {
+    const training = ensurePath(next, 'training', () => ({}))
+    const strategies = Array.isArray(training.strategies)
+      ? [...(training.strategies as unknown[])]
+      : []
+    training.strategies = strategies.map((s) => {
+      if (!isRecord(s)) return s
+      const p = isRecord(s.params) ? s.params : {}
+      if (p.reward_plugin !== details.instanceId) return s
+      const mergedParams: Record<string, unknown> = {
+        ...details.params,
+        reward_plugin: details.instanceId,
+      }
+      return { ...s, params: mergedParams }
+    })
+    return next
+  }
+
+  if (kind === 'evaluation') {
+    const evalCfg = ensurePath(next, 'evaluation', () => ({}))
+    const evaluators = ensurePath(evalCfg, 'evaluators', () => ({}))
+    const list = Array.isArray(evaluators.plugins) ? [...(evaluators.plugins as unknown[])] : []
+    const idx = list.findIndex((e) => isRecord(e) && e.id === details.instanceId)
+    if (idx < 0) return next
+    const prev = list[idx] as Record<string, unknown>
+    list[idx] = {
+      ...prev,
+      id: details.instanceId,
+      plugin: details.pluginId,
+      params: details.params,
+      thresholds: details.thresholds,
+      ...(details.enabled !== undefined && { enabled: details.enabled }),
+      ...(details.save_report !== undefined && { save_report: details.save_report }),
+    }
+    evaluators.plugins = list
+    return next
+  }
+
+  // validation
+  const datasets = ensurePath(next, 'datasets', () => ({}))
+  const key = firstDatasetKey(next)
+  if (!isRecord(datasets[key])) return next
+  const ds = datasets[key] as Record<string, unknown>
+  const validations = ensurePath(ds, 'validations', () => ({}))
+  const list = Array.isArray(validations.plugins) ? [...(validations.plugins as unknown[])] : []
+  const idx = list.findIndex((e) => isRecord(e) && e.id === details.instanceId)
+  if (idx < 0) return next
+  const prev = list[idx] as Record<string, unknown>
+  list[idx] = {
+    ...prev,
+    id: details.instanceId,
+    plugin: details.pluginId,
+    params: details.params,
+    thresholds: details.thresholds,
+    ...(details.apply_to !== undefined && { apply_to: details.apply_to }),
+    ...(details.enabled !== undefined && { enabled: details.enabled }),
+    ...(details.fail_on_error !== undefined && { fail_on_error: details.fail_on_error }),
+  }
+  validations.plugins = list
+  return next
+}
+
+/** Rename an instance (change its ``id`` while keeping the reference
+ *  to the catalog plugin). No-op for reports (instanceId === pluginId).
+ *  Returns ``null`` if the target id is already taken in the same list. */
+export function renameInstance(
+  kind: PluginKind,
+  parsed: Record<string, unknown>,
+  oldId: string,
+  newId: string,
+): Record<string, unknown> | null {
+  if (oldId === newId) return parsed
+  if (kind === 'reports') return parsed
+  const existing = readInstances(kind, parsed).map((x) => x.instanceId)
+  if (existing.includes(newId)) return null
+
+  const next = cloneParsed(parsed)
+
+  if (kind === 'reward') {
+    const training = ensurePath(next, 'training', () => ({}))
+    const strategies = Array.isArray(training.strategies)
+      ? [...(training.strategies as unknown[])]
+      : []
+    training.strategies = strategies.map((s) => {
+      if (!isRecord(s)) return s
+      const p = isRecord(s.params) ? { ...s.params } : {}
+      if (p.reward_plugin === oldId) p.reward_plugin = newId
+      return { ...s, params: p }
+    })
+    return next
+  }
+
+  if (kind === 'evaluation') {
+    const evalCfg = ensurePath(next, 'evaluation', () => ({}))
+    const evaluators = ensurePath(evalCfg, 'evaluators', () => ({}))
+    const list = Array.isArray(evaluators.plugins) ? [...(evaluators.plugins as unknown[])] : []
+    const idx = list.findIndex((e) => isRecord(e) && e.id === oldId)
+    if (idx < 0) return null
+    const prev = list[idx] as Record<string, unknown>
+    list[idx] = { ...prev, id: newId }
+    evaluators.plugins = list
+    return next
+  }
+
+  // validation
+  const datasets = ensurePath(next, 'datasets', () => ({}))
+  const key = firstDatasetKey(next)
+  if (!isRecord(datasets[key])) return null
+  const ds = datasets[key] as Record<string, unknown>
+  const validations = ensurePath(ds, 'validations', () => ({}))
+  const list = Array.isArray(validations.plugins) ? [...(validations.plugins as unknown[])] : []
+  const idx = list.findIndex((e) => isRecord(e) && e.id === oldId)
+  if (idx < 0) return null
+  const prev = list[idx] as Record<string, unknown>
+  list[idx] = { ...prev, id: newId }
+  validations.plugins = list
+  return next
+}

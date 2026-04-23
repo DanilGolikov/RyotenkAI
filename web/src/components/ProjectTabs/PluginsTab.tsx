@@ -26,14 +26,19 @@ import type { PluginKind, PluginManifest } from '../../api/types'
 import { dumpYaml } from '../../lib/yaml'
 import { Spinner } from '../ui'
 import { PluginInfoModal } from '../PluginInfoModal'
+import { PluginConfigModal } from '../ConfigBuilder/PluginConfigModal'
 import { PluginPaletteDrawer } from '../ConfigBuilder/PluginPaletteDrawer'
 import { PluginInstanceRow } from './PluginInstanceRow'
 import {
   addInstance,
   isRecord,
+  readInstanceDetails,
   readInstances,
   removeInstance,
+  renameInstance,
   reorderInstances,
+  writeInstanceDetails,
+  type PluginInstanceDetails,
 } from './pluginInstances'
 
 interface Props {
@@ -76,6 +81,10 @@ export function PluginsTab({ projectId }: Props) {
   const parsed = configQuery.data?.parsed_json ?? {}
 
   const [infoPlugin, setInfoPlugin] = useState<PluginManifest | null>(null)
+  const [configuring, setConfiguring] = useState<
+    | { kind: PluginKind; instanceId: string; pluginId: string }
+    | null
+  >(null)
   const [activeDrag, setActiveDrag] = useState<
     | { source: 'palette'; kind: PluginKind; pluginId: string }
     | { source: 'instance'; kind: PluginKind; instanceId: string }
@@ -163,6 +172,20 @@ export function PluginsTab({ projectId }: Props) {
   const handleReorder = useCallback(
     async (kind: PluginKind, orderedIds: string[]) => {
       const next = reorderInstances(kind, parsed, orderedIds)
+      await commit(next)
+    },
+    [commit, parsed],
+  )
+
+  const handleSaveConfigure = useCallback(
+    async (kind: PluginKind, original: PluginInstanceDetails, edited: PluginInstanceDetails) => {
+      let stage = parsed
+      if (edited.instanceId !== original.instanceId) {
+        const renamed = renameInstance(kind, stage, original.instanceId, edited.instanceId)
+        if (!renamed) throw new Error(`Instance id "${edited.instanceId}" is already taken.`)
+        stage = renamed
+      }
+      const next = writeInstanceDetails(kind, stage, edited)
       await commit(next)
     },
     [commit, parsed],
@@ -275,6 +298,11 @@ export function PluginsTab({ projectId }: Props) {
               manifestById={manifestById}
               activeStrategyTypes={activeStrategyTypes}
               onRemove={(id) => void handleRemove(section.kind, id)}
+              onConfigure={(inst) => setConfiguring({
+                kind: section.kind,
+                instanceId: inst.instanceId,
+                pluginId: inst.pluginId,
+              })}
             />
           ))}
         </div>
@@ -300,6 +328,30 @@ export function PluginsTab({ projectId }: Props) {
       {infoPlugin && (
         <PluginInfoModal plugin={infoPlugin} onClose={() => setInfoPlugin(null)} />
       )}
+
+      {configuring && (() => {
+        const manifest = manifestById.get(configuring.pluginId)
+        const details = readInstanceDetails(configuring.kind, parsed, configuring.instanceId)
+        if (!manifest || !details) {
+          // Race: either the manifest disappeared or the instance was
+          // removed before the modal opened. Silently close.
+          setConfiguring(null)
+          return null
+        }
+        const takenIds = instancesByKind[configuring.kind].map((i) => i.instanceId)
+        return (
+          <PluginConfigModal
+            kind={configuring.kind}
+            manifest={manifest}
+            initial={details}
+            takenInstanceIds={takenIds}
+            onCancel={() => setConfiguring(null)}
+            onSave={async (edited) => {
+              await handleSaveConfigure(configuring.kind, details, edited)
+            }}
+          />
+        )
+      })()}
     </DndContext>
   )
 }
@@ -313,6 +365,7 @@ function KindSection({
   manifestById,
   activeStrategyTypes,
   onRemove,
+  onConfigure,
 }: {
   kind: PluginKind
   label: string
@@ -322,6 +375,7 @@ function KindSection({
   manifestById: Map<string, PluginManifest>
   activeStrategyTypes: Set<string>
   onRemove: (instanceId: string) => void
+  onConfigure: (instance: { instanceId: string; pluginId: string }) => void
 }) {
   const { isOver, setNodeRef } = useDroppable({
     id: `container:${kind}`,
@@ -361,6 +415,7 @@ function KindSection({
                   kind={kind}
                   sortable={sortable}
                   onRemove={() => onRemove(inst.instanceId)}
+                  onConfigure={manifest ? () => onConfigure(inst) : undefined}
                   warning={warning}
                 />
               )
