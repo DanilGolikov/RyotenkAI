@@ -57,3 +57,67 @@ def test_catalog_get_unknown_id_raises(tmp_path: Path) -> None:
         assert "missing" in str(exc)
     else:
         raise AssertionError("expected KeyError")
+
+
+def test_catalog_auto_reloads_when_new_plugin_appears(tmp_path: Path) -> None:
+    """``ensure_loaded`` re-scans when a new plugin folder is added
+    without requiring a manual ``reload()`` — this is what powers the
+    web UI "add a preset → show up on refresh" flow."""
+    _make_plugin(tmp_path, "validation", "alpha", "Alpha")
+    catalog = CommunityCatalog(root=tmp_path)
+    catalog.ensure_loaded()
+    assert [e.manifest.plugin.id for e in catalog.plugins("validation")] == ["alpha"]
+
+    # Simulate a user dropping a new plugin into community/validation/
+    _make_plugin(tmp_path, "validation", "beta", "Beta")
+
+    # No explicit reload() — just another call, which must pick up the change.
+    catalog.ensure_loaded()
+    ids = sorted(e.manifest.plugin.id for e in catalog.plugins("validation"))
+    assert ids == ["alpha", "beta"]
+
+
+def test_catalog_auto_reloads_when_manifest_edited(tmp_path: Path) -> None:
+    """Editing an existing manifest updates its mtime and must also
+    trigger a reload — otherwise the web UI wouldn't pick up renamed
+    fields, changed descriptions, etc."""
+    import time
+
+    _make_plugin(tmp_path, "evaluation", "dummy", "DummyPlugin")
+    catalog = CommunityCatalog(root=tmp_path)
+    catalog.ensure_loaded()
+    first = catalog.plugins("evaluation")
+    assert first[0].manifest.plugin.description == ""
+
+    # Re-write manifest with a new description field. Sleep briefly so
+    # the mtime ticks on filesystems with low-resolution mtimes.
+    time.sleep(0.01)
+    (tmp_path / "evaluation" / "dummy" / "manifest.toml").write_text(
+        textwrap.dedent("""
+            [plugin]
+            id = "dummy"
+            kind = "evaluation"
+            description = "edited"
+
+            [plugin.entry_point]
+            module = "plugin"
+            class = "DummyPlugin"
+        """).strip()
+    )
+
+    catalog.ensure_loaded()
+    second = catalog.plugins("evaluation")
+    assert second[0].manifest.plugin.description == "edited"
+
+
+def test_catalog_no_reload_when_tree_unchanged(tmp_path: Path) -> None:
+    """Cache-hit path: repeated ``ensure_loaded`` on an unchanged tree
+    must return the same LoadedPlugin instances (no reload, no rebuild)."""
+    _make_plugin(tmp_path, "reward", "alpha", "Alpha")
+    catalog = CommunityCatalog(root=tmp_path)
+    catalog.ensure_loaded()
+    first = catalog.plugins("reward")
+    catalog.ensure_loaded()
+    second = catalog.plugins("reward")
+    # Same class objects — reload would have re-imported and produced new ones.
+    assert first[0].plugin_cls is second[0].plugin_cls
