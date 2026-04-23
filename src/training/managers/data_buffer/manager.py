@@ -67,6 +67,7 @@ from src.training.managers.data_buffer.checkpoint_utils import _get_sorted_check
 from src.training.managers.data_buffer.events import DataBufferEventCallbacks
 from src.training.managers.data_buffer.fault_simulator import FaultSimulator, SimulatedFaultError
 from src.training.managers.data_buffer.state_models import PhaseState, PhaseStatus, PipelineState
+from src.training.metrics_models import TrainingMetricsSnapshot
 
 if TYPE_CHECKING:
     from src.utils.config import StrategyPhaseConfig
@@ -425,9 +426,13 @@ class DataBuffer:
         self,
         phase_idx: int,
         checkpoint_path: str | None = None,
-        metrics: dict[str, Any] | None = None,
+        metrics: TrainingMetricsSnapshot | dict[str, Any] | None = None,
     ) -> None:
-        """Mark a phase as successfully completed."""
+        """Mark a phase as successfully completed.
+
+        ``metrics`` may be provided as a :class:`TrainingMetricsSnapshot` (preferred)
+        or a legacy ``dict`` for backward compatibility — the dict is coerced.
+        """
         if phase_idx < 0 or phase_idx >= self.total_phases:
             raise IndexError(f"Phase index {phase_idx} out of range")
 
@@ -435,8 +440,11 @@ class DataBuffer:
         phase.status = PhaseStatus.COMPLETED
         phase.completed_at = datetime.now()
         phase.checkpoint_path = checkpoint_path
-        if metrics:
-            phase.metrics = metrics
+        if metrics is not None:
+            if isinstance(metrics, TrainingMetricsSnapshot):
+                phase.metrics = metrics
+            else:
+                phase.metrics = TrainingMetricsSnapshot.from_dict(metrics)
 
         if all(p.is_complete for p in self.state.phases):
             self.state.status = "completed"

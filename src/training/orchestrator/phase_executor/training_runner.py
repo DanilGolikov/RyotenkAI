@@ -153,7 +153,7 @@ class PhaseTrainingRunner:
             )
 
             if self._mlflow_manager:
-                train_loss = metrics.get("train_loss")
+                train_loss = metrics.train_loss
                 self._mlflow_manager.log_event_complete(
                     f"Phase {phase_idx} ({phase.strategy_type.upper()}) completed"
                     + (f", loss={train_loss:.4f}" if train_loss else ""),
@@ -162,7 +162,7 @@ class PhaseTrainingRunner:
                     phase_idx=phase_idx,
                     strategy_type=phase.strategy_type,
                     checkpoint=str(final_checkpoint),
-                    **{k: v for k, v in metrics.items() if isinstance(v, int | float)},
+                    **metrics.numeric_kwargs(),
                 )
 
             buffer.cleanup_old_checkpoints(keep_last=2)

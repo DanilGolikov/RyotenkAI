@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.training.metrics_models import TrainingMetricsSnapshot
 from src.training.orchestrator.phase_executor import PhaseExecutor
 from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.memory_manager import OOMRecoverableError
@@ -90,11 +91,11 @@ def mock_dataset_loader() -> MagicMock:
 def mock_metrics_collector() -> MagicMock:
     """Mock MetricsCollector."""
     collector = MagicMock()
-    collector.extract_from_trainer.return_value = {
-        "train_loss": 0.45,
-        "eval_loss": 0.52,
-        "epoch": 3,
-    }
+    collector.extract_from_trainer.return_value = TrainingMetricsSnapshot(
+        train_loss=0.45,
+        eval_loss=0.52,
+        epoch=3,
+    )
     return collector
 
 
@@ -873,7 +874,7 @@ class TestPhaseExecutorDataBufferIntegration:
         mock_metrics_collector: MagicMock,
     ):
         """Test that phase is marked completed with metrics."""
-        expected_metrics = {"train_loss": 0.45, "eval_loss": 0.52, "epoch": 3}
+        expected_metrics = TrainingMetricsSnapshot(train_loss=0.45, eval_loss=0.52, epoch=3)
         mock_metrics_collector.extract_from_trainer.return_value = expected_metrics
 
         mock_mlflow = MagicMock()
@@ -1085,7 +1086,7 @@ class TestPhaseExecutorMLflowIntegration:
         mock_metrics_collector: MagicMock,
     ):
         """Test that completion metrics are logged to MLflow."""
-        expected_metrics = {"train_loss": 0.45, "eval_loss": 0.52}
+        expected_metrics = TrainingMetricsSnapshot(train_loss=0.45, eval_loss=0.52)
         mock_metrics_collector.extract_from_trainer.return_value = expected_metrics
 
         mock_mlflow = MagicMock()
@@ -1413,7 +1414,7 @@ class TestPhaseExecutorMLflowEdgeCases:
             # Should fallback to log_dataset_info
             mock_mlflow_manager.log_dataset_info.assert_called_once()
 
-    def test_mlflow_metrics_filtered_non_numeric(
+    def test_mlflow_metrics_skips_none_fields(
         self,
         phase_executor: PhaseExecutor,
         mock_buffer: MagicMock,
@@ -1422,16 +1423,13 @@ class TestPhaseExecutorMLflowEdgeCases:
         mock_metrics_collector: MagicMock,
         mock_mlflow_manager: MagicMock,
     ):
-        """Test that non-numeric metrics are filtered when logging to MLflow."""
-        # Metrics with mixed types
-        mixed_metrics = {
-            "train_loss": 0.45,
-            "eval_loss": 0.52,
-            "model_name": "gpt2",  # String - should be filtered
-            "epoch": 3,
-            "status": "completed",  # String - should be filtered
-        }
-        mock_metrics_collector.extract_from_trainer.return_value = mixed_metrics
+        """Non-populated snapshot fields must not be logged as MLflow metrics."""
+        mock_metrics_collector.extract_from_trainer.return_value = TrainingMetricsSnapshot(
+            train_loss=0.45,
+            eval_loss=0.52,
+            epoch=3,
+            # train_runtime / learning_rate / global_step left as None
+        )
 
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()
@@ -1448,14 +1446,14 @@ class TestPhaseExecutorMLflowEdgeCases:
             )
 
             assert result.is_success()
-            # Check that only numeric metrics were logged
             mock_mlflow_manager.log_metrics.assert_called()
             logged_metrics = mock_mlflow_manager.log_metrics.call_args[0][0]
             assert "train_loss" in logged_metrics
             assert "eval_loss" in logged_metrics
             assert "epoch" in logged_metrics
-            assert "model_name" not in logged_metrics
-            assert "status" not in logged_metrics
+            assert "train_runtime" not in logged_metrics
+            assert "learning_rate" not in logged_metrics
+            assert "global_step" not in logged_metrics
 
 
 # ========================================================================

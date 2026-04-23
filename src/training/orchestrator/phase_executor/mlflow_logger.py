@@ -18,6 +18,7 @@ from src.training.constants import (
     TAG_STRATEGY_TYPE,
     TRUNCATE_ERROR_MSG,
 )
+from src.training.metrics_models import TrainingMetricsSnapshot
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -207,14 +208,14 @@ class MlflowPhaseLogger:
     def log_completion(
         self,
         phase_idx: int,
-        metrics: dict[str, Any],
+        metrics: TrainingMetricsSnapshot,
         checkpoint_path: str,
     ) -> None:
         """Log phase completion to MLflow."""
         if self._mlflow_manager is None:
             return
 
-        float_metrics = {k: float(v) for k, v in metrics.items() if isinstance(v, int | float)}
+        float_metrics = {k: float(v) for k, v in metrics.numeric_kwargs().items()}
         if float_metrics:
             self._mlflow_manager.log_metrics(float_metrics)
 

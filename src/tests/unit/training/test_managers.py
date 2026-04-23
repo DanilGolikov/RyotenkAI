@@ -439,12 +439,12 @@ class TestDataBufferPhaseTracking:
         Then: Phase status is COMPLETED
         """
         initialized_buffer.mark_phase_started(0)
-        initialized_buffer.mark_phase_completed(0, "/tmp/checkpoint", {"loss": 1.5})
+        initialized_buffer.mark_phase_completed(0, "/tmp/checkpoint", {"train_loss": 1.5})
 
         phase = initialized_buffer.state.phases[0]
         assert phase.status == PhaseStatus.COMPLETED
         assert phase.checkpoint_path == "/tmp/checkpoint"
-        assert phase.metrics["loss"] == 1.5
+        assert phase.metrics.train_loss == 1.5
 
     def test_mark_phase_failed(self, initialized_buffer):
         """
