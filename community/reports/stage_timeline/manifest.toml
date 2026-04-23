@@ -3,7 +3,6 @@ id = "stage_timeline"
 kind = "reports"
 name = "StageTimelineBlockPlugin"
 version = "1.0.0"
-priority = 100
 category = "report"
 stability = "stable"
 description = "Report block: stage_timeline."
@@ -11,3 +10,6 @@ description = "Report block: stage_timeline."
 [plugin.entry_point]
 module = "plugin"
 class = "StageTimelineBlockPlugin"
+
+[reports]
+order = 100

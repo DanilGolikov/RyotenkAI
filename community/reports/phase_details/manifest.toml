@@ -3,7 +3,6 @@ id = "phase_details"
 kind = "reports"
 name = "PhaseDetailsBlockPlugin"
 version = "1.0.0"
-priority = 80
 category = "report"
 stability = "stable"
 description = "Report block: phase_details."
@@ -11,3 +10,6 @@ description = "Report block: phase_details."
 [plugin.entry_point]
 module = "plugin"
 class = "PhaseDetailsBlockPlugin"
+
+[reports]
+order = 80

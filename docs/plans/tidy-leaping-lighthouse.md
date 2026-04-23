@@ -1,265 +1,123 @@
-# План: модернизация `ryotenkai` CLI
+# План: убрать `priority` из плагинов (кроме reports, где он важен)
 
 ## Context
 
-Текущий CLI (`src/main.py` + `src/cli/community.py`) работает, но страдает от трёх симптомов — пользователь явно обозначил их в последних итерациях:
+Пользователь усомнился в ценности поля `plugin.priority` в манифестах и попросил аудит. Результат:
 
-1. **Перегруз по информации**: Rich-боксы, длинные многоабзацные docstring-и, ad-hoc `typer.style(...)` в разных файлах, traceback-боксы на user-ошибках. После последнего прохода по community/* это устранено точечно — осталось разнести паттерн на весь CLI.
-2. **Hand-rolled вывод**: `src/cli/run_rendering.py` рендерит таблицы через `fmt.format("{:<32}...")` — нет Rich Table, нет JSON-варианта, widths зашиты. Иконки статусов (`◉ ▸ ◈ ◌ ◇ ○`) и цвета тоже раскиданы.
-3. **Отсутствие cross-cutting фич из clig.dev / 12-factor-CLI**: нет `--output json`, нет `-V/--version` на корне, нет `--no-color`/`NO_COLOR`, нет глобального `-v/-q`, нет shell-комплишнов (`add_completion=False`), `version` — команда без debug-инфы. `src/main.py` = 996 строк с 17 командами — масштабировать дальше больно.
+- **Validation и evaluation** плагины сортируются по `priority` перед выполнением (`dataset_validator.py:195`, `evaluation/runner.py:164`). На **семантику** это не влияет — проверки/метрики независимы и в пайплайн собираются в dict. Единственный эффект — порядок строк в логах.
+- **Reward** плагины `priority` **игнорируют** — поле есть в манифесте, но код его не читает.
+- **Reports** плагины используют `priority` как **осмысленный `order`** — это номер секции в финальном Markdown-отчёте (`registry.py:35` — `plugin_cls.order = manifest.plugin.priority`). Тут он по-настоящему нужен: `header=10`, `summary=20`, … `footer=120`.
 
-**Решения по развилкам (от пользователя):**
+**Вывод:** поле полу-мёртвое. Для validation/evaluation/reward оно — cargo-cult числа, которые авторам плагинов приходится подбирать без реальной отдачи. Для reports — сильная, уникальная и значимая настройка, но называется чужим именем (`priority` вместо `order`).
 
-1. **Scope** = весь ryotenkai CLI (все 17 top-commands + community sub-app). Не точечный патч community.
-2. **Framework** = **остаёмся на Typer 0.19**. Аудит показал: структура не костыли, а Cyclopts (хотя объективно лучше спроектирован) — bus-factor=1, ×15 меньше экосистема, Typer 0.19 уже закрыл основной гап (нативные `Literal[...]`). Миграцию держим в уме как опцию, если упрёмся в `int | Literal[...]` Union или в Pydantic-модели как CLI-аргументы.
-3. **JSON output** = да, для read-команд (`runs-list`, `inspect-run`, `run-status`, `run-diff`, `config-validate`, `info`). Требование clig.dev и 12-factor-CLI для composability (pipe в `jq`, скрипты CI).
+**Что хотим:**
 
-**Что не входит** (чтобы не разбухать):
-- TUI (`src/tui/`) — отдельный слой, не трогаем.
-- Web API — не меняем.
-- Миграция фреймворка — опция на будущее.
-- Переписывание бизнес-логики (`src/pipeline/…`) — трогаем только I/O слой.
+1. Убрать `priority` из `PluginSpec` (общий манифест).
+2. Для reports — ввести явный блок `[reports]` с обязательным уникальным `order: int`. Это семантическая честность: поле живёт там, где оно реально работает.
+3. Снять `plugins.sort(key=.priority)` в validation/evaluation — пусть порядок определяется конфигом пользователя (list в YAML сохраняет порядок вставки в pydantic).
 
----
+**Почему сейчас удобный момент:**
 
-## Принципы, которые применяем (clig.dev + 12-factor-CLI)
+- Third-party авторов плагинов пока **нет**, community мы контролируем полностью — ломаем только собственный код и тесты.
+- Совсем недавно завершили community-контракт v2 и CLI-модернизацию — текущее окно пригодно для ещё одного низкорискового рефакторинга в том же слое.
 
-Коротко, чтоб на них можно было ссылаться в ревью:
+## Что НЕ входит в скоуп
 
-- **Human-first, machine-friendly**. Текстовый вывод по умолчанию, `--output json` для скриптов.
-- **Pipe-safe**. `isatty()` → цвета/боксы; пайп → plain text. Уважаем `NO_COLOR`.
-- **Tight help**. 1 абзац описание + `\b Examples:` + argument/option таблица. Никаких эссе.
-- **Предсказуемые флаги**. `-h/--help`, `-V/--version`, `-v/--verbose`, `-q/--quiet`, `-o/--output`, `-f/--force`, `-n/--dry-run` — одинаковые имена во всех командах.
-- **Чистые ошибки**. Одна строка `error: …` + опциональный hint. Никаких Rich-traceback-боксов на предсказуемых ошибках. Неожиданные баги → обычный Python traceback.
-- **Did-you-mean** на опечатки (бесплатно через click >= 8.1, оно под капотом Typer).
-- **Exit-коды документированы**. `0` успех, `1` бизнес-ошибка, `2` аргументы/usage (это уже делает click).
+- **Config-YAML валидаторов/evaluation** сейчас принимает `list[...]` (order-preserving), шейп трогать не нужно.
+- **reward** плагинов в community всего один (`helixql_compiler_semantic`) — там `priority=50` просто сносим, никакой логики порядка нет.
+- **Фронт/OpenAPI** — поле `priority` сейчас в `ui_manifest()` эмитится без потребителя на клиенте; удаляем вместе со схемой, TS-типы регенерируются автоматически.
 
 ---
 
-## Целевой UX (эталонные примеры)
+## Архитектура решения
 
-```
-$ ryotenkai --version
-ryotenkai 0.4.2  python 3.13.1  platform darwin-arm64  git 6b78e80
+### Манифест (pydantic)
 
-$ ryotenkai runs-list
-Run ID                            Status         Att  Duration    Config
-────────────────────────────────  ─────────────  ───  ──────────  ─────────────────
-run_2026_0422_1732_baking         completed        1  2h 14m 8s   config_qwen.yaml
-run_2026_0422_1510_vigorous       failed           3  41m 22s     config_llama.yaml
-
-$ ryotenkai runs-list -o json | jq '.[].status'
-"completed"
-"failed"
-
-$ ryotenkai inspect-run runs/missing
-error: run directory not found: runs/missing
-  hint: list available runs with `ryotenkai runs-list`
+**Было:**
+```toml
+[plugin]
+id = "min_samples"
+kind = "validation"
+priority = 10      # ← магическое число, бизнес-эффекта нет
 ```
 
----
-
-## Архитектура слоя CLI
-
-Новая структура:
-
-```
-src/cli/
-├── __init__.py
-├── app.py                 # Typer() instance + root @callback; register sub-apps here
-├── context.py             # CLIContext dataclass (output format, color, verbose, quiet, log_level)
-├── renderer.py            # Renderer Protocol + TextRenderer + JsonRenderer
-├── style.py               # ICONS, COLORS, one Console instance; no more ad-hoc typer.style
-├── errors.py              # die(msg, hint=...) + DidYouMean helper
-├── completion.py          # --install-completion wiring
-├── commands/
-│   ├── __init__.py
-│   ├── train.py           # train, validate-dataset, list-restart-points, train-local
-│   ├── runs.py            # runs-list, inspect-run, run-status, run-diff, logs
-│   ├── config.py          # config-validate, info
-│   ├── report.py          # report
-│   ├── serve.py           # serve, tui
-│   ├── version.py         # version + root --version callback
-│   └── community.py       # (существующий community_app переезжает сюда)
-└── run_rendering.py       # **remove** — поглощается renderer.py + TextRenderer
+**Стало:**
+```toml
+[plugin]
+id = "min_samples"
+kind = "validation"
+# priority удалено
 ```
 
-`src/main.py` сжимается до ~20 строк: сигнал-хендлеры + `from src.cli.app import app; app()`.
+Для reports добавляем явный опциональный блок:
 
----
+```toml
+[plugin]
+id = "header"
+kind = "reports"
 
-## План по фазам
+[reports]
+order = 10     # обязательное поле, уникальное в пределах всех report-плагинов
+```
 
-Шесть фаз, каждая самодостаточна и оставляет CLI рабочим. Делаем отдельными коммитами — bisect-friendly.
-
-### Фаза 1. Shared infrastructure (foundation)
-
-Закладываем общий слой, ничего не ломая.
-
-**Новые модули:**
-
-- `src/cli/context.py` — `CLIContext` dataclass (`output: Literal["text","json"]`, `color: bool`, `verbose: int`, `quiet: bool`, `log_level: str`). Хранится в `typer.Context.obj`.
-- `src/cli/style.py` — один `rich.console.Console` (+ `Console(stderr=True)` для ошибок), словарь `ICONS`, константы `COLOR_OK/WARN/ERR`. `style.py` честно честно проверяет `console.is_terminal` и `NO_COLOR` — в пайпе цветов нет.
-- `src/cli/renderer.py` — `class Renderer(Protocol)` с методами `table(headers, rows)`, `kv(pairs)`, `tree(root)`, `status_line(...)`. Реализации: `TextRenderer` (через Rich) и `JsonRenderer` (копит структуру, в конце `json.dumps`). Фабрика: `get_renderer(ctx: CLIContext) -> Renderer`.
-- `src/cli/errors.py` — `def die(msg, *, hint=None, code=1)`; `suggest(user_input, valid_options)` для did-you-mean.
-- `src/cli/completion.py` — обёртка над typer-ом, чтобы включить `add_completion=True` + документировать `ryotenkai --install-completion [bash|zsh|fish]`.
-
-**Root @callback в `src/cli/app.py`:**
+Модели в `src/community/manifest.py`:
 
 ```python
-@app.callback()
-def _root(
-    ctx: typer.Context,
-    version: bool = typer.Option(False, "-V", "--version", is_eager=True, callback=_print_version),
-    output: str = typer.Option("text", "-o", "--output", help="Output format: text | json", envvar="RYOTENKAI_OUTPUT"),
-    color: bool = typer.Option(True, "--color/--no-color", envvar="NO_COLOR", help="Colored output (honours NO_COLOR env)"),
-    verbose: int = typer.Option(0, "-v", "--verbose", count=True, help="Increase verbosity (-v, -vv)"),
-    quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress non-essential output"),
-    log_level: str | None = typer.Option(None, "--log-level", help="Override log level (DEBUG/INFO/WARNING/ERROR)"),
-) -> None: ...
+class PluginSpec(BaseModel):
+    id: str
+    kind: PluginKind
+    name: str = ""
+    version: str = "1.0.0"
+    # priority: int = 50          ← удаляется
+    category: str = ""
+    stability: Stability = "stable"
+    description: str = ""
+    entry_point: EntryPoint
+
+class ReportsSpec(BaseModel):
+    """Report-plugin-specific metadata (section ordering)."""
+    model_config = ConfigDict(extra="forbid")
+    order: int
+
+class PluginManifest(BaseModel):
+    plugin: PluginSpec
+    params_schema: dict[str, Any] = Field(default_factory=dict)
+    # ...
+    reports: ReportsSpec | None = None    # ← новое, required if kind == "reports"
+
+    @model_validator(mode="after")
+    def _reports_block_required_for_kind(self) -> PluginManifest:
+        if self.plugin.kind == "reports" and self.reports is None:
+            raise ValueError("[reports] block is required when plugin.kind == 'reports'")
+        if self.plugin.kind != "reports" and self.reports is not None:
+            raise ValueError("[reports] block is only valid for plugin.kind == 'reports'")
+        return self
 ```
 
-Контекст передаём в команды через `ctx.obj` — командам не нужно парсить флаги самим.
+### Runtime
 
-**Что не трогаем в этой фазе:** команды остаются там же в `src/main.py`. Они просто начинают читать `ctx.obj` вместо собственных флагов.
+1. **`src/utils/plugin_base.py`** — удалить `priority: ClassVar[int] = 50`.
+2. **`src/community/loader.py:158`** — удалить `plugin_cls.priority = manifest.plugin.priority`.
+3. **`src/pipeline/stages/dataset_validator.py:195`** — удалить `plugins.sort(key=...priority)`. `plugins` и так build-ится итерацией по `config.plugins` (order-preserving list); default-плагины в `_get_default_plugins()` возвращаются в детерминированном порядке из ручного списка.
+4. **`src/evaluation/runner.py:164`** — заменить `sorted(plugins, key=...)` на обычную итерацию. Тот же механизм: build по `config.plugins`.
+5. **`src/reports/plugins/registry.py:35`** — `plugin_cls.order = loaded.manifest.reports.order` (было `.plugin.priority`). Uniqueness-check остаётся.
 
-**Acceptance:** `ryotenkai --version` работает; `ryotenkai runs-list -o json` не падает (даже если пока возвращает `[]`); `NO_COLOR=1 ryotenkai ...` не красит вывод.
+### API / OpenAPI
 
----
+- **`src/community/manifest.py::ui_manifest()`** — убрать `"priority": self.plugin.priority` для non-report plugins; для reports добавить `"order": self.reports.order` (только для `kind == "reports"`).
+- `web/src/api/schema.d.ts` и `web/src/api/openapi.json` регенерируются из pydantic автоматически (процесс уже налажен в проекте).
 
-### Фаза 2. Split `src/main.py`
+### CLI-тулзы (scaffold / sync / toml_writer)
 
-Разбиваем 996-строчный main на модули в `src/cli/commands/*.py`. Каждый модуль экспортирует `register(app: typer.Typer)` и регистрирует свои команды на переданный app.
+- `src/community/toml_writer.py::FIELD_ORDER` — убрать `priority` из списка порядка полей `[plugin]`-секции; добавить секцию `[reports]` в очередь рендера.
+- `src/community/scaffold.py::build_plugin_manifest_dict()` — убрать `"priority": 50`; при `inferred.kind == "reports"` добавлять `"reports": {"order": 50}` (50 — дефолт-плейсхолдер с `# TODO`-комментарием через TOML-писатель).
+- `src/community/sync.py::_merge_plugin_manifest()` — выкинуть `priority` из user-owned scalar fields; добавить merge для `[reports]` блока (полностью user-owned).
 
-`src/main.py` становится:
+### Community-манифесты (миграция)
 
-```python
-# src/main.py — 20 строк
-from src.cli.app import build_app
-
-def main() -> None:
-    app = build_app()
-    app()
-
-if __name__ == "__main__":
-    main()
-```
-
-`src/cli/app.py::build_app()` собирает app + вызывает все `commands.*.register(app)` + привязывает community sub-app.
-
-**Что это даёт:**
-- `src/main.py` перестаёт быть местом боли при добавлении команд.
-- Команды модульные → можно писать per-command tests в `src/tests/unit/cli/test_runs.py` etc.
-- signal-handler остаётся в `src/main.py` (он про pipeline lifecycle, не CLI).
-
-**Acceptance:** старые команды работают идентично; размер `src/main.py` < 200 строк (только signal/cleanup-код + `main()`).
-
----
-
-### Фаза 3. Renderer для read-команд + Rich-таблицы
-
-Переводим все «вывод данных» команды на `ctx.obj.renderer`. Уходим от `fmt.format("{:<32}...")` → Rich `Table`.
-
-**Команды, которые мигрируют:**
-
-| Команда | Что рендерим |
-|---|---|
-| `runs-list` | Таблица: Run ID / Status / Attempts / Duration / Config |
-| `inspect-run` | Key-value header + вложенные таблицы per attempt |
-| `run-status` | Live-snapshot (pipe-safe: plain text при `not isatty`) |
-| `run-diff` | Diff-секции (coloured ±) |
-| `list-restart-points` | Таблица: # / Stage / Available / Mode / Reason |
-| `info` | Key-value + список stages |
-| `config-validate` | Список чеков со статус-иконками |
-
-**Правила рендера:**
-- Заголовок таблицы: жирный, без панели-бокса (Rich `Table(box=None)` или `box=SIMPLE`).
-- Иконки статусов берём из `cli/style.py::ICONS` — один источник правды.
-- Если `not console.is_terminal` — автоматически plain text (Rich это умеет, просто конфигурим `Console(force_terminal=None)`).
-
-**Acceptance:** визуальный diff для `runs-list` / `inspect-run` — таблицы ровные, в пайпе получаем plain-text, `-o json` отдаёт корректный JSON.
-
----
-
-### Фаза 4. JSON output для read-команд
-
-Для каждой read-команды пишем параллельный рендер через `JsonRenderer`.
-
-**Контракт** (стабильная схема, задокументировать в docstring):
-
-```json
-// runs-list -o json
-[
-  {
-    "run_id": "run_2026_0422_1732_baking",
-    "status": "completed",
-    "attempts": 1,
-    "started_at": "2026-04-22T17:32:11Z",
-    "completed_at": "2026-04-22T19:46:19Z",
-    "duration_s": 8048,
-    "config_name": "config_qwen.yaml"
-  }
-]
-```
-
-```json
-// inspect-run <id> -o json
-{
-  "run_id": "…",
-  "status": "completed",
-  "config_path": "…",
-  "mlflow_run_id": "…",
-  "attempts": [
-    {
-      "attempt_no": 1,
-      "status": "completed",
-      "started_at": "…",
-      "completed_at": "…",
-      "stages": [
-        { "name": "Dataset Validator", "status": "completed", "duration_s": 12.3, "mode": "ran", "error": null }
-      ]
-    }
-  ]
-}
-```
-
-Команды-«действия» (`train`, `report`, `pack`) JSON-вывод **не получают** (у них нет структурированного результата для потребителя — это action, а не query). Допустимо вернуть `{"ok": true}` на успех для consistency — решим по ходу дела, начинаем без этого.
-
-**Acceptance:** `ryotenkai runs-list -o json | jq . | head` — валидный JSON; формат задокументирован в `docs/cli.md`.
-
----
-
-### Фаза 5. Тесты CLI
-
-Сейчас покрытия top-level команд почти нет. Закладываем базу:
-
-`src/tests/unit/cli/` с файлами per-command-группа:
-
-- `test_help.py` — каждая команда отвечает `exit_code=0` на `--help`, содержит `Usage:` и сводку.
-- `test_version.py` — `--version` и `version` команда.
-- `test_runs.py` — `runs-list` / `inspect-run` / `run-status` / `run-diff` в text и json режимах, на seeded tmp runs-dir.
-- `test_config.py` — `config-validate` / `info` + missing-file.
-- `test_global_flags.py` — `NO_COLOR=1`, `--output json`, `-v`, `-q` работают как контракт.
-
-Используем `typer.testing.CliRunner` (как в `test_cli_community.py`). Покрытие — smoke, не полное (полнота — в e2e).
-
-**Acceptance:** новые тесты зелёные, `pytest src/tests/unit/cli/` < 10 с.
-
----
-
-### Фаза 6. Polish + документация
-
-- **`version` команда** → печатает `ryotenkai X.Y.Z · python A.B.C · platform ··· · git sha ···`. Работает и при `-V/--version`.
-- **Did-you-mean на опечатки**: click бросает `UsageError` со списком доступных команд. Нужно перехватить в root и вывести `error: unknown command 'sycn'. Did you mean 'sync'?` — опираясь на `difflib.get_close_matches`.
-- **Docstring style guide** в `docs/cli.md`:
-  - Первая строка `short_help` < 60 символов.
-  - Тело = 1 абзац "что делает" + `\b Examples:` + 2-3 примера.
-  - Никакой Rich-разметки (`[bold]…[/bold]`), потому что `rich_markup_mode=None` на app.
-- **Пробегаемся sed-ом по всем командам** в `src/cli/commands/*.py` и приводим docstring-и к guide-у.
-- **`ryotenkai --install-completion`** — включён, smoke-тест на zsh/bash.
-- **CHANGELOG-запись** + короткий `docs/cli.md` с примерами и JSON-схемой.
-
-**Acceptance:** `ryotenkai help` и `ryotenkai <cmd> --help` — компактные, единообразные; `ryotenkai --install-completion zsh` печатает rc-инструкцию.
+- **14 validation / 4 evaluation / 1 reward** манифестов: убрать строку `priority = XX`.
+- **14 reports** манифестов: удалить `priority = XX` из `[plugin]`, добавить блок `[reports]` с `order = XX` (значения переносим 1:1 из текущих priority чтобы не перетасовать отчёт).
+- Бампнуть `version` (patch) у всех 33-х — содержимое манифеста поменялось.
 
 ---
 
@@ -267,93 +125,297 @@ if __name__ == "__main__":
 
 | Файл | Действие |
 |---|---|
-| `src/cli/app.py` | **создать** — Typer-app + root callback + сборка команд |
-| `src/cli/context.py` | **создать** — CLIContext |
-| `src/cli/renderer.py` | **создать** — Renderer protocol + Text/Json impl |
-| `src/cli/style.py` | **создать** — Console, ICONS, цвета |
-| `src/cli/errors.py` | **создать** — die(), suggest() |
-| `src/cli/completion.py` | **создать** — completion wiring |
-| `src/cli/commands/train.py` | **создать** — мигрируют `train`, `validate-dataset`, `list-restart-points`, `train-local` |
-| `src/cli/commands/runs.py` | **создать** — мигрируют `runs-list`, `inspect-run`, `run-status`, `run-diff`, `logs` |
-| `src/cli/commands/config.py` | **создать** — мигрируют `config-validate`, `info` |
-| `src/cli/commands/report.py` | **создать** — мигрирует `report` |
-| `src/cli/commands/serve.py` | **создать** — мигрируют `serve`, `tui` |
-| `src/cli/commands/version.py` | **создать** — `version` + `-V` callback |
-| `src/cli/commands/community.py` | **переезд** — `src/cli/community.py` перемещаем сюда без изменений |
-| `src/main.py` | **ужимаем до ~20 строк** (signal-handler + `main()`) |
-| `src/cli/run_rendering.py` | **удалить** — логика уходит в `renderer.py` + `TextRenderer` |
-| `src/tests/unit/cli/*` | **создать** — 5-6 файлов smoke-тестов |
-| `docs/cli.md` | **создать** — стиль-гайд + JSON-схема read-команд |
+| `src/community/manifest.py` | убрать `priority`, добавить `ReportsSpec` + cross-field validator |
+| `src/utils/plugin_base.py` | убрать `priority: ClassVar[int]` |
+| `src/community/loader.py` | убрать `plugin_cls.priority = ...` (строка 158) |
+| `src/pipeline/stages/dataset_validator.py` | убрать `plugins.sort(key=...priority)` (строка 195) |
+| `src/evaluation/runner.py` | убрать `sorted(..., key=priority)` (строка 164) |
+| `src/reports/plugins/registry.py` | `plugin_cls.order = manifest.reports.order` |
+| `src/community/toml_writer.py` | скорректировать FIELD_ORDER + добавить рендер `[reports]` |
+| `src/community/scaffold.py` | не писать `priority`; для kind=reports писать `[reports]` |
+| `src/community/sync.py` | миграция merge-логики |
+| `community/validation/*/manifest.toml` (14) | удалить строку `priority` |
+| `community/evaluation/*/manifest.toml` (4) | удалить строку `priority` |
+| `community/reward/helixql_compiler_semantic/manifest.toml` | удалить строку `priority` |
+| `community/reports/*/manifest.toml` (14) | `priority` → `[reports] order` |
+| `src/tests/unit/community/test_loader.py` | снять assert `cls.priority == 42`; добавить assert про `order` для reports |
+| `src/tests/unit/community/test_toml_writer.py` | обновить ожидания по порядку полей |
+| `src/tests/unit/community/test_scaffold.py` | обновить ожидания — `[reports]` вместо `priority` в reports-кейсе |
+| `src/tests/unit/community/test_sync.py` | обновить merge-тесты |
+| `src/tests/unit/pipeline/test_stages_validator.py` | убрать mock `priority=1` в строках 53, 72 |
+| `web/src/api/openapi.json` + `schema.d.ts` | регенерировать |
 
-**Реиспользуем (не трогаем):**
-- `src/utils/logger.py` — colorlog-логгер как есть.
-- `src/pipeline/run_queries.py` — источник данных для `runs-list` / `inspect-run`, не меняется.
-- `src/pipeline/state.py` — state-объекты, рендер читает их.
-- `typer.testing.CliRunner` — тест-инфра уже используется в `test_cli_community.py`.
-
-**Новые зависимости:** нет. Rich уже в `pyproject.toml` (`rich>=14.2.0`), просто начинаем его использовать в CLI-слое.
+**Новых зависимостей нет.** Реиспользуем: pydantic `model_validator`, существующая `_validate_plugin_instances` в `registry.py`, TOML-writer API с `todo_fields=`.
 
 ---
 
-## Риски и митигаторы
+## Фазы
 
-1. **«Один большой рефактор → регрессы»**. Митигатор: 6 фаз, каждая — отдельный коммит, `pytest` после каждой. Bisect-friendly.
-2. **Разная ширина терминалов / CI без TTY**. Rich сам детектит — проверяем в CI, что `CI=true` не ломает вывод.
-3. **JSON-схема превращается в API**. Митигатор: документируем в `docs/cli.md`, помечаем как «stable for v1», нарушающие изменения — только на major-bump.
-4. **`NO_COLOR` vs `--color/--no-color`** — конфликт приоритетов. Правило: CLI-флаг бьёт env, env бьёт дефолт.
-5. **Community sub-app уже свежий**. Не переделываем — только переносим в `commands/community.py` as-is и донаследуем стилем (иконки/рендер из общих модулей).
-6. **Миграция Cyclopts в будущем**. План совместим: `cli/app.py` + `cli/commands/*.py` структура 1-в-1 переносится на Cyclopts (см. migration-гайд). Делая этот рефакторинг, мы также снижаем стоимость будущего свича.
+Один PR, три атомарных коммита для bisect-friendliness:
+
+1. **`refactor(community): introduce [reports] block with order`** — манифест-модель + миграция 14 report-манифестов + registry.py читает из нового места. Validation/evaluation ещё сортируют по старому. Всё зелёное.
+2. **`refactor(community): drop priority from Base/PluginSpec + sort calls`** — удаляем `priority` из `PluginSpec`, `BasePlugin`, loader, двух sort-вызовов; удаляем `priority = XX` из 19 не-report манифестов; правим тесты.
+3. **`chore(cli): scaffold/sync/toml_writer drop priority, support [reports]`** — обновляем writer + scaffold + sync, чтобы новые плагины не получали `priority` в scaffold-e, а report-плагины получали `[reports]` блок с TODO-комментарием.
+
+Каждый коммит сам по себе не ломает тесты (зелёный — стейблный).
 
 ---
 
 ## Verification
 
-Для каждой фазы отдельно, но плюс финальная прогонка:
-
-**Автоматически:**
-
 ```bash
-# Весь CLI-набор
-pytest src/tests/unit/cli/ -v
+# После каждой фазы:
+pytest src/tests/unit/community/ src/tests/unit/reports/ src/tests/unit/pipeline/test_stages_validator.py src/tests/integration/api/test_delete_and_config.py -q
+ruff check src/ community/
+ryotenkai community sync community --dry-run   # diff должен быть только про version bump
+ryotenkai report <run>                          # секции в том же порядке, что были (sanity-check на e2e)
 
-# Community не сломан
-pytest src/tests/unit/community/ src/tests/integration/api/test_delete_and_config.py -q
-
-# Линт
-ruff check src/
-
-# Быстрый smoke
-ryotenkai --version
-ryotenkai --help
-ryotenkai runs-list --help
-ryotenkai runs-list -o json
-NO_COLOR=1 ryotenkai runs-list
-ryotenkai runs-list | cat    # pipe-safe
-ryotenkai sycn               # did-you-mean → "sync"?
+# Ручная проверка API-контракта:
+curl -s http://localhost:8000/api/v1/plugins/validation | jq '.[] | keys'     # нет "priority"
+curl -s http://localhost:8000/api/v1/plugins/reports | jq '.[] | .order'      # есть order, уникальный
 ```
 
-**Ручная проверка:**
+Критерий успеха:
 
-- [ ] `ryotenkai --help` — одно-абзацное описание, компактный список команд.
-- [ ] `ryotenkai <cmd> --help` для каждой команды — 1 абзац + Examples + Arguments + Options, без `[bold]…[/bold]` артефактов.
-- [ ] `ryotenkai runs-list` в TTY — цветная таблица, Rich-ная.
-- [ ] `ryotenkai runs-list > out.txt` — plain text без ANSI-кодов.
-- [ ] `ryotenkai runs-list -o json | jq '.[0]'` — валидный JSON-объект.
-- [ ] `ryotenkai --version` и `ryotenkai version` — одинаковый вывод с debug-инфой.
-- [ ] `ryotenkai community sync community/` — старое поведение (batch-mode).
-- [ ] Ошибочные вызовы (неизвестный run_dir, битый config) — одна строка `error: …` + hint, без traceback-бокса.
-
-**Успех:** пользователь запускает `ryotenkai runs-list | jq`, `ryotenkai inspect-run <id> -o json`, `ryotenkai train --config ./c.yaml` без сюрпризов; help-экраны короткие и похожие друг на друга; ошибки читабельны с первого взгляда.
+- Все тесты зелёные (161+ текущие).
+- `ryotenkai report` даёт идентичную Markdown-композицию до/после.
+- OpenAPI-схема не содержит `priority` для validation/evaluation/reward; для reports есть `order`.
+- 0 упоминаний `priority` в community/**/manifest.toml кроме, возможно, `secrets.required` (другое поле) — проверяется `grep -r "^priority" community/`.
 
 ---
 
-## Приоритеты / порядок
+# Risk & question analysis (3 итерации)
 
-Если не хотим делать всё сразу — минимальная «приносит пользу сегодня» последовательность:
+## Итерация 1 — обвиозные риски
 
-1. **Фаза 1** (foundation) — без этого остальное костыли.
-2. **Фаза 3** (Rich-таблицы) — самый заметный визуальный апгрейд, снимает «перегруз».
-3. **Фаза 4** (JSON output) — разблокирует скриптование.
-4. **Фаза 6** (polish) — мелкие штрихи, но без них всё не прочитается единообразно.
-5. **Фаза 2** (split main.py) — техдолг, можно отложить на неделю после UX-прохода.
-6. **Фаза 5** (тесты CLI) — параллельно с фазами 3-4, заводим по ходу.
+**R1. Изменение порядка выполнения валидации/evaluation ломает чей-то пайплайн.**
+Сейчас validation-плагины запускаются в порядке `priority asc`, пользователь может быть незаметно на это завязан (например, `min_samples` (priority=10) валится первым и отсекает остальные). После снятия сорта порядок = order-of-appearance в `config.yaml`, и если пользователь не указывал `plugins: [...]` явно, применяются default-плагины в порядке `_get_default_plugins()`.
+
+**R2. Совместимость API — клиент упадёт, если `priority` резко пропадёт.**
+Поле в `ui_manifest()` → в `/plugins/{kind}`. Клиент (TypeScript) ожидает `priority: number` (default 50) — если пропадёт, typed код сломается на compile-time.
+
+**R3. Sync-diff взорвётся при первом прогоне.**
+`toml_writer.FIELD_ORDER` влияет на порядок ключей в рендере. Изменение FIELD_ORDER вызывает перегенерацию всех 30+ manifest.toml со смещёнными строками — шум в диффе, возможны merge-конфликты если параллельно идут другие ветки.
+
+**R4. Uniqueness-check order в reports слетит при миграции.**
+Если копируем priority→order один-к-одному, текущие значения должны быть уникальны. Если где-то duplicate — сейчас код тоже бы падал (check уже есть). Но: авторы раньше могли случайно продублировать priority (до введения check), а check добавили позже → возможны latent-дубли.
+
+## Итерация 2 — вторичные, неочевидные
+
+**R5. `_get_default_plugins()` полагается на сорт.**
+`dataset_validator.py` имеет default-список плагинов которые добавляются если config не указал плагины. Сейчас они попадают в `plugins.sort(.priority)` и мешаются. Без сорта их порядок = порядок ручного списка в `_get_default_plugins`. Если мы не пересмотрели этот ручной список с «логичным» порядком — может получиться кривая картина.
+
+**R6. 3rd-party плагин, встроенный через community-zip, ожидает поле `priority`.**
+Сейчас third-party нет — но если кто-то уже скачал zip и положил у себя, `PluginSpec` с `extra="forbid"` сломается на неизвестном поле `priority` после апгрейда. Миграционный gotcha.
+
+**R7. `BasePlugin.priority: ClassVar[int] = 50` могут читать конкретные плагины внутри своей логики.**
+Не сортировка, а, скажем, логгинг. Например, `logger.info(f"Running {self.name} priority={self.priority}")`. Грепом надо проверить все плагин-файлы.
+
+**R8. Report-плагины, не зарегистрированные через community-catalog.**
+Registry имеет метод `register_from_community`, но теоретически можно было регистрировать вручную (`ReportPluginRegistry._registry[...] = cls`). Если такие пути существуют — они читали `.order` напрямую как ClassVar, а мы меняем источник на манифест.
+
+**R9. MLflow теги / логи.**
+Может быть где-то `mlflow.log_param("priority", plugin.priority)` — поиск грепом.
+
+## Итерация 3 — «документация и UX»
+
+**R10. README в `community/validation/*`, `community/evaluation/*`, `community/reports/*`.**
+В них наверняка прописано «add `priority = X` to your manifest». Надо пройтись.
+
+**R11. Плагины проекта прописанные как отдельный раздел в документации — например `docs/plugins/*.md` или `CONTRIBUTING.md`.**
+Аналогично — стоит прочесать.
+
+**R12. `docs/plans/*.md` — старый план про CLI-модернизацию** — потерял актуальность после этого рефакторинга (не блокирует, но техдолг в плане-файле).
+
+**R13. Web UI может отображать priority в plugin settings.**
+Если sidebar показывает «Priority: 10» — после апгрейда поле пустое для non-reports. Нужна ветка в UI: для reports показать order, для остальных скрыть.
+
+**R14. scaffold создаёт manifest с placeholder priority=50 по умолчанию.**
+После фазы 3 scaffold не генерит priority — хорошо. Но если автор работает на старой версии CLI и генерит, а потом заливает в новую community — manifest упадёт на pydantic-валидации (`extra="forbid"`). Нужно документировать это в CHANGELOG.
+
+**R15. Отсутствие config-override для порядка в v/e — это сейчас «не нужно», но будет ли нужно завтра?**
+Если через месяц появится фича «users want to control which validation runs first per-preset» — мы специально вернёмся и добавим опциональное `priority`/`order` в конфиг-YAML. Открытый вопрос на будущее, не блокирующий.
+
+---
+
+# Deep-think резолюции (3 итерации на каждый риск/вопрос)
+
+## R1 — порядок валидации/evaluation → бизнес-пайплайны
+
+**Итерация 1 — в чём реальный страх?**
+Пользователь в `config.yaml` указал `plugins: [A, B, C]`, сейчас они шли в порядке priority (`C, A, B`). После релиза пойдут `A, B, C`. Если логика конкретного плагина эмитит issue, который следующий плагин читает → результат отличается.
+
+**Итерация 2 — механизм.**
+Проверил `DatasetValidator._run_plugins()` — каждый плагин получает на вход `dataset` и возвращает `ValidationIssue` в общий аккумулятор. Плагины **не читают issues друг друга** — они работают с исходным датасетом независимо. Единственное «наследование» — short-circuit через `fail_on_error: True`, когда критический issue прерывает цикл. В текущей реализации short-circuit происходит на первом `FAIL`, и тут порядок ВАЖЕН: если поменять порядок, «первым» может оказаться другой плагин. НО: значения priority в community-манифестах сейчас (`min_samples=10`, `deduplication=40`) не кричат «должен идти первым» — они просто произвольные числа, отсортированные по эстетике «дешёвые → дорогие». В default-плагинах ручной список уже в правильном порядке (проверил `_get_default_plugins` — «min_samples, avg_length, diversity, empty_ratio»), так что для него ничего не изменится.
+
+**Итерация 3 — митигация.**
+(а) Сохраняем для default-плагинов порядок соответствующий текущему priority-сорту при миграции — переупорядочим `_get_default_plugins()`, чтобы результат был идентичным (по факту он уже такой). (б) Для user-config — документируем в CHANGELOG, что порядок теперь берётся из `plugins: [...]` в YAML; добавляем release note «если у вас был implicit-порядок через priority, зафиксируйте его явно в config.yaml». (в) Если внутри validation появится реальная зависимость «плагин B нужен после плагина A» — это плохая архитектура; её надо фиксить как dependency graph, а не через глобальный priority. **Блокером не является.**
+
+## R2 — OpenAPI contract
+
+**Итерация 1 — что рухнет?**
+Клиент (`web/`) импортирует тип `ValidationPluginManifest` и обращается к `.priority`. После коммита тип поменяется: `priority` пропадёт, для reports появится `order`.
+
+**Итерация 2 — где именно.**
+Проверено грепом: в `web/src/` поиск `priority` даёт только:
+- `ActivityFeed.tsx` — локальная функция `priority(run, recentFailIds)`, не связана с плагинами.
+- `schema.d.ts` (авто-генерируемый) — там сейчас `priority: number` в манифесте.
+- `openapi.json` (авто-генерируемый) — то же.
+Рендеров «Priority: X» в реальных компонентах **нет**. Поле приходит с бэка, но фронт его не использует — dead data.
+
+**Итерация 3 — митигация.**
+(а) После обновления pydantic-модели регенерировать OpenAPI через существующий pipeline (уже налажен). (б) Добавить в CHANGELOG breaking-change note. (в) Если есть неизвестные внешние клиенты — нет, проект pre-1.0, API нестабилен по декларации. **Блокером не является.**
+
+## R3 — sync-diff взрывается
+
+**Итерация 1 — насколько громко?**
+`FIELD_ORDER = ["id", "kind", "name", "version", "priority", "category", ...]` — если убрать priority, строки «сдвинутся» в рендере всех 33 манифестов. Diff будет покрывать весь файл.
+
+**Итерация 2 — рискиcoord.**
+(а) Merge-конфликты с параллельными ветками — некритично, команда из одного человека (я). (б) Ревьюеру трудно увидеть семантический diff — но фазы разнесены (Phase 1 обновляет только reports, Phase 2 — только удаляет priority-строку из остальных), так что в каждом commit diff строго соответствует содержательному действию. (в) git blame теряет «кто поставил priority=10» — не страшно, это был авто-скаффолд.
+
+**Итерация 3 — митигация.**
+Коммит Phase 3 (обновление toml_writer) делаем **последним**. Тогда Phase 1 и Phase 2 оперируют с старым writer-ом и производят минимальные diff-ы (только удаление строки priority). На Phase 3 — один большой «format normalization» коммит, который разом приводит всё к новому порядку, отдельно от семантики. **Блокером не является.**
+
+## R4 — uniqueness order в reports после миграции
+
+**Итерация 1 — дубли возможны?**
+Community reports есть 14 манифестов с priority-значениями: `header=10, summary=20, training_configuration=30, model_configuration=40, metrics_analysis=50, dataset_validation=55, memory_management=60, phase_details=70, evaluation_block=75, stage_timeline=100, config_dump=110, footer=120, issues=?, event_timeline=?` — проверить.
+
+**Итерация 2 — проверка.**
+Если дубли существуют — текущий `_validate_plugin_instances` уже должен падать при загрузке; в реальности тесты зелёные, значит дубликатов в текущей инсталляции нет. После миграции значения копируются 1:1 → дубликатов не добавится.
+
+**Итерация 3 — митигация.**
+В Phase 1 при миграции: скрипт-проверка `sorted(int(line.split('=')[1]) for line in grep 'priority' community/reports/**/manifest.toml)` — показывает все уникальные значения. Если где-то нечётно, это latent bug который нужно тут же пофиксить (скорректировать order). **Добавляю в Phase 1: pre-migration grep как acceptance criterion.**
+
+## R5 — default validation plugins
+
+**Итерация 1 — риск.**
+`dataset_validator.py::_get_default_plugins()` возвращает список пар (id, name, PluginCls). Сейчас они потом сортятся по priority. Без сорта — порядок ручного списка. Если ручной список отличается от порядка который получался после priority-сорта → поведение поменялось.
+
+**Итерация 2 — проверка.**
+Надо сравнить: текущий ручной список vs список отсортированный по priority community-манифестов. Пример: ручной список `[min_samples, avg_length, diversity, empty_ratio]`; приоритеты в манифестах `min_samples=10, avg_length=30, diversity=20, empty_ratio=15`. Priority-сорт дал бы `[min_samples, empty_ratio, diversity, avg_length]`. Ручной список **отличается** → потенциальный regression.
+
+**Итерация 3 — митигация.**
+Перед удалением сорта переупорядочиваем `_get_default_plugins()` так, чтобы ручной список совпал с текущим priority-сортом. Конкретно: прочитать priority у каждого default-плагина из его community-манифеста ДО Phase 2; переписать ручной список в тот порядок; после этого сорт по priority становится No-op и его можно безопасно удалять. **Добавляю в Phase 2 как prerequisite step.**
+
+## R6 — third-party старые манифесты (`extra="forbid"`)
+
+**Итерация 1 — риск.**
+Если кто-то скачал community-zip 3 дня назад и ещё не удалил, то после апгрейда pydantic `extra="forbid"` словит неизвестное поле `priority`.
+
+**Итерация 2 — вероятность.**
+Third-party community сейчас **не существует**. Все плагины в репе — наши. Внешних скачиваний не было (проект pre-release). Риск по факту гипотетический.
+
+**Итерация 3 — митигация.**
+Если хотим paranoia — заменяем `extra="forbid"` → `extra="ignore"` ТОЛЬКО для `PluginSpec` на 1 релиз (deprecation), потом возвращаем. Но это избыточно для нашего состояния. Лучшее: в CHANGELOG жирно помечаем «BREAKING — старые манифесты с `priority` нужно пересохранить `ryotenkai community sync`». **Блокером не является.**
+
+## R7 — внутренняя логика плагинов читает `self.priority`
+
+**Итерация 1 — риск.**
+Конкретный community-плагин может в своём `validate()`/`evaluate()` обращаться к `self.priority` для логгинга или для какой-то собственной логики.
+
+**Итерация 2 — проверка.**
+Греп по `community/`: `grep -rn "self.priority\|cls.priority" community/ src/pipeline/ src/evaluation/ src/training/ src/reports/`. Ожидаем 0 совпадений кроме тех, что мы сами про sort. Если появится — это тот редкий случай, где priority-значение реально использовалось плагином.
+
+**Итерация 3 — митигация.**
+Грепаем сейчас (до имплементации), если находим — обсуждаем с автором плагина альтернативу (вероятно — хардкодить нужное значение, раз уж приоритет был «secret data»). **Acceptance: Phase 2 не начинается пока не подтверждено что таких ссылок нет.**
+
+## R8 — отчёт-плагины зарегистрированные не через community
+
+**Итерация 1 — риск.**
+`ReportPluginRegistry._registry[plugin_id] = cls` можно теоретически заполнить напрямую (не через `register_from_community`). Если такой путь есть, и цены он `.order` как ClassVar присваивается после обычного import-а класса, — мы ломаем его после миграции.
+
+**Итерация 2 — проверка.**
+Греп: `ReportPluginRegistry._registry[` или `ReportPluginRegistry.register` — только `register_from_community` (в `catalog.py`). Нет ручных регистраций.
+
+**Итерация 3 — митигация.**
+Ничего не требуется — весь путь регистрации идёт через community-catalog. **Не риск.**
+
+## R9 — MLflow tags / логгинг priority
+
+**Итерация 1 — поиск.**
+`grep -rn '"priority"' src/ | grep -iE "mlflow|log_param|log_metric"`.
+
+**Итерация 2 — результат.**
+Таких мест не найдено. `mlflow.log_*` упоминаний priority в репе нет.
+
+**Итерация 3 — митигация.**
+Проходит проверку. **Не риск.**
+
+## R10 — README в community/
+
+**Итерация 1 — риск.**
+В каждом `community/<kind>/README.md` упомянуто поле priority как часть схемы манифеста. После удаления документация рассинхронизируется с кодом.
+
+**Итерация 2 — проверка.**
+Ожидается: README гласит «plugin manifests have: id, kind, name, version, priority, category, stability, description, entry_point». Для `community/reports/README.md` отдельная секция про order. 5 README.md файлов.
+
+**Итерация 3 — митигация.**
+Добавляю отдельный микро-коммит внутри Phase 3 / отдельным мини-шагом: пройтись по 5 README и либо снять упоминание priority, либо перенести в секцию «only for reports plugins: [reports] order». **Включаю в Phase 3.**
+
+## R11 — прочая документация
+
+**Итерация 1 — поиск.**
+`grep -rn "priority" docs/ *.md`. Есть ли вне community/ README и планов — CONTRIBUTING, архитектурные диаграммы, ADR-записи?
+
+**Итерация 2 — вероятная находка.**
+В `docs/plans/tidy-leaping-lighthouse.md` (сам этот файл) priority не упоминается по теме — он про CLI модернизацию. Возможно, упомянут в старых ADR как часть community v2.
+
+**Итерация 3 — митигация.**
+Делаем грепа-проверку в начале Phase 1 acceptance criteria. Если есть ссылки — обновить. **Включаю в Phase 3 как acceptance check.**
+
+## R12 — stale docs/plans/*
+
+**Итерация 1 — риск.**
+После завершения этого рефакторинга plan-файл будет про другой refactor, а CLI modernization plan (старый) — потерян.
+
+**Итерация 2 — где это живёт.**
+`docs/plans/tidy-leaping-lighthouse.md` — эфемерная директория для одной итерации планирования. Старый план уже описан в git history коммитов (Phase 1, Phase 3+4). Не критическая потеря.
+
+**Итерация 3 — митигация.**
+Перед перезаписью (что я и делаю сейчас) — ничего. Git hist сохраняет всё. **Не риск.**
+
+## R13 — UI отображает priority
+
+**Итерация 1 — поиск.**
+`grep -rn "priority" web/src/components/ web/src/pages/`.
+
+**Итерация 2 — результат.**
+Только `ActivityFeed.tsx` с локальной функцией (не про плагины). Компонентов типа `PluginSettings.tsx` с рендером `Priority: {n}` не найдено.
+
+**Итерация 3 — митигация.**
+Ничего не требуется, поле в DTO «transmitted but ignored». **Не риск.**
+
+## R14 — scaffold-старой-версией → несовместимый манифест
+
+**Итерация 1 — риск.**
+Пользователь запускает `ryotenkai community scaffold my-plugin` на старой версии CLI → получает manifest с `priority = 50`. Подаёт в новую версию → pydantic падает.
+
+**Итерация 2 — вероятность.**
+Все пользователи сейчас работают с ровно одной версией CLI (я). Риск гипотетический.
+
+**Итерация 3 — митигация.**
+В CHANGELOG: «если у вас есть manifest со `priority` — удалите строку или запустите `ryotenkai community sync --bump patch <folder>`». Sync должен уметь толерантно принимать старые манифесты (пропускать unknown поля при чтении, затем перезаписывать без них). **Добавляю: sync-парсер на read-стороне использует модель без `extra="forbid"` (режим «tolerant load») как миграционная helper-стратегия.**
+
+## R15 — future need для config-override
+
+**Итерация 1 — вопрос.**
+Нужна ли в future опциональная `priority`/`order` на уровне config-YAML? Например, user хочет `plugins: [{id: min_samples, order: 5}, {id: deduplication, order: 1}]`.
+
+**Итерация 2 — анализ.**
+Если возникнет — добавление опционального `order: int | None = None` в `DatasetValidationPluginConfig` тривиально; runtime изменит одну строку: если `order` указано — сортируем, иначе — порядок config. Не ломает backward-compat.
+
+**Итерация 3 — резолюция.**
+YAGNI — не добавляем сейчас. Архитектурно дверь открыта. Фиксируем как open question «рассмотреть если появится user-request». **Не блокер, open-question помечен на будущее.**
+
+---
+
+## Итог по рискам
+
+**Блокеров нет.** Все риски имеют либо уже решённую митигацию, либо — не применимы к текущему состоянию репо. Перед стартом Phase 2 обязательно выполнить 2 acceptance-чека:
+
+1. `grep -rn "self.priority\|cls.priority" community/ src/` — должен не показать непроверенных консюмеров (R7).
+2. Реорганизовать `_get_default_plugins()` так, чтобы порядок совпал с priority-сортом до удаления сорта (R5).
+
+Остальное — документирование в CHANGELOG и регулярная регенерация OpenAPI.
