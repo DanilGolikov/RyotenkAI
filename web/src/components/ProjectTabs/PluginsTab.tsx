@@ -6,6 +6,7 @@ import {
   PointerSensor,
   closestCenter,
   pointerWithin,
+  useDndContext,
   useDroppable,
   useSensor,
   useSensors,
@@ -452,10 +453,30 @@ function KindSection({
    *  built-in section order back. Other kinds don't have defaults. */
   onResetToDefaults?: () => void
 }) {
-  const { isOver, setNodeRef } = useDroppable({
+  const { setNodeRef } = useDroppable({
     id: `container:${kind}`,
     data: { source: 'container', kind },
   })
+  // The active drag's payload — used to decide whether THIS section is
+  // a valid drop target and to compute "is hover". ``useDroppable.isOver``
+  // only fires when the cursor is literally over the container element;
+  // it stays ``false`` while the cursor hovers one of the sortable
+  // child rows, because the nearest droppable then is the row itself.
+  // We derive ``isOverSection`` from ``dnd.over`` instead, which
+  // exposes the true resolved target — either our container or any
+  // instance belonging to our kind.
+  const dnd = useDndContext()
+  const activeData = dnd.active?.data?.current as
+    | { source?: 'palette' | 'instance'; kind?: PluginKind }
+    | undefined
+  const overData = dnd.over?.data?.current as
+    | { source?: 'container' | 'instance'; kind?: PluginKind }
+    | undefined
+  const isOverSection =
+    !!dnd.over
+    && (dnd.over.id === `container:${kind}` || overData?.kind === kind)
+  const canAccept = isOverSection && (!activeData || activeData.kind === kind)
+  const willReject = isOverSection && !!activeData && activeData.kind !== kind
   const itemIds = instances.map((i) => `instance:${kind}:${i.instanceId}`)
 
   return (
@@ -470,8 +491,13 @@ function KindSection({
           ref={setNodeRef}
           className={[
             'rounded-md border-2 border-dashed bg-surface-1/50 p-2 space-y-1.5 min-h-[64px] transition',
-            isOver ? 'border-brand-alt bg-brand-alt/5' : 'border-line-1',
+            canAccept
+              ? 'border-brand-alt bg-brand-alt/5'
+              : willReject
+                ? 'border-err/60 bg-err/5 cursor-not-allowed'
+                : 'border-line-1',
           ].join(' ')}
+          aria-disabled={willReject || undefined}
         >
           {instances.length === 0 ? (
             <div className="px-2 py-3 text-center space-y-2">
