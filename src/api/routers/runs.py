@@ -33,7 +33,7 @@ def get_run(
     run_dir: Path = Depends(resolve_run_dir),
     runs_dir: Path = Depends(get_runs_dir),
 ) -> RunDetail | Response:
-    detail, snapshot = run_service.get_run_detail_with_snapshot(run_dir, runs_dir)
+    detail, snapshot = run_service.get_run_detail(run_dir, runs_dir)
     if is_fresh(request, snapshot.mtime_ns):
         # 304 has no body per RFC 7232 §4.1; attach validators so the client
         # refreshes them for the next roundtrip.

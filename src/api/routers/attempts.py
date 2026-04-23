@@ -23,7 +23,7 @@ def get_attempt(
     run_dir: Path = Depends(resolve_run_dir),
 ) -> AttemptDetail | Response:
     try:
-        detail, snapshot = run_service.get_attempt_detail_with_snapshot(run_dir, attempt_no)
+        detail, snapshot = run_service.get_attempt_detail(run_dir, attempt_no)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if is_fresh(request, snapshot.mtime_ns):
@@ -42,7 +42,7 @@ def get_stages(
     run_dir: Path = Depends(resolve_run_dir),
 ) -> StagesResponse | Response:
     try:
-        stages, snapshot = run_service.get_attempt_stages_with_snapshot(run_dir, attempt_no)
+        stages, snapshot = run_service.get_attempt_stages(run_dir, attempt_no)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if is_fresh(request, snapshot.mtime_ns):

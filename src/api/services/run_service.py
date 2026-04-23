@@ -14,8 +14,6 @@ from src.pipeline.presentation import (
     format_mode_label,
 )
 from src.pipeline.run_queries import (
-    RunInspectionData,
-    RunInspector,
     RunSummaryRow,
     effective_pipeline_status,
     scan_runs_dir_grouped,
@@ -146,28 +144,17 @@ def _run_detail(state: PipelineState, run_dir: Path, runs_dir: Path) -> RunDetai
     )
 
 
-def get_run_detail(run_dir: Path, runs_dir: Path) -> RunDetail:
-    inspection: RunInspectionData = RunInspector(run_dir).load(include_logs=False)
-    return _run_detail(inspection.state, run_dir, runs_dir)
+def get_run_detail(run_dir: Path, runs_dir: Path) -> tuple[RunDetail, StateSnapshot]:
+    """Read the run's state and return the view paired with its ``mtime_ns``.
 
-
-def get_run_detail_with_snapshot(run_dir: Path, runs_dir: Path) -> tuple[RunDetail, StateSnapshot]:
-    """Variant that also returns the ``mtime_ns`` for HTTP cache validators.
-
-    Keeps ``get_run_detail`` unchanged for existing callers (TUI, CLI) that
-    don't care about cache headers.
+    ``mtime_ns`` is needed by the router to emit ETag / Last-Modified headers
+    and short-circuit polling with ``304 Not Modified``.
     """
     snapshot = load_state_snapshot(run_dir)
     return _run_detail(snapshot.state, run_dir, runs_dir), snapshot
 
 
-def get_attempt_detail(run_dir: Path, attempt_no: int) -> AttemptDetail:
-    state = load_state_snapshot(run_dir).state
-    return _attempt_detail(state, attempt_no, run_dir)
-
-
-def get_attempt_detail_with_snapshot(run_dir: Path, attempt_no: int) -> tuple[AttemptDetail, StateSnapshot]:
-    """Variant that also returns the ``mtime_ns`` for HTTP cache validators."""
+def get_attempt_detail(run_dir: Path, attempt_no: int) -> tuple[AttemptDetail, StateSnapshot]:
     snapshot = load_state_snapshot(run_dir)
     return _attempt_detail(snapshot.state, attempt_no, run_dir), snapshot
 
@@ -205,14 +192,8 @@ def _attempt_detail(state: PipelineState, attempt_no: int, run_dir: Path) -> Att
     )
 
 
-def get_attempt_stages(run_dir: Path, attempt_no: int) -> StagesResponse:
-    detail, _ = get_attempt_detail_with_snapshot(run_dir, attempt_no)
-    return _build_stages_response(detail)
-
-
-def get_attempt_stages_with_snapshot(run_dir: Path, attempt_no: int) -> tuple[StagesResponse, StateSnapshot]:
-    """Variant that also returns the ``mtime_ns`` for HTTP cache validators."""
-    detail, snapshot = get_attempt_detail_with_snapshot(run_dir, attempt_no)
+def get_attempt_stages(run_dir: Path, attempt_no: int) -> tuple[StagesResponse, StateSnapshot]:
+    detail, snapshot = get_attempt_detail(run_dir, attempt_no)
     return _build_stages_response(detail), snapshot
 
 
@@ -308,11 +289,8 @@ __all__ = [
     "build_suggested_run_id",
     "create_empty_run",
     "get_attempt_detail",
-    "get_attempt_detail_with_snapshot",
     "get_attempt_stages",
-    "get_attempt_stages_with_snapshot",
     "get_run_detail",
-    "get_run_detail_with_snapshot",
     "list_runs",
     "validate_run_id",
 ]
