@@ -27,4 +27,6 @@ export const qk = {
   providerConfigVersion: (id: string, filename: string) =>
     ['providers', id, 'config', 'versions', filename] as const,
   configPresets: () => ['config', 'presets'] as const,
+  configPresetPreview: (id: string, currentHash: string) =>
+    ['config', 'presets', id, 'preview', currentHash] as const,
 }
