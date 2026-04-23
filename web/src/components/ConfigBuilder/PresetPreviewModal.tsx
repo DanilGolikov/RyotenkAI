@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useClickOutside } from '../../hooks/useClickOutside'
 import { usePresetPreview } from '../../api/hooks/usePresetPreview'
 import { HelpTooltip } from './HelpTooltip'
+import { deepDiff } from '../../lib/jsonDiff'
 import type {
   ConfigPreset,
   PresetDiffEntry,
@@ -98,6 +99,25 @@ function formatDiffValue(v: unknown): string {
   } catch {
     return String(v)
   }
+}
+
+/** Inline compact value — used when listing leaf-level diffs so each
+ *  field fits on one line. Long strings are truncated mid-line. */
+function formatInline(v: unknown): string {
+  if (v === undefined) return '—'
+  if (v === null) return 'null'
+  if (typeof v === 'string') return JSON.stringify(v)
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  try {
+    const s = JSON.stringify(v)
+    return s.length > 120 ? s.slice(0, 119) + '…' : s
+  } catch {
+    return String(v)
+  }
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 /**
@@ -393,13 +413,21 @@ function Empty({ children }: { children: React.ReactNode }) {
 /** Single row in "What changes" — restores the old github-style coloured
  *  diff (red-tinted ``−`` line + green-tinted ``+`` line) with the new
  *  reason chip (``REPLACED`` / ``ADDED`` / ``OVERWRITE``) layered on top.
- *  Complex values are pretty-printed as multi-line ``<pre>`` blocks so
- *  the user can actually read nested objects instead of a truncated
- *  one-liner. */
+ *
+ *  The backend returns coarse entries at the top-level block granularity
+ *  (e.g. ``model``, ``training``) because presets replace whole scope
+ *  keys — but that's visually useless when only one nested leaf changed.
+ *  So when both ``before`` and ``after`` are plain objects we recurse
+ *  via ``deepDiff`` and render a per-leaf list (each changed field as
+ *  its own ``key.path``  + ``−/+`` pair). For arrays/scalars we fall
+ *  back to the original coloured ``<pre>`` blocks. */
 function DiffRow({ entry }: { entry: PresetDiffEntry }) {
   const reason = REASON_STYLE[entry.reason]
   const hasBefore = entry.before !== undefined && entry.before !== null
   const hasAfter = entry.after !== undefined && entry.after !== null
+  const canExpandLeaves = isPlainObject(entry.before) && isPlainObject(entry.after)
+  const leaves = canExpandLeaves ? deepDiff(entry.before, entry.after) : []
+
   return (
     <div className="rounded-md border border-line-1 bg-surface-0 overflow-hidden">
       <div className="flex items-baseline gap-2 px-2 py-1.5 border-b border-line-1 bg-surface-1">
@@ -412,9 +440,56 @@ function DiffRow({ entry }: { entry: PresetDiffEntry }) {
         <span className="font-mono text-xs text-ink-1" title={`Config path: ${entry.key}`}>
           {entry.key}
         </span>
+        {leaves.length > 0 && (
+          <span className="text-[0.6rem] text-ink-4 ml-auto">
+            {leaves.length} field{leaves.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
       <div className="font-mono text-2xs">
-        {hasBefore && (
+        {/* Leaf-level expansion when both sides are objects. Mirrors the
+            old client-side deepDiff view so users see per-field changes
+            instead of a wall of JSON. */}
+        {leaves.length > 0 && (
+          <div className="divide-y divide-line-1">
+            {leaves.map((leaf) => (
+              <div key={leaf.path} className="py-1">
+                <div
+                  className="px-2 text-[0.65rem] text-ink-3"
+                  title={`${entry.key}.${leaf.path}`}
+                >
+                  <span className="text-ink-4">{entry.key}.</span>
+                  <span className="text-ink-2">{leaf.path}</span>
+                </div>
+                {leaf.kind !== 'added' && (
+                  <div
+                    className="flex gap-1.5 px-2 py-0.5 bg-err/10 border-l-2 border-err/60 text-err"
+                    title="Your current value — will be removed."
+                  >
+                    <span className="select-none opacity-60">−</span>
+                    <span className="flex-1 whitespace-pre-wrap break-all leading-snug">
+                      {formatInline(leaf.baseline)}
+                    </span>
+                  </div>
+                )}
+                {leaf.kind !== 'removed' && (
+                  <div
+                    className="flex gap-1.5 px-2 py-0.5 bg-ok/10 border-l-2 border-ok/60 text-ok"
+                    title="Value the preset will write in place."
+                  >
+                    <span className="select-none opacity-60">+</span>
+                    <span className="flex-1 whitespace-pre-wrap break-all leading-snug">
+                      {formatInline(leaf.current)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Fallback: whole-value view for arrays / scalars / added blocks. */}
+        {leaves.length === 0 && hasBefore && (
           <div
             className="flex gap-1.5 px-2 py-1 bg-err/10 border-l-2 border-err/60 text-err"
             title="Your current value — will be removed."
@@ -425,7 +500,7 @@ function DiffRow({ entry }: { entry: PresetDiffEntry }) {
             </pre>
           </div>
         )}
-        {hasAfter && (
+        {leaves.length === 0 && hasAfter && (
           <div
             className="flex gap-1.5 px-2 py-1 bg-ok/10 border-l-2 border-ok/60 text-ok"
             title="Value the preset will write in place."
