@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.training.models.loader as loader
-from src.utils.config import LoraConfig as LoraConfigType
+from src.utils.config import QLoRAConfig as QLoRAConfigType
 
 
 class _Model:
@@ -43,7 +43,8 @@ def _mk_cfg(*, use_4bit: bool) -> MagicMock:
     cfg.model.tokenizer_name = None
 
     cfg.training.get_effective_load_in_4bit.return_value = use_4bit
-    cfg.training.lora = LoraConfigType(
+    # bnb_4bit_* knobs live on QLoRAConfig (strict LoraConfig rejects them).
+    qlora = QLoRAConfigType(
         r=8,
         lora_alpha=16,
         lora_dropout=0.05,
@@ -56,6 +57,8 @@ def _mk_cfg(*, use_4bit: bool) -> MagicMock:
         bnb_4bit_compute_dtype="bfloat16",
         bnb_4bit_use_double_quant=True,
     )
+    cfg.training.lora = qlora
+    cfg.training.qlora = qlora
     return cfg
 
 

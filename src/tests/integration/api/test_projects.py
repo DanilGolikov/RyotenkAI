@@ -72,8 +72,14 @@ def test_save_config_creates_history_snapshot(
         "/api/v1/projects/hist/config", json={"yaml": "model: foo\n"}
     )
     assert first.status_code == 200
-    # No prior config → no snapshot.
-    assert first.json() == {"ok": True, "snapshot_filename": None}
+    # First save on an empty project seeds v1 from the incoming content so
+    # the Versions tab isn't empty on the very first save.
+    first_snapshot = first.json()["snapshot_filename"]
+    assert first_snapshot is not None
+    first_snapshot_path = (
+        projects_root / "projects" / "hist" / "configs" / "history" / first_snapshot
+    )
+    assert first_snapshot_path.read_text(encoding="utf-8") == "model: foo\n"
 
     second = client.put(
         "/api/v1/projects/hist/config", json={"yaml": "model: bar\n"}
@@ -85,6 +91,7 @@ def test_save_config_creates_history_snapshot(
         projects_root / "projects" / "hist" / "configs" / "history" / snapshot_name
     )
     assert snapshot_path.is_file()
+    # Second save snapshots the *previous* current (model: foo).
     assert snapshot_path.read_text(encoding="utf-8") == "model: foo\n"
 
     current = client.get("/api/v1/projects/hist/config")
@@ -101,7 +108,9 @@ def test_versions_endpoint_lists_snapshots(client: TestClient) -> None:
     listing = client.get("/api/v1/projects/versions/config/versions")
     assert listing.status_code == 200
     versions = listing.json()["versions"]
-    assert len(versions) == 2
+    # First save seeds v1; each subsequent save snapshots the previous current.
+    # 3 saves → v1 (from 1st) + snapshots of (1st-before-2nd) + (2nd-before-3rd) = 3.
+    assert len(versions) == 3
 
     first_snap = versions[-1]["filename"]
     detail = client.get(f"/api/v1/projects/versions/config/versions/{first_snap}")
@@ -146,10 +155,13 @@ def test_delete_only_unregisters(
     project_dir = projects_root / "projects" / "gone"
     assert project_dir.is_dir()
 
-    resp = client.delete("/api/v1/projects/gone")
+    # Default ``DELETE`` now removes the workspace too — pass
+    # ``delete_files=false`` to preserve the unregister-only semantics the
+    # test is documenting.
+    resp = client.delete("/api/v1/projects/gone?delete_files=false")
     assert resp.status_code == 204
 
-    # Directory still exists — delete is only an unregister.
+    # Directory still exists — delete-with-delete_files=false is an unregister.
     assert project_dir.is_dir()
 
     listing = client.get("/api/v1/projects").json()

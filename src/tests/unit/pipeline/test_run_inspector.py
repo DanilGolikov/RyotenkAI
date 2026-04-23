@@ -571,8 +571,13 @@ def test_cli_inspect_run_success(tmp_path: Path, cli_runner: CliRunner) -> None:
 
 
 def test_cli_inspect_run_verbose(tmp_path: Path, cli_runner: CliRunner) -> None:
+    # ``-v`` was replaced by explicit --outputs/--logs flags. Use both to
+    # cover the verbose code path that this test originally exercised.
     _make_state(tmp_path, run_id="run_inspect_v")
-    result = cli_runner.invoke(app, ["inspect-run", str(tmp_path / "run_inspect_v"), "-v"])
+    result = cli_runner.invoke(
+        app,
+        ["inspect-run", str(tmp_path / "run_inspect_v"), "--outputs", "--logs"],
+    )
     assert result.exit_code == 0
 
 
@@ -669,8 +674,14 @@ def test_cli_run_diff_with_drift(tmp_path: Path, cli_runner: CliRunner) -> None:
     run_dir = tmp_path / "run_diff"
     result = cli_runner.invoke(app, ["run-diff", str(run_dir)])
     assert result.exit_code == 0
-    # Should show some kind of change info
-    assert ("late_stage" in result.output or "critical" in result.output)
+    # Should show some kind of change info (the renderer now groups hashes
+    # under "training + model + datasets" / "inference + evaluation").
+    assert (
+        "training" in result.output
+        or "inference" in result.output
+        or "late_stage" in result.output
+        or "critical" in result.output
+    )
 
 
 def test_cli_run_diff_only_one_attempt(tmp_path: Path, cli_runner: CliRunner) -> None:
@@ -708,7 +719,12 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
-    with patch("src.utils.config.load_config", return_value=mock_cfg):
+    # HF_TOKEN is now part of the validator's readiness check; provide it so
+    # the "valid-config" branch doesn't trip on a missing token in CI.
+    with (
+        patch("src.utils.config.load_config", return_value=mock_cfg),
+        patch.dict("os.environ", {"HF_TOKEN": "hf_test_token"}, clear=False),
+    ):
         result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
 
     assert result.exit_code == 0
