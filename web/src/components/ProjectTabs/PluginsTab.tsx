@@ -52,8 +52,8 @@ const KIND_SECTIONS: {
   sortable: boolean
 }[] = [
   { kind: 'validation', label: 'Validation', help: 'Dataset pre-flight checks.', sortable: true },
-  { kind: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.', sortable: true },
   { kind: 'reward', label: 'Reward', help: 'Reward plugin for GRPO/SAPO/DPO/ORPO strategies. Matched against each phase\'s strategy_type.', sortable: false },
+  { kind: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.', sortable: true },
   { kind: 'reports', label: 'Reports', help: 'Sections rendered in the run report — drag to reorder.', sortable: true },
 ]
 

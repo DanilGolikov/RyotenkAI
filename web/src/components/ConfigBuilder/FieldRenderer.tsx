@@ -598,6 +598,7 @@ export function ObjectFields({
   hashPrefix = '',
   rootValue,
   onRootChange,
+  forceExpandOptional = false,
 }: {
   root: PipelineJsonSchema
   node: JsonSchemaNode
@@ -608,6 +609,12 @@ export function ObjectFields({
   hashPrefix?: string
   rootValue?: Record<string, unknown>
   onRootChange?: (next: Record<string, unknown>) => void
+  /** When true, render every field inline without the "Show N
+   *  optional" collapse. Used by schema-driven forms rendered outside
+   *  the main config builder (e.g. the plugin Configure modal) where
+   *  the schema is typically small and the collapse would just hide
+   *  the content the user just opened the modal to edit. */
+  forceExpandOptional?: boolean
 }) {
   const [showAdvanced, setShowAdvanced] = useState(false)
   const props = (node.properties ?? {}) as Record<string, JsonSchemaNode>
@@ -797,7 +804,7 @@ export function ObjectFields({
   })
   const gap = hasCardChild ? 'space-y-1.5' : 'space-y-0.5'
 
-  if (override?.expandOptional) {
+  if (override?.expandOptional || forceExpandOptional) {
     return (
       <div className={gap}>
         {pinnedFields.map(renderField)}

@@ -3,7 +3,8 @@ import { useClickOutside } from '../../hooks/useClickOutside'
 import type { PipelineJsonSchema, JsonSchemaNode } from '../../api/hooks/useConfigSchema'
 import type { PluginKind, PluginManifest } from '../../api/types'
 import type { PluginInstanceDetails } from '../ProjectTabs/pluginInstances'
-import { FieldRenderer } from './FieldRenderer'
+import { ObjectFields } from './FieldRenderer'
+import { HelpTooltip } from './HelpTooltip'
 
 interface Props {
   kind: PluginKind
@@ -167,10 +168,16 @@ export function PluginConfigModal({
 
         {/* Body */}
         <div className="p-4 text-xs space-y-5 overflow-y-auto">
-          {/* Instance settings */}
-          <Section title="Instance">
+          {/* Instance settings — flat rows, no group heading. The
+              ``Parameters`` / ``Thresholds`` blocks below get their own
+              counted headers; for instance-level knobs the context is
+              obvious from the modal title. */}
+          <div className="space-y-2">
             {kind !== 'reports' && kind !== 'reward' && (
-              <Field label="Instance id" help="Used to identify this attachment in logs and reports. Must be unique within this kind.">
+              <Field
+                label="Instance id"
+                help="Used to identify this attachment in logs and reports. Must be unique within this kind."
+              >
                 <input
                   ref={firstFieldRef}
                   type="text"
@@ -194,7 +201,10 @@ export function PluginConfigModal({
             )}
 
             {draft.enabled !== undefined && (
-              <Field label="Enabled" help="Uncheck to keep this attachment in the config but skip it on next run.">
+              <Field
+                label="Enabled"
+                help="Uncheck to keep this attachment in the config but skip it on next run."
+              >
                 <label className="inline-flex items-center gap-2 text-xs">
                   <input
                     type="checkbox"
@@ -208,7 +218,10 @@ export function PluginConfigModal({
 
             {kind === 'validation' && (
               <>
-                <Field label="Apply to" help="Which dataset phases this validator runs against. Empty = both.">
+                <Field
+                  label="Apply to"
+                  help="Which dataset phases this validator runs against. Empty = both."
+                >
                   <div className="flex gap-3 text-xs">
                     {['train', 'eval'].map((phase) => {
                       const checked = draft.apply_to?.includes(phase) ?? true
@@ -230,7 +243,10 @@ export function PluginConfigModal({
                     })}
                   </div>
                 </Field>
-                <Field label="Fail on error" help="Abort the run when this validator reports a FAIL issue.">
+                <Field
+                  label="Fail on error"
+                  help="Abort the run when this validator reports a FAIL issue."
+                >
                   <label className="inline-flex items-center gap-2 text-xs">
                     <input
                       type="checkbox"
@@ -244,7 +260,10 @@ export function PluginConfigModal({
             )}
 
             {kind === 'evaluation' && (
-              <Field label="Save per-sample report" help="Writes a Markdown breakdown next to the run — useful for debugging threshold failures.">
+              <Field
+                label="Save per-sample report"
+                help="Writes a Markdown breakdown next to the run — useful for debugging threshold failures."
+              >
                 <label className="inline-flex items-center gap-2 text-xs">
                   <input
                     type="checkbox"
@@ -255,36 +274,37 @@ export function PluginConfigModal({
                 </label>
               </Field>
             )}
-          </Section>
+          </div>
 
-          {/* Parameters */}
+          {/* Parameters — no optional-field collapse; plugins usually have
+              few knobs and users expect to see them all when configuring. */}
           {paramCount > 0 && (
-            <Section title={`Parameters · ${paramCount}`}>
-              <FieldRenderer
+            <SchemaGroup title="Parameters" count={paramCount}>
+              <ObjectFields
                 root={paramsRoot}
                 node={paramsSchema}
                 value={draft.params}
                 onChange={(next) => setDraft({ ...draft, params: (next as Record<string, unknown>) ?? {} })}
-                labelKey="params"
-                path={`__plugin_params__/${manifest.id}`}
                 depth={0}
+                pathPrefix={`__plugin_params__/${manifest.id}`}
+                forceExpandOptional
               />
-            </Section>
+            </SchemaGroup>
           )}
 
           {/* Thresholds */}
           {thresholdCount > 0 && (
-            <Section title={`Thresholds · ${thresholdCount}`}>
-              <FieldRenderer
+            <SchemaGroup title="Thresholds" count={thresholdCount}>
+              <ObjectFields
                 root={thresholdsRoot}
                 node={thresholdsSchema}
                 value={draft.thresholds}
                 onChange={(next) => setDraft({ ...draft, thresholds: (next as Record<string, unknown>) ?? {} })}
-                labelKey="thresholds"
-                path={`__plugin_thresholds__/${manifest.id}`}
                 depth={0}
+                pathPrefix={`__plugin_thresholds__/${manifest.id}`}
+                forceExpandOptional
               />
-            </Section>
+            </SchemaGroup>
           )}
 
           {paramCount === 0 && thresholdCount === 0 && (
@@ -334,21 +354,36 @@ export function PluginConfigModal({
   )
 }
 
-function Section({
+/** Group header for the schema-driven Parameters / Thresholds blocks.
+ *  Shows ``Title · N`` so users can see at a glance how many knobs are
+ *  coming; a thin hairline under the header keeps the group visually
+ *  distinct without a full card chrome. */
+function SchemaGroup({
   title,
+  count,
   children,
 }: {
   title: string
+  count: number
   children: React.ReactNode
 }) {
   return (
     <div className="space-y-2">
-      <div className="text-2xs font-semibold text-ink-1">{title}</div>
+      <div className="flex items-baseline gap-2 border-b border-line-1 pb-1">
+        <div className="text-xs font-semibold text-ink-1">{title}</div>
+        <div className="text-[0.65rem] text-ink-4">·</div>
+        <div className="text-[0.65rem] text-ink-3">{count}</div>
+      </div>
       <div className="space-y-2">{children}</div>
     </div>
   )
 }
 
+/** One row for an instance-level scalar: label on the left with a
+ *  ``?``-tooltip for long explanations, input on the right. Replaces
+ *  the old inline-under-label description block — the help text now
+ *  lives inside ``HelpTooltip`` so instance rows don't dominate the
+ *  modal height. */
 function Field({
   label,
   help,
@@ -359,10 +394,10 @@ function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-3">
-      <div className="sm:w-40 shrink-0">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+      <div className="sm:w-40 shrink-0 flex items-center gap-1.5">
         <div className="text-xs text-ink-2">{label}</div>
-        {help && <div className="text-[0.65rem] text-ink-3 leading-snug mt-0.5">{help}</div>}
+        {help && <HelpTooltip text={help} label={`Help for ${label}`} />}
       </div>
       <div className="flex-1 min-w-0">{children}</div>
     </div>
