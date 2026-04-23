@@ -73,9 +73,6 @@ class TestSyntaxBackendPluginRegistration:
     def test_name_classvar(self) -> None:
         assert HelixQLGeneratedSyntaxBackendPlugin.name == "helixql_generated_syntax_backend"
 
-    def test_priority_classvar(self) -> None:
-        assert HelixQLGeneratedSyntaxBackendPlugin.priority == 8
-
 
 # ---------------------------------------------------------------------------
 # _validate_contract

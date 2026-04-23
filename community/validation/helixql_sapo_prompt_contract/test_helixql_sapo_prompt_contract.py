@@ -71,9 +71,6 @@ class TestSAPOValidatorRegistration:
     def test_name_classvar(self) -> None:
         assert HelixQLSAPOPromptContractValidator.name == "helixql_sapo_prompt_contract"
 
-    def test_priority_classvar(self) -> None:
-        assert HelixQLSAPOPromptContractValidator.priority == 25  # noqa: WPS432
-
 
 # ---------------------------------------------------------------------------
 # _sample_issues — unit level

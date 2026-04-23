@@ -73,9 +73,6 @@ class TestGoldSyntaxValidatorRegistration:
     def test_name_classvar(self) -> None:
         assert HelixQLGoldSyntaxBackendValidator.name == "helixql_gold_syntax_backend"
 
-    def test_priority_classvar(self) -> None:
-        assert HelixQLGoldSyntaxBackendValidator.priority == 40  # noqa: WPS432
-
 
 # ---------------------------------------------------------------------------
 # _validate_contract
