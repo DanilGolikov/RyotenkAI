@@ -17,6 +17,8 @@ Coverage:
 
 from __future__ import annotations
 
+import pytest
+
 from typing import Any
 from unittest.mock import patch
 
@@ -37,6 +39,19 @@ VALID_PAIR_SAMPLE: dict[str, Any] = {  # noqa: WPS407
     "chosen": "QUERY GetAll () =>\n    items <- N<User>\n    RETURN items",
     "rejected": "SELECT * FROM users",
 }
+
+
+@pytest.fixture(autouse=True)
+def _attach_community_name_like_loader(monkeypatch):
+    """Simulate src.community.loader._attach_community_metadata.
+
+    The real loader assigns plugin_cls.name = manifest.plugin.id when
+    the catalog is loaded. These unit tests instantiate the plugin class
+    directly (no catalog), so we mirror the assignment for the duration of
+    each test to keep self.name / ValidationResult.plugin_name
+    populated.
+    """
+    monkeypatch.setattr(HelixQLPreferenceSemanticsValidator, "name", "helixql_preference_semantics", raising=False)
 
 
 def _make_plugin() -> HelixQLPreferenceSemanticsValidator:

@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from src.config.integrations.mlflow import MLflowTrackingRef
 from src.utils.config import (
     DatasetConfig,
     ExperimentTrackingConfig,
@@ -111,10 +112,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -129,10 +127,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -147,10 +142,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -172,10 +164,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -190,10 +179,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -219,10 +205,7 @@ class TestDatasetForStrategy:
             ),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -244,10 +227,7 @@ class TestDatasetForStrategy:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowConfig(
-                    tracking_uri="http://localhost:5000",
-                    experiment_name="test",
-                )
+                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -269,10 +249,7 @@ class TestValidateDatasets:
                 ),
                 inference=_inference_cfg_disabled(),
                 experiment_tracking=ExperimentTrackingConfig(
-                    mlflow=MLflowConfig(
-                        tracking_uri="http://localhost:5000",
-                        experiment_name="test",
-                    )
+                    mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
                 ),
             )
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, ClassVar
+from typing import Any
 
 from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
 from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
@@ -12,7 +12,6 @@ from src.utils.domains.helixql_cli import HelixCompiler
 
 
 class HelixQLGeneratedSyntaxBackendPlugin(EvaluatorPlugin):
-    name: ClassVar[str] = "helixql_generated_syntax_backend"
     def __init__(self, params: dict[str, Any], thresholds: dict[str, Any]) -> None:
         self._compiler: HelixCompiler | None = None
         super().__init__(params, thresholds)

@@ -17,12 +17,27 @@ Coverage:
 
 from __future__ import annotations
 
+import pytest
+
 from typing import Any
 
 import pytest
 from plugin import HelixQLSemanticMatchPlugin
 
 from src.evaluation.plugins.base import EvalSample
+
+
+@pytest.fixture(autouse=True)
+def _attach_community_name_like_loader(monkeypatch):
+    """Simulate src.community.loader._attach_community_metadata.
+
+    The real loader assigns plugin_cls.name = manifest.plugin.id when
+    the catalog is loaded. These unit tests instantiate the plugin class
+    directly (no catalog), so we mirror the assignment for the duration of
+    each test to keep self.name / ValidationResult.plugin_name
+    populated.
+    """
+    monkeypatch.setattr(HelixQLSemanticMatchPlugin, "name", "helixql_semantic_match", raising=False)
 
 
 def _make_sample(

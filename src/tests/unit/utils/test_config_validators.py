@@ -13,6 +13,7 @@ import pytest
 from pydantic import ValidationError
 from unittest.mock import patch
 
+from src.config.integrations.mlflow import MLflowTrackingRef
 from src.utils.config import (
     AdaLoraConfig,
     DatasetConfig,
@@ -118,10 +119,7 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
         },
         providers={},
         experiment_tracking=ExperimentTrackingConfig(
-            mlflow=MLflowConfig(
-                tracking_uri="http://127.0.0.1:5002",
-                experiment_name="test-exp",
-            )
+            mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test-exp")
         ),
     )
 

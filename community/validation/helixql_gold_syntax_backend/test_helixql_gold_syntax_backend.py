@@ -15,6 +15,8 @@ Coverage:
 
 from __future__ import annotations
 
+import pytest
+
 from typing import Any
 from unittest.mock import patch
 
@@ -38,6 +40,19 @@ MESSAGES_SAMPLE: dict[str, Any] = {  # noqa: WPS407
         {"role": "assistant", "content": "QUERY GetAll () =>\n    items <- N<User>\n    RETURN items"},
     ]
 }
+
+
+@pytest.fixture(autouse=True)
+def _attach_community_name_like_loader(monkeypatch):
+    """Simulate src.community.loader._attach_community_metadata.
+
+    The real loader assigns plugin_cls.name = manifest.plugin.id when
+    the catalog is loaded. These unit tests instantiate the plugin class
+    directly (no catalog), so we mirror the assignment for the duration of
+    each test to keep self.name / ValidationResult.plugin_name
+    populated.
+    """
+    monkeypatch.setattr(HelixQLGoldSyntaxBackendValidator, "name", "helixql_gold_syntax_backend", raising=False)
 
 
 def _make_plugin(config: dict[str, Any] | None = None) -> HelixQLGoldSyntaxBackendValidator:

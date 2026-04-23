@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from src.config.integrations.mlflow import MLflowTrackingRef
 from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
@@ -42,10 +43,7 @@ RUNPOD_PROVIDER_CFG: dict = {
 
 def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
     return ExperimentTrackingConfig(
-        mlflow=MLflowConfig(
-            tracking_uri="http://127.0.0.1:5002",
-            experiment_name="test-exp",
-        )
+        mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test-exp")
     )
 
 

@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.config.integrations.mlflow import MLflowTrackingRef
 from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
@@ -91,10 +92,7 @@ def full_config():
             ),
         ),
         experiment_tracking=ExperimentTrackingConfig(
-            mlflow=MLflowConfig(
-                tracking_uri="http://localhost:5000",
-                experiment_name="test",
-            )
+            mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
         ),
     )
 

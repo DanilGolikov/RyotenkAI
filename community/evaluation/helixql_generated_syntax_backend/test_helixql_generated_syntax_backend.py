@@ -19,6 +19,8 @@ Coverage:
 
 from __future__ import annotations
 
+import pytest
+
 from typing import Any
 from unittest.mock import patch
 
@@ -32,6 +34,19 @@ BASE_PARAMS: dict[str, Any] = {
 }
 
 BASE_THRESHOLDS: dict[str, Any] = {"min_valid_ratio": 0.8}
+
+
+@pytest.fixture(autouse=True)
+def _attach_community_name_like_loader(monkeypatch):
+    """Simulate src.community.loader._attach_community_metadata.
+
+    The real loader assigns plugin_cls.name = manifest.plugin.id when
+    the catalog is loaded. These unit tests instantiate the plugin class
+    directly (no catalog), so we mirror the assignment for the duration of
+    each test to keep self.name / ValidationResult.plugin_name
+    populated.
+    """
+    monkeypatch.setattr(HelixQLGeneratedSyntaxBackendPlugin, "name", "helixql_generated_syntax_backend", raising=False)
 
 
 def _make_sample(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Any
 
 from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
 from src.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
@@ -10,7 +10,6 @@ from src.utils.domains.helixql import semantic_match_details
 
 
 class HelixQLSemanticMatchPlugin(EvaluatorPlugin):
-    name: ClassVar[str] = "helixql_semantic_match"
     requires_expected_answer = True
 
     def _validate_contract(self) -> None:

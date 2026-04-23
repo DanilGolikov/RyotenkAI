@@ -49,16 +49,12 @@ _MIGRATION_HINT = (
 class ExperimentTrackingConfig(StrictBaseModel):
     """Project-level references to reusable tracking integrations.
 
-    ``mlflow`` is normally a ``MLflowTrackingRef`` (integration id plus
-    project-local fields). The resolver/runtime code may replace it with a
-    fully-merged ``MLflowConfig`` so downstream pipeline stages can read
-    ``tracking_uri`` / ``ca_bundle_path`` / system-metrics knobs unchanged.
-    Tests likewise construct ``MLflowConfig`` directly to exercise the
-    post-resolver state without touching the integrations registry.
-    Same split applies to ``huggingface``.
+    ``mlflow`` now holds an integration id + project-local fields only;
+    every runtime knob (URI / CA bundle / system metrics) comes from the
+    integration. Same for ``huggingface``.
     """
 
-    mlflow: MLflowTrackingRef | MLflowConfig | None = Field(None)
+    mlflow: MLflowTrackingRef | None = Field(None)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     @model_validator(mode="before")
@@ -93,17 +89,11 @@ class ExperimentTrackingConfig(StrictBaseModel):
     def get_report_to(self) -> list[str]:
         """Get list of trackers for HuggingFace Trainer.
 
-        ``mlflow`` is considered active when either the tracking ref carries
-        an integration id or the resolved config already has a tracking URI.
+        ``mlflow`` is considered active iff an integration id is set.
         """
-        if self.mlflow is None:
+        if self.mlflow is None or not self.mlflow.integration:
             return ["none"]
-        if isinstance(self.mlflow, MLflowTrackingRef):
-            return ["mlflow"] if self.mlflow.integration else ["none"]
-        # Resolved ``MLflowConfig`` — inactive only if it somehow has no URIs.
-        if self.mlflow.tracking_uri or self.mlflow.local_tracking_uri:
-            return ["mlflow"]
-        return ["none"]
+        return ["mlflow"]
 
 
 __all__ = [
