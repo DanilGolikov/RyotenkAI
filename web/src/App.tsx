@@ -12,6 +12,7 @@ import { ProvidersPage } from './pages/Providers'
 import { ProviderDetailPage } from './pages/ProviderDetail'
 import { IntegrationsIndexPage } from './pages/IntegrationsIndex'
 import { IntegrationDetailPage } from './pages/IntegrationDetail'
+import { CatalogPage } from './pages/Catalog'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -48,6 +49,7 @@ export default function App() {
                 path="integrations/:id/*"
                 element={<IntegrationDetailPage />}
               />
+              <Route path="catalog" element={<CatalogPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

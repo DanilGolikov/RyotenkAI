@@ -27,7 +27,7 @@ export type Status =
 
 export type LaunchMode = 'new_run' | 'fresh' | 'resume' | 'restart'
 
-export type PluginKind = 'reward' | 'validation' | 'evaluation'
+export type PluginKind = 'reward' | 'validation' | 'evaluation' | 'reports'
 
 // ───────── Runs / attempts / stages ─────────
 //
