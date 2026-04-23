@@ -34,4 +34,6 @@ export const qk = {
   integrationConfigVersion: (id: string, filename: string) =>
     ['integrations', id, 'config', 'versions', filename] as const,
   configPresets: () => ['config', 'presets'] as const,
+  configPresetPreview: (id: string, currentHash: string) =>
+    ['config', 'presets', id, 'preview', currentHash] as const,
 }

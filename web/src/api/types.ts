@@ -211,3 +211,10 @@ export interface ConnectionTestResult {
 
 export type ConfigPreset = S['ConfigPreset']
 export type ConfigPresetsResponse = S['ConfigPresetsResponse']
+export type PresetPreviewRequest = S['PresetPreviewRequest']
+export type PresetPreviewResponse = S['PresetPreviewResponse']
+export type PresetDiffEntry = S['PresetDiffEntry']
+export type PresetRequirementCheck = S['PresetRequirementCheck']
+export type PresetPlaceholderHint = S['PresetPlaceholderHint']
+export type PresetScopeOut = S['PresetScopeOut']
+export type PresetRequirementsOut = S['PresetRequirementsOut']
