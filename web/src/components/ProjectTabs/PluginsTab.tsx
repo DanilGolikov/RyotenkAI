@@ -6,6 +6,7 @@ import {
   PointerSensor,
   closestCenter,
   pointerWithin,
+  useDndContext,
   useDroppable,
   useSensor,
   useSensors,
@@ -456,6 +457,18 @@ function KindSection({
     id: `container:${kind}`,
     data: { source: 'container', kind },
   })
+  // The active drag's payload — used to decide whether THIS section is
+  // a valid drop target. ``isOver`` alone only tells us the pointer is
+  // above the zone; it says nothing about compatibility. Without this
+  // guard dragging a validation chip over the reports section would
+  // still paint the usual "accept" highlight even though the drop
+  // handler rejects the move (kind mismatch).
+  const dnd = useDndContext()
+  const activeData = dnd.active?.data?.current as
+    | { source?: 'palette' | 'instance'; kind?: PluginKind }
+    | undefined
+  const canAccept = isOver && (!activeData || activeData.kind === kind)
+  const willReject = isOver && !!activeData && activeData.kind !== kind
   const itemIds = instances.map((i) => `instance:${kind}:${i.instanceId}`)
 
   return (
@@ -470,8 +483,13 @@ function KindSection({
           ref={setNodeRef}
           className={[
             'rounded-md border-2 border-dashed bg-surface-1/50 p-2 space-y-1.5 min-h-[64px] transition',
-            isOver ? 'border-brand-alt bg-brand-alt/5' : 'border-line-1',
+            canAccept
+              ? 'border-brand-alt bg-brand-alt/5'
+              : willReject
+                ? 'border-err/60 bg-err/5 cursor-not-allowed'
+                : 'border-line-1',
           ].join(' ')}
+          aria-disabled={willReject || undefined}
         >
           {instances.length === 0 ? (
             <div className="px-2 py-3 text-center space-y-2">

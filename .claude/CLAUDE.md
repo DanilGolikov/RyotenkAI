@@ -13,14 +13,14 @@
 
 Last indexed: 2026-04-23. Confidence: 100%.
 ### Architecture
-repo is a comprehensive machine learning and data processing platform designed to handle complex pipeline orchestration and evaluation tasks. The project features a robust Python-based backend for core logic and a modern TypeScript-based frontend for user interaction. With over 180,000 lines of code, the repository supports sophisticated workflows, including MLflow integration, community-driven evaluation plugins, and a TUI-based logging system for monitoring operations. The project utilizes a polyglot architecture with a strong emphasis on Python for backend services and TypeScript for the web interface.
+repo is a comprehensive software platform primarily focused on machine learning pipelines, evaluation frameworks, and API-driven orchestration. With a codebase spanning over 184,000 lines, the project integrates a robust Python-based backend for data processing and pipeline management with a modern TypeScript-based web interface. The project is designed to handle complex evaluation tasks, as evidenced by its specialized community plugins and integrated MLflow support. The project utilizes a polyglot architecture with a strong emphasis on Python for core logic and TypeScript for the frontend.
 ### Key Modules
 | Module | Purpose | Owner |
 |--------|---------|-------|
-| `src` | The src module serves as the core engine for a comprehensive machine learning li | — |
+| `src` | The src module serves as the core integration layer for the application's plugin | — |
 | `docker` | The docker module serves as a containerization and infrastructure support layer  | — |
 | `scripts` | The scripts module serves as a centralized repository for utility scripts and au | — |
-| `web` | The web module serves as the frontend interface for the project, providing a rob | — |
+| `web` | The web module serves as the primary frontend interface for the application, bui | — |
 | `community` | The community module serves as an extensible ecosystem for community-contributed | — |
 ### Entry Points
 - `web/src/App.tsx`
@@ -40,7 +40,7 @@ repo is a comprehensive machine learning and data processing platform designed t
 | File | Churn | 90d Commits | Owner |
 |------|-------|-------------|-------|
 | `src/pipeline/orchestrator.py` | 100.0th %ile | 36 | daniil |
-| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.9th %ile | 16 | daniil |
+| `web/src/components/ConfigBuilder/FieldRenderer.tsx` | 99.9th %ile | 17 | daniil |
 | `docs/plans/jolly-baking-bird.md` | 99.8th %ile | 4 | daniil |
 | `src/training/reward_plugins/plugins/test_helixql_compiler_semantic.py` | 99.7th %ile | 7 | daniil |
 | `src/tests/unit/config/validators/test_cross_validators.py` | 99.6th %ile | 5 | daniil |
