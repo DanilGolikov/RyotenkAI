@@ -22,6 +22,7 @@ from src.utils.config import (
     GlobalHyperparametersConfig,
     LoraConfig,
     PhaseHyperparametersConfig,
+    QLoRAConfig,
 )
 
 # =============================================================================
@@ -266,7 +267,7 @@ def test_dataset_local_paths_train_basename_extraction():
         ),
         (
             "qlora",
-            LoraConfig(
+            QLoRAConfig(
                 r=16,
                 lora_alpha=32,
                 lora_dropout=0.05,
