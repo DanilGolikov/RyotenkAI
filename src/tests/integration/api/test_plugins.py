@@ -71,3 +71,52 @@ def test_baseline_plugin_has_minimal_manifest(client: TestClient) -> None:
     for key in ("id", "name", "version", "kind", "supported_strategies",
                 "params_schema", "thresholds_schema"):
         assert key in sample
+
+
+# ---------------------------------------------------------------------------
+# /plugins/reports/defaults — surfaces the built-in section order so the
+# frontend's Reports tab can pre-fill the list when the user config omits
+# ``reports.sections``. See PluginsTab.tsx::materializeReportsIfNeeded.
+# ---------------------------------------------------------------------------
+
+
+def test_reports_defaults_returns_default_section_order(client: TestClient) -> None:
+    resp = client.get("/api/v1/plugins/reports/defaults")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "sections" in payload
+    sections = payload["sections"]
+    assert isinstance(sections, list)
+    # Non-empty — the UI relies on this to show a meaningful Reports
+    # section when the user hasn't attached anything yet.
+    assert len(sections) > 0
+    # Known anchors from ``src/reports/plugins/defaults.py`` — first
+    # section is always the header, last is always the footer. Guards
+    # against accidental reorderings that would shift every user's
+    # report layout on upgrade.
+    assert sections[0] == "header"
+    assert sections[-1] == "footer"
+    # No duplicates — uniqueness invariant on the default list.
+    assert len(set(sections)) == len(sections)
+
+
+def test_reports_defaults_entries_are_actual_report_plugin_ids(client: TestClient) -> None:
+    """Every id in the defaults list must reference a real report plugin
+    in the catalog. Regression guard: shipping a default that points to
+    a nonexistent plugin would crash the report generator."""
+    defaults = client.get("/api/v1/plugins/reports/defaults").json()["sections"]
+    catalog = client.get("/api/v1/plugins/reports").json()["plugins"]
+    catalog_ids = {p["id"] for p in catalog}
+    missing = [s for s in defaults if s not in catalog_ids]
+    assert missing == [], f"default sections with no matching plugin: {missing}"
+
+
+def test_reports_defaults_vs_plugin_list_route_order(client: TestClient) -> None:
+    """The specific ``/reports/defaults`` route must NOT be shadowed by
+    the generic ``/{kind}`` route. FastAPI matches routes in declaration
+    order; this test would start failing the moment a refactor moves
+    the generic route above the specific one and turns the endpoint
+    into a 404 "unknown plugin kind 'defaults'"."""
+    resp = client.get("/api/v1/plugins/reports/defaults")
+    assert resp.status_code == 200
+    assert "sections" in resp.json()
