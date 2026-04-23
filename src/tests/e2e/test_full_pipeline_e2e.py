@@ -29,10 +29,11 @@ def mock_stages():
     stages = []
     stage_names = [
         "Dataset Validator",
-        "RunPod Deployer",
+        "GPU Deployer",
         "Training Monitor",
         "Model Retriever",
         "Model Evaluator",
+        "Inference Deployer",
     ]
 
     for name in stage_names:
@@ -56,6 +57,11 @@ def mock_orchestrator_with_stages(mock_config, mock_stages):
 
         orchestrator = PipelineOrchestrator(Path("test_config.yaml"))
         orchestrator.stages = mock_stages
+        # ``PipelineOrchestrator`` delegates stage execution to an internal
+        # ``stage_execution_loop`` that holds its own ``_stages`` reference, so
+        # overriding ``orchestrator.stages`` alone is not enough after the
+        # bootstrap decomposition. Keep both in sync for these E2E tests.
+        orchestrator._stage_execution_loop._stages = mock_stages
 
         return orchestrator
 
@@ -109,7 +115,7 @@ class TestFullPipelineE2E:
 
         # Each stage should have added its data to context
         assert "Dataset Validator" in context
-        assert "RunPod Deployer" in context
+        assert "GPU Deployer" in context
         assert "Training Monitor" in context
         assert "Model Retriever" in context
         assert "Model Evaluator" in context
@@ -175,7 +181,7 @@ class TestPipelineCleanup:
 
         # Simulate pod creation in stage 1
         orchestrator.stages[1].run.return_value = Ok(
-            {"RunPod Deployer": {"pod_id": "pod_test_123", "status": "success"}}
+            {"GPU Deployer": {"pod_id": "pod_test_123", "status": "success"}}
         )
 
         # Make stage 3 fail
@@ -222,9 +228,9 @@ class TestStageDiscovery:
 
         stages = orchestrator.list_stages()
 
-        assert len(stages) == 5
+        assert len(stages) == 6
         assert "Dataset Validator" in stages
-        assert "RunPod Deployer" in stages
+        assert "GPU Deployer" in stages
         assert "Training Monitor" in stages
         assert "Model Retriever" in stages
         assert "Model Evaluator" in stages

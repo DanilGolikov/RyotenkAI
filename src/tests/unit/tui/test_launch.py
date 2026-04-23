@@ -98,7 +98,7 @@ def test_build_train_command_for_restart(tmp_path: Path) -> None:
 
 def test_resolve_config_path_for_run_reads_state(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "src.pipeline.launch._resolve_config_path_for_run",
+        "src.pipeline.launch.runtime._resolve_config_path_for_run",
         lambda run_dir, config_path=None: (tmp_path / "configs" / "pipeline.yaml").resolve(),
     )
 
@@ -109,7 +109,7 @@ def test_resolve_config_path_for_run_reads_state(tmp_path: Path, monkeypatch) ->
 
 def test_load_restart_point_options_uses_config_and_restart_api(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        "src.pipeline.launch._load_restart_point_options",
+        "src.pipeline.launch.runtime._load_restart_point_options",
         lambda run_dir, config_path=None: (
             tmp_path / "cfg.yaml",
             [
@@ -196,7 +196,7 @@ def test_execute_launch_subprocess_returns_readable_failure_tail(tmp_path: Path,
             )
             return 1
 
-    monkeypatch.setattr("src.pipeline.launch.subprocess.Popen", lambda *args, **kwargs: DummyProcess())
+    monkeypatch.setattr("src.pipeline.launch.runtime.subprocess.Popen", lambda *args, **kwargs: DummyProcess())
 
     result = execute_launch_subprocess(request, python_executable="python3")
 
@@ -225,7 +225,7 @@ def test_execute_launch_subprocess_passes_log_level_via_environment(tmp_path: Pa
         captured_env.update(kwargs["env"])
         return DummyProcess()
 
-    monkeypatch.setattr("src.pipeline.launch.subprocess.Popen", _fake_popen)
+    monkeypatch.setattr("src.pipeline.launch.runtime.subprocess.Popen", _fake_popen)
 
     result = execute_launch_subprocess(request, python_executable="python3")
 
@@ -238,9 +238,9 @@ def test_interrupt_launch_process_uses_process_group_for_session_leader(monkeypa
     killpg_calls: list[tuple[int, int]] = []
     kill_calls: list[tuple[int, int]] = []
 
-    monkeypatch.setattr("src.pipeline.launch.os.getpgid", lambda pid: pid)
-    monkeypatch.setattr("src.pipeline.launch.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
-    monkeypatch.setattr("src.pipeline.launch.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
 
     assert interrupt_launch_process(12345) is True
     assert len(killpg_calls) == 2
@@ -251,9 +251,9 @@ def test_interrupt_launch_process_falls_back_to_single_pid_for_external_run(monk
     killpg_calls: list[tuple[int, int]] = []
     kill_calls: list[tuple[int, int]] = []
 
-    monkeypatch.setattr("src.pipeline.launch.os.getpgid", lambda _pid: 99999)
-    monkeypatch.setattr("src.pipeline.launch.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
-    monkeypatch.setattr("src.pipeline.launch.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.getpgid", lambda _pid: 99999)
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.killpg", lambda pid, sig: killpg_calls.append((pid, sig)))
+    monkeypatch.setattr("src.pipeline.launch.runtime.os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
 
     assert interrupt_launch_process(12345) is True
     assert killpg_calls == []
