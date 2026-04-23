@@ -82,12 +82,12 @@ class TestMetricsCollector:
         trainer.state.epoch = 1.0
 
         collector = MetricsCollector()
-        metrics = collector.extract_from_trainer(trainer)
+        snapshot = collector.extract_from_trainer(trainer)
 
-        assert metrics["train_loss"] == 0.5
-        assert metrics["train_runtime"] == 100.0
-        assert metrics["global_step"] == 100
-        assert metrics["epoch"] == 1.0
+        assert snapshot.train_loss == 0.5
+        assert snapshot.train_runtime == 100.0
+        assert snapshot.global_step == 100
+        assert snapshot.epoch == 1.0
 
     def test_extract_from_trainer_no_state(self):
         """Test metrics extraction from trainer without state."""
@@ -95,9 +95,9 @@ class TestMetricsCollector:
         trainer.state = None
 
         collector = MetricsCollector()
-        metrics = collector.extract_from_trainer(trainer)
+        snapshot = collector.extract_from_trainer(trainer)
 
-        assert metrics == {}
+        assert snapshot.is_empty()
 
     def test_extract_from_trainer_loss_not_in_last_log(self):
         """Test metrics extraction when last log doesn't contain loss.
@@ -116,18 +116,18 @@ class TestMetricsCollector:
         trainer.state.epoch = 1.0
 
         collector = MetricsCollector()
-        metrics = collector.extract_from_trainer(trainer)
+        snapshot = collector.extract_from_trainer(trainer)
 
         # Should find loss=0.5 from second-to-last entry
-        assert metrics["train_loss"] == 0.5
+        assert snapshot.train_loss == 0.5
         # Should find learning_rate=0.0001 from second-to-last entry
-        assert metrics["learning_rate"] == 0.0001
+        assert snapshot.learning_rate == 0.0001
         # Should find train_runtime from last entry
-        assert metrics["train_runtime"] == 120.0
+        assert snapshot.train_runtime == 120.0
         # Should find throughput metrics
-        assert metrics["train_samples_per_second"] == 10.5
-        assert metrics["global_step"] == 150
-        assert metrics["epoch"] == 1.0
+        assert snapshot.train_samples_per_second == 10.5
+        assert snapshot.global_step == 150
+        assert snapshot.epoch == 1.0
 
     def test_extract_from_trainer_all_metrics_in_different_logs(self):
         """Test extraction when metrics are spread across different logs."""
@@ -142,33 +142,36 @@ class TestMetricsCollector:
         trainer.state.epoch = 1.0
 
         collector = MetricsCollector()
-        metrics = collector.extract_from_trainer(trainer)
+        snapshot = collector.extract_from_trainer(trainer)
 
-        assert metrics["train_loss"] == 0.9
-        assert metrics["eval_loss"] == 0.7
-        assert metrics["learning_rate"] == 0.0001
-        assert metrics["train_runtime"] == 60.0
+        assert snapshot.train_loss == 0.9
+        assert snapshot.eval_loss == 0.7
+        assert snapshot.learning_rate == 0.0001
+        assert snapshot.train_runtime == 60.0
 
     def test_aggregate_phases_empty(self):
         """Test aggregation with empty list."""
         collector = MetricsCollector()
         summary = collector.aggregate_phases([])
-        assert summary == {}
+        assert summary.is_empty
+        assert summary.total_phases == 0
 
     def test_aggregate_phases(self):
         """Test aggregation of multiple phases."""
+        from src.training.metrics_models import TrainingMetricsSnapshot
+
         collector = MetricsCollector()
         phase_metrics = [
-            {"global_step": 100, "train_runtime": 50.0, "train_loss": 0.8},
-            {"global_step": 200, "train_runtime": 60.0, "train_loss": 0.5},
+            TrainingMetricsSnapshot(global_step=100, train_runtime=50.0, train_loss=0.8),
+            TrainingMetricsSnapshot(global_step=200, train_runtime=60.0, train_loss=0.5),
         ]
 
         summary = collector.aggregate_phases(phase_metrics)
 
-        assert summary["total_phases"] == 2
-        assert summary["total_steps"] == 300
-        assert summary["total_runtime_seconds"] == 110.0
-        assert summary["final_loss"] == 0.5
+        assert summary.total_phases == 2
+        assert summary.total_steps == 300
+        assert summary.total_runtime_seconds == 110.0
+        assert summary.final_loss == 0.5
 
 
 class TestResumeManager:
