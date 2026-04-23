@@ -13,6 +13,7 @@ import { TrainingProviderField } from './TrainingProviderField'
 import { UnionField } from './UnionField'
 import { useClientFieldValidation, useFieldStatus, useValidationCtx } from './ValidationContext'
 import type { FieldStatus } from './ValidationContext'
+import { Toggle } from '../ui'
 
 /**
  * Per-path custom components for fields that can't be described by the
@@ -359,16 +360,12 @@ export function FieldRenderer(props: FieldProps) {
     const checked = Boolean(fallback)
     return wrapAnchor(
       <LabelledRow label={label} description={description} required={required} path={path} value={fallback} suppressBar>
-        <label className="inline-flex items-center gap-2 text-xs cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={(e) => onChange(e.target.checked)}
-            {...focusHandlers}
-            className="h-4 w-4 rounded-[2px] border border-line-2 bg-surface-1 accent-brand hover:border-ink-3 focus:outline-none focus-visible:ring-1 focus-visible:ring-brand transition-colors"
-          />
-          <span className="font-mono text-ink-2">{String(checked)}</span>
-        </label>
+        <Toggle
+          checked={checked}
+          onChange={(next) => onChange(next)}
+          aria-label={typeof label === 'string' ? label : path}
+          {...focusHandlers}
+        />
       </LabelledRow>
     )
   }

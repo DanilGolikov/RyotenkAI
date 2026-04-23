@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLogStream } from '../api/hooks/useLogStream'
+import { Toggle } from './ui'
 
 const FILES = ['pipeline.log', 'training.log', 'inference.log', 'eval.log'] as const
 type LogFile = (typeof FILES)[number]
@@ -51,15 +52,19 @@ export function LogDock({
             </button>
           ))}
           {error && <span className="text-2xs text-err">error</span>}
-          <label className="flex items-center gap-1 text-2xs text-ink-3 cursor-pointer ml-1">
-            <input
-              type="checkbox"
-              className="accent-brand"
+          <div className="flex items-center gap-1.5 text-2xs text-ink-3 ml-1">
+            <Toggle
               checked={autoScroll}
-              onChange={(event) => setAutoScroll(event.target.checked)}
+              onChange={setAutoScroll}
+              aria-label="Follow tail"
             />
-            follow
-          </label>
+            <span
+              className="cursor-pointer select-none"
+              onClick={() => setAutoScroll((v) => !v)}
+            >
+              follow
+            </span>
+          </div>
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}

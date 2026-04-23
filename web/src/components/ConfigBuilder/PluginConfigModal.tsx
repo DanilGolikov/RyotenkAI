@@ -5,6 +5,7 @@ import type { PluginKind, PluginManifest } from '../../api/types'
 import type { PluginInstanceDetails } from '../ProjectTabs/pluginInstances'
 import { ObjectFields } from './FieldRenderer'
 import { HelpTooltip } from './HelpTooltip'
+import { Toggle } from '../ui'
 
 interface Props {
   kind: PluginKind
@@ -203,16 +204,13 @@ export function PluginConfigModal({
             {draft.enabled !== undefined && (
               <Field
                 label="Enabled"
-                help="Uncheck to keep this attachment in the config but skip it on next run."
+                help="Toggle off to keep this attachment in the config but skip it on next run."
               >
-                <label className="inline-flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={draft.enabled}
-                    onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-                  />
-                  <span className="text-ink-2">{draft.enabled ? 'yes' : 'no'}</span>
-                </label>
+                <Toggle
+                  checked={draft.enabled}
+                  onChange={(next) => setDraft({ ...draft, enabled: next })}
+                  aria-label="Enabled"
+                />
               </Field>
             )}
 
@@ -222,23 +220,23 @@ export function PluginConfigModal({
                   label="Apply to"
                   help="Which dataset phases this validator runs against. Empty = both."
                 >
-                  <div className="flex gap-3 text-xs">
+                  <div className="flex gap-4 text-xs">
                     {['train', 'eval'].map((phase) => {
                       const checked = draft.apply_to?.includes(phase) ?? true
                       return (
-                        <label key={phase} className="inline-flex items-center gap-1.5">
-                          <input
-                            type="checkbox"
+                        <div key={phase} className="inline-flex items-center gap-1.5">
+                          <Toggle
                             checked={checked}
-                            onChange={(e) => {
+                            onChange={(next) => {
                               const current = new Set(draft.apply_to ?? ['train', 'eval'])
-                              if (e.target.checked) current.add(phase)
+                              if (next) current.add(phase)
                               else current.delete(phase)
                               setDraft({ ...draft, apply_to: [...current] })
                             }}
+                            aria-label={`Apply to ${phase}`}
                           />
-                          {phase}
-                        </label>
+                          <span className="text-ink-2">{phase}</span>
+                        </div>
                       )
                     })}
                   </div>
@@ -247,14 +245,11 @@ export function PluginConfigModal({
                   label="Fail on error"
                   help="Abort the run when this validator reports a FAIL issue."
                 >
-                  <label className="inline-flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={draft.fail_on_error ?? false}
-                      onChange={(e) => setDraft({ ...draft, fail_on_error: e.target.checked })}
-                    />
-                    <span className="text-ink-2">{draft.fail_on_error ? 'yes' : 'no'}</span>
-                  </label>
+                  <Toggle
+                    checked={draft.fail_on_error ?? false}
+                    onChange={(next) => setDraft({ ...draft, fail_on_error: next })}
+                    aria-label="Fail on error"
+                  />
                 </Field>
               </>
             )}
@@ -264,14 +259,11 @@ export function PluginConfigModal({
                 label="Save per-sample report"
                 help="Writes a Markdown breakdown next to the run — useful for debugging threshold failures."
               >
-                <label className="inline-flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={draft.save_report ?? true}
-                    onChange={(e) => setDraft({ ...draft, save_report: e.target.checked })}
-                  />
-                  <span className="text-ink-2">{draft.save_report ? 'yes' : 'no'}</span>
-                </label>
+                <Toggle
+                  checked={draft.save_report ?? true}
+                  onChange={(next) => setDraft({ ...draft, save_report: next })}
+                  aria-label="Save per-sample report"
+                />
               </Field>
             )}
           </div>

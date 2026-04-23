@@ -313,7 +313,14 @@ export function PluginsTab({ projectId }: Props) {
 
   // ---------- render ----------
 
-  if (configQuery.isLoading) {
+  // Gate the tab on BOTH config AND the plugin catalog. Without the
+  // second condition we render rows with an empty ``manifestById`` for
+  // ~1 frame on first mount — every row lights up amber (``isStale``)
+  // until the plugin queries resolve. Waiting another beat on the
+  // spinner is preferable to a golden flash. ``reportDefaultsQuery``
+  // also contributes: reports.sections falls back to the server's
+  // defaults, which we don't want to briefly render as empty either.
+  if (configQuery.isLoading || pluginsAll.isLoading || reportDefaultsQuery.isLoading) {
     return (
       <div className="flex items-center gap-2 text-sm text-ink-3">
         <Spinner /> loading config
