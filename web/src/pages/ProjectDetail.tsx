@@ -230,15 +230,14 @@ export function ProjectDetailPage() {
                   'border border-b-2',
                   'transition-colors duration-150',
                   isActive
-                    // Three concurrent signals on active — matches the
-                    // NN/g recommendation of "active needs ~3× weight
-                    // over inactive":
+                    // Active signals:
                     //   1) brighter text (ink-1) + medium weight
-                    //   2) burgundy bottom "полоска" (2px)
-                    //   3) soft side+top frame (line-2) + bg lift to
-                    //      surface-3, so the tab silhouette reads
-                    //      as a card popping out of the strip.
-                    ? 'text-ink-1 font-medium bg-surface-3 border-[#3c4046] border-b-brand-warm'
+                    //   2) violet bottom "полоска" (2px) — matches the
+                    //      cool brand used across CTAs and nav-active
+                    //      instead of the warm burgundy token.
+                    // Side / top frame and the bg lift dropped by user
+                    // request — the underline alone is enough contrast.
+                    ? 'text-ink-1 font-medium border-transparent border-b-brand'
                     : 'text-ink-3 hover:text-ink-1 hover:bg-surface-2/50 border-transparent',
                 ].join(' ')
               }
