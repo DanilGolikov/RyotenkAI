@@ -69,7 +69,13 @@ class TestSAPOValidatorRegistration:
         assert "helixql_sapo_prompt_contract" in ValidationPluginRegistry.list_plugins()
 
     def test_name_classvar(self) -> None:
-        assert HelixQLSAPOPromptContractValidator.name == "helixql_sapo_prompt_contract"
+        """``name`` is attached by the community loader from manifest.plugin.id."""
+        from src.community.catalog import catalog
+        from src.data.validation.registry import ValidationPluginRegistry
+
+        catalog.reload()
+        registered = ValidationPluginRegistry._plugins["helixql_sapo_prompt_contract"]
+        assert registered.name == "helixql_sapo_prompt_contract"
 
 
 # ---------------------------------------------------------------------------

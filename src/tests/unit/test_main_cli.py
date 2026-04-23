@@ -202,7 +202,7 @@ def test_list_restart_points_command(cli_runner, tmp_path):
     run_dir.mkdir()
 
     with (
-        patch("src.main.load_restart_point_options", return_value=(config_file, mock_points)),
+        patch("src.pipeline.launch_queries.load_restart_point_options", return_value=(config_file, mock_points)),
         patch("src.main._resolve_config", return_value=config_file),
     ):
         result = cli_runner.invoke(app, ["list-restart-points", str(run_dir)])
@@ -219,9 +219,9 @@ def test_info_command(cli_runner, mock_pipeline_orchestrator, temp_config):
     result = cli_runner.invoke(app, ["info", "--config", str(temp_config)])
 
     assert result.exit_code == 0
-    assert "Pipeline Stages" in result.stdout
-    assert "Model Configuration" in result.stdout
-    assert "Dataset Configuration" in result.stdout
+    assert "Stages" in result.stdout
+    assert "Model" in result.stdout
+    assert "Dataset" in result.stdout
     assert "Dataset Validation" in result.stdout
     assert "test/model" in result.stdout
 
@@ -240,8 +240,9 @@ def test_version_command(cli_runner):
     result = cli_runner.invoke(app, ["version"])
 
     assert result.exit_code == 0
-    assert "RyotenkAI" in result.stdout
-    assert "Version:" in result.stdout
+    assert "ryotenkai" in result.stdout.lower()
+    # Current compact version line: "ryotenkai <ver>  python <ver>  platform ...  git <sha>"
+    assert "python" in result.stdout.lower()
 
 
 def test_tui_command_accepts_log_level_and_configures_logger(cli_runner, tmp_path):

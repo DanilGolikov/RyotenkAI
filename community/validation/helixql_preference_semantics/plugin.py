@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.data.validation.base import ValidationPlugin, ValidationResult
 from src.utils.domains.helixql import (
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 class HelixQLPreferenceSemanticsValidator(ValidationPlugin):
+    name: ClassVar[str] = "helixql_preference_semantics"
     supports_streaming = True
 
     def __init__(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.data.validation.base import ValidationPlugin, ValidationResult
 from src.training.constants import COL_MESSAGES, COL_PROMPT
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 class HelixQLSAPOPromptContractValidator(ValidationPlugin):
+    name: ClassVar[str] = "helixql_sapo_prompt_contract"
     supports_streaming = True
 
     def _validate_contract(self) -> None:

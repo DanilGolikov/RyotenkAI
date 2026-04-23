@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 
 class HelixQLGoldSyntaxBackendValidator(ValidationPlugin):
+    name: ClassVar[str] = "helixql_gold_syntax_backend"
     """Validate gold HelixQL answers via ``helix compile``."""
 
     required_fields: ClassVar[list[str]] = []
