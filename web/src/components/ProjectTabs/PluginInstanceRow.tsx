@@ -11,6 +11,10 @@ interface Props {
   kind: PluginKind
   /** Reward rows are not sortable (single-instance per strategy-phase). */
   sortable: boolean
+  /** False = instance is attached but will be skipped at run time.
+   *  Renders as a desaturated / muted row so the user can see at a
+   *  glance which items are dormant without opening Configure. */
+  enabled?: boolean
   onRemove: () => void
   onConfigure?: () => void
   onInfo?: () => void
@@ -40,6 +44,7 @@ export function PluginInstanceRow({
   manifest,
   kind,
   sortable,
+  enabled = true,
   onRemove,
   onConfigure,
   onInfo,
@@ -64,15 +69,22 @@ export function PluginInstanceRow({
   }
 
   const isStale = !manifest
+  const isDisabled = enabled === false
   const rowCls = [
-    'flex items-center gap-2 rounded-md border bg-surface-0 px-2 py-1.5',
-    isStale
+    'flex items-center gap-2 rounded-md border px-2 py-1.5 transition',
+    // Desaturated + dashed-border look when disabled — conveys
+    // "attached but skipped" without hiding the row. Hover still
+    // highlights so the user can Configure / Remove / Enable.
+    isDisabled
+      ? 'bg-surface-1 border-dashed border-line-2 opacity-60 grayscale'
+      : 'bg-surface-0',
+    !isDisabled && (isStale
       ? 'border-warn/50'
       : warning
         ? 'border-err/50'
-        : 'border-line-1 hover:border-line-2',
+        : 'border-line-1 hover:border-line-2'),
     isDragging ? 'opacity-60 ring-2 ring-brand-alt/40' : '',
-  ].join(' ')
+  ].filter(Boolean).join(' ')
 
   return (
     <div>
@@ -96,6 +108,14 @@ export function PluginInstanceRow({
               <div className="text-[0.65rem] text-ink-3 font-mono truncate" title={`Plugin reference: ${pluginId}`}>
                 → {pluginId}
               </div>
+            )}
+            {isDisabled && (
+              <span
+                className="inline-flex items-center rounded border border-line-2 bg-surface-2 px-1.5 py-0 text-[0.6rem] uppercase tracking-wide text-ink-3"
+                title="Disabled — attached but will be skipped on next run. Toggle in Configure."
+              >
+                disabled
+              </span>
             )}
           </div>
           {isStale ? (

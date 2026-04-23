@@ -95,13 +95,15 @@ export function PluginPaletteDrawer({
     })
   }
 
-  // ``self-start + sticky`` pins the palette independently of the
-  // growing left column. The previous layout used ``sticky`` on the
-  // aside alone which made the whole row grow taller on the left and
-  // scrolled the palette out of view once the validation section grew
-  // past the viewport (reported: "блок палитры сдвигается вниз").
+  // ``self-start + sticky top-0`` pins the palette to the top of the
+  // scrolling tab panel. ``top-0`` (not ``top-20``) because the parent
+  // ``<div className="p-5 ... overflow-y-auto">`` in ProjectDetail is
+  // the scrollable ancestor — sticky offsets are measured relative to
+  // THAT container, not the viewport. Any value above 0 just pushes
+  // the palette down visually and leaves a gap at the top of the tab
+  // (reported: "у палитры отступ сверху большой").
   return (
-    <aside className="w-64 shrink-0 border-l border-line-1 bg-surface-1 flex flex-col max-h-[calc(100vh-8rem)] self-start sticky top-20">
+    <aside className="w-64 shrink-0 border-l border-line-1 bg-surface-1 flex flex-col max-h-full self-start sticky top-0">
       <div className="px-3 py-2 border-b border-line-1">
         <div className="text-2xs font-semibold text-ink-1">Plugin palette</div>
         <div className="text-[0.65rem] text-ink-3 mt-0.5 leading-snug">

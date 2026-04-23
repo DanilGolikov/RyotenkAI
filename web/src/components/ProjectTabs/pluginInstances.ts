@@ -26,6 +26,11 @@ export interface PluginInstance {
   instanceId: string
   /** Reference to the catalog plugin by its manifest id. */
   pluginId: string
+  /** ``false`` when the YAML marks the instance as ``enabled: false``.
+   *  Undefined means "not specified" — the backend treats that as
+   *  ``true`` for validation/evaluation, and reports/reward have no
+   *  such flag (always enabled when attached). */
+  enabled?: boolean
 }
 
 export function isRecord(v: unknown): v is Record<string, unknown> {
@@ -94,6 +99,7 @@ export function readInstances(
       .map((p) => ({
         instanceId: typeof p.id === 'string' ? p.id : String(p.plugin ?? ''),
         pluginId: typeof p.plugin === 'string' ? p.plugin : '',
+        enabled: typeof p.enabled === 'boolean' ? p.enabled : undefined,
       }))
       .filter((x) => x.pluginId)
   }
@@ -109,6 +115,7 @@ export function readInstances(
     .map((p) => ({
       instanceId: typeof p.id === 'string' ? p.id : String(p.plugin ?? ''),
       pluginId: typeof p.plugin === 'string' ? p.plugin : '',
+      enabled: typeof p.enabled === 'boolean' ? p.enabled : undefined,
     }))
     .filter((x) => x.pluginId)
 }
