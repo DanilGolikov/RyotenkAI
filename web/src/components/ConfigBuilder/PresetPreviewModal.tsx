@@ -130,9 +130,9 @@ export function PresetPreviewModal({ preset, current, dirty, onApply, onCancel }
           <button
             type="button"
             onClick={onCancel}
-            className="btn-ghost h-8 text-xs"
+            className="btn-ghost h-8 text-xs flex items-center gap-1"
           >
-            Cancel
+            <span aria-hidden="true">←</span> Back
           </button>
           <button
             ref={applyBtnRef}

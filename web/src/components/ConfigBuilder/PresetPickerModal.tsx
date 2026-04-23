@@ -97,15 +97,17 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
     setOpen(false)
   }, [closeToken])
 
-  // Esc closes from anywhere while open.
+  // Esc closes the picker, but only if the preview isn't open on top —
+  // otherwise pressing Esc to close the preview would also dismiss the
+  // picker underneath and break the "Back" contract.
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape' && !pendingPreset) setOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open])
+  }, [open, pendingPreset])
 
   // Scroll active card into view on cursor move.
   useEffect(() => {
@@ -116,14 +118,18 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
   const presets = data?.presets ?? []
   if (isLoading || presets.length === 0) return null
 
+  // Keep the picker open behind the preview so ``Back`` in the preview
+  // reveals the list again (same-page "sheet-over-sheet" pattern). The
+  // preview sits on top via z-index stacking — clicks on its backdrop
+  // dismiss only the preview, not the picker.
   function handlePick(preset: ConfigPreset) {
     setPendingPreset(preset)
-    setOpen(false)
   }
 
   function confirmApply() {
     if (pendingPreset) onLoad(pendingPreset)
     setPendingPreset(null)
+    setOpen(false)
   }
 
   return (
@@ -143,7 +149,13 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
           aria-modal="true"
           aria-label="Pick a preset"
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center pt-24"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            // When the preview is open on top, backdrop clicks belong to
+            // it (handled by its own useClickOutside) — don't also close
+            // the picker underneath, or the user has nothing to return to.
+            if (pendingPreset) return
+            setOpen(false)
+          }}
         >
           <div
             onClick={(e) => e.stopPropagation()}
