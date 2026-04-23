@@ -21,12 +21,19 @@ type PresetRow = ConfigPreset & {
   _haystack: string
 }
 
-/** Tier → short human chip shown inside the card header. */
-const TIER_LABEL: Record<string, string> = {
-  small: 'small',
-  medium: 'medium',
-  large: 'large',
+/** Tier → short human chip shown inside the card header.
+ *  Classes carry both the text and the colour bucket so large presets
+ *  visually stand out from small ones without reading the label. */
+const TIER_STYLE: Record<string, { label: string; cls: string }> = {
+  small: { label: 'small', cls: 'bg-ok/15 text-ok border-ok/30' },
+  medium: { label: 'medium', cls: 'bg-warn/15 text-warn border-warn/30' },
+  large: { label: 'large', cls: 'bg-err/15 text-err border-err/30' },
 }
+
+const CHIP_BASE = 'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6rem]'
+const CHIP_NEUTRAL = `${CHIP_BASE} bg-surface-2 text-ink-3`
+const CHIP_VRAM = `${CHIP_BASE} bg-brand-alt/10 text-brand-alt border border-brand-alt/20`
+const CHIP_MONO = `${CHIP_BASE} bg-surface-2 font-mono text-ink-2`
 
 function buildHaystack(p: ConfigPreset): string {
   const parts: string[] = [
@@ -202,61 +209,119 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
                   No presets match <span className="font-mono text-ink-2">{query}</span>.
                 </div>
               ) : (
-                results.map((p, idx) => (
-                  <button
-                    key={p.name}
-                    type="button"
-                    data-idx={idx}
-                    onMouseEnter={() => setCursor(idx)}
-                    onClick={() => handlePick(p)}
-                    className={[
-                      'w-full text-left px-4 py-3 flex flex-col gap-1 transition',
-                      idx === cursor ? 'bg-surface-2 text-ink-1' : 'text-ink-2 hover:bg-surface-2/60',
-                    ].join(' ')}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium text-ink-1">
-                        {p.display_name || p.name}
-                      </span>
-                      <span className="text-[0.6rem] font-mono text-ink-4">{p.name}</span>
-                      {p.size_tier && (
-                        <span className="ml-auto rounded border border-line-2 px-1.5 py-0.5 text-[0.6rem] text-ink-3">
-                          {TIER_LABEL[p.size_tier] ?? p.size_tier}
+                results.map((p, idx) => {
+                  const tier = p.size_tier ? TIER_STYLE[p.size_tier] : null
+                  const req = p.requirements
+                  const placeholderCount = Object.keys(p.placeholders ?? {}).length
+                  const replacesN = p.scope?.replaces?.length ?? 0
+                  const preservesN = p.scope?.preserves?.length ?? 0
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      data-idx={idx}
+                      onMouseEnter={() => setCursor(idx)}
+                      onClick={() => handlePick(p)}
+                      className={[
+                        'w-full text-left px-4 py-3 flex flex-col gap-1.5 transition',
+                        idx === cursor ? 'bg-surface-2 text-ink-1' : 'text-ink-2 hover:bg-surface-2/60',
+                      ].join(' ')}
+                    >
+                      {/* Header: name · id · size-tier (colour-coded) */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-ink-1">
+                          {p.display_name || p.name}
                         </span>
-                      )}
-                    </div>
-                    {p.description && (
-                      <div className="text-[0.65rem] text-ink-3 line-clamp-2">
-                        {p.description}
-                      </div>
-                    )}
-                    {p.requirements && (
-                      <div className="flex flex-wrap gap-1.5 mt-0.5 text-[0.6rem]">
-                        {(p.requirements.hub_models ?? []).map((m) => (
+                        <span className="text-[0.6rem] font-mono text-ink-4">{p.name}</span>
+                        {tier && (
                           <span
-                            key={`hub-${m}`}
-                            className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-ink-3"
+                            className={`ml-auto rounded border px-1.5 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide ${tier.cls}`}
                           >
-                            {m}
-                          </span>
-                        ))}
-                        {p.requirements.min_vram_gb != null && (
-                          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-ink-3">
-                            ≥{p.requirements.min_vram_gb} GB VRAM
+                            {tier.label}
                           </span>
                         )}
-                        {(p.requirements.provider_kind ?? []).map((k) => (
-                          <span
-                            key={`prov-${k}`}
-                            className="rounded bg-surface-2 px-1.5 py-0.5 text-ink-3"
-                          >
-                            {k}
-                          </span>
-                        ))}
                       </div>
-                    )}
-                  </button>
-                ))
+
+                      {p.description && (
+                        <div className="text-[0.65rem] text-ink-3 line-clamp-2">
+                          {p.description}
+                        </div>
+                      )}
+
+                      {/* Requirements row — VRAM + HF models + provider + plugins */}
+                      {req && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {req.min_vram_gb != null && (
+                            <span className={CHIP_VRAM} title="Minimum GPU VRAM">
+                              <span aria-hidden="true">🖥️</span>
+                              ≥{req.min_vram_gb} GB
+                            </span>
+                          )}
+                          {(req.hub_models ?? []).map((m) => (
+                            <span
+                              key={`hub-${m}`}
+                              className={CHIP_MONO}
+                              title="Hugging Face Hub model"
+                            >
+                              <span aria-hidden="true">🤗</span>
+                              {m}
+                            </span>
+                          ))}
+                          {(req.provider_kind ?? []).map((k) => (
+                            <span
+                              key={`prov-${k}`}
+                              className={CHIP_NEUTRAL}
+                              title="Compatible provider kind"
+                            >
+                              <span aria-hidden="true">☁️</span>
+                              {k}
+                            </span>
+                          ))}
+                          {(req.required_plugins ?? []).map((pl) => (
+                            <span
+                              key={`pl-${pl}`}
+                              className={CHIP_NEUTRAL}
+                              title="Required community plugin"
+                            >
+                              <span aria-hidden="true">🔌</span>
+                              {pl}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Scope + placeholders summary */}
+                      {(replacesN > 0 || preservesN > 0 || placeholderCount > 0) && (
+                        <div className="flex flex-wrap gap-1.5 text-[0.6rem] text-ink-3">
+                          {replacesN > 0 && (
+                            <span
+                              className={CHIP_NEUTRAL}
+                              title={`Keys replaced by this preset: ${p.scope?.replaces?.join(', ')}`}
+                            >
+                              ↻ replaces {replacesN}
+                            </span>
+                          )}
+                          {preservesN > 0 && (
+                            <span
+                              className={CHIP_NEUTRAL}
+                              title={`Keys preserved from your config: ${p.scope?.preserves?.join(', ')}`}
+                            >
+                              ∙ preserves {preservesN}
+                            </span>
+                          )}
+                          {placeholderCount > 0 && (
+                            <span
+                              className={`${CHIP_BASE} bg-warn/10 text-warn border border-warn/20`}
+                              title="Fields you'll need to fill in after applying"
+                            >
+                              ✎ {placeholderCount} to fill
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </button>
+                  )
+                })
               )}
             </div>
 
