@@ -30,10 +30,24 @@ const TIER_STYLE: Record<string, { label: string; cls: string }> = {
   large: { label: 'large', cls: 'bg-err/15 text-err border-err/30' },
 }
 
-const CHIP_BASE = 'inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6rem]'
+// Chip palette — each requirement category gets its own semantic colour
+// bucket so you can read a card at a glance without parsing any icons.
+// Tokens come from the existing Tailwind theme (brand, ok, warn, err,
+// ink, surface) — no new colours added.
+const CHIP_BASE = 'inline-flex items-center rounded px-1.5 py-0.5 text-[0.6rem]'
 const CHIP_NEUTRAL = `${CHIP_BASE} bg-surface-2 text-ink-3`
+// VRAM — most important requirement, brand accent.
 const CHIP_VRAM = `${CHIP_BASE} bg-brand-alt/10 text-brand-alt border border-brand-alt/20`
-const CHIP_MONO = `${CHIP_BASE} bg-surface-2 font-mono text-ink-2`
+// Hub model — mono font on a dim tile, neutral semantics (identifier).
+const CHIP_MODEL = `${CHIP_BASE} bg-surface-2 font-mono text-ink-2`
+// Provider kind — info-blue accent (separates at-a-glance from VRAM and models).
+const CHIP_PROVIDER = `${CHIP_BASE} bg-brand/10 text-brand border border-brand/20`
+// Required plugin — warn accent, signals "needs extra setup".
+const CHIP_PLUGIN = `${CHIP_BASE} bg-warn/10 text-warn border border-warn/20 font-mono`
+// Scope counters — neutral but slightly lighter than plain chips.
+const CHIP_SCOPE = `${CHIP_BASE} bg-surface-2 text-ink-3`
+// Placeholders counter — brighter warn to stand out: "you'll still edit N fields".
+const CHIP_PLACEHOLDERS = `${CHIP_BASE} bg-warn/15 text-warn border border-warn/30`
 
 function buildHaystack(p: ConfigPreset): string {
   const parts: string[] = [
@@ -147,7 +161,7 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
         aria-haspopup="dialog"
         className="rounded-md border border-line-1 px-3 py-1.5 text-2xs text-ink-2 hover:text-ink-1 hover:border-line-2"
       >
-        Load preset ▾
+        Load preset
       </button>
 
       {open && (
@@ -253,37 +267,33 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
                         <div className="flex flex-wrap gap-1.5">
                           {req.min_vram_gb != null && (
                             <span className={CHIP_VRAM} title="Minimum GPU VRAM">
-                              <span aria-hidden="true">🖥️</span>
-                              ≥{req.min_vram_gb} GB
+                              ≥{req.min_vram_gb} GB VRAM
                             </span>
                           )}
                           {(req.hub_models ?? []).map((m) => (
                             <span
                               key={`hub-${m}`}
-                              className={CHIP_MONO}
+                              className={CHIP_MODEL}
                               title="Hugging Face Hub model"
                             >
-                              <span aria-hidden="true">🤗</span>
                               {m}
                             </span>
                           ))}
                           {(req.provider_kind ?? []).map((k) => (
                             <span
                               key={`prov-${k}`}
-                              className={CHIP_NEUTRAL}
+                              className={CHIP_PROVIDER}
                               title="Compatible provider kind"
                             >
-                              <span aria-hidden="true">☁️</span>
                               {k}
                             </span>
                           ))}
                           {(req.required_plugins ?? []).map((pl) => (
                             <span
                               key={`pl-${pl}`}
-                              className={CHIP_NEUTRAL}
+                              className={CHIP_PLUGIN}
                               title="Required community plugin"
                             >
-                              <span aria-hidden="true">🔌</span>
                               {pl}
                             </span>
                           ))}
@@ -292,29 +302,29 @@ export function PresetPickerModal({ dirty, onLoad, current, closeToken }: Props)
 
                       {/* Scope + placeholders summary */}
                       {(replacesN > 0 || preservesN > 0 || placeholderCount > 0) && (
-                        <div className="flex flex-wrap gap-1.5 text-[0.6rem] text-ink-3">
+                        <div className="flex flex-wrap gap-1.5">
                           {replacesN > 0 && (
                             <span
-                              className={CHIP_NEUTRAL}
+                              className={CHIP_SCOPE}
                               title={`Keys replaced by this preset: ${p.scope?.replaces?.join(', ')}`}
                             >
-                              ↻ replaces {replacesN}
+                              replaces {replacesN}
                             </span>
                           )}
                           {preservesN > 0 && (
                             <span
-                              className={CHIP_NEUTRAL}
+                              className={CHIP_SCOPE}
                               title={`Keys preserved from your config: ${p.scope?.preserves?.join(', ')}`}
                             >
-                              ∙ preserves {preservesN}
+                              preserves {preservesN}
                             </span>
                           )}
                           {placeholderCount > 0 && (
                             <span
-                              className={`${CHIP_BASE} bg-warn/10 text-warn border border-warn/20`}
+                              className={CHIP_PLACEHOLDERS}
                               title="Fields you'll need to fill in after applying"
                             >
-                              ✎ {placeholderCount} to fill
+                              {placeholderCount} to fill
                             </span>
                           )}
                         </div>
