@@ -45,9 +45,9 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_success()
@@ -67,9 +67,9 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_failure()
@@ -89,9 +89,9 @@ class TestDatasetValidatorIntegration:
 
         cfg = _mk_primary_only_config(_mk_local_ds(str(dataset_file), plugins=[], critical_failures=1))
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_success()
@@ -111,9 +111,9 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         callbacks = DatasetValidatorEventCallbacks(
             on_dataset_loaded=Mock(),
             on_validation_completed=Mock(),

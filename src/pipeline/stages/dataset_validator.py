@@ -145,7 +145,7 @@ class DatasetValidator(PipelineStage):
         Load plugins from validations config.
 
         Instantiates each plugin and injects DTST_* secrets for plugins
-        decorated with @requires_secrets.
+        that declare ``[secrets] required = [...]`` in their manifest.toml.
 
         Args:
             plugin_configs: List of plugin configurations
@@ -155,9 +155,9 @@ class DatasetValidator(PipelineStage):
         """
         logger.info(f"[VALIDATOR] Loading {len(plugin_configs)} validation plugins")
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered()
+        catalog.ensure_loaded()
 
         secrets_resolver = self._build_secrets_resolver()
 
@@ -211,9 +211,9 @@ class DatasetValidator(PipelineStage):
         Returns:
             List of ValidationPlugin instances with default configs
         """
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered()
+        catalog.ensure_loaded()
 
         # Sensible defaults for most use cases
         # We intentionally keep params dynamic; apply_to defaults to [train, eval].

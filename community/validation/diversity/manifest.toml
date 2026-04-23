@@ -1,0 +1,30 @@
+[plugin]
+id = "diversity_score"
+kind = "validation"
+name = "Vocabulary Diversity"
+version = "1.0.0"
+priority = 30
+category = "basic"
+stability = "stable"
+description = "Checks dataset vocabulary diversity (lexical richness)."
+
+[plugin.entry_point]
+module = "plugin"
+class = "DiversityValidator"
+
+[params_schema.sample_size]
+type = "integer"
+min = 1
+default = 10000
+
+[thresholds_schema.min_score]
+type = "float"
+min = 0.0
+max = 1.0
+default = 0.7
+
+[suggested_params]
+sample_size = 10000
+
+[suggested_thresholds]
+min_score = 0.7

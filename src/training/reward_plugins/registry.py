@@ -1,36 +1,28 @@
+"""Registry for reward plugins loaded from the community catalogue."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from src.utils.logger import logger
+
 if TYPE_CHECKING:
+    from src.community.loader import LoadedPlugin
     from src.training.reward_plugins.base import RewardPlugin
 
 
 class RewardPluginRegistry:
-    """
-    Registry for reward plugins.
-
-    Plugins self-register via the ``@RewardPluginRegistry.register`` decorator.
-    The registry key is read from ``plugin_cls.name`` (inherited from BasePlugin) —
-    no string duplication needed.
-
-    Example:
-        @RewardPluginRegistry.register
-        class MyRewardPlugin(RewardPlugin):
-            name = "my_reward"
-            ...
-    """
+    """Name → (plugin_class, manifest) map populated by ``CommunityCatalog``."""
 
     _registry: ClassVar[dict[str, type[RewardPlugin]]] = {}
+    _manifests: ClassVar[dict[str, dict[str, Any]]] = {}
 
     @classmethod
-    def register(cls, plugin_cls: type[RewardPlugin]) -> type[RewardPlugin]:
-        """Decorator: register a plugin class by its ``name`` ClassVar."""
-        name: str = plugin_cls.name
-        if not name:
-            raise ValueError(f"RewardPlugin subclass {plugin_cls.__name__!r} must define a non-empty 'name' ClassVar.")
-        cls._registry[name] = plugin_cls
-        return plugin_cls
+    def register_from_community(cls, loaded: LoadedPlugin) -> None:
+        plugin_id = loaded.manifest.plugin.id
+        cls._registry[plugin_id] = loaded.plugin_cls
+        cls._manifests[plugin_id] = loaded.manifest.ui_manifest()
+        logger.debug("[REWARD_REGISTRY] Registered plugin: %s", plugin_id)
 
     @classmethod
     def create(cls, name: str, params: dict[str, Any]) -> RewardPlugin:
@@ -38,7 +30,7 @@ class RewardPluginRegistry:
             available = sorted(cls._registry.keys())
             raise KeyError(
                 f"Reward plugin {name!r} is not registered. Available plugins: {available}. "
-                "Run reward plugin discovery before lookup."
+                "Ensure CommunityCatalog.ensure_loaded() was called."
             )
         return cls._registry[name](params)
 
@@ -48,12 +40,12 @@ class RewardPluginRegistry:
 
     @classmethod
     def list_manifests(cls) -> list[dict[str, Any]]:
-        """Return normalised manifest dicts for every registered plugin."""
-        return [plugin_cls.get_manifest() for plugin_cls in cls._registry.values()]
+        return [dict(manifest) for manifest in cls._manifests.values()]
 
     @classmethod
     def clear(cls) -> None:
         cls._registry.clear()
+        cls._manifests.clear()
 
 
 __all__ = ["RewardPluginRegistry"]

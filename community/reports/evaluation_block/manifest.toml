@@ -1,0 +1,13 @@
+[plugin]
+id = "evaluation_block"
+kind = "reports"
+name = "EvaluationBlockPlugin"
+version = "1.0.0"
+priority = 45
+category = "report"
+stability = "stable"
+description = "Report block: evaluation_block."
+
+[plugin.entry_point]
+module = "plugin"
+class = "EvaluationBlockPlugin"

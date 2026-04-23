@@ -20,9 +20,11 @@ class Secrets(BaseSettings):
       for back-compat during the transition. When the workspace token is
       absent, we fall back to the env attribute and log a deprecation
       warning so users migrate in their own time.
-    - **Arbitrary plugin secrets** (``EVAL_*`` keys): stored in
-      ``model_extra`` after ``extra="allow"``; resolved by plugin code
-      via ``SecretsResolver``.
+    - **Arbitrary plugin secrets** (``EVAL_*``, ``DTST_*`` keys): stored
+      in ``model_extra`` after ``extra="allow"``. Resolved by plugin
+      code via ``SecretsResolver``; plugins declare what they need in
+      their ``community/**/manifest.toml`` under
+      ``[secrets] required = [...]``.
 
     Historical note: ``hf_token`` used to be *required* at top level
     (construction raised when missing). That contract changes with PR4 —

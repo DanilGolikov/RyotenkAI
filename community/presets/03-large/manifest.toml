@@ -1,0 +1,24 @@
+[preset]
+id = "03-large"
+name = "> 10B"
+description = "Large models (13B and up). Conservative LoRA rank and lower LR to keep VRAM bounded and avoid instability on larger models. Pick a provider yourself after loading — the preset leaves `training.provider` unset so you can target single_node or a cloud pool with a big-memory GPU."
+size_tier = "large"
+version = "1.1.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+[preset.requirements]
+# Llama-3.1-70B is gated on HF Hub — HF_TOKEN with access is required.
+hub_models       = ["meta-llama/Llama-3.1-70B-Instruct"]
+# Large models realistically need a cloud pool with big-memory GPUs.
+provider_kind    = ["runpod"]
+required_plugins = []
+min_vram_gb      = 80
+
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to your training JSONL dataset"

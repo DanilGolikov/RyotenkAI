@@ -1,0 +1,29 @@
+[plugin]
+id = "min_samples"
+kind = "validation"
+name = "Minimum Samples"
+version = "1.0.0"
+priority = 10
+category = "basic"
+stability = "stable"
+description = "Checks that the dataset has at least N examples."
+
+[plugin.entry_point]
+module = "plugin"
+class = "MinSamplesValidator"
+
+[params_schema.sample_size]
+type = "integer"
+min = 1
+default = 10000
+
+[thresholds_schema.threshold]
+type = "integer"
+min = 1
+default = 100
+
+[suggested_params]
+sample_size = 10000
+
+[suggested_thresholds]
+threshold = 100

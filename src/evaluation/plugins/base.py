@@ -89,11 +89,9 @@ class EvaluatorPlugin(BasePlugin, ABC):
         self.thresholds = dict(thresholds)
         self._validate_contract()
 
-    @classmethod
-    @abstractmethod
-    def get_description(cls) -> str:
-        """Return a human-readable description of what this plugin checks."""
-        ...
+    # ``get_description()`` is inherited from :class:`BasePlugin`; its default
+    # reads ``manifest.plugin.description``. Override only if you need a
+    # dynamic description.
 
     @abstractmethod
     def evaluate(self, samples: list[EvalSample]) -> EvalResult:

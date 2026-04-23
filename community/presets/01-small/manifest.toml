@@ -1,0 +1,25 @@
+[preset]
+id = "01-small"
+name = "≤ 1B"
+description = "Small instruction-tuned models (up to ~1 billion params). Fits on consumer GPUs. Pick a provider yourself after loading — the preset leaves `training.provider` unset so you can target single_node or a cloud pool."
+size_tier = "small"
+version = "1.1.0"
+
+[preset.entry_point]
+file = "preset.yaml"
+
+# Scope — which top-level config keys this preset owns.
+[preset.scope]
+replaces  = ["model", "training"]
+preserves = ["datasets", "providers", "evaluation", "reports", "integrations"]
+
+# Requirements — environment prerequisites surfaced on the preview modal.
+[preset.requirements]
+hub_models       = ["Qwen/Qwen2.5-0.5B-Instruct"]
+provider_kind    = ["single_node", "runpod"]
+required_plugins = []
+min_vram_gb      = 8
+
+# Placeholders — fields the user must fill after applying.
+[preset.placeholders]
+"datasets.default.source_local.local_paths.train" = "Path to your training JSONL dataset"

@@ -1,19 +1,18 @@
+"""Registry for report plugins loaded from the community catalogue.
+
+Report plugins use a different metadata contract from BasePlugin-based
+plugins: ``plugin_id`` (string) and ``order`` (int) are class-level attributes
+that existed before the community rollout. The community manifest mirrors
+them via ``plugin.id`` → ``plugin_id`` and ``plugin.priority`` → ``order``.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
+    from src.community.loader import LoadedPlugin
     from src.reports.plugins.interfaces import IReportBlockPlugin
-
-
-def _validate_plugin_contract(plugin_cls: type[Any]) -> None:
-    plugin_id = getattr(plugin_cls, "plugin_id", "")
-    order = getattr(plugin_cls, "order", None)
-
-    if not isinstance(plugin_id, str) or not plugin_id.strip():
-        raise ValueError(f"Report plugin {plugin_cls.__name__!r} must define a non-empty 'plugin_id'")
-    if not isinstance(order, int):
-        raise ValueError(f"Report plugin {plugin_cls.__name__!r} must define integer 'order'")
 
 
 def _validate_plugin_instances(plugins: list[IReportBlockPlugin]) -> None:
@@ -30,19 +29,20 @@ class ReportPluginRegistry:
     _registry: ClassVar[dict[str, type[Any]]] = {}
 
     @classmethod
-    def register(cls, plugin_cls: type[Any]) -> type[Any]:
-        _validate_plugin_contract(plugin_cls)
+    def register_from_community(cls, loaded: LoadedPlugin) -> None:
+        plugin_cls = loaded.plugin_cls
+        plugin_id = loaded.manifest.plugin.id
+        order = loaded.manifest.plugin.priority
 
-        plugin_id = str(plugin_cls.plugin_id)
+        plugin_cls.plugin_id = plugin_id  # type: ignore[attr-defined]
+        plugin_cls.order = order  # type: ignore[attr-defined]
+
         existing = cls._registry.get(plugin_id)
         if existing is not None and existing is not plugin_cls:
             raise ValueError(
-                f"Report plugin_id {plugin_id!r} is already registered by {existing.__name__!r}. "
-                "Each report plugin must have a unique plugin_id."
+                f"Report plugin_id {plugin_id!r} is already registered by {existing.__name__!r}."
             )
-
         cls._registry[plugin_id] = plugin_cls
-        return plugin_cls
 
     @classmethod
     def get_all(cls) -> dict[str, type[Any]]:
@@ -54,6 +54,10 @@ class ReportPluginRegistry:
 
 
 def build_report_plugins() -> list[IReportBlockPlugin]:
+    from src.community.catalog import catalog
+
+    catalog.ensure_loaded()
+
     plugins = [
         plugin_cls()
         for _, plugin_cls in sorted(

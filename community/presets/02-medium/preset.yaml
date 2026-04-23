@@ -1,0 +1,53 @@
+model:
+  name: "Qwen/Qwen2.5-7B-Instruct"
+  torch_dtype: bfloat16
+  trust_remote_code: false
+
+training:
+  type: "qlora"
+
+  qlora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    bias: none
+    target_modules: "all-linear"
+    use_dora: false
+    use_rslora: false
+    init_lora_weights: gaussian
+    bnb_4bit_quant_type: nf4
+    bnb_4bit_compute_dtype: bfloat16
+    bnb_4bit_use_double_quant: true
+
+  hyperparams:
+    per_device_train_batch_size: 2
+    gradient_accumulation_steps: 8
+    learning_rate: 2.0e-4
+    warmup_ratio: 0.05
+    epochs: 3
+    weight_decay: 0.01
+    lr_scheduler_type: cosine
+    bf16: true
+    fp16: false
+    gradient_checkpointing: true
+    logging_steps: 10
+    save_steps: 200
+    max_length: 2048
+    packing: true
+
+  strategies:
+    - strategy_type: "sft"
+      dataset: "default"
+      hyperparams:
+        epochs: 3
+        max_length: 2048
+        packing: true
+
+datasets:
+  default:
+    source_type: local
+    source_local:
+      local_paths:
+        train: "./datasets/train.jsonl"
+
+providers: {}

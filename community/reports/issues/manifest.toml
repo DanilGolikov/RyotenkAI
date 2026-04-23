@@ -1,0 +1,13 @@
+[plugin]
+id = "issues"
+kind = "reports"
+name = "IssuesBlockPlugin"
+version = "1.0.0"
+priority = 30
+category = "report"
+stability = "stable"
+description = "Report block: issues."
+
+[plugin.entry_point]
+module = "plugin"
+class = "IssuesBlockPlugin"

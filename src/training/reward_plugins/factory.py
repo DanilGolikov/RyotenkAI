@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from src.training.reward_plugins.discovery import ensure_reward_plugins_discovered
+from src.community.catalog import catalog
 from src.training.reward_plugins.registry import RewardPluginRegistry
 from src.utils.logger import logger
 
@@ -45,7 +45,7 @@ def build_reward_plugin_result(
     reward_params_raw = phase_config.params.get("reward_params", {})
     reward_params = reward_params_raw if isinstance(reward_params_raw, dict) else {}
 
-    ensure_reward_plugins_discovered()
+    catalog.ensure_loaded()
 
     plugin = RewardPluginRegistry.create(plugin_name, reward_params)
 

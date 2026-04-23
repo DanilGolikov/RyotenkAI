@@ -15,8 +15,8 @@ from mlflow.tracking import MlflowClient
 
 from src.reports.adapters.mlflow_adapter import MLflowAdapter
 from src.reports.core.builder import ReportBuilder
+from src.community.catalog import catalog
 from src.reports.plugins.composer import ReportComposer
-from src.reports.plugins.discovery import ensure_report_plugins_discovered
 from src.reports.plugins.interfaces import IReportBlockPlugin, ReportPluginContext
 from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
 from src.reports.plugins.registry import build_report_plugins
@@ -67,7 +67,7 @@ class ExperimentReportGenerator:
             raise ValueError("Either tracking_uri or gateway must be provided")
 
         if plugins is None:
-            ensure_report_plugins_discovered()
+            catalog.ensure_loaded()
             self._plugins = build_report_plugins()
         else:
             self._plugins = plugins

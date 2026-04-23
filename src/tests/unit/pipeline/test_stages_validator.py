@@ -86,9 +86,9 @@ def test_execute_returns_err_on_critical_failure(tmp_path) -> None:
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.data.validation.discovery import ensure_validation_plugins_discovered
+    from src.community.catalog import catalog
 
-    ensure_validation_plugins_discovered(force=True)
+    catalog.reload()
 
     validator = DatasetValidator(cfg)
     res = validator.execute({})
@@ -106,9 +106,9 @@ def test_execute_returns_ok_with_failed_status_in_advisory_mode(tmp_path) -> Non
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.data.validation.discovery import ensure_validation_plugins_discovered
+    from src.community.catalog import catalog
 
-    ensure_validation_plugins_discovered(force=True)
+    catalog.reload()
 
     validator = DatasetValidator(cfg)
     res = validator.execute({})
@@ -128,9 +128,9 @@ def test_execute_returns_ok_when_failed_plugins_below_critical_threshold(tmp_pat
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.data.validation.discovery import ensure_validation_plugins_discovered
+    from src.community.catalog import catalog
 
-    ensure_validation_plugins_discovered(force=True)
+    catalog.reload()
 
     validator = DatasetValidator(cfg)
     res = validator.execute({})

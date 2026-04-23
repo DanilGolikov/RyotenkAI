@@ -1,0 +1,13 @@
+[plugin]
+id = "config_dump"
+kind = "reports"
+name = "ConfigDumpBlockPlugin"
+version = "1.0.0"
+priority = 110
+category = "report"
+stability = "stable"
+description = "Report block: config_dump."
+
+[plugin.entry_point]
+module = "plugin"
+class = "ConfigDumpBlockPlugin"

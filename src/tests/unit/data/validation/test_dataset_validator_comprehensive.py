@@ -63,9 +63,9 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_success()
@@ -85,9 +85,9 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_success()
@@ -107,9 +107,9 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.data.validation.discovery import ensure_validation_plugins_discovered
+        from src.community.catalog import catalog
 
-        ensure_validation_plugins_discovered(force=True)
+        catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
         assert result.is_success()
