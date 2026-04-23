@@ -1,9 +1,10 @@
 """Registry for report plugins loaded from the community catalogue.
 
 Report plugins use a different metadata contract from BasePlugin-based
-plugins: ``plugin_id`` (string) and ``order`` (int) are class-level attributes
-that existed before the community rollout. The community manifest mirrors
-them via ``plugin.id`` → ``plugin_id`` and ``plugin.priority`` → ``order``.
+plugins: ``plugin_id`` (string) and ``order`` (int) are class-level
+attributes that existed before the community rollout. The community
+manifest mirrors them via ``plugin.id`` → ``plugin_id`` and the
+``[reports]`` block's ``order`` field → ``order``.
 """
 
 from __future__ import annotations
@@ -32,7 +33,15 @@ class ReportPluginRegistry:
     def register_from_community(cls, loaded: LoadedPlugin) -> None:
         plugin_cls = loaded.plugin_cls
         plugin_id = loaded.manifest.plugin.id
-        order = loaded.manifest.plugin.priority
+        # Report plugins must declare [reports] order — enforced by
+        # PluginManifest._reports_block_matches_kind. The assertion keeps
+        # mypy/typing happy even though the validator guarantees truthiness.
+        reports_spec = loaded.manifest.reports
+        if reports_spec is None:  # pragma: no cover — defensive
+            raise ValueError(
+                f"report plugin {plugin_id!r} loaded without [reports] block"
+            )
+        order = reports_spec.order
 
         plugin_cls.plugin_id = plugin_id  # type: ignore[attr-defined]
         plugin_cls.order = order  # type: ignore[attr-defined]

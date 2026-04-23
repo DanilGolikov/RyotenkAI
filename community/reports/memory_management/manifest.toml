@@ -3,7 +3,6 @@ id = "memory_management"
 kind = "reports"
 name = "MemoryManagementBlockPlugin"
 version = "1.0.0"
-priority = 60
 category = "report"
 stability = "stable"
 description = "Report block: memory_management."
@@ -11,3 +10,6 @@ description = "Report block: memory_management."
 [plugin.entry_point]
 module = "plugin"
 class = "MemoryManagementBlockPlugin"
+
+[reports]
+order = 60

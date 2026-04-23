@@ -28,7 +28,6 @@ id = "my_block"                # → becomes plugin_id on the class
 kind = "reports"               # required literal
 name = "My Block"              # human-readable (defaults to id)
 version = "1.0.0"
-priority = 75                  # → becomes `order` on the class; must be unique across reports
 category = "report"
 stability = "stable"
 description = "Renders the … block of the experiment report."
@@ -36,6 +35,9 @@ description = "Renders the … block of the experiment report."
 [plugin.entry_point]
 module = "plugin"
 class  = "MyBlockPlugin"
+
+[reports]
+order = 75                     # → becomes `order` on the class; must be unique across reports
 ```
 
 Report plugins do not use `params_schema` / `thresholds_schema` / `secrets` — they read everything from the `ReportPluginContext` they receive.
@@ -47,7 +49,7 @@ Report plugins predate the community contract and keep their legacy attribute na
 | Manifest field | Class attribute |
 |---|---|
 | `plugin.id` | `plugin_id` |
-| `plugin.priority` | `order` |
+| `reports.order` | `order` |
 | `plugin.name` | `title` (not auto-attached — set it yourself, see below) |
 
 You write `plugin_id` / `order` in `manifest.toml`, not on the class.

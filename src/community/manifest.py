@@ -43,6 +43,21 @@ class CompatSpec(BaseModel):
     min_core_version: str = ""
 
 
+class ReportsSpec(BaseModel):
+    """Report-plugin metadata — section ordering inside the rendered report.
+
+    Only meaningful for ``plugin.kind == "reports"``. ``order`` must be
+    unique across all registered report plugins; the registry enforces
+    this at catalog load time.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    order: int = Field(
+        description="Global section order in the rendered Markdown report.",
+    )
+
+
 class PluginSpec(BaseModel):
     """Body of [plugin] section in plugin manifest.toml."""
 
@@ -77,6 +92,7 @@ class PluginManifest(BaseModel):
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
     secrets: SecretsSpec = Field(default_factory=SecretsSpec)
     compat: CompatSpec = Field(default_factory=CompatSpec)
+    reports: ReportsSpec | None = None
 
     @model_validator(mode="after")
     def _check_suggested_against_schema(self) -> PluginManifest:
@@ -88,6 +104,22 @@ class PluginManifest(BaseModel):
             self.thresholds_schema,
             label="suggested_thresholds",
         )
+        return self
+
+    @model_validator(mode="after")
+    def _reports_block_matches_kind(self) -> PluginManifest:
+        """``[reports]`` is required for kind=reports plugins and forbidden
+        for every other kind — the block is dead weight elsewhere."""
+        if self.plugin.kind == "reports" and self.reports is None:
+            raise ValueError(
+                "[reports] block is required when plugin.kind == 'reports' "
+                "(must provide the `order` field)"
+            )
+        if self.plugin.kind != "reports" and self.reports is not None:
+            raise ValueError(
+                f"[reports] block is only valid for plugin.kind == 'reports'; "
+                f"got kind={self.plugin.kind!r}"
+            )
         return self
 
     @staticmethod
@@ -107,7 +139,7 @@ class PluginManifest(BaseModel):
 
     def ui_manifest(self) -> dict[str, Any]:
         """Flatten into the shape consumed by the web UI / ``/plugins`` API."""
-        return {
+        out: dict[str, Any] = {
             "id": self.plugin.id,
             "name": self.plugin.name,
             "version": self.plugin.version,
@@ -120,6 +152,9 @@ class PluginManifest(BaseModel):
             "suggested_params": dict(self.suggested_params),
             "suggested_thresholds": dict(self.suggested_thresholds),
         }
+        if self.reports is not None:
+            out["order"] = self.reports.order
+        return out
 
 
 class PresetScope(BaseModel):

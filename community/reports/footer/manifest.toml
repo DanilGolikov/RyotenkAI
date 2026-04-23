@@ -3,7 +3,6 @@ id = "footer"
 kind = "reports"
 name = "FooterBlockPlugin"
 version = "1.0.0"
-priority = 120
 category = "report"
 stability = "stable"
 description = "Report block: footer."
@@ -11,3 +10,6 @@ description = "Report block: footer."
 [plugin.entry_point]
 module = "plugin"
 class = "FooterBlockPlugin"
+
+[reports]
+order = 120
