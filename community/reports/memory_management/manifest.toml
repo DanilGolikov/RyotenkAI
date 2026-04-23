@@ -10,6 +10,3 @@ description = "Report block: memory_management."
 [plugin.entry_point]
 module = "plugin"
 class = "MemoryManagementBlockPlugin"
-
-[reports]
-order = 60

@@ -490,9 +490,15 @@ class PipelineOrchestrator:
         )
 
     def _generate_experiment_report(self, run_id: str | None = None) -> None:
-        """Delegate: generate the post-pipeline experiment Markdown report."""
+        """Delegate: generate the post-pipeline experiment Markdown report.
+
+        Passes ``PipelineConfig.reports.sections`` through so users control
+        which sections appear and in what order directly from their YAML.
+        """
         ExecutionSummaryReporter.generate_experiment_report(
-            run_id=run_id, mlflow_manager=self._mlflow_manager
+            run_id=run_id,
+            mlflow_manager=self._mlflow_manager,
+            sections=self.config.reports.sections,
         )
 
     def get_stage_by_name(self, name: str) -> PipelineStage | None:

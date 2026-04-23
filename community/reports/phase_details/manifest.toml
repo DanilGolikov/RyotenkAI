@@ -10,6 +10,3 @@ description = "Report block: phase_details."
 [plugin.entry_point]
 module = "plugin"
 class = "PhaseDetailsBlockPlugin"
-
-[reports]
-order = 80

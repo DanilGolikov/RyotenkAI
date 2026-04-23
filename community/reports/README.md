@@ -35,24 +35,38 @@ description = "Renders the … block of the experiment report."
 [plugin.entry_point]
 module = "plugin"
 class  = "MyBlockPlugin"
-
-[reports]
-order = 75                     # → becomes `order` on the class; must be unique across reports
 ```
 
 Report plugins do not use `params_schema` / `thresholds_schema` / `secrets` — they read everything from the `ReportPluginContext` they receive.
 
+## Section order — comes from config, not the manifest
+
+Position in the final Markdown report is decided by the pipeline config:
+
+```yaml
+reports:
+  sections:
+    - header
+    - summary
+    - my_block        # your plugin, wherever you want it
+    - footer
+```
+
+If you omit `reports.sections`, the default built-in order is used (see `src/reports/plugins/defaults.py`). Plugins whose id isn't listed simply aren't rendered — that's how you opt-out of a section.
+
+No more globally-unique `order` numbers in manifests: different users can place the same plugin at different positions just by editing their config, and two independent plugins can't collide.
+
 ## Loader ↔ class mapping
 
-Report plugins predate the community contract and keep their legacy attribute names. The loader maps manifest fields onto the class automatically:
+Report plugins predate the community contract and keep their legacy attribute names. The loader + registry map manifest fields and config position onto the class automatically:
 
-| Manifest field | Class attribute |
+| Source | Class attribute |
 |---|---|
-| `plugin.id` | `plugin_id` |
-| `reports.order` | `order` |
-| `plugin.name` | `title` (not auto-attached — set it yourself, see below) |
+| `plugin.id` in manifest | `plugin_id` |
+| `reports.sections[i]` in pipeline config | `order` (assigned as `i * 10`) |
+| `plugin.name` in manifest | `title` (not auto-attached — set it yourself, see below) |
 
-You write `plugin_id` / `order` in `manifest.toml`, not on the class.
+You never write `order` anywhere any more — it's a runtime detail.
 
 ## Class contract
 
@@ -65,10 +79,12 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
 
 
 class MyBlockPlugin:
-    # These are overwritten by the loader from manifest.toml — leaving them
-    # here is harmless and keeps the class self-documenting.
+    # plugin_id is overwritten by the loader from manifest.toml. order is
+    # overwritten at render time based on reports.sections in the pipeline
+    # config — leaving a default here keeps the class self-documenting and
+    # testable in isolation.
     plugin_id = "my_block"
-    order = 75
+    order = 0
 
     title = "My Custom Block"
 

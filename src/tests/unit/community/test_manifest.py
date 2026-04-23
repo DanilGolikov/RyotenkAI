@@ -72,31 +72,19 @@ def test_plugin_manifest_rejects_unknown_top_level_key() -> None:
         PluginManifest.model_validate(body)
 
 
-def test_reports_block_required_for_reports_kind() -> None:
+def test_reports_kind_does_not_require_manifest_block() -> None:
+    """Report-plugin section order lives in pipeline config, not the manifest —
+    no `[reports]` block is expected on the manifest side any more."""
     body = _base_plugin_body(kind="reports")
-    with pytest.raises(ValidationError, match=r"\[reports\] block is required"):
-        PluginManifest.model_validate(body)
-
-
-def test_reports_block_forbidden_for_non_reports_kind() -> None:
-    body = _base_plugin_body()  # kind == "validation"
-    body["reports"] = {"order": 10}
-    with pytest.raises(ValidationError, match=r"\[reports\] block is only valid"):
-        PluginManifest.model_validate(body)
-
-
-def test_reports_block_happy_path_and_ui_manifest() -> None:
-    body = _base_plugin_body(kind="reports")
-    body["reports"] = {"order": 75}
     manifest = PluginManifest.model_validate(body)
-    assert manifest.reports is not None
-    assert manifest.reports.order == 75
-    ui = manifest.ui_manifest()
-    assert ui["order"] == 75
+    assert manifest.plugin.kind == "reports"
+    # ui_manifest never emits `order` — it's a runtime detail assigned by the registry.
+    assert "order" not in manifest.ui_manifest()
 
 
-def test_reports_block_requires_order_field() -> None:
+def test_reports_block_is_not_accepted_on_any_kind() -> None:
+    """The old `[reports]` block is removed; passing it now fails as unknown key."""
     body = _base_plugin_body(kind="reports")
-    body["reports"] = {}
+    body["reports"] = {"order": 10}
     with pytest.raises(ValidationError):
         PluginManifest.model_validate(body)

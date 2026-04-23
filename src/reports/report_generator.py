@@ -7,15 +7,16 @@ Architecture: MLflow -> Adapter -> Domain Data -> Builder -> Report.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import mlflow
 from mlflow.tracking import MlflowClient
 
+from src.community.catalog import catalog
 from src.reports.adapters.mlflow_adapter import MLflowAdapter
 from src.reports.core.builder import ReportBuilder
-from src.community.catalog import catalog
 from src.reports.plugins.composer import ReportComposer
 from src.reports.plugins.interfaces import IReportBlockPlugin, ReportPluginContext
 from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
@@ -43,6 +44,7 @@ class ExperimentReportGenerator:
         gateway: IMLflowGateway | None = None,
         adapter: IExperimentDataProvider | None = None,
         plugins: list[IReportBlockPlugin] | None = None,
+        sections: Sequence[str] | None = None,
     ):
         """
         Initialize generator.
@@ -51,7 +53,10 @@ class ExperimentReportGenerator:
             tracking_uri: MLflow tracking URI (legacy, used when gateway is not provided)
             gateway:      IMLflowGateway instance. Takes precedence over tracking_uri.
             adapter:      Data provider (defaults to MLflowAdapter)
-            plugins:      Ordered list of report block plugins (defaults to builtins)
+            plugins:      Ordered list of report block plugins (escape hatch for tests).
+                          If passed, ``sections`` is ignored.
+            sections:     Ordered list of plugin ids to render. ``None`` uses the
+                          built-in default (see ``DEFAULT_REPORT_SECTIONS``).
         """
         if gateway is not None:
             self._tracking_uri = gateway.uri
@@ -68,7 +73,7 @@ class ExperimentReportGenerator:
 
         if plugins is None:
             catalog.ensure_loaded()
-            self._plugins = build_report_plugins()
+            self._plugins = build_report_plugins(sections)
         else:
             self._plugins = plugins
         self._composer = ReportComposer(self._plugins)

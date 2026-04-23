@@ -10,6 +10,3 @@ description = "Report block: evaluation_block."
 [plugin.entry_point]
 module = "plugin"
 class = "EvaluationBlockPlugin"
-
-[reports]
-order = 45

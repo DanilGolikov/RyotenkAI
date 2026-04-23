@@ -10,6 +10,3 @@ description = "Report block: stage_timeline."
 [plugin.entry_point]
 module = "plugin"
 class = "StageTimelineBlockPlugin"
-
-[reports]
-order = 100

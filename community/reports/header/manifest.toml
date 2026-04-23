@@ -10,6 +10,3 @@ description = "Report block: header."
 [plugin.entry_point]
 module = "plugin"
 class = "HeaderBlockPlugin"
-
-[reports]
-order = 10

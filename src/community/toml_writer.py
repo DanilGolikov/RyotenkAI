@@ -29,8 +29,6 @@ _TOP_KEY_ORDER = (
     "module",
     "class",
     "file",
-    # Reports-specific metadata.
-    "order",
     # Schema entry fields — type and default first, then constraints.
     "type",
     "default",
@@ -48,7 +46,6 @@ _PLUGIN_SECTION_ORDER = (
     "suggested_params",
     "suggested_thresholds",
     "secrets",
-    "reports",
     "compat",
 )
 

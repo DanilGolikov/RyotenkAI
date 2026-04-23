@@ -10,6 +10,3 @@ description = "Report block: config_dump."
 [plugin.entry_point]
 module = "plugin"
 class = "ConfigDumpBlockPlugin"
-
-[reports]
-order = 110

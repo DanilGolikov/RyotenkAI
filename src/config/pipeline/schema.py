@@ -12,6 +12,7 @@ from ..evaluation import EvaluationConfig
 from ..inference import InferenceConfig
 from ..integrations import ExperimentTrackingConfig, HuggingFaceHubConfig
 from ..model import ModelConfig  # noqa: TC001
+from ..reports import ReportsConfig
 from ..training import AdaLoraConfig, LoraConfig, TrainingOnlyConfig
 from .datasets import PipelineDatasetMixin
 from .io import PipelineIOMixin
@@ -81,6 +82,15 @@ class PipelineConfig(
     evaluation: EvaluationConfig = Field(
         default_factory=EvaluationConfig,  # pyright: ignore[reportCallIssue]  # type: ignore[call-arg]
         description="Evaluation settings (used by ModelEvaluator stage).",
+    )
+
+    # Reports section control — single source of truth for section order.
+    reports: ReportsConfig = Field(
+        default_factory=ReportsConfig,
+        description=(
+            "Which report plugins appear in the post-run Markdown report and in "
+            "what order. Default (null) uses the built-in section list."
+        ),
     )
 
     # =========================================================================
