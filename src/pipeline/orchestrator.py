@@ -81,9 +81,7 @@ class PipelineOrchestrator:
         # Do not name this attribute `run` — it would shadow
         # PipelineOrchestrator.run().
         self.run_ctx: RunContext = RunContext.create()
-        self.logical_run_id: str | None = None
         self.run_directory: Path | None = run_directory
-        self.attempt_directory: Path | None = None
         self._log_layout: LogLayout | None = None
         self._state_store: PipelineStateStore | None = None
         self._shutdown_signal_name: str | None = None
@@ -285,14 +283,14 @@ class PipelineOrchestrator:
             config_hashes=config_hashes,
         )
 
-        # Mirror the prepared attempt onto orchestrator fields — downstream
-        # code still reads ``self.run_directory``/``self._state_store`` etc.
-        # These will be removed once RunSession (PR-A11) takes over.
+        # Keep the fields used by error-recovery (``LaunchPreparationError``
+        # handler reads ``self._state_store``/``self.run_directory``) and by
+        # the stage-execution loop wiring (``self._log_layout``) in sync.
+        # ``attempt_directory``/``logical_run_id`` live on ``PreparedAttempt``
+        # and are passed through ``context.fork(...)`` — no mirror needed.
         self.run_directory = prepared.run_directory
         self._state_store = prepared.state_store
-        self.attempt_directory = prepared.attempt_directory
         self._log_layout = prepared.log_layout
-        self.logical_run_id = prepared.logical_run_id
 
         # Acquire the run.lock via RunLockGuard so release is impossible
         # to forget in the finally block (Invariant #1 of the architecture).
@@ -387,19 +385,6 @@ class PipelineOrchestrator:
         if self._state_store is None:
             return
         self._state_store.save(state)
-
-    def _record_stage_log_paths(self, *, stage_name: str) -> None:
-        """Attach the log file registry for ``stage_name`` to its StageRunState."""
-        if self._log_layout is None:
-            return
-        include_remote_training = stage_name == StageNames.TRAINING_MONITOR
-        log_paths = self._log_layout.stage_log_registry(
-            stage_name,
-            include_remote_training=include_remote_training,
-        )
-        self._attempt_controller.record_stage_log_paths(
-            stage_name=stage_name, log_paths=log_paths
-        )
 
     def _setup_mlflow_for_attempt(
         self, *, state: PipelineState, attempt: PipelineAttemptState, start_stage_idx: int
