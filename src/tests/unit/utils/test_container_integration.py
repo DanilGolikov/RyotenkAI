@@ -27,10 +27,10 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
-    LoraConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
+    QLoRAConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
@@ -52,7 +52,7 @@ def full_config():
         ),
         training=TrainingOnlyConfig(
             type="qlora",
-            qlora=LoraConfig(
+            qlora=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
@@ -328,7 +328,7 @@ inference:
       serve_image: test/vllm:latest
 experiment_tracking:
   mlflow:
-    tracking_uri: "http://localhost:5000"
+    integration: mlflow-test
     experiment_name: "test"
 """)
 

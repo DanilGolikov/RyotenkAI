@@ -744,10 +744,14 @@ class TrainingDeploymentManager:
             env_vars["MLFLOW_HTTP_REQUEST_MAX_RETRIES"] = "2"
             logger.debug("📊 MLflow timeout: 15s, max retries: 2")
 
-            if mlflow_config.ca_bundle_path:
-                env_vars["REQUESTS_CA_BUNDLE"] = mlflow_config.ca_bundle_path
-                env_vars["SSL_CERT_FILE"] = mlflow_config.ca_bundle_path
-                logger.info(f"📊 MLflow CA bundle: {mlflow_config.ca_bundle_path}")
+            # ``ca_bundle_path`` is a runtime field that only exists on the
+            # resolved ``MLflowConfig``. A bare ``MLflowTrackingRef`` means no
+            # TLS bundle is known to this pipeline yet, so skip the export.
+            ca_bundle_path = getattr(mlflow_config, "ca_bundle_path", None)
+            if ca_bundle_path:
+                env_vars["REQUESTS_CA_BUNDLE"] = ca_bundle_path
+                env_vars["SSL_CERT_FILE"] = ca_bundle_path
+                logger.info(f"📊 MLflow CA bundle: {ca_bundle_path}")
 
         # Provider-specific extras merged last so they can override defaults.
         if extra_env_vars:

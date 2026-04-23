@@ -49,12 +49,16 @@ _MIGRATION_HINT = (
 class ExperimentTrackingConfig(StrictBaseModel):
     """Project-level references to reusable tracking integrations.
 
-    ``mlflow`` now holds an integration id + project-local fields only;
-    every runtime knob (URI / CA bundle / system metrics) comes from the
-    integration. Same for ``huggingface``.
+    ``mlflow`` is normally a ``MLflowTrackingRef`` (integration id plus
+    project-local fields). The resolver/runtime code may replace it with a
+    fully-merged ``MLflowConfig`` so downstream pipeline stages can read
+    ``tracking_uri`` / ``ca_bundle_path`` / system-metrics knobs unchanged.
+    Tests likewise construct ``MLflowConfig`` directly to exercise the
+    post-resolver state without touching the integrations registry.
+    Same split applies to ``huggingface``.
     """
 
-    mlflow: MLflowTrackingRef | None = Field(None)
+    mlflow: MLflowTrackingRef | MLflowConfig | None = Field(None)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     @model_validator(mode="before")

@@ -28,6 +28,7 @@ from src.utils.config import (
     InferenceConfig,
     InferenceEnginesConfig,
     InferenceVLLMEngineConfig,
+    MLflowConfig,
     MLflowTrackingRef,
     ModelConfig,
     PipelineConfig,
