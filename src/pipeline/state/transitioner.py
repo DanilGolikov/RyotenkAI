@@ -9,6 +9,28 @@ Lineage manipulation (``invalidate_from`` / ``restore_reused`` / the
 per-stage wrappers around ``update_lineage``) lives in
 :mod:`src.pipeline.state.lineage_manager` — this module keeps a single
 concern: stage-run state transitions.
+
+Invariant — ``StageRunState.log_paths`` persists across every transition
+--------------------------------------------------------------------------
+``log_paths`` describes the **physical log file on disk** owned by the
+stage. It is independent of the stage's lifecycle status — once the
+orchestrator registers a path (via ``AttemptController.record_stage_log_paths``)
+the file exists and stays referenced regardless of whether the stage
+eventually completes, fails, is skipped, or is interrupted.
+
+The two implementation strategies below both preserve this invariant:
+
+* ``completed`` / ``failed`` — **mutate the existing** ``StageRunState``.
+  ``log_paths`` is not touched, so it stays on the already-persisted
+  instance.
+* ``running`` / ``skipped`` / ``interrupted`` — **replace** the slot with
+  a fresh ``StageRunState``, explicitly copying ``dict(prev.log_paths)``
+  from the outgoing state. ``dict(...)`` gives the new instance its own
+  mutable copy so later writes cannot alias back onto the prior slot.
+
+Adding a new transition? Either mutate in place or explicitly copy
+``log_paths``; there is a dedicated regression suite
+(``TestLogPathsPreservation``) that will catch an accidental drop.
 """
 
 from __future__ import annotations
