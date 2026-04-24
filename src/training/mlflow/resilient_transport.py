@@ -3,6 +3,20 @@ Resilient MLflow transport shim for provider-side training runtime.
 
 Protects native HF/TRL -> MLflow callback delivery from transient transport
 failures without disabling `report_to=["mlflow"]`.
+
+Monotonic step order invariant
+------------------------------
+When the circuit breaker is open, metric calls are buffered to a local
+JSONL file (``MetricsBuffer``). On recovery we must drain the buffer
+**before** the first live metric goes through; otherwise MLflow receives
+the live metric first and only then the older buffered steps, producing
+an out-of-order zig-zag in the UI.
+
+The drain happens inside :meth:`ResilientMLflowTransport._make_wrapper`
+right after the breaker allows the call but before ``original(...)``.
+``MetricsBuffer.flush`` sorts its entries by ``(step, timestamp)`` before
+emitting, so MLflow sees monotonically increasing steps across the whole
+flap-and-recover sequence.
 """
 
 from __future__ import annotations
@@ -239,12 +253,18 @@ class ResilientMLflowTransport:
             pass  # Buffer is best-effort
 
     def _flush_buffer(self, original: Callable[..., Any], operation: str) -> None:
-        """Flush buffered metrics on circuit recovery. Best-effort."""
+        """Drain buffered metrics into MLflow. Best-effort.
+
+        Must run **before** the live metric on the fast path — see
+        ``_make_wrapper``. ``MetricsBuffer.flush`` sorts entries by step
+        before emitting, so MLflow receives them in monotonic order.
+        """
         if self._buffer is None or self._buffer.count == 0:
             return
         if operation not in ("log_metric", "log_metrics"):
             return
-        # Use the original (unpatched) log_metric to flush
+        # Use the original (unpatched) log_metric to flush — bypasses the
+        # breaker so a drain doesn't trip it into open on a transient stall.
         log_metric_original = self._originals.get(("module", "log_metric"))
         if log_metric_original is None:
             log_metric_original = original if operation == "log_metric" else None
@@ -265,6 +285,15 @@ class ResilientMLflowTransport:
                 self._buffer_metric_call(operation, args, kwargs)
                 return None
 
+            # Drain the buffer **before** the live metric so MLflow sees
+            # historical steps (accumulated while the breaker was open)
+            # before current ones. Otherwise, on recovery the live metric
+            # ships first and older buffered entries land after it —
+            # producing out-of-order zig-zag in the MLflow UI.
+            # Best-effort: a drain failure is swallowed inside
+            # ``_flush_buffer`` so the live metric still goes through.
+            self._flush_buffer(original, operation)
+
             try:
                 result = original(*args, **kwargs)
             except Exception as exc:
@@ -281,7 +310,6 @@ class ResilientMLflowTransport:
                 return None
 
             self._breaker.record_success()
-            self._flush_buffer(original, operation)
             return result
 
         return wrapped
