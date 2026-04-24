@@ -35,6 +35,7 @@ from src.training.mlflow.resilient_transport import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_fake_mlflow() -> ModuleType:
     """Create an isolated fake mlflow module with all patchable methods."""
     fake = ModuleType("mlflow_fake")
@@ -44,8 +45,7 @@ def _make_fake_mlflow() -> ModuleType:
     class FakeMlflowClient:
         pass
 
-    for method in ("log_batch", "log_metric", "log_param", "log_params",
-                    "set_tag", "set_tags", "log_dict", "log_text"):
+    for method in ("log_batch", "log_metric", "log_param", "log_params", "set_tag", "set_tags", "log_dict", "log_text"):
         setattr(FakeMlflowClient, method, MagicMock(name=f"MlflowClient.{method}"))
 
     fake.MlflowClient = FakeMlflowClient  # type: ignore[attr-defined]
@@ -55,6 +55,7 @@ def _make_fake_mlflow() -> ModuleType:
 # ===========================================================================
 # Circuit Breaker State Machine
 # ===========================================================================
+
 
 class TestCircuitBreakerStateMachine:
     """MLflowTransportCircuitBreaker state transitions."""
@@ -128,6 +129,7 @@ class TestCircuitBreakerStateMachine:
 # Transport Exception Detection
 # ===========================================================================
 
+
 class TestTransportExceptionDetection:
     """_is_transport_exception: type-based and message-based matching."""
 
@@ -174,6 +176,7 @@ class TestTransportExceptionDetection:
 # ===========================================================================
 # Install / Uninstall Lifecycle
 # ===========================================================================
+
 
 class TestInstallUninstall:
     """install() and uninstall() monkey-patching lifecycle."""
@@ -247,6 +250,7 @@ class TestInstallUninstall:
 # Wrapper Behavior (Integration)
 # ===========================================================================
 
+
 class TestWrapperBehavior:
     """Wrapped methods: success passthrough, failure handling, buffering."""
 
@@ -306,6 +310,7 @@ class TestWrapperBehavior:
 # ===========================================================================
 # Metric Buffering
 # ===========================================================================
+
 
 class TestMetricBuffering:
     """Buffer metrics when circuit is open, flush on recovery."""
@@ -403,8 +408,106 @@ class TestMetricBuffering:
 
 
 # ===========================================================================
+# Monotonic step order on recovery — regression pin for MLflow UI zig-zag
+# ===========================================================================
+
+
+class TestMonotonicStepOrderOnRecovery:
+    """Buffered metrics must reach MLflow *before* the live metric that
+    triggered recovery. Otherwise the MLflow chart shows a zig-zag:
+    the live step lands first, then older buffered ones after it.
+
+    Invariant: for a sequence live(100) / open / buffer(101, 102) / recovery
+    live(103), MLflow receives keys in order 100, 101, 102, 103 — never 103
+    before 101.
+    """
+
+    def test_buffer_drains_before_live_metric(self, tmp_path: Path) -> None:
+        buffer = MetricsBuffer(buffer_dir=tmp_path)
+        # Steps 101 and 102 accumulated while breaker was open, in any order.
+        buffer.write_metric("loss", 0.91, step=101)
+        buffer.write_metric("loss", 0.92, step=102)
+
+        received_steps: list[int] = []
+
+        fake = _make_fake_mlflow()
+
+        def record_call(*args: Any, **kwargs: Any) -> None:
+            # key=args[0], value=args[1], step=args[2] or kwargs["step"]
+            step = args[2] if len(args) > 2 else kwargs.get("step")
+            received_steps.append(int(step))
+
+        fake.log_metric = MagicMock(side_effect=record_call)
+
+        transport = ResilientMLflowTransport(failure_threshold=1, recovery_cooldown_s=0.01)
+        transport.attach_buffer(buffer)
+        transport.install(fake)
+        # Simulate state at the recovery boundary: breaker was open, now half_open.
+        transport._breaker.state = "half_open"
+
+        # The live metric arriving at step 103 must come AFTER 101, 102 in MLflow.
+        fake.log_metric("loss", 0.93, step=103)
+
+        assert received_steps == [101, 102, 103]
+        assert buffer.count == 0
+
+    def test_buffer_drains_even_when_out_of_order_in_file(self, tmp_path: Path) -> None:
+        """Buffer file may contain steps in any order; drain must sort them."""
+        buffer = MetricsBuffer(buffer_dir=tmp_path)
+        buffer.write_metric("loss", 0.92, step=102)  # written first
+        buffer.write_metric("loss", 0.91, step=101)  # written second, lower step
+
+        received_steps: list[int] = []
+        fake = _make_fake_mlflow()
+
+        def record_call(*args: Any, **kwargs: Any) -> None:
+            step = args[2] if len(args) > 2 else kwargs.get("step")
+            received_steps.append(int(step))
+
+        fake.log_metric = MagicMock(side_effect=record_call)
+
+        transport = ResilientMLflowTransport(failure_threshold=1, recovery_cooldown_s=0.01)
+        transport.attach_buffer(buffer)
+        transport.install(fake)
+        transport._breaker.state = "half_open"
+
+        fake.log_metric("loss", 0.93, step=103)
+
+        assert received_steps == [101, 102, 103]
+
+    def test_live_metric_still_sent_when_flush_errors(self, tmp_path: Path) -> None:
+        """A flush failure must not prevent the live metric from going through.
+
+        We simulate a flush error by attaching a buffer whose ``flush`` raises.
+        The live call must still reach MLflow and the breaker must still record
+        success.
+        """
+
+        class ExplodingBuffer:
+            count = 5
+            path = tmp_path / "stub.jsonl"
+
+            def flush(self, *_args: Any, **_kwargs: Any) -> int:
+                raise RuntimeError("disk went away")
+
+        fake = _make_fake_mlflow()
+        received: list[tuple] = []
+        fake.log_metric = MagicMock(side_effect=lambda *a, **kw: received.append((a, kw)))
+
+        transport = ResilientMLflowTransport(failure_threshold=1, recovery_cooldown_s=0.01)
+        transport.attach_buffer(ExplodingBuffer())
+        transport.install(fake)
+
+        fake.log_metric("loss", 0.5, step=7)
+
+        assert received == [(("loss", 0.5), {"step": 7})]
+        assert transport.breaker_state == "closed"
+
+
+# ===========================================================================
 # Breaker State Property
 # ===========================================================================
+
 
 class TestBreakerStateProperty:
     def test_breaker_state_reflects_internal_state(self) -> None:
@@ -418,6 +521,7 @@ class TestBreakerStateProperty:
 # ===========================================================================
 # Rate-Limited Warnings
 # ===========================================================================
+
 
 class TestRateLimitedWarnings:
     def test_warning_suppressed_within_interval(self) -> None:
