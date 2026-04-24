@@ -91,9 +91,7 @@ class TestPositive:
 
     def test_after_stage_completed_adds_entry(self) -> None:
         lineage: dict = {}
-        new = after_stage_completed(
-            lineage, stage_name="s1", attempt_id="a1", outputs={"foo": "bar"}
-        )
+        new = after_stage_completed(lineage, stage_name="s1", attempt_id="a1", outputs={"foo": "bar"})
         assert "s1" in new
         assert new["s1"].outputs == {"foo": "bar"}
         assert new["s1"].attempt_id == "a1"
@@ -296,9 +294,9 @@ class TestRegressions:
         semantic name (call site) differs. Sanity check that the two wrappers
         produce identical output so future divergence is intentional."""
         lineage = {"s0": _ref("s0")}
-        assert after_stage_skipped(
+        assert after_stage_skipped(lineage, stage_name="s0", attempt_id="a") == after_stage_failed(
             lineage, stage_name="s0", attempt_id="a"
-        ) == after_stage_failed(lineage, stage_name="s0", attempt_id="a")
+        )
 
 
 # =============================================================================
@@ -354,8 +352,57 @@ def test_combinatorial_after_stage_completed_chain(entry_count: int) -> None:
 
 def test_combinatorial_completed_then_failed_leaves_no_trace() -> None:
     """Compound: completed then failed = absent."""
-    lineage = after_stage_completed(
-        {}, stage_name="s1", attempt_id="a", outputs={"x": 1}
-    )
+    lineage = after_stage_completed({}, stage_name="s1", attempt_id="a", outputs={"x": 1})
     lineage = after_stage_failed(lineage, stage_name="s1", attempt_id="a")
     assert "s1" not in lineage
+
+
+# =============================================================================
+# 8. log_paths invariant in restore_reused
+# =============================================================================
+#
+# Decision "Persistence of log_paths during stage transitions" (active,
+# confidence 0.95) says log_paths must survive every transition. For
+# restore_reused the *physical* file doesn't exist in the NEW attempt
+# (the reused stage didn't execute in this attempt — its logs live on
+# disk in the previous attempt dir). The correct carry-over is therefore
+# an EXPLICIT empty log_paths in the new attempt, never a copy from the
+# source lineage ref. These tests pin that contract down so a future
+# "helpful" change that copies previous-attempt paths doesn't slip in.
+
+
+class TestRestoreReusedLogPaths:
+    def test_reused_stage_has_empty_log_paths_in_new_attempt(self) -> None:
+        attempt = _make_attempt()
+        lineage = {"s0": _ref("s0", {"k": "v0"})}
+        restore_reused(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_STAGES,
+            start_stage_name="s1",
+            enabled_stage_names=_STAGES,
+            context={},
+            sync_root_from_stage=lambda *_: None,
+        )
+        assert attempt.stage_runs["s0"].status == StageRunState.STATUS_COMPLETED
+        assert attempt.stage_runs["s0"].execution_mode == StageRunState.MODE_REUSED
+        # Invariant: new attempt has no physical log file for a REUSED stage.
+        assert attempt.stage_runs["s0"].log_paths == {}
+
+    def test_reused_then_disabled_also_has_empty_log_paths(self) -> None:
+        """A stage disabled by config in the new attempt is marked SKIPPED via
+        mark_stage_skipped; log_paths must also start empty there (no prev
+        slot in this fresh attempt)."""
+        attempt = _make_attempt()
+        lineage = {"s0": _ref("s0", {"k": "v0"})}
+        restore_reused(
+            attempt=attempt,
+            lineage=lineage,
+            stage_names=_STAGES,
+            start_stage_name="s2",
+            enabled_stage_names=["s1", "s2"],  # s0 disabled
+            context={},
+            sync_root_from_stage=lambda *_: None,
+        )
+        assert attempt.stage_runs["s0"].status == StageRunState.STATUS_SKIPPED
+        assert attempt.stage_runs["s0"].log_paths == {}

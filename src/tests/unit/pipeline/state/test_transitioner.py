@@ -196,31 +196,19 @@ _PIPELINE_STAGES = ["s0", "s1", "s2", "s3"]
 
 class TestInvalidateLineageFrom:
     def test_drops_entries_from_start_stage_onward(self) -> None:
-        lineage = {
-            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={})
-            for name in _PIPELINE_STAGES
-        }
-        new_lineage = invalidate_lineage_from(
-            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s1"
-        )
+        lineage = {name: StageLineageRef(attempt_id="a", stage_name=name, outputs={}) for name in _PIPELINE_STAGES}
+        new_lineage = invalidate_lineage_from(lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s1")
         assert set(new_lineage.keys()) == {"s0"}
 
     def test_preserves_input_unchanged(self) -> None:
         lineage = {"s0": StageLineageRef(attempt_id="a", stage_name="s0", outputs={})}
-        new_lineage = invalidate_lineage_from(
-            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s2"
-        )
+        new_lineage = invalidate_lineage_from(lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s2")
         assert lineage == {"s0": StageLineageRef(attempt_id="a", stage_name="s0", outputs={})}
         assert new_lineage is not lineage
 
     def test_drops_all_when_start_is_first_stage(self) -> None:
-        lineage = {
-            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={})
-            for name in _PIPELINE_STAGES
-        }
-        new_lineage = invalidate_lineage_from(
-            lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s0"
-        )
+        lineage = {name: StageLineageRef(attempt_id="a", stage_name=name, outputs={}) for name in _PIPELINE_STAGES}
+        new_lineage = invalidate_lineage_from(lineage=lineage, stage_names=_PIPELINE_STAGES, start_stage_name="s0")
         assert new_lineage == {}
 
     def test_unknown_start_stage_raises(self) -> None:
@@ -275,8 +263,7 @@ class TestRestoreReusedContext:
     def test_stops_at_start_stage(self) -> None:
         attempt = _make_attempt()
         lineage = {
-            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={"n": name})
-            for name in _PIPELINE_STAGES
+            name: StageLineageRef(attempt_id="a", stage_name=name, outputs={"n": name}) for name in _PIPELINE_STAGES
         }
         restore_reused_context(
             attempt=attempt,
@@ -323,6 +310,7 @@ class TestRestoreReusedContext:
 # Invariant: log_paths set on running stage MUST survive every transition.
 # Rationale: log_paths describes the physical file, not the stage status.
 # ---------------------------------------------------------------------------
+
 
 class TestLogPathsPreservation:
     _LOG_PATHS: dict[str, str] = {
@@ -385,3 +373,52 @@ class TestLogPathsPreservation:
         mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:05:00Z")
         attempt.stage_runs["s1"].log_paths["injected"] = "logs/x.log"
         assert original == self._LOG_PATHS
+
+    # ------------------------------------------------------------------
+    # Symmetry — completed / failed without prior state also start empty.
+    # Previously only skipped / interrupted were covered; the asymmetric
+    # "mutate existing or create default" branch in mark_stage_completed
+    # and mark_stage_failed also needs to be pinned down.
+    # ------------------------------------------------------------------
+
+    def test_completed_with_no_prior_state_has_empty_log_paths(self) -> None:
+        attempt = _make_attempt()
+        mark_stage_completed(attempt=attempt, stage_name="s1", outputs={"ok": True})
+        assert attempt.stage_runs["s1"].log_paths == {}
+
+    def test_failed_with_no_prior_state_has_empty_log_paths(self) -> None:
+        attempt = _make_attempt()
+        mark_stage_failed(attempt=attempt, stage_name="s1", error="boom", failure_kind="X")
+        assert attempt.stage_runs["s1"].log_paths == {}
+
+    # ------------------------------------------------------------------
+    # Retry chain — the flagship use-case of the invariant. A stage that
+    # went running → completed → running again (retry) must carry its
+    # log_paths through every step, because the physical log file lives
+    # for the whole attempt dir, not a single lifecycle pass.
+    # ------------------------------------------------------------------
+
+    def test_log_paths_survive_full_retry_chain(self) -> None:
+        attempt = self._running_with_log_paths()
+        # running → completed
+        mark_stage_completed(attempt=attempt, stage_name="s1", outputs={"pass": 1})
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+        # completed → running (retry)
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:10:00Z")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+        # running → failed
+        mark_stage_failed(attempt=attempt, stage_name="s1", error="boom", failure_kind="X")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+        # failed → running (retry again)
+        mark_stage_running(attempt=attempt, stage_name="s1", started_at="2026-01-01T00:15:00Z")
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
+
+    def test_completed_does_not_alias_caller_outputs(self) -> None:
+        """outputs dict is copied — external mutation must not leak into state."""
+        attempt = self._running_with_log_paths()
+        outputs: dict[str, object] = {"k": "v"}
+        mark_stage_completed(attempt=attempt, stage_name="s1", outputs=outputs)
+        outputs["k"] = "mutated"
+        assert attempt.stage_runs["s1"].outputs == {"k": "v"}
+        # Invariant unaffected.
+        assert attempt.stage_runs["s1"].log_paths == self._LOG_PATHS
