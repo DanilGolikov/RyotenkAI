@@ -130,20 +130,11 @@ export function ArrayField({
 
   return (
     <FieldAnchor path={path} hashPrefix={hashPrefix ?? ''}>
-      {/* Unified "nested group" shell: violet left-line matches
-          CollapsibleCard so Strategies and QLora read as the same kind
-          of object visually. Open state swaps body to surface-1 (well
-          effect) and header gets a soft violet wash, same as
-          CollapsibleCard — see FRONTEND_GUIDELINES.md "Visual
-          hierarchy recipes". */}
-      <div
-        className={[
-          'relative rounded border border-line-1 transition-colors',
-          open
-            ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
-            : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
-        ].join(' ')}
-      >
+      {/* Flat group shell: hairline border + surface-2, no violet
+          chrome. Matches CollapsibleCard so Strategies and QLora read
+          as the same kind of object visually. Open state shifts only
+          the chevron and adds a divider — brand-policy intact. */}
+      <div className="rounded-md border border-line-1 bg-surface-2 transition-colors">
         <div
           role="button"
           tabIndex={-1}
@@ -152,10 +143,8 @@ export function ArrayField({
             setOpen((v) => !v)
           }}
           className={[
-            'flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors',
-            open
-              ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
-              : 'hover:bg-surface-3/40',
+            'flex items-center gap-2 px-3.5 py-2.5 cursor-pointer transition-colors hover:bg-surface-3/30',
+            open ? 'border-b border-line-1' : '',
           ].join(' ')}
         >
           <button
@@ -175,7 +164,9 @@ export function ArrayField({
             </span>
             <span className="text-xs text-ink-1 font-medium">
               {label}
-              {required && <span className="ml-1 text-brand-warm">*</span>}
+              {required && (
+                <span className="ml-1 text-brand-warm" aria-hidden>*</span>
+              )}
             </span>
           </button>
           <span data-no-toggle>
@@ -192,15 +183,15 @@ export function ArrayField({
               appendItem()
               setOpen(true)
             }}
-            className="rounded border border-line-1 px-2 py-1 text-2xs text-ink-2 hover:text-ink-1 hover:border-line-2 transition"
+            className="rounded-md border border-line-1 px-2 py-1 text-2xs text-ink-2 hover:text-ink-1 hover:border-line-2 transition"
           >
             + Add
           </button>
         </div>
         {open && (
-          <div className="px-4 pb-3 pt-1 space-y-3">
+          <div className="px-3.5 pb-3 pt-2 space-y-2">
             {list.length === 0 ? (
-              <div className="rounded border border-dashed border-line-1 bg-surface-0/40 px-3 py-4 text-2xs text-ink-3 text-center">
+              <div className="rounded-md border border-dashed border-line-1 bg-surface-inset px-3 py-4 text-2xs text-ink-3 text-center">
                 No items. Click <span className="text-ink-1">+ Add</span> to create one.
               </div>
             ) : (
@@ -278,14 +269,10 @@ function ArrayItem({
   const isChain = phaseIndex !== undefined
   return (
     <div className="relative">
-      <div
-        className={[
-          'relative rounded border border-line-1 transition-colors',
-          open
-            ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
-            : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
-        ].join(' ')}
-      >
+      {/* Item shell — same flat treatment as the parent ArrayField, one
+          surface tier deeper (`surface-inset`) so nested items read as
+          inset wells rather than another card-on-card layer. */}
+      <div className="rounded-md border border-line-1 bg-surface-inset transition-colors">
         <div
           role="button"
           tabIndex={-1}
@@ -294,10 +281,8 @@ function ArrayItem({
             setOpen((v) => !v)
           }}
           className={[
-            'flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors',
-            open
-              ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
-              : 'hover:bg-surface-2/60',
+            'flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors hover:bg-surface-2/40',
+            open ? 'border-b border-line-1' : '',
           ].join(' ')}
         >
           <span
@@ -307,8 +292,11 @@ function ArrayItem({
             ▸
           </span>
           {isChain && (
+            // Pill — uses the shared `.pill-info` token (sky-blue) so
+            // "Phase N" reads as an ordinal index rather than a brand
+            // emphasis. Brand-policy: violet stays for CTA/focus only.
             <span
-              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.6rem] font-mono font-semibold bg-brand/15 text-brand-strong border border-brand/30"
+              className="pill pill-info font-mono"
               aria-label={`Phase ${(phaseIndex as number) + 1}`}
             >
               Phase {(phaseIndex as number) + 1}
@@ -328,35 +316,14 @@ function ArrayItem({
             ✕
           </button>
         </div>
-        {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+        {open && <div className="px-3 pb-3 pt-2">{children}</div>}
       </div>
       {isChain && !isLast && (
         <div className="flex justify-center py-1" aria-hidden="true">
-          <svg width="14" height="18" viewBox="0 0 14 18" className="opacity-70">
-            <defs>
-              <linearGradient id="chainArrow" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#7c3aed" />
-                <stop offset="100%" stopColor="#b8a1fb" />
-              </linearGradient>
-            </defs>
-            <line
-              x1="7"
-              y1="0"
-              x2="7"
-              y2="13"
-              stroke="url(#chainArrow)"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-            <polyline
-              points="2,11 7,17 12,11"
-              fill="none"
-              stroke="#b8a1fb"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          {/* Neutral chevron — was a violet gradient SVG, swapped for a
+              muted text glyph so chain-rhythm reads structurally without
+              extra brand paint. */}
+          <span className="text-ink-4 text-sm leading-none">↓</span>
         </div>
       )}
     </div>

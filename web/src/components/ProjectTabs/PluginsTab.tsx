@@ -47,13 +47,16 @@ interface Props {
   projectId: string
 }
 
+// Validation kind lives under the Datasets project tab now — every
+// dataset has its own plugin attachments. See
+// `web/src/components/Datasets/ValidationPluginsSection.tsx`. The
+// generic Plugins tab keeps reward / evaluation / reports only.
 const KIND_SECTIONS: {
   kind: PluginKind
   label: string
   help: string
   sortable: boolean
 }[] = [
-  { kind: 'validation', label: 'Validation', help: 'Dataset pre-flight checks.', sortable: true },
   { kind: 'reward', label: 'Reward', help: 'Reward plugin for GRPO/SAPO/DPO/ORPO strategies. Matched against each phase\'s strategy_type.', sortable: false },
   { kind: 'evaluation', label: 'Evaluation', help: 'Post-training model evaluators.', sortable: true },
   { kind: 'reports', label: 'Reports', help: 'Sections rendered in the run report — drag to reorder.', sortable: true },
@@ -421,6 +424,7 @@ export function PluginsTab({ projectId }: Props) {
             manifest={manifest}
             initial={details}
             takenInstanceIds={takenIds}
+            projectId={projectId}
             onCancel={() => setConfiguring(null)}
             onSave={async (edited) => {
               await handleSaveConfigure(configuring.kind, details, edited)
@@ -432,7 +436,7 @@ export function PluginsTab({ projectId }: Props) {
   )
 }
 
-function KindSection({
+export function KindSection({
   kind,
   label,
   help,
@@ -554,7 +558,7 @@ function KindSection({
 /** Returns a user-facing message when the attached reward plugin is
  *  incompatible with any currently-active strategy phase, or ``undefined``
  *  when everything is fine. */
-function rewardIncompatibilityWarning(
+export function rewardIncompatibilityWarning(
   kind: PluginKind,
   manifest: PluginManifest | null,
   activeStrategyTypes: Set<string>,

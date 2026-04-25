@@ -10,3 +10,22 @@ description = "Checks that the sample is suitable for prompt-only GRPO/SAPO mode
 [plugin.entry_point]
 module = "plugin"
 class = "HelixQLSAPOPromptContractValidator"
+
+[params_schema.max_error_examples]
+type = "integer"
+min = -1
+default = 10
+description = "Cap on sample-level error examples kept per error type. -1 = keep all."
+
+[thresholds_schema.min_pass_rate]
+type = "number"
+min = 0.0
+max = 1.0
+default = 1.0
+description = "Lower bound on the share of samples meeting the prompt contract."
+
+[suggested_params]
+max_error_examples = 10
+
+[suggested_thresholds]
+min_pass_rate = 1.0

@@ -5,6 +5,7 @@ import type { PluginKind, PluginManifest } from '../../api/types'
 import type { PluginInstanceDetails } from '../ProjectTabs/pluginInstances'
 import { ObjectFields } from './FieldRenderer'
 import { HelpTooltip } from './HelpTooltip'
+import { PluginEnvSection } from './PluginEnvSection'
 import { Toggle } from '../ui'
 
 interface Props {
@@ -14,6 +15,11 @@ interface Props {
   /** Ids already in use within this kind's list — used for client-side
    *  uniqueness validation when the user renames the instance. */
   takenInstanceIds: string[]
+  /** Project the modal is editing inside — needed by the env block to
+   *  read/write project env.json. Optional for callers (Plugins tab,
+   *  Datasets tab) that already wired it; the env block hides itself
+   *  when undefined OR when the manifest has no required_env. */
+  projectId?: string
   onCancel: () => void
   onSave: (next: PluginInstanceDetails) => Promise<void>
 }
@@ -52,6 +58,7 @@ export function PluginConfigModal({
   manifest,
   initial,
   takenInstanceIds,
+  projectId,
   onCancel,
   onSave,
 }: Props) {
@@ -138,7 +145,7 @@ export function PluginConfigModal({
     >
       <div
         ref={panelRef}
-        className="w-full max-w-3xl max-h-[88vh] overflow-hidden rounded-xl border border-line-2 bg-surface-1 shadow-card flex flex-col"
+        className="w-full max-w-3xl max-h-[88vh] overflow-hidden rounded-xl border border-line-1 bg-surface-2 shadow-card flex flex-col"
       >
         {/* Header */}
         <div className="px-4 py-3 border-b border-line-1 flex items-start justify-between gap-3">
@@ -182,7 +189,7 @@ export function PluginConfigModal({
                 <input
                   ref={firstFieldRef}
                   type="text"
-                  className={`input w-full text-xs ${idCollision ? 'border-err ring-1 ring-err' : ''}`}
+                  className={`input w-full text-xs ${idCollision ? 'border-err ring-2 ring-err/45' : ''}`}
                   value={draft.instanceId}
                   onChange={(e) => setDraft({ ...draft, instanceId: e.target.value })}
                 />
@@ -299,10 +306,14 @@ export function PluginConfigModal({
             </SchemaGroup>
           )}
 
-          {paramCount === 0 && thresholdCount === 0 && (
-            <div className="rounded-md border border-dashed border-line-2 px-3 py-2 text-2xs text-ink-3">
+          {paramCount === 0 && thresholdCount === 0 && (manifest.required_env?.length ?? 0) === 0 && (
+            <div className="rounded-md border border-dashed border-line-1 bg-surface-inset px-3 py-2 text-2xs text-ink-3">
               This plugin has no configurable parameters or thresholds.
             </div>
+          )}
+
+          {projectId && manifest.required_env && manifest.required_env.length > 0 && (
+            <PluginEnvSection projectId={projectId} required={manifest.required_env} />
           )}
 
           {saveError && (
@@ -385,13 +396,20 @@ function Field({
   help?: string
   children: React.ReactNode
 }) {
+  // Mirrors LabelledRow / FieldRow / EnvRow grammar: label takes flex-1
+  // inside a fixed-width column so the `?` icon sits at the right edge
+  // of the label cell — same vertical line across every form on every
+  // page. Without flex-1, the `?` clings to the label text and visually
+  // drifts row-to-row depending on label length.
   return (
-    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
-      <div className="sm:w-40 shrink-0 flex items-center gap-1.5">
-        <div className="text-xs text-ink-2">{label}</div>
+    <div className="grid grid-cols-1 sm:grid-cols-[160px_minmax(0,1fr)] gap-1 sm:gap-3 items-center">
+      <div className="flex items-center gap-1.5 min-w-0 h-8 px-0.5">
+        <span className="flex-1 min-w-0 text-xs text-ink-2 tracking-tight truncate">
+          {label}
+        </span>
         {help && <HelpTooltip text={help} label={`Help for ${label}`} />}
       </div>
-      <div className="flex-1 min-w-0">{children}</div>
+      <div className="min-w-0">{children}</div>
     </div>
   )
 }

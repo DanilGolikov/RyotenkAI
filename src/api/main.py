@@ -12,6 +12,7 @@ from src.api.dependencies import get_settings
 from src.api.exceptions import install_exception_handlers
 from src.api.routers import (
     attempts,
+    datasets,
     integrations,
     launch,
     logs,
@@ -58,6 +59,7 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         health_router,
         config_router.router,
         attempts.router,
+        datasets.router,
         integrations.router,
         logs.router,
         launch.router,

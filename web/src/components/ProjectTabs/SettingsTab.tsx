@@ -179,7 +179,7 @@ export function SettingsTab({ projectId }: { projectId: string }) {
         <button
           type="button"
           onClick={addExtra}
-          className="text-2xs text-ink-3 hover:text-ink-1 border border-line-1 hover:border-line-2 rounded px-2 py-1 transition"
+          className="text-2xs text-ink-3 hover:text-ink-1 border border-line-1 hover:border-line-2 rounded-md px-2 py-1 transition"
         >
           + Add variable
         </button>
@@ -209,30 +209,26 @@ export function SettingsTab({ projectId }: { projectId: string }) {
 
 // ───── Row primitives matching ConfigBuilder LabelledRow visuals ──────────
 //
-// Same 220px label pill, same input surface, same ? tooltip. No status
-// underlines — env doesn't have the validate pipeline that ConfigBuilder
-// rows participate in.
+// Same 200px label column, same input surface, same ? tooltip. Plain-text
+// label (no pill chrome) so env rows read identically to the
+// ConfigBuilder form. No status underlines — env doesn't have the
+// validate pipeline that ConfigBuilder rows participate in. (`focused`
+// is kept in the API for future use, currently a no-op since the input
+// itself shows focus via its own focus-ring.)
 
-function LabelPill({
+function LabelText({
   label,
   description,
   mono = true,
-  focused = false,
 }: {
   label: string
   description?: string
   mono?: boolean
-  focused?: boolean
 }) {
   return (
-    <div
-      className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${
-        focused ? 'border-brand' : 'border-line-1'
-      } px-2.5 h-8 transition-colors`}
-    >
-      <span className="inline-flex w-2 shrink-0" aria-hidden />
+    <div className="flex items-center gap-1.5 min-w-0 h-8 px-0.5">
       <span
-        className={`flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate ${
+        className={`flex-1 min-w-0 text-xs text-ink-2 tracking-tight truncate ${
           mono ? 'font-mono' : ''
         }`}
       >
@@ -244,7 +240,7 @@ function LabelPill({
 }
 
 const INPUT_CLS =
-  'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors'
+  'h-8 rounded-md bg-surface-inset border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors'
 
 function EnvRow({
   spec,
@@ -256,18 +252,9 @@ function EnvRow({
   onChange: (v: string) => void
 }) {
   const [reveal, setReveal] = useState(false)
-  const [focused, setFocused] = useState(false)
-  const focusProps = {
-    onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
-  }
   return (
-    <div className="py-1.5 grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-center">
-      <LabelPill
-        label={spec.key}
-        description={spec.description}
-        focused={focused}
-      />
+    <div className="py-1.5 grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-1 sm:gap-4 items-center">
+      <LabelText label={spec.key} description={spec.description} />
       <div className="flex items-center gap-2 w-fit max-w-full">
         {spec.kind === 'enum' ? (
           <SelectField
@@ -276,7 +263,6 @@ function EnvRow({
             onChange={onChange}
             allowEmpty
             triggerClassName="min-w-[160px]"
-            {...focusProps}
           />
         ) : spec.kind === 'secret' ? (
           <>
@@ -286,13 +272,12 @@ function EnvRow({
               onChange={(e) => onChange(e.target.value)}
               placeholder={spec.placeholder}
               autoComplete="off"
-              {...focusProps}
               className={`${INPUT_CLS} w-[360px] max-w-full`}
             />
             <button
               type="button"
               onClick={() => setReveal((v) => !v)}
-              className="h-8 px-2.5 text-2xs rounded border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition shrink-0"
+              className="h-8 px-2.5 text-2xs rounded-md border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition shrink-0"
             >
               {reveal ? 'Hide' : 'Show'}
             </button>
@@ -303,7 +288,6 @@ function EnvRow({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder={spec.placeholder}
-            {...focusProps}
             className={`${INPUT_CLS} w-[360px] max-w-full`}
           />
         )}
@@ -321,35 +305,29 @@ function CustomEnvRow({
   onChange: (patch: Partial<{ key: string; value: string }>) => void
   onRemove: () => void
 }) {
-  const [focused, setFocused] = useState(false)
-  const focusProps = {
-    onFocus: () => setFocused(true),
-    onBlur: () => setFocused(false),
-  }
+  // Custom rows don't have a fixed label — the user types the env-var
+  // name into the LEFT cell using INPUT_CLS so it sits on the same
+  // `surface-inset` as every other input.
   return (
-    <div className="py-1.5 grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-center">
+    <div className="py-1.5 grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-1 sm:gap-4 items-center">
       <input
         value={entry.key}
         onChange={(e) => onChange({ key: e.target.value })}
         placeholder="KEY_NAME"
-        {...focusProps}
-        className={`h-8 rounded bg-surface-1 border ${
-          focused ? 'border-brand' : 'border-line-1'
-        } px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none hover:border-line-2 transition-colors w-full`}
+        className={`${INPUT_CLS} w-full`}
       />
       <div className="flex items-center gap-2 w-fit max-w-full">
         <input
           value={entry.value}
           onChange={(e) => onChange({ value: e.target.value })}
           placeholder="value"
-          {...focusProps}
           className={`${INPUT_CLS} w-[360px] max-w-full`}
         />
         <button
           type="button"
           onClick={onRemove}
           title="Remove"
-          className="w-8 h-8 inline-flex items-center justify-center rounded text-err hover:bg-err/10 transition text-xs shrink-0"
+          className="w-8 h-8 inline-flex items-center justify-center rounded-md text-err hover:bg-err/10 transition text-xs shrink-0"
         >
           ✕
         </button>

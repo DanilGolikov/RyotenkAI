@@ -114,6 +114,16 @@ export type ToggleFavoriteResponse = S['ToggleFavoriteResponse']
 
 // ───────── Plugins catalogue ─────────
 
+/** Required-env spec exposed in PluginManifest.required_env. Mirrors
+ *  RequiredEnvSpec on the backend (src/community/manifest.py). */
+export interface PluginRequiredEnv {
+  name: string
+  description?: string
+  optional?: boolean
+  secret?: boolean
+  managed_by?: 'integrations' | 'providers' | ''
+}
+
 export type PluginManifest =
   Narrow<
     Narrow<
@@ -127,7 +137,12 @@ export type PluginManifest =
     >,
     'suggested_thresholds',
     Record<string, unknown>
-  >
+  > & {
+    /** Plugin's declarative env contract (added in the v3.1 manifest
+     *  schema). Optional until openapi.json is regenerated; UI treats
+     *  `undefined` as "no envs required". */
+    required_env?: PluginRequiredEnv[]
+  }
 export type PluginListResponse =
   Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>
 
@@ -217,4 +232,20 @@ export type PresetDiffEntry = S['PresetDiffEntry']
 export type PresetRequirementCheck = S['PresetRequirementCheck']
 export type PresetPlaceholderHint = S['PresetPlaceholderHint']
 export type PresetScopeOut = S['PresetScopeOut']
+
+// ───────── Datasets (preview / path-check / validate) ─────────
+
+export type DatasetPreviewResponse = S['PreviewResponse']
+export type DatasetPathCheckResponse = S['PathCheckResponse']
+export type DatasetPathCheckSplit = S['PathCheckSplit']
+export type DatasetValidateRequest = S['ValidateRequest']
+export type DatasetValidateResponse = S['ValidateResponse']
+export type DatasetFormatCheckPayload = S['FormatCheckPayload']
+export type DatasetPluginRunPayload = S['PluginRunPayload']
+export type DatasetErrorGroupPayload = S['ErrorGroupPayload']
+export type DatasetSplit = 'train' | 'eval'
+
+/** UI-only convenience: row payload from preview. Backend sends a free-
+ *  form object (allow extra), so we widen to any-keyed dict. */
+export type DatasetPreviewRow = Record<string, unknown>
 export type PresetRequirementsOut = S['PresetRequirementsOut']

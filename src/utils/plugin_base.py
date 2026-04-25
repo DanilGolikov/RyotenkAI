@@ -44,6 +44,18 @@ class BasePlugin:
     _required_secrets: ClassVar[tuple[str, ...]] = ()
     _community_manifest: ClassVar[PluginManifest | None] = None
 
+    #: Declarative environment-variable contract. Subclasses set this
+    #: as a tuple of dicts matching :class:`RequiredEnvSpec`
+    #: (``{"name": "...", "description": "...", "optional": False, "secret": True,
+    #: "managed_by": "" | "integrations" | "providers"}``).
+    #:
+    #: The community-manifest loader cross-checks this list against
+    #: ``manifest.toml`` ``[[required_env]]`` blocks at load time so
+    #: there's exactly one source of truth — code is the contract,
+    #: TOML mirrors it. A future ``scripts/sync_plugin_envs.py`` will
+    #: regenerate the TOML side from ``REQUIRED_ENV`` automatically.
+    REQUIRED_ENV: ClassVar[tuple[dict[str, object], ...]] = ()
+
     @classmethod
     def get_description(cls) -> str:
         """Return the plugin description.

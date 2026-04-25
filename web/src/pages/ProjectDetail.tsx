@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import {
   useProject,
@@ -6,6 +6,7 @@ import {
 } from '../api/hooks/useProjects'
 import type { ProjectDetail } from '../api/types'
 import { ConfigTab } from '../components/ProjectTabs/ConfigTab'
+import { DatasetsTab } from '../components/Datasets/DatasetsTab'
 import { PluginsTab } from '../components/ProjectTabs/PluginsTab'
 import { RunsTab } from '../components/ProjectTabs/RunsTab'
 import { SettingsTab } from '../components/ProjectTabs/SettingsTab'
@@ -16,6 +17,7 @@ const TABS: { to: string; label: string }[] = [
   { to: 'info', label: 'Info' },
   { to: 'config', label: 'Config' },
   { to: 'versions', label: 'Versions' },
+  { to: 'datasets', label: 'Datasets' },
   { to: 'runs', label: 'Runs' },
   { to: 'plugins', label: 'Plugins' },
   { to: 'settings', label: 'Settings' },
@@ -97,29 +99,36 @@ function WorkspacePath({ path }: { path: string }) {
 function DescriptionEditor({ project }: { project: ProjectDetail }) {
   const mut = useUpdateProjectDescription(project.id)
   const [draft, setDraft] = useState(project.description)
-  const [focused, setFocused] = useState(false)
+  // `userTouched` flips on every `onChange`. While true, we treat the
+  // textarea as the source of truth and refuse to overwrite it from
+  // background refetches OR on blur. The flag clears only when the
+  // user explicitly saves (success) or on remount with a brand-new
+  // project. This is a strict improvement over the previous focus +
+  // mut.data heuristic, which lost edits if the user clicked outside
+  // the textarea before pressing Save.
+  const userTouchedRef = useRef(false)
+  const lastProjectIdRef = useRef(project.id)
 
-  // Sync draft with server on remount or background refetch — but leave
-  // the user's in-flight typing alone while the field is focused, AND
-  // don't clobber a freshly-saved value while the project query is
-  // still refetching. Previously clicking Save blurred the textarea →
-  // this effect fired with the stale ``project.description`` and
-  // overwrote the user's edit before refetch completed, making it look
-  // like Save reverted the change. ``mut.data`` is the ProjectDetail
-  // the backend returned from the latest save, so if the draft matches
-  // it we're already in sync and can skip the overwrite.
   useEffect(() => {
-    if (focused) return
-    if (mut.data && draft === mut.data.description) return
+    // New project mounted (router-level switch) — reset everything.
+    if (lastProjectIdRef.current !== project.id) {
+      lastProjectIdRef.current = project.id
+      userTouchedRef.current = false
+      setDraft(project.description)
+      return
+    }
+    // User has unsaved edits — keep them, don't pull stale server value.
+    if (userTouchedRef.current) return
+    // Sync from server (initial mount or background refetch).
     setDraft(project.description)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.description, focused, mut.data])
+  }, [project.id, project.description])
 
   const dirty = draft !== project.description
 
   async function save() {
     try {
       await mut.mutateAsync(draft)
+      userTouchedRef.current = false
     } catch (exc) {
       window.alert((exc as Error).message || 'Failed to save description.')
     }
@@ -129,12 +138,13 @@ function DescriptionEditor({ project }: { project: ProjectDetail }) {
     <div className="space-y-2">
       <textarea
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onChange={(e) => {
+          userTouchedRef.current = true
+          setDraft(e.target.value)
+        }}
         rows={3}
         placeholder="Short summary of the experiment — goal, dataset, model."
-        className="w-full rounded bg-surface-1 border border-line-1 hover:border-line-2 focus:border-brand focus:outline-none px-2.5 py-2 text-xs text-ink-1 placeholder:text-ink-4 resize-y transition-colors"
+        className="w-full rounded bg-surface-inset border border-line-1 hover:border-line-2 focus:border-brand focus:outline-none px-2.5 py-2 text-xs text-ink-1 placeholder:text-ink-4 resize-y transition-colors"
       />
       <div className="flex items-center gap-2">
         <button
@@ -258,6 +268,7 @@ export function ProjectDetailPage() {
             <Route path="info" element={<InfoTab project={project} />} />
             <Route path="config" element={<ConfigTab projectId={project.id} />} />
             <Route path="versions" element={<VersionsTab projectId={project.id} />} />
+            <Route path="datasets/*" element={<DatasetsTab projectId={project.id} />} />
             <Route path="runs" element={<RunsTab projectId={project.id} />} />
             <Route path="plugins" element={<PluginsTab projectId={project.id} />} />
             <Route path="settings" element={<SettingsTab projectId={project.id} />} />
