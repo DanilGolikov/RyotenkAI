@@ -114,15 +114,10 @@ export type ToggleFavoriteResponse = S['ToggleFavoriteResponse']
 
 // ───────── Plugins catalogue ─────────
 
-/** Required-env spec exposed in PluginManifest.required_env. Mirrors
- *  RequiredEnvSpec on the backend (src/community/manifest.py). */
-export interface PluginRequiredEnv {
-  name: string
-  description?: string
-  optional?: boolean
-  secret?: boolean
-  managed_by?: 'integrations' | 'providers' | ''
-}
+/** Required-env spec — sourced from the auto-generated OpenAPI schema
+ *  (single source of truth lives at src/community/manifest.py on the
+ *  backend). Drift is caught by `make verify-api-sync` in CI. */
+export type PluginRequiredEnv = S['RequiredEnvSpec']
 
 export type PluginManifest =
   Narrow<
@@ -137,12 +132,7 @@ export type PluginManifest =
     >,
     'suggested_thresholds',
     Record<string, unknown>
-  > & {
-    /** Plugin's declarative env contract (added in the v3.1 manifest
-     *  schema). Optional until openapi.json is regenerated; UI treats
-     *  `undefined` as "no envs required". */
-    required_env?: PluginRequiredEnv[]
-  }
+  >
 export type PluginListResponse =
   Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>
 

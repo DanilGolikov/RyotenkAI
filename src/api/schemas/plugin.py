@@ -1,8 +1,13 @@
 """Pydantic schemas for the plugin catalogue endpoints.
 
-Mirrors the shape of :meth:`src.community.manifest.PluginManifest.ui_manifest`
+Surfaces the shape of :meth:`src.community.manifest.PluginManifest.ui_manifest`
 — ``params_schema`` / ``thresholds_schema`` come out as JSON Schema objects
 that the UI can drop straight into ``FieldRenderer``.
+
+``RequiredEnvSpec`` is re-exported from :mod:`src.community.manifest` so the
+plugin catalog has **a single source of truth**: the canonical Pydantic model
+lives next to the manifest loader, and any schema change automatically flows
+to the OpenAPI surface (which `web/src/api/schema.d.ts` is generated from).
 """
 
 from __future__ import annotations
@@ -11,24 +16,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+# Re-export the canonical RequiredEnvSpec — see module docstring for
+# rationale. The CI gate (`make check-openapi`) ensures the front-end
+# generated types stay in sync.
+from src.community.manifest import RequiredEnvSpec
+
 PluginKind = Literal["reward", "validation", "evaluation", "reports"]
-
-
-class RequiredEnvSpec(BaseModel):
-    """Mirror of :class:`src.community.manifest.RequiredEnvSpec` for the
-    web API. Kept here so the OpenAPI surface is self-contained and
-    decoupled from internal manifest evolution."""
-
-    name: str
-    description: str = ""
-    optional: bool = False
-    secret: bool = True
-    managed_by: Literal["integrations", "providers", ""] = ""
 
 
 class PluginManifest(BaseModel):
     """Normalised manifest surfaced to the web UI."""
 
+    schema_version: int = 1
     id: str
     name: str
     version: str = "1.0.0"
@@ -55,4 +54,4 @@ class PluginListResponse(BaseModel):
     plugins: list[PluginManifest]
 
 
-__all__ = ["PluginKind", "PluginManifest", "PluginListResponse"]
+__all__ = ["PluginKind", "PluginManifest", "PluginListResponse", "RequiredEnvSpec"]

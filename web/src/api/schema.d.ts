@@ -1503,6 +1503,11 @@ export interface components {
          * @description Normalised manifest surfaced to the web UI.
          */
         PluginManifest: {
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
             /** Id */
             id: string;
             /** Name */
@@ -1550,6 +1555,8 @@ export interface components {
             suggested_thresholds?: {
                 [key: string]: unknown;
             };
+            /** Required Env */
+            required_env?: components["schemas"]["RequiredEnvSpec"][];
         };
         /** PluginRunPayload */
         PluginRunPayload: {
@@ -1895,6 +1902,57 @@ export interface components {
              * @default false
              */
             regenerated: boolean;
+        };
+        /**
+         * RequiredEnvSpec
+         * @description Environment variable a plugin needs at runtime.
+         *
+         *     Plugins declare this list explicitly so the UI can render a
+         *     "Required environment variables" block in the Configure modal,
+         *     point the user at the right Settings tab when the value is a
+         *     managed credential (HF / RunPod / MLflow), and refuse to launch
+         *     a pipeline if a non-optional env is unset.
+         *
+         *     Fields:
+         *       name        — env-var name. UPPER_SNAKE_CASE. Stored as-is in
+         *                     the project's `env.json`.
+         *       description — what the value is used for. Surfaces in the UI
+         *                     next to the input.
+         *       optional    — when True, plugin runs even if the var is unset.
+         *       secret      — when True, UI renders a password-style input
+         *                     (`type=password` + show/hide toggle). Default is
+         *                     True because most envs are credentials; explicitly
+         *                     set to False for non-secret config (URLs etc).
+         *       managed_by  — informational hint surfaced in the UI when the
+         *                     var is owned by another Settings surface
+         *                     (`integrations` / `providers`). Lets the modal
+         *                     redirect the user instead of accepting a plain-
+         *                     text override.
+         */
+        RequiredEnvSpec: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Optional
+             * @default false
+             */
+            optional: boolean;
+            /**
+             * Secret
+             * @default true
+             */
+            secret: boolean;
+            /**
+             * Managed By
+             * @default
+             * @enum {string}
+             */
+            managed_by: "integrations" | "providers" | "";
         };
         /** RestartPoint */
         RestartPoint: {

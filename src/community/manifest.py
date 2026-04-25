@@ -19,6 +19,18 @@ PluginKind = Literal["validation", "evaluation", "reward", "reports"]
 
 Stability = Literal["stable", "beta", "experimental"]
 
+#: Latest manifest schema version this loader understands. Bumped whenever
+#: a breaking shape change lands (e.g. removing a field, renaming a key).
+#: Manifests omitting ``schema_version`` are treated as the latest, so legacy
+#: TOMLs keep loading; future TOMLs declaring a newer number are rejected
+#: with a clear error so the user knows to upgrade RyotenkAI.
+#:
+#: History:
+#:   v3 (2026-04) — current. ``params_schema`` / ``thresholds_schema``
+#:                  via :class:`ParamFieldSchema`; ``required_env`` block;
+#:                  legacy ``[secrets].required`` slated for removal in v4.
+LATEST_SCHEMA_VERSION = 3
+
 #: Leaf types accepted in ``[params_schema.X] type``. ``enum`` is rendered
 #: as a JSON-Schema string with an ``enum`` list; everything else maps
 #: directly to the same-named JSON Schema type.
@@ -256,6 +268,10 @@ class PluginManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: Manifest schema version. Optional; missing values are treated as
+    #: :data:`LATEST_SCHEMA_VERSION`. Higher-than-supported numbers are
+    #: rejected with a clear error pointing the user at RyotenkAI upgrade.
+    schema_version: int = Field(default=LATEST_SCHEMA_VERSION)
     plugin: PluginSpec
     params_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
     thresholds_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
@@ -272,6 +288,20 @@ class PluginManifest(BaseModel):
             "project env vars live)."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_schema_version(self) -> PluginManifest:
+        if self.schema_version < 1:
+            raise ValueError(
+                f"schema_version must be >= 1; got {self.schema_version}"
+            )
+        if self.schema_version > LATEST_SCHEMA_VERSION:
+            raise ValueError(
+                f"manifest declares schema_version={self.schema_version}, "
+                f"but this RyotenkAI build supports up to v{LATEST_SCHEMA_VERSION}. "
+                f"Upgrade the host to load this plugin."
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_suggested_against_schema(self) -> PluginManifest:
@@ -308,6 +338,7 @@ class PluginManifest(BaseModel):
         that powers the main config builder.
         """
         return {
+            "schema_version": self.schema_version,
             "id": self.plugin.id,
             "name": self.plugin.name,
             "version": self.plugin.version,

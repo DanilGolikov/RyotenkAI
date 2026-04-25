@@ -35,6 +35,7 @@ import {
 
 function manifest(id: string, overrides: Partial<PluginManifest> = {}): PluginManifest {
   return {
+    schema_version: 3,
     id,
     name: id,
     version: '1.0.0',
