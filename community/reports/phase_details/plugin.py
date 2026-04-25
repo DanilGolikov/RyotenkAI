@@ -16,10 +16,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class PhaseDetailsBlockPlugin(ReportPlugin):
-    plugin_id = "phase_details"
-    title = "Phase Details"
-    order = 80
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         phases = ctx.report.phases
         nodes: list[DocBlock] = [Heading(2, inlines(txt("🔄 Phase Details")))]

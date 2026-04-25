@@ -15,10 +15,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class TrainingConfigurationBlockPlugin(ReportPlugin):
-    plugin_id = "training_configuration"
-    title = "Training Configuration"
-    order = 70
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         report = ctx.report
         c = report.config

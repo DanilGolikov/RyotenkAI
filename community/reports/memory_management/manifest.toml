@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "memory_management"
 kind = "reports"
-name = "MemoryManagementBlockPlugin"
+name = "Memory Management"
 version = "1.0.0"
-category = "report"
+category = "diagnostics"
 stability = "stable"
-description = "Report block: memory_management."
+description = "GPU VRAM peaks, allocator events, and OOM near-misses captured during training."
 
 [plugin.entry_point]
 module = "plugin"

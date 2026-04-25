@@ -13,13 +13,14 @@ Two complementary abstractions live here:
   Protocol so external/test/duck-typed implementations stay usable.
 - :class:`ReportPlugin` — the concrete ABC that **community-loaded
   plugins** must inherit from. It plugs into :class:`BasePlugin` (community
-  metadata mirroring + secret injection) and forces the
-  ``plugin_id`` / ``title`` / ``order`` ClassVars + abstract ``render``,
-  giving authors a typed, lint-friendly surface.
+  metadata mirroring + secret injection), forces an abstract ``render``
+  and exposes ``plugin_id`` / ``title`` as properties backed by the
+  manifest (``[plugin].id`` / ``[plugin].name``). ``order`` is per-instance
+  state assigned by :func:`build_report_plugins` from the user's
+  ``reports.sections`` list — never declared on the class.
 
-Existing free-standing classes (``HeaderBlockPlugin`` etc.) migrate to
-``ReportPlugin`` in the same PR that introduces the unified
-``PluginRegistry[T]``.
+Authors no longer write ``plugin_id = "..."`` / ``title = "..."`` /
+``order = ...`` on subclasses; the manifest is the single source of truth.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from src.utils.plugin_base import BasePlugin
 
@@ -107,32 +108,65 @@ class IReportBlockPlugin(Protocol):
 class ReportPlugin(BasePlugin, ABC):
     """Abstract base for community-loaded report block plugins.
 
-    Carries the same metadata mirroring as the other plugin kinds (name,
-    version, ``_community_manifest`` etc. — inherited from
-    :class:`BasePlugin`) and pins the structural contract from
-    :class:`IReportBlockPlugin`.
+    Inherits :class:`BasePlugin`'s metadata mirroring (``name``, ``version``,
+    ``_community_manifest`` etc. — populated by the community loader from
+    ``manifest.toml``) and adds the :class:`IReportBlockPlugin` contract on
+    top:
 
-    ``plugin_id`` / ``title`` / ``order`` are ClassVars, not properties —
-    matching the way community plugins have always declared them and
-    avoiding boilerplate on every subclass. ``order`` is overwritten at
-    composition time by :func:`build_report_plugins` based on the user's
-    ``reports.sections`` ordering, so the value declared on the class is
-    only a default for in-process use (tests, ad-hoc rendering).
+    - ``plugin_id`` / ``title`` are read-only properties backed by
+      ``manifest.plugin.id`` / ``manifest.plugin.name``. Authors do **not**
+      declare them on the subclass — the manifest is the single source of
+      truth.
+    - ``order`` is per-instance state, assigned by
+      :func:`build_report_plugins` from the user's ``reports.sections``
+      list position. Default ``0`` lets tests instantiate plugins outside
+      the orchestration path without crashing; production paths overwrite
+      it before render.
 
     Subclass example::
 
+        # community/reports/header/plugin.py
         class HeaderBlockPlugin(ReportPlugin):
-            plugin_id = "header"
-            title = "Header"
-            order = 10
-
             def render(self, ctx: ReportPluginContext) -> ReportBlock:
-                ...
+                return ReportBlock(
+                    block_id=self.plugin_id,   # → manifest.plugin.id
+                    title=self.title,          # → manifest.plugin.name
+                    order=self.order,          # → injected by build_report_plugins
+                    nodes=[...],
+                )
     """
 
-    plugin_id: ClassVar[str] = ""
-    title: ClassVar[str] = ""
-    order: ClassVar[int] = 0
+    #: Per-instance render order. Re-assigned by
+    #: :func:`build_report_plugins` based on the user's ``reports.sections``
+    #: list position; default is fine for ad-hoc rendering and unit tests.
+    _order: int = 0
+
+    @property
+    def plugin_id(self) -> str:
+        """Manifest-backed plugin id. Raises if not loaded via the catalog."""
+        manifest = type(self)._community_manifest
+        if manifest is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: plugin_id requires a community "
+                "manifest. ReportPlugin subclasses must be loaded via the "
+                "community catalog (CommunityCatalog._populate_registries)."
+            )
+        return manifest.plugin.id
+
+    @property
+    def title(self) -> str:
+        """Manifest-backed display title (``[plugin].name``)."""
+        manifest = type(self)._community_manifest
+        if manifest is None:
+            raise RuntimeError(
+                f"{type(self).__name__}: title requires a community manifest."
+            )
+        return manifest.plugin.name
+
+    @property
+    def order(self) -> int:
+        """Render order. Set by :func:`build_report_plugins`."""
+        return self._order
 
     @abstractmethod
     def render(self, ctx: ReportPluginContext) -> ReportBlock:

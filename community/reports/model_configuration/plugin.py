@@ -21,10 +21,6 @@ def _format_number(value: int) -> str:
 
 
 class ModelConfigurationBlockPlugin(ReportPlugin):
-    plugin_id = "model_configuration"
-    title = "Model Configuration"
-    order = 50
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         m = ctx.report.model
 

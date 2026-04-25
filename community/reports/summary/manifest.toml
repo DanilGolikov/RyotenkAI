@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "summary"
 kind = "reports"
-name = "SummaryBlockPlugin"
+name = "Summary"
 version = "1.0.0"
-category = "report"
+category = "structural"
 stability = "stable"
-description = "Report block: summary."
+description = "High-level run summary — final status, key metrics, headline duration."
 
 [plugin.entry_point]
 module = "plugin"

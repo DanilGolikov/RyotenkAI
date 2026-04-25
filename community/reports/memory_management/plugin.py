@@ -18,10 +18,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class MemoryManagementBlockPlugin(ReportPlugin):
-    plugin_id = "memory_management"
-    title = "Memory Management"
-    order = 60
-
     @staticmethod
     def _fmt(v) -> str:
         if v is None:

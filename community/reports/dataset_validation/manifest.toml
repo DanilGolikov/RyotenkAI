@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "dataset_validation"
 kind = "reports"
-name = "DatasetValidationBlockPlugin"
+name = "Dataset Validation"
 version = "1.0.0"
-category = "report"
+category = "validation"
 stability = "stable"
-description = "Report block: dataset_validation."
+description = "Per-plugin validation results from the DatasetValidator stage — metrics, warnings, errors, recommendations."
 
 [plugin.entry_point]
 module = "plugin"

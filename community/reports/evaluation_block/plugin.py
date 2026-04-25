@@ -25,10 +25,6 @@ _EMPTY_CELL = "—"  # noqa: WPS226
 class EvaluationBlockPlugin(ReportPlugin):
     """Renders evaluation_results.json data in the experiment report."""
 
-    plugin_id = "evaluation_block"
-    title = "Model Evaluation"
-    order = 45
-
     @staticmethod
     def _format_kv(d: dict) -> tuple[DocInline, ...]:
         if not d:

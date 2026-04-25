@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "stage_timeline"
 kind = "reports"
-name = "StageTimelineBlockPlugin"
+name = "Pipeline Stages"
 version = "1.0.0"
-category = "report"
+category = "structural"
 stability = "stable"
-description = "Report block: stage_timeline."
+description = "2-column table of every pipeline stage and how long it took — the run's wall-clock anatomy."
 
 [plugin.entry_point]
 module = "plugin"

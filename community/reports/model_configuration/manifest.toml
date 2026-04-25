@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "model_configuration"
 kind = "reports"
-name = "ModelConfigurationBlockPlugin"
+name = "Model Configuration"
 version = "1.0.0"
-category = "report"
+category = "configuration"
 stability = "stable"
-description = "Report block: model_configuration."
+description = "Base model name, dtype, device map, and adapter (LoRA / QLoRA) parameters."
 
 [plugin.entry_point]
 module = "plugin"
