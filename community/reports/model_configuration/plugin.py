@@ -12,7 +12,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
 def _format_number(value: int) -> str:
@@ -20,7 +20,7 @@ def _format_number(value: int) -> str:
     return f"{value:,}".replace(",", ".")
 
 
-class ModelConfigurationBlockPlugin:
+class ModelConfigurationBlockPlugin(ReportPlugin):
     plugin_id = "model_configuration"
     title = "Model Configuration"
     order = 50

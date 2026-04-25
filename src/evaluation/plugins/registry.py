@@ -1,62 +1,42 @@
-"""Registry for evaluation plugins loaded from the community catalogue."""
+"""Registry for evaluation plugins loaded from the community catalogue.
+
+Thin subclass over :class:`PluginRegistry`. The plugin constructor takes
+``(params, thresholds)`` (same shape as validation), so the kwargs adapter
+is identical — but the kind label differs for log/error messages, and
+the eval-side resolver uses the ``EVAL_*`` namespace rather than ``DTST_*``.
+
+Module-level singleton :data:`evaluator_registry` is what the rest of
+the codebase imports.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.utils.logger import logger
+from src.community.registry_base import PluginRegistry
 
 if TYPE_CHECKING:
-    from src.community.loader import LoadedPlugin
-
-    from .base import EvaluatorPlugin
+    from src.evaluation.plugins.base import EvaluatorPlugin
 
 
-class EvaluatorPluginRegistry:
-    """Name → (plugin_class, manifest) map populated by ``CommunityCatalog``."""
+class EvaluatorPluginRegistry(PluginRegistry["EvaluatorPlugin"]):
+    """Evaluation-kind registry. Plugin ctor expects ``(params, thresholds)``.
 
-    _registry: ClassVar[dict[str, type[EvaluatorPlugin]]] = {}
-    _manifests: ClassVar[dict[str, dict[str, Any]]] = {}
+    ``_kind`` matches the canonical :data:`PluginKind` literal
+    (``"evaluation"``) so error messages and log lines speak the same
+    vocabulary as the manifest / API layer.
+    """
 
-    @classmethod
-    def register_from_community(cls, loaded: LoadedPlugin) -> None:
-        plugin_id = loaded.manifest.plugin.id
-        if plugin_id in cls._registry and cls._registry[plugin_id] is not loaded.plugin_cls:
-            raise ValueError(
-                f"Evaluator plugin id {plugin_id!r} is already registered by "
-                f"{cls._registry[plugin_id].__name__!r}."
-            )
-        cls._registry[plugin_id] = loaded.plugin_cls
-        cls._manifests[plugin_id] = loaded.manifest.ui_manifest()
-        logger.debug("[EVALUATOR_REGISTRY] Registered plugin: %s", plugin_id)
+    _kind: ClassVar[str] = "evaluation"
 
-    @classmethod
-    def get(cls, name: str) -> type[EvaluatorPlugin]:
-        if name not in cls._registry:
-            available = sorted(cls._registry.keys())
-            raise KeyError(
-                f"Evaluator plugin {name!r} is not registered. "
-                f"Available plugins: {available}. "
-                "Ensure CommunityCatalog.ensure_loaded() was called."
-            )
-        return cls._registry[name]
-
-    @classmethod
-    def get_all(cls) -> dict[str, type[EvaluatorPlugin]]:
-        return dict(cls._registry)
-
-    @classmethod
-    def list_manifests(cls) -> list[dict[str, Any]]:
-        return [dict(manifest) for manifest in cls._manifests.values()]
-
-    @classmethod
-    def is_registered(cls, name: str) -> bool:
-        return name in cls._registry
-
-    @classmethod
-    def clear(cls) -> None:
-        cls._registry.clear()
-        cls._manifests.clear()
+    def _make_init_kwargs(self, init_kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "params": dict(init_kwargs.get("params") or {}),
+            "thresholds": dict(init_kwargs.get("thresholds") or {}),
+        }
 
 
-__all__ = ["EvaluatorPluginRegistry"]
+evaluator_registry = EvaluatorPluginRegistry()
+
+
+__all__ = ["EvaluatorPluginRegistry", "evaluator_registry"]

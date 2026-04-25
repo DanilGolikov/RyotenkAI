@@ -6,14 +6,22 @@ Plugins live under ``community/reports/`` and are loaded by
 and the registry populated by the loader.
 """
 
-from .interfaces import IReportBlockPlugin, PluginExecutionRecord, ReportBlock, ReportPluginContext
-from .registry import ReportPluginRegistry, build_report_plugins
+from .interfaces import (
+    IReportBlockPlugin,
+    PluginExecutionRecord,
+    ReportBlock,
+    ReportPlugin,
+    ReportPluginContext,
+)
+from .registry import ReportPluginRegistry, build_report_plugins, report_registry
 
 __all__ = [
     "IReportBlockPlugin",
     "PluginExecutionRecord",
     "ReportBlock",
+    "ReportPlugin",
     "ReportPluginContext",
     "ReportPluginRegistry",
     "build_report_plugins",
+    "report_registry",
 ]

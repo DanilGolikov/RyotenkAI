@@ -232,3 +232,45 @@ def test_registry_file_is_written(client: TestClient, projects_root: Path) -> No
     payload = json.loads(registry_file.read_text(encoding="utf-8"))
     ids = [p["id"] for p in payload.get("projects", [])]
     assert "persisted" in ids
+
+
+# ---------------------------------------------------------------------------
+# get_config — stale_plugins surfacing (PR14 / E1)
+# ---------------------------------------------------------------------------
+
+
+def test_get_config_includes_stale_plugins_field(client: TestClient) -> None:
+    """The field is always present (defaulting to empty list) so the
+    UI can rely on it without conditional rendering."""
+    _create(client, name="StaleField", id="stale-field")
+    resp = client.get("/api/v1/projects/stale-field/config")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "stale_plugins" in body
+    assert body["stale_plugins"] == []
+
+
+def test_get_config_flags_stale_plugins_referenced_in_yaml(client: TestClient) -> None:
+    """Saving a config that references a non-existent plugin id flags
+    it as stale so the UI can render a "Remove from config" button."""
+    _create(client, name="StaleRef", id="stale-ref")
+    # Use the canonical test pipeline config + ghost reports section.
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "fixtures/configs/test_pipeline.yaml"
+    )
+    config_text = fixture.read_text(encoding="utf-8")
+    tampered = (
+        config_text.rstrip()
+        + "\n\nreports:\n  sections:\n    - ghost_section\n"
+    )
+    save = client.put("/api/v1/projects/stale-ref/config", json={"yaml": tampered})
+    assert save.status_code == 200, save.text
+
+    resp = client.get("/api/v1/projects/stale-ref/config")
+    assert resp.status_code == 200
+    stale = resp.json()["stale_plugins"]
+    assert any(
+        s["plugin_kind"] == "reports" and s["plugin_name"] == "ghost_section"
+        for s in stale
+    ), stale

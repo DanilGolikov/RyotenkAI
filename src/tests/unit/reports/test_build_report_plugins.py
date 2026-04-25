@@ -47,10 +47,10 @@ def test_empty_sections_returns_empty_list() -> None:
 def test_default_sections_match_registry_keys() -> None:
     """Guardrail: DEFAULT_REPORT_SECTIONS shouldn't drift away from shipped plugins."""
     from src.community.catalog import catalog
-    from src.reports.plugins.registry import ReportPluginRegistry
+    from src.reports.plugins.registry import report_registry
 
     catalog.ensure_loaded()
-    registered = set(ReportPluginRegistry.get_all())
+    registered = set(report_registry.list_ids())
     defaults = set(DEFAULT_REPORT_SECTIONS)
     assert defaults.issubset(registered), (
         f"DEFAULT_REPORT_SECTIONS references missing plugins: {defaults - registered}"

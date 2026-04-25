@@ -105,7 +105,14 @@ export type ProjectDetail = S['ProjectDetail']
 export type CreateProjectRequest = S['CreateProjectRequest']
 export type SaveConfigRequest = S['SaveConfigRequest']
 export type SaveConfigResponse = S['SaveConfigResponse']
-export type ConfigResponse = S['ConfigResponse']
+
+/** One plugin reference in the saved config that no longer matches a
+ *  registered community plugin. The Datasets / Plugins tabs use this
+ *  to render a "Remove from config" button per stale row instead of
+ *  letting the run fail mid-pipeline with a "plugin not found" error. */
+export type StalePluginEntry = S['StalePluginEntry']
+export type ConfigResponse =
+  Narrow<S['ConfigResponse'], 'stale_plugins', StalePluginEntry[]>
 export type ConfigVersion = S['ConfigVersion']
 export type ConfigVersionsResponse = S['ConfigVersionsResponse']
 export type ConfigVersionDetail = S['ConfigVersionDetail']
@@ -114,15 +121,10 @@ export type ToggleFavoriteResponse = S['ToggleFavoriteResponse']
 
 // ───────── Plugins catalogue ─────────
 
-/** Required-env spec exposed in PluginManifest.required_env. Mirrors
- *  RequiredEnvSpec on the backend (src/community/manifest.py). */
-export interface PluginRequiredEnv {
-  name: string
-  description?: string
-  optional?: boolean
-  secret?: boolean
-  managed_by?: 'integrations' | 'providers' | ''
-}
+/** Required-env spec — sourced from the auto-generated OpenAPI schema
+ *  (single source of truth lives at src/community/manifest.py on the
+ *  backend). Drift is caught by `make verify-api-sync` in CI. */
+export type PluginRequiredEnv = S['RequiredEnvSpec']
 
 export type PluginManifest =
   Narrow<
@@ -137,14 +139,26 @@ export type PluginManifest =
     >,
     'suggested_thresholds',
     Record<string, unknown>
-  > & {
-    /** Plugin's declarative env contract (added in the v3.1 manifest
-     *  schema). Optional until openapi.json is regenerated; UI treats
-     *  `undefined` as "no envs required". */
-    required_env?: PluginRequiredEnv[]
-  }
+  >
+/** Per-entry community-loader failure. Backend mirrors LoadFailure
+ *  through OpenAPI; the UI renders these in the catalog amber banner. */
+export type PluginLoadError = S['PluginLoadError']
 export type PluginListResponse =
-  Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>
+  Narrow<
+    Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>,
+    'errors',
+    PluginLoadError[]
+  >
+
+/** Preflight gate — Launch modal calls POST /plugins/preflight before
+ *  enabling the launch button. ``missing`` is non-empty when a non-
+ *  optional ``[[required_env]]`` is unset; the UI renders each row as
+ *  a chip with a deep-link to the right Settings tab when
+ *  ``managed_by`` is set. */
+export type PreflightRequest = S['PreflightRequest']
+export type MissingEnvSchema = S['MissingEnvSchema']
+export type PreflightResponse =
+  Narrow<S['PreflightResponse'], 'missing', MissingEnvSchema[]>
 
 // ───────── Providers (reusable workspaces) ─────────
 

@@ -67,9 +67,17 @@ sample_size = 10000
 [suggested_thresholds]
 threshold = 100
 
-# --- secrets (optional) ----------------------------------------------------
-[secrets]
-required = ["DTST_EXAMPLE_TOKEN"]
+# --- env contract (optional) -----------------------------------------------
+# Each [[required_env]] entry surfaces as an input in the Configure modal.
+# Loader-derived rule: secret=true AND optional=false → the registry
+# auto-injects the resolved value as `self._secrets[name]` at instantiate
+# time (see src/community/registry_base.py:_inject_secrets).
+[[required_env]]
+name = "DTST_EXAMPLE_TOKEN"
+description = "Token used by my_validator to call the upstream service."
+optional = false
+secret = true
+managed_by = ""
 ```
 
 `suggested_*` values pre-fill the config form when a user first adds the plugin; `*_schema` is surfaced via `GET /plugins/validation` for the web UI.
@@ -120,7 +128,7 @@ class MyValidator(ValidationPlugin):
         return [] if result.passed else ["Add more samples", "Use augmentation"]
 ```
 
-You do **not** register the class manually. The community catalog loader reads `manifest.toml`, imports the class via `entry_point`, and attaches `name`/`priority`/`version`/`_required_secrets` from the manifest onto it.
+You do **not** register the class manually. The community catalog loader reads `manifest.toml`, imports the class via `entry_point`, and attaches `name`/`version`/`_required_secrets` from the manifest onto it.
 
 ## Keep three semantic blocks separate in `ValidationResult`
 
@@ -134,16 +142,17 @@ This is the single most important convention — reports render each block in a 
 
 Do not put thresholds into metrics or vice versa.
 
-## Priority ranges
+## Execution order
 
-| Range | Plugin type |
-|---|---|
-| 10–20 | Cheap format/size checks (`min_samples`, `preference_format`) |
-| 25–40 | Statistical checks (`avg_length`, `diversity_score`, `empty_ratio`) |
-| 50–60 | Domain-specific checks (`deduplication`, HelixQL DPO/SAPO) |
-| 70–80 | Expensive / external API checks |
+Plugins run in the order they appear in
+``datasets.<id>.validations.plugins`` in the user's config YAML —
+there is no global priority field. List cheap checks first
+(``min_samples``, ``preference_format``) and expensive ones
+(deduplication, external API calls) last so ``critical_failures: 1``
+fails fast on obvious problems before doing the slow work.
 
-Lower runs earlier. If your plugin is `expensive = True` the orchestrator may skip it in `mode: fast`.
+Plugins with ``expensive = True`` may be skipped by the orchestrator in
+``mode: fast``.
 
 ## Referencing the plugin from pipeline config
 
@@ -169,14 +178,18 @@ datasets:
 
 ## Secrets (`DTST_*`)
 
-If the plugin calls an external service, declare its secrets in the manifest:
+If the plugin calls an external service, declare its secrets via `[[required_env]]`:
 
 ```toml
-[secrets]
-required = ["DTST_SCHEMA_VALIDATOR_TOKEN"]
+[[required_env]]
+name = "DTST_SCHEMA_VALIDATOR_TOKEN"
+description = "API token for the schema validator service"
+optional = false
+secret = true
+managed_by = ""
 ```
 
-Add the value to `secrets.env` (`DTST_SCHEMA_VALIDATOR_TOKEN=…`). The `DatasetValidator` reads `cls._required_secrets` and injects them as `self._secrets: dict[str, str]` before calling `validate()`:
+Add the value to `secrets.env` (`DTST_SCHEMA_VALIDATOR_TOKEN=…`). At load time the loader filters every `secret=true, optional=false` entry into `cls._required_secrets`, and `DatasetValidator` injects them as `self._secrets: dict[str, str]` before calling `validate()`:
 
 ```python
 class MyValidator(ValidationPlugin):

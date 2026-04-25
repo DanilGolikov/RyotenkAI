@@ -463,10 +463,9 @@ def _run_configured_plugins(dataset: Any, cfg: Any) -> list[StandalonePluginRun]
         return []
 
     from src.community import catalog
-    from src.data.validation.registry import ValidationPluginRegistry
+    from src.data.validation.registry import validation_registry
 
     catalog.ensure_loaded()  # idempotent
-    registry = ValidationPluginRegistry()
 
     # Manifest defaults are merged into the YAML params/thresholds as a
     # FALLBACK so existing instances saved before a plugin gained a
@@ -500,7 +499,10 @@ def _run_configured_plugins(dataset: Any, cfg: Any) -> list[StandalonePluginRun]
             suggested_params = dict(getattr(manifest, "suggested_params", {}) or {})
             suggested_thresholds = dict(getattr(manifest, "suggested_thresholds", {}) or {})
         try:
-            plugin = registry.get_plugin(
+            # No resolver passed: the standalone API endpoint is for ad-hoc
+            # validation runs from the UI; secret-requiring plugins must use
+            # the pipeline-stage path which threads the project Secrets in.
+            plugin = validation_registry.instantiate(
                 raw.plugin,
                 params=_merged(dict(raw.params or {}), suggested_params),
                 thresholds=_merged(dict(raw.thresholds or {}), suggested_thresholds),

@@ -11,13 +11,40 @@ need to know about our TOML-specific keys.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+#: Field names in ``[params_schema.X]`` / ``[thresholds_schema.X]`` must
+#: be valid Python identifiers in ``snake_case`` so they round-trip
+#: cleanly into TypedDict / dataclass codegen (PR10's longer-term goal)
+#: AND so the scaffold CLI can emit a working ``self.params["x"]``
+#: access stub. Names like ``min-samples`` or ``MaxLength`` would force
+#: every consumer to special-case identifiers — we'd rather catch it
+#: at manifest-load time.
+_PARAM_FIELD_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
 PluginKind = Literal["validation", "evaluation", "reward", "reports"]
 
 Stability = Literal["stable", "beta", "experimental"]
+
+#: Latest manifest schema version this loader understands. Bumped whenever
+#: a breaking shape change lands (e.g. removing a field, renaming a key).
+#: Manifests omitting ``schema_version`` are treated as the latest, so legacy
+#: TOMLs keep loading; future TOMLs declaring a newer number are rejected
+#: with a clear error so the user knows to upgrade RyotenkAI.
+#:
+#: History:
+#:   v3 (2026-04) — ``params_schema`` / ``thresholds_schema`` via
+#:                  :class:`ParamFieldSchema`; introduced the ``required_env``
+#:                  block alongside the legacy ``[secrets].required``.
+#:   v4 (2026-04) — current. Dropped ``[secrets].required`` — every
+#:                  required env (secret or not, optional or not) is now
+#:                  declared via ``[[required_env]]``. The loader derives
+#:                  the runtime ``_required_secrets`` ClassVar from
+#:                  entries with ``secret=true, optional=false``.
+LATEST_SCHEMA_VERSION = 4
 
 #: Leaf types accepted in ``[params_schema.X] type``. ``enum`` is rendered
 #: as a JSON-Schema string with an ``enum`` list; everything else maps
@@ -43,12 +70,6 @@ class PresetEntryPoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     file: str = Field(description="Relative path to the preset YAML inside the preset folder.")
-
-
-class SecretsSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    required: list[str] = Field(default_factory=list)
 
 
 class RequiredEnvSpec(BaseModel):
@@ -256,12 +277,15 @@ class PluginManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    #: Manifest schema version. Optional; missing values are treated as
+    #: :data:`LATEST_SCHEMA_VERSION`. Higher-than-supported numbers are
+    #: rejected with a clear error pointing the user at RyotenkAI upgrade.
+    schema_version: int = Field(default=LATEST_SCHEMA_VERSION)
     plugin: PluginSpec
     params_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
     thresholds_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
     suggested_params: dict[str, Any] = Field(default_factory=dict)
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
-    secrets: SecretsSpec = Field(default_factory=SecretsSpec)
     compat: CompatSpec = Field(default_factory=CompatSpec)
     required_env: list[RequiredEnvSpec] = Field(
         default_factory=list,
@@ -274,6 +298,20 @@ class PluginManifest(BaseModel):
     )
 
     @model_validator(mode="after")
+    def _check_schema_version(self) -> PluginManifest:
+        if self.schema_version < 1:
+            raise ValueError(
+                f"schema_version must be >= 1; got {self.schema_version}"
+            )
+        if self.schema_version > LATEST_SCHEMA_VERSION:
+            raise ValueError(
+                f"manifest declares schema_version={self.schema_version}, "
+                f"but this RyotenkAI build supports up to v{LATEST_SCHEMA_VERSION}. "
+                f"Upgrade the host to load this plugin."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_suggested_against_schema(self) -> PluginManifest:
         self._assert_keys_subset(
             self.suggested_params, self.params_schema, label="suggested_params"
@@ -283,6 +321,29 @@ class PluginManifest(BaseModel):
             self.thresholds_schema,
             label="suggested_thresholds",
         )
+        return self
+
+    @model_validator(mode="after")
+    def _check_schema_field_names(self) -> PluginManifest:
+        """Reject param/threshold field names that aren't valid Python
+        identifiers.
+
+        ``params_schema.min-samples`` would render fine as JSON Schema
+        but breaks any code that wants to access ``self.params["…"]``
+        through an attribute, populate a TypedDict from the schema, or
+        emit a working scaffold. We force ``snake_case`` at the
+        manifest layer so every downstream tool can rely on it.
+        """
+        for label, schema in (
+            ("params_schema", self.params_schema),
+            ("thresholds_schema", self.thresholds_schema),
+        ):
+            invalid = sorted(k for k in schema if not _PARAM_FIELD_NAME_RE.match(k))
+            if invalid:
+                raise ValueError(
+                    f"{label} field names must match {_PARAM_FIELD_NAME_RE.pattern!r} "
+                    f"(snake_case Python identifiers); offenders: {invalid}"
+                )
         return self
 
     @staticmethod
@@ -300,6 +361,25 @@ class PluginManifest(BaseModel):
                 f"{label} keys {sorted(extra)} are not declared in the corresponding schema"
             )
 
+    def required_secret_names(self) -> tuple[str, ...]:
+        """Return the names of envs the runtime treats as required secrets.
+
+        These are the ``[[required_env]]`` entries with both ``secret=true``
+        and ``optional=false``. The community loader uses this to populate
+        the runtime ``_required_secrets`` ClassVar that the per-kind
+        :class:`PluginRegistry` consults during ``instantiate()`` to inject
+        ``instance._secrets``.
+
+        Optional or non-secret envs are *intentionally* excluded — those
+        are fetched lazily by the plugin via ``_env(name)`` (B2) when the
+        helper lands. The Configure modal still surfaces them all.
+        """
+        return tuple(
+            spec.name
+            for spec in self.required_env
+            if spec.secret and not spec.optional
+        )
+
     def ui_manifest(self) -> dict[str, Any]:
         """Flatten into the shape consumed by the web UI / ``/plugins`` API.
 
@@ -308,6 +388,7 @@ class PluginManifest(BaseModel):
         that powers the main config builder.
         """
         return {
+            "schema_version": self.schema_version,
             "id": self.plugin.id,
             "name": self.plugin.name,
             "version": self.plugin.version,

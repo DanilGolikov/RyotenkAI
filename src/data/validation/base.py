@@ -74,10 +74,12 @@ class ValidationPlugin(BasePlugin, ABC):
 
     Class Attributes:
         name: Unique plugin identifier
-        priority: Execution priority (lower = earlier, default: 50)
         expensive: Whether plugin is computationally expensive
         required_fields: List of required dataset fields
         supports_streaming: Whether plugin supports IterableDataset
+
+    Execution order is the order plugin instances appear in the user's
+    pipeline config YAML — there is no global ``priority`` knob.
 
     Methods to implement:
         get_description(): Human-readable description of what plugin checks
@@ -100,12 +102,12 @@ class ValidationPlugin(BasePlugin, ABC):
             def get_recommendations(self, result):
                 return ["Add more samples", "Use data augmentation"]
 
-    The plugin's ``name`` / ``priority`` / ``version`` are declared in
+    The plugin's ``name`` / ``version`` are declared in
     ``community/validation/<id>/manifest.toml`` and attached to the class
     by ``src.community.loader``. See ``community/validation/README.md``.
     """
 
-    # name / priority / version — inherited from BasePlugin
+    # name / version — inherited from BasePlugin
     # Plugin-specific metadata (override in subclasses)
     expensive: ClassVar[bool] = False
     required_fields: ClassVar[list[str]] = []

@@ -1,51 +1,33 @@
-"""Registry for reward plugins loaded from the community catalogue."""
+"""Registry for reward plugins loaded from the community catalogue.
+
+Thin subclass over :class:`PluginRegistry`. Reward plugins take only
+``params`` (no thresholds — pass/fail criteria don't apply during
+training; the trainer composes the reward signal directly).
+
+Module-level singleton :data:`reward_registry` is what the rest of
+the codebase imports.
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.utils.logger import logger
+from src.community.registry_base import PluginRegistry
 
 if TYPE_CHECKING:
-    from src.community.loader import LoadedPlugin
     from src.training.reward_plugins.base import RewardPlugin
 
 
-class RewardPluginRegistry:
-    """Name → (plugin_class, manifest) map populated by ``CommunityCatalog``."""
+class RewardPluginRegistry(PluginRegistry["RewardPlugin"]):
+    """Reward-kind registry. Plugin ctor expects ``(params)``."""
 
-    _registry: ClassVar[dict[str, type[RewardPlugin]]] = {}
-    _manifests: ClassVar[dict[str, dict[str, Any]]] = {}
+    _kind: ClassVar[str] = "reward"
 
-    @classmethod
-    def register_from_community(cls, loaded: LoadedPlugin) -> None:
-        plugin_id = loaded.manifest.plugin.id
-        cls._registry[plugin_id] = loaded.plugin_cls
-        cls._manifests[plugin_id] = loaded.manifest.ui_manifest()
-        logger.debug("[REWARD_REGISTRY] Registered plugin: %s", plugin_id)
-
-    @classmethod
-    def create(cls, name: str, params: dict[str, Any]) -> RewardPlugin:
-        if name not in cls._registry:
-            available = sorted(cls._registry.keys())
-            raise KeyError(
-                f"Reward plugin {name!r} is not registered. Available plugins: {available}. "
-                "Ensure CommunityCatalog.ensure_loaded() was called."
-            )
-        return cls._registry[name](params)
-
-    @classmethod
-    def get_all(cls) -> dict[str, type[RewardPlugin]]:
-        return dict(cls._registry)
-
-    @classmethod
-    def list_manifests(cls) -> list[dict[str, Any]]:
-        return [dict(manifest) for manifest in cls._manifests.values()]
-
-    @classmethod
-    def clear(cls) -> None:
-        cls._registry.clear()
-        cls._manifests.clear()
+    def _make_init_kwargs(self, init_kwargs: dict[str, Any]) -> dict[str, Any]:
+        return {"params": dict(init_kwargs.get("params") or {})}
 
 
-__all__ = ["RewardPluginRegistry"]
+reward_registry = RewardPluginRegistry()
+
+
+__all__ = ["RewardPluginRegistry", "reward_registry"]

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.community.inference import InferredPlugin, bump_version, infer_plugin
+from src.community.loader import _import_plugin_class
 from src.community.manifest import PluginManifest, PresetManifest
 from src.community.scaffold import build_plugin_manifest_dict
 from src.community.toml_writer import dump_manifest_toml
@@ -91,17 +92,53 @@ def _merge_suggestions(
     return {k: v for k, v in existing.items() if k in schema}
 
 
-def _merge_secrets(
-    existing: list[str] | None, inferred: tuple[str, ...]
-) -> list[str]:
-    """Union: inferred keys first (deterministic), then existing-only keys."""
-    existing_list = list(existing or [])
+def _merge_required_env(
+    existing: list[dict[str, Any]] | None,
+    inferred: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Merge ``[[required_env]]`` entries.
+
+    - Existing entries (with hand-edited descriptions / managed_by hints
+      / non-default secret/optional flags) win — sync never destroys
+      author-provided metadata.
+    - Inferred env names that don't appear in ``existing`` are appended
+      with the safe defaults (``secret=true, optional=false, managed_by=""``).
+    - Existing entries whose ``name`` is no longer inferred *stay*: the
+      runtime cross-check (PR8 / A7) will catch genuine drift between
+      Python and TOML; here we err on the side of preservation.
+
+    The output preserves the order ``inferred → existing-only`` so a
+    fresh scaffold places newly-discovered envs at the top of the list.
+    """
+    existing_by_name: dict[str, dict[str, Any]] = {
+        entry["name"]: dict(entry)
+        for entry in (existing or [])
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    out: list[str] = []
-    for key in list(inferred) + existing_list:
-        if key not in seen:
-            out.append(key)
-            seen.add(key)
+
+    def _default_entry(name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": "",
+            "optional": False,
+            "secret": True,
+            "managed_by": "",
+        }
+
+    for name in inferred:
+        if name in seen:
+            continue
+        out.append(existing_by_name.get(name) or _default_entry(name))
+        seen.add(name)
+
+    for name, entry in existing_by_name.items():
+        if name in seen:
+            continue
+        out.append(entry)
+        seen.add(name)
+
     return out
 
 
@@ -161,13 +198,15 @@ def _merge_plugin_manifest(
     else:
         merged.pop("suggested_thresholds", None)
 
-    # secrets — supplement union (never delete)
-    existing_secrets = (existing.get("secrets", {}) or {}).get("required") or []
-    union = _merge_secrets(existing_secrets, inferred.required_secrets)
-    if union:
-        merged["secrets"] = {"required": union}
+    # required_env — merge per-name; never delete author-provided metadata.
+    existing_required_env = existing.get("required_env") or []
+    merged_required_env = _merge_required_env(
+        existing_required_env, inferred.required_secrets
+    )
+    if merged_required_env:
+        merged["required_env"] = merged_required_env
     else:
-        merged.pop("secrets", None)
+        merged.pop("required_env", None)
 
     # compat — preserve existing if set
     existing_compat = existing.get("compat", {}) or {}
@@ -194,6 +233,56 @@ def sync_plugin_manifest(
         existing, inferred, plugin_id=plugin_dir.name, bump=bump
     )
     # Validate before writing — fail fast if merge produced something invalid.
+    PluginManifest.model_validate(merged)
+
+    new_text = dump_manifest_toml(merged)
+    changed = new_text != old_text
+    diff = _unified_diff(old_text, new_text, path=str(manifest_path))
+    return SyncResult(new_text=new_text, old_text=old_text, changed=changed, diff=diff)
+
+
+def sync_plugin_envs(plugin_dir: Path) -> SyncResult:
+    """Rewrite manifest's ``[[required_env]]`` from the class's REQUIRED_ENV.
+
+    Imports the plugin module (just like the loader does), reads the
+    Python-side ``REQUIRED_ENV`` ClassVar, and writes that as the
+    manifest's ``required_env`` block. Use this after editing the env
+    contract in code so the TOML side never drifts and the load-time
+    cross-check in :func:`_crosscheck_required_env` keeps passing.
+
+    No-op when the class doesn't declare ``REQUIRED_ENV`` (or declares
+    it empty) — the manifest stays the only source of truth.
+    """
+    manifest_path = plugin_dir / "manifest.toml"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"no manifest.toml in {plugin_dir}")
+
+    old_text = manifest_path.read_text(encoding="utf-8")
+    existing = tomllib.loads(old_text)
+    plugin_block = existing.get("plugin", {}) or {}
+    entry_point = plugin_block.get("entry_point", {}) or {}
+    module_name = entry_point.get("module", "plugin")
+    class_name = entry_point.get("class") or entry_point.get("class_name")
+    if not class_name:
+        raise ValueError(
+            f"manifest at {manifest_path} has no [plugin.entry_point].class — "
+            "cannot import to read REQUIRED_ENV"
+        )
+
+    plugin_cls = _import_plugin_class(plugin_dir, module_name, class_name)
+    declared = getattr(plugin_cls, "REQUIRED_ENV", ())
+
+    merged = dict(existing)
+    if declared:
+        merged["required_env"] = [
+            spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+            for spec in declared
+        ]
+    else:
+        merged.pop("required_env", None)
+
+    # Re-validate the whole manifest so a bad REQUIRED_ENV declaration
+    # surfaces here instead of at the next loader run.
     PluginManifest.model_validate(merged)
 
     new_text = dump_manifest_toml(merged)
@@ -286,6 +375,7 @@ def _unified_diff(a: str, b: str, *, path: str) -> str:
 
 __all__ = [
     "SyncResult",
+    "sync_plugin_envs",
     "sync_plugin_manifest",
     "sync_preset_manifest",
 ]

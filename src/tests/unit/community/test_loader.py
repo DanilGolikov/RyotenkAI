@@ -25,8 +25,12 @@ def _build_plugin_folder(root: Path, kind: str, plugin_id: str, *, class_name: s
             module = "plugin"
             class = "{class_name}"
 
-            [secrets]
-            required = ["EVAL_DUMMY"]
+            [[required_env]]
+            name = "EVAL_DUMMY"
+            description = ""
+            optional = false
+            secret = true
+            managed_by = ""
         """).strip()
     )
     (plugin_dir / "plugin.py").write_text(
@@ -91,7 +95,10 @@ def test_load_plugins_kind_mismatch_is_skipped(tmp_path: Path, caplog) -> None:
     (plugin_dir / "plugin.py").write_text("class Dummy:\n    pass\n")
 
     loaded = load_plugins("validation", root=tmp_path)
-    assert loaded == []
+    assert list(loaded) == []
+    # Failures surface as structured records so the UI/admin can see them.
+    assert [f.error_type for f in loaded.failures] == ["kind_mismatch"]
+    assert loaded.failures[0].plugin_id == "x"
 
 
 def test_load_plugins_archive(tmp_path: Path) -> None:

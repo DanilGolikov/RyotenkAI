@@ -6,12 +6,12 @@ import yaml
 
 from src.reports.core.constants import KEY_HYPERPARAMS
 from src.reports.document.nodes import CodeBlock, DocBlock, Heading, HorizontalRule, Paragraph, emph, inlines, txt
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 KEY_LORA = "lora"
 
 
-class ConfigDumpBlockPlugin:
+class ConfigDumpBlockPlugin(ReportPlugin):
     plugin_id = "config_dump"
     title = "Configuration"
     order = 110

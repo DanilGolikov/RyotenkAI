@@ -16,10 +16,10 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class MetricsAnalysisBlockPlugin:
+class MetricsAnalysisBlockPlugin(ReportPlugin):
     plugin_id = "metrics_analysis"
     title = "Metrics Analysis"
     order = 90

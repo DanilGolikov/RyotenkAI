@@ -44,7 +44,7 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
         return
 
     from src.community.catalog import catalog
-    from src.evaluation.plugins.registry import EvaluatorPluginRegistry
+    from src.evaluation.plugins.registry import evaluator_registry
     from src.evaluation.plugins.secrets import SecretsResolver
 
     catalog.ensure_loaded()
@@ -55,10 +55,10 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
             continue
 
         plugin_name = plugin_cfg.plugin
-        if not EvaluatorPluginRegistry.is_registered(plugin_name):
+        if not evaluator_registry.is_registered(plugin_name):
             continue
 
-        plugin_cls = EvaluatorPluginRegistry.get(plugin_name)
+        plugin_cls = evaluator_registry.get_class(plugin_name)
         required_keys: tuple[str, ...] | None = getattr(plugin_cls, "_required_secrets", None)
         if not required_keys:
             continue

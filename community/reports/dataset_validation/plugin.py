@@ -19,7 +19,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 _PASSED = "passed"
 _MAX_REPORT_ERROR_EXAMPLES = 20
@@ -28,7 +28,7 @@ _GROUPED_INDEX_ERROR_RE = re.compile(r"^(?P<label>[^:\n]+): \[(?P<body>[^\]]*)\]
 _GROUPED_SAMPLES_ERROR_RE = re.compile(r"^(?P<label>Samples?) (?P<body>\d+(?:,\d+)*) - (?P<message>.+)$")
 
 
-class DatasetValidationBlockPlugin:
+class DatasetValidationBlockPlugin(ReportPlugin):
     plugin_id = "dataset_validation"
     title = "Dataset Validation"
     order = 40

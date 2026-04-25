@@ -44,8 +44,15 @@ default = 0.7
 [suggested_thresholds]
 min_mean_score = 0.7
 
-[secrets]
-required = ["EVAL_MY_API_KEY"]
+# Single source of truth for env vars this plugin needs. Loader-derived
+# rule: secret=true AND optional=false → the registry auto-injects the
+# resolved value as ``self._secrets["EVAL_MY_API_KEY"]``.
+[[required_env]]
+name = "EVAL_MY_API_KEY"
+description = "API key for the upstream judge service"
+optional = false
+secret = true
+managed_by = ""
 ```
 
 `params_schema` / `thresholds_schema` drive form generation; `suggested_*` pre-fill values when a user adds the plugin to a project.
@@ -116,14 +123,14 @@ schema = sample.metadata.get("schema_context", "")
 
 `helixql_generated_syntax_backend` uses this exact mechanism to pick up the DB schema.
 
-## Priority ranges
+## Execution order
 
-| Range | Plugin type |
-|---|---|
-| 0–10 | Cheap structural checks (syntax, format) |
-| 20–30 | Deterministic semantic comparators |
-| 40–50 | Aggregated / composite scorers |
-| 60–80 | External-API judges (Cerebras, OpenAI, …) |
+Plugins run in the order they appear in
+``evaluation.evaluators.plugins`` in the user's config YAML — there is
+no global priority field. Order cheap structural checks (syntax,
+format) before deterministic semantic comparators, then aggregated
+scorers, then external-API judges (Cerebras, OpenAI, …) — this keeps
+costs predictable when an upstream check fails fast.
 
 ## Referencing the plugin from pipeline config
 
@@ -147,14 +154,18 @@ evaluation:
 
 ## Secrets (`EVAL_*`)
 
-Declared in the manifest:
+Declared in the manifest as `[[required_env]]` entries with `secret=true, optional=false`:
 
 ```toml
-[secrets]
-required = ["EVAL_CEREBRAS_API_KEY"]
+[[required_env]]
+name = "EVAL_CEREBRAS_API_KEY"
+description = "Cerebras Inference Cloud API key"
+optional = false
+secret = true
+managed_by = ""
 ```
 
-The runner resolves from `secrets.env` (`EVAL_CEREBRAS_API_KEY=…`) and injects `self._secrets: dict[str, str]` before `evaluate()`. Missing secrets → the runner logs, skips this plugin, and continues with the others.
+The loader derives `cls._required_secrets` from every such entry, and the registry resolves them from `secrets.env` (`EVAL_CEREBRAS_API_KEY=…`) into `self._secrets: dict[str, str]` before `evaluate()`. Missing secrets → the runner logs, skips this plugin, and continues with the others.
 
 Plugins only see `EVAL_*` keys — system (`HF_TOKEN`, `RUNPOD_API_KEY`) and validation (`DTST_*`) namespaces are hard-isolated.
 

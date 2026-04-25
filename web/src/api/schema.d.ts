@@ -507,6 +507,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preflight
+         * @description Check that every plugin in ``request.config`` has its non-optional
+         *     ``[[required_env]]`` keys set in process env / project env.
+         *
+         *     The Launch modal calls this before enabling the launch button so a
+         *     user without the right credentials sees a "set up before launch"
+         *     chip with a deep link to the right Settings tab — instead of a
+         *     pipeline that runs for minutes and crashes mid-stage on the missing
+         *     key.
+         *
+         *     Returns ``ok=true`` plus an empty ``missing`` list when the launch
+         *     is safe; ``ok=false`` with structured rows otherwise. A malformed
+         *     config payload surfaces as a 422 with the full per-field error
+         *     list (Pydantic does the work).
+         */
+        post: operations["plugins-preflight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{kind}": {
         parameters: {
             query?: never;
@@ -1048,6 +1080,11 @@ export interface components {
             parsed_json?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Stale Plugins
+             * @default []
+             */
+            stale_plugins: components["schemas"]["StalePluginEntry"][];
         };
         /** ConfigTemplate */
         ConfigTemplate: {
@@ -1269,6 +1306,29 @@ export interface components {
              */
             version: string;
         };
+        /**
+         * InstanceErrorSchema
+         * @description One per-field shape violation surfaced by the preflight gate.
+         *
+         *     Mirrors :class:`src.community.instance_validator.InstanceValidationError`.
+         *     ``location`` is a dotted path (``params.timeout_seconds``,
+         *     ``thresholds.min_score``) so the UI can highlight the exact field.
+         */
+        InstanceErrorSchema: {
+            /**
+             * Plugin Kind
+             * @enum {string}
+             */
+            plugin_kind: "reward" | "validation" | "evaluation" | "reports";
+            /** Plugin Name */
+            plugin_name: string;
+            /** Plugin Instance Id */
+            plugin_instance_id: string;
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+        };
         /** IntegrationConfigResponse */
         IntegrationConfigResponse: {
             /** Yaml */
@@ -1467,6 +1527,42 @@ export interface components {
             /** Exists */
             exists: boolean;
         };
+        /**
+         * MissingEnvSchema
+         * @description One required env the preflight gate couldn't resolve.
+         *
+         *     Mirrors :class:`src.community.preflight.MissingEnv` — the API
+         *     re-shapes the dataclass into a Pydantic model so OpenAPI emits a
+         *     proper schema and the front-end gets typed access.
+         */
+        MissingEnvSchema: {
+            /**
+             * Plugin Kind
+             * @enum {string}
+             */
+            plugin_kind: "reward" | "validation" | "evaluation" | "reports";
+            /** Plugin Name */
+            plugin_name: string;
+            /** Plugin Instance Id */
+            plugin_instance_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Secret
+             * @default true
+             */
+            secret: boolean;
+            /**
+             * Managed By
+             * @default
+             */
+            managed_by: string;
+        };
         /** PathCheckResponse */
         PathCheckResponse: {
             /**
@@ -1497,12 +1593,50 @@ export interface components {
             kind: "reward" | "validation" | "evaluation" | "reports";
             /** Plugins */
             plugins: components["schemas"]["PluginManifest"][];
+            /** Errors */
+            errors?: components["schemas"]["PluginLoadError"][];
+        };
+        /**
+         * PluginLoadError
+         * @description One per-entry failure surfaced from the community loader.
+         *
+         *     Mirrors :class:`src.community.loader.LoadFailure` for the OpenAPI
+         *     surface — kept as a plain Pydantic model (rather than re-exporting
+         *     the dataclass) so the API stays decoupled from internal shape
+         *     changes. The UI reads ``error_type`` to pick an icon, ``message``
+         *     for the headline, and ``traceback`` for the developer drilldown.
+         */
+        PluginLoadError: {
+            /** Entry Name */
+            entry_name: string;
+            /** Plugin Id */
+            plugin_id?: string | null;
+            /** Error Type */
+            error_type: string;
+            /** Message */
+            message: string;
+            /**
+             * Traceback
+             * @default
+             */
+            traceback: string;
         };
         /**
          * PluginManifest
          * @description Normalised manifest surfaced to the web UI.
+         *
+         *     The ``schema_version`` default mirrors :data:`LATEST_SCHEMA_VERSION`
+         *     on the backend so OpenAPI consumers see the version the API actually
+         *     emits. The runtime value always comes from
+         *     :meth:`src.community.manifest.PluginManifest.ui_manifest`; this
+         *     default is purely an OpenAPI documentation hint.
          */
         PluginManifest: {
+            /**
+             * Schema Version
+             * @default 4
+             */
+            schema_version: number;
             /** Id */
             id: string;
             /** Name */
@@ -1550,6 +1684,8 @@ export interface components {
             suggested_thresholds?: {
                 [key: string]: unknown;
             };
+            /** Required Env */
+            required_env?: components["schemas"]["RequiredEnvSpec"][];
         };
         /** PluginRunPayload */
         PluginRunPayload: {
@@ -1578,6 +1714,41 @@ export interface components {
             recommendations?: string[];
             /** Error Groups */
             error_groups?: components["schemas"]["ErrorGroupPayload"][];
+        };
+        /**
+         * PreflightRequest
+         * @description Run preflight against an in-memory config payload.
+         *
+         *     The Launch modal pulls the project's saved config YAML into JSON
+         *     and POSTs it here so the user sees errors *before* hitting the
+         *     actual launch endpoint. ``project_env`` is the same dict the
+         *     launcher will merge on top of process env at fork time.
+         */
+        PreflightRequest: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Project Env */
+            project_env?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * PreflightResponse
+         * @description Result envelope for ``POST /plugins/preflight``.
+         *
+         *     ``ok`` is True only when both ``missing`` and ``instance_errors``
+         *     are empty. The two lists are populated in a single catalog scan
+         *     so the UI doesn't need a second round-trip.
+         */
+        PreflightResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Missing */
+            missing?: components["schemas"]["MissingEnvSchema"][];
+            /** Instance Errors */
+            instance_errors?: components["schemas"]["InstanceErrorSchema"][];
         };
         /** PresetDiffEntry */
         PresetDiffEntry: {
@@ -1896,6 +2067,57 @@ export interface components {
              */
             regenerated: boolean;
         };
+        /**
+         * RequiredEnvSpec
+         * @description Environment variable a plugin needs at runtime.
+         *
+         *     Plugins declare this list explicitly so the UI can render a
+         *     "Required environment variables" block in the Configure modal,
+         *     point the user at the right Settings tab when the value is a
+         *     managed credential (HF / RunPod / MLflow), and refuse to launch
+         *     a pipeline if a non-optional env is unset.
+         *
+         *     Fields:
+         *       name        — env-var name. UPPER_SNAKE_CASE. Stored as-is in
+         *                     the project's `env.json`.
+         *       description — what the value is used for. Surfaces in the UI
+         *                     next to the input.
+         *       optional    — when True, plugin runs even if the var is unset.
+         *       secret      — when True, UI renders a password-style input
+         *                     (`type=password` + show/hide toggle). Default is
+         *                     True because most envs are credentials; explicitly
+         *                     set to False for non-secret config (URLs etc).
+         *       managed_by  — informational hint surfaced in the UI when the
+         *                     var is owned by another Settings surface
+         *                     (`integrations` / `providers`). Lets the modal
+         *                     redirect the user instead of accepting a plain-
+         *                     text override.
+         */
+        RequiredEnvSpec: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Optional
+             * @default false
+             */
+            optional: boolean;
+            /**
+             * Secret
+             * @default true
+             */
+            secret: boolean;
+            /**
+             * Managed By
+             * @default
+             * @enum {string}
+             */
+            managed_by: "integrations" | "providers" | "";
+        };
         /** RestartPoint */
         RestartPoint: {
             /** Stage */
@@ -2076,6 +2298,24 @@ export interface components {
         StagesResponse: {
             /** Stages */
             stages?: components["schemas"]["StageRun"][];
+        };
+        /**
+         * StalePluginEntry
+         * @description One plugin reference in the saved config that no longer matches
+         *     a registered community plugin.
+         *
+         *     Mirrors :class:`src.community.stale_plugins.StalePluginRef` —
+         *     reshaped as a Pydantic model so it lands in OpenAPI cleanly.
+         */
+        StalePluginEntry: {
+            /** Plugin Kind */
+            plugin_kind: string;
+            /** Plugin Name */
+            plugin_name: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Location */
+            location: string;
         };
         /** ToggleFavoriteRequest */
         ToggleFavoriteRequest: {
@@ -3095,6 +3335,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportDefaultsResponse"];
+                };
+            };
+        };
+    };
+    "plugins-preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreflightResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

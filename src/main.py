@@ -317,6 +317,15 @@ app.add_typer(
     help="Scaffold, sync and pack community/ plugin and preset manifests.",
 )
 
+# Plugin authoring toolchain (bootstrap fresh plugin folders).
+from src.cli.plugin_scaffold import plugin_app  # noqa: E402
+
+app.add_typer(
+    plugin_app,
+    name="plugin",
+    help="Bootstrap new plugin folders under community/.",
+)
+
 
 def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
     """

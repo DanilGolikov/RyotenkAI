@@ -20,6 +20,11 @@ interface Props {
    *  Datasets tab) that already wired it; the env block hides itself
    *  when undefined OR when the manifest has no required_env. */
   projectId?: string
+  /** Reward-only: lower-cased strategy types whose phases will receive
+   *  the params on Save. Computed by the caller via
+   *  ``rewardBroadcastTargets`` so the modal stays config-agnostic.
+   *  Empty / undefined ⇒ no broadcast hint. */
+  broadcastTargets?: string[]
   onCancel: () => void
   onSave: (next: PluginInstanceDetails) => Promise<void>
 }
@@ -59,6 +64,7 @@ export function PluginConfigModal({
   initial,
   takenInstanceIds,
   projectId,
+  broadcastTargets,
   onCancel,
   onSave,
 }: Props) {
@@ -322,6 +328,24 @@ export function PluginConfigModal({
             </div>
           )}
         </div>
+
+        {/* Reward broadcast hint — surfaces the fact that Save mirrors
+            params to every phase that references this reward plugin
+            (writeInstanceDetails for kind=reward fans out across the
+            strategies list). Hidden when the targets list is empty so
+            non-reward kinds don't see a confusing extra row. */}
+        {kind === 'reward' && broadcastTargets && broadcastTargets.length > 0 && (
+          <div
+            className="px-4 py-2 border-t border-line-1 text-[11px] text-text-2"
+            data-testid="reward-broadcast-hint"
+          >
+            <span className="font-medium text-text-1">
+              Applies to {broadcastTargets.length}{' '}
+              {broadcastTargets.length === 1 ? 'strategy' : 'strategies'}:
+            </span>{' '}
+            <span className="font-mono">{broadcastTargets.join(', ')}</span>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-line-1 flex items-center justify-between gap-2">

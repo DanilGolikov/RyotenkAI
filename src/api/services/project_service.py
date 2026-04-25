@@ -15,6 +15,7 @@ from src.api.schemas.project import (
     ConfigVersionsResponse,
     ProjectDetail,
     ProjectSummary,
+    StalePluginEntry,
 )
 from src.api.services import config_service
 from src.pipeline.project import (
@@ -201,7 +202,50 @@ def _parse_yaml_safely(text: str) -> dict | None:
 def get_config(registry: ProjectRegistry, project_id: str) -> ConfigResponse:
     _, store, _ = _load_project(registry, project_id)
     yaml_text = store.current_yaml_text()
-    return ConfigResponse(yaml=yaml_text, parsed_json=_parse_yaml_safely(yaml_text))
+    parsed = _parse_yaml_safely(yaml_text)
+    return ConfigResponse(
+        yaml=yaml_text,
+        parsed_json=parsed,
+        stale_plugins=_collect_stale_plugins(parsed),
+    )
+
+
+def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
+    """Walk the saved config for plugin references that no longer match
+    a registered community plugin.
+
+    Empty list when ``parsed`` is None (config didn't parse) or when
+    :class:`PipelineConfig` validation fails — config-level errors
+    surface through the dedicated validate endpoint, not here. We
+    swallow the validation error so a get_config call never fails on
+    config issues alone (the user can still open the editor and fix).
+    """
+    if parsed is None:
+        return []
+
+    # Lazy imports keep the project_service module light at import time
+    # — community catalog pulls torch/datasets via plugin loaders, and
+    # the get_config endpoint is hot enough that we only want that hit
+    # when there's actually parsed YAML to walk.
+    from pydantic import ValidationError
+
+    from src.community.stale_plugins import find_stale_plugins
+    from src.utils.config import PipelineConfig
+
+    try:
+        config = PipelineConfig.model_validate(parsed)
+    except ValidationError:
+        return []
+
+    return [
+        StalePluginEntry(
+            plugin_kind=ref.plugin_kind,
+            plugin_name=ref.plugin_name,
+            instance_id=ref.instance_id,
+            location=ref.location,
+        )
+        for ref in find_stale_plugins(config)
+    ]
 
 
 def save_config(registry: ProjectRegistry, project_id: str, yaml_text: str) -> str | None:

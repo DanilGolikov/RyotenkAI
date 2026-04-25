@@ -533,6 +533,38 @@ export function writeInstanceDetails(
   return next
 }
 
+/** Compute the strategy phases that would receive a Configure-modal
+ *  save for the given reward instance. Used to surface a broadcast
+ *  hint ("These params apply to N strategies: grpo, sapo") under the
+ *  Save button — the user expects per-instance edits but reward
+ *  ``writeInstanceDetails`` mirrors the params dict to *every* phase
+ *  whose ``params.reward_plugin`` matches the instance id.
+ *
+ *  Returns an empty list when the instance isn't a reward plugin or
+ *  isn't referenced by any phase (e.g. a dangling YAML row that the
+ *  user is about to remove). Order of strategy types in the result
+ *  matches their order in ``training.strategies`` so the hint reads
+ *  like the user's own config.
+ */
+export function rewardBroadcastTargets(
+  parsed: Record<string, unknown>,
+  instanceId: string,
+): string[] {
+  const training = isRecord(parsed.training) ? parsed.training : {}
+  const strategies = Array.isArray(training.strategies)
+    ? (training.strategies as unknown[])
+    : []
+  const out: string[] = []
+  for (const s of strategies) {
+    if (!isRecord(s)) continue
+    const params = isRecord(s.params) ? s.params : {}
+    if (params.reward_plugin !== instanceId) continue
+    const t = typeof s.strategy_type === 'string' ? s.strategy_type.toLowerCase() : ''
+    if (t) out.push(t)
+  }
+  return out
+}
+
 /** Rename an instance (change its ``id`` while keeping the reference
  *  to the catalog plugin). No-op for reports (instanceId === pluginId).
  *  Returns ``null`` if the target id is already taken in the same list. */

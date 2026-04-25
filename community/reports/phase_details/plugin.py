@@ -12,10 +12,10 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class PhaseDetailsBlockPlugin:
+class PhaseDetailsBlockPlugin(ReportPlugin):
     plugin_id = "phase_details"
     title = "Phase Details"
     order = 80

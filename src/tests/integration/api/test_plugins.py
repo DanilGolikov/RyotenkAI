@@ -120,3 +120,129 @@ def test_reports_defaults_vs_plugin_list_route_order(client: TestClient) -> None
     resp = client.get("/api/v1/plugins/reports/defaults")
     assert resp.status_code == 200
     assert "sections" in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# /plugins/preflight — env-availability gate (PR7 / A6).
+# ---------------------------------------------------------------------------
+
+
+def _minimal_preflight_config_payload() -> dict:
+    """Return a minimal pipeline config dict that PipelineConfig will
+    accept — used as the floor for preflight tests that mutate the
+    ``evaluation`` block to enable a specific plugin.
+
+    Reading the canonical fixture file keeps the payload in lockstep
+    with schema evolution (it's already CI-validated via load_config)."""
+    import yaml
+    from pathlib import Path as _Path
+
+    fixture = _Path(__file__).resolve().parents[2] / "fixtures/configs/test_pipeline.yaml"
+    return yaml.safe_load(fixture.read_text(encoding="utf-8"))
+
+
+def test_preflight_no_plugins_returns_ok(client: TestClient) -> None:
+    """A config that doesn't reference any non-optional-env plugin → ok=true."""
+    resp = client.post(
+        "/api/v1/plugins/preflight",
+        json={"config": _minimal_preflight_config_payload(), "project_env": {}},
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["missing"] == []
+
+
+def test_preflight_surfaces_missing_envs(
+    client: TestClient, monkeypatch
+) -> None:
+    """Enabling cerebras_judge with no API key set → ok=false + structured row."""
+    monkeypatch.delenv("EVAL_CEREBRAS_API_KEY", raising=False)
+    config = _minimal_preflight_config_payload()
+    config["inference"] = {
+        "enabled": True,
+        "engine": "vllm",
+        "provider": "single_node",
+        "engines": {
+            "vllm": {
+                "merge_image": "test/merge:latest",
+                "serve_image": "test/serve:latest",
+            }
+        },
+    }
+    config["evaluation"] = {
+        "enabled": True,
+        "dataset": {"path": "data/eval.jsonl"},
+        "evaluators": {
+            "plugins": [
+                {
+                    "id": "judge",
+                    "plugin": "cerebras_judge",
+                    "enabled": True,
+                }
+            ]
+        },
+    }
+    resp = client.post(
+        "/api/v1/plugins/preflight",
+        json={"config": config, "project_env": {}},
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["ok"] is False
+    names = [m["name"] for m in payload["missing"]]
+    assert "EVAL_CEREBRAS_API_KEY" in names
+    only = next(m for m in payload["missing"] if m["name"] == "EVAL_CEREBRAS_API_KEY")
+    assert only["plugin_kind"] == "evaluation"
+    assert only["plugin_name"] == "cerebras_judge"
+    assert only["plugin_instance_id"] == "judge"
+    assert only["secret"] is True
+
+
+def test_preflight_project_env_satisfies_requirement(
+    client: TestClient, monkeypatch
+) -> None:
+    """``project_env`` is the same dict the launcher merges at fork —
+    values declared there must satisfy the gate without process env."""
+    monkeypatch.delenv("EVAL_CEREBRAS_API_KEY", raising=False)
+    config = _minimal_preflight_config_payload()
+    config["inference"] = {
+        "enabled": True,
+        "engine": "vllm",
+        "provider": "single_node",
+        "engines": {
+            "vllm": {
+                "merge_image": "test/merge:latest",
+                "serve_image": "test/serve:latest",
+            }
+        },
+    }
+    config["evaluation"] = {
+        "enabled": True,
+        "dataset": {"path": "data/eval.jsonl"},
+        "evaluators": {
+            "plugins": [
+                {"id": "judge", "plugin": "cerebras_judge", "enabled": True}
+            ]
+        },
+    }
+    resp = client.post(
+        "/api/v1/plugins/preflight",
+        json={
+            "config": config,
+            "project_env": {"EVAL_CEREBRAS_API_KEY": "from-env-json"},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["ok"] is True
+    assert payload["missing"] == []
+
+
+def test_preflight_invalid_config_returns_422(client: TestClient) -> None:
+    """Malformed config payload surfaces as 422 — not a 500."""
+    resp = client.post(
+        "/api/v1/plugins/preflight",
+        json={"config": {"oh no this is not a config": True}, "project_env": {}},
+    )
+    assert resp.status_code == 422

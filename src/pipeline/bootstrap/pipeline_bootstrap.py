@@ -123,6 +123,40 @@ class PipelineBootstrap:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
+        # Step 1.5: Preflight gate — refuse to spin up the rest of the
+        # orchestrator if a non-optional ``[[required_env]]`` is unset
+        # OR if any plugin instance's params/thresholds violate the
+        # manifest schema. Catches both classes of mistake at second 0
+        # instead of at minute 4 mid-stage. Process env at this point
+        # already has the project's env.json merged in (the launcher
+        # merges before fork), so we don't pass project_env explicitly.
+        from src.community.preflight import LaunchAbortedError, run_preflight
+
+        report = run_preflight(config, secrets=secrets)
+        if not report.ok:
+            for m in report.missing_envs:
+                logger.error(
+                    "[PREFLIGHT] %s plugin %r (instance %r) needs env %r%s",
+                    m.plugin_kind,
+                    m.plugin_name,
+                    m.plugin_instance_id,
+                    m.name,
+                    f" — {m.description}" if m.description else "",
+                )
+            for e in report.instance_errors:
+                logger.error(
+                    "[PREFLIGHT] %s plugin %r (instance %r) shape error at %s: %s",
+                    e.plugin_kind,
+                    e.plugin_name,
+                    e.plugin_instance_id,
+                    e.location,
+                    e.message,
+                )
+            raise LaunchAbortedError(
+                missing=report.missing_envs,
+                instance_errors=report.instance_errors,
+            )
+
         # Step 2: Pipeline context seeded with run-scope keys.
         # PipelineContext inherits from dict — existing stages keep working.
         context = PipelineContext(

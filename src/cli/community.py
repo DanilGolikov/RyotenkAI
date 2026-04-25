@@ -29,7 +29,12 @@ from src.community.constants import (
 )
 from src.community.pack import PackResult, pack_community_folder
 from src.community.scaffold import scaffold_plugin_manifest, scaffold_preset_manifest
-from src.community.sync import SyncResult, sync_plugin_manifest, sync_preset_manifest
+from src.community.sync import (
+    SyncResult,
+    sync_plugin_envs,
+    sync_plugin_manifest,
+    sync_preset_manifest,
+)
 
 # ---------------------------------------------------------------------------
 # App
@@ -577,6 +582,77 @@ def _missing_manifest_error(target: Target) -> None:
     else:
         lines.append(_usage_hint().rstrip())
     _die("\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# sync-envs
+# ---------------------------------------------------------------------------
+
+
+@community_app.command("sync-envs")
+def sync_envs_cmd(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
+            help="A single plugin folder whose REQUIRED_ENV should be propagated to manifest.toml.",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print the diff that would be written; do not modify manifest.toml.",
+        ),
+    ] = False,
+) -> None:
+    """Re-render manifest's [[required_env]] from the plugin class's REQUIRED_ENV.
+
+    The plugin Python module is imported (just like the loader does at
+    runtime), the ``REQUIRED_ENV`` ClassVar is read, and the manifest's
+    ``[[required_env]]`` block is rewritten to match. Useful when you
+    edit the env contract in code — running this keeps the load-time
+    cross-check happy without hand-editing TOML.
+
+    \b
+    Examples:
+      ryotenkai community sync-envs community/evaluation/cerebras_judge
+      ryotenkai community sync-envs community/reward/my_reward --dry-run
+    """
+    role = _classify_path(path)
+    if role != "plugin":
+        _die(
+            f"sync-envs only works on a single plugin folder; got {role!r} "
+            f"for {_rel(path)}"
+        )
+
+    manifest_path = path / "manifest.toml"
+    if not manifest_path.is_file():
+        typer.echo(_style_err(f"error: no manifest.toml in {_rel(path)}"), err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        result = sync_plugin_envs(path)
+    except Exception as exc:
+        typer.echo(_style_err(f"error: {exc}"), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not result.changed:
+        typer.echo(
+            f"{_style_dim('·')} {_rel(manifest_path)} already in sync (no changes)"
+        )
+        return
+
+    typer.echo(result.diff)
+    if dry_run:
+        typer.echo(_style_warn("[dry-run]") + f" {_rel(manifest_path)} not modified")
+        return
+
+    manifest_path.write_text(result.new_text, encoding="utf-8")
+    typer.echo(f"{_style_ok('✓')} updated {_rel(manifest_path)}")
 
 
 # ---------------------------------------------------------------------------

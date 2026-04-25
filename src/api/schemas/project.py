@@ -54,9 +54,29 @@ class SaveConfigResponse(BaseModel):
     snapshot_filename: str | None = None
 
 
+class StalePluginEntry(BaseModel):
+    """One plugin reference in the saved config that no longer matches
+    a registered community plugin.
+
+    Mirrors :class:`src.community.stale_plugins.StalePluginRef` —
+    reshaped as a Pydantic model so it lands in OpenAPI cleanly.
+    """
+
+    plugin_kind: str  # "validation" | "evaluation" | "reward" | "reports"
+    plugin_name: str
+    instance_id: str
+    location: str
+
+
 class ConfigResponse(BaseModel):
     yaml: str
     parsed_json: dict[str, Any] | None = None
+    #: Plugin references in ``yaml`` whose target id is not currently
+    #: registered in the community catalog. Populated when the config
+    #: parses cleanly enough to walk the plugin enumerators (otherwise
+    #: empty — config-level errors surface via the validate endpoint).
+    #: The UI renders a "Remove from config" button per row.
+    stale_plugins: list[StalePluginEntry] = []
 
 
 class ConfigVersion(BaseModel):

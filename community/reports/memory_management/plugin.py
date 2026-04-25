@@ -14,10 +14,10 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class MemoryManagementBlockPlugin:
+class MemoryManagementBlockPlugin(ReportPlugin):
     plugin_id = "memory_management"
     title = "Memory Management"
     order = 60

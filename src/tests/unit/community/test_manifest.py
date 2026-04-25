@@ -36,9 +36,81 @@ def test_plugin_manifest_rejects_suggested_keys_outside_schema() -> None:
         PluginManifest.model_validate(body)
 
 
-def test_plugin_manifest_secrets_default_empty() -> None:
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "snake_case",
+        "x",
+        "with9_digit",
+        "_leading_underscore",
+        "all_lower_with_underscores_123",
+    ],
+)
+def test_plugin_manifest_accepts_valid_python_identifier_field_names(
+    field_name: str,
+) -> None:
+    """Valid snake_case identifiers round-trip through manifest validation."""
+    body = _base_plugin_body()
+    body["params_schema"] = {field_name: {"type": "integer"}}
+    PluginManifest.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "kebab-case",
+        "CamelCase",
+        "9_leading_digit",
+        "with space",
+        "uppercase_X",
+        "dotted.name",
+    ],
+)
+def test_plugin_manifest_rejects_non_identifier_field_names(field_name: str) -> None:
+    """Field names that aren't snake_case Python identifiers fail load.
+
+    Forces the manifest layer to enforce the contract everyone
+    downstream relies on (TypedDict codegen, scaffold CLI, attribute
+    access patterns) — drift here would silently leak to every
+    consumer."""
+    body = _base_plugin_body()
+    body["params_schema"] = {field_name: {"type": "integer"}}
+    with pytest.raises(ValidationError, match=r"snake_case Python identifiers"):
+        PluginManifest.model_validate(body)
+
+
+def test_plugin_manifest_thresholds_schema_field_names_also_validated() -> None:
+    """The constraint applies to thresholds_schema too — symmetric with
+    params_schema since both feed the same UI / runtime code paths."""
+    body = _base_plugin_body()
+    body["thresholds_schema"] = {"bad-name": {"type": "integer"}}
+    with pytest.raises(ValidationError, match=r"thresholds_schema field names"):
+        PluginManifest.model_validate(body)
+
+
+def test_plugin_manifest_required_env_default_empty() -> None:
+    """No ``[[required_env]]`` declared → empty list, no derived secrets.
+
+    The legacy ``[secrets]`` block was removed in schema v4; envs (secret
+    or not) are now declared via ``[[required_env]]`` and the runtime
+    ``_required_secrets`` ClassVar comes from the
+    ``required_secret_names()`` helper.
+    """
     manifest = PluginManifest.model_validate(_base_plugin_body())
-    assert manifest.secrets.required == []
+    assert manifest.required_env == []
+    assert manifest.required_secret_names() == ()
+
+
+def test_plugin_manifest_required_secret_names_filters() -> None:
+    """Only ``secret=true, optional=false`` envs end up in the runtime tuple."""
+    body = _base_plugin_body()
+    body["required_env"] = [
+        {"name": "EVAL_REAL_SECRET", "secret": True, "optional": False},
+        {"name": "EVAL_OPTIONAL_SECRET", "secret": True, "optional": True},
+        {"name": "EVAL_PUBLIC_URL", "secret": False, "optional": False},
+    ]
+    manifest = PluginManifest.model_validate(body)
+    assert manifest.required_secret_names() == ("EVAL_REAL_SECRET",)
 
 
 def test_plugin_manifest_ui_manifest_shape() -> None:
