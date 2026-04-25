@@ -24,6 +24,7 @@ import {
   removeInstance,
   renameInstance,
   reorderInstances,
+  rewardBroadcastTargets,
   writeInstanceDetails,
 } from './pluginInstances'
 
@@ -597,5 +598,75 @@ describe('combinatorial: every (kind × mutation) on empty config is safe', () =
   it.each(kinds)('reorderInstances(%s, {}, []) is a no-op', (kind) => {
     const next = reorderInstances(kind, {}, [])
     expect(readInstances(kind, next)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// rewardBroadcastTargets — the helper that powers PR13's "params apply
+// to N strategies" hint. Pure function, easy to cover exhaustively.
+// ---------------------------------------------------------------------------
+
+describe('rewardBroadcastTargets', () => {
+  it('returns every strategy whose phase references the instance id', () => {
+    const cfg = {
+      training: {
+        strategies: [
+          { strategy_type: 'sft', params: {} },
+          {
+            strategy_type: 'grpo',
+            params: { reward_plugin: 'helixql_compiler_semantic' },
+          },
+          {
+            strategy_type: 'sapo',
+            params: { reward_plugin: 'helixql_compiler_semantic' },
+          },
+        ],
+      },
+    }
+    expect(rewardBroadcastTargets(cfg, 'helixql_compiler_semantic')).toEqual([
+      'grpo',
+      'sapo',
+    ])
+  })
+
+  it('returns an empty list when the instance is not referenced anywhere', () => {
+    const cfg = {
+      training: {
+        strategies: [
+          {
+            strategy_type: 'grpo',
+            params: { reward_plugin: 'other_reward' },
+          },
+        ],
+      },
+    }
+    expect(rewardBroadcastTargets(cfg, 'helixql_compiler_semantic')).toEqual([])
+  })
+
+  it('returns an empty list when the config has no training section', () => {
+    expect(rewardBroadcastTargets({}, 'anything')).toEqual([])
+  })
+
+  it('preserves config order (no de-duplication, no sorting)', () => {
+    const cfg = {
+      training: {
+        strategies: [
+          { strategy_type: 'sapo', params: { reward_plugin: 'r' } },
+          { strategy_type: 'grpo', params: { reward_plugin: 'r' } },
+        ],
+      },
+    }
+    expect(rewardBroadcastTargets(cfg, 'r')).toEqual(['sapo', 'grpo'])
+  })
+
+  it('lowercases strategy types so the hint reads consistently', () => {
+    const cfg = {
+      training: {
+        strategies: [
+          { strategy_type: 'GRPO', params: { reward_plugin: 'r' } },
+        ],
+      },
+    }
+    expect(rewardBroadcastTargets(cfg, 'r')).toEqual(['grpo'])
   })
 })

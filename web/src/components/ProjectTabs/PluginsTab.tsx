@@ -36,6 +36,7 @@ import {
   isRecord,
   readInstanceDetails,
   readInstances,
+  rewardBroadcastTargets,
   removeInstance,
   renameInstance,
   reorderInstances,
@@ -425,6 +426,11 @@ export function PluginsTab({ projectId }: Props) {
             initial={details}
             takenInstanceIds={takenIds}
             projectId={projectId}
+            broadcastTargets={
+              configuring.kind === 'reward'
+                ? rewardBroadcastTargets(parsed, configuring.instanceId)
+                : undefined
+            }
             onCancel={() => setConfiguring(null)}
             onSave={async (edited) => {
               await handleSaveConfigure(configuring.kind, details, edited)
