@@ -36,6 +36,58 @@ def test_plugin_manifest_rejects_suggested_keys_outside_schema() -> None:
         PluginManifest.model_validate(body)
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "snake_case",
+        "x",
+        "with9_digit",
+        "_leading_underscore",
+        "all_lower_with_underscores_123",
+    ],
+)
+def test_plugin_manifest_accepts_valid_python_identifier_field_names(
+    field_name: str,
+) -> None:
+    """Valid snake_case identifiers round-trip through manifest validation."""
+    body = _base_plugin_body()
+    body["params_schema"] = {field_name: {"type": "integer"}}
+    PluginManifest.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "kebab-case",
+        "CamelCase",
+        "9_leading_digit",
+        "with space",
+        "uppercase_X",
+        "dotted.name",
+    ],
+)
+def test_plugin_manifest_rejects_non_identifier_field_names(field_name: str) -> None:
+    """Field names that aren't snake_case Python identifiers fail load.
+
+    Forces the manifest layer to enforce the contract everyone
+    downstream relies on (TypedDict codegen, scaffold CLI, attribute
+    access patterns) — drift here would silently leak to every
+    consumer."""
+    body = _base_plugin_body()
+    body["params_schema"] = {field_name: {"type": "integer"}}
+    with pytest.raises(ValidationError, match=r"snake_case Python identifiers"):
+        PluginManifest.model_validate(body)
+
+
+def test_plugin_manifest_thresholds_schema_field_names_also_validated() -> None:
+    """The constraint applies to thresholds_schema too — symmetric with
+    params_schema since both feed the same UI / runtime code paths."""
+    body = _base_plugin_body()
+    body["thresholds_schema"] = {"bad-name": {"type": "integer"}}
+    with pytest.raises(ValidationError, match=r"thresholds_schema field names"):
+        PluginManifest.model_validate(body)
+
+
 def test_plugin_manifest_required_env_default_empty() -> None:
     """No ``[[required_env]]`` declared → empty list, no derived secrets.
 
