@@ -10,3 +10,34 @@ description = "Validates model_answer via Helix CLI compile (syntax + analysis, 
 [plugin.entry_point]
 module = "plugin"
 class = "HelixQLGeneratedSyntaxBackendPlugin"
+
+[params_schema.timeout_seconds]
+type = "integer"
+min = 1
+default = 30
+description = "Helix CLI compile timeout per sample, seconds."
+
+[thresholds_schema.min_valid_ratio]
+type = "number"
+min = 0.0
+max = 1.0
+default = 0.8
+description = "Lower bound on the share of generated queries that must compile cleanly."
+
+[suggested_params]
+timeout_seconds = 30
+
+[suggested_thresholds]
+min_valid_ratio = 0.8
+
+# Optional override for the `helix` CLI used to compile samples.
+# When unset the plugin falls back to whatever is on PATH (the bundled
+# auto-installer in the reward plugin's setup script puts it on PATH
+# inside Docker). Surface as a non-secret env so the Configure modal
+# shows the value alongside the other knobs.
+[[required_env]]
+name = "HELIX_CLI_PATH"
+description = "Path to the `helix` CLI binary used to compile generated queries."
+optional = true
+secret = false
+managed_by = ""
