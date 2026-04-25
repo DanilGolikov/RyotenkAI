@@ -37,7 +37,7 @@ class ReportPluginRegistry(PluginRegistry["ReportPlugin"]):
     behaviour) so plugins that omit the ClassVar still get a populated id.
     """
 
-    _kind: ClassVar[str] = "report"
+    _kind: ClassVar[str] = "reports"
 
     def register_from_community(self, loaded: LoadedPlugin) -> None:
         plugin_cls = loaded.plugin_cls
@@ -52,7 +52,7 @@ class ReportPluginRegistry(PluginRegistry["ReportPlugin"]):
         # if the caller accidentally provided some, to surface bugs.
         if init_kwargs:
             raise TypeError(
-                f"report plugin instantiation does not accept init_kwargs; "
+                f"reports plugin instantiation does not accept init_kwargs; "
                 f"got {list(init_kwargs.keys())}"
             )
         return {}

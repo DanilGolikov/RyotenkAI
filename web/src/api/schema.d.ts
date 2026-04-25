@@ -1596,11 +1596,17 @@ export interface components {
         /**
          * PluginManifest
          * @description Normalised manifest surfaced to the web UI.
+         *
+         *     The ``schema_version`` default mirrors :data:`LATEST_SCHEMA_VERSION`
+         *     on the backend so OpenAPI consumers see the version the API actually
+         *     emits. The runtime value always comes from
+         *     :meth:`src.community.manifest.PluginManifest.ui_manifest`; this
+         *     default is purely an OpenAPI documentation hint.
          */
         PluginManifest: {
             /**
              * Schema Version
-             * @default 1
+             * @default 4
              */
             schema_version: number;
             /** Id */

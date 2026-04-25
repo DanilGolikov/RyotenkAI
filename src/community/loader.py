@@ -449,7 +449,32 @@ def load_plugins(
             ))
             continue
 
-        _attach_community_metadata(plugin_cls, manifest, source_root)
+        # Metadata attachment runs the REQUIRED_ENV cross-check (A7)
+        # which can raise on Python ↔ TOML drift. Wrap in the same
+        # strict/loose-mode contract as the import step so a single
+        # plugin's contract violation doesn't take the whole catalog
+        # down in production.
+        try:
+            _attach_community_metadata(plugin_cls, manifest, source_root)
+        except Exception as exc:
+            if is_strict:
+                raise
+            logger.error(
+                "[COMMUNITY_LOADER] kind=%s id=%s metadata attach failed: %s",
+                kind,
+                manifest.plugin.id,
+                exc,
+            )
+            failures.append(LoadFailure(
+                kind=kind,
+                entry_name=entry_name,
+                plugin_id=manifest.plugin.id,
+                error_type="metadata_error",
+                message=str(exc),
+                traceback=traceback.format_exc(),
+            ))
+            continue
+
         plugins.append(
             LoadedPlugin(
                 manifest=manifest, plugin_cls=plugin_cls, source_path=source_root

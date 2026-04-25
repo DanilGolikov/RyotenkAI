@@ -25,9 +25,16 @@ PluginKind = Literal["reward", "validation", "evaluation", "reports"]
 
 
 class PluginManifest(BaseModel):
-    """Normalised manifest surfaced to the web UI."""
+    """Normalised manifest surfaced to the web UI.
 
-    schema_version: int = 1
+    The ``schema_version`` default mirrors :data:`LATEST_SCHEMA_VERSION`
+    on the backend so OpenAPI consumers see the version the API actually
+    emits. The runtime value always comes from
+    :meth:`src.community.manifest.PluginManifest.ui_manifest`; this
+    default is purely an OpenAPI documentation hint.
+    """
+
+    schema_version: int = 4
     id: str
     name: str
     version: str = "1.0.0"

@@ -57,7 +57,18 @@ def preflight(request: PreflightRequest) -> PreflightResponse:
         # validation; here we're validating an arbitrary payload that
         # happens to be a config file. Surface the full error list so
         # the front-end can highlight the offending fields.
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+        #
+        # ``include_url=False`` strips Pydantic's ``url`` field that
+        # always points back to errors.pydantic.dev (noise for the
+        # frontend). Without ``ctx`` filtering Pydantic v2 leaks the
+        # original exception object into ``ctx['error']``, which the
+        # default JSONResponse encoder can't serialise — that crashes
+        # the request with a 500 instead of returning the 422.
+        errors = [
+            {k: v for k, v in err.items() if k != "ctx"}
+            for err in exc.errors(include_url=False)
+        ]
+        raise HTTPException(status_code=422, detail=errors) from exc
 
 
 @router.get("/{kind}", response_model=PluginListResponse)

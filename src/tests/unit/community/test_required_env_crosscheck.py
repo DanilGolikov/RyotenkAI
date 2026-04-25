@@ -207,6 +207,44 @@ def test_sync_envs_clears_block_when_required_env_is_empty(tmp_community_root: P
     assert "required_env" not in written
 
 
+def test_crosscheck_failure_becomes_load_failure_in_loose_mode(
+    tmp_community_root: Path,
+) -> None:
+    """REQUIRED_ENV ↔ TOML drift should not take the whole catalog down.
+
+    In loose mode (production default) the contract violation is captured
+    as a structured ``LoadFailure`` row alongside the rest of the loaded
+    plugins — so one author's mistake doesn't break every other plugin
+    in the catalog. Strict mode still re-raises (covered above).
+    """
+    py = (
+        '(\n'
+        '    RequiredEnvSpec(name="EVAL_KEY", optional=False, secret=True, managed_by=""),\n'
+        ')'
+    )
+    # TOML disagrees — optional flag flipped.
+    toml = textwrap.dedent("""
+        [[required_env]]
+        name = "EVAL_KEY"
+        optional = true
+        secret = true
+        managed_by = ""
+    """)
+    _write_eval_plugin_with_required_env(
+        tmp_community_root, "drifty",
+        py_required_env=py,
+        toml_required_env=toml,
+    )
+
+    result = load_plugins("evaluation", root=tmp_community_root, strict=False)
+    assert list(result) == []
+    assert len(result.failures) == 1
+    f = result.failures[0]
+    assert f.error_type == "metadata_error"
+    assert f.plugin_id == "drifty"
+    assert "REQUIRED_ENV ↔ manifest cross-check failed" in f.message
+
+
 def test_sync_envs_idempotent(tmp_community_root: Path) -> None:
     """Running sync-envs twice produces no further diff."""
     py = (

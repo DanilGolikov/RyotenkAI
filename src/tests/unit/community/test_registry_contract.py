@@ -361,5 +361,5 @@ def test_reports_registry_rejects_init_kwargs(
     registry = ReportPluginRegistry()
     registry.register_from_community(loaded[0])
 
-    with pytest.raises(TypeError, match="report plugin instantiation does not accept init_kwargs"):
+    with pytest.raises(TypeError, match="reports plugin instantiation does not accept init_kwargs"):
         registry.instantiate("tiny", params={"unexpected": True})

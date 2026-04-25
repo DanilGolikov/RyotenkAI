@@ -4423,7 +4423,7 @@
           "schema_version": {
             "type": "integer",
             "title": "Schema Version",
-            "default": 1
+            "default": 4
           },
           "id": {
             "type": "string",
@@ -4505,7 +4505,7 @@
           "kind"
         ],
         "title": "PluginManifest",
-        "description": "Normalised manifest surfaced to the web UI."
+        "description": "Normalised manifest surfaced to the web UI.\n\nThe ``schema_version`` default mirrors :data:`LATEST_SCHEMA_VERSION`\non the backend so OpenAPI consumers see the version the API actually\nemits. The runtime value always comes from\n:meth:`src.community.manifest.PluginManifest.ui_manifest`; this\ndefault is purely an OpenAPI documentation hint."
       },
       "PluginRunPayload": {
         "properties": {

@@ -20,9 +20,14 @@ if TYPE_CHECKING:
 
 
 class EvaluatorPluginRegistry(PluginRegistry["EvaluatorPlugin"]):
-    """Evaluation-kind registry. Plugin ctor expects ``(params, thresholds)``."""
+    """Evaluation-kind registry. Plugin ctor expects ``(params, thresholds)``.
 
-    _kind: ClassVar[str] = "evaluator"
+    ``_kind`` matches the canonical :data:`PluginKind` literal
+    (``"evaluation"``) so error messages and log lines speak the same
+    vocabulary as the manifest / API layer.
+    """
+
+    _kind: ClassVar[str] = "evaluation"
 
     def _make_init_kwargs(self, init_kwargs: dict[str, Any]) -> dict[str, Any]:
         return {
