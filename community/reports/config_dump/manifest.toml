@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "config_dump"
 kind = "reports"
-name = "ConfigDumpBlockPlugin"
+name = "Configuration"
 version = "1.0.0"
-category = "report"
+category = "configuration"
 stability = "stable"
-description = "Report block: config_dump."
+description = "Verbatim YAML dump of the resolved pipeline config — a permanent record of what was actually trained against."
 
 [plugin.entry_point]
 module = "plugin"

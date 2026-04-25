@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "issues"
 kind = "reports"
-name = "IssuesBlockPlugin"
+name = "Warnings & Errors"
 version = "1.0.0"
-category = "report"
+category = "diagnostics"
 stability = "stable"
-description = "Report block: issues."
+description = "Surface every warning and error captured by the orchestrator during the run."
 
 [plugin.entry_point]
 module = "plugin"

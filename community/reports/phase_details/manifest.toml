@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "phase_details"
 kind = "reports"
-name = "PhaseDetailsBlockPlugin"
+name = "Phase Details"
 version = "1.0.0"
-category = "report"
+category = "training"
 stability = "stable"
-description = "Report block: phase_details."
+description = "Per-strategy phase breakdown — strategy type, dataset, duration, completion status."
 
 [plugin.entry_point]
 module = "plugin"

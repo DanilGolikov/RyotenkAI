@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "footer"
 kind = "reports"
-name = "FooterBlockPlugin"
+name = "Footer"
 version = "1.0.0"
-category = "report"
+category = "structural"
 stability = "stable"
-description = "Report block: footer."
+description = "Bottom-of-report sign-off — generation timestamp and tooling attribution."
 
 [plugin.entry_point]
 module = "plugin"

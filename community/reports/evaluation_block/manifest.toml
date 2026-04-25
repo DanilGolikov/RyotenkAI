@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "evaluation_block"
 kind = "reports"
-name = "EvaluationBlockPlugin"
+name = "Model Evaluation"
 version = "1.0.0"
-category = "report"
+category = "evaluation"
 stability = "stable"
-description = "Report block: evaluation_block."
+description = "Per-evaluator pass/fail verdict, metrics, and recommendations from the ModelEvaluator stage."
 
 [plugin.entry_point]
 module = "plugin"

@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "training_configuration"
 kind = "reports"
-name = "TrainingConfigurationBlockPlugin"
+name = "Training Configuration"
 version = "1.0.0"
-category = "report"
+category = "configuration"
 stability = "stable"
-description = "Report block: training_configuration."
+description = "Per-strategy hyperparameters — epochs, learning rate, batch size, scheduler, mixed precision."
 
 [plugin.entry_point]
 module = "plugin"

@@ -1,11 +1,13 @@
+schema_version = 4
+
 [plugin]
 id = "metrics_analysis"
 kind = "reports"
-name = "MetricsAnalysisBlockPlugin"
+name = "Metrics Analysis"
 version = "1.0.0"
-category = "report"
+category = "metrics"
 stability = "stable"
-description = "Report block: metrics_analysis."
+description = "Loss curves, learning rate schedule, gradient norms — the headline training-progress charts and trends."
 
 [plugin.entry_point]
 module = "plugin"
