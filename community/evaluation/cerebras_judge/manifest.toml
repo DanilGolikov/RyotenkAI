@@ -13,3 +13,14 @@ class = "CerebrasJudgePlugin"
 
 [secrets]
 required = ["EVAL_CEREBRAS_API_KEY"]
+
+# UI hint mirroring [secrets].required so the Configure modal renders
+# an input section for these env vars and the user doesn't have to
+# guess where to plug their Cerebras key. Runtime still resolves the
+# value through the Secrets layer (see plugin/main.py:30).
+[[required_env]]
+name = "EVAL_CEREBRAS_API_KEY"
+description = "API key for the Cerebras Inference Cloud (https://cloud.cerebras.ai). Used by this judge to score model answers."
+optional = false
+secret = true
+managed_by = ""

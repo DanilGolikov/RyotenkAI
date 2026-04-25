@@ -26,3 +26,15 @@ default = 10
 [suggested_params]
 validation_backend = "compile"
 timeout_seconds = 10
+
+# Optional path to the `helix` CLI. The plugin's setup script
+# auto-installs it under /usr/local/bin (or ~/.local/bin) inside
+# Docker, but operators running on bare metal may want to point at a
+# pre-built binary. Surfaced as a non-secret env so the Configure
+# modal lets them override without touching env.json by hand.
+[[required_env]]
+name = "HELIX_CLI_PATH"
+description = "Path to the `helix` CLI binary used by the compile-validation backend. Leave empty to use whatever is on PATH."
+optional = true
+secret = false
+managed_by = ""
