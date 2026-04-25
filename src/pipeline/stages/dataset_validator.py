@@ -522,45 +522,33 @@ class DatasetValidator(PipelineStage):
         """
         Check dataset column format against strategy requirements.
 
-        Calls strategy.validate_dataset() for each unique strategy type.
-        Runs O(1) — only reads column metadata, no dataset iteration.
+        Delegates the per-strategy ``validate_dataset`` loop to the pure
+        helper in :mod:`src.data.validation.standalone` so the HTTP API
+        (``POST /projects/.../datasets/.../validate``) and this pipeline
+        stage answer from the same code path. Behaviour preserved:
+        early-fail on the first strategy whose format check fails, with
+        the same error code ``DATASET_FORMAT_ERROR``.
 
+        O(1) — only reads column metadata, no dataset iteration.
         Called BEFORE quality plugins to fail fast before GPU spin-up.
         """
-        if not strategy_phases:
-            return Ok(None)
+        from src.data.validation.standalone import check_dataset_format
 
-        from src.training.strategies.factory import StrategyFactory
+        bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
+        if bundle.is_failure():
+            return Err(bundle.unwrap_err())
 
-        factory = StrategyFactory()
-        seen_types: set[str] = set()
-
-        for phase in strategy_phases:
-            strategy_type = phase.strategy_type
-            if strategy_type in seen_types:
-                continue
-            seen_types.add(strategy_type)
-
-            try:
-                strategy = factory.create_from_phase(phase, self._config)
-            except ValueError as e:
+        for item in bundle.unwrap():
+            if not item.ok:
                 return Err(
                     DatasetError(
-                        message=f"[{dataset_name}] Unknown strategy type '{strategy_type}': {e}",
+                        message=(
+                            f"[{dataset_name}] Format check failed for "
+                            f"'{item.strategy_type}': {item.message}"
+                        ),
                         code="DATASET_FORMAT_ERROR",
                     )
                 )
-
-            result = strategy.validate_dataset(dataset)
-            if result.is_failure():
-                err = result.unwrap_err()
-                return Err(
-                    DatasetError(
-                        message=f"[{dataset_name}] Format check failed for '{strategy_type}': {err.message}",
-                        code="DATASET_FORMAT_ERROR",
-                    )
-                )
-
         return Ok(None)
 
     @staticmethod

@@ -44,6 +44,17 @@ class DatasetConfig(StrictBaseModel):
     adapter_type: str | None = Field(default=None)
     adapter_config: dict[str, Any] = Field(default_factory=dict)
 
+    # === UI / lifecycle metadata ===
+    # `auto_created=True` is set by the web UI when a dataset entry is
+    # generated together with a strategy (1:1 strict pairing). Removing
+    # the strategy then removes the dataset automatically. Manually-
+    # added datasets keep this False, so the UI can confirm with the
+    # user before deleting them. Backend treats it as opaque metadata.
+    auto_created: bool = Field(
+        default=False,
+        description="True when this dataset was auto-created together with a strategy (1:1 lifecycle).",
+    )
+
     validations: DatasetValidationsConfig = Field(
         default_factory=lambda: DatasetValidationsConfig(critical_failures=0, mode="fast", plugins=[]),
     )

@@ -144,9 +144,12 @@ body {
     box-shadow: inset 2px 0 0 #8b5cf6;   /* violet-500 */
   }
 
-  /* ---------- Inputs ---------- */
+  /* ---------- Inputs ----------
+     Inputs sit on `surface-inset` (darker than canvas) so the вдавленный
+     contrast itself signals "edit me" — no heavy border needed. Border
+     drops to `line-1` (hairline) and only lifts to `brand` on focus. */
   .input {
-    @apply w-full bg-surface-1 border border-line-2 rounded-md px-3 py-2 text-sm text-ink-1 placeholder:text-ink-4 focus:border-brand focus:outline-none transition;
+    @apply w-full bg-surface-inset border border-line-1 rounded-md px-3 py-2 text-sm text-ink-1 placeholder:text-ink-4 focus:border-brand focus:outline-none transition;
   }
 }
 
@@ -201,9 +204,38 @@ body {
     box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.55);
   }
 }
-.field-attention-pulse {
+/* Halo targets the actual interactive control (input / select trigger /
+   toggle), NOT the wrapping <div>. Some custom renderers (HFModelField,
+   MLflowIntegrationField, …) wrap the control in a flex/grid div that
+   stretches to the row's full width — putting the halo on the wrapper
+   used to paint a 600 px glow around a 32 px number input.
+   Using a descendant `:is(...)` selector keeps the halo glued to the
+   real control regardless of how deep the wrapper hierarchy goes. */
+.field-attention-pulse :is(
+  input,
+  textarea,
+  select,
+  button[aria-haspopup="listbox"],
+  [role="switch"]
+) {
   animation: field-attention-pulse 1.5s ease-in-out infinite;
   border-radius: 4px;
+}
+
+/* Error ring: same descendant-targeting trick as the pulse — paint
+   the red ring/border on the actual control, never the wrapper. */
+.cfg-error-target :is(
+  input,
+  textarea,
+  select,
+  button[aria-haspopup="listbox"],
+  [role="switch"]
+) {
+  border-radius: 4px;
+  /* err = Tailwind red-400 — matches the `err` token in tailwind.config.ts */
+  border-color: #f87171 !important;
+  box-shadow: 0 0 0 2px rgb(248 113 113 / 0.45);
+  background-color: rgb(248 113 113 / 0.04);
 }
 
 /* Live-running dot — sky-blue so "happening now" is visually distinct

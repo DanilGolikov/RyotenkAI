@@ -12,12 +12,16 @@ interface Props {
    *  ``supported_strategies`` don't include any of these. */
   activeStrategyTypes: Set<string>
   onInfoClick?: (plugin: PluginManifest) => void
+  /** Limit rendered kinds. ``undefined`` → all four (PluginsTab
+   *  project-wide view); a concrete list → only those kinds (Datasets
+   *  tab renders this drawer with `['validation']` only). */
+  onlyKinds?: PluginKind[]
 }
 
 // Project-wide kind order: Validation → Reward → Evaluation → Reports.
 // Mirrors ``KIND_SECTIONS`` in ``PluginsTab`` so the palette reads in
 // the same sequence as the drop zones on the left.
-const KIND_ORDER: PluginKind[] = ['validation', 'reward', 'evaluation', 'reports']
+const DEFAULT_kindOrder: PluginKind[] = ['validation', 'reward', 'evaluation', 'reports']
 const KIND_LABELS: Record<PluginKind, string> = {
   validation: 'Validation',
   reward: 'Reward',
@@ -43,13 +47,20 @@ export function PluginPaletteDrawer({
   attachedIdsByKind,
   activeStrategyTypes,
   onInfoClick,
+  onlyKinds,
 }: Props) {
   const { byKind, isLoading, error } = useAllPlugins()
   const [query, setQuery] = useState('')
-  // Collapsed by default — all four accordion groups closed so the
-  // palette doesn't dump 30+ chips on the user at once. A non-empty
-  // search auto-opens the matching groups (see effect below).
-  const [openKinds, setOpenKinds] = useState<Set<PluginKind>>(new Set())
+  // Collapsed by default for ALL views — palette is a quick-attach
+  // surface, not a catalog browser. A non-empty search auto-opens the
+  // matching groups (see effect below).
+  const kindOrder = useMemo<PluginKind[]>(
+    () => (onlyKinds && onlyKinds.length > 0
+      ? DEFAULT_kindOrder.filter((k) => onlyKinds.includes(k))
+      : DEFAULT_kindOrder),
+    [onlyKinds],
+  )
+  const [openKinds, setOpenKinds] = useState<Set<PluginKind>>(() => new Set())
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -59,7 +70,7 @@ export function PluginPaletteDrawer({
       reward: [],
       reports: [],
     }
-    for (const kind of KIND_ORDER) {
+    for (const kind of kindOrder) {
       const list = byKind[kind] ?? []
       out[kind] = list.filter((p) => {
         // Reports: drop already-attached ids outright (single-instance).
@@ -80,7 +91,7 @@ export function PluginPaletteDrawer({
   useEffect(() => {
     if (!query.trim()) return
     const toOpen = new Set<PluginKind>()
-    for (const kind of KIND_ORDER) {
+    for (const kind of kindOrder) {
       if (filtered[kind].length > 0) toOpen.add(kind)
     }
     setOpenKinds(toOpen)
@@ -127,7 +138,7 @@ export function PluginPaletteDrawer({
         )}
         {isLoading && <div className="text-2xs text-ink-3">Loading…</div>}
 
-        {!isLoading && KIND_ORDER.map((kind) => {
+        {!isLoading && kindOrder.map((kind) => {
           const list = filtered[kind]
           const isOpen = openKinds.has(kind)
           return (

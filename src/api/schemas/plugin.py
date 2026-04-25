@@ -14,6 +14,18 @@ from pydantic import BaseModel, Field
 PluginKind = Literal["reward", "validation", "evaluation", "reports"]
 
 
+class RequiredEnvSpec(BaseModel):
+    """Mirror of :class:`src.community.manifest.RequiredEnvSpec` for the
+    web API. Kept here so the OpenAPI surface is self-contained and
+    decoupled from internal manifest evolution."""
+
+    name: str
+    description: str = ""
+    optional: bool = False
+    secret: bool = True
+    managed_by: Literal["integrations", "providers", ""] = ""
+
+
 class PluginManifest(BaseModel):
     """Normalised manifest surfaced to the web UI."""
 
@@ -33,6 +45,9 @@ class PluginManifest(BaseModel):
     thresholds_schema: dict[str, Any] = Field(default_factory=dict)
     suggested_params: dict[str, Any] = Field(default_factory=dict)
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
+    #: Declarative env contract — UI surfaces these as inputs in the
+    #: Configure modal. Empty list when the plugin doesn't need envs.
+    required_env: list[RequiredEnvSpec] = Field(default_factory=list)
 
 
 class PluginListResponse(BaseModel):

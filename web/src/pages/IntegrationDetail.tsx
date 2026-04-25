@@ -47,17 +47,13 @@ export function IntegrationDetailPage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <div className="text-lg font-semibold text-ink-1">{integration.name}</div>
-              <span className="text-[0.65rem] text-brand-alt px-1.5 py-0.5 rounded border border-brand-alt/40">
+              <span className="pill pill-info">
                 {typeInfo?.label ?? integration.type}
               </span>
               {integration.has_token ? (
-                <span className="text-[0.65rem] text-ok border border-ok/40 bg-ok/10 rounded px-1.5 py-0.5">
-                  token set
-                </span>
+                <span className="pill pill-ok">token set</span>
               ) : (
-                <span className="text-[0.65rem] text-ink-4 border border-line-1 rounded px-1.5 py-0.5">
-                  no token
-                </span>
+                <span className="pill pill-idle">no token</span>
               )}
             </div>
             <div className="text-2xs text-ink-3 font-mono mt-0.5">{integration.id}</div>

@@ -195,9 +195,16 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
   // Strategy phase item: dataset is promoted to required (it's the
   // primary knob alongside strategy_type). Stays above the "Show N
   // optional" toggle and gets the red asterisk.
+  //
+  // `params` is hidden from the form: it's a free-form `dict[str, Any]`
+  // owned by plugins (e.g. `reward_plugin: id` written by the Plugins
+  // tab) — there's no schema for the user to fill in by hand here, and
+  // surfacing an empty `Params {}` row was confusing. Power users can
+  // still edit it via the YAML view; the value round-trips losslessly.
   'training.strategies.*': {
     requires: ['dataset'],
     fieldOrder: ['strategy_type', 'dataset'],
+    hidden: ['params'],
   },
   // Phase-level leaf configs: once the user opens them, every knob is
   // relevant. Skip the "Show N optional" dance. Also collapse by

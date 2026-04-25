@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import yaml
 from fastapi import Depends, HTTPException
 
 from src.api.config import ApiSettings
-from src.pipeline.project import ProjectRegistry
+from src.pipeline.project import ProjectRegistry, ProjectStore
+from src.pipeline.project.registry import ProjectRegistryError
 from src.pipeline.settings.integrations import IntegrationRegistry
 from src.pipeline.settings.providers import ProviderRegistry
 from src.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:
     from src.api.services.token_crypto import TokenCrypto
+    from src.config.datasets.schema import DatasetConfig
 
 
 @lru_cache(maxsize=1)
@@ -67,6 +71,96 @@ def get_integration_registry(
 ) -> IntegrationRegistry:
     """Reusable integration registry. Same workspace root as projects/providers."""
     return IntegrationRegistry(settings.projects_root_resolved)
+
+
+@dataclass(frozen=True)
+class DatasetRequestContext:
+    """Resolved context for a dataset-scoped HTTP request.
+
+    Holds the parsed pipeline config (dict — *not* a typed Pydantic
+    instance, because that would require the full config to be valid;
+    preview/validate endpoints must work even when other unrelated
+    parts of the config are broken), the dataset key, and the parsed
+    :class:`DatasetConfig` for that key.
+    """
+
+    project_id: str
+    project_root: Path
+    dataset_key: str
+    dataset_config: "DatasetConfig"
+    parsed_pipeline_config: dict[str, Any]
+
+
+def resolve_dataset_key(
+    project_id: str,
+    dataset_key: str,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> DatasetRequestContext:
+    """Look up ``datasets.<dataset_key>`` in the project's current YAML
+    config and return a resolved request context.
+
+    Raises:
+        404 — project not found / dataset key not present
+        400 — invalid project_id or dataset_key (path traversal, empty)
+        422 — dataset block can't be parsed into ``DatasetConfig``
+    """
+    if not project_id or "/" in project_id or "\\" in project_id or ".." in project_id:
+        raise HTTPException(status_code=400, detail="invalid_project_id")
+    if not dataset_key or "/" in dataset_key or "\\" in dataset_key or ".." in dataset_key:
+        raise HTTPException(status_code=400, detail="invalid_dataset_key")
+
+    try:
+        entry = registry.resolve(project_id)
+    except ProjectRegistryError as exc:
+        raise HTTPException(status_code=404, detail=f"project_not_found: {exc}") from exc
+
+    project_root = Path(entry.path)
+    store = ProjectStore(project_root)
+    if not store.exists():
+        raise HTTPException(status_code=404, detail="project_directory_missing")
+
+    yaml_text = store.current_yaml_text()
+    try:
+        parsed = yaml.safe_load(yaml_text) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"config_yaml_parse_error: {exc}"
+        ) from exc
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=422, detail="config_yaml_not_object")
+
+    datasets_block = parsed.get("datasets") or {}
+    if not isinstance(datasets_block, dict) or dataset_key not in datasets_block:
+        raise HTTPException(
+            status_code=404, detail=f"dataset_not_found: {dataset_key}"
+        )
+
+    raw = datasets_block[dataset_key]
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=422, detail=f"dataset_entry_not_object: {dataset_key}"
+        )
+
+    # Local import — config schema imports validators which transitively
+    # touch many subsystems; keeping the import lazy avoids slowing down
+    # API boot for endpoints that don't need it.
+    from src.config.datasets.schema import DatasetConfig
+
+    try:
+        dataset_config = DatasetConfig.model_validate(raw)
+    except Exception as exc:  # ValidationError or any pydantic-raised
+        raise HTTPException(
+            status_code=422, detail=f"dataset_config_invalid: {exc}"
+        ) from exc
+
+    return DatasetRequestContext(
+        project_id=project_id,
+        project_root=project_root.resolve(),
+        dataset_key=dataset_key,
+        dataset_config=dataset_config,
+        parsed_pipeline_config=parsed,
+    )
 
 
 @lru_cache(maxsize=1)

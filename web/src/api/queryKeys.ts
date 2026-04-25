@@ -36,4 +36,13 @@ export const qk = {
   configPresets: () => ['config', 'presets'] as const,
   configPresetPreview: (id: string, currentHash: string) =>
     ['config', 'presets', id, 'preview', currentHash] as const,
+  datasetPreview: (
+    projectId: string,
+    datasetKey: string,
+    split: 'train' | 'eval',
+  ) => ['projects', projectId, 'datasets', datasetKey, 'preview', split] as const,
+  datasetPathCheck: (projectId: string, datasetKey: string) =>
+    ['projects', projectId, 'datasets', datasetKey, 'path-check'] as const,
+  datasetValidation: (projectId: string, datasetKey: string) =>
+    ['projects', projectId, 'datasets', datasetKey, 'validate'] as const,
 }

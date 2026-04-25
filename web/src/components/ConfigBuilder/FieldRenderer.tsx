@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { JsonSchemaNode, PipelineJsonSchema } from '../../api/hooks/useConfigSchema'
 import { ArrayField } from './ArrayField'
+import { DatasetSelectField } from './DatasetSelectField'
 import { FieldAnchor } from './FieldAnchor'
 import { HelpTooltip } from './HelpTooltip'
 import { AlertIcon } from '../icons'
@@ -44,6 +45,10 @@ const CUSTOM_FIELD_RENDERERS: Record<
   'model.name': HFModelField,
   'experiment_tracking.mlflow.integration': MLflowIntegrationField,
   'experiment_tracking.huggingface.integration': HuggingFaceIntegrationField,
+  // Every strategy phase gets a dataset picker instead of a free-text
+  // input. Numeric array indices are normalised to `*` by the path
+  // normaliser below, so the key matches every element in the chain.
+  'training.strategies.*.dataset': DatasetSelectField,
 }
 import {
   detectKind,
@@ -75,41 +80,34 @@ type FieldProps = {
 }
 
 /**
- * Dense label-left row with a hairline divider + subtle row hover.
- * Labels are intentionally muted (zinc-400) so input values pop — the
- * brightness delta is what lets the eye scan boundaries in a long form.
- * Hairlines come from `space-y-2` on the surrounding
- * ObjectFields container.
+ * Linear/Stripe-style config row: label-left as plain text (no pill,
+ * no background, no border) + input-right on `surface-inset` (вдавлено).
+ *
+ * Why no label-pill: pre-redesign the label sat in a 220px box with its
+ * own border + bg-surface-1, which (a) added a 4th-level border on every
+ * row, (b) made the row feel like a separate chunk, (c) created two
+ * competing design languages on screens that mix scalar rows + cards.
+ * Plain-text labels read like Linear/Vercel/Grafana settings — chrome
+ * disappears, the eye scans labels and inputs on their own merits.
+ *
+ * Visual rules:
+ *   - idle / ok / editing → no extra paint. Input contrast (вдавленный
+ *     surface-inset) + focus-ring carries the affordance.
+ *   - error → red ring on the input only, plus inline message below.
+ *     The label asterisk turns red so the row reads as "errored" at a
+ *     glance even when the user is scrolled past the input.
  */
-// Visual rules (after iteration with design):
-//   - idle / ok / editing → no bar. Focus ring on the input already
-//     signals "you're here" via the existing `focus:border-brand` inside
-//     INPUT_BASE; we mirror that onto the label pill so both halves of
-//     the row light up together.
-//   - error → red bar under the input + matching red border on the label
-//     pill + inline message below.
-const STATUS_BORDER: Record<FieldStatus['state'], string> = {
+// Error styling targets actual controls (input / select / textarea /
+// toggle / listbox-button), NOT the wrapping div. Custom renderers
+// often wrap the control in a flex container that fills the row —
+// applying the ring on the wrapper makes a small 32 px field look
+// like a giant errored block. Same logic as `.field-attention-pulse`
+// in globals.css.
+const STATUS_RING: Record<FieldStatus['state'], string> = {
   idle: '',
   editing: '',
   ok: '',
-  // Apply ring to the DIRECT CHILD (input / SelectField trigger / etc.),
-  // not the wrapper — the wrapper fills the whole grid cell, so a ring on
-  // it spans the full pane while the actual input may be narrow. Arbitrary
-  // variant [&>*] lets us reach only the one rendered input element.
-  // Thicker 2px ring + subtle red bg tint + red border: errors should
-  // pop visually against the flat grey surface — previously a 1px ring
-  // was too quiet to notice while scrolling a long form.
-  error:
-    '[&>*]:rounded [&>*]:ring-2 [&>*]:ring-err/40 [&>*]:border-err [&>*]:bg-err/[0.04]',
-}
-
-const LABEL_PILL_BORDER: Record<FieldStatus['state'], string> = {
-  idle: 'border-line-1',
-  editing: 'border-brand',
-  ok: 'border-line-1',
-  // Matching the stronger ring on the input side: thin red ring + red
-  // border on the label pill so both halves of the row read as "errored".
-  error: 'border-err ring-1 ring-err/30',
+  error: 'cfg-error-target',
 }
 
 function LabelledRow({
@@ -126,81 +124,76 @@ function LabelledRow({
   required?: boolean
   path?: string
   value?: unknown
-  /** Skip the input-side status bar. Used for checkboxes where a bar
-   *  under a 16×16 box reads as a glitch. */
+  /** Skip the input-side error ring. Used for checkboxes where a ring
+   *  around a 16×16 box reads as a glitch. */
   suppressBar?: boolean
   children: React.ReactNode
 }) {
   const status = useFieldStatus(path ?? '', Boolean(required), value)
   const ctx = useValidationCtx()
-  const bar = path && !suppressBar ? STATUS_BORDER[status.state] : STATUS_BORDER.idle
-  const labelBorder = path ? LABEL_PILL_BORDER[status.state] : LABEL_PILL_BORDER.idle
-  // Pulse class: soft yellow attention halo, applied to both halves
-  // while the field has an unresolved error AND isn't currently
-  // focused. The moment the user clicks into the field, focusedPath
-  // matches and the class falls off — animation stops cleanly. Kept
-  // OFF the input-side wrapper when `suppressBar` is set (e.g.
-  // checkboxes) to avoid the halo cupping a 16px box.
+  const ring = path && !suppressBar ? STATUS_RING[status.state] : STATUS_RING.idle
+  // Pulse halo on the INPUT side only — pre-redesign it cupped both
+  // label pill and input wrapper, which felt loud. The single yellow
+  // glow around the input is enough signal "look here", and it falls
+  // off the moment the user focuses the field.
   const isFocused = path != null && ctx?.focusedPath === path
   const pulseCls =
     path && status.state === 'error' && !isFocused
       ? 'field-attention-pulse'
       : ''
-  // Derive a stable DOM id from the dotted config path so the <label
-  // htmlFor> binds to the input rendered by children, and screen
-  // readers can announce "Field X, required, value Y" consistently.
-  // Path is guaranteed unique within one form instance. CSS.escape
-  // handles numeric array indices and any chars that aren't valid in
-  // id selectors.
   const inputId = path ? `cfg-${path.replace(/[^a-zA-Z0-9_-]/g, '_')}` : undefined
   const helpLabel = path ? `Help for ${label}` : 'Field help'
-  // `group/row` + `group-focus-within/row:*` lets the label column light
-  // up brand-burgundy whenever any input inside the row is focused — a
-  // single visual signal "you're editing this field" that survives
-  // focus shifts between sub-inputs (e.g. combobox popovers). Brand tint
-  // stays ≤10% alpha per the "brand doesn't flood forms" policy.
+  // Required asterisk: muted brand-warm by default, flips to err when
+  // the row is in error state — single visual signal that travels with
+  // the label as the user scrolls.
+  const asteriskCls =
+    status.state === 'error' ? 'text-err' : 'text-brand-warm'
   return (
-    <div className="group/row py-1.5">
-      <div className="grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center">
-        <div
-          className={`flex items-center gap-2 min-w-0 rounded bg-surface-1 border ${labelBorder} ${pulseCls} px-2.5 h-8 transition-colors group-focus-within/row:bg-brand-weak/10 group-focus-within/row:border-brand/30`}
-        >
-          {/* Required marker lives in a fixed-width slot on the left so
-              every row aligns to the same column, regardless of label
-              length. Pattern borrowed from Ant Design; absent rows get
-              an invisible placeholder to preserve the grid. */}
-          <span
-            aria-hidden={!required}
-            className={`inline-flex w-2 shrink-0 text-brand-warm text-xs leading-none ${required ? '' : 'invisible'}`}
-          >
-            *
-          </span>
+    <div className="py-1.5">
+      <div className="grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-1 sm:gap-4 items-start sm:items-center">
+        <div className="flex items-center gap-1.5 min-w-0 h-8 px-0.5">
           <label
             htmlFor={inputId}
-            className="flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate"
+            className="flex-1 min-w-0 text-xs text-ink-2 tracking-tight truncate"
           >
             {label}
-            {required && <span className="sr-only"> (required)</span>}
+            {required && (
+              <>
+                <span aria-hidden className={`ml-0.5 ${asteriskCls}`}>*</span>
+                <span className="sr-only"> (required)</span>
+              </>
+            )}
           </label>
-          {/* Error glyph — sits to the LEFT of the help "?" so the
-              user registers "something's wrong here" before they
-              look at the input column. Only rendered on error; no
-              tooltip interaction — the full message already lives
-              inline below the field row. */}
           {status.state === 'error' && (
-            <span
-              aria-hidden
-              title={status.message}
-              className="inline-flex w-4 h-4 items-center justify-center text-err shrink-0"
-            >
-              <AlertIcon className="w-3.5 h-3.5" />
+            // Hover-triggered tooltip for the inline error message —
+            // native `title` was too slow (~1.5 s delay) and easy to
+            // miss. The popover lives inside the label cell and shows
+            // up immediately on hover/focus, mirroring HelpTooltip's
+            // visual style for consistency.
+            <span className="relative inline-flex group/err shrink-0">
+              <span
+                aria-label={`Error: ${status.message ?? ''}`}
+                role="img"
+                tabIndex={0}
+                className="inline-flex w-4 h-4 items-center justify-center text-err cursor-help focus:outline-none focus:ring-1 focus:ring-err/40 rounded"
+              >
+                <AlertIcon className="w-3.5 h-3.5" />
+              </span>
+              {status.message && (
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute left-0 top-full mt-1.5 z-30 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-err/40 bg-surface-4 px-3 py-2 text-[0.7rem] leading-snug text-ink-1 shadow-card whitespace-normal break-words opacity-0 group-hover/err:opacity-100 group-focus-within/err:opacity-100 transition-opacity"
+                >
+                  <span className="text-err font-medium">Error:</span> {status.message}
+                </span>
+              )}
             </span>
           )}
           <HelpTooltip text={description} label={helpLabel} />
         </div>
         <div
           id={inputId}
-          className={`w-full min-w-0 ${bar} ${pulseCls} transition-colors`}
+          className={`w-full min-w-0 ${ring} ${pulseCls} transition-colors`}
           aria-invalid={status.state === 'error' || undefined}
           aria-describedby={
             status.state === 'error' && inputId ? `${inputId}-err` : undefined
@@ -212,7 +205,7 @@ function LabelledRow({
       {status.state === 'error' && status.message && (
         <div
           id={inputId ? `${inputId}-err` : undefined}
-          className="mt-1 ml-0 sm:ml-[236px] text-[0.65rem] text-err font-mono break-words"
+          className="mt-1 ml-0 sm:ml-[216px] text-[0.65rem] text-err font-mono break-words"
         >
           {status.message}
         </div>
@@ -241,11 +234,13 @@ function useFieldHandlers(path: string) {
 }
 
 // Dense input baseline: 32px height, 13px text, monospace for values.
-// Grafana-flat: neutral surface-1 bg + hairline line-1 border. Focus
-// lifts to brand border (violet) without any coloured background, so
-// the form reads as chrome rather than decoration.
+// Linear/repowise-flat: input sits on `surface-inset` (DARKER than the
+// surrounding card surface), which makes it read as вдавленный — the
+// contrast itself signals "edit me" without a heavy border. Border drops
+// to hairline line-1, focus lifts to brand-violet without any coloured
+// background. Eye scans values, not chrome.
 const INPUT_BASE =
-  'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors placeholder:text-ink-4 placeholder:italic'
+  'h-8 rounded-md bg-surface-inset border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors placeholder:text-ink-4 placeholder:italic'
 
 const WIDE_NAME_RE = /(path|url|uri|dir|file|repo|image|endpoint|bucket|model|name|prefix|suffix|volume|description|prompt|tracking_uri)/i
 
@@ -312,28 +307,21 @@ export function FieldRenderer(props: FieldProps) {
 
   const fieldOverride = getFieldOverride(path)
   if (fieldOverride?.comingSoon) {
-    // Don't surface this field as "required" — the form widget isn't
-    // built yet, so the client can't satisfy it anyway. Server still
-    // validates the underlying YAML, so correctness isn't lost; we
-    // just stop blocking the UI on a widget we haven't shipped. Show
-    // a muted banner underneath so the user knows they must edit the
-    // YAML view to set this value in the meantime.
+    // Don't surface as required — widget isn't shipped yet, so client
+    // can't satisfy it. Server still validates the underlying YAML, so
+    // correctness isn't lost. Visual treatment: single inline row with
+    // muted text + `pill-skip` chip — same vertical weight as a real
+    // field, so it doesn't visually shout "broken section". Help-tooltip
+    // carries the "edit in YAML" guidance instead of a 2-line caption.
+    const tip =
+      `${description ?? fieldOverride.comingSoon}\n\nPicker in progress — switch to YAML view to set this value today.`
     return wrapAnchor(
-      <div className="space-y-1">
-        <LabelledRow label={label} description={description} required={false} path={path} value={fallback}>
-          <div className="h-8 inline-flex items-center gap-2 px-2.5 rounded-md border border-dashed border-line-1 bg-surface-0/40 text-xs text-ink-3 italic">
-            <span>{fieldOverride.comingSoon}</span>
-            <span className="not-italic text-[0.55rem] uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-alt/15 text-brand-alt">
-              soon
-            </span>
-          </div>
-        </LabelledRow>
-        <div className="ml-0 sm:ml-[236px] text-[0.65rem] text-ink-4">
-          Picker in progress — switch to the{' '}
-          <span className="text-ink-3 font-medium">YAML</span> view to set this
-          value today.
+      <LabelledRow label={label} description={tip} required={false} path={path} value={fallback}>
+        <div className="h-8 inline-flex items-center gap-2 text-xs text-ink-3 italic">
+          <span>{fieldOverride.comingSoon}</span>
+          <span className="pill pill-skip not-italic">soon</span>
         </div>
-      </div>,
+      </LabelledRow>,
     )
   }
   if (fieldOverride?.enumValues) {
@@ -490,26 +478,30 @@ export function FieldRenderer(props: FieldProps) {
       // Flat render: the active subtab already owns the frame, no need for
       // a nested collapsible card inside it.
       //
-      // Header design — follows the Linear/Stripe/GitHub pattern for
-      // config forms:
-      //   • Typography carries the hierarchy (18–20 px, font-weight 600).
-      //     Decoration is minimal — no accent bars or gradient flourishes.
-      //   • A tiny uppercase "eyebrow" above the title gives context
-      //     ("Section") without bolder chrome.
-      //   • Hairline divider below the whole block keeps rhythm between
-      //     sections without a heavy box.
+      // Header — Linear/Stripe Settings pattern: H2 + one-line caption
+      // (the schema description) + hairline divider. The eyebrow
+      // ("SECTION") was decoration noise — the left-rail's own
+      // "SECTIONS" header already carries that signal, repeating it on
+      // the right pane was a tautology. With the eyebrow gone, the H2
+      // can sit larger and become the single anchor.
       return (
         <div className="space-y-5">
-          <header className="pb-3 border-b border-line-1/50">
-            <div className="text-[0.6rem] font-medium uppercase tracking-[0.16em] text-ink-4 mb-1">
-              Section
-            </div>
+          <header className="pb-3 border-b border-line-1">
             <div className="flex items-baseline gap-2">
-              <h3 className="text-[1.15rem] font-semibold text-ink-1 tracking-tight leading-tight">
+              <h2 className="text-[1.25rem] font-semibold text-ink-1 tracking-tight leading-tight">
                 {label}
-              </h3>
+              </h2>
               <HelpTooltip text={description} label={`Help for ${label}`} />
             </div>
+            {description && (
+              // Section descriptions in pydantic-derived schemas can be
+              // very long (whole architecture notes). Clamp to 2 lines
+              // so the header stays compact; full text is still
+              // available via the help-tooltip "?" beside the title.
+              <p className="mt-1 text-xs text-ink-3 max-w-2xl line-clamp-2">
+                {description}
+              </p>
+            )}
           </header>
           <ObjectFields
             root={root}
@@ -883,22 +875,14 @@ function CollapsibleCard({
   bodyExtra?: React.ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  // Flat group: hairline border + surface-2 (one tier up from canvas).
+  // No left brand-bar, no gradient wash — those previously made nested
+  // groups feel like a separate design language inside the form. Open
+  // state shifts only the chevron rotation + a hairline divider between
+  // header and body. Brand-policy intact: violet stays for CTA / focus
+  // / active-tab, structural chrome is neutral.
   return (
-    // Nested collapsibles wear a violet (`brand-alt`) left-line as the
-    // secondary brand tone — top sections use burgundy, nested groups
-    // use violet, so two levels read as two moods (see Brand-usage
-    // policy in FRONTEND_GUIDELINES.md). When closed the card stays flat
-    // on `surface-2`; when open, the header gets a soft violet-to-right
-    // wash and the body drops to `surface-1` so the open group reads as
-    // a well, not a pasted-on block.
-    <div
-      className={[
-        'relative rounded border border-line-1 transition-colors',
-        open
-          ? 'bg-surface-1 border-l-2 border-l-brand-alt/50'
-          : 'bg-surface-2 border-l-2 border-l-brand-alt/25 hover:border-l-brand-alt/40',
-      ].join(' ')}
-    >
+    <div className="rounded-md border border-line-1 bg-surface-2 transition-colors">
       <div
         role="button"
         tabIndex={-1}
@@ -907,10 +891,8 @@ function CollapsibleCard({
           setOpen((v) => !v)
         }}
         className={[
-          'flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-colors',
-          open
-            ? 'bg-gradient-to-r from-brand-alt/[0.12] via-transparent to-transparent'
-            : 'hover:bg-surface-3/40',
+          'flex items-center gap-2 px-3.5 py-2.5 cursor-pointer transition-colors hover:bg-surface-3/30',
+          open ? 'border-b border-line-1' : '',
         ].join(' ')}
       >
         <button
@@ -924,15 +906,17 @@ function CollapsibleCard({
         >
           <span
             aria-hidden
-            className={`text-[10px] transition-transform ${
-              open ? 'rotate-90 text-brand-alt' : 'text-ink-3'
+            className={`text-[10px] text-ink-3 transition-transform ${
+              open ? 'rotate-90' : ''
             }`}
           >
             ▸
           </span>
           <span className="text-xs text-ink-1 font-medium">
             {label}
-            {required && <span className="ml-1 text-brand-warm">*</span>}
+            {required && (
+              <span className="ml-1 text-brand-warm" aria-hidden>*</span>
+            )}
           </span>
         </button>
         <span data-no-toggle>
@@ -941,7 +925,7 @@ function CollapsibleCard({
         {headerExtra && <span data-no-toggle className="ml-auto">{headerExtra}</span>}
       </div>
       {open && (
-        <div className="px-4 pb-3 pt-1 space-y-3">
+        <div className="px-3.5 pb-3 pt-2 space-y-2">
           {bodyExtra}
           {children}
         </div>

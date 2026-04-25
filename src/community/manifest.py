@@ -51,6 +51,41 @@ class SecretsSpec(BaseModel):
     required: list[str] = Field(default_factory=list)
 
 
+class RequiredEnvSpec(BaseModel):
+    """Environment variable a plugin needs at runtime.
+
+    Plugins declare this list explicitly so the UI can render a
+    "Required environment variables" block in the Configure modal,
+    point the user at the right Settings tab when the value is a
+    managed credential (HF / RunPod / MLflow), and refuse to launch
+    a pipeline if a non-optional env is unset.
+
+    Fields:
+      name        — env-var name. UPPER_SNAKE_CASE. Stored as-is in
+                    the project's `env.json`.
+      description — what the value is used for. Surfaces in the UI
+                    next to the input.
+      optional    — when True, plugin runs even if the var is unset.
+      secret      — when True, UI renders a password-style input
+                    (`type=password` + show/hide toggle). Default is
+                    True because most envs are credentials; explicitly
+                    set to False for non-secret config (URLs etc).
+      managed_by  — informational hint surfaced in the UI when the
+                    var is owned by another Settings surface
+                    (`integrations` / `providers`). Lets the modal
+                    redirect the user instead of accepting a plain-
+                    text override.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    description: str = ""
+    optional: bool = False
+    secret: bool = True
+    managed_by: Literal["integrations", "providers", ""] = ""
+
+
 class CompatSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -228,6 +263,15 @@ class PluginManifest(BaseModel):
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
     secrets: SecretsSpec = Field(default_factory=SecretsSpec)
     compat: CompatSpec = Field(default_factory=CompatSpec)
+    required_env: list[RequiredEnvSpec] = Field(
+        default_factory=list,
+        description=(
+            "Environment variables this plugin needs at runtime. The web UI "
+            "renders inputs for these in the Configure modal; values are "
+            "persisted into the project's env.json (the same place general "
+            "project env vars live)."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_suggested_against_schema(self) -> PluginManifest:
@@ -276,6 +320,7 @@ class PluginManifest(BaseModel):
             "thresholds_schema": params_to_json_schema(self.thresholds_schema),
             "suggested_params": dict(self.suggested_params),
             "suggested_thresholds": dict(self.suggested_thresholds),
+            "required_env": [spec.model_dump() for spec in self.required_env],
         }
 
 

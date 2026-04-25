@@ -34,19 +34,23 @@ export default {
         '2xl': '1359px', // default 1536 / 1.13
       },
       colors: {
-        // Surfaces — near-black canvas (~L 11%) with ~3% L lifts per step.
-        // No hue tint — chrome reads as neutral dark, closer to Grafana.
-        'surface-0': '#181b1f',   // app canvas
-        'surface-1': '#1f2226',   // sidebar / inputs
-        'surface-2': '#262a2f',   // cards / hover-of-input
-        'surface-3': '#2f3338',   // hover / selected
-        'surface-4': '#3a3e44',   // popover
+        // Surfaces — Linear/repowise-inspired near-black scale. Canvas is
+        // a deep cool-grey (~L 7%) with ~3-4% L lifts per step. Adding
+        // `surface-inset` (BELOW canvas) so inputs can sit вдавлено —
+        // contrast itself replaces a structural border around the field.
+        'surface-inset': '#0a0c10',   // input wells (darker than canvas)
+        'surface-0':     '#101216',   // app canvas
+        'surface-1':     '#161a1f',   // sidebar / surfaces
+        'surface-2':     '#1d2127',   // cards / elevated
+        'surface-3':     '#252a31',   // hover / selected
+        'surface-4':     '#2e333b',   // popover
 
-        // Borders — hairline off-white greys. Lower contrast than before
-        // so cards feel flat; relies on surface elevation + hover to
-        // communicate grouping.
-        'line-1': '#2c3036',
-        'line-2': '#3c4046',
+        // Borders — opaque approximations of `rgba(255,255,255,.06)` /
+        // `.10)` on the new canvas. Hairline-soft so structural chrome
+        // stays out of the way; surface elevation + focus-ring carry the
+        // grouping work instead.
+        'line-1': '#1f2329',
+        'line-2': '#2a2f37',
 
         // Text — ink-2 bumped to zinc-300 so body copy stays crisp
         // against the now-lighter surface-2.

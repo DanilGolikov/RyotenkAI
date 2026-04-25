@@ -25,6 +25,7 @@ import { YamlView } from '../YamlView'
 import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { useConfigDraft } from '../../hooks/useConfigDraft'
 import { Spinner } from '../ui'
+import { syncStrategyDatasetCoupling } from './datasetCoupling'
 
 // Draft persistence lives in `hooks/useConfigDraft.ts`. See the file's
 // header for the rationale — TL;DR: drafts are a device-local notepad
@@ -222,8 +223,13 @@ export function ConfigTab({ projectId }: { projectId: string }) {
   }, [saveMut.isPending, saveMut.isSuccess, validateMut.isPending, dirty, yamlParseError, view])
 
   function applyFormChange(next: Record<string, unknown>) {
-    setFormValue(next)
-    setYamlText(dumpYaml(next))
+    // Auto-coupling: diff against the previous formValue and create or
+    // prune `datasets.<key>` entries so every strategy ends up with a
+    // 1:1 dataset. Pure helper — idempotent when nothing changed, so
+    // running it on every change is safe.
+    const coupled = syncStrategyDatasetCoupling(formValue, next)
+    setFormValue(coupled)
+    setYamlText(dumpYaml(coupled))
     setDirty(true)
     setYamlParseError(null)
   }

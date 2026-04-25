@@ -26,8 +26,13 @@ interface Props {
   onBlur?: () => void
 }
 
+// Mirror INPUT_BASE exactly so a <SelectField> reads as "just another
+// input" next to <input type="text"> rows — previously trigger sat on
+// `surface-1` while inputs lived on `surface-inset`, which made every
+// select look like a different widget family. Same bg, same rounding,
+// same border, same focus behavior.
 const TRIGGER_BASE =
-  'h-8 rounded bg-surface-1 border border-line-1 px-2.5 pr-7 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors flex items-center justify-between gap-2'
+  'h-8 rounded-md bg-surface-inset border border-line-1 px-2.5 pr-7 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors flex items-center justify-between gap-2'
 
 /**
  * Custom listbox dropdown. Mirrors native ``<select>`` semantics (value,
@@ -125,9 +130,13 @@ export function SelectField({
         <span aria-hidden className="text-ink-3 text-[10px]">▾</span>
       </button>
       {open && (
+        // Popover is the one place in the form that sits ABOVE the
+        // canvas, so in dark-theme z-elevation it reads lighter than
+        // the trigger (inset → surface-2 step up). Border stays hairline
+        // line-1; the `shadow-card` drop already signals "floating".
         <div
           role="listbox"
-          className="absolute z-30 left-0 mt-1 min-w-full rounded border border-line-2 bg-surface-1 shadow-card overflow-hidden py-0.5"
+          className="absolute z-30 left-0 mt-1 min-w-full rounded-md border border-line-1 bg-surface-2 shadow-card overflow-hidden py-0.5"
         >
           <ul className="list-none m-0 p-0">
             {items.map((opt, idx) => {
@@ -151,11 +160,18 @@ export function SelectField({
                   }}
                   className={[
                     'relative pl-3 pr-3 py-1.5 text-[13px] font-mono cursor-pointer',
+                    // Selected row: flat `surface-3` + bright text, no
+                    // violet gradient wash. Brand-policy: violet only on
+                    // CTA / focus-ring / active-tab / nav-active — a
+                    // dropdown option is structural, not a call-to-action.
+                    // Active (keyboard cursor) gets a lighter surface-3/60
+                    // so the "you're about to pick this one" signal is
+                    // distinguishable from the committed selection.
                     selected
-                      ? 'text-ink-1 bg-gradient-brand-soft shadow-inset-accent'
+                      ? 'bg-surface-3 text-ink-1'
                       : active
-                        ? 'bg-surface-2 text-ink-1'
-                        : 'text-ink-2',
+                        ? 'bg-surface-3/60 text-ink-1'
+                        : 'text-ink-2 hover:text-ink-1',
                   ].join(' ')}
                 >
                   {opt.label ?? opt.value}

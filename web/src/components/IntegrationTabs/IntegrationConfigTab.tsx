@@ -11,11 +11,14 @@ import { dumpYaml, safeYamlParse } from '../../lib/yaml'
 import { HelpTooltip } from '../ConfigBuilder/HelpTooltip'
 import { Spinner, Toggle } from '../ui'
 
+// Mirrors INPUT_BASE in ConfigBuilder/FieldRenderer.tsx — input sits on
+// `surface-inset` (вдавлено) with a hairline border. Same widget look
+// as the rest of the app's forms.
 const INPUT_CLS =
-  'h-8 rounded bg-surface-1 border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors'
+  'h-8 rounded-md bg-surface-inset border border-line-1 px-2.5 text-[13px] text-ink-1 font-mono focus:outline-none focus:border-brand hover:border-line-2 transition-colors'
 
 const ROW_CLS =
-  'py-1.5 grid grid-cols-1 sm:grid-cols-[220px_minmax(0,1fr)] gap-2 sm:gap-4 items-start sm:items-center'
+  'py-1.5 grid grid-cols-1 sm:grid-cols-[200px_minmax(0,1fr)] gap-1 sm:gap-4 items-start sm:items-center'
 
 export function IntegrationConfigTab({
   integrationId,
@@ -194,20 +197,16 @@ function MLflowForm({ integrationId }: { integrationId: string }) {
           <button
             type="button"
             onClick={() => setTokenReveal((v) => !v)}
-            className="h-8 px-2.5 text-2xs rounded border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition"
+            className="h-8 px-2.5 text-2xs rounded-md border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition"
           >
             {tokenReveal ? 'Hide' : 'Show'}
           </button>
-          {hasToken && (
-            <span className="text-ok border border-ok/40 bg-ok/10 rounded px-1.5 py-0.5 text-[0.65rem]">
-              token set
-            </span>
-          )}
+          {hasToken && <span className="pill pill-ok">token set</span>}
           {hasToken && (
             <button
               type="button"
               onClick={clearToken}
-              className="h-8 px-2.5 text-2xs rounded border border-err/50 text-err hover:bg-err/10 hover:border-err transition"
+              className="h-8 px-2.5 text-2xs rounded-md border border-err/50 text-err hover:bg-err/10 hover:border-err transition"
             >
               Clear
             </button>
@@ -506,20 +505,16 @@ function HuggingFaceForm({ integrationId }: { integrationId: string }) {
           <button
             type="button"
             onClick={() => setReveal((v) => !v)}
-            className="h-8 px-2.5 text-2xs rounded border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition"
+            className="h-8 px-2.5 text-2xs rounded-md border border-line-1 text-ink-3 hover:text-ink-1 hover:border-line-2 transition"
           >
             {reveal ? 'Hide' : 'Show'}
           </button>
-          {hasToken && (
-            <span className="text-ok border border-ok/40 bg-ok/10 rounded px-1.5 py-0.5 text-[0.65rem]">
-              token set
-            </span>
-          )}
+          {hasToken && <span className="pill pill-ok">token set</span>}
           {hasToken && (
             <button
               type="button"
               onClick={clear}
-              className="h-8 px-2.5 text-2xs rounded border border-err/50 text-err hover:bg-err/10 hover:border-err transition"
+              className="h-8 px-2.5 text-2xs rounded-md border border-err/50 text-err hover:bg-err/10 hover:border-err transition"
             >
               Clear
             </button>
@@ -586,24 +581,26 @@ function FieldRow({
   children: React.ReactNode
 }) {
   const labelText = useMemo(() => label, [label])
+  // Linear-style: label-only on the left, no pill chrome. Matches the
+  // ConfigBuilder LabelledRow rewrite — same column width, same height,
+  // same asterisk treatment.
   return (
     <div className={ROW_CLS}>
-      <div className="flex items-center gap-2 min-w-0 rounded bg-surface-1 border border-line-1 px-2.5 h-8">
-        <span
-          aria-hidden={!required}
-          className={`inline-flex w-2 shrink-0 text-brand-warm text-xs leading-none ${
-            required ? '' : 'invisible'
-          }`}
-        >
-          *
-        </span>
-        <span className="flex-1 min-w-0 text-xs text-ink-2 font-medium tracking-tight truncate">
+      <div className="flex items-center gap-1.5 min-w-0 h-8 px-0.5">
+        <span className="flex-1 min-w-0 text-xs text-ink-2 tracking-tight truncate">
           {labelText}
-          {required && <span className="sr-only"> (required)</span>}
+          {required && (
+            <>
+              <span aria-hidden className="ml-0.5 text-brand-warm">*</span>
+              <span className="sr-only"> (required)</span>
+            </>
+          )}
         </span>
         <HelpTooltip text={description} label={`Help for ${label}`} />
       </div>
-      <div className="w-full min-w-0 flex items-center flex-wrap">{children}</div>
+      <div className="w-full min-w-0 flex items-center flex-wrap gap-2">
+        {children}
+      </div>
     </div>
   )
 }
