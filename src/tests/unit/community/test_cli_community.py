@@ -331,3 +331,102 @@ def test_sync_on_unknown_dir_shows_usage_hint(
     assert result.exit_code == 1
     combined = result.output + (result.stderr or "")
     assert "cannot tell" in combined or "Expected one of" in combined
+
+
+# ---------------------------------------------------------------------------
+# sync-envs (PR8 / A7) — propagates plugin class's REQUIRED_ENV into TOML.
+# ---------------------------------------------------------------------------
+
+
+def test_sync_envs_writes_required_env_block(
+    runner: CliRunner, tmp_path: Path
+) -> None:
+    plugin_dir = tmp_path / "evaluation" / "tiny"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "manifest.toml").write_text(
+        textwrap.dedent("""
+            [plugin]
+            id = "tiny"
+            kind = "evaluation"
+            version = "1.0.0"
+
+            [plugin.entry_point]
+            module = "plugin"
+            class = "TinyPlugin"
+        """).strip() + "\n"
+    )
+    plugin_source = (
+        "from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin\n"
+        "from src.community.manifest import RequiredEnvSpec\n"
+        "\n"
+        "\n"
+        "class TinyPlugin(EvaluatorPlugin):\n"
+        '    REQUIRED_ENV = (\n'
+        '        RequiredEnvSpec(name="EVAL_KEY", description="my key",\n'
+        '                        optional=False, secret=True, managed_by=""),\n'
+        '    )\n'
+        "\n"
+        "    def evaluate(self, samples):\n"
+        '        return EvalResult(plugin_name="tiny", passed=True)\n'
+        "\n"
+        "    def get_recommendations(self, result):\n"
+        "        return []\n"
+    )
+    (plugin_dir / "plugin.py").write_text(plugin_source)
+
+    result = runner.invoke(community_app, ["sync-envs", str(plugin_dir)])
+    assert result.exit_code == 0, result.output + (result.stderr or "")
+    written = (plugin_dir / "manifest.toml").read_text()
+    assert "[[required_env]]" in written
+    assert 'name = "EVAL_KEY"' in written
+    assert 'description = "my key"' in written
+
+
+def test_sync_envs_dry_run_does_not_write(runner: CliRunner, tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "evaluation" / "tiny"
+    plugin_dir.mkdir(parents=True)
+    initial_manifest = (
+        textwrap.dedent("""
+            [plugin]
+            id = "tiny"
+            kind = "evaluation"
+            version = "1.0.0"
+
+            [plugin.entry_point]
+            module = "plugin"
+            class = "TinyPlugin"
+        """).strip()
+        + "\n"
+    )
+    (plugin_dir / "manifest.toml").write_text(initial_manifest)
+    plugin_source = (
+        "from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin\n"
+        "from src.community.manifest import RequiredEnvSpec\n"
+        "\n"
+        "\n"
+        "class TinyPlugin(EvaluatorPlugin):\n"
+        '    REQUIRED_ENV = (\n'
+        '        RequiredEnvSpec(name="EVAL_KEY", optional=False, secret=True, managed_by=""),\n'
+        '    )\n'
+        "\n"
+        "    def evaluate(self, samples):\n"
+        '        return EvalResult(plugin_name="tiny", passed=True)\n'
+        "\n"
+        "    def get_recommendations(self, result):\n"
+        "        return []\n"
+    )
+    (plugin_dir / "plugin.py").write_text(plugin_source)
+
+    result = runner.invoke(community_app, ["sync-envs", str(plugin_dir), "--dry-run"])
+    assert result.exit_code == 0, result.output + (result.stderr or "")
+    assert (plugin_dir / "manifest.toml").read_text() == initial_manifest
+
+
+def test_sync_envs_rejects_kind_dir(runner: CliRunner, tmp_path: Path) -> None:
+    """sync-envs only operates on a single plugin folder — kind/root errors out."""
+    kind_dir = tmp_path / "evaluation"
+    kind_dir.mkdir()
+    result = runner.invoke(community_app, ["sync-envs", str(kind_dir)])
+    assert result.exit_code == 1
+    combined = result.output + (result.stderr or "")
+    assert "single plugin folder" in combined or "kind_dir" in combined

@@ -248,6 +248,81 @@ def _import_plugin_class(source_root: Path, module_name: str, class_name: str) -
     return getattr(module, class_name)
 
 
+def _crosscheck_required_env(
+    plugin_cls: type, manifest: PluginManifest
+) -> None:
+    """If the class declares ``REQUIRED_ENV``, verify it matches the manifest.
+
+    Compares Python's tuple to the manifest's ``[[required_env]]`` list
+    element-wise on (name, optional, secret, managed_by). Description
+    text is intentionally **not** compared — authors often massage it
+    in the TOML for end users without re-deriving from a Python-side
+    one-liner.
+
+    Empty Python-side tuple (the default for plugins that don't import
+    :class:`BasePlugin`) skips the check; the manifest stays
+    authoritative. Mismatch raises :class:`ValueError` with a precise
+    per-field diff so the author can decide which side to fix.
+    """
+    declared = getattr(plugin_cls, "REQUIRED_ENV", ())
+    if not declared:
+        return
+
+    # Normalise the Python side to plain dicts so we can compare against
+    # the Pydantic model_dump() of the manifest entries on equal terms.
+    py_entries: list[dict[str, object]] = []
+    for spec in declared:
+        if hasattr(spec, "model_dump"):
+            py_entries.append(spec.model_dump())
+        elif isinstance(spec, dict):
+            py_entries.append(dict(spec))
+        else:
+            raise TypeError(
+                f"plugin {plugin_cls.__name__}.REQUIRED_ENV entries must be "
+                f"RequiredEnvSpec instances or matching dicts; got "
+                f"{type(spec).__name__}"
+            )
+
+    manifest_entries = [spec.model_dump() for spec in manifest.required_env]
+
+    py_by_name = {e["name"]: e for e in py_entries}
+    toml_by_name = {e["name"]: e for e in manifest_entries}
+
+    diffs: list[str] = []
+
+    only_in_py = sorted(set(py_by_name) - set(toml_by_name))
+    only_in_toml = sorted(set(toml_by_name) - set(py_by_name))
+    if only_in_py:
+        diffs.append(
+            f"declared in REQUIRED_ENV but missing from manifest: {only_in_py}"
+        )
+    if only_in_toml:
+        diffs.append(
+            f"declared in manifest but missing from REQUIRED_ENV: {only_in_toml}"
+        )
+
+    for name in sorted(set(py_by_name) & set(toml_by_name)):
+        py = py_by_name[name]
+        toml = toml_by_name[name]
+        per_key: list[str] = []
+        for key in ("optional", "secret", "managed_by"):
+            if py.get(key) != toml.get(key):
+                per_key.append(
+                    f"{key}: code={py.get(key)!r} vs toml={toml.get(key)!r}"
+                )
+        if per_key:
+            diffs.append(f"{name}: " + "; ".join(per_key))
+
+    if diffs:
+        raise ValueError(
+            f"REQUIRED_ENV ↔ manifest cross-check failed for plugin "
+            f"{manifest.plugin.id!r}:\n  - "
+            + "\n  - ".join(diffs)
+            + "\nRun `ryotenkai community sync-envs <plugin>` to align "
+            "the manifest with REQUIRED_ENV."
+        )
+
+
 def _attach_community_metadata(
     plugin_cls: type, manifest: PluginManifest, source_path: Path
 ) -> None:
@@ -258,7 +333,13 @@ def _attach_community_metadata(
     that ClassVar at instantiate time to fetch values via the per-kind
     :class:`PluginSecretsResolver`. Optional or non-secret envs are
     handled by the plugin itself (or B2's ``_env`` helper).
+
+    Also runs the REQUIRED_ENV cross-check (A7) — see
+    :func:`_crosscheck_required_env` — *before* mirroring metadata, so
+    a manifest/code mismatch fails the load fast with a precise diff.
     """
+    _crosscheck_required_env(plugin_cls, manifest)
+
     plugin_cls.name = manifest.plugin.id  # type: ignore[attr-defined]
     plugin_cls.version = manifest.plugin.version  # type: ignore[attr-defined]
     plugin_cls._required_secrets = manifest.required_secret_names()  # type: ignore[attr-defined]

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.community.inference import InferredPlugin, bump_version, infer_plugin
+from src.community.loader import _import_plugin_class
 from src.community.manifest import PluginManifest, PresetManifest
 from src.community.scaffold import build_plugin_manifest_dict
 from src.community.toml_writer import dump_manifest_toml
@@ -240,6 +241,56 @@ def sync_plugin_manifest(
     return SyncResult(new_text=new_text, old_text=old_text, changed=changed, diff=diff)
 
 
+def sync_plugin_envs(plugin_dir: Path) -> SyncResult:
+    """Rewrite manifest's ``[[required_env]]`` from the class's REQUIRED_ENV.
+
+    Imports the plugin module (just like the loader does), reads the
+    Python-side ``REQUIRED_ENV`` ClassVar, and writes that as the
+    manifest's ``required_env`` block. Use this after editing the env
+    contract in code so the TOML side never drifts and the load-time
+    cross-check in :func:`_crosscheck_required_env` keeps passing.
+
+    No-op when the class doesn't declare ``REQUIRED_ENV`` (or declares
+    it empty) — the manifest stays the only source of truth.
+    """
+    manifest_path = plugin_dir / "manifest.toml"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"no manifest.toml in {plugin_dir}")
+
+    old_text = manifest_path.read_text(encoding="utf-8")
+    existing = tomllib.loads(old_text)
+    plugin_block = existing.get("plugin", {}) or {}
+    entry_point = plugin_block.get("entry_point", {}) or {}
+    module_name = entry_point.get("module", "plugin")
+    class_name = entry_point.get("class") or entry_point.get("class_name")
+    if not class_name:
+        raise ValueError(
+            f"manifest at {manifest_path} has no [plugin.entry_point].class — "
+            "cannot import to read REQUIRED_ENV"
+        )
+
+    plugin_cls = _import_plugin_class(plugin_dir, module_name, class_name)
+    declared = getattr(plugin_cls, "REQUIRED_ENV", ())
+
+    merged = dict(existing)
+    if declared:
+        merged["required_env"] = [
+            spec.model_dump() if hasattr(spec, "model_dump") else dict(spec)
+            for spec in declared
+        ]
+    else:
+        merged.pop("required_env", None)
+
+    # Re-validate the whole manifest so a bad REQUIRED_ENV declaration
+    # surfaces here instead of at the next loader run.
+    PluginManifest.model_validate(merged)
+
+    new_text = dump_manifest_toml(merged)
+    changed = new_text != old_text
+    diff = _unified_diff(old_text, new_text, path=str(manifest_path))
+    return SyncResult(new_text=new_text, old_text=old_text, changed=changed, diff=diff)
+
+
 # ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
@@ -324,6 +375,7 @@ def _unified_diff(a: str, b: str, *, path: str) -> str:
 
 __all__ = [
     "SyncResult",
+    "sync_plugin_envs",
     "sync_plugin_manifest",
     "sync_preset_manifest",
 ]
