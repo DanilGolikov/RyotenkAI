@@ -28,6 +28,7 @@ import type { PluginKind, PluginManifest } from '../../api/types'
 import { dumpYaml } from '../../lib/yaml'
 import { Spinner } from '../ui'
 import { PluginInfoModal } from '../PluginInfoModal'
+import { StalePluginsBanner } from './StalePluginsBanner'
 import { PluginConfigModal } from '../ConfigBuilder/PluginConfigModal'
 import { PluginPaletteDrawer } from '../ConfigBuilder/PluginPaletteDrawer'
 import { PluginInstanceRow } from './PluginInstanceRow'
@@ -216,6 +217,12 @@ export function PluginsTab({ projectId }: Props) {
     [commit, parsed, materializeReportsIfNeeded],
   )
 
+  // Stale plugin entries come from the backend (PR14) — the catalog
+  // owns the source-of-truth check. ``stale_plugins`` is always an
+  // array on a successful GET, but configQuery may not have resolved
+  // yet so we default to empty.
+  const stalePlugins = configQuery.data?.stale_plugins ?? []
+
   const handleReorder = useCallback(
     async (kind: PluginKind, orderedIds: string[]) => {
       const base = kind === 'reports' ? materializeReportsIfNeeded(parsed) : parsed
@@ -356,6 +363,11 @@ export function PluginsTab({ projectId }: Props) {
           {(saveMut.error as Error).message}
         </div>
       )}
+      <StalePluginsBanner
+        entries={stalePlugins}
+        onRemove={(kind, id) => void handleRemove(kind, id)}
+        busy={saveMut.isPending}
+      />
       <div className="flex gap-4 items-start">
         <div className="flex-1 min-w-0 space-y-5">
           {KIND_SECTIONS.map((section) => (
