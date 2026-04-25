@@ -507,6 +507,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/plugins/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preflight
+         * @description Check that every plugin in ``request.config`` has its non-optional
+         *     ``[[required_env]]`` keys set in process env / project env.
+         *
+         *     The Launch modal calls this before enabling the launch button so a
+         *     user without the right credentials sees a "set up before launch"
+         *     chip with a deep link to the right Settings tab — instead of a
+         *     pipeline that runs for minutes and crashes mid-stage on the missing
+         *     key.
+         *
+         *     Returns ``ok=true`` plus an empty ``missing`` list when the launch
+         *     is safe; ``ok=false`` with structured rows otherwise. A malformed
+         *     config payload surfaces as a 422 with the full per-field error
+         *     list (Pydantic does the work).
+         */
+        post: operations["plugins-preflight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/{kind}": {
         parameters: {
             query?: never;
@@ -1467,6 +1499,42 @@ export interface components {
             /** Exists */
             exists: boolean;
         };
+        /**
+         * MissingEnvSchema
+         * @description One required env the preflight gate couldn't resolve.
+         *
+         *     Mirrors :class:`src.community.preflight.MissingEnv` — the API
+         *     re-shapes the dataclass into a Pydantic model so OpenAPI emits a
+         *     proper schema and the front-end gets typed access.
+         */
+        MissingEnvSchema: {
+            /**
+             * Plugin Kind
+             * @enum {string}
+             */
+            plugin_kind: "reward" | "validation" | "evaluation" | "reports";
+            /** Plugin Name */
+            plugin_name: string;
+            /** Plugin Instance Id */
+            plugin_instance_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Secret
+             * @default true
+             */
+            secret: boolean;
+            /**
+             * Managed By
+             * @default
+             */
+            managed_by: string;
+        };
         /** PathCheckResponse */
         PathCheckResponse: {
             /**
@@ -1612,6 +1680,35 @@ export interface components {
             recommendations?: string[];
             /** Error Groups */
             error_groups?: components["schemas"]["ErrorGroupPayload"][];
+        };
+        /**
+         * PreflightRequest
+         * @description Run preflight against an in-memory config payload.
+         *
+         *     The Launch modal pulls the project's saved config YAML into JSON
+         *     and POSTs it here so the user sees env errors *before* hitting
+         *     the actual launch endpoint. ``project_env`` is the same dict the
+         *     launcher will merge on top of process env at fork time.
+         */
+        PreflightRequest: {
+            /** Config */
+            config: {
+                [key: string]: unknown;
+            };
+            /** Project Env */
+            project_env?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * PreflightResponse
+         * @description Result envelope for ``POST /plugins/preflight``.
+         */
+        PreflightResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Missing */
+            missing?: components["schemas"]["MissingEnvSchema"][];
         };
         /** PresetDiffEntry */
         PresetDiffEntry: {
@@ -3180,6 +3277,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportDefaultsResponse"];
+                };
+            };
+        };
+    };
+    "plugins-preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreflightResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

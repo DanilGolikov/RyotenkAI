@@ -123,6 +123,27 @@ class PipelineBootstrap:
             logger.error(f"Failed to load configuration: {e}")
             raise
 
+        # Step 1.5: Preflight env gate — refuse to spin up the rest of
+        # the orchestrator if a non-optional ``[[required_env]]`` is
+        # unset. Catches missing keys at second 0 instead of at minute 4
+        # mid-stage. Process env at this point already has the project's
+        # env.json merged in (the launcher merges before fork), so we
+        # don't pass project_env explicitly.
+        from src.community.preflight import LaunchAbortedError, validate_required_env
+
+        missing_envs = validate_required_env(config, secrets=secrets)
+        if missing_envs:
+            for m in missing_envs:
+                logger.error(
+                    "[PREFLIGHT] %s plugin %r (instance %r) needs env %r%s",
+                    m.plugin_kind,
+                    m.plugin_name,
+                    m.plugin_instance_id,
+                    m.name,
+                    f" — {m.description}" if m.description else "",
+                )
+            raise LaunchAbortedError(missing_envs)
+
         # Step 2: Pipeline context seeded with run-scope keys.
         # PipelineContext inherits from dict — existing stages keep working.
         context = PipelineContext(

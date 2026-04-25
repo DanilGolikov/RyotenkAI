@@ -74,10 +74,50 @@ class PluginListResponse(BaseModel):
     errors: list[PluginLoadError] = Field(default_factory=list)
 
 
+class MissingEnvSchema(BaseModel):
+    """One required env the preflight gate couldn't resolve.
+
+    Mirrors :class:`src.community.preflight.MissingEnv` — the API
+    re-shapes the dataclass into a Pydantic model so OpenAPI emits a
+    proper schema and the front-end gets typed access.
+    """
+
+    plugin_kind: PluginKind
+    plugin_name: str
+    plugin_instance_id: str
+    name: str
+    description: str = ""
+    secret: bool = True
+    managed_by: str = ""
+
+
+class PreflightRequest(BaseModel):
+    """Run preflight against an in-memory config payload.
+
+    The Launch modal pulls the project's saved config YAML into JSON
+    and POSTs it here so the user sees env errors *before* hitting
+    the actual launch endpoint. ``project_env`` is the same dict the
+    launcher will merge on top of process env at fork time.
+    """
+
+    config: dict[str, Any]
+    project_env: dict[str, str] = Field(default_factory=dict)
+
+
+class PreflightResponse(BaseModel):
+    """Result envelope for ``POST /plugins/preflight``."""
+
+    ok: bool
+    missing: list[MissingEnvSchema] = Field(default_factory=list)
+
+
 __all__ = [
+    "MissingEnvSchema",
     "PluginKind",
     "PluginListResponse",
     "PluginLoadError",
     "PluginManifest",
+    "PreflightRequest",
+    "PreflightResponse",
     "RequiredEnvSpec",
 ]

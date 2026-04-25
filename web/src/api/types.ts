@@ -143,6 +143,16 @@ export type PluginListResponse =
     PluginLoadError[]
   >
 
+/** Preflight gate — Launch modal calls POST /plugins/preflight before
+ *  enabling the launch button. ``missing`` is non-empty when a non-
+ *  optional ``[[required_env]]`` is unset; the UI renders each row as
+ *  a chip with a deep-link to the right Settings tab when
+ *  ``managed_by`` is set. */
+export type PreflightRequest = S['PreflightRequest']
+export type MissingEnvSchema = S['MissingEnvSchema']
+export type PreflightResponse =
+  Narrow<S['PreflightResponse'], 'missing', MissingEnvSchema[]>
+
 // ───────── Providers (reusable workspaces) ─────────
 
 export type ProviderTypeInfo = S['ProviderTypeInfo']

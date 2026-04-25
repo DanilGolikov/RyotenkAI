@@ -1416,6 +1416,48 @@
         }
       }
     },
+    "/api/v1/plugins/preflight": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Preflight",
+        "description": "Check that every plugin in ``request.config`` has its non-optional\n``[[required_env]]`` keys set in process env / project env.\n\nThe Launch modal calls this before enabling the launch button so a\nuser without the right credentials sees a \"set up before launch\"\nchip with a deep link to the right Settings tab — instead of a\npipeline that runs for minutes and crashes mid-stage on the missing\nkey.\n\nReturns ``ok=true`` plus an empty ``missing`` list when the launch\nis safe; ``ok=false`` with structured rows otherwise. A malformed\nconfig payload surfaces as a 422 with the full per-field error\nlist (Pydantic does the work).",
+        "operationId": "plugins-preflight",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreflightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreflightResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{kind}": {
       "get": {
         "tags": [
@@ -4175,6 +4217,56 @@
         ],
         "title": "LogFileInfo"
       },
+      "MissingEnvSchema": {
+        "properties": {
+          "plugin_kind": {
+            "type": "string",
+            "enum": [
+              "reward",
+              "validation",
+              "evaluation",
+              "reports"
+            ],
+            "title": "Plugin Kind"
+          },
+          "plugin_name": {
+            "type": "string",
+            "title": "Plugin Name"
+          },
+          "plugin_instance_id": {
+            "type": "string",
+            "title": "Plugin Instance Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "secret": {
+            "type": "boolean",
+            "title": "Secret",
+            "default": true
+          },
+          "managed_by": {
+            "type": "string",
+            "title": "Managed By",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "plugin_kind",
+          "plugin_name",
+          "plugin_instance_id",
+          "name"
+        ],
+        "title": "MissingEnvSchema",
+        "description": "One required env the preflight gate couldn't resolve.\n\nMirrors :class:`src.community.preflight.MissingEnv` — the API\nre-shapes the dataclass into a Pydantic model so OpenAPI emits a\nproper schema and the front-end gets typed access."
+      },
       "PathCheckResponse": {
         "properties": {
           "source_type": {
@@ -4482,6 +4574,49 @@
           "duration_ms"
         ],
         "title": "PluginRunPayload"
+      },
+      "PreflightRequest": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          },
+          "project_env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Project Env"
+          }
+        },
+        "type": "object",
+        "required": [
+          "config"
+        ],
+        "title": "PreflightRequest",
+        "description": "Run preflight against an in-memory config payload.\n\nThe Launch modal pulls the project's saved config YAML into JSON\nand POSTs it here so the user sees env errors *before* hitting\nthe actual launch endpoint. ``project_env`` is the same dict the\nlauncher will merge on top of process env at fork time."
+      },
+      "PreflightResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "missing": {
+            "items": {
+              "$ref": "#/components/schemas/MissingEnvSchema"
+            },
+            "type": "array",
+            "title": "Missing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok"
+        ],
+        "title": "PreflightResponse",
+        "description": "Result envelope for ``POST /plugins/preflight``."
       },
       "PresetDiffEntry": {
         "properties": {
