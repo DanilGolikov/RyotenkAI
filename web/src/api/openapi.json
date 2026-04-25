@@ -3735,6 +3735,46 @@
         ],
         "title": "HealthStatus"
       },
+      "InstanceErrorSchema": {
+        "properties": {
+          "plugin_kind": {
+            "type": "string",
+            "enum": [
+              "reward",
+              "validation",
+              "evaluation",
+              "reports"
+            ],
+            "title": "Plugin Kind"
+          },
+          "plugin_name": {
+            "type": "string",
+            "title": "Plugin Name"
+          },
+          "plugin_instance_id": {
+            "type": "string",
+            "title": "Plugin Instance Id"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plugin_kind",
+          "plugin_name",
+          "plugin_instance_id",
+          "location",
+          "message"
+        ],
+        "title": "InstanceErrorSchema",
+        "description": "One per-field shape violation surfaced by the preflight gate.\n\nMirrors :class:`src.community.instance_validator.InstanceValidationError`.\n``location`` is a dotted path (``params.timeout_seconds``,\n``thresholds.min_score``) so the UI can highlight the exact field."
+      },
       "IntegrationConfigResponse": {
         "properties": {
           "yaml": {
@@ -4595,7 +4635,7 @@
           "config"
         ],
         "title": "PreflightRequest",
-        "description": "Run preflight against an in-memory config payload.\n\nThe Launch modal pulls the project's saved config YAML into JSON\nand POSTs it here so the user sees env errors *before* hitting\nthe actual launch endpoint. ``project_env`` is the same dict the\nlauncher will merge on top of process env at fork time."
+        "description": "Run preflight against an in-memory config payload.\n\nThe Launch modal pulls the project's saved config YAML into JSON\nand POSTs it here so the user sees errors *before* hitting the\nactual launch endpoint. ``project_env`` is the same dict the\nlauncher will merge on top of process env at fork time."
       },
       "PreflightResponse": {
         "properties": {
@@ -4609,6 +4649,13 @@
             },
             "type": "array",
             "title": "Missing"
+          },
+          "instance_errors": {
+            "items": {
+              "$ref": "#/components/schemas/InstanceErrorSchema"
+            },
+            "type": "array",
+            "title": "Instance Errors"
           }
         },
         "type": "object",
@@ -4616,7 +4663,7 @@
           "ok"
         ],
         "title": "PreflightResponse",
-        "description": "Result envelope for ``POST /plugins/preflight``."
+        "description": "Result envelope for ``POST /plugins/preflight``.\n\n``ok`` is True only when both ``missing`` and ``instance_errors``\nare empty. The two lists are populated in a single catalog scan\nso the UI doesn't need a second round-trip."
       },
       "PresetDiffEntry": {
         "properties": {

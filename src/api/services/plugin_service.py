@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.api.schemas.plugin import (
+    InstanceErrorSchema,
     MissingEnvSchema,
     PluginKind,
     PluginListResponse,
@@ -27,7 +28,7 @@ from src.api.schemas.plugin import (
     PreflightResponse,
 )
 from src.community.catalog import catalog
-from src.community.preflight import validate_required_env
+from src.community.preflight import run_preflight
 
 
 def list_plugins(kind: PluginKind) -> PluginListResponse:
@@ -55,7 +56,7 @@ def list_plugins(kind: PluginKind) -> PluginListResponse:
 def preflight(
     config_payload: dict[str, Any], project_env: dict[str, str] | None = None
 ) -> PreflightResponse:
-    """Validate that every plugin enabled by ``config_payload`` has its envs.
+    """Run env-availability and instance-shape gates against ``config_payload``.
 
     The config dict is parsed into the canonical :class:`PipelineConfig`
     so we run against the same shape the orchestrator sees — a malformed
@@ -63,10 +64,10 @@ def preflight(
 
     No secrets are loaded here: the Launch modal sends ``project_env``
     explicitly (it's the same dict the launcher merges on fork), and
-    process env is read inside ``validate_required_env``. Plugin
-    secrets that come from ``secrets.env`` are deliberately *not*
-    consulted — ``secrets.env`` is operator-local and may diverge from
-    the deployed environment, so the user must declare via project env.
+    process env is read inside the preflight helpers. Plugin secrets
+    that come from ``secrets.env`` are deliberately *not* consulted —
+    ``secrets.env`` is operator-local and may diverge from the
+    deployed environment, so the user must declare via project env.
     """
     from src.utils.config import PipelineConfig
 
@@ -77,9 +78,9 @@ def preflight(
         # full per-field error list.
         raise
 
-    missing = validate_required_env(config, project_env=project_env or {})
+    report = run_preflight(config, project_env=project_env or {})
     return PreflightResponse(
-        ok=not missing,
+        ok=report.ok,
         missing=[
             MissingEnvSchema(
                 plugin_kind=m.plugin_kind,
@@ -90,7 +91,17 @@ def preflight(
                 secret=m.secret,
                 managed_by=m.managed_by,
             )
-            for m in missing
+            for m in report.missing_envs
+        ],
+        instance_errors=[
+            InstanceErrorSchema(
+                plugin_kind=e.plugin_kind,
+                plugin_name=e.plugin_name,
+                plugin_instance_id=e.plugin_instance_id,
+                location=e.location,
+                message=e.message,
+            )
+            for e in report.instance_errors
         ],
     )
 

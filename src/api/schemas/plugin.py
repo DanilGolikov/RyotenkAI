@@ -98,12 +98,27 @@ class MissingEnvSchema(BaseModel):
     managed_by: str = ""
 
 
+class InstanceErrorSchema(BaseModel):
+    """One per-field shape violation surfaced by the preflight gate.
+
+    Mirrors :class:`src.community.instance_validator.InstanceValidationError`.
+    ``location`` is a dotted path (``params.timeout_seconds``,
+    ``thresholds.min_score``) so the UI can highlight the exact field.
+    """
+
+    plugin_kind: PluginKind
+    plugin_name: str
+    plugin_instance_id: str
+    location: str
+    message: str
+
+
 class PreflightRequest(BaseModel):
     """Run preflight against an in-memory config payload.
 
     The Launch modal pulls the project's saved config YAML into JSON
-    and POSTs it here so the user sees env errors *before* hitting
-    the actual launch endpoint. ``project_env`` is the same dict the
+    and POSTs it here so the user sees errors *before* hitting the
+    actual launch endpoint. ``project_env`` is the same dict the
     launcher will merge on top of process env at fork time.
     """
 
@@ -112,13 +127,20 @@ class PreflightRequest(BaseModel):
 
 
 class PreflightResponse(BaseModel):
-    """Result envelope for ``POST /plugins/preflight``."""
+    """Result envelope for ``POST /plugins/preflight``.
+
+    ``ok`` is True only when both ``missing`` and ``instance_errors``
+    are empty. The two lists are populated in a single catalog scan
+    so the UI doesn't need a second round-trip.
+    """
 
     ok: bool
     missing: list[MissingEnvSchema] = Field(default_factory=list)
+    instance_errors: list[InstanceErrorSchema] = Field(default_factory=list)
 
 
 __all__ = [
+    "InstanceErrorSchema",
     "MissingEnvSchema",
     "PluginKind",
     "PluginListResponse",

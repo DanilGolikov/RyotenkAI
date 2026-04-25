@@ -1301,6 +1301,29 @@ export interface components {
              */
             version: string;
         };
+        /**
+         * InstanceErrorSchema
+         * @description One per-field shape violation surfaced by the preflight gate.
+         *
+         *     Mirrors :class:`src.community.instance_validator.InstanceValidationError`.
+         *     ``location`` is a dotted path (``params.timeout_seconds``,
+         *     ``thresholds.min_score``) so the UI can highlight the exact field.
+         */
+        InstanceErrorSchema: {
+            /**
+             * Plugin Kind
+             * @enum {string}
+             */
+            plugin_kind: "reward" | "validation" | "evaluation" | "reports";
+            /** Plugin Name */
+            plugin_name: string;
+            /** Plugin Instance Id */
+            plugin_instance_id: string;
+            /** Location */
+            location: string;
+            /** Message */
+            message: string;
+        };
         /** IntegrationConfigResponse */
         IntegrationConfigResponse: {
             /** Yaml */
@@ -1692,8 +1715,8 @@ export interface components {
          * @description Run preflight against an in-memory config payload.
          *
          *     The Launch modal pulls the project's saved config YAML into JSON
-         *     and POSTs it here so the user sees env errors *before* hitting
-         *     the actual launch endpoint. ``project_env`` is the same dict the
+         *     and POSTs it here so the user sees errors *before* hitting the
+         *     actual launch endpoint. ``project_env`` is the same dict the
          *     launcher will merge on top of process env at fork time.
          */
         PreflightRequest: {
@@ -1709,12 +1732,18 @@ export interface components {
         /**
          * PreflightResponse
          * @description Result envelope for ``POST /plugins/preflight``.
+         *
+         *     ``ok`` is True only when both ``missing`` and ``instance_errors``
+         *     are empty. The two lists are populated in a single catalog scan
+         *     so the UI doesn't need a second round-trip.
          */
         PreflightResponse: {
             /** Ok */
             ok: boolean;
             /** Missing */
             missing?: components["schemas"]["MissingEnvSchema"][];
+            /** Instance Errors */
+            instance_errors?: components["schemas"]["InstanceErrorSchema"][];
         };
         /** PresetDiffEntry */
         PresetDiffEntry: {
