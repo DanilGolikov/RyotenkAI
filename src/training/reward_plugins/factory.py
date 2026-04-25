@@ -4,11 +4,13 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from src.community.catalog import catalog
 from src.training.reward_plugins.registry import reward_registry
+from src.training.reward_plugins.secrets import SecretsResolver as RewardSecretsResolver
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
+    from src.config.secrets.model import Secrets
     from src.training.reward_plugins.base import RewardPlugin
     from src.utils.config import PipelineConfig, StrategyPhaseConfig
 
@@ -26,6 +28,7 @@ def build_reward_plugin_result(
     train_dataset: Dataset,
     phase_config: StrategyPhaseConfig,
     pipeline_config: PipelineConfig,
+    secrets: Secrets | None = None,
 ) -> RewardPluginResult:
     """Instantiate the reward plugin, run its setup, and return kwargs.
 
@@ -34,6 +37,11 @@ def build_reward_plugin_result(
 
     config_kwargs  → merged into the TRL *Config constructor (e.g. reward_weights).
     trainer_kwargs → merged into the TRL Trainer constructor (e.g. reward_funcs).
+
+    ``secrets`` — optional. When passed, a ``RWRD_*`` resolver is built and
+    handed to the registry so reward plugins declaring required secrets in
+    their manifest get them auto-injected. When ``None``, plugins that need
+    secrets fail fast at ``registry.instantiate(...)`` with a clear error.
     """
     plugin_name = str(phase_config.params.get("reward_plugin") or "").strip()
     if not plugin_name:
@@ -47,11 +55,12 @@ def build_reward_plugin_result(
 
     catalog.ensure_loaded()
 
-    # Reward plugins don't yet declare ``_required_secrets`` — the
-    # ``RWRD_*`` resolver lands in PR6 of the cozy-booping-walrus plan.
-    # ``resolver=None`` is safe today: instantiate() only fails when a
-    # plugin actually requires secrets without a resolver.
-    plugin = reward_registry.instantiate(plugin_name, params=reward_params)
+    resolver = RewardSecretsResolver(secrets) if secrets is not None else None
+    plugin = reward_registry.instantiate(
+        plugin_name,
+        resolver=resolver,
+        params=reward_params,
+    )
 
     logger.info("[REWARD_PLUGIN] Running setup for %r ...", plugin_name)
     plugin.setup()

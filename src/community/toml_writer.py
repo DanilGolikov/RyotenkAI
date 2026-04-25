@@ -58,8 +58,23 @@ _PLUGIN_SECTION_ORDER = (
     "thresholds_schema",
     "suggested_params",
     "suggested_thresholds",
-    "secrets",
     "compat",
+)
+
+#: Top-level array-of-tables sections. Emitted AFTER the section order
+#: pass so dotted ``[[required_env]]`` blocks land at the bottom of the
+#: manifest in a deterministic order.
+_PLUGIN_AOT_KEYS = ("required_env",)
+
+#: Field order within a single ``[[required_env]]`` block. Mirrors the
+#: ParamFieldSchema-style "type/default first, descriptive bits after"
+#: pattern so hand-crafted manifests stay diff-stable.
+_REQUIRED_ENV_FIELD_ORDER = (
+    "name",
+    "description",
+    "optional",
+    "secret",
+    "managed_by",
 )
 
 # Top-level section order of a preset manifest.
@@ -189,6 +204,42 @@ def _resolve(doc: Mapping[str, Any], path: str) -> Mapping[str, Any] | None:
     return cur if isinstance(cur, Mapping) else None
 
 
+def _emit_array_of_tables(
+    lines: list[str],
+    key: str,
+    items: list[Mapping[str, Any]],
+    *,
+    field_order: tuple[str, ...] = (),
+) -> None:
+    """Emit ``[[key]]`` blocks for each dict in ``items``.
+
+    ``field_order`` lists keys whose order should be pinned at the top
+    of each block; remaining keys fall back to alphabetical order.
+    Empty / missing scalars are still rendered so the diff against an
+    operator-edited manifest stays predictable.
+    """
+    priority = {k: i for i, k in enumerate(field_order)}
+    for item in items:
+        sorted_keys = sorted(
+            item.keys(),
+            key=lambda k: (priority.get(k, len(priority)), k),
+        )
+        lines.append(f"[[{key}]]")
+        for sk in sorted_keys:
+            value = item[sk]
+            if isinstance(value, Mapping):
+                # Nested-dict inside an AOT entry would need
+                # `[[parent.child]]` — community manifests don't use that
+                # shape today, so reject early instead of emitting
+                # something that can't round-trip.
+                raise TypeError(
+                    f"nested dicts inside [[{key}]] are not supported; "
+                    f"got mapping under {sk!r}"
+                )
+            lines.append(f"{sk} = {_format_scalar(value)}")
+        lines.append("")
+
+
 def dump_manifest_toml(
     manifest: Mapping[str, Any],
     *,
@@ -230,6 +281,20 @@ def dump_manifest_toml(
             if child in scheduled:
                 continue
             _emit_section(lines, child, body[key], todo_fields=todo, scheduled=scheduled)
+
+    # Top-level array-of-tables (e.g. [[required_env]]) — always after
+    # the section order pass, in a fixed key order so diffs stay small.
+    if "plugin" in manifest:
+        for aot_key in _PLUGIN_AOT_KEYS:
+            entries = manifest.get(aot_key)
+            if not entries:
+                continue
+            field_order = (
+                _REQUIRED_ENV_FIELD_ORDER if aot_key == "required_env" else ()
+            )
+            _emit_array_of_tables(
+                lines, aot_key, list(entries), field_order=field_order
+            )
 
     # Trailing blank → single newline at EOF
     while lines and lines[-1] == "":

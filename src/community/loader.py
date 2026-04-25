@@ -251,10 +251,17 @@ def _import_plugin_class(source_root: Path, module_name: str, class_name: str) -
 def _attach_community_metadata(
     plugin_cls: type, manifest: PluginManifest, source_path: Path
 ) -> None:
-    """Mirror manifest fields onto the plugin class so runtime code can read them."""
+    """Mirror manifest fields onto the plugin class so runtime code can read them.
+
+    ``_required_secrets`` is derived from ``required_env`` entries that
+    are both ``secret=true`` and ``optional=false`` — the registry uses
+    that ClassVar at instantiate time to fetch values via the per-kind
+    :class:`PluginSecretsResolver`. Optional or non-secret envs are
+    handled by the plugin itself (or B2's ``_env`` helper).
+    """
     plugin_cls.name = manifest.plugin.id  # type: ignore[attr-defined]
     plugin_cls.version = manifest.plugin.version  # type: ignore[attr-defined]
-    plugin_cls._required_secrets = tuple(manifest.secrets.required)  # type: ignore[attr-defined]
+    plugin_cls._required_secrets = manifest.required_secret_names()  # type: ignore[attr-defined]
     plugin_cls._community_manifest = manifest  # type: ignore[attr-defined]
     plugin_cls._community_source_path = source_path  # type: ignore[attr-defined]
 

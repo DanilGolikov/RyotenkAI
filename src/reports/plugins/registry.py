@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from src.community.loader import LoadedPlugin
+    from src.config.secrets.model import Secrets
     from src.reports.plugins.interfaces import IReportBlockPlugin, ReportPlugin
 
 
@@ -62,6 +63,8 @@ report_registry = ReportPluginRegistry()
 
 def build_report_plugins(
     sections: Sequence[str] | None = None,
+    *,
+    secrets: Secrets | None = None,
 ) -> list[IReportBlockPlugin]:
     """Return ordered plugin instances for the given section list.
 
@@ -74,8 +77,16 @@ def build_report_plugins(
       breathing room in debug output) and written onto the class before
       instantiation, so downstream code that reads ``plugin.order`` keeps
       working unchanged.
+
+    ``secrets`` — optional. When provided, an ``RPRT_*`` resolver is
+    built and threaded into ``registry.instantiate(...)`` so report
+    plugins that declare required secrets get them auto-injected.
+    None of the shipped community/reports/ plugins need this today, but
+    the wiring matches the validation/evaluation/reward kinds for
+    consistency and forward-compat.
     """
     from src.community.catalog import catalog
+    from src.reports.plugins.secrets import SecretsResolver as ReportSecretsResolver
 
     catalog.ensure_loaded()
     available_ids = report_registry.list_ids()
@@ -97,6 +108,8 @@ def build_report_plugins(
             f"Available plugins: {sorted(available_ids)!r}"
         )
 
+    resolver = ReportSecretsResolver(secrets) if secrets is not None else None
+
     plugins: list[IReportBlockPlugin] = []
     for idx, plugin_id in enumerate(ordered_ids):
         plugin_cls = report_registry.get_class(plugin_id)
@@ -104,7 +117,7 @@ def build_report_plugins(
         # class so existing instances also see the new value (composer
         # reads ``.order`` during rendering).
         plugin_cls.order = idx * 10  # type: ignore[attr-defined]
-        plugins.append(report_registry.instantiate(plugin_id))
+        plugins.append(report_registry.instantiate(plugin_id, resolver=resolver))
     return plugins
 
 

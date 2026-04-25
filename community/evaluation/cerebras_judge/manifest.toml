@@ -11,13 +11,11 @@ description = "LLM-as-judge: uses Cerebras to score model answers on a 1–5 sca
 module = "plugin"
 class = "CerebrasJudgePlugin"
 
-[secrets]
-required = ["EVAL_CEREBRAS_API_KEY"]
-
-# UI hint mirroring [secrets].required so the Configure modal renders
-# an input section for these env vars and the user doesn't have to
-# guess where to plug their Cerebras key. Runtime still resolves the
-# value through the Secrets layer (see plugin/main.py:30).
+# Single source of truth for the env vars this plugin needs.
+# ``secret=true, optional=false`` is what makes the loader populate the
+# ``_required_secrets`` ClassVar — the registry then auto-injects the
+# resolved value into ``instance._secrets`` at plugin construction time
+# (see src/community/registry_base.py:_inject_secrets).
 [[required_env]]
 name = "EVAL_CEREBRAS_API_KEY"
 description = "API key for the Cerebras Inference Cloud (https://cloud.cerebras.ai). Used by this judge to score model answers."

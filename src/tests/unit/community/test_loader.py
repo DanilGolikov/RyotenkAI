@@ -25,8 +25,12 @@ def _build_plugin_folder(root: Path, kind: str, plugin_id: str, *, class_name: s
             module = "plugin"
             class = "{class_name}"
 
-            [secrets]
-            required = ["EVAL_DUMMY"]
+            [[required_env]]
+            name = "EVAL_DUMMY"
+            description = ""
+            optional = false
+            secret = true
+            managed_by = ""
         """).strip()
     )
     (plugin_dir / "plugin.py").write_text(

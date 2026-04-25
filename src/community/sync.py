@@ -91,17 +91,53 @@ def _merge_suggestions(
     return {k: v for k, v in existing.items() if k in schema}
 
 
-def _merge_secrets(
-    existing: list[str] | None, inferred: tuple[str, ...]
-) -> list[str]:
-    """Union: inferred keys first (deterministic), then existing-only keys."""
-    existing_list = list(existing or [])
+def _merge_required_env(
+    existing: list[dict[str, Any]] | None,
+    inferred: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Merge ``[[required_env]]`` entries.
+
+    - Existing entries (with hand-edited descriptions / managed_by hints
+      / non-default secret/optional flags) win — sync never destroys
+      author-provided metadata.
+    - Inferred env names that don't appear in ``existing`` are appended
+      with the safe defaults (``secret=true, optional=false, managed_by=""``).
+    - Existing entries whose ``name`` is no longer inferred *stay*: the
+      runtime cross-check (PR8 / A7) will catch genuine drift between
+      Python and TOML; here we err on the side of preservation.
+
+    The output preserves the order ``inferred → existing-only`` so a
+    fresh scaffold places newly-discovered envs at the top of the list.
+    """
+    existing_by_name: dict[str, dict[str, Any]] = {
+        entry["name"]: dict(entry)
+        for entry in (existing or [])
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+    }
+    out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    out: list[str] = []
-    for key in list(inferred) + existing_list:
-        if key not in seen:
-            out.append(key)
-            seen.add(key)
+
+    def _default_entry(name: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "description": "",
+            "optional": False,
+            "secret": True,
+            "managed_by": "",
+        }
+
+    for name in inferred:
+        if name in seen:
+            continue
+        out.append(existing_by_name.get(name) or _default_entry(name))
+        seen.add(name)
+
+    for name, entry in existing_by_name.items():
+        if name in seen:
+            continue
+        out.append(entry)
+        seen.add(name)
+
     return out
 
 
@@ -161,13 +197,15 @@ def _merge_plugin_manifest(
     else:
         merged.pop("suggested_thresholds", None)
 
-    # secrets — supplement union (never delete)
-    existing_secrets = (existing.get("secrets", {}) or {}).get("required") or []
-    union = _merge_secrets(existing_secrets, inferred.required_secrets)
-    if union:
-        merged["secrets"] = {"required": union}
+    # required_env — merge per-name; never delete author-provided metadata.
+    existing_required_env = existing.get("required_env") or []
+    merged_required_env = _merge_required_env(
+        existing_required_env, inferred.required_secrets
+    )
+    if merged_required_env:
+        merged["required_env"] = merged_required_env
     else:
-        merged.pop("secrets", None)
+        merged.pop("required_env", None)
 
     # compat — preserve existing if set
     existing_compat = existing.get("compat", {}) or {}

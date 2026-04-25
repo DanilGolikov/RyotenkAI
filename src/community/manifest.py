@@ -26,10 +26,15 @@ Stability = Literal["stable", "beta", "experimental"]
 #: with a clear error so the user knows to upgrade RyotenkAI.
 #:
 #: History:
-#:   v3 (2026-04) — current. ``params_schema`` / ``thresholds_schema``
-#:                  via :class:`ParamFieldSchema`; ``required_env`` block;
-#:                  legacy ``[secrets].required`` slated for removal in v4.
-LATEST_SCHEMA_VERSION = 3
+#:   v3 (2026-04) — ``params_schema`` / ``thresholds_schema`` via
+#:                  :class:`ParamFieldSchema`; introduced the ``required_env``
+#:                  block alongside the legacy ``[secrets].required``.
+#:   v4 (2026-04) — current. Dropped ``[secrets].required`` — every
+#:                  required env (secret or not, optional or not) is now
+#:                  declared via ``[[required_env]]``. The loader derives
+#:                  the runtime ``_required_secrets`` ClassVar from
+#:                  entries with ``secret=true, optional=false``.
+LATEST_SCHEMA_VERSION = 4
 
 #: Leaf types accepted in ``[params_schema.X] type``. ``enum`` is rendered
 #: as a JSON-Schema string with an ``enum`` list; everything else maps
@@ -55,12 +60,6 @@ class PresetEntryPoint(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     file: str = Field(description="Relative path to the preset YAML inside the preset folder.")
-
-
-class SecretsSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    required: list[str] = Field(default_factory=list)
 
 
 class RequiredEnvSpec(BaseModel):
@@ -277,7 +276,6 @@ class PluginManifest(BaseModel):
     thresholds_schema: dict[str, ParamFieldSchema] = Field(default_factory=dict)
     suggested_params: dict[str, Any] = Field(default_factory=dict)
     suggested_thresholds: dict[str, Any] = Field(default_factory=dict)
-    secrets: SecretsSpec = Field(default_factory=SecretsSpec)
     compat: CompatSpec = Field(default_factory=CompatSpec)
     required_env: list[RequiredEnvSpec] = Field(
         default_factory=list,
@@ -329,6 +327,25 @@ class PluginManifest(BaseModel):
             raise ValueError(
                 f"{label} keys {sorted(extra)} are not declared in the corresponding schema"
             )
+
+    def required_secret_names(self) -> tuple[str, ...]:
+        """Return the names of envs the runtime treats as required secrets.
+
+        These are the ``[[required_env]]`` entries with both ``secret=true``
+        and ``optional=false``. The community loader uses this to populate
+        the runtime ``_required_secrets`` ClassVar that the per-kind
+        :class:`PluginRegistry` consults during ``instantiate()`` to inject
+        ``instance._secrets``.
+
+        Optional or non-secret envs are *intentionally* excluded — those
+        are fetched lazily by the plugin via ``_env(name)`` (B2) when the
+        helper lands. The Configure modal still surfaces them all.
+        """
+        return tuple(
+            spec.name
+            for spec in self.required_env
+            if spec.secret and not spec.optional
+        )
 
     def ui_manifest(self) -> dict[str, Any]:
         """Flatten into the shape consumed by the web UI / ``/plugins`` API.

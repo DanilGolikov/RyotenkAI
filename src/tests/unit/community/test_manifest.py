@@ -36,9 +36,29 @@ def test_plugin_manifest_rejects_suggested_keys_outside_schema() -> None:
         PluginManifest.model_validate(body)
 
 
-def test_plugin_manifest_secrets_default_empty() -> None:
+def test_plugin_manifest_required_env_default_empty() -> None:
+    """No ``[[required_env]]`` declared → empty list, no derived secrets.
+
+    The legacy ``[secrets]`` block was removed in schema v4; envs (secret
+    or not) are now declared via ``[[required_env]]`` and the runtime
+    ``_required_secrets`` ClassVar comes from the
+    ``required_secret_names()`` helper.
+    """
     manifest = PluginManifest.model_validate(_base_plugin_body())
-    assert manifest.secrets.required == []
+    assert manifest.required_env == []
+    assert manifest.required_secret_names() == ()
+
+
+def test_plugin_manifest_required_secret_names_filters() -> None:
+    """Only ``secret=true, optional=false`` envs end up in the runtime tuple."""
+    body = _base_plugin_body()
+    body["required_env"] = [
+        {"name": "EVAL_REAL_SECRET", "secret": True, "optional": False},
+        {"name": "EVAL_OPTIONAL_SECRET", "secret": True, "optional": True},
+        {"name": "EVAL_PUBLIC_URL", "secret": False, "optional": False},
+    ]
+    manifest = PluginManifest.model_validate(body)
+    assert manifest.required_secret_names() == ("EVAL_REAL_SECRET",)
 
 
 def test_plugin_manifest_ui_manifest_shape() -> None:

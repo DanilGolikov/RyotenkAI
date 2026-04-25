@@ -96,7 +96,21 @@ def build_plugin_manifest_dict(
     if suggested_thresholds:
         manifest["suggested_thresholds"] = suggested_thresholds
     if inferred.required_secrets:
-        manifest["secrets"] = {"required": list(inferred.required_secrets)}
+        # Each inferred ``self._secrets["KEY"]`` access becomes a
+        # ``[[required_env]]`` block with ``secret=true, optional=false``
+        # — the safe default for any key that the plugin code dereferences
+        # unconditionally. Authors flip ``secret=false`` for non-credential
+        # envs (e.g. CLI paths) post-scaffold.
+        manifest["required_env"] = [
+            {
+                "name": name,
+                "description": "",
+                "optional": False,
+                "secret": True,
+                "managed_by": "",
+            }
+            for name in inferred.required_secrets
+        ]
     # ``[compat]`` is intentionally omitted: adding an empty block just makes
     # noise in the rendered TOML. Authors can add it by hand when they have a
     # real ``min_core_version`` to pin.

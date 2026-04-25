@@ -100,14 +100,53 @@ def test_preset_default_section_order() -> None:
 
 
 def test_list_of_scalars() -> None:
+    """Plain list-of-strings inside a section round-trips."""
     manifest = {
         "plugin": {
             "id": "x",
-            "kind": "validation",
+            "kind": "reward",
+            "supported_strategies": ["grpo", "sapo"],
             "entry_point": {"module": "plugin", "class": "X"},
         },
-        "secrets": {"required": ["EVAL_A", "EVAL_B"]},
     }
     text = dump_manifest_toml(manifest)
-    assert 'required = ["EVAL_A", "EVAL_B"]' in text
-    assert tomllib.loads(text)["secrets"]["required"] == ["EVAL_A", "EVAL_B"]
+    assert 'supported_strategies = ["grpo", "sapo"]' in text
+
+
+def test_array_of_tables_for_required_env() -> None:
+    """``required_env`` renders as ``[[required_env]]`` blocks in a fixed
+    field order so hand-edited diffs stay stable."""
+    manifest = {
+        "plugin": {
+            "id": "x",
+            "kind": "evaluation",
+            "entry_point": {"module": "plugin", "class": "X"},
+        },
+        "required_env": [
+            {
+                "name": "EVAL_KEY_A",
+                "description": "first key",
+                "optional": False,
+                "secret": True,
+                "managed_by": "",
+            },
+            {
+                "name": "EVAL_KEY_B",
+                "description": "second key",
+                "optional": True,
+                "secret": False,
+                "managed_by": "integrations",
+            },
+        ],
+    }
+    text = dump_manifest_toml(manifest)
+    # Two AOT blocks, in the same order they appeared in the input.
+    assert text.count("[[required_env]]") == 2
+    a_idx = text.index('name = "EVAL_KEY_A"')
+    b_idx = text.index('name = "EVAL_KEY_B"')
+    assert a_idx < b_idx
+    # name comes before description per _REQUIRED_ENV_FIELD_ORDER.
+    assert text.index("name", a_idx) < text.index("description", a_idx)
+    # Round-trips through tomllib unchanged.
+    parsed = tomllib.loads(text)
+    assert parsed["required_env"] == manifest["required_env"]

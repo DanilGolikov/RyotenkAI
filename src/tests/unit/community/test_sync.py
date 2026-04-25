@@ -202,8 +202,10 @@ def test_suggested_param_orphan_removed(tmp_path: Path) -> None:
     assert "orphan_key" not in merged["suggested_params"]
 
 
-def test_secrets_are_unioned_not_overwritten(tmp_path: Path) -> None:
-    """Sync supplements ``secrets.required`` with inferred keys but never deletes."""
+def test_required_env_is_merged_not_overwritten(tmp_path: Path) -> None:
+    """Sync supplements ``[[required_env]]`` with inferred keys; existing
+    entries (with hand-edited descriptions / non-default flags) are kept
+    verbatim, and entries no longer inferred are preserved too."""
     src = textwrap.dedent('''
         from src.evaluation.plugins.base import EvaluatorPlugin
 
@@ -229,8 +231,12 @@ def test_secrets_are_unioned_not_overwritten(tmp_path: Path) -> None:
         module = "plugin"
         class = "MyPlugin"
 
-        [secrets]
-        required = ["EVAL_OPTIONAL_USER_ONLY"]
+        [[required_env]]
+        name = "EVAL_OPTIONAL_USER_ONLY"
+        description = "Hand-edited helper text"
+        optional = true
+        secret = true
+        managed_by = ""
     ''')
     plugin_dir = tmp_path / "my_plugin"
     plugin_dir.mkdir()
@@ -239,7 +245,13 @@ def test_secrets_are_unioned_not_overwritten(tmp_path: Path) -> None:
 
     result = sync_plugin_manifest(plugin_dir, bump="patch")
     merged = tomllib.loads(result.new_text)
-    assert merged["secrets"]["required"] == ["EVAL_NEW_KEY", "EVAL_OPTIONAL_USER_ONLY"]
+    names = [entry["name"] for entry in merged["required_env"]]
+    # Inferred key first, existing-only entry kept after.
+    assert names == ["EVAL_NEW_KEY", "EVAL_OPTIONAL_USER_ONLY"]
+    # Existing entry's hand-edited fields survive intact.
+    user_entry = next(e for e in merged["required_env"] if e["name"] == "EVAL_OPTIONAL_USER_ONLY")
+    assert user_entry["description"] == "Hand-edited helper text"
+    assert user_entry["optional"] is True
 
 
 def test_sync_is_idempotent(tmp_path: Path) -> None:

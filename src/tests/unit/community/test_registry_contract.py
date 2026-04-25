@@ -292,8 +292,12 @@ def test_secret_injection_requires_resolver(
         "evaluation",
         "needs_secret",
         manifest_extras=dedent("""
-            [secrets]
-            required = ["EVAL_FAKE_KEY"]
+            [[required_env]]
+            name = "EVAL_FAKE_KEY"
+            description = ""
+            optional = false
+            secret = true
+            managed_by = ""
         """),
         plugin_source=EVALUATION_SRC.replace("TinyEvalPlugin", "NeedsSecretEvalPlugin"),
         class_name="NeedsSecretEvalPlugin",
@@ -318,8 +322,12 @@ def test_secret_injection_attaches_resolved_dict(
         "evaluation",
         "needs_secret",
         manifest_extras=dedent("""
-            [secrets]
-            required = ["EVAL_FAKE_KEY"]
+            [[required_env]]
+            name = "EVAL_FAKE_KEY"
+            description = ""
+            optional = false
+            secret = true
+            managed_by = ""
         """),
         plugin_source=EVALUATION_SRC.replace("TinyEvalPlugin", "NeedsSecretEvalPlugin"),
         class_name="NeedsSecretEvalPlugin",

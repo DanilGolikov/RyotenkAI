@@ -63,6 +63,8 @@ def test_scaffold_plugin_emits_todo_markers(tmp_path: Path) -> None:
 
 
 def test_scaffold_plugin_with_secrets(tmp_path: Path) -> None:
+    """``self._secrets["KEY"]`` accesses become ``[[required_env]]`` blocks
+    with the safe defaults (``secret=true, optional=false``)."""
     src = textwrap.dedent('''
         from src.evaluation.plugins.base import EvaluatorPlugin
 
@@ -82,7 +84,13 @@ def test_scaffold_plugin_with_secrets(tmp_path: Path) -> None:
     text = scaffold_plugin_manifest(plugin_dir)
     parsed = tomllib.loads(text)
     manifest = PluginManifest.model_validate(parsed)
-    assert manifest.secrets.required == ["EVAL_API_KEY"]
+    names = [entry.name for entry in manifest.required_env]
+    assert names == ["EVAL_API_KEY"]
+    entry = manifest.required_env[0]
+    assert entry.secret is True
+    assert entry.optional is False
+    # Loader-derived runtime tuple matches.
+    assert manifest.required_secret_names() == ("EVAL_API_KEY",)
 
 
 def test_scaffold_preset_basic(tmp_path: Path) -> None:
