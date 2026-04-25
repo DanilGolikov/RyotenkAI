@@ -133,8 +133,15 @@ export type PluginManifest =
     'suggested_thresholds',
     Record<string, unknown>
   >
+/** Per-entry community-loader failure. Backend mirrors LoadFailure
+ *  through OpenAPI; the UI renders these in the catalog amber banner. */
+export type PluginLoadError = S['PluginLoadError']
 export type PluginListResponse =
-  Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>
+  Narrow<
+    Narrow<S['PluginListResponse'], 'plugins', PluginManifest[]>,
+    'errors',
+    PluginLoadError[]
+  >
 
 // ───────── Providers (reusable workspaces) ─────────
 

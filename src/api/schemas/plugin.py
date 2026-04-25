@@ -49,9 +49,35 @@ class PluginManifest(BaseModel):
     required_env: list[RequiredEnvSpec] = Field(default_factory=list)
 
 
+class PluginLoadError(BaseModel):
+    """One per-entry failure surfaced from the community loader.
+
+    Mirrors :class:`src.community.loader.LoadFailure` for the OpenAPI
+    surface — kept as a plain Pydantic model (rather than re-exporting
+    the dataclass) so the API stays decoupled from internal shape
+    changes. The UI reads ``error_type`` to pick an icon, ``message``
+    for the headline, and ``traceback`` for the developer drilldown.
+    """
+
+    entry_name: str
+    plugin_id: str | None = None
+    error_type: str
+    message: str
+    traceback: str = ""
+
+
 class PluginListResponse(BaseModel):
     kind: PluginKind
     plugins: list[PluginManifest]
+    #: Per-entry load failures from the most recent catalog refresh.
+    #: Empty when every plugin in the kind directory loaded cleanly.
+    errors: list[PluginLoadError] = Field(default_factory=list)
 
 
-__all__ = ["PluginKind", "PluginManifest", "PluginListResponse", "RequiredEnvSpec"]
+__all__ = [
+    "PluginKind",
+    "PluginListResponse",
+    "PluginLoadError",
+    "PluginManifest",
+    "RequiredEnvSpec",
+]

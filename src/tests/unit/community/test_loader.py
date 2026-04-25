@@ -91,7 +91,10 @@ def test_load_plugins_kind_mismatch_is_skipped(tmp_path: Path, caplog) -> None:
     (plugin_dir / "plugin.py").write_text("class Dummy:\n    pass\n")
 
     loaded = load_plugins("validation", root=tmp_path)
-    assert loaded == []
+    assert list(loaded) == []
+    # Failures surface as structured records so the UI/admin can see them.
+    assert [f.error_type for f in loaded.failures] == ["kind_mismatch"]
+    assert loaded.failures[0].plugin_id == "x"
 
 
 def test_load_plugins_archive(tmp_path: Path) -> None:

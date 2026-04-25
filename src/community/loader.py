@@ -1,18 +1,30 @@
 """Loader for community plugins and presets.
 
 Scans ``community/<kind>/`` (for plugins) and ``community/presets/`` (for
-presets), returning structured ``LoadedPlugin`` / ``LoadedPreset`` records.
-Each entry is backed by either a folder or a ZIP archive; archives are
-transparently extracted to the cache and loaded from there.
+presets), returning structured :class:`LoadedPlugin` / :class:`LoadedPreset`
+records alongside :class:`LoadFailure` entries for entries the loader
+couldn't import.
+
+Two modes (controlled by the ``strict`` flag and the ``COMMUNITY_STRICT``
+env var):
+
+- **loose** (production default): swallow per-entry exceptions, log
+  them, and surface them as ``LoadFailure`` rows so the API/UI can
+  show the full picture without bricking the whole catalog.
+- **strict** (test / dev): re-raise the original exception so the test
+  run fails loudly. Triggered when the env var is set to a truthy value
+  or the caller passes ``strict=True``.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tomllib
+import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,6 +43,24 @@ from src.community.manifest import PluginKind, PluginManifest, PresetManifest
 from src.utils.logger import logger
 
 
+#: Truthy values for the ``COMMUNITY_STRICT`` env var. Anything else
+#: (unset, ``"0"``, ``""``, ``"false"``, etc.) keeps the default loose mode.
+_STRICT_TRUE = frozenset({"1", "true", "yes", "on"})
+
+
+def _resolve_strict(explicit: bool | None) -> bool:
+    """Combine an explicit caller flag with the env-var override.
+
+    ``strict=True`` from the caller always wins. ``strict=None`` (the
+    default for top-level entry points) defers to ``COMMUNITY_STRICT``.
+    """
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    return os.environ.get("COMMUNITY_STRICT", "").strip().lower() in _STRICT_TRUE
+
+
 @dataclass(frozen=True, slots=True)
 class LoadedPlugin:
     manifest: PluginManifest
@@ -43,6 +73,74 @@ class LoadedPreset:
     manifest: PresetManifest
     yaml_text: str
     source_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class LoadFailure:
+    """One entry the loader couldn't bring online.
+
+    Surfaced through :class:`CommunityCatalog._failures` and
+    ``GET /plugins/{kind}`` so the UI can render an error banner with
+    enough context for the plugin author to debug — and so a
+    ``COMMUNITY_STRICT=1 pytest`` run fails loudly on the same input.
+    """
+
+    #: ``"validation" | "evaluation" | "reward" | "reports" | "presets"`` —
+    #: which on-disk subtree the entry came from. ``"presets"`` is reserved
+    #: for the preset loader.
+    kind: str
+    #: Folder/zip name as seen on disk (``community/<kind>/<entry_name>``).
+    entry_name: str
+    #: Manifest id when available; falls back to :data:`None` when the
+    #: manifest itself didn't parse.
+    plugin_id: str | None
+    #: Stable machine-readable failure category.
+    #: ``"manifest_parse" | "kind_mismatch" | "duplicate_id" | "import_error" | "missing_yaml"``.
+    error_type: str
+    #: Human-readable summary suitable for the UI banner.
+    message: str
+    #: Full traceback for the developer drilldown. Empty when the failure
+    #: is a synthetic check (e.g. ``kind_mismatch``) without a real exc.
+    traceback: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class LoadResult:
+    """Success/failure pair returned by :func:`load_plugins`.
+
+    Two fields keep the wire-shape obvious to callers — the catalog
+    stores ``failures`` separately from ``plugins`` so the UI can treat
+    them independently. The result is iterable / indexable / sized so
+    code that only cares about the happy path can keep treating it as
+    ``list[LoadedPlugin]``.
+    """
+
+    plugins: list[LoadedPlugin] = field(default_factory=list)
+    failures: list[LoadFailure] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter(self.plugins)
+
+    def __len__(self) -> int:
+        return len(self.plugins)
+
+    def __getitem__(self, index):
+        return self.plugins[index]
+
+
+@dataclass(frozen=True, slots=True)
+class PresetLoadResult:
+    presets: list[LoadedPreset] = field(default_factory=list)
+    failures: list[LoadFailure] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter(self.presets)
+
+    def __len__(self) -> int:
+        return len(self.presets)
+
+    def __getitem__(self, index):
+        return self.presets[index]
 
 
 def _iter_entries(kind_dir: Path) -> Iterator[tuple[str, Path]]:
@@ -162,11 +260,26 @@ def _attach_community_metadata(
 
 
 def load_plugins(
-    kind: PluginKind, *, root: Path = COMMUNITY_ROOT
-) -> list[LoadedPlugin]:
-    """Load every plugin of the given kind under ``root/<kind>/``."""
+    kind: PluginKind,
+    *,
+    root: Path = COMMUNITY_ROOT,
+    strict: bool | None = None,
+) -> LoadResult:
+    """Load every plugin of the given kind under ``root/<kind>/``.
+
+    Returns a :class:`LoadResult` carrying both successes and per-entry
+    failures. Iterating over the result still yields ``LoadedPlugin`` —
+    callers that only care about the happy path can keep the
+    ``for p in load_plugins(kind, root=…):`` shape unchanged.
+
+    ``strict`` controls fail-fast behaviour: ``True`` re-raises the
+    first exception, ``False`` swallows everything into ``failures``,
+    ``None`` (default) consults the ``COMMUNITY_STRICT`` env var.
+    """
+    is_strict = _resolve_strict(strict)
     kind_dir = root / PLUGIN_KIND_DIRS[kind]
-    loaded: list[LoadedPlugin] = []
+    plugins: list[LoadedPlugin] = []
+    failures: list[LoadFailure] = []
     seen_ids: set[str] = set()
 
     for entry_name, entry_path in _iter_entries(kind_dir):
@@ -175,23 +288,49 @@ def load_plugins(
             manifest_dict = _parse_toml(_read_manifest_text(source_root))
             manifest = PluginManifest.model_validate(manifest_dict)
         except Exception as exc:
+            if is_strict:
+                raise
             logger.error(
                 "[COMMUNITY_LOADER] kind=%s entry=%s failed to load manifest: %s",
                 kind,
                 entry_name,
                 exc,
             )
+            failures.append(LoadFailure(
+                kind=kind,
+                entry_name=entry_name,
+                plugin_id=None,
+                error_type="manifest_parse",
+                message=str(exc),
+                traceback=traceback.format_exc(),
+            ))
             continue
 
         if manifest.plugin.kind != kind:
+            msg = (
+                f"manifest declares kind={manifest.plugin.kind!r} "
+                f"but lives under community/{kind}/"
+            )
+            if is_strict:
+                raise ValueError(f"[{entry_name}] {msg}")
             logger.error(
                 "[COMMUNITY_LOADER] kind mismatch: %s manifest declares kind=%s",
                 entry_name,
                 manifest.plugin.kind,
             )
+            failures.append(LoadFailure(
+                kind=kind,
+                entry_name=entry_name,
+                plugin_id=manifest.plugin.id,
+                error_type="kind_mismatch",
+                message=msg,
+            ))
             continue
 
         if manifest.plugin.id in seen_ids:
+            # Duplicate ids are *always* fatal — they're a programming
+            # mistake, not a transient runtime issue. Strict mode here
+            # would be redundant.
             raise ValueError(
                 f"duplicate plugin id {manifest.plugin.id!r} in kind={kind}"
             )
@@ -204,16 +343,26 @@ def load_plugins(
                 manifest.plugin.entry_point.class_name,
             )
         except Exception as exc:
+            if is_strict:
+                raise
             logger.error(
                 "[COMMUNITY_LOADER] kind=%s id=%s failed to import entry point: %s",
                 kind,
                 manifest.plugin.id,
                 exc,
             )
+            failures.append(LoadFailure(
+                kind=kind,
+                entry_name=entry_name,
+                plugin_id=manifest.plugin.id,
+                error_type="import_error",
+                message=str(exc),
+                traceback=traceback.format_exc(),
+            ))
             continue
 
         _attach_community_metadata(plugin_cls, manifest, source_root)
-        loaded.append(
+        plugins.append(
             LoadedPlugin(
                 manifest=manifest, plugin_cls=plugin_cls, source_path=source_root
             )
@@ -225,13 +374,21 @@ def load_plugins(
             source_root,
         )
 
-    return loaded
+    return LoadResult(plugins=plugins, failures=failures)
 
 
-def load_presets(*, root: Path = COMMUNITY_ROOT) -> list[LoadedPreset]:
-    """Load every preset under ``root/presets/``."""
+def load_presets(
+    *, root: Path = COMMUNITY_ROOT, strict: bool | None = None
+) -> PresetLoadResult:
+    """Load every preset under ``root/presets/``.
+
+    Mirrors :func:`load_plugins` — returns a result object with both
+    successes and per-entry failures. Strict-mode handling is shared.
+    """
+    is_strict = _resolve_strict(strict)
     presets_dir = root / PRESET_DIR_NAME
-    loaded: list[LoadedPreset] = []
+    presets: list[LoadedPreset] = []
+    failures: list[LoadFailure] = []
     seen_ids: set[str] = set()
 
     for entry_name, entry_path in _iter_entries(presets_dir):
@@ -240,11 +397,21 @@ def load_presets(*, root: Path = COMMUNITY_ROOT) -> list[LoadedPreset]:
             manifest_dict = _parse_toml(_read_manifest_text(source_root))
             manifest = PresetManifest.model_validate(manifest_dict)
         except Exception as exc:
+            if is_strict:
+                raise
             logger.error(
                 "[COMMUNITY_LOADER] preset=%s failed to load manifest: %s",
                 entry_name,
                 exc,
             )
+            failures.append(LoadFailure(
+                kind="presets",
+                entry_name=entry_name,
+                plugin_id=None,
+                error_type="manifest_parse",
+                message=str(exc),
+                traceback=traceback.format_exc(),
+            ))
             continue
 
         if manifest.preset.id in seen_ids:
@@ -253,14 +420,24 @@ def load_presets(*, root: Path = COMMUNITY_ROOT) -> list[LoadedPreset]:
 
         yaml_path = source_root / manifest.preset.entry_point.file
         if not yaml_path.exists():
+            msg = f"YAML file not found at {yaml_path}"
+            if is_strict:
+                raise FileNotFoundError(msg)
             logger.error(
-                "[COMMUNITY_LOADER] preset=%s: YAML file not found at %s",
+                "[COMMUNITY_LOADER] preset=%s: %s",
                 manifest.preset.id,
-                yaml_path,
+                msg,
             )
+            failures.append(LoadFailure(
+                kind="presets",
+                entry_name=entry_name,
+                plugin_id=manifest.preset.id,
+                error_type="missing_yaml",
+                message=msg,
+            ))
             continue
 
-        loaded.append(
+        presets.append(
             LoadedPreset(
                 manifest=manifest,
                 yaml_text=yaml_path.read_text(encoding="utf-8"),
@@ -273,16 +450,21 @@ def load_presets(*, root: Path = COMMUNITY_ROOT) -> list[LoadedPreset]:
             yaml_path,
         )
 
-    return loaded
+    return PresetLoadResult(presets=presets, failures=failures)
 
 
-def load_all_plugins(*, root: Path = COMMUNITY_ROOT) -> dict[str, list[LoadedPlugin]]:
-    return {kind: load_plugins(kind, root=root) for kind in ALL_PLUGIN_KINDS}
+def load_all_plugins(
+    *, root: Path = COMMUNITY_ROOT, strict: bool | None = None
+) -> dict[str, LoadResult]:
+    return {kind: load_plugins(kind, root=root, strict=strict) for kind in ALL_PLUGIN_KINDS}
 
 
 __all__ = [
+    "LoadFailure",
+    "LoadResult",
     "LoadedPlugin",
     "LoadedPreset",
+    "PresetLoadResult",
     "load_all_plugins",
     "load_plugins",
     "load_presets",

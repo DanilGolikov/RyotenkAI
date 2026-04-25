@@ -1497,6 +1497,33 @@ export interface components {
             kind: "reward" | "validation" | "evaluation" | "reports";
             /** Plugins */
             plugins: components["schemas"]["PluginManifest"][];
+            /** Errors */
+            errors?: components["schemas"]["PluginLoadError"][];
+        };
+        /**
+         * PluginLoadError
+         * @description One per-entry failure surfaced from the community loader.
+         *
+         *     Mirrors :class:`src.community.loader.LoadFailure` for the OpenAPI
+         *     surface — kept as a plain Pydantic model (rather than re-exporting
+         *     the dataclass) so the API stays decoupled from internal shape
+         *     changes. The UI reads ``error_type`` to pick an icon, ``message``
+         *     for the headline, and ``traceback`` for the developer drilldown.
+         */
+        PluginLoadError: {
+            /** Entry Name */
+            entry_name: string;
+            /** Plugin Id */
+            plugin_id?: string | null;
+            /** Error Type */
+            error_type: string;
+            /** Message */
+            message: string;
+            /**
+             * Traceback
+             * @default
+             */
+            traceback: string;
         };
         /**
          * PluginManifest

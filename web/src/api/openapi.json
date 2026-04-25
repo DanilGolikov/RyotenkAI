@@ -4270,6 +4270,13 @@
             },
             "type": "array",
             "title": "Plugins"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/PluginLoadError"
+            },
+            "type": "array",
+            "title": "Errors"
           }
         },
         "type": "object",
@@ -4278,6 +4285,46 @@
           "plugins"
         ],
         "title": "PluginListResponse"
+      },
+      "PluginLoadError": {
+        "properties": {
+          "entry_name": {
+            "type": "string",
+            "title": "Entry Name"
+          },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          },
+          "error_type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "traceback": {
+            "type": "string",
+            "title": "Traceback",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "entry_name",
+          "error_type",
+          "message"
+        ],
+        "title": "PluginLoadError",
+        "description": "One per-entry failure surfaced from the community loader.\n\nMirrors :class:`src.community.loader.LoadFailure` for the OpenAPI\nsurface — kept as a plain Pydantic model (rather than re-exporting\nthe dataclass) so the API stays decoupled from internal shape\nchanges. The UI reads ``error_type`` to pick an icon, ``message``\nfor the headline, and ``traceback`` for the developer drilldown."
       },
       "PluginManifest": {
         "properties": {
