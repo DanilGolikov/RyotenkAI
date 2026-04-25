@@ -128,7 +128,7 @@ class MyValidator(ValidationPlugin):
         return [] if result.passed else ["Add more samples", "Use augmentation"]
 ```
 
-You do **not** register the class manually. The community catalog loader reads `manifest.toml`, imports the class via `entry_point`, and attaches `name`/`priority`/`version`/`_required_secrets` from the manifest onto it.
+You do **not** register the class manually. The community catalog loader reads `manifest.toml`, imports the class via `entry_point`, and attaches `name`/`version`/`_required_secrets` from the manifest onto it.
 
 ## Keep three semantic blocks separate in `ValidationResult`
 
@@ -142,16 +142,17 @@ This is the single most important convention — reports render each block in a 
 
 Do not put thresholds into metrics or vice versa.
 
-## Priority ranges
+## Execution order
 
-| Range | Plugin type |
-|---|---|
-| 10–20 | Cheap format/size checks (`min_samples`, `preference_format`) |
-| 25–40 | Statistical checks (`avg_length`, `diversity_score`, `empty_ratio`) |
-| 50–60 | Domain-specific checks (`deduplication`, HelixQL DPO/SAPO) |
-| 70–80 | Expensive / external API checks |
+Plugins run in the order they appear in
+``datasets.<id>.validations.plugins`` in the user's config YAML —
+there is no global priority field. List cheap checks first
+(``min_samples``, ``preference_format``) and expensive ones
+(deduplication, external API calls) last so ``critical_failures: 1``
+fails fast on obvious problems before doing the slow work.
 
-Lower runs earlier. If your plugin is `expensive = True` the orchestrator may skip it in `mode: fast`.
+Plugins with ``expensive = True`` may be skipped by the orchestrator in
+``mode: fast``.
 
 ## Referencing the plugin from pipeline config
 

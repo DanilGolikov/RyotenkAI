@@ -71,16 +71,19 @@ class EvaluatorPlugin(BasePlugin, ABC):
     Base class for all evaluator plugins.
 
     Subclass contract:
-    - Override class variables: name, priority.
     - Implement get_description(), evaluate(), get_recommendations().
     - Optionally override `_validate_contract()` for config validation at init.
 
     Plugin receives ALREADY-COLLECTED samples (with model_answer filled in).
     It does NOT call inference itself — that is EvaluationRunner's responsibility.
+
+    Execution order is the order plugin instances appear in
+    ``evaluation.evaluators.plugins`` in the user's config YAML — there
+    is no global ``priority`` knob.
     """
 
     # ----------------------------------------------------------------
-    # Metadata — name / priority / version inherited from BasePlugin
+    # Metadata — name / version inherited from BasePlugin
     # ----------------------------------------------------------------
     requires_expected_answer: ClassVar[bool] = False
 
