@@ -29,10 +29,6 @@ _GROUPED_SAMPLES_ERROR_RE = re.compile(r"^(?P<label>Samples?) (?P<body>\d+(?:,\d
 
 
 class DatasetValidationBlockPlugin(ReportPlugin):
-    plugin_id = "dataset_validation"
-    title = "Dataset Validation"
-    order = 40
-
     @staticmethod
     def _format_kv_lines(d: dict) -> tuple[DocInline, ...]:
         if not d:

@@ -5,10 +5,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class FooterBlockPlugin(ReportPlugin):
-    plugin_id = "footer"
-    title = "Footer"
-    order = 120
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         now = ctx.clock().strftime("%Y-%m-%d %H:%M:%S")
         nodes: list[DocBlock] = [Paragraph(inlines(emph(f"Generated automatically by RyotenkAI at {now}")))]

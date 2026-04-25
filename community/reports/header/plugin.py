@@ -16,10 +16,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class HeaderBlockPlugin(ReportPlugin):
-    plugin_id = "header"
-    title = "Header"
-    order = 10
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         s = ctx.report.summary
         started = s.start_time.strftime("%Y-%m-%d %H:%M:%S") if s.start_time else "—"

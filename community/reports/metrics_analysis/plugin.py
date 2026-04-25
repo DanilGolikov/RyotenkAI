@@ -20,10 +20,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class MetricsAnalysisBlockPlugin(ReportPlugin):
-    plugin_id = "metrics_analysis"
-    title = "Metrics Analysis"
-    order = 90
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         phases = ctx.report.phases
         resources = ctx.report.resources

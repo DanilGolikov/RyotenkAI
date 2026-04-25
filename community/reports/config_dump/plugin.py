@@ -12,10 +12,6 @@ KEY_LORA = "lora"
 
 
 class ConfigDumpBlockPlugin(ReportPlugin):
-    plugin_id = "config_dump"
-    title = "Configuration"
-    order = 110
-
     def _convert_param_value(self, value: Any) -> Any:
         """Convert string MLflow param value to a Python type."""
         if not isinstance(value, str):

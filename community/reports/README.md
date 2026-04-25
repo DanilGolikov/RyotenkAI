@@ -23,12 +23,15 @@ community/reports/<plugin_id>/
 ## `manifest.toml` format
 
 ```toml
+schema_version = 4
+
 [plugin]
-id = "my_block"                # → becomes plugin_id on the class
+id = "my_block"                # → self.plugin_id at runtime
 kind = "reports"               # required literal
-name = "My Block"              # human-readable (defaults to id)
+name = "My Block"              # → self.title at runtime
 version = "1.0.0"
-category = "report"
+category = "structural"        # one of: structural / configuration / validation /
+                               #         evaluation / diagnostics / metrics / training
 stability = "stable"
 description = "Renders the … block of the experiment report."
 
@@ -56,17 +59,19 @@ If you omit `reports.sections`, the default built-in order is used (see `src/rep
 
 No more globally-unique `order` numbers in manifests: different users can place the same plugin at different positions just by editing their config, and two independent plugins can't collide.
 
-## Loader ↔ class mapping
+## Manifest is the single source of truth
 
-Report plugins predate the community contract and keep their legacy attribute names. The loader + registry map manifest fields and config position onto the class automatically:
+Three things you used to write on the class are now derived automatically:
 
-| Source | Class attribute |
+| Surface | Source |
 |---|---|
-| `plugin.id` in manifest | `plugin_id` |
-| `reports.sections[i]` in pipeline config | `order` (assigned as `i * 10`) |
-| `plugin.name` in manifest | `title` (not auto-attached — set it yourself, see below) |
+| `plugin_id` | `[plugin].id` in `manifest.toml` |
+| `title` | `[plugin].name` in `manifest.toml` |
+| `order` | position in `reports.sections` (assigned as `i * 10`) |
 
-You never write `order` anywhere any more — it's a runtime detail.
+Don't declare any of them on the subclass — `ReportPlugin` exposes
+`plugin_id` / `title` as manifest-backed properties and `order` as
+per-instance state assigned by `build_report_plugins`.
 
 ## Class contract
 
@@ -75,22 +80,16 @@ You never write `order` anywhere any more — it's a runtime detail.
 from __future__ import annotations
 
 from src.reports.document.nodes import DocBlock, Heading, Paragraph, Table, inlines, txt
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class MyBlockPlugin:
-    # plugin_id is overwritten by the loader from manifest.toml. order is
-    # overwritten at render time based on reports.sections in the pipeline
-    # config — leaving a default here keeps the class self-documenting and
-    # testable in isolation.
-    plugin_id = "my_block"
-    order = 0
-
-    title = "My Custom Block"
+class MyBlockPlugin(ReportPlugin):
+    # No plugin_id / title / order ClassVars — they come from the manifest
+    # and the user's reports.sections list. Just implement render().
 
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         nodes: list[DocBlock] = [
-            Heading(2, inlines(txt(self.title))),
+            Heading(2, inlines(txt(self.title))),  # → manifest [plugin].name
             Paragraph(inlines(txt(f"Run: {ctx.run_id}"))),
             Table(
                 headers=["metric", "value"],
@@ -98,9 +97,9 @@ class MyBlockPlugin:
             ),
         ]
         return ReportBlock(
-            block_id=self.plugin_id,
-            title=self.title,
-            order=self.order,
+            block_id=self.plugin_id,   # → manifest [plugin].id
+            title=self.title,          # → manifest [plugin].name
+            order=self.order,          # → reports.sections position × 10
             nodes=nodes,
         )
 ```
@@ -108,8 +107,7 @@ class MyBlockPlugin:
 ### Rules
 
 - `block_id` in the returned `ReportBlock` **must** equal `self.plugin_id`.
-- `order` **must** be unique across all report plugins — duplicates raise at registry build time.
-- `plugin_id` **must** be unique across all report plugins.
+- `plugin_id` is auto-unique because the catalogue rejects duplicate ids at load time.
 - Do **not** call `mlflow` / `open()` / network inside `render()` — the composer catches exceptions, but your block turns into an error placeholder. Query via `ctx.data_provider` and `ctx.data` instead.
 
 ## The `ReportPluginContext`

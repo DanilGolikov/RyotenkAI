@@ -17,10 +17,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class SummaryBlockPlugin(ReportPlugin):
-    plugin_id = "summary"
-    title = "Summary"
-    order = 20
-
     @staticmethod
     def _status_description(status: RunStatus) -> str:
         return {

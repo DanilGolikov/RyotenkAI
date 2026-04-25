@@ -16,10 +16,6 @@ from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPlug
 
 
 class IssuesBlockPlugin(ReportPlugin):
-    plugin_id = "issues"
-    title = "Warnings & Errors"
-    order = 30
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         issues = ctx.report.issues
         nodes: list[DocBlock] = [Heading(2, inlines(txt("⚠️ Warnings & Errors")))]

@@ -42,10 +42,6 @@ def _fmt_duration(seconds: float) -> str:
 class StageTimelineBlockPlugin(ReportPlugin):
     """Renders a 2-column table: Stage | Duration from stage artifact envelopes."""
 
-    plugin_id = "stage_timeline"
-    title = "Pipeline Stages"
-    order = 100
-
     def render(self, ctx: ReportPluginContext) -> ReportBlock:
         timeline = ctx.report.timeline
         nodes: list[DocBlock] = [Heading(2, inlines(txt("📋 Pipeline Stages")))]

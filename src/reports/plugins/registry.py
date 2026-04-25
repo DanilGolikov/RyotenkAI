@@ -31,21 +31,13 @@ if TYPE_CHECKING:
 class ReportPluginRegistry(PluginRegistry["ReportPlugin"]):
     """Report-kind registry. Plugin ctor takes no arguments.
 
-    The legacy ``plugin_id = ...`` ClassVar pattern continues to work
-    because :class:`ReportPlugin` still declares the slot. We additionally
-    set it from the manifest at registration time (matching the old
-    behaviour) so plugins that omit the ClassVar still get a populated id.
+    ``plugin_id`` / ``title`` are manifest-backed properties on
+    :class:`ReportPlugin`; the registry doesn't mirror anything onto the
+    class — the loader's ``_attach_community_metadata`` already attaches
+    ``_community_manifest`` and the properties read from it.
     """
 
     _kind: ClassVar[str] = "reports"
-
-    def register_from_community(self, loaded: LoadedPlugin) -> None:
-        plugin_cls = loaded.plugin_cls
-        plugin_id = loaded.manifest.plugin.id
-        # Mirror manifest id onto the class so ``plugin.plugin_id`` works
-        # even if the author omitted the ClassVar declaration.
-        plugin_cls.plugin_id = plugin_id  # type: ignore[attr-defined]
-        super().register_from_community(loaded)
 
     def _make_init_kwargs(self, init_kwargs: dict[str, Any]) -> dict[str, Any]:
         # Reports take no kwargs; ignore anything passed and warn-by-error
@@ -74,9 +66,9 @@ def build_report_plugins(
     - Duplicate plugin id in ``sections`` → :class:`ValueError` (catches
       config typos like ``[a, b, a]``).
     - ``order`` is assigned from the list position (× 10 for visual
-      breathing room in debug output) and written onto the class before
-      instantiation, so downstream code that reads ``plugin.order`` keeps
-      working unchanged.
+      breathing room in debug output) on each **instance** after
+      construction, so concurrent uses of the same plugin class see
+      independent orderings (no class-level mutation).
 
     ``secrets`` — optional. When provided, an ``RPRT_*`` resolver is
     built and threaded into ``registry.instantiate(...)`` so report
@@ -112,12 +104,14 @@ def build_report_plugins(
 
     plugins: list[IReportBlockPlugin] = []
     for idx, plugin_id in enumerate(ordered_ids):
-        plugin_cls = report_registry.get_class(plugin_id)
-        # ``order`` is part of the IReportBlockPlugin contract — mutate the
-        # class so existing instances also see the new value (composer
-        # reads ``.order`` during rendering).
-        plugin_cls.order = idx * 10  # type: ignore[attr-defined]
-        plugins.append(report_registry.instantiate(plugin_id, resolver=resolver))
+        instance = report_registry.instantiate(plugin_id, resolver=resolver)
+        # ``order`` is per-instance state on ``ReportPlugin`` — write to the
+        # ``_order`` slot the property reads from, so the composer's
+        # ``.order`` access returns the section-list position. Each
+        # ``instantiate`` call returns a fresh object, so this never bleeds
+        # across runs.
+        instance._order = idx * 10  # type: ignore[attr-defined]
+        plugins.append(instance)
     return plugins
 
 
