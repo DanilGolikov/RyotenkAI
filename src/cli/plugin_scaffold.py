@@ -105,7 +105,7 @@ def _render_manifest(plugin_id: str, kind: ScaffoldKind, class_name: str) -> str
     return "\n".join(lines)
 
 
-def _render_plugin_py(kind: ScaffoldKind, class_name: str) -> str:
+def _render_plugin_py(kind: ScaffoldKind, plugin_id: str, class_name: str) -> str:
     """Render the plugin.py skeleton with the right ABC + TODO bodies."""
     base_module, base_class = _kind_class_base(kind)
     if kind == "validation":
@@ -115,7 +115,7 @@ def _render_plugin_py(kind: ScaffoldKind, class_name: str) -> str:
     elif kind == "reward":
         body = _reward_body(class_name, base_module, base_class)
     elif kind == "reports":
-        body = _reports_body(class_name, base_module, base_class)
+        body = _reports_body(plugin_id, class_name, base_module, base_class)
     else:
         # ScaffoldKind is a Literal — but mypy doesn't know that exhaustive
         # match here is total without a fallback raise.
@@ -225,7 +225,7 @@ def _reward_body(class_name: str, base_module: str, base_class: str) -> str:
     )
 
 
-def _reports_body(class_name: str, base_module: str, base_class: str) -> str:
+def _reports_body(plugin_id: str, class_name: str, base_module: str, base_class: str) -> str:
     return (
         f'"""TODO: one-line module docstring."""\n'
         "\n"
@@ -238,8 +238,12 @@ def _reports_body(class_name: str, base_module: str, base_class: str) -> str:
         f"class {class_name}({base_class}):\n"
         '    """TODO: class docstring describing the section."""\n'
         "\n"
-        "    plugin_id = \"\"   # filled by loader from manifest id\n"
-        "    title = \"TODO: section title\"\n"
+        # Hardcoded plugin_id matches the manifest id the loader will
+        # also stamp at registration time. Setting it here makes the
+        # class self-contained for tests that instantiate the plugin
+        # outside the catalog path (the most common authoring flow).
+        f'    plugin_id = "{plugin_id}"\n'
+        f'    title = "TODO: section title"\n'
         "    order = 0  # overwritten by build_report_plugins from reports.sections\n"
         "\n"
         "    def render(self, ctx: ReportPluginContext) -> ReportBlock:\n"
@@ -353,7 +357,7 @@ def scaffold_cmd(
     (plugin_dir / "manifest.toml").write_text(
         _render_manifest(plugin_id, kind, class_name)
     )
-    (plugin_dir / "plugin.py").write_text(_render_plugin_py(kind, class_name))
+    (plugin_dir / "plugin.py").write_text(_render_plugin_py(kind, plugin_id, class_name))
     (plugin_dir / "README.md").write_text(_render_readme(plugin_id, kind, class_name))
 
     tests_dir = plugin_dir / "tests"

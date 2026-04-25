@@ -193,3 +193,18 @@ def test_class_name_capitalises_underscores(
         fake_root / "validation" / "two_word_thing" / "plugin.py"
     ).read_text()
     assert "class TwoWordThingPlugin(ValidationPlugin):" in plugin_text
+
+
+def test_reports_scaffold_seeds_plugin_id_class_attr(
+    runner: CliRunner, fake_root: Path
+) -> None:
+    """Reports plugins instantiated outside the catalog (e.g. in tests)
+    still get a meaningful ``plugin_id`` — the scaffold seeds the
+    ClassVar from the manifest id rather than leaving an empty string
+    that would only get filled by the loader's registration step."""
+    runner.invoke(
+        plugin_app,
+        ["scaffold", "reports", "my_section", "--root", str(fake_root)],
+    )
+    plugin_text = (fake_root / "reports" / "my_section" / "plugin.py").read_text()
+    assert 'plugin_id = "my_section"' in plugin_text
