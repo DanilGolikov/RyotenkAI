@@ -3214,6 +3214,14 @@
               }
             ],
             "title": "Parsed Json"
+          },
+          "stale_plugins": {
+            "items": {
+              "$ref": "#/components/schemas/StalePluginEntry"
+            },
+            "type": "array",
+            "title": "Stale Plugins",
+            "default": []
           }
         },
         "type": "object",
@@ -5944,6 +5952,35 @@
         },
         "type": "object",
         "title": "StagesResponse"
+      },
+      "StalePluginEntry": {
+        "properties": {
+          "plugin_kind": {
+            "type": "string",
+            "title": "Plugin Kind"
+          },
+          "plugin_name": {
+            "type": "string",
+            "title": "Plugin Name"
+          },
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plugin_kind",
+          "plugin_name",
+          "instance_id",
+          "location"
+        ],
+        "title": "StalePluginEntry",
+        "description": "One plugin reference in the saved config that no longer matches\na registered community plugin.\n\nMirrors :class:`src.community.stale_plugins.StalePluginRef` —\nreshaped as a Pydantic model so it lands in OpenAPI cleanly."
       },
       "ToggleFavoriteRequest": {
         "properties": {

@@ -62,6 +62,21 @@ def build_reward_plugin_result(
         params=reward_params,
     )
 
+    # Reward broadcast visibility (PR13): the UI's Configure modal saves
+    # reward plugin params *once* but the underlying YAML may apply them
+    # across multiple training phases that share the same plugin id.
+    # Logging the (strategy, plugin, params-keys) triple at each
+    # instantiation gives the user a verifiable trail in the run log
+    # so a surprising "params also affected the SAPO phase!" outcome is
+    # auditable post-hoc. Param values themselves are intentionally NOT
+    # logged — they may include secrets through ``reward_params``.
+    logger.info(
+        "[REWARD_PLUGIN] strategy=%s plugin=%r params=%s",
+        phase_config.strategy_type,
+        plugin_name,
+        sorted(reward_params.keys()),
+    )
+
     logger.info("[REWARD_PLUGIN] Running setup for %r ...", plugin_name)
     plugin.setup()
     logger.info("[REWARD_PLUGIN] Setup complete for %r", plugin_name)

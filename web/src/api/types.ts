@@ -105,7 +105,14 @@ export type ProjectDetail = S['ProjectDetail']
 export type CreateProjectRequest = S['CreateProjectRequest']
 export type SaveConfigRequest = S['SaveConfigRequest']
 export type SaveConfigResponse = S['SaveConfigResponse']
-export type ConfigResponse = S['ConfigResponse']
+
+/** One plugin reference in the saved config that no longer matches a
+ *  registered community plugin. The Datasets / Plugins tabs use this
+ *  to render a "Remove from config" button per stale row instead of
+ *  letting the run fail mid-pipeline with a "plugin not found" error. */
+export type StalePluginEntry = S['StalePluginEntry']
+export type ConfigResponse =
+  Narrow<S['ConfigResponse'], 'stale_plugins', StalePluginEntry[]>
 export type ConfigVersion = S['ConfigVersion']
 export type ConfigVersionsResponse = S['ConfigVersionsResponse']
 export type ConfigVersionDetail = S['ConfigVersionDetail']

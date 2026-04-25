@@ -1080,6 +1080,11 @@ export interface components {
             parsed_json?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Stale Plugins
+             * @default []
+             */
+            stale_plugins: components["schemas"]["StalePluginEntry"][];
         };
         /** ConfigTemplate */
         ConfigTemplate: {
@@ -2293,6 +2298,24 @@ export interface components {
         StagesResponse: {
             /** Stages */
             stages?: components["schemas"]["StageRun"][];
+        };
+        /**
+         * StalePluginEntry
+         * @description One plugin reference in the saved config that no longer matches
+         *     a registered community plugin.
+         *
+         *     Mirrors :class:`src.community.stale_plugins.StalePluginRef` —
+         *     reshaped as a Pydantic model so it lands in OpenAPI cleanly.
+         */
+        StalePluginEntry: {
+            /** Plugin Kind */
+            plugin_kind: string;
+            /** Plugin Name */
+            plugin_name: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Location */
+            location: string;
         };
         /** ToggleFavoriteRequest */
         ToggleFavoriteRequest: {
