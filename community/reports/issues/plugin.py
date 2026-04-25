@@ -12,10 +12,10 @@ from src.reports.document.nodes import (
     strong,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class IssuesBlockPlugin:
+class IssuesBlockPlugin(ReportPlugin):
     plugin_id = "issues"
     title = "Warnings & Errors"
     order = 30

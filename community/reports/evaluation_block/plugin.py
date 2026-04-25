@@ -17,12 +17,12 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 _EMPTY_CELL = "—"  # noqa: WPS226
 
 
-class EvaluationBlockPlugin:
+class EvaluationBlockPlugin(ReportPlugin):
     """Renders evaluation_results.json data in the experiment report."""
 
     plugin_id = "evaluation_block"

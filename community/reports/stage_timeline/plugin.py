@@ -15,7 +15,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 _STATUS_EMOJI: MappingProxyType[str, str] = MappingProxyType(
     {
@@ -39,7 +39,7 @@ def _fmt_duration(seconds: float) -> str:
     return f"{minutes}m {secs:.0f}s"
 
 
-class StageTimelineBlockPlugin:
+class StageTimelineBlockPlugin(ReportPlugin):
     """Renders a 2-column table: Stage | Duration from stage artifact envelopes."""
 
     plugin_id = "stage_timeline"

@@ -13,10 +13,10 @@ from src.reports.document.nodes import (
     txt,
 )
 from src.reports.models.report import RunStatus
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class SummaryBlockPlugin:
+class SummaryBlockPlugin(ReportPlugin):
     plugin_id = "summary"
     title = "Summary"
     order = 20

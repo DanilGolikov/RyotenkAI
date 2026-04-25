@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
-from src.data.validation.registry import ValidationPluginRegistry
+from src.data.validation.registry import validation_registry
 from src.pipeline.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
@@ -170,25 +170,20 @@ class DatasetValidator(PipelineStage):
                 plugin_thresholds = pc.thresholds or {}
                 apply_to = set(pc.apply_to or [SPLIT_TRAIN, SPLIT_EVAL])
 
-                plugin = ValidationPluginRegistry.get_plugin(plugin_name, plugin_params, plugin_thresholds)
-
-                required_keys: tuple[str, ...] | None = getattr(type(plugin), "_required_secrets", None)
-                if required_keys:
-                    if secrets_resolver is None:
-                        raise RuntimeError(
-                            f"Validation plugin '{plugin_name}' requires secrets {list(required_keys)} "
-                            "but no Secrets model was provided to DatasetValidator. "
-                            "Ensure the orchestrator passes secrets."
-                        )
-                    resolved = secrets_resolver.resolve(required_keys)
-                    object.__setattr__(plugin, "_secrets", resolved)
-                    logger.debug(f"[VALIDATOR] Injected {len(resolved)} secret(s) for plugin '{plugin_id}'")
+                # Secret injection is centralised in registry.instantiate(). Plugins
+                # that don't declare ``_required_secrets`` simply ignore the resolver.
+                plugin = validation_registry.instantiate(
+                    plugin_name,
+                    resolver=secrets_resolver,
+                    params=plugin_params,
+                    thresholds=plugin_thresholds,
+                )
 
                 plugins.append((plugin_id, plugin_name, plugin, apply_to))
                 logger.debug(f"[VALIDATOR] Loaded plugin instance: {plugin_id} ({plugin_name})")
 
             except KeyError as e:
-                available = ValidationPluginRegistry.list_plugins()
+                available = validation_registry.list_ids()
                 logger.error(f"[VALIDATOR] Failed to load plugin: {e}. Available: {available}")
                 raise
 

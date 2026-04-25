@@ -9,10 +9,11 @@ Provides pluggable architecture for dataset validation with:
 """
 
 from src.data.validation.base import ValidationPlugin, ValidationResult
-from src.data.validation.registry import ValidationPluginRegistry
+from src.data.validation.registry import ValidationPluginRegistry, validation_registry
 
 __all__ = [
     "ValidationPlugin",
     "ValidationPluginRegistry",
     "ValidationResult",
+    "validation_registry",
 ]

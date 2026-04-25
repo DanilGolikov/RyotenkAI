@@ -44,20 +44,20 @@ def _hf_ds(train_id: str, *, plugins: list[dict] | None = None, critical_failure
 
 
 @patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.ValidationPluginRegistry")
+@patch("src.pipeline.stages.dataset_validator.validation_registry")
 def test_loads_default_plugins_when_no_plugins_configured(mock_registry, mock_loader_factory) -> None:
     ds = _local_ds("data/train.jsonl", plugins=[], critical_failures=1)
     cfg = _mk_primary_only_config(ds)
 
-    # Default plugin load calls registry.get_plugin(...) 4 times
-    mock_registry.get_plugin.return_value = MagicMock(name="x")
+    # Default plugin load calls registry.instantiate(...) 4 times
+    mock_registry.instantiate.return_value = MagicMock(name="x")
 
     _ = DatasetValidator(cfg)
-    assert mock_registry.get_plugin.call_count == 4
+    assert mock_registry.instantiate.call_count == 4
 
 
 @patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.ValidationPluginRegistry")
+@patch("src.pipeline.stages.dataset_validator.validation_registry")
 def test_loads_configured_plugins_only(mock_registry, mock_loader_factory) -> None:
     ds = _local_ds(
         "data/train.jsonl",
@@ -69,9 +69,9 @@ def test_loads_configured_plugins_only(mock_registry, mock_loader_factory) -> No
     )
     cfg = _mk_primary_only_config(ds)
 
-    mock_registry.get_plugin.return_value = MagicMock(name="x")
+    mock_registry.instantiate.return_value = MagicMock(name="x")
     _ = DatasetValidator(cfg)
-    assert mock_registry.get_plugin.call_count == 2
+    assert mock_registry.instantiate.call_count == 2
 
 
 def test_execute_returns_err_on_critical_failure(tmp_path) -> None:

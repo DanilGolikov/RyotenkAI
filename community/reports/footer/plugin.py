@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from src.reports.document.nodes import DocBlock, Paragraph, emph, inlines
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class FooterBlockPlugin:
+class FooterBlockPlugin(ReportPlugin):
     plugin_id = "footer"
     title = "Footer"
     order = 120

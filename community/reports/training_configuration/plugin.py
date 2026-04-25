@@ -11,10 +11,10 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class TrainingConfigurationBlockPlugin:
+class TrainingConfigurationBlockPlugin(ReportPlugin):
     plugin_id = "training_configuration"
     title = "Training Configuration"
     order = 70

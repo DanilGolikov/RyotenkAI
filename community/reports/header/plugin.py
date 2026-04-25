@@ -12,10 +12,10 @@ from src.reports.document.nodes import (
     strong,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
-class HeaderBlockPlugin:
+class HeaderBlockPlugin(ReportPlugin):
     plugin_id = "header"
     title = "Header"
     order = 10

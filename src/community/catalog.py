@@ -136,29 +136,32 @@ class CommunityCatalog:
         )
 
     def _populate_registries(self) -> None:
-        """Push loaded plugins into the legacy per-kind registries.
+        """Push loaded plugins into the per-kind registries.
 
         Imports are done lazily inside the method to keep ``src/community/``
-        free of hard dependencies on unrelated subsystems.
+        free of hard dependencies on unrelated subsystems. Each kind module
+        exports a singleton registry instance — the catalog drives the
+        clear/register lifecycle through that instance, never directly
+        through the class.
         """
-        from src.data.validation.registry import ValidationPluginRegistry
-        from src.evaluation.plugins.registry import EvaluatorPluginRegistry
-        from src.reports.plugins.registry import ReportPluginRegistry
-        from src.training.reward_plugins.registry import RewardPluginRegistry
+        from src.data.validation.registry import validation_registry
+        from src.evaluation.plugins.registry import evaluator_registry
+        from src.reports.plugins.registry import report_registry
+        from src.training.reward_plugins.registry import reward_registry
 
-        ValidationPluginRegistry.clear()
-        EvaluatorPluginRegistry.clear()
-        RewardPluginRegistry.clear()
-        ReportPluginRegistry.clear()
+        validation_registry.clear()
+        evaluator_registry.clear()
+        reward_registry.clear()
+        report_registry.clear()
 
         for loaded in self._plugins.get("validation", []):
-            ValidationPluginRegistry.register_from_community(loaded)
+            validation_registry.register_from_community(loaded)
         for loaded in self._plugins.get("evaluation", []):
-            EvaluatorPluginRegistry.register_from_community(loaded)
+            evaluator_registry.register_from_community(loaded)
         for loaded in self._plugins.get("reward", []):
-            RewardPluginRegistry.register_from_community(loaded)
+            reward_registry.register_from_community(loaded)
         for loaded in self._plugins.get("reports", []):
-            ReportPluginRegistry.register_from_community(loaded)
+            report_registry.register_from_community(loaded)
 
     # ----- public accessors -------------------------------------------------
 

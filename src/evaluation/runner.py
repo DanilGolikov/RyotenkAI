@@ -393,7 +393,7 @@ class EvaluationRunner:
         Run explicit plugin discovery first, then instantiate enabled plugin instances.
         """
         from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import EvaluatorPluginRegistry
+        from src.evaluation.plugins.registry import evaluator_registry
 
         catalog.ensure_loaded()
         plugins: list[tuple[Any, EvaluatorPlugin]] = []
@@ -404,7 +404,7 @@ class EvaluationRunner:
                 logger.debug(f"[EVAL] Plugin instance '{plugin_cfg.id}' is disabled, skipping")
                 continue
 
-            if not EvaluatorPluginRegistry.is_registered(plugin_name):
+            if not evaluator_registry.is_registered(plugin_name):
                 logger.warning(
                     f"[EVAL] Plugin '{plugin_name}' for instance '{plugin_cfg.id}' is not registered. "
                     "Check plugin name in config and ensure the plugin module is imported."
@@ -412,20 +412,15 @@ class EvaluationRunner:
                 continue
 
             try:
-                plugin_cls = EvaluatorPluginRegistry.get(plugin_name)
-                plugin = plugin_cls(params=plugin_cfg.params, thresholds=plugin_cfg.thresholds)
-
-                required_secrets_keys: tuple[str, ...] | None = getattr(plugin_cls, "_required_secrets", None)
-                if required_secrets_keys:
-                    if self._secrets_resolver is None:
-                        raise RuntimeError(
-                            f"Plugin '{plugin_name}' requires secrets {list(required_secrets_keys)} "
-                            "but no SecretsResolver was provided to EvaluationRunner. "
-                            "Ensure ModelEvaluator passes secrets to EvaluationRunner."
-                        )
-                    resolved = self._secrets_resolver.resolve(required_secrets_keys)
-                    object.__setattr__(plugin, "_secrets", resolved)
-                    logger.debug(f"[EVAL] Injected {len(resolved)} secret(s) for plugin instance '{plugin_cfg.id}'")
+                # Secret injection lives in registry.instantiate() — the
+                # ``_required_secrets`` ClassVar (mirrored from manifest) is
+                # consulted there and the EVAL_* resolver fills them.
+                plugin = evaluator_registry.instantiate(
+                    plugin_name,
+                    resolver=self._secrets_resolver,
+                    params=plugin_cfg.params,
+                    thresholds=plugin_cfg.thresholds,
+                )
 
                 object.__setattr__(plugin, "_save_report", bool(plugin_cfg.save_report))
 

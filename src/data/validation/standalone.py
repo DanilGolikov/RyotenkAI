@@ -132,7 +132,7 @@ def run_plugins(
 
     ``plugins`` is a list of ``(plugin_id, plugin_name, plugin)``
     triples — same shape the pipeline-stage uses internally so callers
-    can build it from existing ``ValidationPluginRegistry`` lookups.
+    can build it from ``validation_registry.instantiate(...)`` calls.
     """
     results: list[StandalonePluginRun] = []
     for plugin_id, plugin_name, plugin in plugins:

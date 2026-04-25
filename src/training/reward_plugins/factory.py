@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from src.community.catalog import catalog
-from src.training.reward_plugins.registry import RewardPluginRegistry
+from src.training.reward_plugins.registry import reward_registry
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -47,7 +47,11 @@ def build_reward_plugin_result(
 
     catalog.ensure_loaded()
 
-    plugin = RewardPluginRegistry.create(plugin_name, reward_params)
+    # Reward plugins don't yet declare ``_required_secrets`` — the
+    # ``RWRD_*`` resolver lands in PR6 of the cozy-booping-walrus plan.
+    # ``resolver=None`` is safe today: instantiate() only fails when a
+    # plugin actually requires secrets without a resolver.
+    plugin = reward_registry.instantiate(plugin_name, params=reward_params)
 
     logger.info("[REWARD_PLUGIN] Running setup for %r ...", plugin_name)
     plugin.setup()
