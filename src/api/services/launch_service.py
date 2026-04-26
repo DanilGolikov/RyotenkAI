@@ -20,7 +20,7 @@ from src.pipeline.launch import (
     spawn_launch_detached,
     validate_resume_run,
 )
-from src.pipeline.project.store import ProjectStore, ProjectStoreError
+from src.workspace.projects.store import ProjectStore, ProjectStoreError
 from src.pipeline.state import PipelineStateStore, remove_stale_lock
 
 

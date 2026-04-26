@@ -21,7 +21,7 @@ from src.api.schemas.project import (
 )
 from src.api.services import project_service
 from src.api.services.project_service import ProjectServiceError
-from src.pipeline.project import ProjectRegistry
+from src.workspace.projects import ProjectRegistry
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 

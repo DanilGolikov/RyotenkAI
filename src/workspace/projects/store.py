@@ -34,7 +34,7 @@ from src.pipeline._fs import (
     utc_now_iso,
 )
 from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
-from src.pipeline.project.models import ProjectConfigVersion, ProjectMetadata
+from src.workspace.projects.models import ProjectConfigVersion, ProjectMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -5,13 +5,13 @@ config history, plugin selection, and runs output. Sibling to the file-based
 
 from __future__ import annotations
 
-from src.pipeline.project.models import (
+from src.workspace.projects.models import (
     ProjectConfigVersion,
     ProjectMetadata,
     ProjectRegistryEntry,
 )
-from src.pipeline.project.registry import ProjectRegistry
-from src.pipeline.project.store import ProjectStore
+from src.workspace.projects.registry import ProjectRegistry
+from src.workspace.projects.store import ProjectStore
 
 __all__ = [
     "ProjectConfigVersion",

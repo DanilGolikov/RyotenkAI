@@ -19,7 +19,7 @@ from src.pipeline._workspace_registry import (
     WorkspaceRegistryError,
     default_workspace_root,
 )
-from src.pipeline.project.models import ProjectRegistryEntry
+from src.workspace.projects.models import ProjectRegistryEntry
 
 if TYPE_CHECKING:
     from pathlib import Path

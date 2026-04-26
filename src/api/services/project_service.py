@@ -18,14 +18,14 @@ from src.api.schemas.project import (
     StalePluginEntry,
 )
 from src.api.services import config_service
-from src.pipeline.project import (
+from src.workspace.projects import (
     ProjectMetadata,
     ProjectRegistry,
     ProjectRegistryEntry,
     ProjectStore,
 )
-from src.pipeline.project.registry import ProjectRegistryError, validate_project_id
-from src.pipeline.project.store import ProjectStoreError
+from src.workspace.projects.registry import ProjectRegistryError, validate_project_id
+from src.workspace.projects.store import ProjectStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
