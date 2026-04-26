@@ -1,14 +1,15 @@
 """Load and instantiate validation plugins for the DatasetValidator stage.
 
-Two entry points:
+Single entry point :meth:`PluginLoader.load_for_dataset` resolves the
+plugins declared on a dataset's ``validations.plugins`` block. If the
+dataset has no ``validations`` block, or the block has an empty
+``plugins`` list, **no plugins run**: validation for that dataset is
+effectively a no-op (format check still runs, since it lives in
+:class:`FormatChecker`).
 
-* :meth:`PluginLoader.load_for_default_dataset` — uses
-  ``config.get_primary_dataset()`` as the source of plugin
-  configuration (legacy convenience for callers that don't yet
-  iterate the strategy chain).
-* :meth:`PluginLoader.load_for_dataset` — per-dataset config lookup
-  with default-plugin fallback. The DatasetValidator orchestration
-  uses this for every dataset it validates.
+There is intentionally no built-in default plugin set — running
+hidden plugins behind the user's back makes pipeline behaviour
+opaque and surprising. Validation must be explicit.
 
 Plugin instances come from :attr:`src.data.validation.registry.
 validation_registry`. DTST_* secrets are injected via
@@ -44,24 +45,19 @@ class PluginLoader:
         self._config = config
         self._secrets = secrets
 
-    def load_for_default_dataset(self) -> list[PluginTuple]:
-        """Load plugins for ``config.get_primary_dataset()``.
-
-        Priority:
-        1. Explicit ``validations.plugins`` on the primary dataset.
-        2. Default plugin set (sensible thresholds, used when no
-           ``validations`` block is configured).
-        """
-        return self.load_for_dataset(self._config.get_primary_dataset())
-
     def load_for_dataset(self, dataset_config: Any) -> list[PluginTuple]:
-        """Load plugins for one specific dataset config or fall back to defaults."""
-        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
-        if validations is not None and getattr(validations, "plugins", None):
-            return self._load_configured_plugins(validations.plugins)
+        """Load plugins for one dataset config.
 
-        logger.info("[VALIDATOR] No validation config, using default plugins")
-        return self._get_default_plugins()
+        Returns an empty list if the dataset has no ``validations`` block
+        or an empty ``plugins`` list — validation runs no plugins for
+        that dataset (explicit behaviour, no hidden defaults).
+        """
+        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
+        plugin_configs = getattr(validations, "plugins", None) if validations is not None else None
+        if not plugin_configs:
+            logger.info("[VALIDATOR] No validation plugins configured; skipping plugin checks")
+            return []
+        return self._load_configured_plugins(plugin_configs)
 
     # ------------------------------------------------------------------
     # Internals
@@ -112,26 +108,6 @@ class PluginLoader:
         from src.data.validation.secrets import SecretsResolver
 
         return SecretsResolver(self._secrets)
-
-    def _get_default_plugins(self) -> list[PluginTuple]:
-        """Sensible default plugin set when no ``validations`` block is present."""
-        from src.community.catalog import catalog
-
-        catalog.ensure_loaded()
-
-        from src.utils.config import DatasetValidationPluginConfig
-
-        default_configs = [
-            DatasetValidationPluginConfig(id="min_samples", plugin="min_samples", thresholds={"threshold": 100}),
-            DatasetValidationPluginConfig(id="avg_length", plugin="avg_length", thresholds={"min": 50, "max": 8192}),
-            DatasetValidationPluginConfig(id="empty_ratio", plugin="empty_ratio", thresholds={"max_ratio": 0.05}),
-            DatasetValidationPluginConfig(
-                id="diversity_score",
-                plugin="diversity_score",
-                thresholds={"min_score": 0.3},
-            ),
-        ]
-        return self._load_configured_plugins(default_configs)
 
 
 __all__ = ["PluginLoader", "PluginTuple"]
