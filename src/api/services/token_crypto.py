@@ -35,7 +35,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from src.pipeline._fs import atomic_write_text
+from src.utils.atomic_fs import atomic_write_text
 
 MASTER_KEY_FILENAME = ".secret.key"
 MASTER_KEY_BYTES = 32  # AES-256

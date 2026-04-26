@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.pipeline._fs import (
+from src.utils.atomic_fs import (
     atomic_write_json,
     atomic_write_text,
     unique_snapshot_path,

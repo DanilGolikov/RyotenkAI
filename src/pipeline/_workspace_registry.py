@@ -40,7 +40,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
 
-from src.pipeline._fs import (
+from src.utils.atomic_fs import (
     atomic_write_json,
     atomic_write_text,
     created_at_from_filename,

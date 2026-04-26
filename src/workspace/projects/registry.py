@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.pipeline._fs import utc_now_iso
+from src.utils.atomic_fs import utc_now_iso
 from src.pipeline._workspace_registry import (
     REGISTRY_SCHEMA_VERSION,
     WorkspaceRegistry,

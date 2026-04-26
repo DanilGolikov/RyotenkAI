@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.pipeline._fs import atomic_write_json, atomic_write_text, utc_now_iso
+from src.utils.atomic_fs import atomic_write_json, atomic_write_text, utc_now_iso
 from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
 from src.workspace.integrations.models import (
     IntegrationConfigVersion,
