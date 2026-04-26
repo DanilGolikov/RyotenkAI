@@ -13,7 +13,7 @@ import os
 from typing import TYPE_CHECKING
 
 from src.pipeline.state import PipelineStateStore
-from src.pipeline.state.cache import clear_cache
+from src.api.state_cache import clear_cache
 
 if TYPE_CHECKING:
     from collections.abc import Callable

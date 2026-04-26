@@ -15,7 +15,7 @@ from src.pipeline.run_queries import (
     scan_runs_dir_grouped,
 )
 from src.pipeline.state import PipelineState
-from src.pipeline.state.cache import StateSnapshot, load_state_snapshot
+from src.api.state_cache import StateSnapshot, load_state_snapshot
 from src.pipeline.state.queries import (
     find_running_attempt_no,
     get_attempt_by_no,

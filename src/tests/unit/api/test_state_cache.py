@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
-from src.pipeline.state.cache import (
+from src.api.state_cache import (
     cache_stats,
     clear_cache,
     load_state_snapshot,
