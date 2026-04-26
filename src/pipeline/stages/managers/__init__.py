@@ -5,10 +5,9 @@ These are NOT stages themselves, but utilities used by stages.
 """
 
 from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.pipeline.stages.managers.log_manager import LogManager, RunPodLogManager
+from src.pipeline.stages.managers.log_manager import LogManager
 
 __all__ = [
     "LogManager",
-    "RunPodLogManager",  # Backward compatibility alias
     "TrainingDeploymentManager",
 ]

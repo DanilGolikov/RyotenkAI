@@ -229,7 +229,4 @@ class LogManager:
         self.download(silent=False)
 
 
-# Backward compatibility alias
-RunPodLogManager = LogManager
-
-__all__ = ["LogManager", "RunPodLogManager"]
+__all__ = ["LogManager"]

@@ -16,11 +16,8 @@ from src.pipeline.launch.launch_preparator import (
     PreparedAttempt,
 )
 
-# Re-export the subprocess launch/interrupt mechanics that used to live in
-# `src/pipeline/launch.py`. Keeping them accessible at the package root so
-# existing callers (`from src.pipeline.launch import spawn_launch_detached`,
-# `read_lock_pid`, etc.) don't need to update their imports after the
-# module → package refactor.
+# Subprocess launch/interrupt mechanics — process spawning, PID tracking,
+# launch-log tail readers.
 from src.pipeline.launch.runtime import (
     MODE_FRESH,
     MODE_NEW_RUN,
@@ -32,16 +29,22 @@ from src.pipeline.launch.runtime import (
     LaunchRequest,
     LaunchResult,
     LaunchStatus,
-    RestartPointOption,
     build_train_command,
     execute_launch_subprocess,
     interrupt_launch_process,
     is_process_alive,
+    read_lock_pid,
+    spawn_launch_detached,
+)
+
+# Restart-point + resume queries — pure read-only inspections of run state.
+# Defined in launch_queries.py so they stay light enough for the CLI's lazy
+# imports (no orchestrator/torch in the chain).
+from src.pipeline.launch_queries import (
+    RestartPointOption,
     load_restart_point_options,
     pick_default_launch_mode,
-    read_lock_pid,
     resolve_config_path_for_run,
-    spawn_launch_detached,
     validate_resume_run,
 )
 

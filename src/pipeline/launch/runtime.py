@@ -20,22 +20,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from src.pipeline.launch_queries import (
-    RestartPointOption,
-)
-from src.pipeline.launch_queries import (
-    load_restart_point_options as _load_restart_point_options,
-)
-from src.pipeline.launch_queries import (
-    pick_default_launch_mode as _pick_default_launch_mode,
-)
-from src.pipeline.launch_queries import (
-    resolve_config_path_for_run as _resolve_config_path_for_run,
-)
-from src.pipeline.launch_queries import (
-    validate_resume_run as _validate_resume_run,
-)
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -192,22 +176,6 @@ def build_train_command(request: LaunchRequest, *, python_executable: str | None
     return command
 
 
-def resolve_config_path_for_run(run_dir: Path, config_path: Path | None = None) -> Path:
-    return _resolve_config_path_for_run(run_dir, config_path)
-
-
-def load_restart_point_options(run_dir: Path, config_path: Path | None = None) -> tuple[Path, list[RestartPointOption]]:
-    return _load_restart_point_options(run_dir, config_path)
-
-
-def pick_default_launch_mode(run_dir: Path) -> str:
-    return _pick_default_launch_mode(run_dir)
-
-
-def validate_resume_run(run_dir: Path, config_path: Path | None = None) -> tuple[Path, str]:
-    return _validate_resume_run(run_dir, config_path)
-
-
 def execute_launch_subprocess(
     request: LaunchRequest,
     *,
@@ -329,15 +297,10 @@ __all__ = [
     "LaunchRequest",
     "LaunchResult",
     "LaunchStatus",
-    "RestartPointOption",
     "build_train_command",
     "execute_launch_subprocess",
     "interrupt_launch_process",
     "is_process_alive",
-    "load_restart_point_options",
-    "pick_default_launch_mode",
     "read_lock_pid",
-    "resolve_config_path_for_run",
     "spawn_launch_detached",
-    "validate_resume_run",
 ]

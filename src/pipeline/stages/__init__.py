@@ -34,8 +34,8 @@ from .dataset_validator import DatasetValidator
 from .gpu_deployer import GPUDeployer
 from .inference_deployer import InferenceDeployer
 
-# Re-export managers for backward compatibility
-from .managers import RunPodLogManager, TrainingDeploymentManager
+# Re-export managers for stage construction
+from .managers import TrainingDeploymentManager
 from .model_evaluator import ModelEvaluator
 from .model_retriever import ModelRetriever
 from .training_monitor import TrainingMonitor
@@ -48,7 +48,6 @@ __all__ = [
     "ModelEvaluator",
     "ModelRetriever",
     "PipelineContextKeys",
-    "RunPodLogManager",
     "StageNames",
     "TrainingDeploymentManager",
     "TrainingMonitor",

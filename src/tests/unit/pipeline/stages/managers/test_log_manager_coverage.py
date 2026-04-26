@@ -370,14 +370,3 @@ def test_download_silent_false_after_delta_append(
     assert local_file.read_text(encoding="utf-8") == full_content
 
 
-# ---------------------------------------------------------------------------
-# Backward compatibility alias
-# ---------------------------------------------------------------------------
-
-def test_runpod_log_manager_alias(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.pipeline.stages.managers.log_manager import RunPodLogManager
-
-    monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
-    ssh = _SSH()
-    mgr = RunPodLogManager(ssh)
-    assert isinstance(mgr, LogManager)
