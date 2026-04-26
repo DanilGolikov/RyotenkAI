@@ -37,8 +37,9 @@ from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import EventBus
+from src.runner.pod_stopper import PodStopper, stop_pod_on_terminal
 from src.runner.state import JobLifecycleFSM
-from src.runner.supervisor import Supervisor
+from src.runner.supervisor import Supervisor, TerminalHook
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -48,10 +49,19 @@ API_V1_PREFIX = "/api/v1"
 
 class _SupervisorFactory(Protocol):
     """Constructor signature shared by :class:`Supervisor` and any
-    test double. Keep narrow — only the boot-time call signature."""
+    test double. Keep narrow — only the boot-time call signature.
+
+    ``terminal_hook`` is optional: production passes the RunPod
+    auto-stop callback; tests omit it (the :class:`MockSupervisor`
+    fixture takes a 2-arg call shape).
+    """
 
     def __call__(
-        self, fsm: JobLifecycleFSM, bus: EventBus,
+        self,
+        fsm: JobLifecycleFSM,
+        bus: EventBus,
+        *,
+        terminal_hook: TerminalHook | None = ...,
     ) -> Supervisor: ...
 
 
@@ -86,19 +96,37 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
            transitions an unsafe state to ``failed`` — see
            :meth:`JobLifecycleFSM.restore_or_init`).
         2. Build EventBus with the env-driven default capacity.
-        3. Build Supervisor (or test double) bound to (fsm, bus).
-        4. Yield — endpoints serve traffic.
-        5. On shutdown, stop the trainer first so its SIGTERM-driven
+        3. Build :class:`PodStopper` and wire :func:`stop_pod_on_terminal`
+           as the supervisor's terminal hook so RunPod billing stops
+           the moment the FSM lands in ``completed`` / ``failed`` /
+           ``cancelled``. The hook is env-driven (see
+           :mod:`src.runner.pod_stopper`); when ``RUNPOD_AUTO_STOP``
+           is unset / ``false`` it returns ``"disabled"`` and the pod
+           keeps running — same contract as the legacy bash wrapper.
+        4. Build Supervisor (or test double) bound to (fsm, bus, hook).
+        5. Yield — endpoints serve traffic.
+        6. On shutdown, stop the trainer first so its SIGTERM-driven
            save can write through, *then* close the bus so the final
            ``trainer_exited`` event reaches subscribers.
         """
         fsm = JobLifecycleFSM(workspace_dir=_resolve_workspace())
         fsm.restore_or_init()
         bus = EventBus()
-        supervisor = supervisor_factory(fsm, bus)
+
+        pod_stopper = PodStopper()
+
+        async def _terminal_hook(terminal_state: str) -> None:
+            await stop_pod_on_terminal(
+                pod_stopper,
+                terminal_state=terminal_state,
+                bus_publish=bus.publish,
+            )
+
+        supervisor = supervisor_factory(fsm, bus, terminal_hook=_terminal_hook)
 
         app.state.fsm = fsm
         app.state.bus = bus
+        app.state.pod_stopper = pod_stopper
         app.state.supervisor = supervisor
 
         try:

@@ -61,6 +61,7 @@ import asyncio
 import contextlib
 import os
 import signal
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -75,9 +76,20 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Supervisor",
-    "SupervisorError",
     "SupervisorBusy",
+    "SupervisorError",
+    "TerminalHook",
 ]
+
+
+# Async callback fired after every FSM transition into a terminal state
+# (completed / failed / cancelled). The single argument is the terminal
+# state name (``"completed"`` etc.). Used by :mod:`src.runner.main` to
+# wire :func:`src.runner.pod_stopper.stop_pod_on_terminal` — i.e.
+# auto-stop the RunPod billing once training finishes. Keeping this
+# protocol generic (rather than ``PodStopper``-typed) means the
+# supervisor stays provider-agnostic.
+TerminalHook = Callable[[str], Awaitable[None]]
 
 
 # Default grace period before SIGKILL escalation. 30 s is enough for
@@ -103,7 +115,13 @@ class Supervisor:
     multi-job lands.
     """
 
-    def __init__(self, fsm: "JobLifecycleFSM", bus: "EventBus") -> None:
+    def __init__(
+        self,
+        fsm: "JobLifecycleFSM",
+        bus: "EventBus",
+        *,
+        terminal_hook: TerminalHook | None = None,
+    ) -> None:
         self._fsm = fsm
         self._bus = bus
         self._proc: asyncio.subprocess.Process | None = None
@@ -116,6 +134,10 @@ class Supervisor:
         # handler so it knows whether to land in ``cancelled`` or
         # ``failed`` on a non-zero exit.
         self._cancellation_requested = False
+        # Optional post-terminal callback (see :data:`TerminalHook`).
+        # Production wires this to RunPod auto-stop; tests usually
+        # leave it ``None``.
+        self._terminal_hook: TerminalHook | None = terminal_hook
 
     # --- read-only accessors ------------------------------------------------
 
@@ -442,6 +464,14 @@ class Supervisor:
             # The FSM is already terminal — extremely rare race where
             # ``shutdown()`` ran during reap. Tolerate.
             pass
+
+        # Fire the terminal hook AFTER the FSM transition lands. Errors
+        # in the hook (e.g. RunPod GraphQL outage) must not affect the
+        # supervisor's terminal state — the hook implementation is
+        # expected to publish its own outcome event for forensics.
+        if self._terminal_hook is not None:
+            with contextlib.suppress(Exception):
+                await self._terminal_hook(target.value)
 
 
 # ---------------------------------------------------------------------------

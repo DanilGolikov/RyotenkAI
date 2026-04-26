@@ -489,8 +489,8 @@ class PluginPacker:
    - Async forward через `asyncio.Queue` worker
    - Reuse `src/training/managers/mlflow_manager/resilient_transport.py::MLflowTransportCircuitBreaker`
    - Buffer offline события до восстановления соединения
-- 4.4 Self-stop hook: на FSM transition → `[completed | cancelled | failed]` → опционально вызывает `runpod_stop_pod.sh` через subprocess (script остаётся как тонкая обёртка над GraphQL)
-- 4.5 Unit tests: idle detection across thresholds, MLflow circuit breaker integration, self-stop disabled when `RUNPOD_AUTO_STOP=false`
+- 4.4 ✅ **DONE** — Self-stop hook: `src/runner/pod_stopper.py` (Python replacement for `runpod_stop_pod.sh`). На FSM transition → `[completed | cancelled | failed]` Supervisor вызывает `terminal_hook` который делегирует в `stop_pod_on_terminal()`. Env-driven: `RUNPOD_AUTO_STOP=false` → `disabled`, missing creds → `skipped`, GraphQL ok → `stopped`, idempotent already-stopped → `already_stopped`, retry exhausted → `failed`. Outcome публикуется как `pod_stop_attempt` event. **Bash скрипт `runpod_stop_pod.sh` удаляется в Phase 6** вместе с остальным cleanup.
+- 4.5 ✅ Unit tests: idle detection across thresholds (12 tests), MLflow circuit breaker integration (deferred), pod_stopper full matrix (19 tests: decision table + env short-circuits + GraphQL paths + retry + network errors + wrapper), supervisor terminal_hook (3 tests).
 
 ### Phase 5 — Mac: SSHTunnel + JobClient (1 день)
 - 5.1 `src/api/services/tunnel_service.py` (NEW):

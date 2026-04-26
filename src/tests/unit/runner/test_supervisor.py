@@ -316,6 +316,68 @@ class TestReapResilience:
         await _wait_for_state(fsm, JobState.COMPLETED, timeout=5.0)
 
 
+# ---------------------------------------------------------------------------
+# Terminal hook (Phase 4.4 — pod auto-stop wiring)
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalHook:
+    """Supervisor must fire its ``terminal_hook`` exactly once on the
+    FSM's terminal transition. This wires the RunPod auto-stop in
+    production — a regression here means we leak billing time."""
+
+    async def test_hook_fires_with_completed_state(
+        self, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        seen: list[str] = []
+
+        async def _hook(state: str) -> None:
+            seen.append(state)
+
+        s = Supervisor(fsm, bus, terminal_hook=_hook)
+        try:
+            await s.submit_and_spawn("j-hook-ok", _py("pass"))
+            await _wait_for_state(fsm, JobState.COMPLETED)
+        finally:
+            await s.shutdown()
+        # Single fire, exactly the terminal name (not e.g. ``running``).
+        assert seen == ["completed"]
+
+    async def test_hook_fires_with_failed_state(
+        self, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        seen: list[str] = []
+
+        async def _hook(state: str) -> None:
+            seen.append(state)
+
+        s = Supervisor(fsm, bus, terminal_hook=_hook)
+        try:
+            await s.submit_and_spawn("j-hook-fail", _py("import sys; sys.exit(2)"))
+            await _wait_for_state(fsm, JobState.FAILED)
+        finally:
+            await s.shutdown()
+        assert seen == ["failed"]
+
+    async def test_hook_exception_does_not_unset_terminal_state(
+        self, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        # A hook that raises must not roll the FSM back — the pod
+        # must reach its terminal state regardless of GraphQL outage.
+        async def _bad_hook(_state: str) -> None:
+            raise RuntimeError("graphql unreachable")
+
+        s = Supervisor(fsm, bus, terminal_hook=_bad_hook)
+        try:
+            await s.submit_and_spawn("j-bad-hook", _py("pass"))
+            await _wait_for_state(fsm, JobState.COMPLETED)
+        finally:
+            await s.shutdown()
+        snap = fsm.current()
+        assert snap is not None
+        assert snap.state == JobState.COMPLETED
+
+
 class TestShutdown:
     async def test_shutdown_kills_running_trainer(
         self, fsm: JobLifecycleFSM, bus: EventBus,

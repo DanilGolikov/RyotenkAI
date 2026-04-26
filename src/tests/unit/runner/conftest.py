@@ -17,6 +17,7 @@ isolation is automatic.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,7 @@ from src.runner.state import (
     InvalidTransitionError,
     JobState,
 )
-from src.runner.supervisor import SupervisorBusy
+from src.runner.supervisor import SupervisorBusy, TerminalHook
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -60,13 +61,24 @@ class MockSupervisor:
     inside an API test.
     """
 
-    def __init__(self, fsm: "JobLifecycleFSM", bus: "EventBus") -> None:
+    def __init__(
+        self,
+        fsm: "JobLifecycleFSM",
+        bus: "EventBus",
+        *,
+        terminal_hook: TerminalHook | None = None,
+    ) -> None:
         self._fsm = fsm
         self._bus = bus
+        self._terminal_hook = terminal_hook
         self._running = False
         self.last_command: list[str] | None = None
         self.last_env: dict[str, str] | None = None
         self.stop_requests: int = 0
+        # Track terminal-hook firings so tests can assert auto-stop
+        # plumbing actually wires through MockSupervisor → main.py.
+        self.terminal_hook_calls: list[str] = []
+        self._terminal_hook_task: asyncio.Task[None] | None = None
 
     # --- supervisor protocol ----------------------------------------------
 
@@ -151,6 +163,26 @@ class MockSupervisor:
         except InvalidTransitionError:
             pass
         self._running = False
+
+        # Fire the terminal hook to mirror Supervisor._reap parity —
+        # tests that exercise pod-stop wiring through MockSupervisor
+        # need this. We schedule on the running loop when one exists
+        # (TestClient-driven flow) and fall back to ``asyncio.run``
+        # when called from a synchronous test with no loop. We hold
+        # a reference to the scheduled task so it survives until the
+        # event loop drains it (RUF006 — fire-and-forget tasks can
+        # be GC'd before they complete).
+        if self._terminal_hook is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # No running loop — run synchronously.
+                asyncio.run(self._terminal_hook(target.value))
+            else:
+                self._terminal_hook_task = loop.create_task(
+                    self._terminal_hook(target.value),
+                )
+            self.terminal_hook_calls.append(target.value)
 
     def fail(self, *, exit_code: int = 1) -> None:
         """Convenience: drive directly to FAILED."""
