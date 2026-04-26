@@ -128,6 +128,31 @@ class TestSubscribeReplay:
 
 
 class TestSubscribeLive:
+    async def test_two_subscribers_each_get_every_event(self, bus: EventBus) -> None:
+        # Multi-subscriber regression: the naive single-asyncio.Event
+        # design has a "lost wakeup" race where one subscriber's
+        # clear() can drop a publish flag before another subscriber
+        # observes it. The swap-pattern in publish() fixes this.
+        # Drive enough publishes back-to-back to exercise the window.
+        async def _publisher() -> None:
+            await asyncio.sleep(0)  # let subscribers attach first
+            for i in range(5):
+                bus.publish("ev", {"i": i})
+                # No sleep between publishes — packs them into one
+                # event-loop tick to maximise the chance of a lost
+                # wakeup if the bus had a race.
+
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(_publisher())
+            t1 = tg.create_task(drain_n(bus, n=5))
+            t2 = tg.create_task(drain_n(bus, n=5))
+
+        events_a = t1.result()
+        events_b = t2.result()
+        # Both subscribers see every event in order.
+        assert [e.payload["i"] for e in events_a] == [0, 1, 2, 3, 4]
+        assert [e.payload["i"] for e in events_b] == [0, 1, 2, 3, 4]
+
     async def test_subscriber_receives_events_published_after_attach(
         self, bus: EventBus,
     ) -> None:

@@ -172,9 +172,19 @@ class EventBus:
         self._buffer: deque[Event] = deque(maxlen=self._capacity)
         # Monotonic offset assigned to the next published event.
         self._next_offset = 0
-        # Set whenever a new event is published; cleared when consumers
-        # observe it. Subscribers wait on this in their async iter loop.
-        self._wakeup = asyncio.Event()
+        # Per-publish wakeup signal — replaced (atomic swap) on every
+        # publish so that **multi-subscriber** broadcasts are race-free.
+        #
+        # The naive single-Event design (set on publish, clear on
+        # consume) has a known race: if a subscriber clears AFTER a
+        # second publish has already set the same flag, the second
+        # event's wakeup is lost. We dodge this by treating the
+        # signal as immutable per publish: each publish creates a
+        # fresh ``asyncio.Event``, sets the OLD one (releasing
+        # everyone waiting on it), and stores the new one for the
+        # next round. Subscribers snapshot the current signal under
+        # a "double-checked cursor" pattern (see :meth:`subscribe`).
+        self._publish_signal = asyncio.Event()
         self._closed = False
 
     # --- public API -----------------------------------------------------
@@ -240,8 +250,17 @@ class EventBus:
         self._buffer.append(event)
         self._next_offset += 1
 
-        # Wake every waiting subscribe() iterator.
-        self._wakeup.set()
+        # Atomic swap: stash the current signal, install a fresh one
+        # for future waiters, then release the stashed one. Any
+        # subscriber that snapshotted ``self._publish_signal`` before
+        # this point is waiting on ``stale`` — we wake them. Any
+        # subscriber that snapshots AFTER this point picks up the
+        # fresh event and won't be affected by the ``set()`` we
+        # just did. This is how we side-step the "lost wakeup"
+        # race that the naive single-Event design has.
+        stale = self._publish_signal
+        self._publish_signal = asyncio.Event()
+        stale.set()
         return event
 
     async def subscribe(self, *, since: int = 0) -> AsyncIterator[Event]:
@@ -257,17 +276,18 @@ class EventBus:
              cursor; client confused).
            * Otherwise replay from ``since`` to ``next_offset - 1``.
 
-        2. After the snapshot, loop on the wakeup event:
+        2. After the snapshot, loop on the per-publish wakeup signal:
 
-           * ``await self._wakeup.wait()`` until a new event arrives
-             or the bus closes.
            * Drain everything new into the consumer (they may be slow
              — that's fine, we yield each event one at a time).
-           * Reset wakeup *only* if no new events have piled up since
-             the last drain; otherwise keep it set.
+           * Snapshot ``self._publish_signal`` BEFORE re-checking the
+             cursor. The ordering is what makes the wait race-free —
+             see ``__init__`` for the swap-pattern rationale.
+           * ``await signal.wait()`` until either a publish releases
+             the signal we snapshotted, or the bus closes.
 
         Cancellation safety: if the consumer task is cancelled
-        (CancelledError propagates out of ``await self._wakeup.wait()``),
+        (CancelledError propagates out of ``signal.wait()``),
         the iterator simply terminates — no resources to release
         beyond Python GC.
         """
@@ -291,7 +311,14 @@ class EventBus:
                 yield event
                 replay_cursor = event.offset + 1
 
-        # Live phase.
+        # Live phase. The double-check around ``signal = ...`` is
+        # what makes this race-free: any publish() that completes
+        # before the snapshot has already populated the buffer (so
+        # ``replay_cursor < self._next_offset`` will catch it on the
+        # second check); any publish() after the snapshot installs a
+        # fresh ``_publish_signal``, so the ``signal.set()`` issued
+        # by THAT publish wakes us. There is no window where a
+        # publish can be missed.
         while True:
             if self._closed and replay_cursor >= self._next_offset:
                 return
@@ -304,8 +331,15 @@ class EventBus:
                         replay_cursor = event.offset + 1
                 continue
 
-            await self._wakeup.wait()
-            self._wakeup.clear()
+            # Snapshot the current per-publish signal BEFORE the
+            # final cursor re-check. See ``__init__`` and
+            # ``publish`` for the swap-pattern rationale.
+            signal = self._publish_signal
+            if replay_cursor < self._next_offset:
+                continue
+            if self._closed:
+                return
+            await signal.wait()
 
     def close(self) -> None:
         """Mark the bus closed and wake every subscriber so their
@@ -314,4 +348,8 @@ class EventBus:
         After ``close()``, :meth:`publish` raises :class:`RuntimeError`.
         """
         self._closed = True
-        self._wakeup.set()
+        # Release whatever signal subscribers are currently waiting
+        # on. We do NOT swap here — a fresh signal would defeat
+        # the purpose, since post-close there will be no further
+        # publish() to populate it.
+        self._publish_signal.set()

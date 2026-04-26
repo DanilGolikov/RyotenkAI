@@ -286,6 +286,39 @@ class TestRestoreOrInit:
         lines = f2.jsonl_path.read_text(encoding="utf-8").splitlines()
         assert json.loads(lines[-1])["state"] == "failed"
 
+    def test_corrupt_state_json_treated_as_fresh(self, tmp_path: Path) -> None:
+        # Pre-populate a half-written state.json — simulates the host
+        # dying between os.replace's tmp-write and rename in a way
+        # that left a truncated file behind. The FSM must boot, not
+        # crash; the corrupt file is preserved as ``state.json.corrupt``
+        # so on-call has it for forensics.
+        state_dir = tmp_path / ".ryotenkai"
+        state_dir.mkdir()
+        (state_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+
+        f = JobLifecycleFSM(workspace_dir=tmp_path)
+        f.restore_or_init()  # must not raise
+        assert f.current() is None
+        assert (state_dir / "state.json.corrupt").exists()
+        assert not (state_dir / "state.json").exists()
+
+    def test_state_json_with_missing_keys_treated_as_fresh(self, tmp_path: Path) -> None:
+        # Snapshot.from_dict raises KeyError on missing required keys.
+        # Same recovery path as JSONDecodeError.
+        import json as _json  # local — not on hot path
+
+        state_dir = tmp_path / ".ryotenkai"
+        state_dir.mkdir()
+        (state_dir / "state.json").write_text(
+            _json.dumps({"job_id": "j", "state": "running"}),  # missing sequence/started_at/...
+            encoding="utf-8",
+        )
+
+        f = JobLifecycleFSM(workspace_dir=tmp_path)
+        f.restore_or_init()
+        assert f.current() is None
+        assert (state_dir / "state.json.corrupt").exists()
+
     def test_running_state_preserved_on_restore(self, tmp_path: Path) -> None:
         # RUNNING is *not* unsafe — it just means "trainer was alive
         # last we checked". The supervisor (Phase 2) decides whether

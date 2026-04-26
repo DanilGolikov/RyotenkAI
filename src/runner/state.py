@@ -296,12 +296,29 @@ class JobLifecycleFSM:
             self._snapshot = None
             return
 
-        import json
-
-        with self.json_path.open(encoding="utf-8") as fh:
-            payload = json.load(fh)
-
-        snap = JobSnapshot.from_dict(payload)
+        # Defensive: if state.json is half-written (host died mid-rename
+        # despite atomic_write_text — e.g. disk full, OOM kill before
+        # fsync settled) we'd otherwise crash the server on every boot.
+        # Treat parse errors as "no recoverable state" — the JSONL audit
+        # log is still on disk for forensics and a fresh ``submit`` can
+        # proceed.
+        try:
+            with self.json_path.open(encoding="utf-8") as fh:
+                payload = json.load(fh)
+            snap = JobSnapshot.from_dict(payload)
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            # The JSONL audit log preserves history; the corrupt
+            # state.json is renamed (not deleted) so on-call can
+            # inspect it. If renaming fails too, we fall through to
+            # fresh state.
+            corrupt_path = self.json_path.with_suffix(".json.corrupt")
+            try:
+                self.json_path.rename(corrupt_path)
+            except OSError:
+                pass
+            del exc  # the original is preserved in the .corrupt file
+            self._snapshot = None
+            return
 
         if snap.state in _UNSAFE_RESTORE_STATES:
             # Synthetic transition — the previous container died mid-flight.
@@ -390,8 +407,6 @@ class JobLifecycleFSM:
         Phase 1 has a single writer; Phase 5+ may add more — the choice
         keeps that path safe.
         """
-        import json
-
         line = json.dumps(snap.to_dict(), ensure_ascii=False, sort_keys=True) + "\n"
         with self.jsonl_path.open("a", encoding="utf-8") as fh:
             fh.write(line)
