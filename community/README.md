@@ -195,6 +195,26 @@ Authors should NOT poke `os.environ` or `self._secrets` directly.
 The helpers give us a place to add validation, telemetry, and per-test
 mocking without touching every plugin folder.
 
+## Sharing code across plugins — `community/libs/`
+
+When two or more plugins in **different kinds** need the same domain
+code (e.g. a HelixQL compiler wrapper used by validation, reward, and
+evaluation), put it in `community/libs/<lib>/` rather than
+copy-pasting or pulling into `src/`. The catalog automatically
+registers each subpackage as `community_libs.<lib>` in `sys.modules`
+before any plugin loads:
+
+```python
+# inside any community/<kind>/<plugin>/plugin.py
+from community_libs.helixql.compiler import get_compiler
+from community_libs.helixql.semantics import semantic_match_details
+```
+
+Single-plugin helpers stay in the plugin's own folder. Generic
+platform utilities (string/dict/retry) belong in `src/utils/`. See
+[`community/libs/README.md`](libs/README.md) for the full contract,
+authoring rules, and an example layout.
+
 ## Reward batch-kwargs contract
 
 The reward kind is the only one whose runtime invocation passes

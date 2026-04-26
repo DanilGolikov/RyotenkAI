@@ -7,9 +7,12 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from community_libs.helixql import (
+    extract_query_text,
+    extract_schema_block,
+    get_compiler,
+)
 from src.data.validation.base import ValidationPlugin, ValidationResult
-from src.utils.domains.helixql import extract_query_text, extract_schema_block
-from src.utils.domains.helixql_cli import HelixCompiler
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -20,14 +23,6 @@ class HelixQLGoldSyntaxBackendValidator(ValidationPlugin):
 
     required_fields: ClassVar[list[str]] = []
     supports_streaming = True
-
-    def __init__(
-        self,
-        params: dict[str, Any] | None = None,
-        thresholds: dict[str, Any] | None = None,
-    ) -> None:
-        self._compiler: HelixCompiler | None = None
-        super().__init__(params, thresholds)
 
     def _validate_contract(self) -> None:
         timeout_seconds = self.params.get("timeout_seconds")
@@ -41,10 +36,8 @@ class HelixQLGoldSyntaxBackendValidator(ValidationPlugin):
                 "helixql_gold_syntax_backend requires params.max_error_examples >= -1"
             )
 
-    def _get_compiler(self) -> HelixCompiler:
-        if self._compiler is None:
-            self._compiler = HelixCompiler(timeout_seconds=int(self.params["timeout_seconds"]))
-        return self._compiler
+    def _get_compiler(self):
+        return get_compiler(timeout_seconds=int(self.params["timeout_seconds"]))
 
     def validate(
         self,

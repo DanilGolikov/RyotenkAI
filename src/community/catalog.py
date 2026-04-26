@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.community.constants import ALL_PLUGIN_KINDS, COMMUNITY_ROOT
+from src.community.libs import (
+    libs_fingerprint_entries,
+    libs_root_for,
+    preload_community_libs,
+)
 from src.community.loader import (
     LoadedPlugin,
     LoadedPreset,
@@ -127,10 +132,24 @@ class CommunityCatalog:
                     candidate = child / filename
                     if candidate.is_file():
                         _append(entries, candidate, self._root)
+        # community/libs/<lib>/{__init__.py,*.py} — surface that decides
+        # which libs are preloaded into community_libs.* and what their
+        # top-level modules are. Deep edits inside libs aren't tracked
+        # (same rule as src/) — restart the backend after those.
+        entries.extend(libs_fingerprint_entries(libs_root_for(self._root)))
         return tuple(sorted(entries))
 
     def _load_locked(self) -> None:
         logger.info("[COMMUNITY_CATALOG] loading from %s", self._root)
+        # Preload shared libs FIRST: plugin modules import from
+        # ``community_libs.<name>`` at module-load time, so the
+        # namespace must exist before _import_plugin_class executes.
+        lib_names = preload_community_libs(libs_root_for(self._root))
+        if lib_names:
+            logger.info(
+                "[COMMUNITY_CATALOG] preloaded libs: %s",
+                ", ".join(lib_names),
+            )
         all_results = load_all_plugins(root=self._root)
         # Split the LoadResult shape into the catalog's separate stores —
         # registries only see successes, the UI gets failures alongside.

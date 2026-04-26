@@ -25,7 +25,7 @@ from unittest.mock import patch
 import pytest
 from plugin import HelixQLPreferenceSemanticsValidator
 
-from src.utils.domains.helixql_cli import CompileResult
+from community_libs.helixql import CompileResult
 
 BASE_PARAMS: dict[str, Any] = {  # noqa: WPS407
     "timeout_seconds": 10,
@@ -80,10 +80,10 @@ def _run_validate(samples: list[dict[str, Any]], config: dict[str, Any] | None =
 class TestDPOValidatorRegistration:
     def test_is_registered(self) -> None:
         from src.community.catalog import catalog
-        from src.data.validation.registry import ValidationPluginRegistry
+        from src.data.validation.registry import validation_registry
 
         catalog.reload()
-        assert "helixql_preference_semantics" in ValidationPluginRegistry.list_plugins()
+        assert "helixql_preference_semantics" in validation_registry.list_ids()
 
     def test_name_classvar(self) -> None:
         assert HelixQLPreferenceSemanticsValidator.name == "helixql_preference_semantics"
@@ -132,7 +132,7 @@ class TestValidatePair:
         result = plugin._validate_pair(sample=sample)  # type: ignore[attr-defined]
         assert result == "missing_rejected"
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_chosen_fails_with_cli_missing(self, _mock: Any) -> None:
         plugin = _make_plugin()
         result = plugin._validate_pair(sample=VALID_PAIR_SAMPLE)  # type: ignore[attr-defined]
@@ -165,7 +165,7 @@ class TestValidatePair:
 
 
 class TestDPOValidatorValidate:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_all_invalid(self, _mock: Any) -> None:
         result = _run_validate([VALID_PAIR_SAMPLE])
         assert result.passed is False
@@ -180,7 +180,7 @@ class TestDPOValidatorValidate:
         assert len(taxonomy_keys) > 0
 
     def test_valid_ratio_below_threshold_fails(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate(
                 [VALID_PAIR_SAMPLE, VALID_PAIR_SAMPLE], config={**BASE_PARAMS, "min_valid_ratio": 1.0}
             )
@@ -199,19 +199,19 @@ class TestDPOValidatorValidate:
         assert "valid_ratio" in result.metrics
 
     def test_taxonomy_captured_in_metrics(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_PAIR_SAMPLE])
         taxonomy_keys = [k for k in result.metrics if k.startswith("error_taxonomy.")]
         assert len(taxonomy_keys) > 0
 
     def test_error_groups_collect_indices(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_PAIR_SAMPLE], config={**BASE_PARAMS, "max_error_examples": -1})
         assert len(result.error_groups) >= 1
         assert result.error_groups[0].sample_indices == [0]
 
     def test_recommendations_on_failure(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_PAIR_SAMPLE])
         plugin = _make_plugin()
         recs = plugin.get_recommendations(result)

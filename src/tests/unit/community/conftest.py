@@ -159,6 +159,33 @@ def fake_secrets() -> Callable[..., Secrets]:
     return _factory
 
 
+# ---------------------------------------------------------------------------
+# Global-state isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _invalidate_global_catalog_after_test():
+    """Force the global ``catalog`` to reload before the next test.
+
+    Many tests in this directory create a fresh ``CommunityCatalog``
+    rooted at ``tmp_community_root`` and call ``ensure_loaded()`` on
+    it. ``_populate_registries`` mutates the *module-level* singletons
+    (``validation_registry``, ``evaluator_registry``, etc.) — so a tmp
+    catalog clearing them away leaks into the global catalog, whose
+    ``_loaded=True`` flag will short-circuit the next ``ensure_loaded``
+    call and leave the registries empty.
+
+    Resetting ``_loaded`` at teardown costs nothing until the next test
+    actually touches the global catalog; at that point a single reload
+    rebuilds the registries.
+    """
+    yield
+    from src.community.catalog import catalog as _global_catalog
+
+    _global_catalog._loaded = False
+
+
 __all__ = [
     "fake_secrets",
     "make_plugin_dir",

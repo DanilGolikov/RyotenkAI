@@ -67,7 +67,7 @@ class BaseRLStrategy(TrainingStrategy, ABC):
         super().__init__(config)
         # Domain-specific schema extraction hook.
         # Defaults to a no-op so that the core strategy carries zero domain knowledge.
-        # Inject e.g. ``src.utils.domains.helixql.extract_schema_block`` from outside when needed.
+        # Inject e.g. ``community_libs.helixql.extract_schema_block`` from outside when needed.
         self._schema_extractor: Callable[[str], str] = schema_extractor or (lambda _: "")
 
     # ------------------------------------------------------------------
