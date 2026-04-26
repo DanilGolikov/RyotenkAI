@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
-from src.pipeline.inference.engines.vllm import VLLMEngine
+from src.pipeline.inference.vllm import VLLMEngine
 from src.providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
 from src.providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
 from src.providers.constants import SHA12_LEN
