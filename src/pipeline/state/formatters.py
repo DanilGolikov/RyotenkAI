@@ -1,41 +1,31 @@
-"""Domain-level formatters for pipeline state.
+"""Human-friendly formatters for stage / pipeline state values.
 
-Status icons/colors and human-friendly formatters for stage/run metadata.
-Not UI-framework specific — used by web API enrichment and CLI renderers.
+UI-framework-agnostic — used by both the web API enrichment and CLI
+rendering. The functions here read from ``StageRunState`` fields
+(durations, execution mode, reuse refs) and turn them into display
+strings; they never mutate state.
+
+Kept separate from icons.py because the two concerns evolve
+independently: glyphs are a stable visual vocabulary, formatters churn
+when product copy changes.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from src.pipeline.run_queries import effective_pipeline_status
-from src.pipeline.state import PipelineState, StageRunState
+from src.pipeline.state.models import StageRunState
 
 _SECS_PER_HOUR = 3600
 _SECS_PER_MINUTE = 60
 
-STATUS_ICONS: dict[str, str] = {
-    StageRunState.STATUS_COMPLETED: "◉",
-    StageRunState.STATUS_FAILED: "◉",
-    StageRunState.STATUS_RUNNING: "▸",
-    StageRunState.STATUS_INTERRUPTED: "◈",
-    StageRunState.STATUS_STALE: "◌",
-    StageRunState.STATUS_SKIPPED: "◇",
-    StageRunState.STATUS_PENDING: "○",
-}
-
-STATUS_COLORS: dict[str, str] = {
-    StageRunState.STATUS_COMPLETED: "green",
-    StageRunState.STATUS_FAILED: "red",
-    StageRunState.STATUS_RUNNING: "cyan",
-    StageRunState.STATUS_INTERRUPTED: "yellow",
-    StageRunState.STATUS_STALE: "dim",
-    StageRunState.STATUS_SKIPPED: "blue",
-    StageRunState.STATUS_PENDING: "dim",
-}
-
 
 def format_duration(started_at: str | None, completed_at: str | None) -> str:
+    """Return ``Hh Mm Ss`` / ``Mm Ss`` / ``Ss`` depending on duration size.
+
+    Returns "" for missing or invalid timestamps so callers can use
+    ``str.format(...) or "—"`` without try/except.
+    """
     if not started_at:
         return ""
     try:
@@ -60,6 +50,11 @@ def format_duration(started_at: str | None, completed_at: str | None) -> str:
 
 
 def format_mode_label(stage_run: StageRunState) -> str:
+    """Render ``execution_mode`` for the UI.
+
+    Reused stages get an extra ``(<attempt-suffix>)`` hint so users can
+    see at a glance which prior attempt the artifact came from.
+    """
     if stage_run.execution_mode == StageRunState.MODE_REUSED and stage_run.reuse_from:
         attempt_id = stage_run.reuse_from.get("attempt_id", "?")
         suffix = str(attempt_id).split(":")[-1] if ":" in str(attempt_id) else str(attempt_id)
@@ -67,11 +62,4 @@ def format_mode_label(stage_run: StageRunState) -> str:
     return stage_run.execution_mode or "—"
 
 
-__all__ = [
-    "STATUS_COLORS",
-    "STATUS_ICONS",
-    "PipelineState",
-    "effective_pipeline_status",
-    "format_duration",
-    "format_mode_label",
-]
+__all__ = ["format_duration", "format_mode_label"]
