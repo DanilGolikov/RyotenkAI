@@ -345,6 +345,12 @@ omit = [
 precision = 2
 show_missing = true
 skip_covered = false
+# Coverage gate: pytest-cov fails the run if total coverage drops below this
+# threshold. Baseline measured 2026-04-26 = 85.35 % (4939 passed / 9 failed
+# pre-existing / 121 skipped). Floor(baseline - 2 %) = 83 — leaves a 2 pp
+# buffer for harmless noise. Bump in a separate PR after a stable green
+# stretch; do not pre-emptively raise it.
+fail_under = 83
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
