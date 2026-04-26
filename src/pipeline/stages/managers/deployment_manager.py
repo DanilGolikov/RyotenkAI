@@ -8,20 +8,14 @@ Extracted from RunPodDeployer as part of SOLID refactoring (Phase 4/5).
 from __future__ import annotations
 
 import json
-import shlex
-import shutil
-import subprocess
-import tempfile
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 from src.constants import PROVIDER_SINGLE_NODE
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.pipeline.stages.constants import PipelineContextKeys
 from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-from src.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
+from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
 from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
     DEPLOYMENT_CONTAINER_NAME_MAX_LEN,
@@ -34,7 +28,6 @@ from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_MARKER_EXISTS,
     DEPLOYMENT_MODE_KEY,
     DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
-    DEPLOYMENT_RSYNC_TIMEOUT,
     DEPLOYMENT_SCRIPT_CHMOD_TIMEOUT,
     DEPLOYMENT_STDERR_TRUNCATE,
     DEPLOYMENT_STDOUT_LINES,
@@ -44,7 +37,7 @@ from src.pipeline.stages.managers.deployment_constants import (
 from src.providers.training.interfaces import TrainingScriptHooks
 from src.utils.docker import docker_is_container_running, ensure_docker_image
 from src.utils.logger import logger
-from src.utils.result import AppError, ConfigError, Err, Failure, Ok, ProviderError, Result
+from src.utils.result import AppError, ConfigError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from src.providers.training.interfaces import IGPUProvider
@@ -99,7 +92,9 @@ class TrainingDeploymentManager:
         self.secrets = secrets
         self._workspace = self.DEFAULT_WORKSPACE
         self._code_syncer = CodeSyncer(config=config, secrets=secrets)
+        self._file_uploader = FileUploader(config=config, secrets=secrets, code_syncer=self._code_syncer)
         self._code_syncer.set_workspace(self._workspace)
+        self._file_uploader.set_workspace(self._workspace)
         logger.debug("🚀 TrainingDeploymentManager initialized")
 
     @property
@@ -119,6 +114,7 @@ class TrainingDeploymentManager:
         """
         self._workspace = workspace_path
         self._code_syncer.set_workspace(workspace_path)
+        self._file_uploader.set_workspace(workspace_path)
         logger.debug(f"[DEPLOY] Workspace: {self._workspace}")
 
     # =========================================================================
@@ -129,196 +125,13 @@ class TrainingDeploymentManager:
         """Proxy to :meth:`CodeSyncer.sync` — kept until callers migrate."""
         return self._code_syncer.sync(ssh_client)
 
-    def _get_training_path(self, local_path: str, strategy_type: str) -> str:
-        """
-        Auto-generate training path for dataset file.
-
-        Pattern: data/{strategy_type}/{basename(local_path)}
-
-        Args:
-            local_path: Local source path (e.g., "data/datasets/train.jsonl")
-            strategy_type: Current strategy type (e.g., "sft", "dpo")
-
-        Returns:
-            Relative path for remote workspace (e.g., "data/sft/train.jsonl")
-
-        Example:
-            >>> _get_training_path("data/datasets/train.jsonl", "sft")
-            "data/sft/train.jsonl"
-
-            >>> _get_training_path("/abs/path/my_dataset.jsonl", "dpo")
-            "data/dpo/my_dataset.jsonl"
-        """
-        basename = Path(local_path).name
-        return f"data/{strategy_type}/{basename}"
+    # =========================================================================
+    # FILES DEPLOY — delegates to FileUploader
+    # =========================================================================
 
     def deploy_files(self, ssh_client: SSHClient, context: dict[str, Any]) -> Result[None, AppError]:
-        """
-        Upload dataset and training scripts to pod.
-
-        Args:
-            ssh_client: SSH client connected to pod
-            context: Pipeline context with dataset_path
-
-        Returns:
-            Result with None on success or error message
-        """
-        logger.info("📤 Uploading files to pod...")
-
-        try:
-            # Get config path from context (set by orchestrator)
-            config_path = context.get("config_path", DEPLOYMENT_CONFIG_PATH)
-            logger.info(f"📂 Using config: {config_path}")
-
-            # ⚡ MULTI-PHASE FIX: Upload ALL datasets from config, not just the first one
-            # This is critical for multi-phase training (SFT → COT → DPO)
-            files_to_upload: list[tuple[str, str]] = [
-                (config_path, DEPLOYMENT_CONFIG_PATH),  # Original config unchanged
-            ]
-
-            # Collect dataset files used by training strategies:
-            # - local_path: absolute/real local filesystem path
-            # - remote_rel_path: path as referenced in config (relative inside remote workspace)
-            dataset_files: list[tuple[str, str]] = []
-            missing_datasets: list[str] = []
-            resolved_datasets_count = 0
-            # Use only datasets that are actually referenced by training strategies
-            datasets_to_upload: dict[str, Any] = {}
-            strategies = self.config.training.get_strategy_chain()
-            if strategies:
-                for s in strategies:
-                    try:
-                        ds_cfg = self.config.get_dataset_for_strategy(s)
-                    except (AttributeError, KeyError, TypeError, ValueError):
-                        continue
-                    ds_name = s.dataset or "__primary__"
-                    datasets_to_upload[ds_name] = ds_cfg
-            else:
-                datasets_to_upload["__primary__"] = self.config.get_primary_dataset()
-
-            for dataset_name, dataset_config in datasets_to_upload.items():
-                if not dataset_config:
-                    continue
-                resolved_datasets_count += 1
-
-                # NEW SCHEMA (v6.0):
-                # - local source: source_local.local_paths.* (local fs)
-                # - training_paths are AUTO-GENERATED: data/{strategy_type}/{basename}
-                # - huggingface source: no uploads
-                if dataset_config.get_source_type() != SOURCE_TYPE_LOCAL:
-                    continue
-
-                source_local = dataset_config.source_local
-                if source_local is None:
-                    missing_datasets.append(f"{dataset_name}: missing source_local")
-                    logger.warning(f"⚠️ Dataset [{dataset_name}] missing source_local block")
-                    continue
-
-                # Find strategy_type for this dataset (for auto-generating training_paths)
-                # strategies is never empty in valid config (Pydantic rejects empty chain)
-                strategy_type: str | None = None
-                for s in strategies:
-                    if (s.dataset or "__primary__") == dataset_name:
-                        strategy_type = s.strategy_type
-                        break
-                if strategy_type is None:
-                    return Err(
-                        ConfigError(
-                            message="Dataset not referenced by any strategy. Strategy chain cannot be empty (config validation).",
-                            code="DATASET_STRATEGY_NOT_FOUND",
-                        )
-                    )
-                bound_strategy: str = strategy_type
-
-                def add_dataset_file(
-                    kind: str,
-                    local_ref: str | None,
-                    bound_ds_name: str = dataset_name,  # Bind loop variable (renamed to avoid shadowing)
-                    bound_strategy_type: str = bound_strategy,  # Bind strategy_type for closure
-                ) -> None:
-                    if not local_ref:
-                        return
-                    local_abs = self.config.resolve_path(local_ref)
-
-                    # Auto-generate training path: data/{strategy_type}/{basename}
-                    remote_rel = self._get_training_path(local_ref, bound_strategy_type)
-
-                    if local_abs and local_abs.exists():
-                        dataset_files.append((str(local_abs), remote_rel))
-                        files_to_upload.append((str(local_abs), remote_rel))
-                        logger.info(f"📂 Dataset [{bound_ds_name}]: {kind} {local_abs} → {remote_rel}")
-                        return
-                    missing_datasets.append(str(local_ref))
-                    logger.warning(f"⚠️ Dataset [{bound_ds_name}] {kind} not found: {local_ref} (resolved: {local_abs})")
-
-                # Upload train file (required)
-                add_dataset_file("train", source_local.local_paths.train)
-
-                # Upload eval file (optional)
-                add_dataset_file("eval", source_local.local_paths.eval)
-
-            if not dataset_files:
-                if missing_datasets:
-                    return Err(
-                        ConfigError(
-                            message="Dataset file not found: "
-                            + ", ".join(missing_datasets)
-                            + ". Check 'datasets:' in config and ensure each dataset.source_local.local_paths.* exists.",
-                            code="DATASET_FILE_NOT_FOUND",
-                            details={"missing": missing_datasets},
-                        )
-                    )
-
-                if resolved_datasets_count == 0:
-                    return Err(
-                        ConfigError(
-                            message="No datasets configured. Add 'datasets:' section to config.",
-                            code="NO_DATASETS_CONFIGURED",
-                        )
-                    )
-
-                logger.info("📦 No local dataset files to upload; using remote-backed datasets from config only")
-
-            logger.info(f"📦 Uploading {len(files_to_upload)} files ({len(dataset_files)} datasets)...")
-
-            batch_result = self._upload_files_with_transport(ssh_client, files_to_upload, dataset_files, config_path, context)
-            if batch_result.is_failure():
-                return batch_result
-
-            # Upload source code modules (selective sync for smaller transfers)
-            sync_result = self._sync_source_code(ssh_client)
-            if sync_result.is_failure():
-                return sync_result
-
-            # Note: train.py is already included in src/training/train.py
-            # No need to upload it separately - it will be run as a module
-
-            logger.info("✅ All files uploaded successfully")
-            return Ok(None)
-
-        except (OSError, subprocess.SubprocessError) as e:
-            logger.error(f"File upload error: {e}")
-            return Err(ProviderError(message=f"Failed to upload files: {e!s}", code="FILE_UPLOAD_FAILED"))
-
-    def _upload_files_with_transport(
-        self,
-        ssh_client: SSHClient,
-        files_to_upload: list[tuple[str, str]],
-        dataset_files: list[tuple[str, str]],
-        config_path: str,
-        context: dict[str, Any],
-    ) -> Result[None, AppError]:
-        """Upload files via SSH batch (tar pipe), with individual file fallback."""
-        logger.debug("📦 Batch uploading files via tar stream...")
-        batch_result = self._upload_files_batch(ssh_client, files_to_upload)
-        if batch_result.is_failure():
-            assert isinstance(batch_result, Failure)
-            err_msg = batch_result.unwrap_err()
-            logger.warning(f"⚠️ Batch upload failed: {err_msg}, falling back to individual uploads")
-            fallback_result = self._upload_files_individual(ssh_client, dataset_files, config_path)
-            if fallback_result.is_failure():
-                return fallback_result
-        return Ok(None)
+        """Proxy to :meth:`FileUploader.deploy_files`."""
+        return self._file_uploader.deploy_files(ssh_client, context)
 
     # =========================================================================
     # PROVIDER HELPERS
@@ -1028,203 +841,6 @@ docker run --rm --detach \\
             else ""
         )
         return Err(ProviderError(message=f"Docker training failed to start{details}", code="TRAINING_START_TIMEOUT"))
-
-    # Private helper methods
-
-    def _upload_files_batch(
-        self, ssh_client: SSHClient, files_to_upload: list[tuple[str, str]]
-    ) -> Result[None, AppError]:
-        """
-        Upload multiple files in one tar stream for 3-5x speedup.
-
-        Args:
-            ssh_client: SSH client instance
-            files_to_upload: List of (local_path, remote_name) tuples
-
-        Returns:
-            Result indicating success or failure
-        """
-        logger.info(f"📦 Batch uploading {len(files_to_upload)} files via tar stream...")
-
-        # Filter existing files and build file mapping
-        existing_files = []
-        file_mapping = {}  # local_path -> remote_name
-
-        for local_path, remote_name in files_to_upload:
-            if Path(local_path).exists():
-                existing_files.append(local_path)
-                file_mapping[local_path] = remote_name
-                logger.info(f"   📄 {local_path} → {self._workspace}/{remote_name}")
-            else:
-                logger.warning(f"⚠️ File not found, skipping: {local_path}")
-
-        if not existing_files:
-            return Err(ProviderError(message="No files to upload", code="NO_FILES_TO_UPLOAD"))
-
-        # Create temporary directory structure that matches remote layout
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Copy files to temp dir with remote names
-            for local_path in existing_files:
-                remote_name = file_mapping[local_path]
-                # Defense-in-depth: remote_name must be relative, otherwise Path(tmpdir)/remote_name
-                # will ignore tmpdir and can cause SameFileError or write outside staging dir.
-                if Path(remote_name).is_absolute():
-                    return Err(
-                        ConfigError(
-                            message=f"Invalid remote path (must be relative): {remote_name}. "
-                            "Use source_local.training_paths.* for remote-relative paths.",
-                            code="INVALID_REMOTE_PATH",
-                        )
-                    )
-                dest_path = Path(tmpdir) / remote_name
-
-                # Create parent directory if needed
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(local_path, dest_path)
-
-            # Build tar | ssh | tar command
-            ssh_opts = build_ssh_opts(ssh_client)
-            tar_cmd = (
-                f"cd {tmpdir} && "
-                f"tar czf - . | "
-                f"ssh {ssh_opts} {ssh_client.ssh_target} "
-                f"'cd {self._workspace} && tar xzf -'"
-            )
-
-            logger.info("📤 Streaming files via tar pipe...")
-            start_time = time.time()
-
-            result = subprocess.run(
-                tar_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_RSYNC_TIMEOUT
-            )
-
-            elapsed = time.time() - start_time
-
-            if result.returncode != 0:
-                # Check for ownership warnings (non-critical)
-                if "Cannot change ownership" in result.stderr:
-                    logger.warning("⚠️ Ownership warnings (non-critical), files uploaded")
-                else:
-                    return Err(
-                        ProviderError(message=f"Batch upload failed: {result.stderr}", code="BATCH_UPLOAD_FAILED")
-                    )
-
-            logger.info(f"✅ Batch upload completed in {elapsed:.1f}s")
-
-            # Verify files were uploaded (check both root and nested files)
-            logger.info("✅ Verified files on remote:")
-            remote_names = [file_mapping[local_path] for local_path in existing_files]
-            verify_results = dict.fromkeys(remote_names, False)
-            verify_cmd_parts = []
-
-            for remote_name in remote_names:
-                remote_path = f"{self._workspace}/{remote_name}"
-                verify_cmd_parts.append(
-                    f"if test -f {shlex.quote(remote_path)}; then "
-                    f"printf 'OK::%s\\n' {shlex.quote(remote_name)}; "
-                    f"else printf 'MISS::%s\\n' {shlex.quote(remote_name)}; fi"
-                )
-
-            verify_cmd = "; ".join(verify_cmd_parts)
-            success, stdout, _ = ssh_client.exec_command(
-                command=verify_cmd, background=False, timeout=DEPLOYMENT_VERIFY_TIMEOUT
-            )
-
-            if success:
-                for line in (stdout or "").splitlines():
-                    if line.startswith("OK::"):
-                        remote_name = line.removeprefix("OK::")
-                        if remote_name in verify_results:
-                            verify_results[remote_name] = True
-            else:
-                logger.warning("⚠️ Batch verification command failed; proceeding with per-file status as not verified.")
-
-            for remote_name in remote_names:
-                if verify_results.get(remote_name, False):
-                    logger.info(f"   ✓ {remote_name}")
-                else:
-                    logger.warning(f"   ✗ {remote_name} NOT FOUND!")
-
-            return Ok(None)
-
-    def _upload_files_individual(  # noqa: WPS231
-        self,
-        ssh_client: SSHClient,
-        dataset_files: list[tuple[str, str]],
-        config_path: str = "config/pipeline_config.yaml",
-    ) -> Result[None, AppError]:
-        """
-        Fallback: upload files individually (slower but more reliable).
-
-        Args:
-            ssh_client: SSH client instance
-            dataset_files: List of (local_path, remote_rel_path) for dataset files
-            config_path: Path to config file
-
-        Returns:
-            Result indicating success or failure
-        """
-        logger.info("📦 Uploading files individually (fallback mode)...")
-
-        # Upload all datasets
-        for local_path, remote_rel_path in dataset_files:
-            logger.info(f"📦 Uploading dataset: {remote_rel_path} (local: {local_path})")
-
-            # Create parent directories on remote
-            remote_path = f"{self._workspace}/{remote_rel_path}"
-            remote_dir = str(Path(remote_path).parent)
-            success, _stdout, stderr = ssh_client.exec_command(
-                command=f"mkdir -p {remote_dir}",
-                background=False,
-                timeout=DEPLOYMENT_VERIFY_TIMEOUT,
-            )
-            if not success:
-                logger.warning(f"⚠️ Failed to create dir {remote_dir}: {stderr}")
-
-            success, error_msg = ssh_client.upload_file(
-                local_path=local_path,
-                remote_path=remote_path,
-                verify=True,
-            )
-
-            if not success:
-                return Err(
-                    ProviderError(
-                        message=f"Failed to upload dataset {remote_rel_path}: {error_msg}",
-                        code="DATASET_UPLOAD_FAILED",
-                        details={"remote_path": remote_rel_path},
-                    )
-                )
-
-            logger.info(f"✅ Dataset uploaded: {remote_rel_path}")
-
-        # Upload config file (use actual config from parameter)
-        config_file = config_path
-        if Path(config_file).exists():
-            logger.info(f"📦 Uploading configuration: {config_file}")
-
-            # Create config directory first
-            success, _stdout, stderr = ssh_client.exec_command(
-                command=f"mkdir -p {self._workspace}/config",
-                background=False,
-                timeout=DEPLOYMENT_VERIFY_TIMEOUT,
-            )
-
-            if not success:
-                logger.warning(f"⚠️ Failed to create config directory: {stderr}")
-
-            success, error_msg = ssh_client.upload_file(
-                local_path=config_file, remote_path=f"{self._workspace}/config/pipeline_config.yaml", verify=True
-            )
-
-            if not success:
-                logger.warning(f"⚠️ Config upload failed: {error_msg}")
-            else:
-                logger.info("✅ Configuration uploaded successfully")
-        else:
-            logger.warning(f"⚠️ Config file not found: {config_file}")
-
-        return Ok(None)
 
 
 __all__ = ["TrainingDeploymentManager"]
