@@ -8,8 +8,7 @@ from typing import Any
 from src.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
 from src.api.schemas.run import LineageRefSchema, RunDetail, RunsListResponse, RunSummary
 from src.pipeline.launch import is_process_alive, read_lock_pid
-from src.pipeline.state.formatters import format_mode_label
-from src.pipeline.state.icons import STATUS_COLORS, STATUS_ICONS
+from src.api.presentation import STATUS_COLORS, STATUS_ICONS, format_mode_label
 from src.pipeline.run_queries import (
     RunSummaryRow,
     effective_pipeline_status,
