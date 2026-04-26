@@ -23,17 +23,17 @@ from src.api.services.token_crypto import (
     write_token_file,
 )
 from src.config.integrations.registry import INTEGRATION_TYPES
-from src.pipeline.settings.integrations import (
+from src.workspace.integrations import (
     IntegrationMetadata,
     IntegrationRegistry,
     IntegrationRegistryEntry,
     IntegrationStore,
 )
-from src.pipeline.settings.integrations.registry import (
+from src.workspace.integrations.registry import (
     IntegrationRegistryError,
     validate_integration_id,
 )
-from src.pipeline.settings.integrations.store import IntegrationStoreError
+from src.workspace.integrations.store import IntegrationStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 

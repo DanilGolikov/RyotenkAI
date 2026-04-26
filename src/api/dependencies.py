@@ -11,7 +11,7 @@ from fastapi import Depends, HTTPException
 from src.api.config import ApiSettings
 from src.workspace.projects import ProjectRegistry, ProjectStore
 from src.workspace.projects.registry import ProjectRegistryError
-from src.pipeline.settings.integrations import IntegrationRegistry
+from src.workspace.integrations import IntegrationRegistry
 from src.workspace.providers import ProviderRegistry
 from src.pipeline.state import PipelineStateStore
 

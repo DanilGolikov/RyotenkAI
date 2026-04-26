@@ -24,7 +24,7 @@ from src.api.services import integration_service
 from src.api.services.connection_test import test_integration
 from src.api.services.integration_service import IntegrationServiceError
 from src.api.services.token_crypto import TokenCrypto, read_token_file
-from src.pipeline.settings.integrations import IntegrationRegistry, IntegrationStore
+from src.workspace.integrations import IntegrationRegistry, IntegrationStore
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 

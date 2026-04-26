@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.pipeline.settings.integrations import (
+from src.workspace.integrations import (
     IntegrationRegistry,
     IntegrationRegistryError,
 )

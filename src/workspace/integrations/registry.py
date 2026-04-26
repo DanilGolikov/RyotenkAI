@@ -11,7 +11,7 @@ from src.pipeline._workspace_registry import (
     WorkspaceRegistryError,
     default_workspace_root,
 )
-from src.pipeline.settings.integrations.models import IntegrationRegistryEntry
+from src.workspace.integrations.models import IntegrationRegistryEntry
 
 if TYPE_CHECKING:
     from pathlib import Path
