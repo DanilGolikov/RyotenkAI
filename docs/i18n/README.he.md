@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   <a href="README.ru.md">🇷🇺 Русский</a> |
   <a href="README.ja.md">🇯🇵 日本語</a> |
   <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-מסמך תצורה מלא: [`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+מסמך תצורה מלא: [`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ make docker-mlflow-up
 | `ryotenkai/ryotenkai-training-runtime` | CUDA + PyTorch + dependencies לצורכי אימון |
 | `ryotenkai/inference-vllm` | vLLM inference runtime (serve + merge deps + SSH) |
 
-אפשר לבנות מקומית או לפרסם ל-Docker Hub. ראו [`../docker/training/README.md`](../docker/training/README.md) ו-[`../docker/inference/README.md`](../docker/inference/README.md).
+אפשר לבנות מקומית או לפרסם ל-Docker Hub. ראו [`../docker/training/README.md`](../../docker/training/README.md) ו-[`../docker/inference/README.md`](../../docker/inference/README.md).
 
 ---
 
@@ -599,8 +599,8 @@ ryotenkai/
 
 ## תרומה
 
-ראו [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+ראו [`../CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
 ## רישיון
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil

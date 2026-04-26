@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   <a href="README.ru.md">🇷🇺 Русский</a> |
   <a href="README.ja.md">🇯🇵 日本語</a> |
   <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-전체 설정 레퍼런스: [`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+전체 설정 레퍼런스: [`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ UI는 `http://localhost:5002`에서 접근할 수 있습니다. 모든 pipeline 
 | `ryotenkai/ryotenkai-training-runtime` | 학습용 CUDA + PyTorch + 의존성 환경 |
 | `ryotenkai/inference-vllm` | vLLM inference runtime (serve + merge deps + SSH) |
 
-로컬에서 빌드하거나 Docker Hub로 push할 수 있습니다. 자세한 내용은 [`../docker/training/README.md`](../docker/training/README.md) 와 [`../docker/inference/README.md`](../docker/inference/README.md) 를 참고하세요.
+로컬에서 빌드하거나 Docker Hub로 push할 수 있습니다. 자세한 내용은 [`../docker/training/README.md`](../../docker/training/README.md) 와 [`../docker/inference/README.md`](../../docker/inference/README.md) 를 참고하세요.
 
 ---
 
@@ -599,8 +599,8 @@ ryotenkai/
 
 ## 기여하기
 
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md) 를 참고하세요.
+[`../CONTRIBUTING.md`](../../CONTRIBUTING.md) 를 참고하세요.
 
 ## 라이선스
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil

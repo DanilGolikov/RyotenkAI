@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   <a href="README.ru.md">🇷🇺 Русский</a> |
   <a href="README.ja.md">🇯🇵 日本語</a> |
   🇨🇳 简体中文 |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-完整配置参考：[`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+完整配置参考：[`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ UI 地址为 `http://localhost:5002`。所有 pipeline runs 都会连同 metrics
 | `ryotenkai/ryotenkai-training-runtime` | 用于训练的 CUDA + PyTorch + 依赖环境 |
 | `ryotenkai/inference-vllm` | vLLM inference runtime (serve + merge deps + SSH) |
 
-可以本地构建，也可以推送到 Docker Hub。参见 [`../docker/training/README.md`](../docker/training/README.md) 和 [`../docker/inference/README.md`](../docker/inference/README.md)。
+可以本地构建，也可以推送到 Docker Hub。参见 [`../docker/training/README.md`](../../docker/training/README.md) 和 [`../docker/inference/README.md`](../../docker/inference/README.md)。
 
 ---
 
@@ -599,8 +599,8 @@ ryotenkai/
 
 ## 贡献
 
-请参阅 [`../CONTRIBUTING.md`](../CONTRIBUTING.md)。
+请参阅 [`../CONTRIBUTING.md`](../../CONTRIBUTING.md)。
 
 ## 许可证
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil

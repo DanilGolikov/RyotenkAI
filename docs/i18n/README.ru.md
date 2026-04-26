@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   🇷🇺 Русский |
   <a href="README.ja.md">🇯🇵 日本語</a> |
   <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-Полный справочник по конфигу: [`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+Полный справочник по конфигу: [`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ make docker-mlflow-up
 | `ryotenkai/ryotenkai-training-runtime` | CUDA + PyTorch + зависимости для обучения |
 | `ryotenkai/inference-vllm` | Runtime для vLLM-инференса (serve + merge deps + SSH) |
 
-Образы можно собирать локально или публиковать в Docker Hub. См. [`../docker/training/README.md`](../docker/training/README.md) и [`../docker/inference/README.md`](../docker/inference/README.md).
+Образы можно собирать локально или публиковать в Docker Hub. См. [`../docker/training/README.md`](../../docker/training/README.md) и [`../docker/inference/README.md`](../../docker/inference/README.md).
 
 ---
 
@@ -599,8 +599,8 @@ ryotenkai/
 
 ## Участие в проекте
 
-См. [../CONTRIBUTING.md](../CONTRIBUTING.md).
+См. [../CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Лицензия
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil

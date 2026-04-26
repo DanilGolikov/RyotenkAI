@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   <a href="README.ru.md">🇷🇺 Русский</a> |
   <a href="README.ja.md">🇯🇵 日本語</a> |
   <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-Referencia completa de configuracion: [`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+Referencia completa de configuracion: [`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ Accede a la UI en `http://localhost:5002`. Todos los pipeline runs se rastrean c
 | `ryotenkai/ryotenkai-training-runtime` | CUDA + PyTorch + dependencias para entrenamiento |
 | `ryotenkai/inference-vllm` | Runtime de inferencia vLLM (serve + merge deps + SSH) |
 
-Puedes construirlas localmente o publicarlas en Docker Hub. Consulta [`../docker/training/README.md`](../docker/training/README.md) y [`../docker/inference/README.md`](../docker/inference/README.md).
+Puedes construirlas localmente o publicarlas en Docker Hub. Consulta [`../docker/training/README.md`](../../docker/training/README.md) y [`../docker/inference/README.md`](../../docker/inference/README.md).
 
 ---
 
@@ -599,8 +599,8 @@ Unete al servidor de Discord para soporte, conversacion sobre roadmap, compartir
 
 ## Contribuir
 
-Consulta [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+Consulta [`../CONTRIBUTING.md`](../../CONTRIBUTING.md).
 
 ## Licencia
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../docs/logo_final.png" alt="RyotenkAI" width="400">
+  <img src="../logo_final.png" alt="RyotenkAI" width="400">
 </p>
 <h1 align="center">RyotenkAI</h1>
 
@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="../README.md">🇬🇧 English</a> |
+  <a href="../../README.md">🇬🇧 English</a> |
   <a href="README.ru.md">🇷🇺 Русский</a> |
   🇯🇵 日本語 |
   <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
@@ -384,7 +384,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-設定リファレンス全体: [`../src/config/CONFIG_REFERENCE.md`](../src/config/CONFIG_REFERENCE.md)
+設定リファレンス全体: [`../src/config/CONFIG_REFERENCE.md`](../../src/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -474,7 +474,7 @@ UI は `http://localhost:5002` で利用できます。すべての pipeline run
 | `ryotenkai/ryotenkai-training-runtime` | 学習用の CUDA + PyTorch + 依存関係 |
 | `ryotenkai/inference-vllm` | vLLM 推論 runtime (serve + merge deps + SSH) |
 
-ローカルビルドも Docker Hub への push も可能です。詳細は [`../docker/training/README.md`](../docker/training/README.md) と [`../docker/inference/README.md`](../docker/inference/README.md) を参照してください。
+ローカルビルドも Docker Hub への push も可能です。詳細は [`../docker/training/README.md`](../../docker/training/README.md) と [`../docker/inference/README.md`](../../docker/inference/README.md) を参照してください。
 
 ---
 
@@ -599,8 +599,8 @@ ryotenkai/
 
 ## コントリビュート
 
-[`../CONTRIBUTING.md`](../CONTRIBUTING.md) を参照してください。
+[`../CONTRIBUTING.md`](../../CONTRIBUTING.md) を参照してください。
 
 ## ライセンス
 
-[MIT](../LICENSE) © Golikov Daniil
+[MIT](../../LICENSE) © Golikov Daniil
