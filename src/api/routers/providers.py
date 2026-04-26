@@ -23,7 +23,7 @@ from src.api.services import provider_service
 from src.api.services.connection_test import test_provider
 from src.api.services.provider_service import ProviderServiceError
 from src.api.services.token_crypto import TokenCrypto, read_token_file
-from src.pipeline.settings.providers import ProviderRegistry, ProviderStore
+from src.workspace.providers import ProviderRegistry, ProviderStore
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 

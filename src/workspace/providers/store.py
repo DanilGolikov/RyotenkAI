@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.pipeline._fs import atomic_write_json, atomic_write_text, utc_now_iso
 from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
-from src.pipeline.settings.providers.models import (
+from src.workspace.providers.models import (
     ProviderConfigVersion,
     ProviderMetadata,
 )

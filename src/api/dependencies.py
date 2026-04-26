@@ -12,7 +12,7 @@ from src.api.config import ApiSettings
 from src.workspace.projects import ProjectRegistry, ProjectStore
 from src.workspace.projects.registry import ProjectRegistryError
 from src.pipeline.settings.integrations import IntegrationRegistry
-from src.pipeline.settings.providers import ProviderRegistry
+from src.workspace.providers import ProviderRegistry
 from src.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:

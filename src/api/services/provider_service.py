@@ -23,17 +23,17 @@ from src.api.services.token_crypto import (
     write_token_file,
 )
 from src.config.providers.registry import PROVIDER_TYPES
-from src.pipeline.settings.providers import (
+from src.workspace.providers import (
     ProviderMetadata,
     ProviderRegistry,
     ProviderRegistryEntry,
     ProviderStore,
 )
-from src.pipeline.settings.providers.registry import (
+from src.workspace.providers.registry import (
     ProviderRegistryError,
     validate_provider_id,
 )
-from src.pipeline.settings.providers.store import ProviderStoreError
+from src.workspace.providers.store import ProviderStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 

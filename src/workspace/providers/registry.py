@@ -19,7 +19,7 @@ from src.pipeline._workspace_registry import (
     default_workspace_root,
 )
 from src.pipeline._fs import utc_now_iso
-from src.pipeline.settings.providers.models import ProviderRegistryEntry
+from src.workspace.providers.models import ProviderRegistryEntry
 
 if TYPE_CHECKING:
     from pathlib import Path
