@@ -35,7 +35,7 @@ start_backend() {
   : > "${BACKEND_LOG}"
   (
     cd "${REPO_ROOT}"
-    "${launcher[@]}" "${python}" -m src.main serve \
+    "${launcher[@]}" "${python}" -m src.main server start \
       --host "${API_HOST}" \
       --port "${API_PORT}" \
       --runs-dir "${RUNS_DIR}" \
