@@ -32,6 +32,7 @@ from src.pipeline.stages.dataset_validator.constants import (
     VALIDATIONS_ATTR,
     WARNINGS_KEY,
 )
+from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
 
@@ -115,6 +116,7 @@ class DatasetValidator(PipelineStage):
         self._secrets = secrets
 
         self._loader_factory = DatasetLoaderFactory(config)
+        self._format_checker = FormatChecker(config)
 
         # Load plugins (if configured)
         self._plugins = self._load_plugins()
@@ -514,54 +516,8 @@ class DatasetValidator(PipelineStage):
         dataset_name: str,
         strategy_phases: list[Any],
     ) -> Result[None, AppError]:
-        """
-        Check dataset column format against strategy requirements.
-
-        Delegates the per-strategy ``validate_dataset`` loop to the pure
-        helper in :mod:`src.data.validation.standalone` so the HTTP API
-        (``POST /projects/.../datasets/.../validate``) and this pipeline
-        stage answer from the same code path. Behaviour preserved:
-        early-fail on the first strategy whose format check fails, with
-        the same error code ``DATASET_FORMAT_ERROR``.
-
-        O(1) — only reads column metadata, no dataset iteration.
-        Called BEFORE quality plugins to fail fast before GPU spin-up.
-        """
-        from src.data.validation.standalone import check_dataset_format
-
-        bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
-        if bundle.is_failure():
-            return Err(bundle.unwrap_err())
-
-        for item in bundle.unwrap():
-            if not item.ok:
-                return Err(
-                    DatasetError(
-                        message=(
-                            f"[{dataset_name}] Format check failed for "
-                            f"'{item.strategy_type}': {item.message}"
-                        ),
-                        code="DATASET_FORMAT_ERROR",
-                    )
-                )
-        return Ok(None)
-
-    @staticmethod
-    def _get_column_names(dataset: Dataset | IterableDataset) -> list[str]:
-        """
-        Safely resolve column names for both Dataset and IterableDataset.
-
-        For IterableDataset, column_names may be None if Arrow schema is unavailable.
-        In that case, peek one sample to infer keys.
-        """
-        col_names = dataset.column_names
-        if col_names is not None:
-            return col_names
-        try:
-            sample = next(iter(dataset.take(1)), None)  # type: ignore[union-attr]
-            return list(sample.keys()) if sample else []
-        except Exception:
-            return []
+        """Proxy to :meth:`FormatChecker.check` — kept until callers migrate."""
+        return self._format_checker.check(dataset, dataset_name, strategy_phases)
 
     def _load_plugins_for_dataset(self, dataset_config: Any) -> list:
         """
