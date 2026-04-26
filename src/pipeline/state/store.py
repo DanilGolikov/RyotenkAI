@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState, utc_now_iso
 
 if TYPE_CHECKING:
-    from src.pipeline.domain.run_context import RunContext
+    from src.pipeline.state.run_context import RunContext
 
 SCHEMA_VERSION = 1
 

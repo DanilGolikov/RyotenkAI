@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import src.pipeline.domain.run_context as rc
+import src.pipeline.state.run_context as rc
 import src.utils.run_naming as rn
 
 

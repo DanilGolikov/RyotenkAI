@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.state import (
     PipelineStateStore,
     PipelineStateLoadError,

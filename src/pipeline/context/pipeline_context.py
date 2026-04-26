@@ -42,7 +42,7 @@ from src.pipeline.stages.constants import PipelineContextKeys
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.pipeline.domain.run_context import RunContext
+    from src.pipeline.state.run_context import RunContext
 
 
 class PipelineContext(dict[str, Any]):

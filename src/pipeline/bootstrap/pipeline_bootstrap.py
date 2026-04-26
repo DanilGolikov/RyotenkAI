@@ -48,9 +48,8 @@ if TYPE_CHECKING:
 
     from src.config.runtime import RuntimeSettings
     from src.pipeline.artifacts import StageArtifactCollector
-    from src.pipeline.domain import RunContext
     from src.pipeline.stages.base import PipelineStage
-    from src.pipeline.state import AttemptController
+    from src.pipeline.state import AttemptController, RunContext
     from src.utils.config import PipelineConfig, Secrets
 
 

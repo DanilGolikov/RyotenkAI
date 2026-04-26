@@ -38,7 +38,7 @@ _POD_CREATE_MAX_RETRIES = 3
 _RECREATABLE_ERRORS = ("RUNPOD_NO_EXPOSED_TCP", "RUNPOD_POD_TIMEOUT", "RUNPOD_POD_FAILED")
 
 if TYPE_CHECKING:
-    from src.pipeline.domain import RunContext
+    from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodSnapshot
     from src.utils.config import Secrets
 

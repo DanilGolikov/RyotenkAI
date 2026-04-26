@@ -6,6 +6,7 @@
 # would re-introduce the cycle — see the top of transitioner.py.
 from src.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
 from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
+from src.pipeline.state.run_context import RunContext
 from src.pipeline.state.store import (
     SCHEMA_VERSION,
     PipelineRunLock,
@@ -34,6 +35,7 @@ __all__ = [
     "PipelineStateLoadError",
     "PipelineStateLockError",
     "PipelineStateStore",
+    "RunContext",
     "StageLineageRef",
     "StageRunState",
     "acquire_run_lock",

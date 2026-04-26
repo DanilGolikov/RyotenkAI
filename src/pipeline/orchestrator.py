@@ -22,7 +22,7 @@ from src.pipeline.constants import (
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.launch import LaunchPreparationError, PreparedAttempt
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import StageNames

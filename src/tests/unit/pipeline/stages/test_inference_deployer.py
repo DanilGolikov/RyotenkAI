@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.providers.inference.interfaces import (
     EndpointInfo,
     InferenceArtifacts,

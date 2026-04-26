@@ -18,7 +18,7 @@ from src.constants import (
     INFERENCE_README_FILENAME,
 )
 from src.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.providers.inference.factory import InferenceProviderFactory

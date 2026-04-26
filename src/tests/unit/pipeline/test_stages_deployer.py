@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
 from src.utils.result import Failure, ProviderError, Success
 

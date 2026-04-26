@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from src.constants import PROVIDER_RUNPOD
 from src.pipeline.constants import GPU_DEPLOYER_IMAGE_SHA_TRUNCATE
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.pipeline.stages.managers import LogManager, TrainingDeploymentManager

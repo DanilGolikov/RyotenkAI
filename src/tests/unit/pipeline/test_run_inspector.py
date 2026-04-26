@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from src.cli.run_rendering import RunInspectionRenderer, format_duration
 from src.main import app
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.pipeline.run_queries import (
     ROOT_GROUP,
     RunInspector,

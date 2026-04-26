@@ -16,7 +16,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from src.pipeline.domain import RunContext
+    from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodResourceInfo
     from src.utils.result import AppError, ProviderError, Result
     from src.utils.ssh_client import SSHClient

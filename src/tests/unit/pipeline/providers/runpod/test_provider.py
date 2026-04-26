@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 import src.providers.runpod.training.provider as rp
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.providers.runpod.models import PodSnapshot, SshEndpoint
 from src.providers.runpod.training.provider import RunPodProvider
 from src.providers.training.interfaces import ProviderStatus

@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 import src.providers.single_node.training.provider as sp
-from src.pipeline.domain import RunContext
+from src.pipeline.state import RunContext
 from src.providers.single_node.training.health_check import HealthCheckResult
 from src.providers.single_node.training.provider import SingleNodeProvider
 from src.providers.training.interfaces import GPUInfo, ProviderStatus
