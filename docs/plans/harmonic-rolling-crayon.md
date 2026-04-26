@@ -750,43 +750,91 @@ def start_training(self, ssh_client, context, provider=None) -> Result[dict, App
 
 ---
 
-### Phase 6.6 — Drop image_name / docker_image config fields
+### Phase 6.6 — Inference config cleanup (CORRECTED 2026-04-26)
 
-**Independent commit.** Single cutover per project policy ("no backwards compat"). Per-existing-YAML migration: пользователь правит YAML руками, `extra="forbid"` Pydantic выкинет clear error при загрузке старого YAML.
+**SCOPE CHANGED.** Поля `image_name` (training/runpod) и `docker_image` (training/single_node) **остаются** — это пользовательский выбор образа для обучения. Они не относятся к runner-image и не дублируются с `RUNTIME_IMAGE`.
 
-#### 6.6.1 Config schema cleanup:
-- `src/config/providers/runpod/training.py:36` — удалить поле `image_name`
-- `src/config/providers/single_node/training.py:42` — удалить поле `docker_image`
+Реальный scope этой phase — **inference-side**:
+- Убрать дублирующие поля `merge_image` / `serve_image` из `InferenceVLLMEngineConfig` (один unified образ в `docker/inference/` теперь покрывает оба сценария — README уже это указывает)
+- Перенести `merge_before_deploy: bool` из `common.lora` → `vllm` engine config (это engine-specific concern)
+- Ввести auto-resolve образа inference по выбранному engine name через constant в `src/runner/__about__.py` или новый `src/inference/__about__.py::INFERENCE_IMAGES`
+- Это подготавливает контракт под добавление новых engines (TGI, Triton, etc.) с минимальными user-facing изменениями
 
-#### 6.6.2 Call-site updates (заменяем `cfg.image_name` / `cfg.docker_image` → `RUNTIME_IMAGE`):
-- `src/providers/runpod/training/api_client.py:61` — replace `train_cfg.image_name` → `RUNTIME_IMAGE` в payload dict
-- `src/providers/runpod/training/api_client.py:99,100,135` — info/debug log lines: use `RUNTIME_IMAGE`
-- `src/providers/runpod/training/provider.py:99` — `self._config.training.image_name` → `RUNTIME_IMAGE`
-- `src/pipeline/stages/managers/deployment/dependency_installer.py:133` — `cfg.get("docker_image")` → `RUNTIME_IMAGE`
-- `src/pipeline/stages/managers/deployment/training_launcher.py:450` — больше не существует (Phase 6.3 удалил `_start_training_docker`); если в новом launcher нужен image (для single_node docker run), брать из `RUNTIME_IMAGE`
-- Import: `from src.runner.__about__ import RUNTIME_IMAGE` в каждом файле
+**Architectural intent (per user):**
+> "Я хочу в инференсе просто выбирать провайдера, выбирать движок который использовать, а дальше система сама выберет образ в зависимости от выбранного движка (унифицировать контракты получается нужно, для взаимодействия с разными движками)."
 
-#### 6.6.3 NOT IN SCOPE:
-- `src/providers/runpod/inference/pods/...` — `pod_cfg.image_name` для **inference**, отдельный lifecycle, не трогаем (job server не управляет inference pods)
+#### 6.6.1 Config schema cleanup
 
-#### 6.6.4 Project YAMLs (3 файла + 1 build script):
-- `examples/quickstart-qlora-sft/pipeline_config.yaml:115` — удалить `docker_image: ...` строку
-- `examples/quickstart-qlora-sft/pipeline_config.yaml:143` — удалить `image_name: ...` строку
-- `src/config/pipeline_config.yaml:344` — удалить `image_name: ...` строку
-- `src/tests/fixtures/configs/test_pipeline.yaml:67` — удалить `docker_image: ...`
-- `docker/training/build_and_push.sh:365-374` — удалить блок suggesting добавить `image_name` / `docker_image` в config (заменить на reminder про `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE`)
+**`src/config/inference/engines/vllm.py`:**
+- ❌ Удалить поле `merge_image: str | None` (line 33-36)
+- ❌ Удалить поле `serve_image: str | None` (line 37-40)
+- ✅ Добавить поле `merge_before_deploy: bool = Field(True, description="Merge LoRA adapter into base model before serving via vLLM.")` — мигрирует из `common.lora`
+- Обновить docstring класса: убрать секцию про "two-container strategy" / "Docker images"
 
-#### 6.6.5 Test fixture updates (~10-20 файлов):
-- `src/tests/mocks/mock_runpod.py` — удалить `image_name` поле
-- `src/tests/unit/pipeline/providers/runpod/test_api_client.py` — обновить asserts на payload без image_name
-- `src/tests/unit/pipeline/providers/runpod/test_provider.py` — fixtures без image_name
-- `src/tests/unit/pipeline/providers/single_node/test_provider.py` — fixtures без docker_image
-- `src/tests/unit/pipeline/stages/managers/deployment/test_*.py` — пройтись по всем fixtures, удалить image fields
-- `src/tests/integration/...` — проверить все YAMLs / fixtures
-- Для всех тестов assert (если есть) что `RUNTIME_IMAGE` используется правильно
+**`src/config/inference/common.py`:**
+- ❌ Удалить поле `merge_before_deploy: bool` из `InferenceLoRAConfig` (line 46)
+- ✅ Оставить `adapter_path: str` (engine-agnostic LoRA path)
 
-#### 6.6.6 No migration script needed:
-- Per project policy: cutover, не deprecation. Пользователь видит Pydantic ValidationError при загрузке старого YAML, удаляет строку, продолжает.
+#### 6.6.2 Image auto-resolve
+
+**Новый модуль `src/inference/__about__.py` (NEW):**
+```python
+"""Pinned inference engine images.
+
+Mirrors the pattern of :data:`src.runner.__about__.RUNTIME_IMAGE` —
+one image per engine, optionally overridable via env for CI.
+The pipeline picks the right image by reading
+``inference.engine`` and indexing this dict; users never see raw
+image strings in the YAML.
+"""
+INFERENCE_IMAGES: Final[dict[str, str]] = {
+    "vllm": "ryotenkai/inference-vllm:v1.0",
+}
+INFERENCE_IMAGE_OVERRIDE_ENV = "RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_<ENGINE>"
+# E.g. RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_VLLM=registry.local/inference-vllm:dev
+
+def resolve_inference_image(engine: str) -> str:
+    """Pick the image for ``engine``. Override via env if set."""
+    ...
+```
+
+#### 6.6.3 Validator cleanup
+
+**`src/config/validators/inference.py`:**
+- ❌ Удалить `validate_inference_images_required_for_provider` (lines 39-67) — больше нечего валидировать, image автоматически определяется
+- Или: оставить функцию, но валидировать что `engine` имеет соответствующий image в `INFERENCE_IMAGES` dict (fail при неподдерживаемом engine)
+
+#### 6.6.4 Call-site updates
+
+Где сейчас читается `vllm.merge_image` / `vllm.serve_image`:
+- Find all: `grep -rn "merge_image\|serve_image" src/`
+- Заменить на `resolve_inference_image(cfg.engine)` (для vllm — один и тот же образ)
+
+Где читается `common.lora.merge_before_deploy`:
+- Заменить на `cfg.engines.vllm.merge_before_deploy` (после миграции)
+
+#### 6.6.5 Project YAMLs
+
+- `examples/quickstart-qlora-sft/pipeline_config.yaml` — удалить блок `inference.engines.vllm.merge_image` и `serve_image` (если есть), удалить `inference.common.lora.merge_before_deploy` (если есть)
+- `src/config/pipeline_config.yaml` — то же
+- `src/tests/fixtures/configs/test_pipeline.yaml` — то же
+- Обновить `docker/inference/README.md` — убрать пример с `merge_image: ...` / `serve_image: ...`, показать что engine: vllm — единственное что нужно
+
+#### 6.6.6 Test fixture updates
+
+- `src/tests/unit/config/test_inference*.py` — обновить fixtures
+- Найти все fixtures которые ставят `merge_image:` / `serve_image:` / `merge_before_deploy:` в config и подтянуть к новой схеме
+- Любой validator-test про "missing merge_image" — удалить (validator удалён)
+
+#### 6.6.7 NOT IN SCOPE этой фазы:
+
+- `image_name` (training, runpod provider) — **остаётся**, это user choice training image
+- `docker_image` (training, single_node provider) — **остаётся**, аналогично
+- `pod_cfg.image_name` для inference в `src/providers/runpod/inference/pods/...` — отдельный фикс (если нужен) — этот образ можно перевести на `resolve_inference_image(engine)` в той же фазе или отдельно
+
+#### 6.6.8 No migration script needed
+
+Per project policy: cutover. Пользователь видит Pydantic ValidationError при загрузке старого YAML с `merge_image` / `serve_image` / `common.lora.merge_before_deploy`, удаляет строки, продолжает.
 
 ---
 
