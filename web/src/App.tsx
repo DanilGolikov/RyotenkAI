@@ -13,6 +13,7 @@ import { ProviderDetailPage } from './pages/ProviderDetail'
 import { IntegrationsIndexPage } from './pages/IntegrationsIndex'
 import { IntegrationDetailPage } from './pages/IntegrationDetail'
 import { CatalogPage } from './pages/Catalog'
+import { JobLivePage } from './pages/JobLive'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export default function App() {
             </Route>
             <Route path="runs/:runId" element={<RunsWorkspace />} />
             <Route path="runs/:runId/attempts/:attemptNo" element={<RunsWorkspace />} />
+            <Route path="runs/:runId/live" element={<JobLivePage />} />
             <Route path="launch" element={<LaunchPage />} />
             <Route path="projects" element={<ProjectsPage />} />
             <Route path="projects/:id/*" element={<ProjectDetailPage />} />

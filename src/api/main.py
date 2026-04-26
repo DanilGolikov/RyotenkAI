@@ -14,6 +14,7 @@ from src.api.routers import (
     attempts,
     datasets,
     integrations,
+    jobs,
     launch,
     logs,
     plugins,
@@ -67,6 +68,10 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         projects.router,
         providers.router,
         reports.router,
+        # ``jobs`` carries prefix ``/runs/{run_id:path}/job`` — must be
+        # registered BEFORE ``runs.router`` (whose ``/{run_id:path}`` route
+        # would otherwise swallow ``/runs/<id>/job/...``).
+        jobs.router,
         runs.router,
     ]
     for router in api_routers:

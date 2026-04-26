@@ -200,6 +200,16 @@ function RunDetailPanel({ runId }: { runId: string }) {
           </div>
         </div>
         <div className="flex gap-2 shrink-0">
+          {/* Phase 7.2 — entry point to the polling-based Live Training
+              page. Always shown; on terminal runs the page itself
+              renders the frozen final snapshot. */}
+          <button
+            type="button"
+            onClick={() => navigate(`/runs/${encodeURIComponent(runId)}/live`)}
+            className="btn-ghost"
+          >
+            Live ↗
+          </button>
           {mlflowHref && (
             <a href={mlflowHref} target="_blank" rel="noreferrer" className="btn-ghost">
               MLflow ↗
