@@ -8,45 +8,52 @@ Layout::
         current.yaml
         history/
           2026-04-19T10-30-45Z.yaml
+      env.json                 # optional env-var overrides
       runs/
 
-Writes are atomic (temp-file replace) and each ``save_config`` call snapshots
-the previous ``current.yaml`` into ``configs/history/`` before overwriting.
+Project layout is richer than Provider/Integration: configs live in a
+``configs/`` sub-directory, projects own ``runs/`` + ``env.json``, and
+:meth:`save_config` seeds a ``v1`` snapshot on the very first save so
+the Versions tab is never empty after a user's first Save click.
+
+The shared :class:`WorkspaceStore` base handles atomic writes,
+metadata I/O, version listing and restore. ProjectStore overrides
+``current_config_path`` / ``history_dir`` to point at the ``configs/``
+sub-directory and adds env-vars + favorite-versions APIs.
 """
 
 from __future__ import annotations
 
 import json
-import shutil
-from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.pipeline._fs import (
     atomic_write_json,
     atomic_write_text,
-    created_at_from_filename,
     unique_snapshot_path,
     utc_now_iso,
 )
+from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
 from src.pipeline.project.models import ProjectConfigVersion, ProjectMetadata
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 PROJECT_SCHEMA_VERSION = 1
 
 
-class ProjectStoreError(RuntimeError):
+class ProjectStoreError(WorkspaceStoreError):
     """Raised for recoverable project-store issues."""
 
 
-class ProjectStore:
+class ProjectStore(WorkspaceStore[ProjectMetadata, ProjectConfigVersion]):
     """File-backed store for a single project workspace."""
 
-    def __init__(self, root: Path):
-        self.root = Path(root).expanduser().resolve()
+    metadata_filename: ClassVar[str] = "project.json"
+    schema_version: ClassVar[int] = PROJECT_SCHEMA_VERSION
+    error_class: ClassVar[type[ProjectStoreError]] = ProjectStoreError
 
-    # ---------- Paths ------------------------------------------------------
-
-    @property
-    def metadata_path(self) -> Path:
-        return self.root / "project.json"
+    # ---------- Layout overrides ------------------------------------------
 
     @property
     def configs_dir(self) -> Path:
@@ -68,21 +75,43 @@ class ProjectStore:
     def env_path(self) -> Path:
         return self.root / "env.json"
 
-    # ---------- Env vars ---------------------------------------------------
+    # ---------- Hooks ------------------------------------------------------
+
+    def _decode_metadata(self, raw: dict[str, Any]) -> ProjectMetadata:
+        favorites = raw.get("favorite_versions") or []
+        return ProjectMetadata(
+            schema_version=int(raw.get("schema_version", PROJECT_SCHEMA_VERSION)),
+            id=str(raw["id"]),
+            name=str(raw.get("name", raw["id"])),
+            description=str(raw.get("description", "")),
+            created_at=str(raw.get("created_at", "")),
+            updated_at=str(raw.get("updated_at", "")),
+            favorite_versions=[str(v) for v in favorites if isinstance(v, str)],
+        )
+
+    def _make_config_version(
+        self, *, filename: str, created_at: str, size_bytes: int, path: Path
+    ) -> ProjectConfigVersion:
+        return ProjectConfigVersion(
+            filename=filename,
+            created_at=created_at,
+            size_bytes=size_bytes,
+            path=path,
+        )
+
+    # ---------- Env vars (project-specific) -------------------------------
 
     def read_env(self) -> dict[str, str]:
         """Return the project's env-var overrides, or {} when unset."""
         if not self.env_path.is_file():
             return {}
         try:
-            import json
-
             with self.env_path.open("r", encoding="utf-8") as fh:
                 raw = json.load(fh)
         except Exception as exc:  # noqa: BLE001 — bubble to API as 400
-            raise ProjectStoreError(f"failed to read {self.env_path}: {exc}") from exc
+            raise self.error_class(f"failed to read {self.env_path}: {exc}") from exc
         if not isinstance(raw, dict):
-            raise ProjectStoreError(
+            raise self.error_class(
                 f"{self.env_path} must be a JSON object, got {type(raw).__name__}",
             )
         return {str(k): str(v) for k, v in raw.items()}
@@ -92,12 +121,15 @@ class ProjectStore:
 
     # ---------- Lifecycle --------------------------------------------------
 
-    def exists(self) -> bool:
-        return self.metadata_path.is_file()
-
-    def create(self, *, id: str, name: str, description: str = "") -> ProjectMetadata:
+    def create(
+        self,
+        *,
+        id: str,  # noqa: A002 — public API
+        name: str,
+        description: str = "",
+    ) -> ProjectMetadata:
         if self.exists():
-            raise ProjectStoreError(f"project already exists at {self.root}")
+            raise self.error_class(f"project already exists at {self.root}")
 
         self.root.mkdir(parents=True, exist_ok=True)
         self.configs_dir.mkdir(parents=True, exist_ok=True)
@@ -120,47 +152,19 @@ class ProjectStore:
             atomic_write_text(self.current_config_path, "")
         return metadata
 
-    def load(self) -> ProjectMetadata:
-        if not self.exists():
-            raise ProjectStoreError(f"project not found at {self.root}")
-        raw = json.loads(self.metadata_path.read_text(encoding="utf-8"))
-        favorites = raw.get("favorite_versions") or []
-        return ProjectMetadata(
-            schema_version=int(raw.get("schema_version", PROJECT_SCHEMA_VERSION)),
-            id=str(raw["id"]),
-            name=str(raw.get("name", raw["id"])),
-            description=str(raw.get("description", "")),
-            created_at=str(raw.get("created_at", "")),
-            updated_at=str(raw.get("updated_at", "")),
-            favorite_versions=[str(v) for v in favorites if isinstance(v, str)],
-        )
-
-    def touch(self) -> None:
-        """Bump ``updated_at`` in metadata."""
-        if not self.exists():
-            return
-        metadata = self.load()
-        metadata.updated_at = utc_now_iso()
-        atomic_write_json(self.metadata_path, metadata.to_dict())
-
     def update_description(self, description: str) -> ProjectMetadata:
         """Patch ``description`` + ``updated_at`` in metadata, leaving every
         other identity field (id, name, created_at, favorites) untouched.
         Returns the fresh metadata so callers can echo it back."""
         if not self.exists():
-            raise ProjectStoreError(f"project not found at {self.root}")
+            raise self.error_class(f"project not found at {self.root}")
         metadata = self.load()
         metadata.description = description
         metadata.updated_at = utc_now_iso()
         atomic_write_json(self.metadata_path, metadata.to_dict())
         return metadata
 
-    # ---------- Config ------------------------------------------------------
-
-    def current_yaml_text(self) -> str:
-        if self.current_config_path.is_file():
-            return self.current_config_path.read_text(encoding="utf-8")
-        return ""
+    # ---------- Config -----------------------------------------------------
 
     def save_config(self, yaml_text: str) -> str | None:
         """Write ``yaml_text`` to ``configs/current.yaml`` atomically.
@@ -168,8 +172,7 @@ class ProjectStore:
         If a previous ``current.yaml`` existed, its contents are first copied
         into ``configs/history/<iso>.yaml``. On the FIRST save (no prior
         content, no history yet) we snapshot the new content instead, so
-        the user sees a v1 in the versions list immediately. Returns the
-        filename of the snapshot (or ``None`` if nothing was snapshotted).
+        the user sees a v1 in the versions list immediately.
         """
         self.configs_dir.mkdir(parents=True, exist_ok=True)
         self.history_dir.mkdir(parents=True, exist_ok=True)
@@ -195,41 +198,6 @@ class ProjectStore:
         self.touch()
         return snapshot_name
 
-    def list_versions(self) -> list[ProjectConfigVersion]:
-        if not self.history_dir.is_dir():
-            return []
-        entries: list[ProjectConfigVersion] = []
-        for path in sorted(self.history_dir.glob("*.yaml")):
-            stat = path.stat()
-            entries.append(
-                ProjectConfigVersion(
-                    filename=path.name,
-                    created_at=created_at_from_filename(path.name),
-                    size_bytes=stat.st_size,
-                    path=path,
-                )
-            )
-        # Newest first
-        entries.sort(key=lambda v: v.filename, reverse=True)
-        return entries
-
-    def read_version(self, filename: str) -> str:
-        if "/" in filename or ".." in filename:
-            raise ProjectStoreError(f"invalid version filename: {filename!r}")
-        path = self.history_dir / filename
-        if not path.is_file():
-            raise ProjectStoreError(f"version not found: {filename}")
-        return path.read_text(encoding="utf-8")
-
-    def restore_version(self, filename: str) -> str | None:
-        """Copy a history snapshot into ``current.yaml``.
-
-        First snapshots the current config, then overwrites. Returns the
-        filename of the new snapshot (or ``None`` if current was empty).
-        """
-        content = self.read_version(filename)
-        return self.save_config(content)
-
     # ---------- Favorites --------------------------------------------------
 
     def toggle_favorite_version(self, filename: str, *, pinned: bool) -> list[str]:
@@ -239,11 +207,11 @@ class ProjectStore:
         Returns the updated list.
         """
         if not self.exists():
-            raise ProjectStoreError(f"project not found at {self.root}")
+            raise self.error_class(f"project not found at {self.root}")
         if "/" in filename or ".." in filename:
-            raise ProjectStoreError(f"invalid version filename: {filename!r}")
+            raise self.error_class(f"invalid version filename: {filename!r}")
         if not (self.history_dir / filename).is_file():
-            raise ProjectStoreError(f"version not found: {filename}")
+            raise self.error_class(f"version not found: {filename}")
         metadata = self.load()
         favs = list(metadata.favorite_versions)
         if pinned:
@@ -255,13 +223,6 @@ class ProjectStore:
         metadata.updated_at = utc_now_iso()
         atomic_write_json(self.metadata_path, metadata.to_dict())
         return favs
-
-    # ---------- Cleanup -----------------------------------------------------
-
-    def remove(self) -> None:
-        """Delete the entire project directory. Use with caution."""
-        if self.root.is_dir():
-            shutil.rmtree(self.root)
 
 
 __all__ = ["PROJECT_SCHEMA_VERSION", "ProjectStore", "ProjectStoreError"]
