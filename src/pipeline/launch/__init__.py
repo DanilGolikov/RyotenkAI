@@ -40,7 +40,7 @@ from src.pipeline.launch.runtime import (
 # Restart-point + resume queries — pure read-only inspections of run state.
 # Defined in launch_queries.py so they stay light enough for the CLI's lazy
 # imports (no orchestrator/torch in the chain).
-from src.pipeline.launch_queries import (
+from src.pipeline.launch.restart_options import (
     RestartPointOption,
     load_restart_point_options,
     pick_default_launch_mode,

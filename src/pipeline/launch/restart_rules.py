@@ -1,6 +1,6 @@
 """Pure decision rules for restart-point availability.
 
-Both :func:`src.pipeline.restart_points.list_restart_points` (lightweight,
+Both :func:`src.pipeline.launch.restart_options.list_restart_points` (lightweight,
 config-driven, no health probe) and
 :class:`src.pipeline.execution.restart_inspector.RestartPointsInspector`
 (orchestrator-driven, includes runtime probe) call into this module.

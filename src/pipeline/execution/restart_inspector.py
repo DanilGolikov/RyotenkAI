@@ -1,8 +1,8 @@
 """Runtime-aware restart-point inspection.
 
-Delegates rule evaluation to :func:`src.pipeline.restart_rules.compute_restart_points`
+Delegates rule evaluation to :func:`src.pipeline.launch.restart_rules.compute_restart_points`
 and adds the runtime health probe. The lighter-weight
-:func:`src.pipeline.restart_points.list_restart_points` shares the same
+:func:`src.pipeline.launch.restart_options.list_restart_points` shares the same
 rule engine but passes a no-op health checker.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from src.pipeline.execution.stage_planner import is_inference_runtime_healthy
-from src.pipeline.restart_rules import compute_restart_points
+from src.pipeline.launch.restart_rules import compute_restart_points
 from src.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:

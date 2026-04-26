@@ -1,8 +1,8 @@
-"""Tests for :func:`src.pipeline.restart_rules.compute_restart_points`.
+"""Tests for :func:`src.pipeline.launch.restart_rules.compute_restart_points`.
 
 The rules module is the single source of truth for restart-point decisions;
 both :class:`RestartPointsInspector` and
-:func:`src.pipeline.restart_points.list_restart_points` delegate to it.
+:func:`src.pipeline.launch.restart_options.list_restart_points` delegate to it.
 Locking the rules down here guarantees they stay synchronized.
 
 Coverage: positive / negative / boundary / invariants / dep-errors /
@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.restart_rules import compute_restart_points
+from src.pipeline.launch.restart_rules import compute_restart_points
 from src.pipeline.stages import StageNames
 from src.pipeline.state.models import PipelineState, StageLineageRef, StageRunState
 

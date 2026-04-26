@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.launch_queries import (
+from src.pipeline.launch.restart_options import (
     RestartPointOption,
     derive_resume_stage,
     load_restart_point_options,
@@ -69,7 +69,7 @@ def test_resolve_config_path_for_run_uses_explicit_path(tmp_path: Path) -> None:
 
 def test_resolve_config_path_for_run_raises_when_state_has_no_config_path(monkeypatch, tmp_path: Path) -> None:
     state = _build_state(config_path="")
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
 
     with pytest.raises(ValueError, match="no config_path"):
         resolve_config_path_for_run(tmp_path / "runs" / "existing")
@@ -94,11 +94,11 @@ def test_load_restart_point_options_maps_plain_dicts_to_dataclass(monkeypatch, t
     ]
 
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
-    monkeypatch.setattr("src.pipeline.launch_queries.list_restart_points", lambda run_dir, config: restart_points)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.list_restart_points", lambda run_dir, config: restart_points)
 
     resolved_path, points = load_restart_point_options(tmp_path / "runs" / "existing", config_path)
 
@@ -122,10 +122,10 @@ def test_load_restart_point_options_maps_plain_dicts_to_dataclass(monkeypatch, t
 def test_load_restart_point_options_propagates_load_config_error(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: (_ for _ in ()).throw(RuntimeError("bad config")))
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: (_ for _ in ()).throw(RuntimeError("bad config")))
 
     with pytest.raises(RuntimeError, match="bad config"):
         load_restart_point_options(tmp_path / "runs" / "existing", config_path)
@@ -134,12 +134,12 @@ def test_load_restart_point_options_propagates_load_config_error(monkeypatch, tm
 def test_load_restart_point_options_propagates_restart_point_query_error(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: MagicMock())
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: MagicMock())
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.list_restart_points",
+        "src.pipeline.launch.restart_options.list_restart_points",
         lambda run_dir, config: (_ for _ in ()).throw(RuntimeError("query failed")),
     )
 
@@ -149,7 +149,7 @@ def test_load_restart_point_options_propagates_restart_point_query_error(monkeyp
 
 def test_pick_default_launch_mode_returns_restart_when_state_load_fails(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.PipelineStateStore.load",
+        "src.pipeline.launch.restart_options.PipelineStateStore.load",
         lambda self: (_ for _ in ()).throw(FileNotFoundError("missing state")),
     )
 
@@ -165,7 +165,7 @@ def test_pick_default_launch_mode_returns_resume_when_resume_stage_exists(monkey
             )
         ]
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
 
     assert pick_default_launch_mode(tmp_path / "runs" / "existing") == "resume"
 
@@ -229,14 +229,14 @@ def test_validate_resume_run_allows_provider_only_hash_drift_when_model_dataset_
     config_path = tmp_path / "config.yaml"
     config_obj = MagicMock()
 
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.compute_config_hashes",
+        "src.pipeline.launch.restart_options.compute_config_hashes",
         lambda _config: {
             "training_critical": "new_training_hash",
             "late_stage": "late_hash",
@@ -265,14 +265,14 @@ def test_validate_resume_run_blocks_when_model_dataset_hash_changes(monkeypatch,
     config_path = tmp_path / "config.yaml"
     config_obj = MagicMock()
 
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.compute_config_hashes",
+        "src.pipeline.launch.restart_options.compute_config_hashes",
         lambda _config: {
             "training_critical": "new_training_hash",
             "late_stage": "late_hash",
@@ -299,14 +299,14 @@ def test_validate_resume_run_uses_legacy_training_hash_when_model_dataset_hash_m
     config_path = tmp_path / "config.yaml"
     config_obj = MagicMock()
 
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.compute_config_hashes",
+        "src.pipeline.launch.restart_options.compute_config_hashes",
         lambda _config: {
             "training_critical": "new_training_hash",
             "late_stage": "late_hash",
@@ -332,14 +332,14 @@ def test_validate_resume_run_blocks_on_late_stage_hash_drift(monkeypatch, tmp_pa
     config_path = tmp_path / "config.yaml"
     config_obj = MagicMock()
 
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.compute_config_hashes",
+        "src.pipeline.launch.restart_options.compute_config_hashes",
         lambda _config: {
             "training_critical": "train_hash",
             "late_stage": "new_late_hash",
@@ -364,14 +364,14 @@ def test_validate_resume_run_raises_when_nothing_is_resumable(monkeypatch, tmp_p
     config_path = tmp_path / "config.yaml"
     config_obj = MagicMock()
 
-    monkeypatch.setattr("src.pipeline.launch_queries.PipelineStateStore.load", lambda self: state)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.resolve_config_path_for_run",
+        "src.pipeline.launch.restart_options.resolve_config_path_for_run",
         lambda run_dir, provided_config_path=None: provided_config_path,
     )
-    monkeypatch.setattr("src.pipeline.launch_queries.load_config", lambda _path: config_obj)
+    monkeypatch.setattr("src.pipeline.launch.restart_options.load_config", lambda _path: config_obj)
     monkeypatch.setattr(
-        "src.pipeline.launch_queries.compute_config_hashes",
+        "src.pipeline.launch.restart_options.compute_config_hashes",
         lambda _config: {
             "training_critical": "train_hash",
             "late_stage": "late_hash",

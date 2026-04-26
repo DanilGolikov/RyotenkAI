@@ -202,7 +202,7 @@ def test_list_restart_points_command(cli_runner, tmp_path):
     run_dir.mkdir()
 
     with (
-        patch("src.pipeline.launch_queries.load_restart_point_options", return_value=(config_file, mock_points)),
+        patch("src.pipeline.launch.restart_options.load_restart_point_options", return_value=(config_file, mock_points)),
         patch("src.main._resolve_config", return_value=config_file),
     ):
         result = cli_runner.invoke(app, ["list-restart-points", str(run_dir)])

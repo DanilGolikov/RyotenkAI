@@ -2,7 +2,7 @@
 
 Keep this module's *top-level* imports lean — every `ryotenkai` invocation
 pays for them, even `--help`. Heavy dependencies (``src.utils.config``,
-``src.pipeline.launch_queries``, the orchestrator, mlflow, torch, …) are
+``src.pipeline.launch.restart_options``, the orchestrator, mlflow, torch, …) are
 imported lazily from inside command bodies so the help screen renders in
 <300 ms instead of ~1.7 s.
 
@@ -510,7 +510,7 @@ def list_restart_points_cmd(
     from src.cli.context import CLIContext
     from src.cli.errors import die
     from src.cli.renderer import get_renderer
-    from src.pipeline.launch_queries import load_restart_point_options  # heavy: lazy
+    from src.pipeline.launch.restart_options import load_restart_point_options  # heavy: lazy
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
