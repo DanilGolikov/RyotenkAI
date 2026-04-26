@@ -1,4 +1,4 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info tui validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
+.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
 
 # Pin all Python tooling to the project-local venv so `make` works regardless
 # of which venv is active in the shell. Override with e.g. `make VENV=.venv2`.
@@ -45,8 +45,8 @@ help:
 	@echo "  make test-cov       - With coverage"
 	@echo ""
 	@echo "Pipeline:"
-	@echo "  make tui            - Launch interactive TUI"
 	@echo "  make validate CONFIG=path  - Validate config"
+	@echo "  make smoke DIR=path        - Batch smoke (parallel) over a config dir"
 	@echo ""
 	@echo "Infrastructure:"
 	@echo "  make docker-mlflow-up   - Start MLflow stack"
@@ -128,11 +128,11 @@ pre-commit: _check-venv
 # Pipeline
 # ============================================
 
-tui: _check-venv
-	$(RYOTENKAI) tui
-
 validate: _check-venv
-	$(RYOTENKAI) config-validate --config $(CONFIG)
+	$(RYOTENKAI) config validate --config $(CONFIG)
+
+smoke: _check-venv
+	$(RYOTENKAI) smoke $(DIR)
 
 # ============================================
 # Infrastructure

@@ -180,6 +180,95 @@ def _json_default(value: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# YAML renderer
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class YamlRenderer:
+    """YAML mirror of :class:`JsonRenderer`.
+
+    Same buffer-then-flush contract: ``emit / kv / table`` accumulate one
+    payload, ``flush`` dumps it as a single YAML document on stdout.
+    Useful for pipelines that prefer YAML's readability for config-like
+    payloads (``ryotenkai config show``, ``ryotenkai preset show``).
+    """
+
+    payload: Any = None
+    _emitted: bool = False
+
+    def heading(self, text: str) -> None:  # noqa: ARG002 — intentionally unused
+        return None
+
+    def kv(
+        self,
+        pairs: Mapping[str, Any],
+        *,
+        title: str | None = None,  # noqa: ARG002
+    ) -> None:
+        self.emit(dict(pairs))
+
+    def table(
+        self,
+        headers: Sequence[str],
+        rows: Iterable[Sequence[Any]],
+        *,
+        title: str | None = None,  # noqa: ARG002
+    ) -> None:
+        header_list = list(headers)
+        rows_as_dicts = [
+            {header_list[i]: row[i] if i < len(row) else None for i in range(len(header_list))}
+            for row in rows
+        ]
+        self.emit(rows_as_dicts)
+
+    def text(self, line: str = "") -> None:  # noqa: ARG002
+        return None
+
+    def emit(self, payload: Any) -> None:
+        if self._emitted:
+            raise RuntimeError(
+                "YamlRenderer.emit() called twice — pick a single payload per command"
+            )
+        self.payload = payload
+        self._emitted = True
+
+    def flush(self) -> None:
+        if not self._emitted:
+            return
+        # Lazy import: PyYAML is heavy enough that we don't want to pay
+        # for it on every CLI invocation when YAML isn't requested.
+        import yaml
+
+        yaml.safe_dump(
+            _yaml_normalise(self.payload),
+            sys.stdout,
+            sort_keys=False,
+            default_flow_style=False,
+            allow_unicode=True,
+        )
+
+
+def _yaml_normalise(value: Any) -> Any:
+    """Recursively coerce non-YAML-native types into safe equivalents.
+
+    ``yaml.safe_dump`` rejects arbitrary objects — we map ``Path`` /
+    ``datetime`` / dataclasses the same way :func:`_json_default` does.
+    """
+    if isinstance(value, dict):
+        return {k: _yaml_normalise(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_yaml_normalise(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if hasattr(value, "__fspath__"):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -188,6 +277,8 @@ def get_renderer(ctx: CLIContext) -> Renderer:
     """Pick the renderer that matches the context's output mode."""
     if ctx.is_json:
         return JsonRenderer()
+    if ctx.is_yaml:
+        return YamlRenderer()
     return TextRenderer()
 
 
@@ -195,5 +286,6 @@ __all__ = [
     "JsonRenderer",
     "Renderer",
     "TextRenderer",
+    "YamlRenderer",
     "get_renderer",
 ]

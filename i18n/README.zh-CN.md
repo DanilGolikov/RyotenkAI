@@ -286,7 +286,7 @@ EvaluationRunner
 ### 报告生成流程
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► 拉取 runs、metrics、artifacts、configs
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # 验证配置
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # 启动完整 pipeline
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # 或在本地运行训练 (用于开发)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### 交互式 TUI
@@ -482,18 +482,18 @@ UI 地址为 `http://localhost:5002`。所有 pipeline runs 都会连同 metrics
 
 | 命令 | 说明 |
 |------|------|
-| `ryotenkai train --config <path>` | 运行完整 training pipeline |
-| `ryotenkai train-local --config <path>` | 在本地运行训练 (不使用远程 GPU) |
-| `ryotenkai validate-dataset --config <path>` | 仅运行数据集验证 |
-| `ryotenkai config-validate --config <path>` | 执行静态 pre-flight checks |
+| `ryotenkai run start --config <path>` | 运行完整 training pipeline |
+| `ryotenkai run start --local --config <path>` | 在本地运行训练 (不使用远程 GPU) |
+| `ryotenkai dataset validate --config <path>` | 仅运行数据集验证 |
+| `ryotenkai config validate --config <path>` | 执行静态 pre-flight checks |
 | `ryotenkai info --config <path>` | 显示 pipeline 与模型配置 |
 | `ryotenkai tui [run_dir]` | 启动交互式 TUI |
-| `ryotenkai inspect-run <run_dir>` | 检查某个 run 目录 |
-| `ryotenkai runs-list [dir]` | 列出所有 runs 及摘要 |
-| `ryotenkai logs <run_dir>` | 显示某个 run 的 pipeline log |
-| `ryotenkai run-status <run_dir>` | 实时监控正在运行的 pipeline |
-| `ryotenkai run-diff <run_dir>` | 对比不同尝试之间的配置差异 |
-| `ryotenkai report <run_dir>` | 生成 MLflow 实验报告 |
+| `ryotenkai runs inspect <run_dir>` | 检查某个 run 目录 |
+| `ryotenkai runs ls [dir]` | 列出所有 runs 及摘要 |
+| `ryotenkai runs logs <run_dir>` | 显示某个 run 的 pipeline log |
+| `ryotenkai runs status <run_dir>` | 实时监控正在运行的 pipeline |
+| `ryotenkai runs diff <run_dir>` | 对比不同尝试之间的配置差异 |
+| `ryotenkai runs report <run_dir>` | 生成 MLflow 实验报告 |
 | `ryotenkai version` | 显示版本信息 |
 
 ---

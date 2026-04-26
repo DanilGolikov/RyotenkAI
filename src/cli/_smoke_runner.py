@@ -39,7 +39,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _DEFAULT_WORKERS = 4
@@ -310,7 +310,7 @@ def _build_report(
 ) -> str:
     passed = sum(1 for r in results if r.passed)
     failed = sum(1 for r in results if not r.passed)
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     lines: list[str] = []
     lines.append("# Smoke Test Report")

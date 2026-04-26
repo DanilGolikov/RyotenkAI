@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Literal
 
-OutputMode = Literal["text", "json"]
+OutputMode = Literal["text", "json", "yaml"]
 
 
 @dataclass(slots=True)
@@ -24,6 +24,8 @@ class CLIContext:
     verbose: int = 0               # -v → 1, -vv → 2
     quiet: bool = False
     log_level: str | None = None   # None = leave logger alone
+    project_id: str | None = None  # --project flag / RYOTENKAI_PROJECT / context store
+    remote_url: str | None = None  # --remote URL — reserved, NotImplementedError stub
 
     # Derived at build time, not user-facing:
     stdout_is_tty: bool = field(default_factory=lambda: sys.stdout.isatty())
@@ -41,6 +43,15 @@ class CLIContext:
     @property
     def is_json(self) -> bool:
         return self.output == "json"
+
+    @property
+    def is_yaml(self) -> bool:
+        return self.output == "yaml"
+
+    @property
+    def is_machine_readable(self) -> bool:
+        """True when output should be parsed by a tool, not a human."""
+        return self.output in ("json", "yaml")
 
 
 def default_context() -> CLIContext:

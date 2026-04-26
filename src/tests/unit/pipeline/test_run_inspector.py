@@ -565,7 +565,7 @@ def cli_runner() -> CliRunner:
 
 def test_cli_inspect_run_success(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_inspect_01")
-    result = cli_runner.invoke(app, ["inspect-run", str(tmp_path / "run_inspect_01")])
+    result = cli_runner.invoke(app, ["runs", "inspect", str(tmp_path / "run_inspect_01")])
     assert result.exit_code == 0
     assert "run_inspect_01" in result.output
 
@@ -576,19 +576,19 @@ def test_cli_inspect_run_verbose(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_inspect_v")
     result = cli_runner.invoke(
         app,
-        ["inspect-run", str(tmp_path / "run_inspect_v"), "--outputs", "--logs"],
+        ["runs", "inspect", str(tmp_path / "run_inspect_v"), "--outputs", "--logs"],
     )
     assert result.exit_code == 0
 
 
 def test_cli_inspect_run_with_logs(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_inspect_l")
-    result = cli_runner.invoke(app, ["inspect-run", str(tmp_path / "run_inspect_l"), "--logs"])
+    result = cli_runner.invoke(app, ["runs", "inspect", str(tmp_path / "run_inspect_l"), "--logs"])
     assert result.exit_code == 0
 
 
 def test_cli_inspect_run_nonexistent_dir(tmp_path: Path, cli_runner: CliRunner) -> None:
-    result = cli_runner.invoke(app, ["inspect-run", str(tmp_path / "ghost")])
+    result = cli_runner.invoke(app, ["runs", "inspect", str(tmp_path / "ghost")])
     assert result.exit_code != 0
 
 
@@ -598,7 +598,7 @@ def test_cli_inspect_run_nonexistent_dir(tmp_path: Path, cli_runner: CliRunner) 
 def test_cli_runs_list_empty(tmp_path: Path, cli_runner: CliRunner) -> None:
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir()
-    result = cli_runner.invoke(app, ["runs-list", str(runs_dir)])
+    result = cli_runner.invoke(app, ["runs", "ls", str(runs_dir)])
     assert result.exit_code == 0
     assert "No runs found" in result.output
 
@@ -607,7 +607,7 @@ def test_cli_runs_list_with_runs(tmp_path: Path, cli_runner: CliRunner) -> None:
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir()
     _make_state(runs_dir, run_id="run_abc")
-    result = cli_runner.invoke(app, ["runs-list", str(runs_dir)])
+    result = cli_runner.invoke(app, ["runs", "ls", str(runs_dir)])
     assert result.exit_code == 0
     assert "run_abc" in result.output
 
@@ -617,7 +617,7 @@ def test_cli_runs_list_with_runs(tmp_path: Path, cli_runner: CliRunner) -> None:
 
 def test_cli_logs_missing_log_file(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_log_01")
-    result = cli_runner.invoke(app, ["logs", str(tmp_path / "run_log_01")])
+    result = cli_runner.invoke(app, ["runs", "logs", str(tmp_path / "run_log_01")])
     # Should exit non-zero with a message about missing log file
     assert result.exit_code != 0
     assert "not found" in result.output.lower() or "Log file" in result.output
@@ -629,7 +629,7 @@ def test_cli_logs_with_log_file(tmp_path: Path, cli_runner: CliRunner) -> None:
     attempt_dir.mkdir(parents=True, exist_ok=True)
     (attempt_dir / "pipeline.log").write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
 
-    result = cli_runner.invoke(app, ["logs", str(tmp_path / "run_log_02")])
+    result = cli_runner.invoke(app, ["runs", "logs", str(tmp_path / "run_log_02")])
     assert result.exit_code == 0
     assert "line 1" in result.output
 
@@ -640,7 +640,7 @@ def test_cli_logs_specific_attempt(tmp_path: Path, cli_runner: CliRunner) -> Non
     attempt_dir.mkdir(parents=True, exist_ok=True)
     (attempt_dir / "pipeline.log").write_text("attempt 2 log\n", encoding="utf-8")
 
-    result = cli_runner.invoke(app, ["logs", str(tmp_path / "run_log_03"), "--attempt", "2"])
+    result = cli_runner.invoke(app, ["runs", "logs", str(tmp_path / "run_log_03"), "--attempt", "2"])
     assert result.exit_code == 0
     assert "attempt 2 log" in result.output
 
@@ -654,7 +654,7 @@ def test_cli_logs_no_attempts_exits_gracefully(tmp_path: Path, cli_runner: CliRu
         training_critical_config_hash="h",
         late_stage_config_hash="l",
     )
-    result = cli_runner.invoke(app, ["logs", str(run_dir)])
+    result = cli_runner.invoke(app, ["runs", "logs", str(run_dir)])
     assert result.exit_code == 0
     assert "No attempts" in result.output
 
@@ -664,7 +664,7 @@ def test_cli_logs_no_attempts_exits_gracefully(tmp_path: Path, cli_runner: CliRu
 
 def test_cli_run_diff_no_changes(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_diff_nc", n_attempts=2)
-    result = cli_runner.invoke(app, ["run-diff", str(tmp_path / "run_diff_nc")])
+    result = cli_runner.invoke(app, ["runs", "diff", str(tmp_path / "run_diff_nc")])
     assert result.exit_code == 0
     assert "No config changes" in result.output
 
@@ -672,7 +672,7 @@ def test_cli_run_diff_no_changes(tmp_path: Path, cli_runner: CliRunner) -> None:
 def test_cli_run_diff_with_drift(tmp_path: Path, cli_runner: CliRunner) -> None:
     state = _make_state_with_diff(tmp_path)
     run_dir = tmp_path / "run_diff"
-    result = cli_runner.invoke(app, ["run-diff", str(run_dir)])
+    result = cli_runner.invoke(app, ["runs", "diff", str(run_dir)])
     assert result.exit_code == 0
     # Should show some kind of change info (the renderer now groups hashes
     # under "training + model + datasets" / "inference + evaluation").
@@ -686,7 +686,7 @@ def test_cli_run_diff_with_drift(tmp_path: Path, cli_runner: CliRunner) -> None:
 
 def test_cli_run_diff_only_one_attempt(tmp_path: Path, cli_runner: CliRunner) -> None:
     _make_state(tmp_path, run_id="run_diff_1a", n_attempts=1)
-    result = cli_runner.invoke(app, ["run-diff", str(tmp_path / "run_diff_1a")])
+    result = cli_runner.invoke(app, ["runs", "diff", str(tmp_path / "run_diff_1a")])
     assert result.exit_code == 0
     assert "Only one attempt" in result.output
 
@@ -695,14 +695,14 @@ def test_cli_run_diff_only_one_attempt(tmp_path: Path, cli_runner: CliRunner) ->
 
 
 def test_cli_config_validate_missing_file(tmp_path: Path, cli_runner: CliRunner) -> None:
-    result = cli_runner.invoke(app, ["config-validate", "--config", str(tmp_path / "nonexistent.yaml")])
+    result = cli_runner.invoke(app, ["config", "validate", "--config", str(tmp_path / "nonexistent.yaml")])
     assert result.exit_code != 0
 
 
 def test_cli_config_validate_invalid_yaml(tmp_path: Path, cli_runner: CliRunner) -> None:
     bad_yaml = tmp_path / "bad.yaml"
     bad_yaml.write_text("{invalid: yaml: :", encoding="utf-8")
-    result = cli_runner.invoke(app, ["config-validate", "--config", str(bad_yaml)])
+    result = cli_runner.invoke(app, ["config", "validate", "--config", str(bad_yaml)])
     assert result.exit_code != 0
     assert "❌" in result.output or "schema" in result.output.lower()
 
@@ -725,7 +725,7 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
         patch("src.utils.config.load_config", return_value=mock_cfg),
         patch.dict("os.environ", {"HF_TOKEN": "hf_test_token"}, clear=False),
     ):
-        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
+        result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
 
     assert result.exit_code == 0
     assert "ready to run" in result.output
@@ -747,7 +747,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
     with patch("src.utils.config.load_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
-        result = cli_runner.invoke(app, ["config-validate", "--config", str(config_path)])
+        result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
 
     assert result.exit_code != 0
     assert "HF_TOKEN" in result.output
@@ -764,7 +764,7 @@ def test_cli_run_status_exits_on_keyboard_interrupt(tmp_path: Path, cli_runner: 
     run_dir = str(tmp_path / "run_status_test")
 
     with patch("time.sleep", side_effect=KeyboardInterrupt):
-        result = cli_runner.invoke(app, ["run-status", run_dir])
+        result = cli_runner.invoke(app, ["runs", "status", run_dir])
 
     # Should exit cleanly (not crash)
     assert result.exit_code == 0

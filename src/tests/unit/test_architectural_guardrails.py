@@ -77,7 +77,7 @@ class TestStagesPackageStaysLight:
     """``from src.pipeline.stages import StageNames`` must not pull the
     training stack into sys.modules.
 
-    Why this exists: lightweight callers (CLI ``list-restart-points``,
+    Why this exists: lightweight callers (CLI ``run restart-points``,
     config validators, restart-point queries, the web backend's run
     listing) need the StageNames enum without paying for torch /
     transformers / mlflow / datasets / src.training.* import time.

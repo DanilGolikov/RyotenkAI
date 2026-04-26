@@ -50,7 +50,7 @@ Base: `/api/v1`.
 
 ## Launch / Interrupt semantics
 
-- Launch spawns `python -m src.main train ...` via
+- Launch spawns `python -m src.main run start ...` via
   `src.pipeline.launch.spawn_launch_detached`. `start_new_session=True` — the
   pipeline keeps running after the API process dies.
 - Source of truth for "is it running?" is the combination of `run.lock` (pid
@@ -97,5 +97,5 @@ Prefix `RYOTENKAI_API_`:
 ## Coexistence with CLI
 
 Both the web UI and the CLI read and write the same state store. You can start
-a run in the browser and inspect it with `ryotenkai inspect-run <run_dir>` or
+a run in the browser and inspect it with `ryotenkai runs inspect <run_dir>` or
 vice versa. No feature flags — orthogonal clients.

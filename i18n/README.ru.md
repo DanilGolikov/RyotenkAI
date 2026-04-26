@@ -286,7 +286,7 @@ EvaluationRunner
 ### Поток генерации отчета
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► выгрузить runs, metrics, artifacts, configs
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # Проверить конфиг
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # Запустить полный пайплайн
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # Или запустить обучение локально (для разработки)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### Интерактивный TUI
@@ -482,18 +482,18 @@ make docker-mlflow-up
 
 | Команда | Описание |
 |---------|----------|
-| `ryotenkai train --config <path>` | Запустить полный training pipeline |
-| `ryotenkai train-local --config <path>` | Запустить обучение локально (без удаленного GPU) |
-| `ryotenkai validate-dataset --config <path>` | Запустить только валидацию датасета |
-| `ryotenkai config-validate --config <path>` | Статические pre-flight проверки конфига |
+| `ryotenkai run start --config <path>` | Запустить полный training pipeline |
+| `ryotenkai run start --local --config <path>` | Запустить обучение локально (без удаленного GPU) |
+| `ryotenkai dataset validate --config <path>` | Запустить только валидацию датасета |
+| `ryotenkai config validate --config <path>` | Статические pre-flight проверки конфига |
 | `ryotenkai info --config <path>` | Показать конфигурацию пайплайна и модели |
 | `ryotenkai tui [run_dir]` | Запустить интерактивный TUI |
-| `ryotenkai inspect-run <run_dir>` | Проинспектировать директорию запуска |
-| `ryotenkai runs-list [dir]` | Показать список всех запусков с краткой сводкой |
-| `ryotenkai logs <run_dir>` | Показать pipeline log конкретного запуска |
-| `ryotenkai run-status <run_dir>` | Live-мониторинг запущенного пайплайна |
-| `ryotenkai run-diff <run_dir>` | Сравнить конфиг между попытками |
-| `ryotenkai report <run_dir>` | Сгенерировать MLflow-отчет по эксперименту |
+| `ryotenkai runs inspect <run_dir>` | Проинспектировать директорию запуска |
+| `ryotenkai runs ls [dir]` | Показать список всех запусков с краткой сводкой |
+| `ryotenkai runs logs <run_dir>` | Показать pipeline log конкретного запуска |
+| `ryotenkai runs status <run_dir>` | Live-мониторинг запущенного пайплайна |
+| `ryotenkai runs diff <run_dir>` | Сравнить конфиг между попытками |
+| `ryotenkai runs report <run_dir>` | Сгенерировать MLflow-отчет по эксперименту |
 | `ryotenkai version` | Показать информацию о версии |
 
 ---

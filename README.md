@@ -330,14 +330,19 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # Validate your config
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # Start full pipeline
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
-# Or run training locally (for development)
-ryotenkai train-local --config my_config.yaml
+# Stream logs in another terminal
+ryotenkai runs logs runs/<run_id> --follow
 ```
+
+> **CLI surface follows the kubectl-style `noun verb` convention.**
+> Old plain commands (`ryotenkai train`, `runs-list`, `inspect-run`,
+> `config-validate`, `validate-dataset`, ...) and the legacy `./run.sh`
+> wrapper were removed in v1.1. See the migration table below.
 
 ---
 
@@ -472,21 +477,94 @@ Build locally or push to Docker Hub. See [`docker/training/README.md`](docker/tr
 
 ## CLI Reference
 
+The CLI follows kubectl-style `noun verb`. Every read command supports
+`-o text|json|yaml`; write commands support `--dry-run`.
+
+### Workflow
+
 | Command | Description |
 |---------|-------------|
-| `ryotenkai train --config <path>` | Run the full training pipeline |
-| `ryotenkai train-local --config <path>` | Run training locally (no remote GPU) |
-| `ryotenkai validate-dataset --config <path>` | Run dataset validation only |
-| `ryotenkai config-validate --config <path>` | Static config pre-flight checks |
-| `ryotenkai info --config <path>` | Show pipeline and model configuration |
-| `ryotenkai inspect-run <run_dir>` | Inspect a run directory |
-| `ryotenkai runs-list [dir]` | List all runs with summary |
-| `ryotenkai logs <run_dir>` | Show pipeline log for a run |
-| `ryotenkai run-status <run_dir>` | Live monitoring of a running pipeline |
-| `ryotenkai run-diff <run_dir>` | Compare config between attempts |
-| `ryotenkai report <run_dir>` | Generate MLflow experiment report |
-| `ryotenkai serve` | Run the web backend (FastAPI) for the browser UI |
-| `ryotenkai version` | Show version information |
+| `ryotenkai run start --config <path>` | Start a fresh training run |
+| `ryotenkai run resume <run_dir>` | Resume from the first failed/pending stage |
+| `ryotenkai run restart <run_dir> --from-stage <name|N>` | Restart from a specific stage |
+| `ryotenkai run interrupt <run_dir>` | Send SIGINT to a detached run |
+| `ryotenkai run restart-points <run_dir>` | List stages this run can restart from |
+
+### Inspect
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai runs ls [dir]` | List all runs with summary |
+| `ryotenkai runs inspect <run_dir>` | Inspect a run (attempts, stages, lineage) |
+| `ryotenkai runs status <run_dir>` | One snapshot or live polling |
+| `ryotenkai runs diff <run_dir>` | Compare config hashes between attempts |
+| `ryotenkai runs logs <run_dir> [--follow]` | Read or tail pipeline.log |
+| `ryotenkai runs report <run_dir>` | Generate the MLflow experiment report |
+| `ryotenkai runs rm <run_dir>` | Delete a run (local + MLflow by default) |
+
+### Config / dataset
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai config validate --config <path>` | Static config pre-flight checks |
+| `ryotenkai config show --config <path>` | Print parsed config (`-o yaml` recommended) |
+| `ryotenkai config explain --config <path>` | Short summary of model + dataset + training |
+| `ryotenkai config schema` | Dump JSON Schema for the pipeline config |
+| `ryotenkai dataset validate --config <path>` | Run dataset Stage 0 (requires explicit plugins) |
+
+### Project
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai project ls` | List registered workspace projects |
+| `ryotenkai project show <id>` | Project metadata + config |
+| `ryotenkai project use <id>` | Make `<id>` the active project for follow-up commands |
+| `ryotenkai project current` | Print the active project (or "no project selected") |
+| `ryotenkai project create <name>` | Create + register a new project |
+| `ryotenkai project rm <id>` | Unregister a project |
+| `ryotenkai project env <id>` | Print persisted env vars |
+| `ryotenkai project run [<id>]` | Launch the project's current config |
+
+### Plugin / preset toolkit
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai plugin ls --kind <kind>` | List installed plugins by kind |
+| `ryotenkai plugin show <kind> <id>` | Full manifest for a plugin |
+| `ryotenkai plugin scaffold <kind> <id>` | Bootstrap a new plugin folder + skeleton |
+| `ryotenkai plugin sync <path> [--bump]` | Refresh manifest from class introspection |
+| `ryotenkai plugin sync-envs <path>` | Re-render `[[required_env]]` from `REQUIRED_ENV` |
+| `ryotenkai plugin pack <path>` | Zip a plugin/preset folder for distribution |
+| `ryotenkai plugin validate <path>` | Validate manifest.toml (no Python import) |
+| `ryotenkai plugin install <path \| --git URL --ref SHA>` | Install a plugin from folder, zip, or git |
+| `ryotenkai plugin preflight --config <path>` | Pre-launch missing-env + instance-shape gate |
+| `ryotenkai plugin stale --config <path>` | List references to plugins absent from the catalog |
+| `ryotenkai preset ls / show / apply / diff` | Discover and apply community presets |
+
+### Misc
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai smoke <dir>` | Batch-run every config in a directory in parallel |
+| `ryotenkai server start` | Run the FastAPI web backend (foreground) |
+| `ryotenkai version` | Show version info |
+
+### Migration from v1.0 plain commands
+
+| Old (removed) | New |
+|---------------|-----|
+| `./run.sh config.yaml` | `ryotenkai run start --config config.yaml` |
+| `./run.sh runs/<id> --resume` | `ryotenkai run resume runs/<id>` |
+| `./run.sh runs/<id> --inspect` | `ryotenkai runs inspect runs/<id>` |
+| `./run.sh /path --smoke` | `ryotenkai smoke /path` |
+| `ryotenkai train` | `ryotenkai run start` |
+| `ryotenkai train-local` | `ryotenkai run start --local` (planned for v1.2) |
+| `ryotenkai validate-dataset` | `ryotenkai dataset validate` |
+| `ryotenkai config-validate` | `ryotenkai config validate` |
+| `ryotenkai inspect-run`, `runs-list`, `logs`, `run-status`, `run-diff`, `report` | `ryotenkai runs <verb>` |
+| `ryotenkai list-restart-points` | `ryotenkai run restart-points` |
+| `ryotenkai community {scaffold,sync,sync-envs,pack}` | `ryotenkai plugin <verb>` |
+| `ryotenkai serve` | `ryotenkai server start` |
 
 ---
 

@@ -286,7 +286,7 @@ EvaluationRunner
 ### レポート生成フロー
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► runs, metrics, artifacts, configs を取得
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # 設定ファイルを検証
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # フルパイプラインを実行
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # またはローカルで学習を実行 (開発用)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### インタラクティブ TUI
@@ -482,18 +482,18 @@ UI は `http://localhost:5002` で利用できます。すべての pipeline run
 
 | コマンド | 説明 |
 |---------|------|
-| `ryotenkai train --config <path>` | フル training pipeline を実行 |
-| `ryotenkai train-local --config <path>` | ローカルで学習を実行 (リモート GPU なし) |
-| `ryotenkai validate-dataset --config <path>` | データセット検証のみ実行 |
-| `ryotenkai config-validate --config <path>` | 静的な pre-flight check を実行 |
+| `ryotenkai run start --config <path>` | フル training pipeline を実行 |
+| `ryotenkai run start --local --config <path>` | ローカルで学習を実行 (リモート GPU なし) |
+| `ryotenkai dataset validate --config <path>` | データセット検証のみ実行 |
+| `ryotenkai config validate --config <path>` | 静的な pre-flight check を実行 |
 | `ryotenkai info --config <path>` | パイプラインとモデル設定を表示 |
 | `ryotenkai tui [run_dir]` | インタラクティブ TUI を起動 |
-| `ryotenkai inspect-run <run_dir>` | run directory を確認 |
-| `ryotenkai runs-list [dir]` | すべての run を要約付きで一覧表示 |
-| `ryotenkai logs <run_dir>` | 指定 run の pipeline log を表示 |
-| `ryotenkai run-status <run_dir>` | 実行中 pipeline をライブ監視 |
-| `ryotenkai run-diff <run_dir>` | 試行間の config 差分を比較 |
-| `ryotenkai report <run_dir>` | MLflow 実験レポートを生成 |
+| `ryotenkai runs inspect <run_dir>` | run directory を確認 |
+| `ryotenkai runs ls [dir]` | すべての run を要約付きで一覧表示 |
+| `ryotenkai runs logs <run_dir>` | 指定 run の pipeline log を表示 |
+| `ryotenkai runs status <run_dir>` | 実行中 pipeline をライブ監視 |
+| `ryotenkai runs diff <run_dir>` | 試行間の config 差分を比較 |
+| `ryotenkai runs report <run_dir>` | MLflow 実験レポートを生成 |
 | `ryotenkai version` | バージョン情報を表示 |
 
 ---

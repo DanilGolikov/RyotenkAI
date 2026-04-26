@@ -286,7 +286,7 @@ EvaluationRunner
 ### 리포트 생성 흐름
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► runs, metrics, artifacts, configs 가져오기
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # 설정 검증
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # 전체 pipeline 실행
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # 또는 로컬에서 학습 실행 (개발용)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### 인터랙티브 TUI
@@ -482,18 +482,18 @@ UI는 `http://localhost:5002`에서 접근할 수 있습니다. 모든 pipeline 
 
 | 명령어 | 설명 |
 |--------|------|
-| `ryotenkai train --config <path>` | 전체 training pipeline 실행 |
-| `ryotenkai train-local --config <path>` | 로컬에서 학습 실행 (원격 GPU 없음) |
-| `ryotenkai validate-dataset --config <path>` | 데이터셋 검증만 실행 |
-| `ryotenkai config-validate --config <path>` | 정적 pre-flight checks 실행 |
+| `ryotenkai run start --config <path>` | 전체 training pipeline 실행 |
+| `ryotenkai run start --local --config <path>` | 로컬에서 학습 실행 (원격 GPU 없음) |
+| `ryotenkai dataset validate --config <path>` | 데이터셋 검증만 실행 |
+| `ryotenkai config validate --config <path>` | 정적 pre-flight checks 실행 |
 | `ryotenkai info --config <path>` | 파이프라인 및 모델 설정 표시 |
 | `ryotenkai tui [run_dir]` | 인터랙티브 TUI 실행 |
-| `ryotenkai inspect-run <run_dir>` | run 디렉터리 확인 |
-| `ryotenkai runs-list [dir]` | 모든 runs를 요약과 함께 표시 |
-| `ryotenkai logs <run_dir>` | 특정 run의 pipeline log 표시 |
-| `ryotenkai run-status <run_dir>` | 실행 중인 pipeline 라이브 모니터링 |
-| `ryotenkai run-diff <run_dir>` | 시도 간 config 차이 비교 |
-| `ryotenkai report <run_dir>` | MLflow 실험 리포트 생성 |
+| `ryotenkai runs inspect <run_dir>` | run 디렉터리 확인 |
+| `ryotenkai runs ls [dir]` | 모든 runs를 요약과 함께 표시 |
+| `ryotenkai runs logs <run_dir>` | 특정 run의 pipeline log 표시 |
+| `ryotenkai runs status <run_dir>` | 실행 중인 pipeline 라이브 모니터링 |
+| `ryotenkai runs diff <run_dir>` | 시도 간 config 차이 비교 |
+| `ryotenkai runs report <run_dir>` | MLflow 실험 리포트 생성 |
 | `ryotenkai version` | 버전 정보 표시 |
 
 ---

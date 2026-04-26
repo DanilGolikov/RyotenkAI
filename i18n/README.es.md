@@ -286,7 +286,7 @@ EvaluationRunner
 ### Flujo de generacion de reportes
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► obtiene runs, metrics, artifacts, configs
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # Validar la configuracion
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # Iniciar el pipeline completo
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # O ejecutar el entrenamiento localmente (para desarrollo)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### TUI interactiva
@@ -482,18 +482,18 @@ Puedes construirlas localmente o publicarlas en Docker Hub. Consulta [`../docker
 
 | Comando | Descripcion |
 |---------|-------------|
-| `ryotenkai train --config <path>` | Ejecuta el training pipeline completo |
-| `ryotenkai train-local --config <path>` | Ejecuta entrenamiento local (sin GPU remota) |
-| `ryotenkai validate-dataset --config <path>` | Ejecuta solo la validacion del dataset |
-| `ryotenkai config-validate --config <path>` | Verificaciones estaticas pre-flight |
+| `ryotenkai run start --config <path>` | Ejecuta el training pipeline completo |
+| `ryotenkai run start --local --config <path>` | Ejecuta entrenamiento local (sin GPU remota) |
+| `ryotenkai dataset validate --config <path>` | Ejecuta solo la validacion del dataset |
+| `ryotenkai config validate --config <path>` | Verificaciones estaticas pre-flight |
 | `ryotenkai info --config <path>` | Muestra configuracion del pipeline y del modelo |
 | `ryotenkai tui [run_dir]` | Lanza la TUI interactiva |
-| `ryotenkai inspect-run <run_dir>` | Inspecciona un directorio de run |
-| `ryotenkai runs-list [dir]` | Lista todos los runs con resumen |
-| `ryotenkai logs <run_dir>` | Muestra el pipeline log de un run |
-| `ryotenkai run-status <run_dir>` | Monitoreo en vivo de un pipeline en ejecucion |
-| `ryotenkai run-diff <run_dir>` | Compara configuracion entre intentos |
-| `ryotenkai report <run_dir>` | Genera reporte de experimento MLflow |
+| `ryotenkai runs inspect <run_dir>` | Inspecciona un directorio de run |
+| `ryotenkai runs ls [dir]` | Lista todos los runs con resumen |
+| `ryotenkai runs logs <run_dir>` | Muestra el pipeline log de un run |
+| `ryotenkai runs status <run_dir>` | Monitoreo en vivo de un pipeline en ejecucion |
+| `ryotenkai runs diff <run_dir>` | Compara configuracion entre intentos |
+| `ryotenkai runs report <run_dir>` | Genera reporte de experimento MLflow |
 | `ryotenkai version` | Muestra informacion de version |
 
 ---

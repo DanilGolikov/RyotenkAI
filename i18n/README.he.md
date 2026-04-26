@@ -286,7 +286,7 @@ EvaluationRunner
 ### זרימת יצירת דוחות
 
 ```text
-ryotenkai report <run_dir>
+ryotenkai runs report <run_dir>
   │
   ▼
 MLflow ──► שליפת runs, metrics, artifacts, configs
@@ -330,13 +330,13 @@ cp src/config/pipeline_config.yaml my_config.yaml
 
 ```bash
 # אימות התצורה
-ryotenkai config-validate --config my_config.yaml
+ryotenkai config validate --config my_config.yaml
 
 # הרצת ה-pipeline המלא
-ryotenkai train --config my_config.yaml
+ryotenkai run start --config my_config.yaml
 
 # או הרצת אימון מקומי (לצרכי פיתוח)
-ryotenkai train-local --config my_config.yaml
+ryotenkai run start --local --config my_config.yaml
 ```
 
 ### TUI אינטראקטיבי
@@ -482,18 +482,18 @@ make docker-mlflow-up
 
 | Command | Description |
 |---------|-------------|
-| `ryotenkai train --config <path>` | מריץ את training pipeline המלא |
-| `ryotenkai train-local --config <path>` | מריץ אימון מקומי (ללא GPU מרוחק) |
-| `ryotenkai validate-dataset --config <path>` | מריץ רק אימות דאטהסט |
-| `ryotenkai config-validate --config <path>` | בדיקות pre-flight סטטיות לתצורה |
+| `ryotenkai run start --config <path>` | מריץ את training pipeline המלא |
+| `ryotenkai run start --local --config <path>` | מריץ אימון מקומי (ללא GPU מרוחק) |
+| `ryotenkai dataset validate --config <path>` | מריץ רק אימות דאטהסט |
+| `ryotenkai config validate --config <path>` | בדיקות pre-flight סטטיות לתצורה |
 | `ryotenkai info --config <path>` | מציג תצורת pipeline ומודל |
 | `ryotenkai tui [run_dir]` | מפעיל TUI אינטראקטיבי |
-| `ryotenkai inspect-run <run_dir>` | בודק ספריית run |
-| `ryotenkai runs-list [dir]` | מציג את כל ה-runs עם סיכום |
-| `ryotenkai logs <run_dir>` | מציג pipeline log של run מסוים |
-| `ryotenkai run-status <run_dir>` | ניטור חי של pipeline רץ |
-| `ryotenkai run-diff <run_dir>` | השוואת config בין ניסיונות |
-| `ryotenkai report <run_dir>` | יצירת דוח ניסוי ב-MLflow |
+| `ryotenkai runs inspect <run_dir>` | בודק ספריית run |
+| `ryotenkai runs ls [dir]` | מציג את כל ה-runs עם סיכום |
+| `ryotenkai runs logs <run_dir>` | מציג pipeline log של run מסוים |
+| `ryotenkai runs status <run_dir>` | ניטור חי של pipeline רץ |
+| `ryotenkai runs diff <run_dir>` | השוואת config בין ניסיונות |
+| `ryotenkai runs report <run_dir>` | יצירת דוח ניסוי ב-MLflow |
 | `ryotenkai version` | הצגת מידע על גרסה |
 
 ---

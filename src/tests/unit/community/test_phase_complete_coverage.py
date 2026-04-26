@@ -529,9 +529,9 @@ class TestRegressions:
         """The reports scaffold used to emit ``plugin_id = ""`` and
         rely on the loader to stamp it. Tests instantiating directly
         saw an empty id in render output. Now seeded from manifest."""
-        from src.cli.plugin_scaffold import _render_plugin_py
+        from src.community.scaffold_template import render_plugin_py
 
-        body = _render_plugin_py("reports", "my_section", "MySectionPlugin")
+        body = render_plugin_py("reports", "my_section", "MySectionPlugin")
         assert 'plugin_id = "my_section"' in body
 
 
