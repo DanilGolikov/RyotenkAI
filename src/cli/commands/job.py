@@ -8,15 +8,18 @@ SSH tunnel from the persisted ``attempts/<n>/job_submission.json``
 and read live state straight from the runner — no marker-file
 detour, no pipeline_state.json lag.
 
-Sub-commands (Phase 7.1 MVP):
+Sub-commands:
 
 - ``status <run-dir>``   GET /api/v1/jobs/{id} — current FSM snapshot
 - ``stop <run-dir>``     POST /stop — graceful shutdown request
 - ``events <run-dir> [--follow] [--since N]``
-                         WebSocket subscribe — replay + live tail
+                         WebSocket subscribe — replay + live tail of
+                         structured events
+- ``logs <run-dir> [--follow] [--tail N] [--stream stdout|stderr]``
+                         Filtered tail of trainer stdout / stderr —
+                         Phase 7.x file-tail fallback for when
+                         ``RunnerEventCallback`` self-disabled
 - ``metrics <run-dir>``  Latest GPU/RAM ``health_snapshot`` event
-                         (deferred: ``logs`` until the runner exposes a
-                         dedicated chunked-tail endpoint).
 
 Every command is a thin wrapper around :class:`SSHTunnelManager`
 + :class:`JobClient` — same primitives the pipeline launcher
@@ -354,6 +357,126 @@ def _format_event_line(event: dict[str, Any], renderer) -> None:  # type: ignore
     if len(payload) > 4:
         payload_summary += ", ..."
     renderer.text(f"[{offset:>6}] {kind:<24} {payload_summary}")
+
+
+def _format_log_line(event: dict[str, Any], renderer) -> None:  # type: ignore[no-untyped-def]
+    """Render one ``trainer_log`` event as ``<stream> line``.
+
+    Angle brackets rather than square brackets so the underlying
+    Rich-backed renderer doesn't interpret ``[stdout]`` as markup
+    and silently strip the tag. Matches how the operator would
+    have seen the output if they had ``tail -f``'d ``training.log``.
+    """
+    payload = event.get("payload") or {}
+    stream = payload.get("kind", "stdout")
+    line = payload.get("line", "")
+    renderer.text(f"<{stream}> {line}")
+
+
+# ---------------------------------------------------------------------------
+# logs
+# ---------------------------------------------------------------------------
+
+
+_VALID_LOG_STREAMS: frozenset[str] = frozenset({"stdout", "stderr"})
+
+
+@job_app.command("logs")
+def logs_cmd(
+    ctx: typer.Context,
+    run_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Run directory.",
+            file_okay=False, dir_okay=True, exists=True,
+        ),
+    ],
+    attempt: Annotated[
+        int | None,
+        typer.Option("--attempt", "-a", help="Specific attempt to query."),
+    ] = None,
+    tail: Annotated[
+        int,
+        typer.Option(
+            "--tail", "-n",
+            help="Stop after this many lines have been emitted.",
+            min=1, max=10_000,
+        ),
+    ] = 200,
+    follow: Annotated[
+        bool,
+        typer.Option(
+            "--follow", "-f",
+            help="Keep streaming live until interrupted or ``--tail`` lines emitted.",
+        ),
+    ] = False,
+    stream: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--stream", "-s",
+            help="Filter to ``stdout``, ``stderr``, or both (default both).",
+        ),
+    ] = None,
+) -> None:
+    """Tail trainer stdout / stderr through the runner.
+
+    The runner publishes every line of trainer output as a
+    ``trainer_log`` event; this command filters and renders them.
+    Use ``--stream stderr`` to focus on errors only, or ``--tail 50``
+    for a quick "what's the trainer doing right now" snapshot.
+
+    This is the file-tail fallback for cases where the structured
+    ``RunnerEventCallback`` channel has self-disabled — the
+    supervisor's stdout/stderr pump runs unconditionally so logs
+    keep flowing.
+    """
+    state = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state)
+    submission = _load_submission(_resolve_attempt_dir(run_dir, attempt))
+
+    requested_streams: set[str] = set(stream or _VALID_LOG_STREAMS)
+    invalid = requested_streams - _VALID_LOG_STREAMS
+    if invalid:
+        raise die(
+            f"unknown stream(s): {sorted(invalid)} "
+            f"(must be a subset of {sorted(_VALID_LOG_STREAMS)})",
+        )
+    streams = requested_streams & _VALID_LOG_STREAMS
+    machine = state.is_machine_readable
+
+    async def _go(client, job_id):  # type: ignore[no-untyped-def]
+        emitted: list[dict[str, Any]] = []
+        async for event in client.subscribe_events(
+            job_id,
+            since=0,
+            max_reconnect_attempts=0 if not follow else None,
+        ):
+            if event.get("kind") != "trainer_log":
+                continue
+            payload = event.get("payload") or {}
+            if payload.get("kind") not in streams:
+                continue
+            emitted.append(event)
+            if not machine:
+                _format_log_line(event, renderer)
+            if len(emitted) >= tail:
+                break
+        return emitted
+
+    try:
+        events = asyncio.run(_with_runner(submission, _go))
+    except KeyboardInterrupt:
+        renderer.text("\n[interrupted]")
+        renderer.flush()
+        return
+    except Exception as exc:  # noqa: BLE001
+        raise die(f"log stream failed: {exc}")
+
+    if machine:
+        renderer.emit(events)
+    elif not events:
+        renderer.text("(no logs)")
+    renderer.flush()
 
 
 # ---------------------------------------------------------------------------

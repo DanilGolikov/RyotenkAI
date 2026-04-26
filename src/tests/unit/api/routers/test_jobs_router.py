@@ -650,6 +650,105 @@ class TestRegressions:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Logs (Phase 7.x — fallback file-tail surface)
+# ---------------------------------------------------------------------------
+
+
+class TestLogs:
+    def test_returns_only_trainer_log_events(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            # Mixed stream: structured events + raw log lines. Logs
+            # endpoint must filter.
+            yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
+            yield {"offset": 1, "kind": "trainer_log",
+                   "payload": {"kind": "stdout", "line": "first"}}
+            yield {"offset": 2, "kind": "step", "payload": {"loss": 0.5}}
+            yield {"offset": 3, "kind": "trainer_log",
+                   "payload": {"kind": "stderr", "line": "warn"}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/logs")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert {e["offset"] for e in body["events"]} == {1, 3}
+        assert body["next_since"] == 4
+
+    def test_stream_filter_isolates_stderr(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_log",
+                   "payload": {"kind": "stdout", "line": "out"}}
+            yield {"offset": 1, "kind": "trainer_log",
+                   "payload": {"kind": "stderr", "line": "err"}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/logs?stream=stderr")
+
+        body = response.json()
+        assert len(body["events"]) == 1
+        assert body["events"][0]["payload"]["kind"] == "stderr"
+
+    def test_invalid_stream_returns_422(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        # Empty filter (no valid streams selected) is a misconfig —
+        # the endpoint refuses rather than silently returning nothing.
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        response = client.get("/api/v1/runs/run-x/job/logs?stream=stdin")
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "invalid_stream_filter"
+
+    def test_limit_caps_emitted_lines(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(50):
+                yield {
+                    "offset": offset, "kind": "trainer_log",
+                    "payload": {"kind": "stdout", "line": f"l{offset}"},
+                }
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/logs?limit=5")
+        assert len(response.json()["events"]) == 5
+
+    def test_runner_failure_returns_partial(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        runner = MagicMock()
+        runner.subscribe_events = MagicMock(side_effect=RuntimeError("ws gone"))
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/logs?since=7")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["events"] == []
+        assert body["next_since"] == 7
+        assert body["error"]["code"] == "stream_failed"
+
+
 @pytest.mark.parametrize("since", [0, 5, 100])
 @pytest.mark.parametrize("limit", [1, 5, 200])
 @pytest.mark.parametrize("attempt_count", [1, 3])

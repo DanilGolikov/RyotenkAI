@@ -604,6 +604,174 @@ class TestRegressions:
 # ---------------------------------------------------------------------------
 
 
+class TestLogs:
+    def test_logs_text_mode_prints_each_line_with_stream_tag(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_log",
+                   "payload": {"kind": "stdout", "line": "hello world"}}
+            yield {"offset": 1, "kind": "trainer_log",
+                   "payload": {"kind": "stderr", "line": "boom"}}
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(app, ["job", "logs", str(run_dir)])
+        assert result.exit_code == 0, result.output
+        assert "<stdout> hello world" in result.stdout
+        assert "<stderr> boom" in result.stdout
+
+    def test_logs_filters_non_log_events(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
+            yield {"offset": 1, "kind": "step", "payload": {"loss": 0.5}}
+            yield {"offset": 2, "kind": "trainer_log",
+                   "payload": {"kind": "stdout", "line": "real-line"}}
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app, ["-o", "json", "job", "logs", str(run_dir)],
+            )
+        assert result.exit_code == 0
+        out = json.loads(result.stdout)
+        # Only the trainer_log event survives the filter.
+        assert isinstance(out, list)
+        assert len(out) == 1
+        assert out[0]["kind"] == "trainer_log"
+
+    def test_logs_stream_filter_isolates_stderr(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_log",
+                   "payload": {"kind": "stdout", "line": "out"}}
+            yield {"offset": 1, "kind": "trainer_log",
+                   "payload": {"kind": "stderr", "line": "err"}}
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app,
+                ["-o", "json", "job", "logs", str(run_dir),
+                 "--stream", "stderr"],
+            )
+        assert result.exit_code == 0
+        out = json.loads(result.stdout)
+        assert len(out) == 1
+        assert out[0]["payload"]["kind"] == "stderr"
+
+    def test_logs_tail_caps_emitted_lines(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(20):
+                yield {
+                    "offset": offset, "kind": "trainer_log",
+                    "payload": {"kind": "stdout", "line": f"l{offset}"},
+                }
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app, ["-o", "json", "job", "logs", str(run_dir),
+                      "--tail", "3"],
+            )
+        assert result.exit_code == 0
+        out = json.loads(result.stdout)
+        assert len(out) == 3
+
+    def test_logs_unknown_stream_friendly_error(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        result = runner.invoke(
+            app,
+            ["job", "logs", str(run_dir), "--stream", "nope"],
+        )
+        assert result.exit_code != 0
+        # Should NOT be a Python traceback — friendly ``die`` message.
+        assert "Traceback" not in result.stdout
+        assert "Traceback" not in (result.stderr or "")
+
+    def test_logs_empty_stream_says_no_logs(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "step", "payload": {"loss": 0.5}}
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(app, ["job", "logs", str(run_dir)])
+        assert result.exit_code == 0
+        assert "(no logs)" in result.stdout
+
+
+class TestFormatLogLine:
+    """Direct tests for the ``[stream] line`` text-mode helper."""
+
+    def _render(self, event: dict[str, Any]) -> str:
+        from src.cli.commands.job import _format_log_line
+
+        sink: list[str] = []
+
+        class _R:
+            def text(self, line: str) -> None:
+                sink.append(line)
+
+        _format_log_line(event, _R())
+        assert len(sink) == 1
+        return sink[0]
+
+    def test_stdout_line_renders_with_tag(self) -> None:
+        line = self._render(
+            {"kind": "trainer_log",
+             "payload": {"kind": "stdout", "line": "hello"}},
+        )
+        assert line == "<stdout> hello"
+
+    def test_stderr_line_renders_with_tag(self) -> None:
+        line = self._render(
+            {"kind": "trainer_log",
+             "payload": {"kind": "stderr", "line": "warn: x"}},
+        )
+        assert line == "<stderr> warn: x"
+
+    def test_missing_payload_uses_defaults(self) -> None:
+        line = self._render({"kind": "trainer_log"})
+        # Defaults: stream=stdout, line empty.
+        assert line == "<stdout> "
+
+
 class TestFormatEventLine:
     """Direct unit tests for the text-mode renderer helper.
 

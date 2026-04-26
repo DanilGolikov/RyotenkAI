@@ -5,11 +5,15 @@ training views the browser hits these endpoints, the FastAPI
 control plane opens a short-lived SSH tunnel + JobClient, fetches
 state from the runner, and returns plain JSON.
 
-Three endpoints, all read-only except ``stop``:
+Endpoints, all read-only except ``stop``:
 
 - ``GET  /api/v1/runs/{run_id}/job/status``       FSM snapshot.
 - ``GET  /api/v1/runs/{run_id}/job/events?since=N&limit=N``
                                                   Buffered event slice.
+- ``GET  /api/v1/runs/{run_id}/job/logs?since=N&limit=N&stream=...``
+                                                  Trainer stdout/stderr —
+                                                  filtered slice of
+                                                  ``trainer_log`` events.
 - ``POST /api/v1/runs/{run_id}/job/stop``         Graceful stop request.
 
 Each call opens and closes a fresh tunnel. That's an extra ~1 s of
@@ -179,6 +183,83 @@ async def get_events(
         # ``subscribe_events`` is best-effort here — return whatever
         # we managed to capture before the WS closed. UI will retry
         # on next poll.
+        return {
+            "events": [],
+            "next_since": since,
+            "error": {"code": "stream_failed", "message": str(exc)},
+        }
+
+    next_since = (
+        max(int(e.get("offset", since)) for e in events) + 1
+        if events
+        else since
+    )
+    return {"events": events, "next_since": next_since}
+
+
+_DEFAULT_LOG_STREAMS: tuple[str, ...] = ("stdout", "stderr")
+
+
+@router.get("/logs")
+async def get_logs(
+    attempt: int | None = Query(default=None, ge=1),
+    since: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=2000),
+    stream: list[str] = Query(
+        default=list(_DEFAULT_LOG_STREAMS),
+        description="Filter to ``stdout`` and/or ``stderr``.",
+    ),
+    run_dir: Path = Depends(resolve_run_dir),
+) -> dict[str, Any]:
+    """Return up to ``limit`` ``trainer_log`` events with ``offset >= since``.
+
+    The trainer subprocess pipes its stdout / stderr through the
+    runner's :class:`Supervisor`, which emits each line as a
+    ``trainer_log`` event with ``payload={"kind": "stdout"|"stderr",
+    "line": "..."}``. This endpoint surfaces those events as the
+    file-tail fallback for cases when the structured event callback
+    (``RunnerEventCallback``) self-disabled — the supervisor pump
+    has no opt-out, so every line of trainer output is observable.
+
+    Same partial-failure shape as ``/events``: a transient WebSocket
+    failure mid-stream returns whatever was captured plus a
+    structured ``error`` so the polling UI keeps the cursor and
+    retries on the next tick.
+    """
+    submission = _load_submission(_latest_attempt_dir(run_dir, attempt))
+    streams = {s for s in stream if s in _DEFAULT_LOG_STREAMS}
+    if not streams:
+        # Empty stream filter is a misconfiguration — refuse rather
+        # than silently return no logs forever.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "invalid_stream_filter",
+                "message": (
+                    "stream must contain one or more of "
+                    f"{_DEFAULT_LOG_STREAMS}"
+                ),
+            },
+        )
+
+    async def _go(client, job_id):  # type: ignore[no-untyped-def]
+        events: list[dict[str, Any]] = []
+        async for event in client.subscribe_events(
+            job_id, since=since, max_reconnect_attempts=0,
+        ):
+            if event.get("kind") != "trainer_log":
+                continue
+            payload = event.get("payload") or {}
+            if payload.get("kind") not in streams:
+                continue
+            events.append(event)
+            if len(events) >= limit:
+                break
+        return events
+
+    try:
+        events = await _with_runner(submission, _go)
+    except Exception as exc:  # noqa: BLE001
         return {
             "events": [],
             "next_since": since,
