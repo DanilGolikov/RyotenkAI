@@ -1,4 +1,15 @@
-"""Unit tests for src.pipeline.stages.managers.deployment.training_launcher."""
+"""Unit tests for src.pipeline.stages.managers.deployment.training_launcher.
+
+NOTE (Phase 6.3 cutover, 2026-04-26):
+This file targets the LEGACY launcher (heredoc start_training.sh +
+nohup + marker-file probes). Phase 6.3 replaced the implementation
+with a JobClient/SSHTunnel flow; the new public surface is covered
+by ``test_training_launcher_v2.py`` (see sibling file). The legacy
+tests are skipped here pending deletion in Phase 6.3 follow-up — we
+keep the file around as a paper-trail of what the old contract
+asserted, in case we need to backport behaviour when something
+surprises us in production.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +39,17 @@ from src.utils.config import (
 )
 from src.utils.result import Failure, Ok, ProviderError
 
-pytestmark = pytest.mark.unit
+pytestmark = [
+    pytest.mark.unit,
+    pytest.mark.skip(
+        reason=(
+            "Phase 6.3 cutover: legacy heredoc/nohup launcher replaced "
+            "by JobClient flow. New tests live in "
+            "test_training_launcher_v2.py. This file will be deleted "
+            "in the Phase 6.3 follow-up commit."
+        ),
+    ),
+]
 
 
 DATASET_CHAT_FIXTURE = "src/tests/fixtures/datasets/test_chat.jsonl"

@@ -528,23 +528,369 @@ class PluginPacker:
    - Defensive: zip-bomb cap (256 MiB), path traversal rejection, symlink rejection, two-pass atomic extraction per plugin
    - Emits `plugins_unpacked` event с installed/skipped/total_bytes для Mac client visibility
    - 12 new unit tests + 3 updated existing tests reflecting new event order
-- 6.2 `src/pipeline/stages/managers/deployment/training_launcher.py` — **переписать целиком**:
-   - Удалить `_create_env_file` (env vars теперь приходят через `POST /jobs` job_spec, не через `.env`)
-   - Удалить `_start_training_cloud` / `_start_training_docker` / probe loop / nohup
-   - Удалить генерацию `start_training.sh`
-   - Новая публичная сигнатура `start_training(...)`: вызвать `run_preflight(...)` → собрать `plugins_payload` через `PluginPacker` → `SSHTunnelManager.open()` → `JobClient.submit_job(...)`
-   - Имя класса остаётся `TrainingLauncher` (facade `TrainingDeploymentManager.start_training` НЕ меняется)
-- 6.3 `src/pipeline/stages/training_monitor.py` (existing): убрать SSH-poll целиком, заменить на `JobClient.subscribe_events()`. `LiveLogTail` остаётся **только** как fallback для скачивания tail логов после завершения (offline forensics).
-- 6.4 Удалить marker-based код в этой же фазе (single cutover):
-   - `src/pipeline/stages/training_monitor._check_marker`, `_read_marker_content`, `_touch_pipeline_heartbeat`
-   - `src/training/notifiers/marker_file.py` целиком (заменяется push events через `RunnerEventCallback`)
-   - `src/providers/runpod/training/resources/watchdog.sh` (логика → `IdleDetector` Phase 4)
-   - `src/providers/runpod/training/resources/runpod_stop_pod.sh` (вызывается из Python supervisor через provider hook — оставить как тонкую GraphQL-обёртку или переписать на Python; решим в реализации)
-- 6.5 `CodeSyncer.REQUIRED_MODULES` — **НЕ расширяем** community/. Plugin payload идёт через multipart.
-- 6.6 `src/config/providers/runpod/training.py` — удалить поле `image_name` (no Pydantic alias, no deprecation warning)
-- 6.7 `src/config/providers/single_node/training.py` — удалить поле `docker_image`
-- 6.8 Один-shot config-migration script для существующих project YAML — strip полей при чтении (warn, продолжить). Это для пользователя, не для legacy mode — после миграции YAML script не нужен.
-- 6.9 Integration tests: e2e через локальный uvicorn (mock pod). Удалить старые тесты под marker-based полinging.
+### Phase 6.3 — TrainingLauncher rewrite + TrainingMonitor switch + marker code deletion
+
+**Sub-divided after start:** контекст-бюджет потребовал разбить на 6.3a (launcher только) + 6.3b (monitor + marker_file deletion). 6.3a не делает runtime работоспособным сам по себе (новый launcher возвращает `mode=job_server`, но old monitor всё ещё ждёт markers), это допустимо т.к. SAPO/GRPO experiments скоординированы и tests skipped.
+
+#### Phase 6.3a — ✅ DONE — TrainingLauncher rewrite
+
+- `src/pipeline/stages/managers/deployment/training_launcher.py` — переписан целиком (592 → 348 LoC):
+  - Sync facade + async island через `asyncio.run`
+  - `start_training` теперь использует `PluginPacker → SSHTunnelManager → JobClient.health_check → JobClient.submit_job`
+  - Stash `job_client` + `ssh_tunnel` + `job_id` на context для monitor reuse
+  - На любой ошибке tunnel закрывается перед `Err` (no leaked ports)
+  - Public API сохранён 1:1 — `__init__(config, secrets, *, deps_installer)`, `workspace`, `set_workspace`, `start_training(ssh_client, context, provider=None)`
+- `src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher.py` — legacy tests marked `pytest.mark.skip` с reason (full deletion в 6.3b)
+- `src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher_v2.py` — 12 новых tests:
+  - `_build_job_env` — defaults, single_node container path, HF_TOKEN, provider hooks override
+  - `_resolve_job_id` — priority chain
+  - `start_training` — happy path stashes context, plugin pack fail → no tunnel, submit fail → tunnel closed, runner health timeout → tunnel closed
+
+#### Phase 6.3b — TODO (next session)
+
+#### Async strategy (utверждено user 2026-04-26)
+
+**`TrainingLauncher.start_training` остаётся sync `def`, async-вызовы идут через `asyncio.run()` внутри.**
+
+Почему:
+- Pipeline flow последовательный по природе (один pod, один run, ждём часами) — concurrent I/O ничего не даёт.
+- Upstream stack полностью sync (`gpu_deployer.py:283`, `TrainingDeploymentManager.start_training`) — full async переписал бы 5-10 файлов без полезного выхлопа.
+- `asyncio.run` падает только если уже внутри event loop (не наш кейс — CLI запускает pipeline, никаких FastAPI workers поверх).
+- Document invariant в docstring: "не вызывать из async context — fail с RuntimeError".
+
+Mini-design `start_training`:
+
+```python
+def start_training(self, ssh_client, context, provider=None) -> Result[dict, AppError]:
+    # 1) sync prep: preflight + plugin pack + env build (no awaits)
+    preflight_result = run_preflight(self.config, self.secrets, project_env)
+    if preflight_result.has_errors():
+        return Err(LaunchAbortedError(...))
+    
+    payload = self._plugin_packer.pack_required()  # bytes (b"" if SFT-only)
+    
+    job_env = self._build_job_env(context, hooks_env_vars)
+    job_command = ["python", "-m", "src.training.run_training", "--config", DEPLOYMENT_CONFIG_PATH]
+    job_id = context[PipelineContextKeys.RUN].logical_run_id
+    job_spec = {"job_id": job_id, "command": job_command, "env": job_env}
+    
+    # 2) async island: tunnel.open + client.submit + first event
+    tunnel, client = asyncio.run(self._submit_via_tunnel(ssh_client, job_spec, payload))
+    
+    # 3) sync: stash on context for TrainingMonitor; return success
+    context["job_client"] = client       # TrainingMonitor reads
+    context["ssh_tunnel"] = tunnel       # TrainingMonitor reads (для close at end)
+    context["job_id"] = job_id
+    return Ok({"mode": "job_server", "job_id": job_id, "tunnel_port": tunnel.local_port})
+
+async def _submit_via_tunnel(self, ssh_client, job_spec, payload):
+    endpoint = SSHTunnelEndpoint(host=ssh_client.host, port=ssh_client.port,
+                                  username=ssh_client.username,
+                                  key_path=ssh_client.key_path or None)
+    tunnel = SSHTunnelManager(endpoint)
+    await tunnel.open()
+    try:
+        client = JobClient(tunnel.base_url)
+        # Health probe (короткий retry loop)
+        for _ in range(10):
+            if await client.health_check():
+                break
+            await asyncio.sleep(1)
+        else:
+            await tunnel.close()
+            raise ProviderError("runner not responsive on tunnel", code="RUNNER_UNREACHABLE")
+        await client.submit_job(job_spec, plugins_payload=payload)
+        return tunnel, client
+    except BaseException:
+        await tunnel.close()
+        raise
+```
+
+`TrainingMonitor` — также sync facade с asyncio.run для WS event consumption.
+
+#### 6.3.1 `src/pipeline/stages/managers/deployment/training_launcher.py` — **переписать целиком (~592 LoC → ~250 LoC)**
+
+**Сохраняем** (public API не меняется → `TrainingDeploymentManager` и `gpu_deployer.py:283` не трогаем):
+- `__init__(self, config, secrets, *, deps_installer)`
+- `workspace` property, `set_workspace(path)`
+- `start_training(self, ssh_client, context, provider) -> Result[dict, AppError]`
+
+**Удаляем целиком:**
+- `_start_training_cloud` (lines 188-420, ~233 LoC)
+- `_start_training_docker` (lines 426-589, ~158 LoC)
+- `_sanitize_docker_name` (jobclient/runner не использует docker container names)
+- Генерация `start_training.sh` через heredoc
+- Probe-loop + `ps aux` / `docker ps` / marker-file checks
+
+**`_create_env_file` судьба:** удаляем функцию-writer (env вместо `.env` едет в `JobSpec.env`), но переиспользуем её **логику сборки env vars** в новом методе `_build_job_env(...)`. То же содержимое — `LOG_LEVEL`, `HELIX_WORKSPACE`, `PYTHONPATH`, `HF_TOKEN`, `MLFLOW_*`, `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` — но возвращает `dict[str, str]` вместо записи в файл. Helper `resolve_mlflow_uris(...)` остаётся переиспользуемым.
+
+**Новый `start_training(...)` (sync facade method, async work через `asyncio.run`):**
+
+```python
+def start_training(self, ssh_client, context, provider=None) -> Result[dict, AppError]:
+    # 1. Run preflight gate (already part of pipeline_bootstrap step 1.5,
+    #    reach into PreflightReport to fail early if anything missing)
+    # 2. Pack reward plugins via PluginPacker
+    # 3. Build JobSpec (command + env merged from _build_job_env + provider hooks env_vars)
+    # 4. Build SSHTunnelEndpoint from ssh_client (host/port/user/key)
+    # 5. asyncio.run(_submit_job_async(...)):
+    #      a. SSHTunnelManager(endpoint).open()
+    #      b. JobClient(tunnel.base_url).submit_job(spec, plugins_payload)
+    #      c. Wait for state to leave PREPARING (via JobClient.subscribe_events
+    #         with max_reconnect_attempts=0 + small timeout — first event after
+    #         submit must be plugins_unpacked then trainer_spawned, that's our
+    #         "running" signal). Tunnel stays open for TrainingMonitor.
+    #      d. Stash tunnel + client on context for the monitor to reuse
+    # 6. Return Ok({"mode": "job_server", "job_id": ..., "tunnel_port": N})
+```
+
+**Reuse существующего:**
+- `src/community/preflight.py::run_preflight` — preflight gate
+- `src/pipeline/stages/managers/deployment/plugin_packer.py::PluginPacker.pack_required()` — Phase 6.1
+- `src/api/services/tunnel_service.py::SSHTunnelManager` — Phase 5
+- `src/api/clients/job_client.py::JobClient` — Phase 5
+- `src/runner/__about__.py::RUNTIME_IMAGE` — already pinned (хотя image теперь настраивается на pod-стороне через docker, не через job_spec)
+- `src/pipeline/stages/managers/deployment/provider_config.py::is_single_node_provider, get_*_training_cfg` — pure helpers
+- `src/infrastructure/mlflow.uri_resolver::resolve_mlflow_uris` — env-vars сборка
+- `src/providers/training/interfaces.py::TrainingScriptHooks` — but теперь читаем только `env_vars` (pre/post_python нам не нужны → см. 6.5)
+
+**Какие ENV propagate из provider hooks (RunPod):**
+- `RUNPOD_API_KEY`, `RUNPOD_POD_ID`, `RUNPOD_AUTO_STOP`, `RUNPOD_KEEP_ON_ERROR` — для `PodStopper` (Phase 4.4) на pod
+- `WATCHDOG_WORKSPACE` — больше не нужно (watchdog.sh удаляется)
+
+**Single-node специфика:** docker container запускается ВНУТРИ pod-а ([wait, это локально на Mac]). Точнее: single_node провайдер = SSH к удалённому docker host, и там СНОВА docker run image. На pod (= host docker container) запустится uvicorn job-server. Значит:
+- `single_node` нуждается в `docker run` обёртке вокруг runner-image
+- На уровне `TrainingLauncher` это **прозрачно** — мы просто SSH-туннелим к single_node host, на котором уже стартовал docker container с job-server
+- Per-provider различия инкапсулированы в provider hooks + `prepare_training_script_hooks`. Если single_node provider не запускает docker, это его responsibility (либо системный systemd-сервис, либо ручной docker run заранее, либо provider запускает в `prepare_training_script_hooks` → но это тогда переименуется в `prepare_runner` или подобное)
+- **В этом плане:** оставляем существующий single_node контракт (docker container уже запущен на host, runner внутри слушает 8080) — детали single_node provider могут отдельно эволюционировать
+
+#### 6.3.2 `src/pipeline/stages/training_monitor.py` — заменить SSH-poll на WS subscribe
+
+**Удаляем** (~600+ LoC из 982):
+- `_check_marker` (line 854)
+- `_read_marker_content` (line 864)
+- `_touch_pipeline_heartbeat` (line 718)
+- All `TRAINING_COMPLETE` / `TRAINING_FAILED` / `.pipeline_heartbeat` / `.watchdog_heartbeat` / `STOPPED_BY_WATCHDOG` / `TRAINING_EXIT_CODE` polling
+- `_collect_death_diagnostics` marker-content reads (keep log-tail download via SSH for forensics)
+- 5-second polling loop in `_monitor_training`/`_monitor_training_resilient`
+
+**Добавляем:**
+- Прочесть `tunnel` + `job_client` + `job_id` из context (которые `TrainingLauncher` положил)
+- `async for event in client.subscribe_events(job_id, since=last_offset): ...`
+- Diff-callback на event kinds:
+  - `step` → `on_resource_check` callback (extract gpu/ram from payload)
+  - `epoch_end` → log progress
+  - `health_snapshot` → `on_resource_check`
+  - `pod_stop_attempt` → log outcome (Phase 4.4 событие)
+  - FSM state events → terminal detection
+- Terminal: на `JobState.COMPLETED` → `on_training_completed(duration)`, на `FAILED`/`CANCELLED` → `on_training_failed(reason, duration)`
+- Если WS `subscribe_events` вылетает с `ReplayTruncatedError`: refetch `client.get_status(job_id)` для текущего offset, продолжаем
+- Если `JobNotFoundError`: log + return error (pod restart wiped state)
+
+**Reuse:**
+- `src/api/clients/job_client.py::JobClient` — submitted from launcher into context
+- `src/api/ws/live_tail.py::LiveLogTail` — **только** для fallback download tail после terminal
+- `TrainingMonitorEventCallbacks` (existing dataclass) — keep public API for MLflow integration
+
+#### 6.3.3 Удаляем целиком: `src/training/notifiers/marker_file.py`
+
+- File deleted
+- Calls in `src/training/run_training.py` (lines 439-521 per agent report) удаляются — заменены на `RunnerEventCallback` (Phase 3, уже работает)
+- `src/training/notifiers/` package: проверить, остаётся ли что-то (если только `marker_file.py` — удалить пакет целиком)
+
+#### 6.3.4 Tests rewrite
+
+**Удалить полностью:**
+- `src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher.py` — 13 active tests, все основаны на marker probes / nohup / docker run
+- Существующие тесты в `src/tests/unit/pipeline/stages/test_stages_monitor.py` (или test_training_monitor.py), которые мокают `_check_marker`, `_read_marker_content`, `_touch_pipeline_heartbeat` — целевая ~30 тестов
+
+**Написать:**
+- `src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher.py` (NEW):
+  - `_build_job_env` returns expected env dict (HF_TOKEN, MLFLOW_*, etc.)
+  - `start_training` happy path: PluginPacker + tunnel.open + client.submit + state transition mock
+  - Preflight failure → `Err(ProviderError)` без открытия tunnel
+  - PluginPacker error → `Err(ProviderError)` aborting submit
+  - JobClient submit error → tunnel closed, `Err`
+  - **Test seam**: inject `pluging_packer_factory`, `tunnel_factory`, `job_client_factory` в `__init__` (default = real classes)
+- `src/tests/unit/pipeline/stages/test_training_monitor.py` (NEW):
+  - WS subscribe yields events → callbacks fire
+  - Terminal completed → `on_training_completed`
+  - Terminal failed → `on_training_failed` with reason from event payload
+  - `ReplayTruncatedError` → refetch status, resume
+  - `JobNotFoundError` → return error
+  - **Test seam**: inject fake `JobClient` через context
+
+**~50+ тестов переписать.** Это большая работа, но критическая — без них cutover необезопасный.
+
+---
+
+### Phase 6.5 — Delete bash scripts + simplify provider hooks
+
+**Independent commit.** После 6.3 ничего не пишет/читает marker файлы и watchdog.sh не активируется (бо `pre_python` hook больше не вызывается — `start_training.sh` исчез вместе с TrainingLauncher rewrite). Можно удалять:
+
+#### 6.5.1 Удаляем файлы:
+- `src/providers/runpod/training/resources/watchdog.sh` — функционал в `IdleDetector` (Phase 4.1)
+- `src/providers/runpod/training/resources/runpod_stop_pod.sh` — функционал в `PodStopper` (Phase 4.4)
+- Если `src/providers/runpod/training/resources/` пустеет — удалить пакет
+
+#### 6.5.2 Упрощаем `src/providers/runpod/training/provider.py`:
+- `prepare_training_script_hooks(ssh_client, context)` — упрощается до возврата только `env_vars`. `pre_python = ""`, `post_python = ""` (deprecated, не вызываются)
+- Удаляем `_upload_watchdog_resources`, `_build_pre_python_hook`, `_build_post_python_hook`
+- Сохраняем `RUNPOD_*` env vars (нужны `PodStopper` на pod-стороне)
+
+#### 6.5.3 Упрощаем `src/providers/training/interfaces.py::TrainingScriptHooks`:
+- Удалить поля `pre_python`, `post_python` (никто не читает после 6.3)
+- Оставить `env_vars: dict[str, str]`
+- Возможно, переименовать → `ProviderEnvHooks` (если кто-то ещё импортит — single_node provider — тоже обновить)
+
+#### 6.5.4 Tests:
+- Удалить тесты `_upload_watchdog_resources`, `_build_pre_python_hook`, `_build_post_python_hook`
+- Обновить тесты `prepare_training_script_hooks` — assert только env_vars
+- Удалить любые тесты watchdog.sh / runpod_stop_pod.sh ressources
+
+---
+
+### Phase 6.6 — Drop image_name / docker_image config fields
+
+**Independent commit.** Single cutover per project policy ("no backwards compat"). Per-existing-YAML migration: пользователь правит YAML руками, `extra="forbid"` Pydantic выкинет clear error при загрузке старого YAML.
+
+#### 6.6.1 Config schema cleanup:
+- `src/config/providers/runpod/training.py:36` — удалить поле `image_name`
+- `src/config/providers/single_node/training.py:42` — удалить поле `docker_image`
+
+#### 6.6.2 Call-site updates (заменяем `cfg.image_name` / `cfg.docker_image` → `RUNTIME_IMAGE`):
+- `src/providers/runpod/training/api_client.py:61` — replace `train_cfg.image_name` → `RUNTIME_IMAGE` в payload dict
+- `src/providers/runpod/training/api_client.py:99,100,135` — info/debug log lines: use `RUNTIME_IMAGE`
+- `src/providers/runpod/training/provider.py:99` — `self._config.training.image_name` → `RUNTIME_IMAGE`
+- `src/pipeline/stages/managers/deployment/dependency_installer.py:133` — `cfg.get("docker_image")` → `RUNTIME_IMAGE`
+- `src/pipeline/stages/managers/deployment/training_launcher.py:450` — больше не существует (Phase 6.3 удалил `_start_training_docker`); если в новом launcher нужен image (для single_node docker run), брать из `RUNTIME_IMAGE`
+- Import: `from src.runner.__about__ import RUNTIME_IMAGE` в каждом файле
+
+#### 6.6.3 NOT IN SCOPE:
+- `src/providers/runpod/inference/pods/...` — `pod_cfg.image_name` для **inference**, отдельный lifecycle, не трогаем (job server не управляет inference pods)
+
+#### 6.6.4 Project YAMLs (3 файла + 1 build script):
+- `examples/quickstart-qlora-sft/pipeline_config.yaml:115` — удалить `docker_image: ...` строку
+- `examples/quickstart-qlora-sft/pipeline_config.yaml:143` — удалить `image_name: ...` строку
+- `src/config/pipeline_config.yaml:344` — удалить `image_name: ...` строку
+- `src/tests/fixtures/configs/test_pipeline.yaml:67` — удалить `docker_image: ...`
+- `docker/training/build_and_push.sh:365-374` — удалить блок suggesting добавить `image_name` / `docker_image` в config (заменить на reminder про `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE`)
+
+#### 6.6.5 Test fixture updates (~10-20 файлов):
+- `src/tests/mocks/mock_runpod.py` — удалить `image_name` поле
+- `src/tests/unit/pipeline/providers/runpod/test_api_client.py` — обновить asserts на payload без image_name
+- `src/tests/unit/pipeline/providers/runpod/test_provider.py` — fixtures без image_name
+- `src/tests/unit/pipeline/providers/single_node/test_provider.py` — fixtures без docker_image
+- `src/tests/unit/pipeline/stages/managers/deployment/test_*.py` — пройтись по всем fixtures, удалить image fields
+- `src/tests/integration/...` — проверить все YAMLs / fixtures
+- Для всех тестов assert (если есть) что `RUNTIME_IMAGE` используется правильно
+
+#### 6.6.6 No migration script needed:
+- Per project policy: cutover, не deprecation. Пользователь видит Pydantic ValidationError при загрузке старого YAML, удаляет строку, продолжает.
+
+---
+
+### Phase 6.7 — Final regression + plan update
+
+#### 6.7.1 Run full test suite:
+```bash
+python -m pytest src/tests/ --tb=short
+python -m pytest --cov=src --cov-fail-under=83
+```
+
+#### 6.7.2 Cleanup grep checks (must all return 0 hits):
+```bash
+test ! -f src/providers/runpod/training/resources/watchdog.sh
+test ! -f src/providers/runpod/training/resources/runpod_stop_pod.sh
+test ! -f src/training/notifiers/marker_file.py
+! grep -rn "_check_marker\|_touch_pipeline_heartbeat" src/pipeline/
+! grep -rn "TRAINING_COMPLETE\|TRAINING_FAILED\b" src/pipeline/ src/training/
+! grep -rn "^\s*image_name:\|^\s*docker_image:" src/config/ examples/ src/tests/fixtures/
+```
+
+#### 6.7.3 Mark plan items as DONE, update README cross-reference в `community/README.md` (только reward уезжает на pod, остальное — Mac).
+
+---
+
+### Phase 6 — sub-commit ordering & blast radius
+
+| Commit | Files modified | LoC delta | Risk | Tests |
+|---|---|---:|---|---|
+| 6.3 | training_launcher.py rewrite + training_monitor.py rewrite + delete marker_file.py + run_training.py callsite cleanup + ~50 test rewrites | ~1500 LoC change | **HIGH** — biggest single change in Phase 6 | New + delete |
+| 6.5 | Delete watchdog.sh + runpod_stop_pod.sh + simplify provider.py + simplify TrainingScriptHooks + delete tests | ~250 LoC change | LOW — independent, safe after 6.3 | Delete-only |
+| 6.6 | Remove `image_name`/`docker_image` fields + 10+ call-sites + 4 YAMLs + ~20 test fixtures | ~150 LoC change | MEDIUM — wide reach but mechanical | Update fixtures |
+| 6.7 | docs/plans update + grep checks + coverage gate | minimal | TRIVIAL | None |
+
+**Why not split 6.3 further:**
+- Splitting `training_launcher.py` rewrite from `training_monitor.py` rewrite leaves an intermediate state where new launcher writes no markers but old monitor polls them → all SAPO/GRPO tests fail mid-cutover
+- Splitting marker_file.py deletion separately: same problem — tests for old notifier break when launcher stops invoking it
+
+**Why split 6.5 / 6.6 from 6.3:**
+- 6.5 is purely deletion, безопасно после 6.3
+- 6.6 is mechanical search-replace — orthogonal к runtime flow
+
+---
+
+### Phase 6 — критические riskи и mitigations
+
+| ID | Риск | Mitigation |
+|---|---|---|
+| C-1 | 6.3 commit слишком большой (~1500 LoC) для одного PR — review fatigue | Split commit message по подразделам с ясными boundaries; добавить top-level docstrings в новые модули объясняющие "what / why / how" |
+| C-2 | Test rewrites вводят новые баги, скрытые от старых coverage | Сначала переписать tests на mock-fixtures (red), потом implementation (green); cover edge cases: preflight fail, plugin pack fail, tunnel fail, submit fail, terminal failure, replay truncated |
+| C-3 | `asyncio.run(...)` в sync-facade `start_training` — если уже в event loop (e.g. integration test), упадёт | Detect via `asyncio.get_event_loop()` and use `asyncio.run_coroutine_threadsafe` или сделать всю facade async — но требует upstream gpu_deployer.py async tooling. Решение: assume sync context (gpu_deployer.py sync today) и документировать invariant |
+| C-4 | Single-node docker container никем не запущен на pod-host — runner unreachable | Single-node — отдельный provider lifecycle (вне Phase 6 scope). Docucommunicate: "single_node provider должен сам запустить runner image на host перед `start_training`" |
+| C-5 | RYOTENKAI runtime image не собран на момент SAPO experiment | Pre-flight check в новом launcher: ping `health_check()` с retry; на failure — explicit ProviderError с инструкцией "build & push runtime image" |
+| C-6 | RUNTIME_IMAGE pinned, но pod провайдер RunPod не имеет access к docker registry | Pre-existing concern: RunPod pulls public images. Если registry private → `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` для prod env. Document |
+| C-7 | Pydantic `extra="forbid"` blocks existing project YAMLs after 6.6 | Per project policy: acceptable — пользователь delete-line and retry. Add CHANGELOG note + clear ValidationError message |
+
+---
+
+### Phase 6 — verification end-to-end
+
+#### Unit
+```bash
+# Новые
+pytest src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher.py -v   # ~15 tests
+pytest src/tests/unit/pipeline/stages/test_training_monitor.py -v                         # ~20 tests
+pytest src/tests/unit/runner/ -v                                                          # 162+ tests still pass
+pytest src/tests/unit/api/clients/ -v                                                     # 25 tests still pass
+pytest src/tests/unit/api/services/test_tunnel_service.py -v                              # 13 tests still pass
+pytest src/tests/unit/pipeline/stages/managers/deployment/test_plugin_packer.py -v        # 12 tests still pass
+
+# Regression: все остальные tests
+pytest src/tests/ --tb=short
+```
+
+#### Coverage gate
+```bash
+pytest --cov=src --cov-fail-under=83
+```
+
+#### Manual smoke (after merging Phase 6, on RunPod):
+1. `./docker/training/build_and_push.sh --bump minor` — собрать RUNTIME_IMAGE
+2. Удалить из существующего project YAML строки `image_name:` / `docker_image:` (если есть)
+3. `ryotenkai run start config/sapo_helixql.yaml`
+4. Проверить:
+   - GPU pod создаётся, runner бутится (health_check returns 200)
+   - SAPO training запускается — события стримятся в Mac client
+   - Reward broadcast log: `[REWARD_PLUGIN] strategy=sapo plugin='helixql_compiler_semantic' params=[...]`
+   - Закрыть Mac на 5 минут → открыть → `ryotenkai run resume <attempt>` → события догнали (Phase 7)
+   - Training завершается естественно → FSM → `completed` → PodStopper firing → pod stops, billing stops
+
+#### Cleanup grep (after Phase 6.7):
+```bash
+test ! -f src/providers/runpod/training/resources/watchdog.sh
+test ! -f src/providers/runpod/training/resources/runpod_stop_pod.sh
+test ! -f src/training/notifiers/marker_file.py
+! grep -rn "_check_marker\|_touch_pipeline_heartbeat" src/pipeline/
+! grep -rn "image_name:\|docker_image:" src/config/ examples/ src/tests/fixtures/
+```
+
+---
+
+**Estimated work:** Phase 6.3 = 1.5 дня (большой), 6.5 = 0.5 дня, 6.6 = 0.5 дня, 6.7 = 0.25 дня. **Total: ~2.75 дня.**
+
+Original plan estimate был "1-2 дня" — недооценено. После deepsink-анализа реальный размер: ~2-3 дня (учитывая ~50 test rewrites).
 
 ### Phase 7 — CLI + Web UI (1 день)
 - 7.1 `src/cli/commands/job.py` (NEW noun, добавляется к существующим run/runs/config/dataset/...):
