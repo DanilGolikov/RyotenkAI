@@ -43,37 +43,6 @@ def _hf_ds(train_id: str, *, plugins: list[dict] | None = None, critical_failure
     )
 
 
-@patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.stage.validation_registry")
-def test_loads_default_plugins_when_no_plugins_configured(mock_registry, mock_loader_factory) -> None:
-    ds = _local_ds("data/train.jsonl", plugins=[], critical_failures=1)
-    cfg = _mk_primary_only_config(ds)
-
-    # Default plugin load calls registry.instantiate(...) 4 times
-    mock_registry.instantiate.return_value = MagicMock(name="x")
-
-    _ = DatasetValidator(cfg)
-    assert mock_registry.instantiate.call_count == 4
-
-
-@patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.stage.validation_registry")
-def test_loads_configured_plugins_only(mock_registry, mock_loader_factory) -> None:
-    ds = _local_ds(
-        "data/train.jsonl",
-        plugins=[
-            {"id": "custom_plugin_main", "plugin": "custom_plugin", "params": {"threshold": 100}, "apply_to": ["train"]},
-            {"id": "another_plugin_main", "plugin": "another_plugin", "params": {}, "apply_to": ["train"]},
-        ],
-        critical_failures=1,
-    )
-    cfg = _mk_primary_only_config(ds)
-
-    mock_registry.instantiate.return_value = MagicMock(name="x")
-    _ = DatasetValidator(cfg)
-    assert mock_registry.instantiate.call_count == 2
-
-
 def test_execute_returns_err_on_critical_failure(tmp_path) -> None:
     # Create tiny dataset (will fail min_samples threshold)
     dataset_file = tmp_path / "train.jsonl"

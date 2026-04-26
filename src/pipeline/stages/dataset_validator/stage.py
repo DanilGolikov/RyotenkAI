@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
-from src.data.validation.registry import validation_registry
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.stages.dataset_validator.constants import (
@@ -33,6 +32,7 @@ from src.pipeline.stages.dataset_validator.constants import (
     WARNINGS_KEY,
 )
 from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
+from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
 
@@ -111,123 +111,17 @@ class DatasetValidator(PipelineStage):
     ):
         super().__init__(config, StageNames.DATASET_VALIDATOR)
         self._config = config
-        self._default_dataset = config.get_primary_dataset()
         self._callbacks = callbacks or DatasetValidatorEventCallbacks()
         self._secrets = secrets
 
         self._loader_factory = DatasetLoaderFactory(config)
         self._format_checker = FormatChecker(config)
+        self._plugin_loader = PluginLoader(config, secrets)
 
-        # Load plugins (if configured)
-        self._plugins = self._load_plugins()
-
-    def _load_plugins(self):
-        """
-        Load validation plugins from config.
-
-        Priority:
-        1. validations (explicit plugin configuration) - preferred
-        2. defaults - use sensible default plugins
-
-        Returns list of ValidationPlugin instances.
-        """
-        dataset_config = self._default_dataset
-
-        # Priority 1: Explicit plugin configuration
-        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
-        if validations is not None and getattr(validations, "plugins", None):
-            return self._load_configured_plugins(validations.plugins)
-
-        # Priority 2: Use defaults
-        logger.info("[VALIDATOR] No validation config, using default plugins")
-        return self._get_default_plugins()
-
-    def _load_configured_plugins(self, plugin_configs: list[Any]) -> list[tuple[str, str, Any, set[str]]]:
-        """
-        Load plugins from validations config.
-
-        Instantiates each plugin and injects DTST_* secrets for plugins
-        that declare ``[secrets] required = [...]`` in their manifest.toml.
-
-        Args:
-            plugin_configs: List of plugin configurations
-
-        Returns:
-            List of (plugin_id, plugin_name, plugin_instance, apply_to_set) tuples
-        """
-        logger.info(f"[VALIDATOR] Loading {len(plugin_configs)} validation plugins")
-
-        from src.community.catalog import catalog
-
-        catalog.ensure_loaded()
-
-        secrets_resolver = self._build_secrets_resolver()
-
-        plugins: list[tuple[str, str, Any, set[str]]] = []
-        for pc in plugin_configs:
-            try:
-                plugin_id = pc.id
-                plugin_name = pc.plugin
-                plugin_params = pc.params or {}
-                plugin_thresholds = pc.thresholds or {}
-                apply_to = set(pc.apply_to or [SPLIT_TRAIN, SPLIT_EVAL])
-
-                # Secret injection is centralised in registry.instantiate(). Plugins
-                # that don't declare ``_required_secrets`` simply ignore the resolver.
-                plugin = validation_registry.instantiate(
-                    plugin_name,
-                    resolver=secrets_resolver,
-                    params=plugin_params,
-                    thresholds=plugin_thresholds,
-                )
-
-                plugins.append((plugin_id, plugin_name, plugin, apply_to))
-                logger.debug(f"[VALIDATOR] Loaded plugin instance: {plugin_id} ({plugin_name})")
-
-            except KeyError as e:
-                available = validation_registry.list_ids()
-                logger.error(f"[VALIDATOR] Failed to load plugin: {e}. Available: {available}")
-                raise
-
-        # Plugins run in user-declared order (config YAML list is order-preserving).
-        # Default plugins come from _get_default_plugins() in a deliberate order.
-        return plugins
-
-    def _build_secrets_resolver(self):
-        """Build a DTST_* SecretsResolver if secrets are available."""
-        if self._secrets is None:
-            return None
-        from src.data.validation.secrets import SecretsResolver
-
-        return SecretsResolver(self._secrets)
-
-    def _get_default_plugins(self) -> list[tuple[str, str, Any, set[str]]]:
-        """
-        Get default validation plugins with sensible defaults.
-
-        Returns:
-            List of ValidationPlugin instances with default configs
-        """
-        from src.community.catalog import catalog
-
-        catalog.ensure_loaded()
-
-        # Sensible defaults for most use cases
-        # We intentionally keep params dynamic; apply_to defaults to [train, eval].
-        from src.utils.config import DatasetValidationPluginConfig
-
-        default_configs = [
-            DatasetValidationPluginConfig(id="min_samples", plugin="min_samples", thresholds={"threshold": 100}),
-            DatasetValidationPluginConfig(id="avg_length", plugin="avg_length", thresholds={"min": 50, "max": 8192}),
-            DatasetValidationPluginConfig(id="empty_ratio", plugin="empty_ratio", thresholds={"max_ratio": 0.05}),
-            DatasetValidationPluginConfig(
-                id="diversity_score",
-                plugin="diversity_score",
-                thresholds={"min_score": 0.3},
-            ),  # Lowered from 0.7 - more realistic
-        ]
-
-        return self._load_configured_plugins(default_configs)
+        # Eagerly resolve the default plugin set so a misconfigured registry
+        # fails fast at construction time (mirrors original behaviour, was
+        # the only purpose of self._plugins which is otherwise unused).
+        self._plugin_loader.load_for_default_dataset()
 
     def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
         """
@@ -520,19 +414,8 @@ class DatasetValidator(PipelineStage):
         return self._format_checker.check(dataset, dataset_name, strategy_phases)
 
     def _load_plugins_for_dataset(self, dataset_config: Any) -> list:
-        """
-        Load validation plugins specific to a dataset.
-
-        Uses dataset's validations config or falls back to defaults.
-        """
-        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
-        if validations is not None and getattr(validations, "plugins", None):
-            if validations.plugins:
-                return self._load_configured_plugins(validations.plugins)
-        else:
-            # Use default plugins
-            return self._get_default_plugins()
-        return self._get_default_plugins()
+        """Proxy to :meth:`PluginLoader.load_for_dataset` — kept until callers migrate."""
+        return self._plugin_loader.load_for_dataset(dataset_config)
 
     @staticmethod
     def _aggregate_results(
