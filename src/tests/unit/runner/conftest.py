@@ -18,6 +18,7 @@ isolation is automatic.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -132,6 +133,16 @@ class MockSupervisor:
         if self._running:
             await self.request_stop(grace_seconds=0.0)
             self.finish(exit_code=130, cancelled=True)
+        # Drain any pending terminal-hook task before lifespan tears
+        # the bus down. Without this, the hook coroutine wakes after
+        # ``bus.close()`` and crashes trying to publish — visible as
+        # a "Task exception was never retrieved" stack trace.
+        if (
+            self._terminal_hook_task is not None
+            and not self._terminal_hook_task.done()
+        ):
+            with contextlib.suppress(Exception):
+                await self._terminal_hook_task
 
     # --- test driver ------------------------------------------------------
 

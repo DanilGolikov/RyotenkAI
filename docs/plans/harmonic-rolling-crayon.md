@@ -492,19 +492,27 @@ class PluginPacker:
 - 4.4 ✅ **DONE** — Self-stop hook: `src/runner/pod_stopper.py` (Python replacement for `runpod_stop_pod.sh`). На FSM transition → `[completed | cancelled | failed]` Supervisor вызывает `terminal_hook` который делегирует в `stop_pod_on_terminal()`. Env-driven: `RUNPOD_AUTO_STOP=false` → `disabled`, missing creds → `skipped`, GraphQL ok → `stopped`, idempotent already-stopped → `already_stopped`, retry exhausted → `failed`. Outcome публикуется как `pod_stop_attempt` event. **Bash скрипт `runpod_stop_pod.sh` удаляется в Phase 6** вместе с остальным cleanup.
 - 4.5 ✅ Unit tests: idle detection across thresholds (12 tests), MLflow circuit breaker integration (deferred), pod_stopper full matrix (19 tests: decision table + env short-circuits + GraphQL paths + retry + network errors + wrapper), supervisor terminal_hook (3 tests).
 
-### Phase 5 — Mac: SSHTunnel + JobClient (1 день)
-- 5.1 `src/api/services/tunnel_service.py` (NEW):
-   - `SSHTunnelManager.open()` запускает `ssh -L <local>:127.0.0.1:8080 -N -f`
-   - **Отдельный** `ControlMaster` socket (`~/.ssh/control_sockets/runner_<host>:<port>`) — изолирован от `SSHClient` (rsync/exec)
-   - Auto-выбор свободного порта 18080-18099
-   - cleanup-at-exit, signal handlers
-- 5.2 `src/api/clients/job_client.py` (NEW):
-   - `httpx.AsyncClient` + `websockets`
-   - `submit_job(job_spec, plugins_payload)` — multipart upload
-   - `subscribe_events(job_id, since_offset)` — WebSocket с auto-reconnect (exp backoff)
-   - `stream_log(job_id, tail=N, follow=True)` — chunked HTTP transfer для `training.log` raw
-   - Reconnect logic с exponential backoff
-- 5.3 Unit tests: tunnel lifecycle, port collision, ControlMaster isolation, client reconnect ordering
+### Phase 5 — Mac: SSHTunnel + JobClient (1 день) ✅ DONE
+- 5.1 ✅ `src/api/services/tunnel_service.py` — `SSHTunnelManager`:
+   - `open()` запускает `ssh -fN -L <local>:127.0.0.1:8080` с `ExitOnForwardFailure=yes`
+   - **Отдельный** ControlMaster socket в `~/.ssh/control_sockets/ryotenkai_runner/` — изолирован от `SSHClient`'s `~/.ssh/sockets/` (rsync/exec)
+   - Auto-выбор свободного порта 18080-18099 (sequential, predictable for debugging)
+   - Readiness probe через TCP-connect до `_TUNNEL_READY_TIMEOUT_SECONDS=10s`
+   - `close()` — best-effort `ssh -O exit`, swallows errors
+   - Idempotent open(); failed open резетит state
+   - Async context manager support
+- 5.2 ✅ `src/api/clients/job_client.py` — `JobClient`:
+   - `httpx.AsyncClient` для HTTP + `websockets.connect` для WS
+   - `health_check()`, `submit_job()` (multipart: form `job_spec` + file `plugins_payload`), `get_status()`, `request_stop()`
+   - `subscribe_events(job_id, since=N)` — async generator с auto-reconnect, exponential backoff (1s → 30s + ±25% jitter), offset tracking для seamless resume
+   - WS close-code translation: 4404 → `JobNotFoundError`, 4410 → `ReplayTruncatedError`, 4422 → `JobClientError`
+   - `max_reconnect_attempts` cap (по умолчанию: ∞)
+   - HTTP→WS URL scheme translation (`http://` → `ws://`, `https://` → `wss://`)
+- 5.3 ✅ Unit tests (38 новых):
+   - 21 JobClient unit tests (httpx.MockTransport + fake WS): health, submit, get_status, request_stop, subscribe_events с reconnect, close-code translation, URL scheme
+   - 13 SSHTunnelManager tests (mock subprocess runner + mock port probe): argv shape, port allocation, lifecycle, readiness probe timeout, close best-effort, socket dir isolation
+   - 4 contract tests (httpx.ASGITransport против реального runner app): submit/status/stop wire shape parity
+- **Stream_log endpoint и `runs_resume` integration отложены в Phase 7** (CLI) — там же подключим `JobClient` к `ryotenkai run resume`
 
 ### Phase 6 — Pipeline integration + cutover (1-2 дня)
 
