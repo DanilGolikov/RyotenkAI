@@ -518,7 +518,16 @@ class PluginPacker:
 
 Эта фаза одновременно вводит новую реализацию **и** удаляет старую (no backwards compat).
 
-- 6.1 `src/pipeline/stages/managers/deployment/plugin_packer.py` (NEW) — § 9.1
+- 6.1 ✅ **DONE** `src/pipeline/stages/managers/deployment/plugin_packer.py` — § 9.1
+   - Класс `PluginPacker(config, *, community_root)` — walks strategy chain, dedup, validates manifests, builds single ZIP с layout `<kind>/<id>/...`
+   - `pack_required()` возвращает `b""` когда нет reward plugins (SFT-only) — caller должен пропустить multipart upload
+   - 12 unit tests (determine_required_plugins, pack, pack_required, determinism)
+- 6.2 ✅ **DONE** `src/runner/plugin_unpacker.py` (NEW, runner side) — § 9.2
+   - Self-contained extractor (НЕ pulls src.community to keep runner image lean)
+   - Wired в `POST /api/v1/jobs` через `Depends(get_plugin_unpacker)`. Unpack BEFORE supervisor spawn — gracefully fails 422 если payload corrupt
+   - Defensive: zip-bomb cap (256 MiB), path traversal rejection, symlink rejection, two-pass atomic extraction per plugin
+   - Emits `plugins_unpacked` event с installed/skipped/total_bytes для Mac client visibility
+   - 12 new unit tests + 3 updated existing tests reflecting new event order
 - 6.2 `src/pipeline/stages/managers/deployment/training_launcher.py` — **переписать целиком**:
    - Удалить `_create_env_file` (env vars теперь приходят через `POST /jobs` job_spec, не через `.env`)
    - Удалить `_start_training_cloud` / `_start_training_docker` / probe loop / nohup
