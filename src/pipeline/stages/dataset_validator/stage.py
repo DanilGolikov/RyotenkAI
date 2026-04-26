@@ -8,21 +8,15 @@ Now supports plugin system for extensible validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from time import perf_counter
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
-from src.data.validation.base import ValidationPlugin
-from src.data.validation.registry import validation_registry
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.stages.dataset_validator.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
     SPLIT_TRAIN,
-    VALIDATION_MAX_SAMPLES_FAST,
     VALIDATION_MODE_ATTR,
     VALIDATION_MODE_FAST,
     VALIDATION_STATUS_FAILED,
@@ -32,13 +26,15 @@ from src.pipeline.stages.dataset_validator.constants import (
     VALIDATIONS_ATTR,
     WARNINGS_KEY,
 )
+from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
+from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
+from src.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
+from src.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from datasets import Dataset, IterableDataset
 
     from src.config.secrets.model import Secrets
     from src.utils.config import PipelineConfig
@@ -110,122 +106,19 @@ class DatasetValidator(PipelineStage):
     ):
         super().__init__(config, StageNames.DATASET_VALIDATOR)
         self._config = config
-        self._default_dataset = config.get_primary_dataset()
         self._callbacks = callbacks or DatasetValidatorEventCallbacks()
         self._secrets = secrets
 
         self._loader_factory = DatasetLoaderFactory(config)
+        self._format_checker = FormatChecker(config)
+        self._plugin_loader = PluginLoader(config, secrets)
+        self._split_loader = DatasetSplitLoader(self._loader_factory)
+        self._plugin_runner = PluginRunner(self._callbacks)
 
-        # Load plugins (if configured)
-        self._plugins = self._load_plugins()
-
-    def _load_plugins(self):
-        """
-        Load validation plugins from config.
-
-        Priority:
-        1. validations (explicit plugin configuration) - preferred
-        2. defaults - use sensible default plugins
-
-        Returns list of ValidationPlugin instances.
-        """
-        dataset_config = self._default_dataset
-
-        # Priority 1: Explicit plugin configuration
-        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
-        if validations is not None and getattr(validations, "plugins", None):
-            return self._load_configured_plugins(validations.plugins)
-
-        # Priority 2: Use defaults
-        logger.info("[VALIDATOR] No validation config, using default plugins")
-        return self._get_default_plugins()
-
-    def _load_configured_plugins(self, plugin_configs: list[Any]) -> list[tuple[str, str, Any, set[str]]]:
-        """
-        Load plugins from validations config.
-
-        Instantiates each plugin and injects DTST_* secrets for plugins
-        that declare ``[secrets] required = [...]`` in their manifest.toml.
-
-        Args:
-            plugin_configs: List of plugin configurations
-
-        Returns:
-            List of (plugin_id, plugin_name, plugin_instance, apply_to_set) tuples
-        """
-        logger.info(f"[VALIDATOR] Loading {len(plugin_configs)} validation plugins")
-
-        from src.community.catalog import catalog
-
-        catalog.ensure_loaded()
-
-        secrets_resolver = self._build_secrets_resolver()
-
-        plugins: list[tuple[str, str, Any, set[str]]] = []
-        for pc in plugin_configs:
-            try:
-                plugin_id = pc.id
-                plugin_name = pc.plugin
-                plugin_params = pc.params or {}
-                plugin_thresholds = pc.thresholds or {}
-                apply_to = set(pc.apply_to or [SPLIT_TRAIN, SPLIT_EVAL])
-
-                # Secret injection is centralised in registry.instantiate(). Plugins
-                # that don't declare ``_required_secrets`` simply ignore the resolver.
-                plugin = validation_registry.instantiate(
-                    plugin_name,
-                    resolver=secrets_resolver,
-                    params=plugin_params,
-                    thresholds=plugin_thresholds,
-                )
-
-                plugins.append((plugin_id, plugin_name, plugin, apply_to))
-                logger.debug(f"[VALIDATOR] Loaded plugin instance: {plugin_id} ({plugin_name})")
-
-            except KeyError as e:
-                available = validation_registry.list_ids()
-                logger.error(f"[VALIDATOR] Failed to load plugin: {e}. Available: {available}")
-                raise
-
-        # Plugins run in user-declared order (config YAML list is order-preserving).
-        # Default plugins come from _get_default_plugins() in a deliberate order.
-        return plugins
-
-    def _build_secrets_resolver(self):
-        """Build a DTST_* SecretsResolver if secrets are available."""
-        if self._secrets is None:
-            return None
-        from src.data.validation.secrets import SecretsResolver
-
-        return SecretsResolver(self._secrets)
-
-    def _get_default_plugins(self) -> list[tuple[str, str, Any, set[str]]]:
-        """
-        Get default validation plugins with sensible defaults.
-
-        Returns:
-            List of ValidationPlugin instances with default configs
-        """
-        from src.community.catalog import catalog
-
-        catalog.ensure_loaded()
-
-        # Sensible defaults for most use cases
-        # We intentionally keep params dynamic; apply_to defaults to [train, eval].
-        from src.utils.config import DatasetValidationPluginConfig
-
-        default_configs = [
-            DatasetValidationPluginConfig(id="min_samples", plugin="min_samples", thresholds={"threshold": 100}),
-            DatasetValidationPluginConfig(id="avg_length", plugin="avg_length", thresholds={"min": 50, "max": 8192}),
-            DatasetValidationPluginConfig(id="empty_ratio", plugin="empty_ratio", thresholds={"max_ratio": 0.05}),
-            DatasetValidationPluginConfig(
-                id="diversity_score",
-                plugin="diversity_score",
-                thresholds={"min_score": 0.3},
-            ),  # Lowered from 0.7 - more realistic
-        ]
-
-        return self._load_configured_plugins(default_configs)
+        # Eagerly resolve the default plugin set so a misconfigured registry
+        # fails fast at construction time (mirrors original behaviour, was
+        # the only purpose of self._plugins which is otherwise unused).
+        self._plugin_loader.load_for_default_dataset()
 
     def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
         """
@@ -270,7 +163,7 @@ class DatasetValidator(PipelineStage):
 
         # Log all datasets scheduled for validation (for complete reporting)
         for dataset_name, (dataset_config, _strategy_phases) in datasets_to_validate.items():
-            dataset_path = self._get_dataset_train_ref(dataset_config)
+            dataset_path = self._split_loader.get_train_ref(dataset_config)
             validation_mode = getattr(
                 getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
             )
@@ -298,7 +191,6 @@ class DatasetValidator(PipelineStage):
                     dataset_name,
                     dataset_config,
                     strategy_phases,
-                    context,
                 ): (
                     dataset_name,
                     dataset_config,
@@ -398,7 +290,6 @@ class DatasetValidator(PipelineStage):
         dataset_name: str,
         dataset_config: Any,
         strategy_phases: list[Any],
-        context: dict[str, Any],
     ) -> Result[dict[str, Any], AppError]:
         """
         Validate a single dataset with its specific configuration.
@@ -407,36 +298,34 @@ class DatasetValidator(PipelineStage):
             dataset_name: Unique dataset identifier
             dataset_config: Dataset configuration
             strategy_phases: Strategy phase configs that consume this dataset
-            context: Pipeline context
 
         Returns:
             Result with validation metrics or DatasetError
         """
         logger.info(f"[VALIDATOR] Starting validation for dataset: {dataset_name}")
 
-        # Load dataset
-        loader = self._loader_factory.create_for_dataset(dataset_config)
-        dataset = self._load_dataset_for_validation(dataset_config, loader)
+        # Load train split
+        dataset = self._split_loader.load_train(dataset_config)
 
         if dataset is None:
             return Err(DatasetError(message=f"Failed to load dataset: {dataset_name}", code="DATASET_LOAD_ERROR"))
 
         # FORMAT CHECK FIRST — fail fast before quality plugins (before GPU)
-        fmt_result = self._check_dataset_format(dataset, dataset_name, strategy_phases)
+        fmt_result = self._format_checker.check(dataset, dataset_name, strategy_phases)
         if fmt_result.is_err():
             return fmt_result
 
         # Get dataset train ref for event tracking
-        dataset_path = self._get_dataset_train_ref(dataset_config)
+        dataset_path = self._split_loader.get_train_ref(dataset_config)
 
         # Fire callback: train dataset loaded
         if self._callbacks.on_dataset_loaded:
-            sample_count = self._get_dataset_size(dataset)
+            sample_count = self._split_loader.get_size(dataset)
             critical_threshold = getattr(getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0)
             self._callbacks.on_dataset_loaded(dataset_name, dataset_path, sample_count, critical_threshold)
 
         # Load plugins for this dataset (each item: (plugin_id, plugin_name, plugin_instance, apply_to_set))
-        plugins = self._load_plugins_for_dataset(dataset_config)
+        plugins = self._plugin_loader.load_for_dataset(dataset_config)
 
         # Run validations: train always
         train_plugins = [
@@ -444,11 +333,10 @@ class DatasetValidator(PipelineStage):
             for (plugin_id, plugin_name, p, apply_to) in plugins
             if SPLIT_TRAIN in apply_to
         ]
-        train_result = self._run_plugin_validations(
+        train_result = self._plugin_runner.run(
             dataset_name,
             dataset_path,
             dataset,
-            context,
             dataset_config,
             train_plugins,
             split_name=SPLIT_TRAIN,  # type: ignore[arg-type]
@@ -456,10 +344,10 @@ class DatasetValidator(PipelineStage):
 
         # Optional eval
         eval_result: Result[dict[str, Any], AppError] | None = None
-        eval_dataset, eval_ref = self._try_load_eval_dataset_for_validation(dataset_config, loader)
+        eval_dataset, eval_ref = self._split_loader.try_load_eval(dataset_config)
         if eval_dataset is not None and eval_ref is not None:
             # FORMAT CHECK for eval dataset too
-            fmt_eval_result = self._check_dataset_format(eval_dataset, dataset_name, strategy_phases)
+            fmt_eval_result = self._format_checker.check(eval_dataset, dataset_name, strategy_phases)
             if fmt_eval_result.is_err():
                 return fmt_eval_result
 
@@ -468,11 +356,10 @@ class DatasetValidator(PipelineStage):
                 for (plugin_id, plugin_name, p, apply_to) in plugins
                 if SPLIT_EVAL in apply_to
             ]
-            eval_result = self._run_plugin_validations(
+            eval_result = self._plugin_runner.run(
                 dataset_name,
                 eval_ref,
                 eval_dataset,
-                context,
                 dataset_config,
                 eval_plugins,
                 split_name=SPLIT_EVAL,  # type: ignore[arg-type]
@@ -507,76 +394,6 @@ class DatasetValidator(PipelineStage):
             return Err(DatasetError(message="; ".join(errors), code="DATASET_VALIDATION_ERROR"))
 
         return Ok(merged)
-
-    def _check_dataset_format(
-        self,
-        dataset: Dataset | IterableDataset,
-        dataset_name: str,
-        strategy_phases: list[Any],
-    ) -> Result[None, AppError]:
-        """
-        Check dataset column format against strategy requirements.
-
-        Delegates the per-strategy ``validate_dataset`` loop to the pure
-        helper in :mod:`src.data.validation.standalone` so the HTTP API
-        (``POST /projects/.../datasets/.../validate``) and this pipeline
-        stage answer from the same code path. Behaviour preserved:
-        early-fail on the first strategy whose format check fails, with
-        the same error code ``DATASET_FORMAT_ERROR``.
-
-        O(1) — only reads column metadata, no dataset iteration.
-        Called BEFORE quality plugins to fail fast before GPU spin-up.
-        """
-        from src.data.validation.standalone import check_dataset_format
-
-        bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
-        if bundle.is_failure():
-            return Err(bundle.unwrap_err())
-
-        for item in bundle.unwrap():
-            if not item.ok:
-                return Err(
-                    DatasetError(
-                        message=(
-                            f"[{dataset_name}] Format check failed for "
-                            f"'{item.strategy_type}': {item.message}"
-                        ),
-                        code="DATASET_FORMAT_ERROR",
-                    )
-                )
-        return Ok(None)
-
-    @staticmethod
-    def _get_column_names(dataset: Dataset | IterableDataset) -> list[str]:
-        """
-        Safely resolve column names for both Dataset and IterableDataset.
-
-        For IterableDataset, column_names may be None if Arrow schema is unavailable.
-        In that case, peek one sample to infer keys.
-        """
-        col_names = dataset.column_names
-        if col_names is not None:
-            return col_names
-        try:
-            sample = next(iter(dataset.take(1)), None)  # type: ignore[union-attr]
-            return list(sample.keys()) if sample else []
-        except Exception:
-            return []
-
-    def _load_plugins_for_dataset(self, dataset_config: Any) -> list:
-        """
-        Load validation plugins specific to a dataset.
-
-        Uses dataset's validations config or falls back to defaults.
-        """
-        validations = getattr(dataset_config, VALIDATIONS_ATTR, None)
-        if validations is not None and getattr(validations, "plugins", None):
-            if validations.plugins:
-                return self._load_configured_plugins(validations.plugins)
-        else:
-            # Use default plugins
-            return self._get_default_plugins()
-        return self._get_default_plugins()
 
     @staticmethod
     def _aggregate_results(
@@ -635,351 +452,3 @@ class DatasetValidator(PipelineStage):
             final_result_data[WARNINGS_KEY] = aggregated_warnings
 
         return Ok(final_result_data)
-
-    @staticmethod
-    def _load_dataset_for_validation(
-        dataset_config,
-        loader,
-        *,
-        split_name: Literal["train", "eval"] = SPLIT_TRAIN,  # type: ignore[assignment]
-    ) -> Dataset | IterableDataset | None:
-        """
-        Load dataset for validation with source type awareness.
-
-        For HuggingFace: uses streaming mode to avoid loading entire dataset.
-        For local files: loads normally via loader.
-
-        Respects validation_mode from dataset_config:
-        - fast: limits to 10K samples
-        - full: loads entire dataset
-        """
-        from datasets import IterableDataset as HFIterableDataset
-
-        source_type = dataset_config.get_source_type()
-        validation_mode = getattr(
-            getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
-        )
-
-        if source_type == SOURCE_TYPE_HUGGINGFACE:
-            # HuggingFace: streaming mode + limit
-            try:
-                from datasets import load_dataset
-
-                # Get token if configured
-                token = None
-                if hasattr(loader, "token"):
-                    token = loader.token
-
-                src = (
-                    dataset_config.source_hf.train_id if split_name == SPLIT_TRAIN else dataset_config.source_hf.eval_id
-                )
-                if not src:
-                    return None
-
-                dataset = load_dataset(
-                    src,
-                    split="train",
-                    streaming=True,  # KEY: Don't download full dataset!
-                    token=token,
-                    trust_remote_code=True,
-                )
-
-                # Check if result is iterable dataset
-                if not isinstance(dataset, HFIterableDataset):
-                    logger.warning(f"Expected IterableDataset, got {type(dataset)}")
-                    return None
-
-                # Apply validation mode
-                if validation_mode == VALIDATION_MODE_FAST:
-                    max_samples = dataset_config.max_samples or VALIDATION_MAX_SAMPLES_FAST
-                    dataset = dataset.take(max_samples)
-                    logger.info(f"Loaded HF dataset (streaming, fast mode): {src}")
-                    logger.info(f"  Validation sample size: {max_samples}")
-                else:
-                    # full mode: no limit (will iterate through entire stream)
-                    logger.info(f"Loaded HF dataset (streaming, full mode): {src}")
-                    logger.warning("  Full validation mode - this may take a while for large datasets")
-
-                return dataset
-
-            except Exception as e:
-                logger.error(f"Failed to load HF dataset: {e}")
-                return None
-
-        else:
-            # Local files: normal load via loader
-            source_local = dataset_config.source_local
-            if source_local is None:
-                return None
-            local_path_str = (
-                source_local.local_paths.train if split_name == SPLIT_TRAIN else source_local.local_paths.eval
-            )
-            if not local_path_str:
-                return None
-
-            local_path = Path(local_path_str)
-            if not local_path.exists():
-                logger.error(f"Dataset not found: {local_path}")
-                return None
-
-            try:
-                dataset = loader.load(str(local_path), split="train")
-                total_samples = len(dataset)
-
-                # Apply validation mode for local datasets
-                if validation_mode == VALIDATION_MODE_FAST and total_samples > VALIDATION_MAX_SAMPLES_FAST:
-                    # Sample first 10K for fast mode
-                    dataset = dataset.select(range(VALIDATION_MAX_SAMPLES_FAST))
-                    logger.info(f"Loaded local dataset (fast mode): {local_path}")
-                    logger.info(f"  Validation sample: {VALIDATION_MAX_SAMPLES_FAST} / {total_samples}")
-                else:
-                    logger.info(f"Loaded local dataset (full mode): {local_path}")
-                    logger.info(f"  Total samples: {total_samples}")
-
-                return dataset
-
-            except Exception as e:
-                logger.error(f"Failed to load local dataset: {e}")
-                return None
-
-    @staticmethod
-    def _get_dataset_size(dataset: Dataset | IterableDataset) -> int:
-        """Get dataset size (works with both types)."""
-        from datasets import IterableDataset
-
-        if isinstance(dataset, IterableDataset):
-            return -1  # Unknown for streaming
-        else:
-            return len(dataset)
-
-    def _run_plugin_validations(
-        self,
-        dataset_name: str,
-        dataset_path: str,
-        dataset: Dataset | IterableDataset,
-        _context: dict[str, Any],
-        dataset_config,
-        plugins: list[tuple[str, str, Any, set[str]]],
-        *,
-        split_name: Literal["train", "eval"],
-    ) -> Result[dict[str, Any], AppError]:
-        """
-        Run plugin-based validations for a single dataset.
-
-        Args:
-            dataset_name: Unique dataset identifier
-            dataset_path: Dataset path/URI for event tracking
-            dataset: Loaded dataset
-            _context: Pipeline context (unused)
-            dataset_config: Dataset configuration
-            plugins: List of validation plugins to run
-            split_name: Dataset split name ("train" or "eval")
-
-        Returns:
-            Result with validation metrics or DatasetError
-        """
-        logger.info(f"[{dataset_name}] Running {len(plugins)} validation plugins on {split_name}")
-
-        all_metrics = {}
-        all_errors = []
-        all_warnings = []
-        all_recommendations = []
-        failed_plugins = []
-        critical_threshold_reached = False
-
-        for plugin_id, plugin_name, plugin, _apply_to in plugins:
-            logger.info(f"  [{dataset_name}] Running plugin: {plugin_id} ({plugin_name}, {split_name})")
-            plugin_started_at = perf_counter()
-
-            # Fire callback: plugin start
-            if self._callbacks.on_plugin_start:
-                self._callbacks.on_plugin_start(
-                    dataset_name,
-                    dataset_path,
-                    plugin_id,
-                    plugin_name,
-                    plugin.get_description(),
-                )
-
-            try:
-                # Run validation
-                result = plugin.validate(dataset)
-
-                # Collect metrics
-                for key, value in result.metrics.items():
-                    all_metrics[f"{split_name}.{plugin_id}.{key}"] = value
-
-                all_warnings.extend(result.warnings)
-
-                if result.passed:
-                    logger.info(
-                        f"    [{dataset_name}] ✓ {plugin_id} ({plugin_name}) passed "
-                        f"({result.execution_time_ms:.1f}ms)"
-                    )
-
-                    # Fire callback: plugin complete
-                    if self._callbacks.on_plugin_complete:
-                        self._callbacks.on_plugin_complete(
-                            dataset_name,
-                            dataset_path,
-                            plugin_id,
-                            plugin.name,
-                            result.params,
-                            result.thresholds,
-                            result.metrics,
-                            result.execution_time_ms,
-                        )
-                else:
-                    logger.error(f"    [{dataset_name}] ✗ {plugin_id} ({plugin_name}) failed")
-                    display_errors = list(result.errors)
-                    display_errors.extend(ValidationPlugin.render_error_groups(result.error_groups))
-                    all_errors.extend(display_errors)
-                    failed_plugins.append(plugin_id)
-
-                    # Get recommendations
-                    recommendations = plugin.get_recommendations(result)
-                    all_recommendations.extend(recommendations)
-
-                    # Fire callback: plugin failed (include config, metrics, and recommendations)
-                    if self._callbacks.on_plugin_failed:
-                        self._callbacks.on_plugin_failed(
-                            dataset_name,
-                            dataset_path,
-                            plugin_id,
-                            plugin.name,
-                            result.params,
-                            result.thresholds,
-                            result.metrics,
-                            result.execution_time_ms,
-                            display_errors,
-                            recommendations,
-                        )
-
-                    # Check critical failure threshold
-                    critical_threshold = getattr(
-                        getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0
-                    )
-                    if 0 < critical_threshold <= len(failed_plugins):
-                        critical_threshold_reached = True
-                        logger.error(
-                            f"    [{dataset_name}] Critical failure threshold reached: "
-                            f"{len(failed_plugins)}/{critical_threshold} plugins failed"
-                        )
-                        logger.error(f"    [{dataset_name}] Stopping validation for this dataset")
-                        break  # Stop validating this dataset
-            # noinspection PyBroadException
-            except Exception as e:
-                crashed_duration_ms = (perf_counter() - plugin_started_at) * 1000.0
-                error_msg = f"Plugin '{plugin_id}' ({plugin_name}) crashed: {e}"
-                logger.error(f"    [{dataset_name}] ✗ {error_msg}")
-                all_errors.append(error_msg)
-                failed_plugins.append(plugin_id)
-
-                # Fire callback for crashes too (consistency with regular failures)
-                if self._callbacks.on_plugin_failed:
-                    self._callbacks.on_plugin_failed(
-                        dataset_name,
-                        dataset_path,
-                        plugin_id,
-                        plugin.name,
-                        dict(plugin.params),
-                        dict(plugin.thresholds),
-                        all_metrics,
-                        crashed_duration_ms,
-                        [error_msg],
-                        [],
-                    )
-
-                # Check critical failure threshold for crashes too
-                critical_threshold = getattr(getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0)
-                if 0 < critical_threshold <= len(failed_plugins):
-                    critical_threshold_reached = True
-                    logger.error(
-                        f"    [{dataset_name}] Critical failure threshold reached: "
-                        f"{len(failed_plugins)}/{critical_threshold} plugins failed"
-                    )
-                    logger.error(f"    [{dataset_name}] Stopping validation for this dataset")
-                    break  # Stop validating this dataset
-
-        # Log results
-        logger.info(f"[{dataset_name}] Dataset Validation Metrics:")
-        for key, value in all_metrics.items():
-            logger.info(f"  - {key}: {value}")
-
-        if all_warnings:
-            logger.warning(f"[{dataset_name}] Validation Warnings:")
-            for warning in all_warnings:
-                logger.warning(f"  - {warning}")
-
-        # If there are errors, fail this dataset's validation
-        if all_errors:
-            logger.error(f"[{dataset_name}] Dataset Validation Failed:")
-            for error in all_errors:
-                logger.error(f"  - {error}")
-
-            # Show recommendations
-            if all_recommendations:
-                logger.info("")
-                logger.info(f"[{dataset_name}] 💡 Recommendations:")
-                for rec in all_recommendations:
-                    logger.info(f"  - {rec}")
-
-            # Fire callback: validation failed
-            if self._callbacks.on_validation_failed:
-                self._callbacks.on_validation_failed(dataset_name, dataset_path, all_errors)
-
-            error_summary = f"{len(all_errors)} validation errors"
-            error_code = (
-                "DATASET_VALIDATION_CRITICAL_FAILURE" if critical_threshold_reached else "DATASET_VALIDATION_ERROR"
-            )
-            return Err(DatasetError(message=error_summary, code=error_code, details={"errors": all_errors}))
-
-        # Success
-        logger.info(f"[{dataset_name}] ✅ All validation checks passed!")
-
-        # Fire callback: validation completed
-        if self._callbacks.on_validation_completed:
-            self._callbacks.on_validation_completed(dataset_name, dataset_path, all_metrics, all_warnings)
-
-        # Return result data
-        result_data = {
-            VALIDATION_STATUS_KEY: VALIDATION_STATUS_PASSED,
-            "warnings": all_warnings,
-            **all_metrics,
-        }
-
-        return Ok(result_data)
-
-    @staticmethod
-    def _get_dataset_train_ref(dataset_config: Any) -> str:
-        """Get a stable train reference string for logging/events."""
-        try:
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE and dataset_config.source_hf is not None:
-                return dataset_config.source_hf.train_id
-            if dataset_config.source_local is not None:
-                return dataset_config.source_local.local_paths.train
-        except Exception:
-            pass
-        return "unknown"
-
-    def _try_load_eval_dataset_for_validation(
-        self,
-        dataset_config: Any,
-        loader: Any,
-    ) -> tuple[Dataset | IterableDataset | None, str | None]:
-        """Load eval dataset if configured; returns (dataset, ref)."""
-        try:
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
-                if dataset_config.source_hf is None or not dataset_config.source_hf.eval_id:
-                    return None, None
-                ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")
-                return ds, dataset_config.source_hf.eval_id
-
-            # local
-            if dataset_config.source_local is None or not dataset_config.source_local.local_paths.eval:
-                return None, None
-            ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")
-            return ds, dataset_config.source_local.local_paths.eval
-
-        except Exception:
-            return None, None
