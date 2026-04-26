@@ -485,10 +485,11 @@ class PluginPacker:
    - `pynvml` (приоритет) → fallback `subprocess nvidia-smi`
    - Триггер на FSM stop вместо kill -9
 - 4.2 `src/runner/health_reporter.py` — periodic GPU/RAM/CPU snapshot → events каждые 30с
-- 4.3 `src/runner/mlflow_relay.py`:
-   - Async forward через `asyncio.Queue` worker
-   - Reuse `src/training/managers/mlflow_manager/resilient_transport.py::MLflowTransportCircuitBreaker`
-   - Buffer offline события до восстановления соединения
+- 4.3 ✅ **DONE** — `src/runner/mlflow_relay.py`:
+   - Async forward через `asyncio.Queue` worker (drop-oldest on overflow, re-queue on failure for monotonic step ordering)
+   - Внутренний `MLflowRelayCircuitBreaker` (failure threshold + exponential cooldown) — мирим контракт с trainer-side `ResilientMLflowTransport`
+   - Wired как opt-in: `RYOTENKAI_RUNNER_MLFLOW_RELAY=1` + `MLFLOW_TRACKING_URI`. По default — disabled (no-op object), внутренний `/internal/events` handler делает `relay.submit(...)` для kind ∈ `MLFLOW_EVENT_KINDS`.
+   - 40 unit-тестов 7-cat (positive / negative / boundary / invariants / dependency-errors / regressions / logic-specific / combinatorial)
 - 4.4 ✅ **DONE** — Self-stop hook: `src/runner/pod_stopper.py` (Python replacement for `runpod_stop_pod.sh`). На FSM transition → `[completed | cancelled | failed]` Supervisor вызывает `terminal_hook` который делегирует в `stop_pod_on_terminal()`. Env-driven: `RUNPOD_AUTO_STOP=false` → `disabled`, missing creds → `skipped`, GraphQL ok → `stopped`, idempotent already-stopped → `already_stopped`, retry exhausted → `failed`. Outcome публикуется как `pod_stop_attempt` event. **Bash скрипт `runpod_stop_pod.sh` удаляется в Phase 6** вместе с остальным cleanup.
 - 4.5 ✅ Unit tests: idle detection across thresholds (12 tests), MLflow circuit breaker integration (deferred), pod_stopper full matrix (19 tests: decision table + env short-circuits + GraphQL paths + retry + network errors + wrapper), supervisor terminal_hook (3 tests).
 
@@ -1131,7 +1132,10 @@ pytest --cov=src --cov-fail-under=83
 
 ---
 
-**STATUS: DONE** — Phases 0–8 merged into the worktree. The migration
+**STATUS: DONE** — Phases 0–8 merged into the worktree, including the
+late additions identified during the post-implementation audit
+(Phase 4.3 MLflowRelay, the `ryotenkai job logs` surface, and the
+`src/tests/integration/runner/` suite from §14). The migration
 cutover finished without legacy fallbacks: `marker_file.py`,
 `watchdog.sh`, `runpod_stop_pod.sh`, and the user-facing `image_name`
 / `docker_image` / `merge_image` / `serve_image` / `merge_before_deploy`
@@ -1146,3 +1150,7 @@ Outstanding follow-ups (none blocking — out of scope for this plan):
 3. The Web UI Live page is intentionally MVP. Charts / WebSocket
    streaming / multi-attempt comparison can layer on top of the
    polling-based proxy without touching the runner.
+4. Trainer-side wiring for the MLflow relay (publish ``mlflow_*`` kinds
+   from ``RunnerEventCallback`` when relay is enabled). The runner
+   side is in place; the trainer-side opt-in is a separate change
+   that's only useful for the air-gapped pod scenario.
