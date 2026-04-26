@@ -23,7 +23,9 @@ Complete reference for all RyotenkAI Pipeline configuration parameters.
 | **Datasets** | `training_paths` **REMOVED** (auto-generated) |
 | **Training** | `output_dir` **REMOVED** (output paths are now hardcoded inside the run workspace) |
 | **Strategies** | `checkpoint_output` **REMOVED** (phase folder is computed automatically) |
-| **Inference** | `merge_image`, `serve_image` → **REQUIRED (single_node only)** |
+| **Inference** | All image fields **REMOVED** (pinned to release in `src/inference/__about__.py::INFERENCE_IMAGES`) |
+| **Training** | `image_name`, `docker_image` **REMOVED** (pinned to release in `src/runner/__about__.py::RUNTIME_IMAGE`) |
+| **Inference LoRA** | `merge_before_deploy` **MOVED** from `inference.common.lora` → `inference.engines.vllm` (engine-specific concern) |
 
 **Migration guide:** `src/docs/feature/release/config_modularization_and_simplification_v7.md`
 
@@ -529,11 +531,15 @@ providers:
 
     training:
       workspace_path: /home/user/workspace
-      docker_image: "ryotenkai/ryotenkai-training-runtime:latest"
       training_start_timeout: 120
       gpu_type: "RTX 4060"
       mock_mode: false
 ```
+
+> **Image pinning (Phase 6.6):** The training docker image is pinned to the release in
+> `src/runner/__about__.py::RUNTIME_IMAGE`. There is no longer a `docker_image:` YAML field —
+> setting it raises a Pydantic `extra_forbidden` error. Override only via env
+> `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` (CI / dev).
 
 > SSH fields (host/user/key_path/alias/timeouts) are documented in `src/config/providers/ssh.py` (`SSHConfig`).
 
@@ -554,7 +560,7 @@ providers:
 | `gpu_type` | string \| null | `null` | GPU type for logs/reports (`null` = auto-detect) |
 | `mock_mode` | bool | `false` | Test mode without real execution |
 | `execution_mode` | string | `"docker"` | How training runs on the host. Only `docker` is supported |
-| `docker_image` | string | - | **REQUIRED.** Training runtime Docker image |
+| ~~`docker_image`~~ | — | — | **REMOVED in Phase 6.6.** Image is pinned to the release in `src/runner/__about__.py::RUNTIME_IMAGE`. |
 | `docker_shm_size` | string | `"16g"` | Container `--shm-size` (increase for heavy dataloaders/large batches) |
 | `docker_container_name_prefix` | string | `"ryotenkai_training"` | Container name prefix (must start with `ryotenkai_training` so TrainingMonitor can find it) |
 
@@ -578,12 +584,16 @@ providers:
     training:
       gpu_type: "NVIDIA A40"            # REQUIRED
       cloud_type: "COMMUNITY"           # COMMUNITY is cheaper than Secure Cloud
-      image_name: "ryotenkai/ryotenkai-training-runtime:latest"
       container_disk_gb: 50
       volume_disk_gb: 20
       ports: "8888/http,22/tcp"
       template_id: null
 ```
+
+> **Image pinning (Phase 6.6):** The pod docker image is pinned to the release in
+> `src/runner/__about__.py::RUNTIME_IMAGE` (same image is used for both training-pod and runner —
+> they ship together). There is no longer an `image_name:` YAML field. Override only via env
+> `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` (CI / dev).
 
 **Important:**
 - Workspace inside the pod is **hardcoded** to `/workspace` (not configurable).
@@ -613,7 +623,7 @@ providers:
 |----------|-----|--------------|----------|
 | `gpu_type` | string | - | **REQUIRED.** GPU type (RunPod string, e.g. `"NVIDIA A40"`, `"NVIDIA RTX A4000"`) |
 | `cloud_type` | string | `"ALL"` | Cloud type: `ALL`, `SECURE`, `COMMUNITY`. `COMMUNITY` is cheaper; `SECURE` is more reliable |
-| `image_name` | string | - | **REQUIRED.** Docker image for training runtime |
+| ~~`image_name`~~ | — | — | **REMOVED in Phase 6.6.** Image is pinned to the release in `src/runner/__about__.py::RUNTIME_IMAGE`. |
 | `container_disk_gb` | int | `100` | Container disk size (GB) |
 | `volume_disk_gb` | int | `20` | Persistent volume size (GB, mounted at `/workspace`) |
 | `ports` | string | `"8888/http,22/tcp"` | Exposed ports (`port/protocol`) |
@@ -634,7 +644,7 @@ providers:
         size_gb: 50
       pod:
         name_prefix: "ryotenkai-vllm-pod"
-        image_name: "ryotenkai/inference-vllm:latest"
+        # Image is pinned in src/inference/__about__.py::INFERENCE_IMAGES — no YAML field.
         gpu_type_ids:
           - "NVIDIA RTX 2000 Ada Generation"
           - "NVIDIA RTX 4000 Ada Generation"
@@ -656,7 +666,7 @@ providers:
 | `volume.data_center_id` | string \| null | `null` | RunPod DC id (e.g. `EU-RO-1`). Required if `volume.id` is not set |
 | `volume.size_gb` | int | `50` | Volume size (GB, on auto-create) |
 | `pod.name_prefix` | string | `"ryotenkai-vllm-pod"` | Pod name prefix |
-| `pod.image_name` | string | - | **REQUIRED.** Docker image inference runtime |
+| ~~`pod.image_name`~~ | — | — | **REMOVED in Phase 6.6.** Image is auto-resolved from `inference.engine` via `src/inference/__about__.py::INFERENCE_IMAGES`. |
 | `pod.gpu_type_ids` | list[string] | 7 types | Preferred GPU list (first available) |
 | `pod.gpu_count` | int | `1` | Number of GPUs |
 | `pod.container_disk_gb` | int | `50` | Container disk size (GB) |
@@ -668,7 +678,14 @@ providers:
 
 ## 5. Inference - Inference endpoint deployment
 
-> **v6.0 CHANGE:** `merge_image` and `serve_image` were added for explicit version tracking; **required only for** `inference.provider=single_node` (two-container Docker strategy).
+> **Phase 6.6 CHANGE:** All inference image fields (`merge_image`, `serve_image`, `pod.image_name`)
+> were **removed** — images are now pinned per-engine in
+> `src/inference/__about__.py::INFERENCE_IMAGES` and auto-resolved from `inference.engine`.
+> User picks only the engine name; the system selects the matching image.
+>
+> `inference.common.lora.merge_before_deploy` was **moved** to
+> `inference.engines.vllm.merge_before_deploy` — whether to merge a LoRA adapter is engine-specific
+> (vLLM supports both merged and on-the-fly LoRA; future TGI/Triton may force one or the other).
 
 ```yaml
 providers:
@@ -710,19 +727,18 @@ inference:
   
   engines:
     vllm:
-      # Docker images are used only when inference.provider=single_node (two-container Docker strategy)
-      # merge_image: ryotenkai/inference-vllm:v1.0
-      # serve_image: ryotenkai/inference-vllm:v1.0
-      
+      # Image is pinned in src/inference/__about__.py::INFERENCE_IMAGES — no YAML field.
+      merge_before_deploy: false   # ← moved from common.lora in Phase 6.6
+
       # Optional: Technical params (defaults applied)
       # tensor_parallel_size: 1
       # max_model_len: 4096
       # gpu_memory_utilization: 0.90
-  
+
   common:
     model_source: auto
     lora:
-      merge_before_deploy: false
+      adapter_path: auto           # ← engine-agnostic LoRA settings only
 ```
 
 ### Inference Providers (`inference.provider`)
@@ -733,10 +749,11 @@ inference:
 
 ### Inference Parameters:
 
-| Parameter | Type | v6.0 Status | Description |
+| Parameter | Type | Status | Description |
 |----------|-----|-------------|----------|
-| `engines.vllm.merge_image` | string | Required (single_node) | Docker image for merge job (two-container strategy) |
-| `engines.vllm.serve_image` | string | Required (single_node) | Docker image for vLLM server (two-container strategy) |
+| ~~`engines.vllm.merge_image`~~ | — | **REMOVED in Phase 6.6** | Image pinned in `INFERENCE_IMAGES["vllm"]`. |
+| ~~`engines.vllm.serve_image`~~ | — | **REMOVED in Phase 6.6** | Image pinned in `INFERENCE_IMAGES["vllm"]`. |
+| `engines.vllm.merge_before_deploy` | bool | Default `True` | Merge LoRA into base before serving (moved from `common.lora` in Phase 6.6). |
 | `tensor_parallel_size` | int | Optional (`1`) | Tensor parallelism |
 | `max_model_len` | int | Optional (`4096`) | Max sequence length |
 | `gpu_memory_utilization` | float | Optional (`0.90`) | GPU memory (0.0-1.0) |
@@ -1024,21 +1041,32 @@ providers:
       on_interrupt: true
     training:
       workspace_path: /home/user/workspace
-      docker_image: "ryotenkai/ryotenkai-training-runtime:latest"
+      # docker_image is pinned in src/runner/__about__.py::RUNTIME_IMAGE.
 
 inference:
   enabled: false
   engines:
     vllm:
-      # merge_image/serve_image required only for inference.provider=single_node when inference.enabled=true
-      # merge_image: ryotenkai/inference-vllm:v1.0
-      # serve_image: ryotenkai/inference-vllm:v1.0
+      # Image is pinned in src/inference/__about__.py::INFERENCE_IMAGES — no YAML field.
+      # merge_before_deploy moved here from common.lora in Phase 6.6.
+      merge_before_deploy: true
 ```
 
 ---
 
-**Document version:** 8.1
-**Updated:** April 6, 2026
+**Document version:** 8.2
+**Updated:** April 26, 2026
+
+### Changes in v8.2 (Phase 6.6 — image pinning):
+
+- **`providers.runpod.training.image_name`** → **REMOVED.** Image is pinned to the release in `src/runner/__about__.py::RUNTIME_IMAGE`. Override via env `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` for CI / dev only.
+- **`providers.single_node.training.docker_image`** → **REMOVED.** Same `RUNTIME_IMAGE` constant.
+- **`providers.runpod.inference.pod.image_name`** → **REMOVED.** Image auto-resolved from `inference.engine` via `src/inference/__about__.py::INFERENCE_IMAGES`. Override via `RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_<ENGINE>`.
+- **`inference.engines.vllm.merge_image`** / **`serve_image`** → **REMOVED.** Same `INFERENCE_IMAGES["vllm"]` constant. The legacy two-container strategy is gone — one unified image (`docker/inference/`) covers both LoRA merge and vLLM serve.
+- **`inference.common.lora.merge_before_deploy`** → **MOVED** to **`inference.engines.vllm.merge_before_deploy`** (engine-specific concern). `inference.common.lora` now contains only `adapter_path` (engine-agnostic).
+- **`validate_inference_images_required_for_provider`** validator → **DELETED** (no fields left to validate).
+
+> Per project's NO BACKWARDS COMPATIBILITY policy, old YAMLs with these fields will fail Pydantic validation (`extra_forbidden`). Remove the lines manually — single cutover, no aliases or deprecation warnings.
 
 ### Changes in v8.1:
 
@@ -1088,4 +1116,4 @@ inference:
 - AdaLoRA: 6 fields → **REQUIRED**
 - Hyperparameters: Global (5 core REQUIRED) + Phase (all optional)
 - `training_paths` **REMOVED** (auto-generated)
-- `merge_image`, `serve_image` → **REQUIRED** (`inference.provider=single_node` only)
+- `merge_image`, `serve_image` → introduced as REQUIRED for single_node (`inference.provider=single_node`). **Both fields removed in Phase 6.6** — see v8.2 changelog above.
