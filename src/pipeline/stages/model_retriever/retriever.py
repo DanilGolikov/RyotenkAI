@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.constants import MR_SSH_PORT_DEFAULT
+from src.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
 from src.utils.logger import logger

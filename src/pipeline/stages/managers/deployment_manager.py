@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from src.constants import PROVIDER_SINGLE_NODE
 from src.config.datasets.constants import SOURCE_TYPE_LOCAL
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
-from src.pipeline.constants import (
+from src.pipeline.stages.constants import PipelineContextKeys
+from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
     DEPLOYMENT_CONTAINER_NAME_MAX_LEN,
     DEPLOYMENT_DOCKER_PULL_TIMEOUT,
@@ -40,7 +41,6 @@ from src.pipeline.constants import (
     DEPLOYMENT_TRAINING_START_TIMEOUT,
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
-from src.pipeline.stages.constants import PipelineContextKeys
 from src.providers.training.interfaces import TrainingScriptHooks
 from src.utils.docker import docker_is_container_running, ensure_docker_image
 from src.utils.logger import logger

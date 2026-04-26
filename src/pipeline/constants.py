@@ -1,28 +1,33 @@
-"""Constants for pipeline (orchestrator, stages)."""
+"""Cross-cutting constants for the pipeline package.
 
-from src.constants import (
-    CONSOLE_LINE_WIDTH,
-    ERROR_MESSAGE_TRUNCATE,
-    HF_UPLOAD_TIMEOUT_S as MR_UPLOAD_TIMEOUT,
-    LOG_DOWNLOAD_INTERVAL_DEFAULT,
-    SSH_CMD_TIMEOUT,
-    SSH_PORT_DEFAULT,
-    TRAINING_START_TIMEOUT_DEFAULT,
-)
+Stage- and manager-specific values live next to their consumers (e.g.
+``stages/managers/deployment_constants.py``,
+``stages/model_retriever/constants.py``,
+``stages/dataset_validator/constants.py``) so that touching one stage's
+limits doesn't generate a diff that reads as "constants got bumped"
+across unrelated subsystems.
 
-# Console output
+Anything here must satisfy: read by ≥ 2 different stages OR by the
+orchestrator/MLflow integration directly.
+"""
+
+from src.constants import CONSOLE_LINE_WIDTH
+
+# Console / report rendering
 SEPARATOR_CHAR = "="
 SEPARATOR_LINE_WIDTH = CONSOLE_LINE_WIDTH
 SUMMARY_LINE_WIDTH = 70
 
-# MLflow categories / sources
+# MLflow categories / source labels — orchestrator + every category-tagged
+# event consumer reads these.
 MLFLOW_CATEGORY_PIPELINE = "pipeline"
 MLFLOW_CATEGORY_VALIDATION = "validation"
 MLFLOW_CATEGORY_INFERENCE = "inference"
 MLFLOW_CATEGORY_EVALUATION = "evaluation"
 MLFLOW_SOURCE_ORCHESTRATOR = "PipelineOrchestrator"
 
-# Context keys
+# Pipeline-context dict keys (read by orchestrator, summary reporter,
+# context propagator).
 CTX_PROVIDER_NAME_UNKNOWN = "unknown"
 CTX_PROVIDER_TYPE_UNKNOWN = "unknown"
 CTX_RUNTIME_SECONDS = "runtime_seconds"
@@ -35,77 +40,3 @@ SECONDS_PER_HOUR = 3600
 
 # Exit codes
 EXIT_CODE_SIGINT = 130  # 128 + 2 (SIGINT)
-
-# Dataset validator
-VALIDATION_MODE_FAST = "fast"
-VALIDATION_MODE_FULL = "full"
-VALIDATION_STATUS_SKIPPED = "skipped"
-VALIDATION_STATUS_FAILED = "failed"
-VALIDATION_STATUS_PASSED = "passed"
-VALIDATION_MAX_SAMPLES_FAST = 10000
-VALIDATIONS_ATTR = "validations"
-VALIDATION_MODE_ATTR = "mode"
-CRITICAL_FAILURES_ATTR = "critical_failures"
-VALIDATION_STATUS_KEY = "validation_status"
-WARNINGS_KEY = "warnings"
-SPLIT_TRAIN = "train"
-SPLIT_EVAL = "eval"
-
-MOCK_MODE_KEY = "mock_mode"
-
-# Deployment manager / timeouts
-DEPLOYMENT_RSYNC_TIMEOUT = 120
-DEPLOYMENT_SSH_CMD_TIMEOUT = SSH_CMD_TIMEOUT
-DEPLOYMENT_TAR_TIMEOUT = 60
-DEPLOYMENT_VERIFY_TIMEOUT = 10
-DEPLOYMENT_DOCKER_PULL_TIMEOUT = 1200
-DEPLOYMENT_PYTHON_VERIFY_TIMEOUT = 60
-DEPLOYMENT_DOCKER_VERIFY_TIMEOUT = 120
-DEPLOYMENT_SCRIPT_CHMOD_TIMEOUT = SSH_CMD_TIMEOUT
-DEPLOYMENT_LAUNCH_TIMEOUT = SSH_CMD_TIMEOUT
-DEPLOYMENT_ERROR_TRUNCATE = ERROR_MESSAGE_TRUNCATE
-DEPLOYMENT_LOG_TRUNCATE = 500
-DEPLOYMENT_STDERR_TRUNCATE = 300
-DEPLOYMENT_STDOUT_LINES = 20
-DEPLOYMENT_CONTAINER_NAME_MAX_LEN = 80
-DEPLOYMENT_TRAINING_START_TIMEOUT = TRAINING_START_TIMEOUT_DEFAULT
-DEPLOYMENT_PS_AUX_LINES = 11
-DEPLOYMENT_MARKER_EXISTS = "EXISTS"
-DEPLOYMENT_CONFIG_PATH = "config/pipeline_config.yaml"
-DEPLOYMENT_MODE_KEY = "mode"
-DEPLOYMENT_DOCKER_VALUE = "docker"
-
-# GPU deployer
-GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
-
-# Model retriever
-HTTP_STATUS_NOT_FOUND = 404
-HTTP_STATUS_UNAUTHORIZED = 401
-HF_CACHE_TTL = 1800
-MR_SSH_PORT_DEFAULT = SSH_PORT_DEFAULT
-MR_SHA12_LENGTH = 12
-MR_SSH_CMD_TIMEOUT = SSH_CMD_TIMEOUT
-# MR_UPLOAD_TIMEOUT is imported from src.constants as HF_UPLOAD_TIMEOUT_S alias (see top of file)
-
-# Model evaluator
-EVAL_ADAPTER_CONFIG = "adapter_config.json"
-EVAL_INPUT_IDS_KEY = "input_ids"
-EVAL_INPUT_IDS_SEQ_DIM = 1  # shape[1] = sequence length
-EVAL_MAX_LENGTH = 2048
-EVAL_MAX_NEW_TOKENS = 256
-EVAL_DEFAULT_TEMPERATURE = 0.7
-EVAL_DEFAULT_TOP_P = 0.9
-EVAL_PROMPT_LOG_TRUNCATE = 50
-
-# Log manager
-ENCODING_UTF8 = "utf-8"
-LOG_REMOTE_NOT_FOUND_MSG = "⚠️ Remote training.log not found yet"
-
-# Training monitor
-TRAINING_MONITOR_SSH_PORT = SSH_PORT_DEFAULT
-TRAINING_MONITOR_START_TIMEOUT_DEFAULT = 30
-TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL = LOG_DOWNLOAD_INTERVAL_DEFAULT
-TRAINING_MONITOR_LOG_STATUS_INTERVAL = 15
-TRAINING_MONITOR_LINE_WIDTH = CONSOLE_LINE_WIDTH
-TRAINING_MONITOR_MOCK_LOSS_INIT = 2.5
-TRAINING_MONITOR_MOCK_LOSS_DECAY = 0.15

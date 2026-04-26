@@ -16,7 +16,9 @@ from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
 from src.data.validation.registry import validation_registry
-from src.pipeline.constants import (
+from src.pipeline.stages.base import PipelineStage
+from src.pipeline.stages.constants import StageNames
+from src.pipeline.stages.dataset_validator.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
     SPLIT_TRAIN,
@@ -30,8 +32,6 @@ from src.pipeline.constants import (
     VALIDATIONS_ATTR,
     WARNINGS_KEY,
 )
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import StageNames
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
 

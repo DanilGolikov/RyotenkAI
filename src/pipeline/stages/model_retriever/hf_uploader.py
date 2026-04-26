@@ -23,7 +23,7 @@ from huggingface_hub import HfApi
 
 from src.constants import LORA_CHECKPOINT_PATTERNS
 from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.pipeline.constants import (
+from src.pipeline.stages.model_retriever.constants import (
     HTTP_STATUS_NOT_FOUND,
     HTTP_STATUS_UNAUTHORIZED,
     MR_SHA12_LENGTH,

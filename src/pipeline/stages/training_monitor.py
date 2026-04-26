@@ -18,15 +18,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.constants import (
-    TRAINING_MONITOR_LINE_WIDTH,
-    TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL,
-    TRAINING_MONITOR_LOG_STATUS_INTERVAL,
-    TRAINING_MONITOR_MOCK_LOSS_DECAY,
-    TRAINING_MONITOR_MOCK_LOSS_INIT,
-    TRAINING_MONITOR_SSH_PORT,
-    TRAINING_MONITOR_START_TIMEOUT_DEFAULT,
-)
+from src.constants import CONSOLE_LINE_WIDTH, LOG_DOWNLOAD_INTERVAL_DEFAULT, SSH_PORT_DEFAULT
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.stages.managers import LogManager
@@ -34,6 +26,17 @@ from src.utils.docker import docker_is_container_running
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, Result, TrainingError
 from src.utils.ssh_client import SSHClient
+
+# TrainingMonitor-local constants — moved out of pipeline/constants.py
+# (PR-B): nobody else reads these and pulling them inline keeps the
+# top-level constants module to genuinely cross-cutting values.
+TRAINING_MONITOR_SSH_PORT = SSH_PORT_DEFAULT
+TRAINING_MONITOR_START_TIMEOUT_DEFAULT = 30
+TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL = LOG_DOWNLOAD_INTERVAL_DEFAULT
+TRAINING_MONITOR_LOG_STATUS_INTERVAL = 15
+TRAINING_MONITOR_LINE_WIDTH = CONSOLE_LINE_WIDTH
+TRAINING_MONITOR_MOCK_LOSS_INIT = 2.5
+TRAINING_MONITOR_MOCK_LOSS_DECAY = 0.15
 
 _TRAINING_FAILED_MARKER = "TRAINING_FAILED"
 

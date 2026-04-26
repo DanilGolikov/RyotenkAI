@@ -12,11 +12,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from src.constants import PROVIDER_RUNPOD
-from src.pipeline.constants import GPU_DEPLOYER_IMAGE_SHA_TRUNCATE
 from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.pipeline.stages.managers import LogManager, TrainingDeploymentManager
+
+# Truncation length for the docker image SHA shown in pipeline logs.
+GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
 from src.providers.training.factory import GPUProviderFactory
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, ProviderError, Result

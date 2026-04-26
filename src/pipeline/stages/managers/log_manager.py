@@ -18,13 +18,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.pipeline.constants import ENCODING_UTF8, LOG_REMOTE_NOT_FOUND_MSG
 from src.utils.logger import get_logger, get_run_log_layout
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from src.utils.ssh_client import SSHClient
+
+# LogManager-local constants (PR-B): not shared with other stages.
+ENCODING_UTF8 = "utf-8"
+LOG_REMOTE_NOT_FOUND_MSG = "⚠️ Remote training.log not found yet"
 
 logger = get_logger(__name__)
 
