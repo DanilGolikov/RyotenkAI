@@ -8,7 +8,7 @@ Now supports plugin system for extensible validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.pipeline.stages.base import PipelineStage
@@ -35,8 +35,6 @@ from src.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from datasets import Dataset, IterableDataset
 
     from src.config.secrets.model import Secrets
     from src.utils.config import PipelineConfig
@@ -193,7 +191,6 @@ class DatasetValidator(PipelineStage):
                     dataset_name,
                     dataset_config,
                     strategy_phases,
-                    context,
                 ): (
                     dataset_name,
                     dataset_config,
@@ -293,7 +290,6 @@ class DatasetValidator(PipelineStage):
         dataset_name: str,
         dataset_config: Any,
         strategy_phases: list[Any],
-        context: dict[str, Any],
     ) -> Result[dict[str, Any], AppError]:
         """
         Validate a single dataset with its specific configuration.
@@ -302,7 +298,6 @@ class DatasetValidator(PipelineStage):
             dataset_name: Unique dataset identifier
             dataset_config: Dataset configuration
             strategy_phases: Strategy phase configs that consume this dataset
-            context: Pipeline context
 
         Returns:
             Result with validation metrics or DatasetError
@@ -400,19 +395,6 @@ class DatasetValidator(PipelineStage):
 
         return Ok(merged)
 
-    def _check_dataset_format(
-        self,
-        dataset: Dataset | IterableDataset,
-        dataset_name: str,
-        strategy_phases: list[Any],
-    ) -> Result[None, AppError]:
-        """Proxy to :meth:`FormatChecker.check` — kept until callers migrate."""
-        return self._format_checker.check(dataset, dataset_name, strategy_phases)
-
-    def _load_plugins_for_dataset(self, dataset_config: Any) -> list:
-        """Proxy to :meth:`PluginLoader.load_for_dataset` — kept until callers migrate."""
-        return self._plugin_loader.load_for_dataset(dataset_config)
-
     @staticmethod
     def _aggregate_results(
         all_results: dict[str, Result[dict[str, Any], AppError]],
@@ -470,28 +452,3 @@ class DatasetValidator(PipelineStage):
             final_result_data[WARNINGS_KEY] = aggregated_warnings
 
         return Ok(final_result_data)
-
-    def _run_plugin_validations(
-        self,
-        dataset_name: str,
-        dataset_path: str,
-        dataset: Dataset | IterableDataset,
-        _context: dict[str, Any],
-        dataset_config,
-        plugins: list[tuple[str, str, Any, set[str]]],
-        *,
-        split_name: Literal["train", "eval"],
-    ) -> Result[dict[str, Any], AppError]:
-        """Proxy to :meth:`PluginRunner.run` — kept until callers migrate."""
-        return self._plugin_runner.run(
-            dataset_name,
-            dataset_path,
-            dataset,
-            dataset_config,
-            plugins,
-            split_name=split_name,
-        )
-
-    def _get_dataset_train_ref(self, dataset_config: Any) -> str:
-        """Proxy to :meth:`DatasetSplitLoader.get_train_ref` — kept until callers migrate."""
-        return self._split_loader.get_train_ref(dataset_config)

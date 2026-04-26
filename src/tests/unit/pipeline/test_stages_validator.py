@@ -302,7 +302,7 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr(
             v._plugin_runner, "run", lambda *a, **k: Ok({"m": 1}) if k.get("split_name") == "train" else Err("bad")
         )
-        res = v._validate_single_dataset("d", dataset_config, [], context={})
+        res = v._validate_single_dataset("d", dataset_config, [])
         assert res.is_failure()
         assert "eval:" in str(res.unwrap_err())
 
