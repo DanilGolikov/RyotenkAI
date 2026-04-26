@@ -128,8 +128,8 @@ datasets:
     ssh_client.exec_command.return_value = (True, "", "")
 
     with (
-        patch.object(deployment, "_upload_files_batch", return_value=Ok(None)) as mock_batch,
-        patch.object(deployment, "_sync_source_code", return_value=Ok(None)),
+        patch.object(deployment._file_uploader, "_upload_files_batch", return_value=Ok(None)) as mock_batch,
+        patch.object(deployment._code_syncer, "sync", return_value=Ok(None)),
     ):
         res = deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
 
