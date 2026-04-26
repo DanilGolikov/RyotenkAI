@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from src.api.config import ApiSettings
 from src.api.dependencies import get_settings, resolve_run_dir
 from src.api.services.log_service import resolve_log_path
-from src.pipeline.live_logs import LiveLogTail
+from src.api.ws.live_tail import LiveLogTail
 from src.pipeline.run_queries import effective_pipeline_status
 from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
