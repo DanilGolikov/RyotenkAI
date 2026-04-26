@@ -43,32 +43,40 @@ def _submit(runner_client, job_id: str = "j-1") -> None:  # type: ignore[no-unty
 class TestReplay:
     def test_since_zero_yields_buffered_events(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         _submit(runner_client)
-        # submit_and_spawn publishes two events: ``job_submitted`` (0)
-        # and ``trainer_spawned`` (1). The subscriber should see both.
+        # POST /jobs publishes three events in this order:
+        # offset 0: plugins_unpacked  — emitted BEFORE the supervisor
+        #                                spawn so plugins are on disk
+        #                                before the trainer starts
+        # offset 1: job_submitted     — emitted by supervisor.submit
+        # offset 2: trainer_spawned   — emitted after FSM → running
         with runner_client.websocket_connect(
             f"{API_V1_PREFIX}/jobs/j-1/events?since=0",
         ) as ws:
             ev0 = ws.receive_json()
             assert ev0["offset"] == 0
-            assert ev0["kind"] == "job_submitted"
+            assert ev0["kind"] == "plugins_unpacked"
             ev1 = ws.receive_json()
             assert ev1["offset"] == 1
-            assert ev1["kind"] == "trainer_spawned"
+            assert ev1["kind"] == "job_submitted"
+            ev2 = ws.receive_json()
+            assert ev2["offset"] == 2
+            assert ev2["kind"] == "trainer_spawned"
             ws.close()
 
     def test_since_skips_earlier(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         _submit(runner_client)
-        # submit_and_spawn already populated offsets 0 and 1.
-        # Add two more then subscribe from 3.
+        # submit_and_spawn populated offsets 0..2 (job_submitted,
+        # plugins_unpacked, trainer_spawned). Add two more then
+        # subscribe from 4.
         bus = runner_client.app.state.bus
         bus.publish("a", {"i": 1})
         bus.publish("b", {"i": 2})
 
         with runner_client.websocket_connect(
-            f"{API_V1_PREFIX}/jobs/j-1/events?since=3",
+            f"{API_V1_PREFIX}/jobs/j-1/events?since=4",
         ) as ws:
             event = ws.receive_json()
-            assert event["offset"] == 3
+            assert event["offset"] == 4
             assert event["kind"] == "b"
             ws.close()
 
@@ -82,7 +90,7 @@ class TestLive:
     def test_event_published_after_connect(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         _submit(runner_client)
         with runner_client.websocket_connect(
-            f"{API_V1_PREFIX}/jobs/j-1/events?since=2",  # skip the two boot events
+            f"{API_V1_PREFIX}/jobs/j-1/events?since=3",  # skip job_submitted, plugins_unpacked, trainer_spawned
         ) as ws:
             # Now publish a live event — the WS subscriber wakes up.
             runner_client.app.state.bus.publish("step", {"loss": 0.5})
@@ -140,7 +148,7 @@ class TestStateIntegration:
         _submit(runner_client)
 
         with runner_client.websocket_connect(
-            f"{API_V1_PREFIX}/jobs/j-1/events?since=2",  # skip boot events
+            f"{API_V1_PREFIX}/jobs/j-1/events?since=3",  # skip 3 boot events
         ) as ws:
             r = runner_client.post(f"{JOBS}/j-1/stop")
             assert r.status_code == 202

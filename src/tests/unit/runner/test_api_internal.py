@@ -42,10 +42,10 @@ class TestPushEvent:
         body = r.json()
         assert body["kind"] == "step"
         assert body["payload"] == {"loss": 0.42, "step": 100}
-        # The bus has two prior events from submit_and_spawn:
-        # job_submitted (offset 0) + trainer_spawned (offset 1).
-        # Our trainer-pushed event is offset 2.
-        assert body["offset"] == 2
+        # The bus has three prior events from submit_and_spawn:
+        # job_submitted (0), plugins_unpacked (1), trainer_spawned (2).
+        # Our trainer-pushed event is offset 3.
+        assert body["offset"] == 3
 
     def test_no_active_job_returns_409(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         # No prior submit → no FSM snapshot.

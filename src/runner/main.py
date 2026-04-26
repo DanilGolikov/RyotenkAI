@@ -37,6 +37,7 @@ from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import EventBus
+from src.runner.plugin_unpacker import PluginUnpacker
 from src.runner.pod_stopper import PodStopper, stop_pod_on_terminal
 from src.runner.state import JobLifecycleFSM
 from src.runner.supervisor import Supervisor, TerminalHook
@@ -109,9 +110,14 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
            save can write through, *then* close the bus so the final
            ``trainer_exited`` event reaches subscribers.
         """
-        fsm = JobLifecycleFSM(workspace_dir=_resolve_workspace())
+        workspace = _resolve_workspace()
+        fsm = JobLifecycleFSM(workspace_dir=workspace)
         fsm.restore_or_init()
         bus = EventBus()
+
+        # The plugin unpacker is stateless beyond its workspace path,
+        # so we build it once at boot and reuse across requests.
+        plugin_unpacker = PluginUnpacker(workspace_dir=workspace)
 
         pod_stopper = PodStopper()
 
@@ -127,6 +133,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         app.state.fsm = fsm
         app.state.bus = bus
         app.state.pod_stopper = pod_stopper
+        app.state.plugin_unpacker = plugin_unpacker
         app.state.supervisor = supervisor
 
         try:

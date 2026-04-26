@@ -107,8 +107,12 @@ class TestGet:
         # MockSupervisor advances FSM to ``running`` synchronously.
         assert body["state"] == "running"
         assert body["sequence"] == 1  # 0 = preparing, 1 = running
-        # Two events on the bus: job_submitted, trainer_spawned.
-        assert body["last_event_offset"] == 1
+        # Three events on the bus after submit:
+        # offset 0: job_submitted
+        # offset 1: plugins_unpacked  (Phase 6.2 — empty payload still
+        #                              publishes a structured event)
+        # offset 2: trainer_spawned
+        assert body["last_event_offset"] == 2
 
     def test_404_for_unknown_id(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
@@ -161,11 +165,45 @@ class TestStop:
 
 
 class TestPluginsPayload:
-    def test_payload_is_consumed_even_if_unused(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        # Phase 1 reads + discards the body. Asserting status 202
-        # with non-empty bytes confirms the consume path doesn't
-        # raise on real ZIP magic bytes.
-        zip_magic = b"PK\x03\x04" + b"\x00" * 100
-        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}, payload=zip_magic)
+    def test_empty_payload_accepted(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        # SFT-only jobs ship no reward plugins. The Mac client sends
+        # ``b""`` and the runner short-circuits to a no-op unpack.
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         r = runner_client.post(JOBS, **kw)
         assert r.status_code == 202
+
+    def test_valid_zip_extracted(self, runner_client, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Build a minimal valid ZIP with one reward plugin and verify
+        # the unpacker landed it on disk + emitted the event.
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("reward/plugin_a/manifest.toml", b"[plugin]\nid='a'\n")
+            zf.writestr("reward/plugin_a/plugin.py", b"# code")
+
+        kw = _multipart(
+            {"job_id": "j-1", "command": ["python", "-c", "pass"]},
+            payload=buf.getvalue(),
+        )
+        r = runner_client.post(JOBS, **kw)
+        assert r.status_code == 202, r.text
+        # Plugin landed in the runner's workspace community/.
+        unpacker = runner_client.app.state.plugin_unpacker
+        plugin_path = (
+            unpacker.community_root / "reward" / "plugin_a" / "manifest.toml"
+        )
+        assert plugin_path.exists()
+
+    def test_invalid_zip_returns_422(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        # Garbage bytes that aren't a valid ZIP must be rejected before
+        # the trainer is spawned — no half-running jobs against a
+        # missing community/ folder.
+        kw = _multipart(
+            {"job_id": "j-1", "command": ["python", "-c", "pass"]},
+            payload=b"not a zip",
+        )
+        r = runner_client.post(JOBS, **kw)
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "plugin_unpack_failed"

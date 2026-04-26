@@ -16,10 +16,16 @@ from fastapi import Request
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
+    from src.runner.plugin_unpacker import PluginUnpacker
     from src.runner.state import JobLifecycleFSM
     from src.runner.supervisor import Supervisor
 
-__all__ = ["get_bus", "get_fsm", "get_supervisor"]
+__all__ = [
+    "get_bus",
+    "get_fsm",
+    "get_plugin_unpacker",
+    "get_supervisor",
+]
 
 
 def get_fsm(request: Request) -> "JobLifecycleFSM":
@@ -35,3 +41,8 @@ def get_bus(request: Request) -> "EventBus":
 def get_supervisor(request: Request) -> "Supervisor":
     """Return the Supervisor bound to the live FastAPI app."""
     return request.app.state.supervisor  # type: ignore[no-any-return]
+
+
+def get_plugin_unpacker(request: Request) -> "PluginUnpacker":
+    """Return the plugin unpacker bound to the live FastAPI app."""
+    return request.app.state.plugin_unpacker  # type: ignore[no-any-return]

@@ -32,13 +32,19 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
-from src.runner.api.deps import get_bus, get_fsm, get_supervisor
+from src.runner.api.deps import (
+    get_bus,
+    get_fsm,
+    get_plugin_unpacker,
+    get_supervisor,
+)
 from src.runner.api.schemas import (
     JobSnapshotResponse,
     JobSpec,
     JobStopAcceptedResponse,
     JobSubmittedResponse,
 )
+from src.runner.plugin_unpacker import PluginUnpackError
 from src.runner.state import (
     InvalidTransitionError,
     JobState,
@@ -47,6 +53,7 @@ from src.runner.supervisor import SupervisorBusy
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
+    from src.runner.plugin_unpacker import PluginUnpacker
     from src.runner.state import JobLifecycleFSM
     from src.runner.supervisor import Supervisor
 
@@ -119,6 +126,7 @@ async def submit_job(
     fsm: "JobLifecycleFSM" = Depends(get_fsm),
     bus: "EventBus" = Depends(get_bus),
     supervisor: "Supervisor" = Depends(get_supervisor),
+    plugin_unpacker: "PluginUnpacker" = Depends(get_plugin_unpacker),
 ) -> JobSubmittedResponse:
     # Validate the JSON part — extra="forbid" surfaces typos at 422
     # rather than silently dropping them.
@@ -130,13 +138,29 @@ async def submit_job(
             detail={"code": "invalid_job_spec", "errors": str(exc)},
         ) from exc
 
-    # Drain the upload — Phase 6's PluginUnpacker will replace this
-    # with the real extract-into-/workspace/community/ flow. Reading
-    # the body now (instead of ignoring it) keeps the upstream client
-    # happy: ASGI doesn't always discard the unread body, depending on
-    # the server. Discard explicitly.
-    _ = await plugins_payload.read()
+    # Read + extract the plugins payload BEFORE spawning the trainer:
+    # if the unpack fails we still hold ``preparing → failed`` ground
+    # without a half-running subprocess, and the trainer never starts
+    # against a missing community/. Empty bytes (no reward plugins,
+    # e.g. SFT-only) is the no-op path.
+    payload_bytes = await plugins_payload.read()
     await plugins_payload.close()
+    try:
+        unpack_result = plugin_unpacker.unpack(payload_bytes)
+    except PluginUnpackError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "plugin_unpack_failed", "message": str(exc)},
+        ) from exc
+
+    bus.publish(
+        "plugins_unpacked",
+        {
+            "installed": list(unpack_result.installed),
+            "skipped": list(unpack_result.skipped),
+            "total_bytes": unpack_result.total_bytes,
+        },
+    )
 
     # Atomic submit + spawn — the supervisor owns both the FSM
     # ``preparing → running`` transition and the subprocess launch.
