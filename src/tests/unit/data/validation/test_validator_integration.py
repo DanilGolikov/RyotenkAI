@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import Mock
 
 from src.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
@@ -75,17 +74,16 @@ class TestDatasetValidatorIntegration:
         assert result.is_failure()
         assert "validation failed" in str(result.unwrap_err()).lower() or "critical" in str(result.unwrap_err()).lower()
 
-    def test_empty_plugins_uses_defaults(self, tmp_path) -> None:
+    def test_empty_plugins_skips_plugin_checks_no_hidden_defaults(self, tmp_path) -> None:
+        """Empty plugins config → no plugins run, validation passes with no metrics.
+
+        Validation must be EXPLICIT — empty plugins means user opted out of
+        plugin checks (format check still runs separately).
+        """
         dataset_file = tmp_path / "train.jsonl"
-        # 150 samples with enough length/diversity to satisfy defaults
-        with dataset_file.open("w", encoding="utf-8") as f:
-            for i in range(150):
-                text = (
-                    f"Sample {i}: machine learning topic {i % 10}, data science algorithms, neural networks, "
-                    "training models, testing validation, evaluation metrics, optimization techniques."
-                )
-                json.dump({"text": text}, f)
-                f.write("\n")
+        # Tiny dataset: would fail any default min_samples threshold if defaults
+        # were silently injected. Test asserts they are NOT.
+        dataset_file.write_text('{"text": "x"}\n' * 5, encoding="utf-8")
 
         cfg = _mk_primary_only_config(_mk_local_ds(str(dataset_file), plugins=[], critical_failures=1))
 
@@ -97,7 +95,8 @@ class TestDatasetValidatorIntegration:
         assert result.is_success()
         ctx = result.unwrap()
         assert ctx["validation_status"] == "passed"
-        assert any(k.startswith("primary.train.") for k in ctx.keys())
+        # No plugin metrics — nothing was checked.
+        assert not any(k.startswith("primary.train.") for k in ctx)
 
     def test_callbacks_called(self, tmp_path) -> None:
         dataset_file = tmp_path / "train.jsonl"

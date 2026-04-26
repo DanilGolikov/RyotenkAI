@@ -115,10 +115,12 @@ class DatasetValidator(PipelineStage):
         self._split_loader = DatasetSplitLoader(self._loader_factory)
         self._plugin_runner = PluginRunner(self._callbacks)
 
-        # Eagerly resolve the default plugin set so a misconfigured registry
-        # fails fast at construction time (mirrors original behaviour, was
-        # the only purpose of self._plugins which is otherwise unused).
-        self._plugin_loader.load_for_default_dataset()
+        # Eager validation of the primary dataset's plugin config: instantiate
+        # plugins now so a typo in `validations.plugins[*].plugin` fails the
+        # stage at construction time (before GPU spin-up) rather than mid-run.
+        # If the primary dataset has no validations.plugins block, this is a
+        # no-op — no hidden defaults are injected.
+        self._plugin_loader.load_for_dataset(config.get_primary_dataset())
 
     def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
         """
