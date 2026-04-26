@@ -1,12 +1,12 @@
 """Shared fixtures for runner unit tests.
 
-Phase 0 ships only the FastAPI ``TestClient`` factory — Phase 1 adds
-fixtures for FSM (in tmp dir), event bus (small ring buffer), and
-mock supervisor.
+Each test gets a fresh app and a temp workspace so the FSM state
+files don't leak between tests.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,11 +19,10 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def runner_client() -> "Iterator[TestClient]":
-    """Build a fresh app + ``TestClient`` per test.
-
-    Each test gets an isolated FastAPI instance — the factory pattern
-    in :func:`src.runner.main.create_app` makes this cheap.
-    """
+def runner_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> "Iterator[TestClient]":
+    """``TestClient`` rooted in an isolated workspace directory."""
+    monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
     with TestClient(create_app()) as client:
         yield client

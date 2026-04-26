@@ -1,20 +1,93 @@
-"""Loopback endpoints used by the trainer subprocess — Phase 0 placeholder.
+"""Loopback endpoints used by the trainer subprocess.
 
-The trainer subprocess (``python -m src.training.run_training``) runs
-inside the same container as the job server. It pushes structured
-progress events through a HuggingFace ``TrainerCallback`` to:
+The trainer subprocess (``python -m src.training.run_training``)
+runs inside the same container as the job server. It pushes
+structured progress events through a HuggingFace ``TrainerCallback``
+(:class:`RunnerEventCallback`, Phase 3) to:
 
-    POST http://127.0.0.1:8080/internal/events
+    POST http://127.0.0.1:8080/api/v1/internal/events
 
-The ``RunnerEventCallback`` (Phase 3) buffers locally and flushes
-every N steps. This router must remain bound to ``127.0.0.1`` only —
-never accept events from the SSH tunnel side.
-
-Phase 0 mounts an empty router so the FastAPI app boots cleanly.
+The router lives behind the same ``API_V1_PREFIX`` as the public
+``/jobs`` surface. Security relies on the uvicorn bind being
+``127.0.0.1`` only — confirmed in ``docker/training/entrypoint.sh``.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from src.runner.api.deps import get_bus, get_fsm
+from src.runner.api.schemas import EventResponse, InternalEventRequest
+
+if TYPE_CHECKING:
+    from src.runner.event_bus import EventBus
+    from src.runner.state import JobLifecycleFSM
 
 router = APIRouter(prefix="/internal", tags=["internal"])
+
+
+# IPv4 loopback. Trusted clients reach the server via this address
+# (set by uvicorn ``--host 127.0.0.1`` in entrypoint.sh) — anyone
+# else either is on the same loopback (the trainer subprocess) or
+# is the SSH ``-L`` tunnel terminating at the loopback port from
+# the Mac side. The check below is belt-and-suspenders for the
+# unlikely case the server is misconfigured to bind 0.0.0.0.
+#
+# ``testclient`` is the synthetic peer ``fastapi.testclient.TestClient``
+# uses for in-process requests — never reachable from a real network,
+# so it's safe to whitelist for the test surface.
+_TRUSTED_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1", "testclient"})
+
+
+def _require_loopback(request: Request) -> None:
+    """Reject requests that didn't arrive over loopback.
+
+    FastAPI's ``request.client.host`` is the peer address — for
+    a uvicorn bound on 127.0.0.1 it is always 127.0.0.1 by
+    construction. The check is cheap and surfaces a misconfigured
+    bind during integration tests (where someone may inadvertently
+    set ``--host 0.0.0.0``).
+    """
+    if request.client is None:
+        raise HTTPException(status_code=403, detail={"code": "no_client_addr"})
+    if request.client.host not in _TRUSTED_HOSTS:
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "loopback_required", "client": request.client.host},
+        )
+
+
+@router.post(
+    "/events",
+    status_code=202,
+    response_model=EventResponse,
+    summary="Trainer pushes a progress event (loopback only)",
+)
+def push_event(
+    body: InternalEventRequest,
+    request: Request,
+    fsm: "JobLifecycleFSM" = Depends(get_fsm),
+    bus: "EventBus" = Depends(get_bus),
+) -> EventResponse:
+    _require_loopback(request)
+
+    snap = fsm.current()
+    if snap is None:
+        # Trainer pushing events without a submitted job is a server-
+        # side bug (the supervisor would not have spawned the
+        # subprocess). 409 is more appropriate than 404 — the
+        # endpoint exists, the precondition does not.
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "no_active_job"},
+        )
+
+    event = bus.publish(body.kind, body.payload)
+    return EventResponse(
+        offset=event.offset,
+        timestamp=event.timestamp,
+        kind=event.kind,
+        payload=dict(event.payload),
+    )

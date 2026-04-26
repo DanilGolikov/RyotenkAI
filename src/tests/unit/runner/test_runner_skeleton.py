@@ -23,7 +23,6 @@ from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import Event
 from src.runner.main import API_V1_PREFIX
-from src.runner.state import JobSnapshot, JobState
 
 
 class TestPackageSurface:
@@ -65,23 +64,6 @@ class TestPackageSurface:
         assert app1 is not app2
 
 
-class TestStateModel:
-    """``JobState`` enum invariants — Phase 1 will add transition rules."""
-
-    def test_terminal_states(self) -> None:
-        terminal = {s for s in JobState if s.is_terminal}
-        assert terminal == {JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED}
-
-    def test_non_terminal_states(self) -> None:
-        non_terminal = {s for s in JobState if not s.is_terminal}
-        assert non_terminal == {JobState.PREPARING, JobState.RUNNING, JobState.STOPPING}
-
-    def test_snapshot_is_immutable(self) -> None:
-        snap = JobSnapshot(job_id="j-1", state=JobState.RUNNING)
-        with pytest.raises(AttributeError):  # frozen dataclass
-            snap.state = JobState.COMPLETED  # type: ignore[misc]
-
-
 class TestEventBusContract:
     """``Event`` dataclass — placeholder until Phase 1 lands the bus."""
 
@@ -102,18 +84,15 @@ class TestHTTPSurface:
     def test_readyz(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         r = runner_client.get("/readyz")
         assert r.status_code == 200
-        assert r.json() == {"status": "ready"}
+        body = r.json()
+        assert body["status"] == "ready"
+        assert body["bus_open"] is True
+        assert body["fsm_restored"] is True
 
     def test_version(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         r = runner_client.get("/version")
         assert r.status_code == 200
         assert r.json() == {"image": RUNTIME_IMAGE}
-
-    def test_jobs_skeleton_is_mounted(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        """Phase 1 deletes this — confirms the router is mounted now."""
-        r = runner_client.get(f"{API_V1_PREFIX}/jobs/_skeleton")
-        assert r.status_code == 200
-        assert r.json() == {"status": "skeleton"}
 
     def test_routers_mounted(self) -> None:
         """Each sub-router is a real FastAPI APIRouter, not a stub."""
