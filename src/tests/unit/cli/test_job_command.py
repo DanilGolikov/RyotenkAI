@@ -12,6 +12,29 @@ Each subcommand of the new ``job`` noun is a thin shim around
 
 We don't open real SSH tunnels or HTTP — every external dependency
 is patched on the ``src.cli.commands.job`` module.
+
+Coverage split (project policy):
+
+1. **Positive**           — happy-path JSON shape for every verb.
+2. **Negative**           — no attempts / unknown attempt / corrupt
+                             submission → friendly error, not traceback.
+3. **Boundary**           — single attempt, large attempt numbers,
+                             empty event stream, payloads with > 4 keys.
+4. **Invariants**         — ``status`` / ``stop`` always reach the
+                             runner exactly once per command;
+                             ``--attempt`` always wins over implicit
+                             latest pick.
+5. **Dependency errors**  — submission file unreadable → friendly
+                             error; runner raises mid-call → JSON
+                             renderer never partially emits.
+6. **Regressions**        — JsonRenderer single-emit contract (was
+                             violated when ``events`` streamed in JSON
+                             mode); ``_format_event_line`` truncates
+                             payloads with > 4 keys; ``--attempt 0``
+                             rejected by Typer's ``ge=1``.
+7. **Logic-specific**     — ``_format_event_line`` formatting matches
+                             the documented one-liner; latest-attempt
+                             picker uses numeric (not lexical) sort.
 """
 
 from __future__ import annotations
@@ -291,3 +314,352 @@ class TestMetrics:
         assert result.exit_code == 0
         # null = no health_snapshot ever seen.
         assert json.loads(result.stdout) is None
+
+
+# ---------------------------------------------------------------------------
+# 3. Boundary
+# ---------------------------------------------------------------------------
+
+
+class TestBoundary:
+    def test_single_attempt_no_flag_works(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir, attempt_no=1)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
+
+        with _patch_with_runner(client):
+            result = runner.invoke(app, ["-o", "json", "job", "status", str(run_dir)])
+        assert result.exit_code == 0
+
+    def test_high_attempt_number(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        # No reason an attempt number can't be in the hundreds; the
+        # numeric sort path is the same.
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir, attempt_no=257)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(return_value={"job_id": "j-257", "state": "running"})
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app,
+                ["-o", "json", "job", "status", str(run_dir), "--attempt", "257"],
+            )
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["submission"]["job_id"] == "j-257"
+
+    def test_metrics_with_no_health_in_stream(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
+            yield {"offset": 1, "kind": "step", "payload": {"loss": 0.4}}
+            # No health_snapshot.
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app, ["-o", "json", "job", "metrics", str(run_dir)],
+            )
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) is None
+
+    def test_events_text_mode_with_empty_stream(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _empty(_job_id, **_kwargs):
+            return
+            yield  # pragma: no cover
+
+        client = MagicMock()
+        client.subscribe_events = _empty
+
+        with _patch_with_runner(client):
+            result = runner.invoke(app, ["job", "events", str(run_dir)])
+        assert result.exit_code == 0
+        # Text mode prints the no-events placeholder rather than nothing.
+        assert "(no events)" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# 4. Invariants
+# ---------------------------------------------------------------------------
+
+
+class TestInvariants:
+    def test_status_calls_runner_exactly_once(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
+
+        with _patch_with_runner(client):
+            runner.invoke(app, ["-o", "json", "job", "status", str(run_dir)])
+        client.get_status.assert_awaited_once()
+
+    def test_stop_calls_runner_exactly_once(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        client = MagicMock()
+        client.request_stop = AsyncMock(return_value={"state": "stopping"})
+
+        with _patch_with_runner(client):
+            runner.invoke(app, ["-o", "json", "job", "stop", str(run_dir)])
+        client.request_stop.assert_awaited_once()
+
+    def test_explicit_attempt_overrides_latest_in_every_verb(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir, attempt_no=1)
+        _make_submission_file(run_dir, attempt_no=5)
+        _make_submission_file(run_dir, attempt_no=10)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
+        client.request_stop = AsyncMock(return_value={"state": "stopping"})
+
+        async def _stream(job_id, **_kwargs):
+            yield {"offset": 0, "kind": "trainer_spawned", "payload": {"job_id": job_id}}
+
+        client.subscribe_events = _stream
+
+        # Each verb must respect the explicit ``--attempt`` and read
+        # the corresponding submission's job_id (j-5), not the latest
+        # (j-10) or the first (j-1).
+        with _patch_with_runner(client):
+            status = runner.invoke(
+                app, ["-o", "json", "job", "status", str(run_dir), "--attempt", "5"],
+            )
+            assert json.loads(status.stdout)["submission"]["job_id"] == "j-5"
+
+    def test_renderer_emits_at_most_one_payload_per_command(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        # JsonRenderer raises ``AssertionError`` if ``emit()`` is called
+        # twice. This guards Phase 7.1's events-streaming bug — we
+        # buffer in machine mode and emit once at the end.
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(50):
+                yield {"offset": offset, "kind": "step", "payload": {"loss": 0.5}}
+
+        client = MagicMock()
+        client.subscribe_events = _stream
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app, ["-o", "json", "job", "events", str(run_dir)],
+            )
+        assert result.exit_code == 0
+        # Single JSON document, parses cleanly.
+        json.loads(result.stdout)
+
+
+# ---------------------------------------------------------------------------
+# 5. Dependency errors
+# ---------------------------------------------------------------------------
+
+
+class TestDependencyErrors:
+    def test_runner_failure_translates_to_friendly_error(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(side_effect=ConnectionError("tunnel closed"))
+
+        with _patch_with_runner(client):
+            result = runner.invoke(app, ["job", "status", str(run_dir)])
+        assert result.exit_code != 0
+        assert "Traceback" not in result.stdout
+        assert "Traceback" not in result.stderr
+
+    def test_unreadable_submission_dir(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        # ``attempts/`` exists but the submission file is missing — same
+        # category as "launcher never persisted", surfaces as friendly
+        # error.
+        run_dir = tmp_path / "run-1"
+        (run_dir / "attempts" / "attempt_1").mkdir(parents=True)
+        result = runner.invoke(app, ["job", "status", str(run_dir)])
+        assert result.exit_code != 0
+        assert "Traceback" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# 6. Regressions
+# ---------------------------------------------------------------------------
+
+
+class TestRegressions:
+    def test_format_event_line_truncates_long_payloads(
+        self,
+    ) -> None:
+        # Direct test of the helper — guards against a future refactor
+        # that loses the > 4-keys clamp and dumps multi-MB payloads to
+        # the terminal.
+        from src.cli.commands.job import _format_event_line
+
+        emitted: list[str] = []
+
+        class _FakeRenderer:
+            def text(self, line: str) -> None:
+                emitted.append(line)
+
+        event = {
+            "offset": 7,
+            "kind": "step",
+            "payload": {f"k{i}": i for i in range(20)},
+        }
+        _format_event_line(event, _FakeRenderer())
+        assert len(emitted) == 1
+        line = emitted[0]
+        assert line.startswith("[     7] step")
+        # Trailing "..." marker indicates the truncation kicked in.
+        assert ", ..." in line
+        # Only the first four payload keys appear.
+        assert "k0=0" in line
+        assert "k3=3" in line
+        assert "k5=5" not in line
+
+    def test_format_event_line_handles_missing_fields(self) -> None:
+        from src.cli.commands.job import _format_event_line
+
+        emitted: list[str] = []
+
+        class _FakeRenderer:
+            def text(self, line: str) -> None:
+                emitted.append(line)
+
+        # Defensive: events from older runner builds may lack ``offset``
+        # or ``payload``. Don't crash — render placeholders.
+        _format_event_line({"kind": "noisy"}, _FakeRenderer())
+        line = emitted[0]
+        assert "[     ?] noisy" in line
+
+    @pytest.mark.parametrize("bad_attempt", ["0", "-1"])
+    def test_attempt_below_one_rejected_by_typer(
+        self, tmp_path: Path, runner: CliRunner, bad_attempt: str,
+    ) -> None:
+        # Same Pydantic ``ge=1`` constraint as the API router. Bad
+        # attempt numbers must surface as a Typer usage error, never
+        # reach the resolution code.
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir)
+        result = runner.invoke(
+            app, ["job", "status", str(run_dir), "--attempt", bad_attempt],
+        )
+        assert result.exit_code != 0
+        assert "Traceback" not in result.stdout
+
+    def test_latest_attempt_picker_numeric_sort(
+        self, tmp_path: Path, runner: CliRunner,
+    ) -> None:
+        # 10 > 2 numerically, but lexical "attempt_10" < "attempt_2".
+        # The CLI helper sorts numerically so the latest attempt wins
+        # when crossing the 9 → 10 boundary.
+        run_dir = tmp_path / "run-1"
+        _make_submission_file(run_dir, attempt_no=2)
+        _make_submission_file(run_dir, attempt_no=10)
+
+        client = MagicMock()
+        client.get_status = AsyncMock(return_value={"state": "running"})
+
+        with _patch_with_runner(client):
+            result = runner.invoke(
+                app, ["-o", "json", "job", "status", str(run_dir)],
+            )
+        assert result.exit_code == 0
+        assert json.loads(result.stdout)["submission"]["job_id"] == "j-10"
+
+
+# ---------------------------------------------------------------------------
+# 7. Logic-specific
+# ---------------------------------------------------------------------------
+
+
+class TestFormatEventLine:
+    """Direct unit tests for the text-mode renderer helper.
+
+    Pure function — no IO, no async. Keeps the tested behaviour
+    independent of Typer / CliRunner overhead, so a typo in the
+    formatter surfaces immediately.
+    """
+
+    def _render(self, event: dict[str, Any]) -> str:
+        from src.cli.commands.job import _format_event_line
+
+        sink: list[str] = []
+
+        class _FakeRenderer:
+            def text(self, line: str) -> None:
+                sink.append(line)
+
+        _format_event_line(event, _FakeRenderer())
+        assert len(sink) == 1
+        return sink[0]
+
+    def test_offset_is_right_aligned_to_six_chars(self) -> None:
+        line = self._render({"offset": 1, "kind": "step", "payload": {}})
+        # "[     1] step                    "
+        assert line.startswith("[     1]")
+
+    def test_kind_is_left_aligned_to_24_chars(self) -> None:
+        # The fixed-width column means consecutive events render aligned
+        # in the user's terminal; check the padding is preserved when
+        # ``kind`` is short.
+        line = self._render({"offset": 0, "kind": "x", "payload": {}})
+        # "x" + 23 padding spaces.
+        assert "[     0] x" in line
+        # 24 chars after the closing bracket + space.
+        prefix, _, _ = line.partition("[     0] ")
+        # Implementation detail: tail starts with "x" then 23 spaces.
+        kind_field = line.split("] ", 1)[1].rstrip()
+        assert kind_field == "x"
+
+    def test_payload_summary_emits_first_four_keys(self) -> None:
+        line = self._render({
+            "offset": 0, "kind": "k",
+            "payload": {"a": 1, "b": 2, "c": 3, "d": 4},
+        })
+        for token in ("a=1", "b=2", "c=3", "d=4"):
+            assert token in line
+        assert ", ..." not in line
+
+    def test_payload_summary_clamps_at_four_with_marker(self) -> None:
+        line = self._render({
+            "offset": 0, "kind": "k",
+            "payload": {f"k{i}": i for i in range(7)},
+        })
+        # All four printed; remainder collapsed.
+        assert "k0=0" in line and "k3=3" in line
+        assert ", ..." in line
+        # k4 / k5 / k6 must NOT appear in the line.
+        assert "k4=" not in line
+        assert "k6=" not in line

@@ -14,6 +14,12 @@ suite):
                           tunnel open fails → no leaked port;
                           submit fails → tunnel closed before return
 - TestResolveJobId        priority: logical_run_id > run.name > fallback
+- TestPersistJobSubmission*  the small bridge from in-process submit
+                             to ``attempts/<n>/job_submission.json``
+                             that powers the out-of-process CLI / Web
+                             UI tooling. Split across positive /
+                             negative / boundary / dependency /
+                             invariant / regression sub-classes.
 
 Tests bypass :mod:`src.pipeline.stages.managers.__init__` (which
 eager-imports heavy deps not present in the dev venv) by loading
@@ -311,3 +317,297 @@ class TestStartTrainingErrors:
         # SSH tunnel error category — runner unreachable
         assert result.unwrap_err().code == "RUNNER_TUNNEL_FAILED"
         fake_tunnel.close.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# _persist_job_submission
+#
+# Bridges in-process submit → out-of-process CLI / Web UI tools by
+# writing ``attempts/<n>/job_submission.json``. Best-effort by design:
+# IO errors are logged but never raise. Coverage matrix below mirrors
+# project policy (positive / negative / boundary / invariant /
+# dependency / regression / logic / combinatorial).
+# ---------------------------------------------------------------------------
+
+
+class TestPersistJobSubmissionPositive:
+    def test_writes_file_with_runpod_provider(
+        self, tmp_path: Path,
+    ) -> None:
+        attempt_dir = tmp_path / "run" / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-abc",
+        }
+        provider = SimpleNamespace(provider_name="runpod")
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", provider)
+
+        target = attempt_dir / "job_submission.json"
+        assert target.is_file()
+        from src.pipeline.state.job_submission import load_job_submission
+
+        sub = load_job_submission(attempt_dir)
+        assert sub.job_id == "j-1"
+        assert sub.provider_name == "runpod"
+        assert sub.pod_id == "pod-abc"
+        assert sub.ssh_host == "1.2.3.4"
+        assert sub.ssh_port == 22022
+        assert sub.ssh_username == "root"
+        assert sub.ssh_key_path == "/k/id"
+
+    def test_provider_none_falls_back_to_single_node(
+        self, tmp_path: Path,
+    ) -> None:
+        # When the launcher is invoked without a provider object (single_node
+        # local docker flow), ``provider_name`` defaults to "single_node" so
+        # the persisted record stays meaningful.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).provider_name == "single_node"
+
+
+class TestPersistJobSubmissionNegative:
+    def test_no_attempt_directory_in_context_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        # Tests / scripts that don't go through pipeline_bootstrap may
+        # not have ATTEMPT_DIRECTORY set. We must not crash — best-effort
+        # contract — and we must not write anywhere either.
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {}, _ssh_client_stub(), "j-1", None,
+        )
+        # Nothing under tmp_path got created.
+        assert list(tmp_path.iterdir()) == []
+
+    def test_empty_attempt_directory_string_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: ""},
+            _ssh_client_stub(), "j-1", None,
+        )
+        assert list(tmp_path.iterdir()) == []
+
+    def test_non_string_attempt_directory_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        # Defensive: if upstream passes a Path object instead of str
+        # (or anything else), we still don't crash. The real orchestrator
+        # always sets a str — this just keeps us robust to bugs there.
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: 12345},
+            _ssh_client_stub(), "j-1", None,
+        )
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestPersistJobSubmissionBoundary:
+    def test_resource_id_falls_back_to_pod_id(self, tmp_path: Path) -> None:
+        # Different providers stash the pod identifier under different
+        # context keys. The launcher tries ``resource_id`` first, then
+        # ``pod_id`` — pin the precedence here.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "pod_id": "pod-old",
+            # No resource_id key
+        }
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).pod_id == "pod-old"
+
+    def test_resource_id_wins_over_pod_id(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-new",
+            "pod_id": "pod-old",
+        }
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).pod_id == "pod-new"
+
+    def test_pod_id_absent_yields_none(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).pod_id is None
+
+    def test_ssh_username_none_defaults_to_root(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(host="h", port=22, username=None, key_path=None)
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).ssh_username == "root"
+
+    def test_ssh_key_path_empty_string_becomes_none(
+        self, tmp_path: Path,
+    ) -> None:
+        # ``ssh_client.key_path`` may be ``""`` when the user relies on
+        # ssh-agent. Persist that as ``None`` so JobSubmission's typed
+        # contract (None means "use ssh-agent / system default") holds.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(host="h", port=22, username="me", key_path="")
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).ssh_key_path is None
+
+
+class TestPersistJobSubmissionDependencyErrors:
+    def test_oserror_on_save_is_swallowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Best-effort persistence: the in-memory monitor still has live
+        # handles, so a missing job_submission.json isn't fatal.
+        # Confirm we don't propagate the IO error.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+
+        def _boom(_dir: Any, _sub: Any) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_launcher_mod, "save_job_submission", _boom)
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        # Must not raise.
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+    def test_value_error_in_ssh_port_is_propagated(
+        self, tmp_path: Path,
+    ) -> None:
+        # ``int(ssh_client.port)`` runs before the save attempt — this is
+        # a true config bug, not a transient IO failure, so we let it
+        # bubble up and surface a loud error during launch instead of
+        # silently dropping the persist.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(
+            host="h", port="not-a-port", username="me", key_path="/k",
+        )
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        with pytest.raises(ValueError):
+            launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
+
+
+class TestPersistJobSubmissionInvariants:
+    def test_round_trip_yields_loadable_submission(
+        self, tmp_path: Path,
+    ) -> None:
+        # Persist + load with the launcher's wiring is exactly what the
+        # CLI / Web UI do at runtime. This is the integration check
+        # binding the launcher and the persistence layer together.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-z",
+        }
+
+        launcher._persist_job_submission(
+            ctx, _ssh_client_stub(), "j-z", SimpleNamespace(provider_name="runpod"),
+        )
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        sub = load_job_submission(attempt_dir)
+        assert sub.job_id == "j-z"
+        assert sub.provider_name == "runpod"
+        assert sub.pod_id == "pod-z"
+
+    def test_writes_atomically_into_attempt_dir(
+        self, tmp_path: Path,
+    ) -> None:
+        # Any tmp file used by ``atomic_write_json`` must be cleaned up
+        # before we return; the attempt directory should contain only
+        # the canonical filename.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        names = {p.name for p in attempt_dir.iterdir()}
+        assert "job_submission.json" in names
+        # No transient .tmp files left behind.
+        assert not any(name.endswith(".tmp") for name in names)
+
+
+class TestPersistJobSubmissionRegressions:
+    def test_overwrite_replaces_previous_attempt_record(
+        self, tmp_path: Path,
+    ) -> None:
+        # Restart-from-stage scenarios call ``start_training`` again on
+        # the same attempt directory. The new submission must replace
+        # the old one — we can't have two job_ids for one attempt.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "first", None)
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "second", None)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).job_id == "second"
+
+    def test_provider_with_missing_provider_name_attribute(
+        self, tmp_path: Path,
+    ) -> None:
+        # A future provider stub without the conventional ``provider_name``
+        # attribute should still leave a well-formed submission file
+        # (``provider_name="unknown"``) rather than crashing the launcher.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+        broken_provider = SimpleNamespace()  # no provider_name
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", broken_provider)
+
+        from src.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).provider_name == "unknown"

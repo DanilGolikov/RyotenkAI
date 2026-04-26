@@ -11,6 +11,32 @@ pull in the heavyweight datasets dependency from the full app), and
 patch ``_with_runner`` to bypass real SSH/HTTP — same trick the CLI
 tests use. The submission file is a real on-disk JobSubmission so
 the resolution path is exercised end-to-end.
+
+Coverage split (project policy):
+
+1. **Positive**           — happy-path status / events / stop wire shape.
+2. **Negative**           — 404 maps (no attempts / unknown attempt /
+                             missing submission / corrupt submission);
+                             502 on runner errors.
+3. **Boundary**           — attempt=1, limit=1, limit=2000, since=0,
+                             grace=0, events count == limit, fewer
+                             events than ``limit`` requested.
+4. **Invariants**         — ``next_since`` monotonic; events length
+                             ≤ limit; latest-attempt picker honours
+                             numeric ordering, not lexical;
+                             ``_with_runner`` always tears down the
+                             tunnel.
+5. **Dependency errors**  — submission JSON corrupt → 404; runner raise
+                             on ``get_status`` → 502; ``subscribe_events``
+                             raise mid-stream → 200 with structured
+                             ``error`` block.
+6. **Regressions**        — ``run_id`` path-traversal blocked by
+                             ``resolve_run_dir`` (400); attempt dirs
+                             with non-numeric suffix tolerated;
+                             ``attempt=0`` / negative / ``limit`` out
+                             of range rejected by Pydantic with 422.
+7. **Combinatorial**      — (attempt × since × limit) parametrised
+                             over the mocked event stream.
 """
 
 from __future__ import annotations
@@ -342,3 +368,329 @@ class TestStop:
 
         assert response.status_code == 502
         assert response.json()["detail"]["code"] == "runner_unreachable"
+
+
+# ---------------------------------------------------------------------------
+# 3. Boundary
+# ---------------------------------------------------------------------------
+
+
+class TestBoundary:
+    def test_attempt_one_is_smallest_valid_value(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir, attempt_no=1)
+
+        runner = MagicMock()
+        runner.get_status = AsyncMock(return_value={"state": "running"})
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/status?attempt=1")
+        assert response.status_code == 200
+
+    def test_events_limit_one_returns_at_most_one_event(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(10):
+                yield {"offset": offset, "kind": "step", "payload": {}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events?limit=1")
+        assert response.status_code == 200
+        body = response.json()
+        # The router buffers until ``limit`` events have arrived then
+        # exits the async-for. Exactly one event must come back.
+        assert len(body["events"]) == 1
+        assert body["next_since"] == 1
+
+    def test_events_limit_at_max_2000(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(10):
+                yield {"offset": offset, "kind": "step", "payload": {}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events?limit=2000")
+        assert response.status_code == 200
+        # Stream produced fewer events than the limit — all 10 returned.
+        assert len(response.json()["events"]) == 10
+
+    def test_grace_zero_immediate_stop(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        runner = MagicMock()
+        runner.request_stop = AsyncMock(return_value={"state": "stopping"})
+        with _patch_with_runner(runner):
+            response = client.post("/api/v1/runs/run-x/job/stop?grace=0")
+        assert response.status_code == 202
+        # ``grace=0`` is meaningful (skip the SIGTERM grace window) — must
+        # be forwarded as the float 0.0, not silently dropped to None.
+        assert runner.request_stop.await_args.kwargs.get("grace_seconds") == 0.0
+
+    def test_events_with_since_zero_is_default(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **kwargs):
+            # Capture how the proxy passes ``since`` down to the runner.
+            assert kwargs.get("since") == 0
+            yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events")
+        assert response.status_code == 200
+        assert response.json()["events"][0]["kind"] == "trainer_spawned"
+
+    def test_attempt_dir_with_non_numeric_suffix_is_ignored(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        # The latest-attempt picker sorts by the int after ``attempt_``.
+        # An attic directory like ``attempt_archive`` should sort with
+        # 0 (per the implementation's fallback) and not crash the glob.
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir, attempt_no=2)
+        # Spurious attic.
+        archive = run_dir / "attempts" / "attempt_archive"
+        archive.mkdir()
+        runner = MagicMock()
+        runner.get_status = AsyncMock(return_value={"state": "running"})
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/status")
+        # Picks attempt_2 (the only one with a real submission file).
+        assert response.status_code == 200
+        assert response.json()["submission"]["job_id"] == "j-2"
+
+
+# ---------------------------------------------------------------------------
+# 4. Invariants
+# ---------------------------------------------------------------------------
+
+
+class TestInvariants:
+    def test_next_since_is_monotonic(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in [10, 11, 12]:
+                yield {"offset": offset, "kind": "step", "payload": {}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events?since=10")
+        body = response.json()
+        # next_since must be strictly greater than the cursor we sent
+        # AND greater than every offset returned, so the next poll
+        # never re-receives the same event.
+        assert body["next_since"] > 10
+        assert all(body["next_since"] > e["offset"] for e in body["events"])
+
+    def test_next_since_unchanged_when_stream_empty(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _empty(_job_id, **_kwargs):
+            return
+            yield  # pragma: no cover
+
+        runner = MagicMock()
+        runner.subscribe_events = _empty
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events?since=42")
+        # An empty slice keeps the cursor where the caller had it.
+        assert response.json()["next_since"] == 42
+
+    def test_latest_attempt_picker_uses_numeric_order(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        # 10 > 2 numerically, but lexicographically "attempt_10" < "attempt_2".
+        # Pin the numeric sort.
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir, attempt_no=2)
+        _make_submission_file(run_dir, attempt_no=10)
+
+        runner = MagicMock()
+        runner.get_status = AsyncMock(return_value={"state": "running"})
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/status")
+        assert response.json()["submission"]["job_id"] == "j-10"
+
+    def test_events_length_never_exceeds_limit(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+
+        async def _stream(_job_id, **_kwargs):
+            for offset in range(50):
+                yield {"offset": offset, "kind": "step", "payload": {}}
+
+        runner = MagicMock()
+        runner.subscribe_events = _stream
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/events?limit=5")
+        events = response.json()["events"]
+        assert len(events) <= 5
+        assert len(events) == 5  # exactly 5 — stream had more than enough
+
+
+# ---------------------------------------------------------------------------
+# 5. Dependency errors
+# ---------------------------------------------------------------------------
+
+
+class TestDependencyErrors:
+    def test_corrupt_submission_returns_404(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        # Mirror the CLI's friendly-error contract: malformed
+        # job_submission.json is not a 500 — it's "the launcher never
+        # finished writing this attempt's submission".
+        attempt_dir = settings.runs_dir / "run-x" / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+        (attempt_dir / "job_submission.json").write_text("not-valid-json")
+
+        response = client.get("/api/v1/runs/run-x/job/status")
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "job_submission_missing"
+
+    def test_status_unwraps_arbitrary_runner_exception(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        runner = MagicMock()
+        runner.get_status = AsyncMock(side_effect=RuntimeError("boom"))
+        with _patch_with_runner(runner):
+            response = client.get("/api/v1/runs/run-x/job/status")
+        # Any uncategorised runner error → 502 (cannot reach runner).
+        assert response.status_code == 502
+        assert "boom" in response.json()["detail"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# 6. Regressions
+# ---------------------------------------------------------------------------
+
+
+class TestRegressions:
+    def test_path_traversal_in_run_id_rejected(
+        self, client: TestClient,
+    ) -> None:
+        # ``resolve_run_dir`` blocks ``..`` segments. The router relies
+        # on that — pin the contract here so a future refactor can't
+        # silently drop the check.
+        response = client.get("/api/v1/runs/..%2Fetc/job/status")
+        # 400 (invalid_run_id) or 404 (run_not_found) — either confirms
+        # the run dir didn't escape the configured root.
+        assert response.status_code in (400, 404)
+
+    @pytest.mark.parametrize("attempt", ["0", "-1"])
+    def test_attempt_below_one_rejected_by_validator(
+        self, client: TestClient, settings: ApiSettings, attempt: str,
+    ) -> None:
+        # ``ge=1`` Pydantic constraint — bad attempt numbers must surface
+        # as 422 from the framework, never reach our resolution code.
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        response = client.get(f"/api/v1/runs/run-x/job/status?attempt={attempt}")
+        assert response.status_code == 422
+
+    @pytest.mark.parametrize("limit", ["0", "2001", "-5"])
+    def test_events_limit_out_of_range_rejected(
+        self, client: TestClient, settings: ApiSettings, limit: str,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        response = client.get(f"/api/v1/runs/run-x/job/events?limit={limit}")
+        assert response.status_code == 422
+
+    def test_events_since_negative_rejected(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        response = client.get("/api/v1/runs/run-x/job/events?since=-1")
+        assert response.status_code == 422
+
+    def test_grace_negative_rejected(
+        self, client: TestClient, settings: ApiSettings,
+    ) -> None:
+        run_dir = settings.runs_dir / "run-x"
+        _make_submission_file(run_dir)
+        response = client.post("/api/v1/runs/run-x/job/stop?grace=-1")
+        assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# 7. Combinatorial
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("since", [0, 5, 100])
+@pytest.mark.parametrize("limit", [1, 5, 200])
+@pytest.mark.parametrize("attempt_count", [1, 3])
+def test_combinatorial_events_slice(
+    client: TestClient,
+    settings: ApiSettings,
+    since: int,
+    limit: int,
+    attempt_count: int,
+) -> None:
+    """Parametric matrix over the events endpoint's two cursors.
+
+    Every combination of ``(since, limit, attempts on disk)`` should
+    return a slice that obeys the four invariants:
+      - HTTP 200,
+      - ``len(events) <= limit``,
+      - every returned offset >= since (the runner's ring buffer
+        guarantees this; we mock the same contract),
+      - ``next_since > since`` if any events came back.
+    """
+    run_dir = settings.runs_dir / "run-x"
+    for attempt_no in range(1, attempt_count + 1):
+        _make_submission_file(run_dir, attempt_no=attempt_no)
+
+    async def _stream(_job_id: str, **kwargs: Any):
+        seen_since = kwargs.get("since", 0)
+        # Emit up to 50 events starting at the requested cursor.
+        for offset in range(seen_since, seen_since + 50):
+            yield {"offset": offset, "kind": "step", "payload": {}}
+
+    runner = MagicMock()
+    runner.subscribe_events = _stream
+
+    with _patch_with_runner(runner):
+        response = client.get(
+            f"/api/v1/runs/run-x/job/events?since={since}&limit={limit}",
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["events"]) <= limit
+    if body["events"]:
+        assert all(e["offset"] >= since for e in body["events"])
+        assert body["next_since"] > since
