@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from src.pipeline._types import CANONICAL_STAGE_ORDER
+from src.pipeline.config_drift import compute_config_hashes
 from src.pipeline.launch.restart_rules import compute_restart_points
-from src.pipeline.state import PipelineStateStore, StageRunState, hash_payload
+from src.pipeline.state import PipelineStateStore
+from src.pipeline.state.queries import first_unfinished_stage
 from src.utils.config import load_config
 
 if TYPE_CHECKING:
@@ -36,34 +38,6 @@ class RestartPointOption:
     available: bool
     mode: str
     reason: str
-
-
-# ---------------------------------------------------------------------------
-# Config-hash computation (shared with ConfigDriftValidator via dedicated
-# helper in a future PR — the two implementations are payload-identical).
-# ---------------------------------------------------------------------------
-
-
-def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:
-    model_dataset_payload = {
-        "model": config.model.model_dump(mode="json"),
-        "training": config.training.model_dump(mode="json"),
-        "datasets": {name: cfg.model_dump(mode="json") for name, cfg in config.datasets.items()},
-    }
-    training_payload = {
-        **model_dataset_payload,
-        "provider_name": config.get_active_provider_name(),
-        "provider": config.get_provider_config(),
-    }
-    late_payload = {
-        "inference": config.inference.model_dump(mode="json"),
-        "evaluation": config.evaluation.model_dump(mode="json"),
-    }
-    return {
-        "training_critical": hash_payload(training_payload),
-        "late_stage": hash_payload(late_payload),
-        "model_dataset": hash_payload(model_dataset_payload),
-    }
 
 
 def list_restart_points(run_dir: Path, config: PipelineConfig) -> list[dict[str, Any]]:
@@ -151,30 +125,20 @@ def derive_resume_stage(state: PipelineState) -> str | None:
     if present, otherwise the keys of ``stage_runs``) — that's the source
     of truth for "what was scheduled to run". The orchestrator-side
     ``StagePlanner.derive_resume_stage`` answers the same question against
-    the *live* stage list; both should agree for a healthy attempt but
-    can diverge for malformed/partial state.
+    the *live* stage list; both delegate iteration to the shared
+    :func:`first_unfinished_stage` helper.
     """
     if not state.attempts:
         return None
     latest = state.attempts[-1]
-    for stage_name in latest.enabled_stage_names or latest.stage_runs:
-        stage_state = latest.stage_runs.get(stage_name)
-        if stage_state is None:
-            return stage_name
-        if stage_state.status in {
-            StageRunState.STATUS_FAILED,
-            StageRunState.STATUS_INTERRUPTED,
-            StageRunState.STATUS_PENDING,
-            StageRunState.STATUS_RUNNING,
-            StageRunState.STATUS_STALE,
-        }:
-            return stage_name
-    return None
+    return first_unfinished_stage(
+        latest.enabled_stage_names or latest.stage_runs,
+        latest.stage_runs,
+    )
 
 
 __all__ = [
     "RestartPointOption",
-    "compute_config_hashes",
     "derive_resume_stage",
     "list_restart_points",
     "load_restart_point_options",

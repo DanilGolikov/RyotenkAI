@@ -6,10 +6,46 @@ about a run directory without poking at PipelineStateStore directly.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
 from src.pipeline.state.store import PipelineStateStore
+
+# Statuses that mark a stage as still owing work (never-run, in-flight, or
+# previously failed/interrupted/stale). The first match in stage_names order
+# is the resume target.
+_UNFINISHED_STAGE_STATUSES: frozenset[str] = frozenset({
+    StageRunState.STATUS_FAILED,
+    StageRunState.STATUS_INTERRUPTED,
+    StageRunState.STATUS_PENDING,
+    StageRunState.STATUS_RUNNING,
+    StageRunState.STATUS_STALE,
+})
+
+
+def first_unfinished_stage(
+    stage_names: Iterable[str],
+    stage_runs: dict[str, StageRunState],
+) -> str | None:
+    """First stage in ``stage_names`` order that is missing or not completed.
+
+    Pure helper shared by the two ``derive_resume_stage`` callers:
+
+    * :func:`src.pipeline.launch.restart_options.derive_resume_stage` walks
+      the saved ``enabled_stage_names`` (the attempt's intent at launch time).
+    * :meth:`src.pipeline.execution.StagePlanner.derive_resume_stage` walks
+      the live ``self._stages`` list (the orchestrator's current stage roster).
+
+    Returns ``None`` when every named stage is recorded as completed.
+    """
+    for stage_name in stage_names:
+        stage_state = stage_runs.get(stage_name)
+        if stage_state is None:
+            return stage_name
+        if stage_state.status in _UNFINISHED_STAGE_STATUSES:
+            return stage_name
+    return None
 
 
 def state_store(run_dir: Path) -> PipelineStateStore:
@@ -99,6 +135,7 @@ def discover_run_dirs(target: Path) -> tuple[Path, ...]:
 __all__ = [
     "discover_run_dirs",
     "find_running_attempt_no",
+    "first_unfinished_stage",
     "get_attempt_by_no",
     "get_running_attempt_no",
     "latest_attempt_no",

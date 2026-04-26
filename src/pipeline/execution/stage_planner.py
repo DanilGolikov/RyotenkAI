@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen
 
 from src.pipeline.stages import StageNames
-from src.pipeline.state import PipelineState, StageRunState
+from src.pipeline.state import PipelineState
+from src.pipeline.state.queries import first_unfinished_stage
 from src.utils.result import AppError
 
 if TYPE_CHECKING:
@@ -168,23 +169,26 @@ class StagePlanner:
         return enabled
 
     def derive_resume_stage(self, state: PipelineState) -> str | None:
-        """Find the first stage that is not successfully completed in the latest attempt."""
+        """Find the first stage that is not successfully completed in the latest attempt.
+
+        Walks the *live* ``self._stages`` order, not the attempt's saved
+        ``enabled_stage_names`` — the orchestrator wants to know "what
+        stage should I run next given the current stage roster", which
+        differs from the launch-options view (saved intent) when stages
+        get added or removed between attempts.
+
+        Returns the first stage's name when ``state.attempts`` is empty
+        (no attempt has run yet, so we resume from the start). The shared
+        :func:`first_unfinished_stage` helper handles the per-attempt
+        loop; the empty-attempts fallback is callers' choice.
+        """
         if not state.attempts:
             return self._stages[0].stage_name
         latest = state.attempts[-1]
-        for stage in self._stages:
-            stage_state = latest.stage_runs.get(stage.stage_name)
-            if stage_state is None:
-                return stage.stage_name
-            if stage_state.status in {
-                StageRunState.STATUS_FAILED,
-                StageRunState.STATUS_INTERRUPTED,
-                StageRunState.STATUS_PENDING,
-                StageRunState.STATUS_RUNNING,
-                StageRunState.STATUS_STALE,
-            }:
-                return stage.stage_name
-        return None
+        return first_unfinished_stage(
+            (stage.stage_name for stage in self._stages),
+            latest.stage_runs,
+        )
 
     def validate_stage_prerequisites(
         self,

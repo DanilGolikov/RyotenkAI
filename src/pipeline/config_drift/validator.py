@@ -29,6 +29,45 @@ if TYPE_CHECKING:
     from src.utils.config import PipelineConfig
 
 
+def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:
+    """Pure function: three scoped hashes for restart/resume drift detection.
+
+    Shared by :class:`ConfigDriftValidator` (orchestrator path, takes
+    ``self._config``) and
+    :func:`src.pipeline.launch.restart_options.compute_config_hashes`
+    (lightweight launch-options path). Single source of truth for the
+    payload shape — drifting the two used to be a real risk.
+
+    Returns a dict with three keys:
+
+    * ``training_critical`` — model + training + datasets + provider; any
+      change here invalidates resume across attempts.
+    * ``late_stage`` — inference + evaluation; allowed to change for manual
+      restart from those stages but not for plain resume.
+    * ``model_dataset`` — model + training + datasets only (no provider);
+      lets provider-only edits resume without re-tripping training_critical.
+    """
+    model_dataset_payload = {
+        "model": config.model.model_dump(mode="json"),
+        "training": config.training.model_dump(mode="json"),
+        "datasets": {name: cfg.model_dump(mode="json") for name, cfg in config.datasets.items()},
+    }
+    training_payload = {
+        **model_dataset_payload,
+        "provider_name": config.get_active_provider_name(),
+        "provider": config.get_provider_config(),
+    }
+    late_payload = {
+        "inference": config.inference.model_dump(mode="json"),
+        "evaluation": config.evaluation.model_dump(mode="json"),
+    }
+    return {
+        "training_critical": hash_payload(training_payload),
+        "late_stage": hash_payload(late_payload),
+        "model_dataset": hash_payload(model_dataset_payload),
+    }
+
+
 class ConfigDriftValidator:
     """Compute config hashes and detect drift across attempts."""
 
@@ -37,29 +76,7 @@ class ConfigDriftValidator:
 
     def build_config_hashes(self) -> dict[str, str]:
         """Compute the three scoped config hashes for the current config."""
-        training_provider_name = self._config.get_active_provider_name()
-        training_provider_cfg = self._config.get_provider_config()
-        model_dataset_payload = {
-            "model": self._config.model.model_dump(mode="json"),
-            "training": self._config.training.model_dump(mode="json"),
-            "datasets": {
-                name: cfg.model_dump(mode="json") for name, cfg in self._config.datasets.items()
-            },
-        }
-        training_payload = {
-            **model_dataset_payload,
-            "provider_name": training_provider_name,
-            "provider": training_provider_cfg,
-        }
-        late_payload = {
-            "inference": self._config.inference.model_dump(mode="json"),
-            "evaluation": self._config.evaluation.model_dump(mode="json"),
-        }
-        return {
-            "training_critical": hash_payload(training_payload),
-            "late_stage": hash_payload(late_payload),
-            "model_dataset": hash_payload(model_dataset_payload),
-        }
+        return compute_config_hashes(self._config)
 
     def validate_drift(
         self,
