@@ -7,6 +7,18 @@
 > Supersedes: [`docs/plans/nice-jepsen-runner.md`](./nice-jepsen-runner.md) (research-документ v1)
 > Updated: 2026-04-26 после изучения [`b-hazy-phoenix.md`](./b-hazy-phoenix.md) — kubectl-style CLI рефактор уже выполнен.
 
+## Migration policy: NO BACKWARDS COMPATIBILITY
+
+Утверждено пользователем: старый код заменяется в одно касание, без `RYOTENKAI_RUNNER_V2` или подобного feature-flag, без legacy-режима.
+
+Конкретно это значит:
+- В Phase 6 `TrainingLauncher` (генератор `start_training.sh` + nohup probes) **удаляется**, не дублируется. Новый код заменяет его in-place.
+- `watchdog.sh`, `_touch_pipeline_heartbeat`, marker-probes в `TrainingMonitor` удаляются в той же фазе, что вводит замену (Phase 4 IdleDetector / Phase 6 events).
+- Поля `image_name` / `docker_image` в Pydantic-схемах удаляются без deprecation alias — миграция конфигов делается одним прогоном.
+- Документация и тесты обновляются вместе с кодом, без legacy-секций.
+
+Цена этой политики — **скоординировать с активными SAPO/GRPO experiments** (см. § 13). Координация уже подтверждена пользователем: окно для миграции открыто.
+
 ## CLI noun-verb адаптация (новое знание после merge)
 
 После merge `origin/RESEACRH` (67 коммитов) в репо появилась **готовая kubectl-style CLI** ([607eca9]):
@@ -214,7 +226,7 @@ Mandatory **до launch**, через `src/pipeline/bootstrap/pipeline_bootstrap
 | `src/training/reward_plugins/factory.py` (broadcast log) | Уже там, остаётся |
 | `src/training/reward_plugins/secrets.py` (RWRD_ resolver) | Без изменений — Job Server передаёт env vars в trainer subprocess |
 | `src/training/managers/mlflow_manager/resilient_transport.py::MLflowTransportCircuitBreaker` | MLflow relay в Job Server использует тот же circuit breaker |
-| `src/providers/training/interfaces.py::TrainingScriptHooks` | RunPod провайдер для self-stop env vars; legacy режим во время feature-flag периода |
+| `src/providers/training/interfaces.py::TrainingScriptHooks` | RunPod провайдер для self-stop env vars (env_vars поле; pre/post bash hooks больше не используются) |
 | `src/api/presentation/icons.py` | UI mapping для job статусов (Web UI Live Training tab) |
 | `src/cli/commands/plugin.py` (Typer noun pattern) | Pattern для нового `ryotenkai job` (как noun-verb) |
 | **`src/community/pack.py::pack_community_folder`** | Backbone PluginPacker (Mac side) |
@@ -247,13 +259,11 @@ Mandatory **до launch**, через `src/pipeline/bootstrap/pipeline_bootstrap
 │  ├ Stage 2: TrainingDeploymentManager facade (Wave 3)       │
 │  │    ├ FileUploader.deploy_files()                         │
 │  │    ├ DependencyInstaller.install_dependencies()          │
-│  │    └ start_training()  ← здесь развилка по feature-flag  │
-│  │       ├ RYOTENKAI_RUNNER_V2=false: TrainingLauncher (legacy)
-│  │       └ RYOTENKAI_RUNNER_V2=true:  TrainingLauncherV2 (new) │
-│  │            ├ PluginPacker (NEW, R-2 fix)                 │
-│  │            ├ SSHTunnelManager (NEW, отдельный CtrlMaster)│
-│  │            └ JobClient (NEW)                             │
-│  ├ Stage 3: TrainingMonitor (упрощается под flag)           │
+│  │    └ start_training()  ← заменяется одной реализацией   │
+│  │       ├ PluginPacker (NEW, R-2 fix)                      │
+│  │       ├ SSHTunnelManager (NEW, отдельный CtrlMaster)     │
+│  │       └ JobClient (NEW)                                  │
+│  ├ Stage 3: TrainingMonitor (только WS subscribe, без SSH-poll) │
 │  ├ Stage 4: ModelRetriever                                  │
 │  ├ Stage 5: ModelEvaluator (Mac, evaluation плагины)        │
 │  └ Stage 6: IntegrationTest                                 │
@@ -315,18 +325,17 @@ Mandatory **до launch**, через `src/pipeline/bootstrap/pipeline_bootstrap
 `ryotenkai/training-runtime:VERSION` — расширяет существующий [`docker/training/Dockerfile.runtime`](docker/training/Dockerfile.runtime):
 
 - CUDA 12.4 + PyTorch 2.5.1 + Python 3.12 (как сейчас)
-- ML deps (как сейчас, `requirements.runtime.txt`)
-- **NEW**: `dumb-init` (для PID 1)
-- **NEW**: `pip install -e /opt/ryotenkai-runner` (наш `src/runner/` пакет, скопированный в образ)
-- **NEW**: образ выставляет `ENV COMMUNITY_STRICT=1` (после распаковки plugins_payload — strict-mode для catalog)
+- ML deps (как сейчас, `requirements.runtime.txt`) — `fastapi`, `uvicorn[standard]`, `websockets` уже в зависимостях основного `pyproject.toml`
+- **NEW**: `dumb-init` (apt package, для PID 1)
+- **NEW**: `COPY src/__init__.py + src/runner → /opt/ryotenkai/src/...` + `ENV PYTHONPATH=/opt/ryotenkai:${PYTHONPATH:-}`. Прямое копирование вместо `pip install -e` — нам не нужен ни отдельный pyproject под runner, ни editable mode. По мере появления зависимостей runner на `src/utils.atomic_fs`, `src/community.install` и т.д. — расширим `COPY` соответствующими модулями. Pipeline-driven `/workspace` остаётся первым в PYTHONPATH (выставляется в job_spec env), так что rsync-обновлённый `src/utils` overrides image baseline — by design.
+- **NEW** (Phase 4+): образ выставляет `ENV COMMUNITY_STRICT=1` после первого вызова `PluginUnpacker` — strict-mode для catalog
 - Updated `entrypoint.sh`: `dumb-init` → стартует sshd + uvicorn job-server (`127.0.0.1:8080`, **только loopback**)
 
-Поля `image_name` / `docker_image` **удаляются** из конфига:
-- `src/config/providers/runpod/training.py:36` — поле `image_name` → удалить (Pydantic alias + deprecation warning)
-- `src/config/providers/single_node/training.py:42` — поле `docker_image` → удалить
+Поля `image_name` / `docker_image` **удаляются** из конфига одним cutover'ом (no Pydantic alias, no deprecation warning):
+- `src/config/providers/runpod/training.py` — поле `image_name` → удалить
+- `src/config/providers/single_node/training.py` — поле `docker_image` → удалить
 - Образ зашит в `src/runner/__about__.py::RUNTIME_IMAGE` и читается из `src/providers/runpod/training/api_client.py`
-
-Migration: `src/config/migrations/v6_drop_image_fields.py` (NEW) — Pydantic field validator с warning + auto-strip при load.
+- Если в существующих project YAML есть эти поля — load выкинет PydanticValidationError на extra-forbid; пользователь правит YAML руками (one-shot, см. Phase 6.8)
 
 ---
 
@@ -497,17 +506,28 @@ class PluginPacker:
    - Reconnect logic с exponential backoff
 - 5.3 Unit tests: tunnel lifecycle, port collision, ControlMaster isolation, client reconnect ordering
 
-### Phase 6 — Pipeline integration (1-2 дня)
+### Phase 6 — Pipeline integration + cutover (1-2 дня)
+
+Эта фаза одновременно вводит новую реализацию **и** удаляет старую (no backwards compat).
+
 - 6.1 `src/pipeline/stages/managers/deployment/plugin_packer.py` (NEW) — § 9.1
-- 6.2 `src/pipeline/stages/managers/deployment/training_launcher_v2.py` (NEW):
-   - Заменяет `_start_training_cloud` / `_start_training_docker` на `JobClient.submit_job(...)`
-   - Использует `PluginPacker` для сборки `plugins_payload`
-   - **Mandatory call** `run_preflight(config, secrets, project_env)` ДО submit
-   - Старый `TrainingLauncher` остаётся под feature-flag `RYOTENKAI_RUNNER_V2=false` (откат)
-- 6.3 `src/pipeline/stages/managers/deployment_manager.py` (existing facade) — `start_training()` выбирает между `TrainingLauncher` и `TrainingLauncherV2` по env-flag (минимальный diff в facade)
-- 6.4 `src/pipeline/stages/training_monitor.py` (existing): добавить параллельный путь — если runner-v2, `JobClient.subscribe_events()` вместо SSH-poll. `LiveLogTail` остаётся как fallback для случаев когда WS недоступен.
+- 6.2 `src/pipeline/stages/managers/deployment/training_launcher.py` — **переписать целиком**:
+   - Удалить `_create_env_file` (env vars теперь приходят через `POST /jobs` job_spec, не через `.env`)
+   - Удалить `_start_training_cloud` / `_start_training_docker` / probe loop / nohup
+   - Удалить генерацию `start_training.sh`
+   - Новая публичная сигнатура `start_training(...)`: вызвать `run_preflight(...)` → собрать `plugins_payload` через `PluginPacker` → `SSHTunnelManager.open()` → `JobClient.submit_job(...)`
+   - Имя класса остаётся `TrainingLauncher` (facade `TrainingDeploymentManager.start_training` НЕ меняется)
+- 6.3 `src/pipeline/stages/training_monitor.py` (existing): убрать SSH-poll целиком, заменить на `JobClient.subscribe_events()`. `LiveLogTail` остаётся **только** как fallback для скачивания tail логов после завершения (offline forensics).
+- 6.4 Удалить marker-based код в этой же фазе (single cutover):
+   - `src/pipeline/stages/training_monitor._check_marker`, `_read_marker_content`, `_touch_pipeline_heartbeat`
+   - `src/training/notifiers/marker_file.py` целиком (заменяется push events через `RunnerEventCallback`)
+   - `src/providers/runpod/training/resources/watchdog.sh` (логика → `IdleDetector` Phase 4)
+   - `src/providers/runpod/training/resources/runpod_stop_pod.sh` (вызывается из Python supervisor через provider hook — оставить как тонкую GraphQL-обёртку или переписать на Python; решим в реализации)
 - 6.5 `CodeSyncer.REQUIRED_MODULES` — **НЕ расширяем** community/. Plugin payload идёт через multipart.
-- 6.6 Integration tests: e2e через локальный uvicorn (mock pod), feature-flag toggle
+- 6.6 `src/config/providers/runpod/training.py` — удалить поле `image_name` (no Pydantic alias, no deprecation warning)
+- 6.7 `src/config/providers/single_node/training.py` — удалить поле `docker_image`
+- 6.8 Один-shot config-migration script для существующих project YAML — strip полей при чтении (warn, продолжить). Это для пользователя, не для legacy mode — после миграции YAML script не нужен.
+- 6.9 Integration tests: e2e через локальный uvicorn (mock pod). Удалить старые тесты под marker-based полinging.
 
 ### Phase 7 — CLI + Web UI (1 день)
 - 7.1 `src/cli/commands/job.py` (NEW noun, добавляется к существующим run/runs/config/dataset/...):
@@ -527,18 +547,16 @@ class PluginPacker:
    - WS reconnect tests
    - **`--remote URL` flag не трогаем** — оставляем stub для v1.2 как есть. Наш job-сервер работает через `--project` контекст
 
-### Phase 8 — Cleanup + migration (½ дня)
-- 8.1 Удалить (под feature-flag `RYOTENKAI_RUNNER_V2=true`):
-   - `src/providers/runpod/training/resources/watchdog.sh` (логика → `IdleDetector`)
-   - marker probes в `TrainingMonitor` (через WS events)
-   - `_touch_pipeline_heartbeat`
-   - `_check_marker`, `_read_marker_content`
-   - старый `TrainingLauncher._start_training_cloud`/`_start_training_docker`
-- 8.2 Migration script `src/config/migrations/v6_drop_image_fields.py` для конфигов с `image_name`/`docker_image`
-- 8.3 Документация: `docs/runner-architecture.md`
-- 8.4 Flip default `RYOTENKAI_RUNNER_V2=true` после verify в одном-двух runs (когда SAPO experiments позволят)
+### Phase 8 — Final polish + docs (½ дня)
 
-**Итого: 7-9 рабочих дней.**
+Большая часть cleanup сделана в Phase 6 одним cutover'ом. Финальная фаза только закрывает остатки.
+
+- 8.1 `docs/runner-architecture.md` — финальная документация с диаграммой, sequence-flow, troubleshooting
+- 8.2 README обновление — секция про job-server (как запустить, как подключиться по SSH `-L`)
+- 8.3 Обновить `community/README.md` — упомянуть что reward плагины уезжают на pod, остальные kinds выполняются на Mac
+- 8.4 Final regression: full pytest, coverage gate ≥ 83, smoke на RunPod
+
+**Итого: 6-8 рабочих дней** (½ дня меньше за счёт удалённой Phase 8 cleanup-секции — она интегрирована в Phase 6).
 
 ---
 
@@ -562,7 +580,6 @@ class PluginPacker:
 - `src/api/services/tunnel_service.py` — SSH `-L` менеджер
 - `src/api/clients/job_client.py` — HTTP+WS клиент
 - `src/pipeline/stages/managers/deployment/plugin_packer.py` — wrapper над `pack_community_folder`
-- `src/pipeline/stages/managers/deployment/training_launcher_v2.py`
 - `src/training/callbacks/runner_event_callback.py`
 - `src/cli/commands/job.py` — NEW Typer noun (рядом с существующими run/runs/...)
 - `src/config/migrations/v6_drop_image_fields.py`
@@ -572,13 +589,20 @@ class PluginPacker:
 - `docker/training/Dockerfile.runtime` — добавить dumb-init + runner install
 - `docker/training/entrypoint.sh` — sshd + uvicorn вместо tail
 - `docker/training/build_and_push.sh` — копирование `src/runner/`
-- `src/pipeline/stages/managers/deployment_manager.py` (facade) — выбор launcher по feature-flag
-- `src/pipeline/stages/training_monitor.py` — путь через JobClient + LiveLogTail fallback
-- `src/training/run_training.py` — добавить `RunnerEventCallback` условно
+- `src/pipeline/stages/managers/deployment_manager.py` (facade) — без diff, fasade перенаправляет на новый `TrainingLauncher`
+- `src/pipeline/stages/managers/deployment/training_launcher.py` — **переписать целиком** (cutover, см. Phase 6.2)
+- `src/pipeline/stages/training_monitor.py` — заменить SSH-poll на `JobClient.subscribe_events()`
+- `src/training/run_training.py` — добавить `RunnerEventCallback`
 - `src/training/orchestrator/shutdown_handler.py` — расширить SIGTERM handling под `should_save=True`
-- `src/config/providers/runpod/training.py` — удалить `image_name` (Pydantic field validator + warning)
+- `src/config/providers/runpod/training.py` — удалить `image_name` (no alias, no warning)
 - `src/config/providers/single_node/training.py` — удалить `docker_image`
 - `src/cli/commands/__init__.py` — зарегистрировать `job_app` через `register_all` (1-2 строки diff)
+
+### Удаляем целиком (Phase 6 cutover)
+- `src/training/notifiers/marker_file.py` — push events заменяют marker files
+- `src/providers/runpod/training/resources/watchdog.sh` — `IdleDetector` (Python) заменяет
+- (Опционально, решим в реализации) `src/providers/runpod/training/resources/runpod_stop_pod.sh` — переписать на Python в supervisor
+- Старые тесты `test_training_launcher.py` под marker-flow — переписываются под новую сигнатуру
 
 ### Переиспользуем (без изменений)
 - `src/utils/atomic_fs.py` (atomic_write_*)
@@ -594,7 +618,7 @@ class PluginPacker:
 - `src/community/registry_base.py::PluginRegistry[T]`
 - `src/training/reward_plugins/secrets.py` (RWRD_SecretsResolver)
 - `src/training/reward_plugins/factory.py` (broadcast log)
-- `src/providers/training/interfaces.py::TrainingScriptHooks` (legacy mode)
+- `src/providers/training/interfaces.py::TrainingScriptHooks` — `env_vars` поле для self-stop secrets (RUNPOD_API_KEY etc.); pre/post bash hooks больше не используются и удаляются из dataclass
 - **`src/cli/app.py`, `src/cli/context.py`, `src/cli/renderer.py`, `src/cli/common_options.py`** (CLI infrastructure для job noun)
 
 ---
@@ -608,7 +632,7 @@ class PluginPacker:
 | R-1 | SIGSEGV в bitsandbytes/flash-attn | 5 | 4 | **20** | Supervisor различает rc>128, читает `training.faulthandler.log` |
 | R-11 | uvicorn PID 1 не пробрасывает signals | 4 | 4 | **16** | `dumb-init` как ENTRYPOINT (Phase 0) |
 | R-22 | TrainerCallback POST overhead | 4 | 4 | **16** | Local buffer + flush каждые N шагов; raw stdout остаётся в `training.log` |
-| R-15 | In-flight runs при rollout (SAPO experiments) | 5 | 3 | **15** | Feature-flag `RYOTENKAI_RUNNER_V2`, дождаться текущих |
+| R-15 | In-flight runs при cutover (SAPO experiments) | 5 | 3 | **15** | Скоординировать окно с пользователем (подтверждено — открыто) |
 | R-7 | Slow dev cycle (rebuild image) | 3 | 5 | **15** | Bind-mount `src/runner/` в dev mode через `RYOTENKAI_DEV_MOUNT` |
 
 Полный список 30 рисков — см. [`nice-jepsen-runner.md` § 17](./nice-jepsen-runner.md).
@@ -623,7 +647,7 @@ class PluginPacker:
 | OQ-2 (state.jsonl path) | `/workspace/.ryotenkai/state.jsonl` — RunPod `volume_mount_path` persistent, переживёт container restart |
 | OQ-3 (ring buffer size) | 10k × ~1KB ≈ 10MB. Configurable через `RYOTENKAI_EVENT_BUFFER_SIZE` |
 | OQ-4 (MLflow relay sync vs async) | Async + `MLflowTransportCircuitBreaker` (existing) |
-| OQ-5 (in-flight SAPO migration) | Feature-flag `RYOTENKAI_RUNNER_V2`, дефолт `false`, flip после завершения текущих SAPO experiments |
+| OQ-5 (in-flight SAPO migration) | Cutover-стратегия (no backwards compat). Окно для миграции скоординировано с пользователем — открыто. Старые runs если есть — дожидаемся их завершения, потом cutover |
 | **OQ-6 NEW** (datasets validation) | Validation plugins **остаются на Mac** (Wave 4 confirmed: они теперь под `datasets.<key>.validations.plugins[]`, выполняются в Stage 0 DatasetValidator). На pod уезжают только reward. |
 | **OQ-7 NEW** (preflight на Mac vs pod) | Preflight работает только на Mac (через `pipeline_bootstrap` step 1.5), до отправки `submit_job`. На pod-е дополнительная проверка не нужна — config уже валиден. |
 | **OQ-8 NEW** (image override для dev) | Жёстко прибито в `__about__.py::RUNTIME_IMAGE`. Override **только** через env `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` (для CI/dev, не для пользователей). |
@@ -660,16 +684,16 @@ pytest src/tests/integration/runner/test_stale_plugin_blocks.py -v
 
 ### Manual (RunPod, end-to-end)
 1. Build & push новый образ: `./docker/training/build_and_push.sh --bump minor`
-2. Запустить SAPO run с feature-flag:
+2. Запустить SAPO run (старая команда теперь использует новую инфраструктуру по умолчанию):
    ```bash
-   RYOTENKAI_RUNNER_V2=true ryotenkai run start config/sapo_helixql.yaml
+   ryotenkai run start config/sapo_helixql.yaml
    ```
 3. Проверить:
    - `ryotenkai job status <attempt>` → состояние `running`, виден reward broadcast log
    - `ryotenkai job events <attempt> --follow` → events стримятся
    - Закрыть лаптоп на 5 минут → открыть → `ryotenkai run resume <attempt>` → события догнали
    - `ryotenkai job stop <attempt>` → state → `stopping` → `cancelled` + последний checkpoint сохранён
-4. Сравнить total time + correctness с предыдущим SAPO run на legacy launcher
+4. Сравнить wall-clock time + correctness с прежним SAPO baseline (комит до cutover)
 
 ### Cleanup checks
 ```bash

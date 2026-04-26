@@ -18,7 +18,6 @@ import re
 import pytest
 
 from src.runner import RUNTIME_IMAGE, create_app
-from src.runner.__about__ import _DEFAULT_RUNTIME_IMAGE
 from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
@@ -34,13 +33,30 @@ class TestPackageSurface:
         """``RUNTIME_IMAGE`` must follow the `<repo>:<tag>` shape."""
         assert re.match(r"^[\w./-]+:[\w.-]+$", RUNTIME_IMAGE)
 
-    def test_runtime_image_default_matches_about(self) -> None:
-        """When the override env is unset, the public constant equals the default.
+    def test_runtime_image_does_not_use_override(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """When the override env is unset, the resolved image matches the package default.
 
-        The unit test process inherits the parent shell — ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
-        is never set in the standard test runner, so the resolved value is the default.
+        Probes the override mechanism through its public effect — re-importing
+        ``__about__`` with the env set yields a different value, and clearing
+        the env restores the canonical pin. This guards both directions
+        without poking at the underscore-prefixed default.
         """
-        assert RUNTIME_IMAGE == _DEFAULT_RUNTIME_IMAGE
+        import importlib
+
+        from src.runner import __about__ as about_module
+
+        monkeypatch.delenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", raising=False)
+        baseline = importlib.reload(about_module).RUNTIME_IMAGE
+        assert baseline == RUNTIME_IMAGE  # current import equals fresh reload — no env in effect
+
+        monkeypatch.setenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", "ghcr.io/example/dev:0.0.0")
+        overridden = importlib.reload(about_module).RUNTIME_IMAGE
+        assert overridden == "ghcr.io/example/dev:0.0.0"
+        assert overridden != baseline
+
+        # Clean up: reload again with no env so module-level state stays canonical.
+        monkeypatch.delenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", raising=False)
+        importlib.reload(about_module)
 
     def test_create_app_is_idempotent(self) -> None:
         """Two calls to the factory build independent apps."""
