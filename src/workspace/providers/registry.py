@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.pipeline._workspace_registry import (
+from src.workspace._registry_base import (
     REGISTRY_SCHEMA_VERSION,
     WorkspaceRegistry,
     WorkspaceRegistryError,

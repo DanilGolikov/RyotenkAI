@@ -1,16 +1,16 @@
 """Generic base classes for workspace-scoped registries + stores.
 
-Three near-identical pairs of (registry, store) lived next to each other:
-``project/{registry,store}.py``, ``settings/providers/{registry,store}.py``,
-``settings/integrations/{registry,store}.py``. They all manage:
+Three near-identical pairs of (registry, store) live in the workspace
+umbrella: ``projects/``, ``providers/``, ``integrations/``. Each pair
+manages:
 
 * a JSON index file at ``<root>/<resource>.json`` listing entries by id;
 * a per-entry directory at ``<root>/<resource>/<id>/`` holding metadata
   (``<resource>.json``) + ``current.yaml`` + ``history/<iso>.yaml``
   snapshots.
 
-Boilerplate triplication was ~400 LOC of identical I/O wrapping. This
-module extracts the shape into two generic bases:
+Without this module the I/O wrapping was ~400 LOC of triplicated
+boilerplate. Two generic bases capture the shape:
 
 * :class:`WorkspaceRegistry` — id index, validate / list / resolve /
   register / unregister.
@@ -24,11 +24,6 @@ small set of hooks. Provider and Integration store/registry become
 thin wrappers; Project keeps its own extras (env vars, favorite
 versions, ``configs/`` sublayout, first-save seed) on top of the
 shared base.
-
-Lives under ``pipeline/`` for now because settings/providers,
-settings/integrations and project/ all do — Phase 6 of the cleanup plan
-will move the umbrella to ``src/workspace/`` and this base module rides
-along with them.
 """
 
 from __future__ import annotations

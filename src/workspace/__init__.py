@@ -6,7 +6,6 @@ domains, not pipeline runtime — projects describe user-managed config
 trees, providers/integrations hold reusable credentials and external
 service bindings.
 
-The shape is shared via ``WorkspaceRegistry`` / ``WorkspaceStore``
-generic bases (currently in ``src.pipeline._workspace_registry``,
-relocates here once the umbrella stabilises).
+The shape is shared via the ``WorkspaceRegistry`` / ``WorkspaceStore``
+generic bases in :mod:`src.workspace._registry_base`.
 """

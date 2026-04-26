@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from src.utils.atomic_fs import atomic_write_json, atomic_write_text, utc_now_iso
-from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
+from src.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
 from src.workspace.providers.models import (
     ProviderConfigVersion,
     ProviderMetadata,

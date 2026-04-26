@@ -33,7 +33,7 @@ from src.utils.atomic_fs import (
     unique_snapshot_path,
     utc_now_iso,
 )
-from src.pipeline._workspace_registry import WorkspaceStore, WorkspaceStoreError
+from src.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
 from src.workspace.projects.models import ProjectConfigVersion, ProjectMetadata
 
 if TYPE_CHECKING:
