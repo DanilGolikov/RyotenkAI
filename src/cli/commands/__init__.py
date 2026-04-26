@@ -26,6 +26,9 @@ from src.cli.commands import (
     dataset as _dataset_mod,
 )
 from src.cli.commands import (
+    job as _job_mod,
+)
+from src.cli.commands import (
     plugin as _plugin_mod,
 )
 from src.cli.commands import (
@@ -54,6 +57,7 @@ from src.cli.commands import (
 _REGISTRY: list[tuple[typer.Typer, str]] = [
     (_run_mod.run_app,       "run"),
     (_runs_mod.runs_app,     "runs"),
+    (_job_mod.job_app,       "job"),
     (_config_mod.config_app, "config"),
     (_dataset_mod.dataset_app, "dataset"),
     (_project_mod.project_app, "project"),

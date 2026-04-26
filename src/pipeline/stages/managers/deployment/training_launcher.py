@@ -61,6 +61,7 @@ from src.pipeline.stages.managers.deployment.provider_config import (
 from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
 )
+from src.pipeline.state.job_submission import JobSubmission, save_job_submission
 from src.providers.training.interfaces import TrainingScriptHooks
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -231,6 +232,15 @@ class TrainingLauncher:
         context["ssh_tunnel"] = tunnel
         context["job_id"] = job_id
 
+        # Persist the SSH endpoint so out-of-process CLI commands
+        # (``ryotenkai job status``, ``... events``, ``... stop``)
+        # can rebuild the connection later. Best-effort — failure to
+        # write the file is logged but doesn't abort the job, since
+        # the monitor in this same process already has live handles.
+        self._persist_job_submission(
+            context, ssh_client, job_id, provider,
+        )
+
         logger.info(
             "[LAUNCHER] Job %s submitted; tunnel localhost:%s → pod:8080",
             job_id, tunnel.local_port,
@@ -265,6 +275,56 @@ class TrainingLauncher:
         if result.is_err():
             return None
         return result.unwrap()
+
+    def _persist_job_submission(
+        self,
+        context: dict[str, Any],
+        ssh_client: SSHClient,
+        job_id: str,
+        provider: IGPUProvider | None,
+    ) -> None:
+        """Write ``attempts/<n>/job_submission.json`` for out-of-process
+        CLI tooling. Best-effort: errors are logged, never raised.
+
+        The attempt directory is read from ``context[ATTEMPT_DIRECTORY]``
+        — the orchestrator sets this before calling start_training.
+        Tests that don't go through the full pipeline bootstrap won't
+        have it set, in which case we silently skip.
+        """
+        from pathlib import Path
+
+        attempt_dir_str = context.get(PipelineContextKeys.ATTEMPT_DIRECTORY)
+        if not isinstance(attempt_dir_str, str) or not attempt_dir_str:
+            logger.debug(
+                "[LAUNCHER] no attempt_directory in context; "
+                "skipping job_submission.json persistence",
+            )
+            return
+
+        provider_name = (
+            getattr(provider, "provider_name", None)
+            if provider is not None
+            else "single_node"
+        )
+        pod_id = context.get("resource_id") or context.get("pod_id")
+
+        submission = JobSubmission.now(
+            job_id=job_id,
+            provider_name=str(provider_name or "unknown"),
+            pod_id=str(pod_id) if pod_id else None,
+            ssh_host=ssh_client.host,
+            ssh_port=int(ssh_client.port),
+            ssh_username=ssh_client.username or "root",
+            ssh_key_path=ssh_client.key_path or None,
+        )
+        try:
+            target = save_job_submission(Path(attempt_dir_str), submission)
+            logger.info("[LAUNCHER] persisted job submission to %s", target)
+        except OSError as exc:
+            logger.warning(
+                "[LAUNCHER] failed to persist job_submission.json: %s",
+                exc,
+            )
 
     def _resolve_job_id(self, context: dict[str, Any]) -> str:
         """Pick the ``job_id`` we'll send to the runner.
