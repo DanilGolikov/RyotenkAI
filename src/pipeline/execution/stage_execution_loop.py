@@ -81,7 +81,7 @@ if TYPE_CHECKING:
 
     from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
-    from src.pipeline.executor import StagePlanner
+    from src.pipeline.execution import StagePlanner
     from src.pipeline.launch import PreparedAttempt
     from src.pipeline.reporting import ExecutionSummaryReporter
     from src.pipeline.stages.base import PipelineStage

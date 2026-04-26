@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.executor import is_inference_runtime_healthy
+from src.pipeline.execution.stage_planner import is_inference_runtime_healthy
 from src.pipeline.restart_rules import compute_restart_points
 from src.pipeline.state import PipelineStateStore
 

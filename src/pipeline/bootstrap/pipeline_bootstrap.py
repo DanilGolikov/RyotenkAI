@@ -28,8 +28,12 @@ from typing import TYPE_CHECKING
 from src.pipeline.bootstrap.startup_validator import StartupValidator
 from src.pipeline.config_drift import ConfigDriftValidator
 from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
-from src.pipeline.execution import RestartPointsInspector, StageExecutionLoop, StageRegistry
-from src.pipeline.executor import StagePlanner
+from src.pipeline.execution import (
+    RestartPointsInspector,
+    StageExecutionLoop,
+    StagePlanner,
+    StageRegistry,
+)
 from src.pipeline.launch import LaunchPreparator
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter

@@ -241,7 +241,7 @@ def test_stateful_resume_reuses_completed_stages_and_appends_attempt(tmp_path: P
     )
 
     with patch(
-        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        "src.pipeline.execution.stage_planner.is_inference_runtime_healthy",
         return_value=True,
     ):
         second_result = second_orchestrator.run(run_dir=run_dir, resume=True)

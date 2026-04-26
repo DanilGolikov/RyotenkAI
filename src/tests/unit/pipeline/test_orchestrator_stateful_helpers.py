@@ -344,7 +344,7 @@ def test_validate_stage_prerequisites_for_evaluator_requires_live_runtime(tmp_pa
     orchestrator = _build_orchestrator(config_path, _build_mock_config())
 
     with patch(
-        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        "src.pipeline.execution.stage_planner.is_inference_runtime_healthy",
         return_value=False,
     ):
         error = orchestrator._stage_planner.validate_stage_prerequisites(
@@ -358,7 +358,7 @@ def test_validate_stage_prerequisites_for_evaluator_requires_live_runtime(tmp_pa
 
 
 def test_is_inference_runtime_healthy_handles_success_and_failure(tmp_path: Path) -> None:
-    from src.pipeline.executor import is_inference_runtime_healthy
+    from src.pipeline.execution import is_inference_runtime_healthy
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model:\n  name: gpt2\n")
@@ -368,10 +368,10 @@ def test_is_inference_runtime_healthy_handles_success_and_failure(tmp_path: Path
     response = MagicMock()
     response.__enter__.return_value = MagicMock(status=200)
     response.__exit__.return_value = None
-    with patch("src.pipeline.executor.stage_planner.urlopen", return_value=response):
+    with patch("src.pipeline.execution.stage_planner.urlopen", return_value=response):
         assert is_inference_runtime_healthy(inference_ctx) is True
 
-    with patch("src.pipeline.executor.stage_planner.urlopen", side_effect=RuntimeError("boom")):
+    with patch("src.pipeline.execution.stage_planner.urlopen", side_effect=RuntimeError("boom")):
         assert is_inference_runtime_healthy(inference_ctx) is False
 
 

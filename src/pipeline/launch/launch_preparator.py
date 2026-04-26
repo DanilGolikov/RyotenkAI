@@ -71,7 +71,7 @@ if TYPE_CHECKING:
     from src.config.runtime import RuntimeSettings
     from src.pipeline.config_drift import ConfigDriftValidator
     from src.pipeline.domain import RunContext
-    from src.pipeline.executor import StagePlanner
+    from src.pipeline.execution import StagePlanner
     from src.pipeline.stages.base import PipelineStage
 
 _SEPARATOR_CHAR = "="

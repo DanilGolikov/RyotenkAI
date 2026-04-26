@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.executor.stage_planner import (
+from src.pipeline.execution.stage_planner import (
     StagePlanner,
     is_inference_runtime_healthy,
 )
@@ -334,7 +334,7 @@ def test_prereq_inference_deployer_accepts_local_path(planner: StagePlanner) -> 
 
 def test_prereq_model_evaluator_inference_unhealthy(planner: StagePlanner) -> None:
     with patch(
-        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        "src.pipeline.execution.stage_planner.is_inference_runtime_healthy",
         return_value=False,
     ):
         err = planner.validate_stage_prerequisites(
@@ -348,7 +348,7 @@ def test_prereq_model_evaluator_inference_unhealthy(planner: StagePlanner) -> No
 
 def test_prereq_model_evaluator_inference_healthy(planner: StagePlanner) -> None:
     with patch(
-        "src.pipeline.executor.stage_planner.is_inference_runtime_healthy",
+        "src.pipeline.execution.stage_planner.is_inference_runtime_healthy",
         return_value=True,
     ):
         err = planner.validate_stage_prerequisites(
@@ -397,7 +397,7 @@ def test_health_uses_endpoint_info_health_url() -> None:
     response.__enter__ = lambda self: self
     response.__exit__ = lambda self, *_: None
     with patch(
-        "src.pipeline.executor.stage_planner.urlopen",
+        "src.pipeline.execution.stage_planner.urlopen",
         return_value=response,
     ) as mock:
         assert is_inference_runtime_healthy(
@@ -413,7 +413,7 @@ def test_health_falls_back_to_endpoint_url() -> None:
     response.__enter__ = lambda self: self
     response.__exit__ = lambda self, *_: None
     with patch(
-        "src.pipeline.executor.stage_planner.urlopen",
+        "src.pipeline.execution.stage_planner.urlopen",
         return_value=response,
     ) as mock:
         assert is_inference_runtime_healthy({"endpoint_url": "http://host/ping"}) is True
@@ -425,13 +425,13 @@ def test_health_non_2xx_returns_false() -> None:
     response.status = 500
     response.__enter__ = lambda self: self
     response.__exit__ = lambda self, *_: None
-    with patch("src.pipeline.executor.stage_planner.urlopen", return_value=response):
+    with patch("src.pipeline.execution.stage_planner.urlopen", return_value=response):
         assert is_inference_runtime_healthy({"endpoint_url": "http://x"}) is False
 
 
 def test_health_network_exception_returns_false() -> None:
     with patch(
-        "src.pipeline.executor.stage_planner.urlopen",
+        "src.pipeline.execution.stage_planner.urlopen",
         side_effect=OSError("network down"),
     ):
         assert is_inference_runtime_healthy({"endpoint_url": "http://x"}) is False

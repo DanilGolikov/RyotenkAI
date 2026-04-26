@@ -14,6 +14,13 @@ is eligible to run.
 
 from src.pipeline.execution.restart_inspector import RestartPointsInspector
 from src.pipeline.execution.stage_execution_loop import StageExecutionLoop
+from src.pipeline.execution.stage_planner import StagePlanner, is_inference_runtime_healthy
 from src.pipeline.execution.stage_registry import StageRegistry
 
-__all__ = ["RestartPointsInspector", "StageExecutionLoop", "StageRegistry"]
+__all__ = [
+    "RestartPointsInspector",
+    "StageExecutionLoop",
+    "StagePlanner",
+    "StageRegistry",
+    "is_inference_runtime_healthy",
+]
