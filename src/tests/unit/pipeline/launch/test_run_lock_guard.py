@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.state.run_lock_guard import RunLockGuard
+from src.pipeline.launch.run_lock_guard import RunLockGuard
 from src.pipeline.state.store import PipelineStateLockError
 
 
@@ -206,7 +206,7 @@ class TestDependencyErrors:
         # Make parent dir non-writable
         lock_file = tmp_path / "run.lock"
         with patch(
-            "src.pipeline.state.run_lock_guard.acquire_run_lock",
+            "src.pipeline.launch.run_lock_guard.acquire_run_lock",
             side_effect=PermissionError("denied"),
         ):
             with pytest.raises(PermissionError):
@@ -251,7 +251,7 @@ class TestRegressions:
         protocol) — and our guard must not attempt release() on a None lock."""
         lock_file = tmp_path / "run.lock"
         with patch(
-            "src.pipeline.state.run_lock_guard.acquire_run_lock",
+            "src.pipeline.launch.run_lock_guard.acquire_run_lock",
             side_effect=PipelineStateLockError("taken"),
         ):
             guard = RunLockGuard(lock_file)

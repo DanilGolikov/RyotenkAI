@@ -33,7 +33,7 @@ from src.pipeline.state import (
     PipelineStateError,
     PipelineStateStore,
 )
-from src.pipeline.state.run_lock_guard import RunLockGuard
+from src.pipeline.launch.run_lock_guard import RunLockGuard
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 

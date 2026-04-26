@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.orchestrator import PipelineOrchestrator
-from src.pipeline.state.run_lock_guard import RunLockGuard
+from src.pipeline.launch.run_lock_guard import RunLockGuard
 from src.utils.result import Ok
 
 

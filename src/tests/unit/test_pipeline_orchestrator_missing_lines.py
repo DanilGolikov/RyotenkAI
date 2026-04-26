@@ -264,7 +264,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         # harmlessly (no real I/O).
         with (
             patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
-            patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
+            patch("src.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             res = orch.run()
         assert res.is_ok()
@@ -325,7 +325,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         # harmlessly (no real I/O).
         with (
             patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
-            patch("src.pipeline.state.run_lock_guard.acquire_run_lock", return_value=mock_lock),
+            patch("src.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             orch.run()
         # pipeline_events.json logging is removed — log_summary_artifact must NOT be called
