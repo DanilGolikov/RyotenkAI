@@ -37,6 +37,10 @@ from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import EventBus
+from src.runner.mlflow_relay import (
+    MLflowRelay,
+    make_mlflow_forward_fn,
+)
 from src.runner.plugin_unpacker import PluginUnpacker
 from src.runner.pod_stopper import PodStopper, stop_pod_on_terminal
 from src.runner.state import JobLifecycleFSM
@@ -130,19 +134,59 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
 
         supervisor = supervisor_factory(fsm, bus, terminal_hook=_terminal_hook)
 
+        # Optional MLflow relay (Phase 4.3). Activated only when the
+        # operator opts in via ``RYOTENKAI_RUNNER_MLFLOW_RELAY=1`` AND
+        # an upstream URI is configured. In the default flow trainer
+        # talks to MLflow directly through ``ResilientMLflowTransport``;
+        # the relay adds a process-independent buffer + circuit
+        # breaker for deployments where the trainer cannot reach
+        # MLflow directly.
+        mlflow_relay = _build_mlflow_relay()
+        await mlflow_relay.start()
+
         app.state.fsm = fsm
         app.state.bus = bus
         app.state.pod_stopper = pod_stopper
         app.state.plugin_unpacker = plugin_unpacker
         app.state.supervisor = supervisor
+        app.state.mlflow_relay = mlflow_relay
 
         try:
             yield
         finally:
+            await mlflow_relay.stop()
             await supervisor.shutdown()
             bus.close()
 
     return _lifespan
+
+
+def _build_mlflow_relay() -> MLflowRelay:
+    """Build the MLflow relay based on env-driven configuration.
+
+    Activation contract:
+
+    - ``RYOTENKAI_RUNNER_MLFLOW_RELAY``  (1/true/on) — opt-in toggle.
+      Defaults to *off*, so existing deployments keep talking to
+      MLflow directly through the trainer's own resilient transport.
+    - ``MLFLOW_TRACKING_URI`` — required when relay is enabled;
+      missing/empty disables the relay even if the toggle is on.
+
+    A disabled relay still exists as a no-op object so endpoints
+    that depend on ``app.state.mlflow_relay`` don't have to gate
+    every call. ``submit()`` returns ``False`` and ``start()`` /
+    ``stop()`` are no-ops.
+    """
+    enabled = os.environ.get(
+        "RYOTENKAI_RUNNER_MLFLOW_RELAY", "",
+    ).strip().lower() in {"1", "true", "on", "yes"}
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "").strip()
+
+    if not enabled or not tracking_uri:
+        return MLflowRelay(forward_fn=None)
+
+    forward_fn = make_mlflow_forward_fn(tracking_uri)
+    return MLflowRelay(forward_fn=forward_fn)
 
 
 def create_app(

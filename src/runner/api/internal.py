@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from src.runner.api.deps import get_bus, get_fsm
+from src.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
 from src.runner.api.schemas import EventResponse, InternalEventRequest
+from src.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
+    from src.runner.mlflow_relay import MLflowRelay
     from src.runner.state import JobLifecycleFSM
 
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -70,6 +72,7 @@ def push_event(
     request: Request,
     fsm: "JobLifecycleFSM" = Depends(get_fsm),
     bus: "EventBus" = Depends(get_bus),
+    mlflow_relay: "MLflowRelay" = Depends(get_mlflow_relay),
 ) -> EventResponse:
     _require_loopback(request)
 
@@ -85,6 +88,14 @@ def push_event(
         )
 
     event = bus.publish(body.kind, body.payload)
+
+    # MLflow relay (Phase 4.3) — forward MLflow-shaped events to the
+    # configured upstream when enabled. Disabled relay returns False
+    # and we move on. Non-blocking: ``submit`` is sync, work happens
+    # in the relay's worker task.
+    if body.kind in MLFLOW_EVENT_KINDS:
+        mlflow_relay.submit({"kind": body.kind, "payload": body.payload})
+
     return EventResponse(
         offset=event.offset,
         timestamp=event.timestamp,

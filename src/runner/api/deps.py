@@ -16,6 +16,7 @@ from fastapi import Request
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
+    from src.runner.mlflow_relay import MLflowRelay
     from src.runner.plugin_unpacker import PluginUnpacker
     from src.runner.state import JobLifecycleFSM
     from src.runner.supervisor import Supervisor
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "get_bus",
     "get_fsm",
+    "get_mlflow_relay",
     "get_plugin_unpacker",
     "get_supervisor",
 ]
@@ -46,3 +48,13 @@ def get_supervisor(request: Request) -> "Supervisor":
 def get_plugin_unpacker(request: Request) -> "PluginUnpacker":
     """Return the plugin unpacker bound to the live FastAPI app."""
     return request.app.state.plugin_unpacker  # type: ignore[no-any-return]
+
+
+def get_mlflow_relay(request: Request) -> "MLflowRelay":
+    """Return the MLflow relay bound to the live FastAPI app.
+
+    Always returns an :class:`MLflowRelay` — disabled deployments
+    get a no-op instance so handlers can call ``.submit()`` without
+    branching on configuration.
+    """
+    return request.app.state.mlflow_relay  # type: ignore[no-any-return]
