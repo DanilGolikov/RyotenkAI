@@ -38,7 +38,7 @@ from src.pipeline.launch import LaunchPreparator
 from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import PipelineContextKeys
-from src.pipeline.validation.artifact_manager import ValidationArtifactManager
+from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 from src.utils.config import load_config, load_secrets
 from src.utils.logger import logger
 

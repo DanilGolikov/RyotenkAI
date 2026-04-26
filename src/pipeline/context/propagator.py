@@ -26,7 +26,7 @@ from src.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
     from src.pipeline.artifacts import StageArtifactCollector
-    from src.pipeline.validation.artifact_manager import ValidationArtifactManager
+    from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 
 
 class ContextPropagator:

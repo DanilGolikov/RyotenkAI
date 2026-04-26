@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
     from src.pipeline.context import PipelineContext
     from src.pipeline.stages.base import PipelineStage
-    from src.pipeline.validation.artifact_manager import ValidationArtifactManager
+    from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
     from src.utils.config import PipelineConfig, Secrets
 
 

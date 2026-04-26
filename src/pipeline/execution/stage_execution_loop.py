@@ -86,7 +86,7 @@ if TYPE_CHECKING:
     from src.pipeline.reporting import ExecutionSummaryReporter
     from src.pipeline.stages.base import PipelineStage
     from src.pipeline.state import AttemptController
-    from src.pipeline.validation.artifact_manager import ValidationArtifactManager
+    from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
     from src.training.managers.mlflow_manager import MLflowManager
     from src.utils.logs_layout import LogLayout
 

@@ -43,8 +43,8 @@ def _hf_ds(train_id: str, *, plugins: list[dict] | None = None, critical_failure
     )
 
 
-@patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.validation_registry")
+@patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
+@patch("src.pipeline.stages.dataset_validator.stage.validation_registry")
 def test_loads_default_plugins_when_no_plugins_configured(mock_registry, mock_loader_factory) -> None:
     ds = _local_ds("data/train.jsonl", plugins=[], critical_failures=1)
     cfg = _mk_primary_only_config(ds)
@@ -56,8 +56,8 @@ def test_loads_default_plugins_when_no_plugins_configured(mock_registry, mock_lo
     assert mock_registry.instantiate.call_count == 4
 
 
-@patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory")
-@patch("src.pipeline.stages.dataset_validator.validation_registry")
+@patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
+@patch("src.pipeline.stages.dataset_validator.stage.validation_registry")
 def test_loads_configured_plugins_only(mock_registry, mock_loader_factory) -> None:
     ds = _local_ds(
         "data/train.jsonl",
@@ -157,7 +157,7 @@ def test_hf_streaming_fast_uses_train_id(mock_load_dataset: MagicMock) -> None:
     loader.token = "test_token"
     loader_factory.create_for_dataset.return_value = loader
 
-    with patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory", return_value=loader_factory):
+    with patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory", return_value=loader_factory):
         validator = DatasetValidator(cfg)
         _ = validator.execute({})
 
@@ -297,7 +297,7 @@ class TestDatasetValidatorAdditionalCoverage:
         assert res.is_failure()
         assert f2.cancelled is True
 
-    @patch("src.pipeline.stages.dataset_validator.DatasetLoaderFactory")
+    @patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
     def test_get_datasets_to_validate_falls_back_when_strategy_dataset_missing(self, _mock_loader_factory) -> None:
         cfg = MagicMock(spec=PipelineConfig)
         primary = MagicMock()

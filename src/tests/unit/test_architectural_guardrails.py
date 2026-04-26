@@ -80,7 +80,7 @@ class TestNoCycles:
     """
 
     @pytest.mark.parametrize("module_path", [
-        "src.pipeline.validation.artifact_manager",
+        "src.pipeline.stages.dataset_validator.artifact_manager",
         "src.pipeline.state.transitioner",
         "src.training.managers.mlflow_manager.manager",
         "src.training.mlflow.resilient_transport",
@@ -104,7 +104,7 @@ class TestNoCycles:
         """ValidationArtifactManager must not import the orchestrator (would re-create the cycle)."""
         import_lines = [
             line
-            for line in (SRC / "pipeline/validation/artifact_manager.py")
+            for line in (SRC / "pipeline/stages/dataset_validator/artifact_manager.py")
             .read_text(encoding="utf-8")
             .splitlines()
             if line.startswith(("import ", "from "))
@@ -173,7 +173,7 @@ class TestExtractionContracts:
     """Extracted modules must expose their documented public API."""
 
     def test_validation_artifact_manager_public_api(self) -> None:
-        from src.pipeline.validation.artifact_manager import ValidationArtifactManager
+        from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 
         expected_methods = [
             "on_dataset_scheduled",
@@ -210,7 +210,7 @@ class TestExtractionContracts:
             )
 
     def test_pipeline_validation_package_importable(self) -> None:
-        mod = importlib.import_module("src.pipeline.validation")
+        mod = importlib.import_module("src.pipeline.stages.dataset_validator")
         assert hasattr(mod, "ValidationArtifactManager")
 
     def test_resilient_transport_public_api(self) -> None:
