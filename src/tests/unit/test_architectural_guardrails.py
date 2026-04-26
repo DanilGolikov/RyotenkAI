@@ -69,6 +69,64 @@ class TestFileSizeLimits:
 
 
 # ---------------------------------------------------------------------------
+# 1.5. STAGES PACKAGE IMPORT IS LIGHT
+# ---------------------------------------------------------------------------
+
+
+class TestStagesPackageStaysLight:
+    """``from src.pipeline.stages import StageNames`` must not pull the
+    training stack into sys.modules.
+
+    Why this exists: lightweight callers (CLI ``list-restart-points``,
+    config validators, restart-point queries, the web backend's run
+    listing) need the StageNames enum without paying for torch /
+    transformers / mlflow / datasets / src.training.* import time.
+
+    Phase 3 of the pipeline cleanup achieved this by trimming
+    ``src/pipeline/stages/__init__.py`` to re-export only the lightweight
+    constants module. If a future change re-introduces an eager
+    ``from .gpu_deployer import GPUDeployer`` (or similar) at the package
+    root, every CLI invocation gets slower again — this guardrail catches
+    that regression at CI time.
+
+    The check runs in a fresh subprocess so the test process's already-
+    loaded modules do not mask the regression.
+    """
+
+    _HEAVY_PREFIXES = ("torch", "transformers", "datasets", "mlflow", "huggingface_hub")
+    _HEAVY_PACKAGES = ("src.training",)
+
+    def test_stages_init_does_not_load_training_stack(self) -> None:
+        probe = (
+            "import sys\n"
+            "from src.pipeline.stages import StageNames  # noqa: F401\n"
+            "loaded = sorted(\n"
+            "    m for m in sys.modules\n"
+            f"    if any(m == p or m.startswith(p + '.') for p in {self._HEAVY_PREFIXES!r})\n"
+            f"    or any(m == p or m.startswith(p + '.') for p in {self._HEAVY_PACKAGES!r})\n"
+            ")\n"
+            "print('|'.join(loaded))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, (
+            f"Lightweight import probe crashed:\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+        loaded = [m for m in result.stdout.strip().split("|") if m]
+        assert not loaded, (
+            "`from src.pipeline.stages import StageNames` pulled heavy modules "
+            "into sys.modules. Likely cause: a stage class got re-added to "
+            "src/pipeline/stages/__init__.py. Move it back to a submodule "
+            "import. Offenders:\n  " + "\n  ".join(loaded[:20])
+        )
+
+
+# ---------------------------------------------------------------------------
 # 2. IMPORT CYCLE DETECTION
 # ---------------------------------------------------------------------------
 

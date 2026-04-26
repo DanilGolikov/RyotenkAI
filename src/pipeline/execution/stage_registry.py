@@ -25,16 +25,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.pipeline.artifacts import StageArtifactCollector
-from src.pipeline.stages import (
-    DatasetValidator,
-    GPUDeployer,
-    InferenceDeployer,
-    ModelEvaluator,
-    ModelRetriever,
-    StageNames,
-    TrainingMonitor,
-)
-from src.pipeline.stages.gpu_deployer import IEarlyReleasable
+from src.pipeline.stages import StageNames
+from src.pipeline.stages.dataset_validator import DatasetValidator
+from src.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
+from src.pipeline.stages.inference_deployer import InferenceDeployer
+from src.pipeline.stages.model_evaluator import ModelEvaluator
+from src.pipeline.stages.model_retriever import ModelRetriever
+from src.pipeline.stages.training_monitor import TrainingMonitor
 from src.utils.logger import logger
 
 if TYPE_CHECKING:

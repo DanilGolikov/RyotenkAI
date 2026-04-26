@@ -18,9 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline._types import CANONICAL_STAGE_ORDER
 from src.pipeline.config_drift import compute_config_hashes
 from src.pipeline.launch.restart_rules import compute_restart_points
+from src.pipeline.stages.constants import CANONICAL_STAGE_ORDER
 from src.pipeline.state import PipelineStateStore
 from src.pipeline.state.queries import first_unfinished_stage
 from src.utils.config import load_config
