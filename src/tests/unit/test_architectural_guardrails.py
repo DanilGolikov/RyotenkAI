@@ -240,7 +240,6 @@ class TestNoOrchestratorImports:
         "src/pipeline/orchestrator.py",         # self
         "src/main.py",                          # CLI entry point
         "src/api/services/run_service.py",      # web backend entry
-        "src/pipeline/launch.py",               # subprocess launcher
     })
 
     def test_no_collaborator_imports_pipeline_orchestrator(self) -> None:
