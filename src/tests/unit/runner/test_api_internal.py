@@ -18,10 +18,14 @@ JOBS = f"{API_V1_PREFIX}/jobs"
 
 
 def _submit(runner_client, job_id: str = "j-1") -> None:  # type: ignore[no-untyped-def]
-    """Drive the FSM to ``preparing`` so the trainer-event endpoint
-    has a parent job to attribute its event to."""
+    """Drive the FSM through ``preparing → running`` (via MockSupervisor)
+    so the trainer-event endpoint has a parent job to attribute to."""
     kw = {
-        "data": {"job_spec": json.dumps({"job_id": job_id})},
+        "data": {
+            "job_spec": json.dumps(
+                {"job_id": job_id, "command": ["python", "-c", "pass"]},
+            ),
+        },
         "files": {"plugins_payload": ("p.zip", io.BytesIO(b""), "application/zip")},
     }
     runner_client.post(JOBS, **kw)
@@ -38,8 +42,10 @@ class TestPushEvent:
         body = r.json()
         assert body["kind"] == "step"
         assert body["payload"] == {"loss": 0.42, "step": 100}
-        # Synthetic ``job_submitted`` already on the bus → this one is offset 1.
-        assert body["offset"] == 1
+        # The bus has two prior events from submit_and_spawn:
+        # job_submitted (offset 0) + trainer_spawned (offset 1).
+        # Our trainer-pushed event is offset 2.
+        assert body["offset"] == 2
 
     def test_no_active_job_returns_409(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         # No prior submit → no FSM snapshot.

@@ -31,13 +31,18 @@ def _multipart(spec: dict, payload: bytes = b"") -> dict:
 
 class TestSubmit:
     def test_happy_path(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        kw = _multipart({"job_id": "j-1"})
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         r = runner_client.post(JOBS, **kw)
         assert r.status_code == 202, r.text
         body = r.json()
         assert body["job_id"] == "j-1"
-        assert body["sequence"] == 0
-        assert body["offset"] == 0  # first event on the bus
+        # MockSupervisor synchronously advances preparing → running,
+        # so the snapshot reported back is at sequence=1.
+        assert body["sequence"] == 1
+        # Offset 0 is ``job_submitted``; the trainer_spawned event
+        # follows at offset 1. The endpoint always returns 0 so the
+        # client can replay both with since=0.
+        assert body["offset"] == 0
 
     def test_invalid_job_spec_returns_422(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         # Empty job_id violates min_length=1
@@ -61,30 +66,26 @@ class TestSubmit:
         assert r.status_code == 422
 
     def test_double_submit_while_running_returns_409(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        # Submit + manually advance to RUNNING via the FSM directly,
-        # then try to submit a second job — should 409.
-        from src.runner.state import JobState
-
-        kw = _multipart({"job_id": "j-1"})
+        # First submit drives FSM through preparing → running via the
+        # MockSupervisor. The second one must 409 — the supervisor
+        # is busy.
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         runner_client.post(JOBS, **kw)
-        runner_client.app.state.fsm.transition(JobState.RUNNING)
 
-        kw2 = _multipart({"job_id": "j-2"})
+        kw2 = _multipart({"job_id": "j-2", "command": ["python", "-c", "pass"]})
         r = runner_client.post(JOBS, **kw2)
         assert r.status_code == 409
         assert r.json()["detail"]["code"] == "job_in_progress"
-        assert r.json()["detail"]["current_state"] == "running"
 
     def test_resubmit_after_terminal_state_succeeds(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        from src.runner.state import JobState
-
-        kw = _multipart({"job_id": "j-1"})
+        # Drive the first job to a terminal state via the mock's
+        # ``finish`` helper (real supervisor does this through ``_reap``
+        # when the trainer subprocess exits).
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         runner_client.post(JOBS, **kw)
-        # Drive to terminal.
-        runner_client.app.state.fsm.transition(JobState.RUNNING)
-        runner_client.app.state.fsm.transition(JobState.COMPLETED)
+        runner_client.app.state.supervisor.finish(exit_code=0)
 
-        kw2 = _multipart({"job_id": "j-2"})
+        kw2 = _multipart({"job_id": "j-2", "command": ["python", "-c", "pass"]})
         r = runner_client.post(JOBS, **kw2)
         assert r.status_code == 202
         assert r.json()["job_id"] == "j-2"
@@ -97,18 +98,20 @@ class TestSubmit:
 
 class TestGet:
     def test_returns_snapshot_for_active_job(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        kw = _multipart({"job_id": "j-1"})
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         runner_client.post(JOBS, **kw)
         r = runner_client.get(f"{JOBS}/j-1")
         assert r.status_code == 200
         body = r.json()
         assert body["job_id"] == "j-1"
-        assert body["state"] == "preparing"
-        assert body["sequence"] == 0
-        assert body["last_event_offset"] == 0  # the synthetic submit event
+        # MockSupervisor advances FSM to ``running`` synchronously.
+        assert body["state"] == "running"
+        assert body["sequence"] == 1  # 0 = preparing, 1 = running
+        # Two events on the bus: job_submitted, trainer_spawned.
+        assert body["last_event_offset"] == 1
 
     def test_404_for_unknown_id(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        kw = _multipart({"job_id": "j-1"})
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]})
         runner_client.post(JOBS, **kw)
         r = runner_client.get(f"{JOBS}/j-other")
         assert r.status_code == 404
@@ -126,27 +129,28 @@ class TestGet:
 
 class TestStop:
     def test_happy_path_running_to_stopping(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        from src.runner.state import JobState
-
-        runner_client.post(JOBS, **_multipart({"job_id": "j-1"}))
-        runner_client.app.state.fsm.transition(JobState.RUNNING)
+        # MockSupervisor lands in ``running`` after submit_and_spawn.
+        runner_client.post(JOBS, **_multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}))
 
         r = runner_client.post(f"{JOBS}/j-1/stop")
         assert r.status_code == 202
         body = r.json()
         assert body["state"] == "stopping"
+        # 0 = preparing, 1 = running, 2 = stopping.
         assert body["sequence"] == 2
 
-    def test_stop_from_preparing_returns_409(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        # FSM forbids preparing → stopping.
-        runner_client.post(JOBS, **_multipart({"job_id": "j-1"}))
+    def test_stop_from_terminal_returns_409(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        # MockSupervisor.finish drives the FSM straight to ``completed``;
+        # stop from a terminal state is rejected.
+        runner_client.post(JOBS, **_multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}))
+        runner_client.app.state.supervisor.finish(exit_code=0)
         r = runner_client.post(f"{JOBS}/j-1/stop")
         assert r.status_code == 409
         assert r.json()["detail"]["code"] == "stop_not_allowed"
-        assert r.json()["detail"]["current_state"] == "preparing"
+        assert r.json()["detail"]["current_state"] == "completed"
 
     def test_stop_unknown_job_returns_404(self, runner_client) -> None:  # type: ignore[no-untyped-def]
-        runner_client.post(JOBS, **_multipart({"job_id": "j-1"}))
+        runner_client.post(JOBS, **_multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}))
         r = runner_client.post(f"{JOBS}/other/stop")
         assert r.status_code == 404
 
@@ -162,6 +166,6 @@ class TestPluginsPayload:
         # with non-empty bytes confirms the consume path doesn't
         # raise on real ZIP magic bytes.
         zip_magic = b"PK\x03\x04" + b"\x00" * 100
-        kw = _multipart({"job_id": "j-1"}, payload=zip_magic)
+        kw = _multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}, payload=zip_magic)
         r = runner_client.post(JOBS, **kw)
         assert r.status_code == 202

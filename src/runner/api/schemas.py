@@ -52,12 +52,22 @@ class JobSpec(_StrictModel):
             "the path key for ``GET /jobs/{job_id}``."
         ),
     )
+    command: list[str] = Field(
+        min_length=1,
+        description=(
+            "argv-style command the supervisor exec()s as the trainer "
+            "subprocess. The Mac client typically sends "
+            "``['python', '-m', 'src.training.run_training', ...]``. "
+            "The first element must resolve in PATH or be an "
+            "absolute path; ``min_length=1`` rejects empty argv."
+        ),
+    )
     env: dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Environment variables to pass to the trainer subprocess. "
-            "Phase 2 supervisor reads this. Phase 1 ignores it but "
-            "validates the shape so the wire contract stays stable."
+            "Extra environment variables to merge over the runner's "
+            "own ``os.environ`` for the trainer subprocess. Use "
+            "this for HF_TOKEN, MLFLOW_*, RYOTENKAI_RUNNER_URL, etc."
         ),
     )
 

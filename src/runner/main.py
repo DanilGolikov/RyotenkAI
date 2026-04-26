@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import FastAPI
 
@@ -38,11 +38,21 @@ from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import EventBus
 from src.runner.state import JobLifecycleFSM
+from src.runner.supervisor import Supervisor
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 API_V1_PREFIX = "/api/v1"
+
+
+class _SupervisorFactory(Protocol):
+    """Constructor signature shared by :class:`Supervisor` and any
+    test double. Keep narrow — only the boot-time call signature."""
+
+    def __call__(
+        self, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> Supervisor: ...
 
 
 def _resolve_workspace() -> Path:
@@ -56,34 +66,63 @@ def _resolve_workspace() -> Path:
     return Path(raw)
 
 
-@asynccontextmanager
-async def _lifespan(app: FastAPI) -> "AsyncIterator[None]":
-    """Wire up FSM + EventBus on ``app.state``.
+def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-untyped-def]
+    """Build a lifespan that uses ``supervisor_factory`` to build the
+    Supervisor.
 
-    Order:
-    1. Build FSM at the workspace dir; call ``restore_or_init()``
-       so a container restart resumes the previous state (or
-       transitions an unsafe state to ``failed`` — see
-       :meth:`JobLifecycleFSM.restore_or_init`).
-    2. Build EventBus with the env-driven default capacity.
-    3. Yield — endpoints serve traffic.
-    4. On shutdown, close the bus so subscribers drain cleanly.
+    Tests pass a mock factory through :func:`create_app`; production
+    uses :class:`Supervisor` directly. Wrapping in a closure keeps
+    the lifespan ``@asynccontextmanager`` shape FastAPI expects
+    while still letting us swap implementations.
     """
-    fsm = JobLifecycleFSM(workspace_dir=_resolve_workspace())
-    fsm.restore_or_init()
-    bus = EventBus()
 
-    app.state.fsm = fsm
-    app.state.bus = bus
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> "AsyncIterator[None]":
+        """Wire up FSM + EventBus + Supervisor on ``app.state``.
 
-    try:
-        yield
-    finally:
-        bus.close()
+        Order:
+        1. Build FSM at the workspace dir; call ``restore_or_init()``
+           so a container restart resumes the previous state (or
+           transitions an unsafe state to ``failed`` — see
+           :meth:`JobLifecycleFSM.restore_or_init`).
+        2. Build EventBus with the env-driven default capacity.
+        3. Build Supervisor (or test double) bound to (fsm, bus).
+        4. Yield — endpoints serve traffic.
+        5. On shutdown, stop the trainer first so its SIGTERM-driven
+           save can write through, *then* close the bus so the final
+           ``trainer_exited`` event reaches subscribers.
+        """
+        fsm = JobLifecycleFSM(workspace_dir=_resolve_workspace())
+        fsm.restore_or_init()
+        bus = EventBus()
+        supervisor = supervisor_factory(fsm, bus)
+
+        app.state.fsm = fsm
+        app.state.bus = bus
+        app.state.supervisor = supervisor
+
+        try:
+            yield
+        finally:
+            await supervisor.shutdown()
+            bus.close()
+
+    return _lifespan
 
 
-def create_app() -> FastAPI:
-    """Build a fresh app instance (factory pattern — see module docstring)."""
+def create_app(
+    supervisor_factory: _SupervisorFactory | None = None,
+) -> FastAPI:
+    """Build a fresh app instance.
+
+    ``supervisor_factory`` is a callable ``(fsm, bus) -> Supervisor``
+    used to construct the supervisor in the lifespan. Defaults to
+    the real :class:`Supervisor`. Tests pass :class:`MockSupervisor`
+    (or any other test double matching the protocol) for unit
+    coverage of the API layer without paying for real subprocess
+    semantics.
+    """
+    factory: _SupervisorFactory = supervisor_factory or Supervisor
     app = FastAPI(
         title="RyotenkAI Runner",
         version=RUNTIME_IMAGE,
@@ -92,7 +131,7 @@ def create_app() -> FastAPI:
             "Loopback-only (127.0.0.1:8080); reached from Mac via "
             "ssh -L tunnel."
         ),
-        lifespan=_lifespan,
+        lifespan=_make_lifespan(factory),
     )
 
     @app.get("/healthz", tags=["meta"])
@@ -102,12 +141,13 @@ def create_app() -> FastAPI:
 
     @app.get("/readyz", tags=["meta"])
     def readyz() -> dict[str, object]:
-        """Readiness — FSM has restored, bus is open."""
+        """Readiness — FSM has restored, bus is open, supervisor wired."""
         bus_open = not app.state.bus.is_closed
         return {
             "status": "ready" if bus_open else "draining",
             "bus_open": bus_open,
             "fsm_restored": True,  # restore_or_init() ran in lifespan
+            "supervisor_running": app.state.supervisor.is_running,
         }
 
     @app.get("/version", tags=["meta"])

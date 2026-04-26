@@ -217,16 +217,38 @@ class JobSnapshot:
 
 class InvalidTransitionError(RuntimeError):
     """Raised when :meth:`JobLifecycleFSM.transition` is called with a
-    state the matrix forbids from the current one."""
+    state the matrix forbids from the current one, or when
+    :meth:`JobLifecycleFSM.transition` runs without a prior
+    :meth:`submit`.
 
-    def __init__(self, current: JobState, attempted: JobState) -> None:
-        super().__init__(
-            f"illegal transition: {current.value} → {attempted.value}; "
-            f"legal next states from {current.value}: "
-            f"{sorted(s.value for s in _LEGAL_TRANSITIONS[current])}",
-        )
+    ``current`` is the FSM's source state; for the no-submit case it
+    is ``JobState.PREPARING`` by convention (the state any
+    transition would *want* to start from). ``no_active_snapshot``
+    flags this synthetic case so error messages can be precise.
+    """
+
+    def __init__(
+        self,
+        current: JobState,
+        attempted: JobState,
+        *,
+        no_active_snapshot: bool = False,
+    ) -> None:
+        if no_active_snapshot:
+            message = (
+                f"cannot transition to {attempted.value}: no active job "
+                "(call submit() first)"
+            )
+        else:
+            legal = sorted(s.value for s in _LEGAL_TRANSITIONS[current])
+            message = (
+                f"illegal transition: {current.value} → {attempted.value}; "
+                f"legal next states from {current.value}: {legal}"
+            )
+        super().__init__(message)
         self.current = current
         self.attempted = attempted
+        self.no_active_snapshot = no_active_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +394,11 @@ class JobLifecycleFSM:
         """
         if self._snapshot is None:
             # No job submitted yet — can't transition from "nothing".
-            # We surface this as InvalidTransitionError with a synthetic
-            # PREPARING source so callers don't need a separate exception.
-            raise InvalidTransitionError(JobState.PREPARING, target)
+            # Synthetic source = PREPARING; no_active_snapshot=True
+            # so the error message is precise.
+            raise InvalidTransitionError(
+                JobState.PREPARING, target, no_active_snapshot=True,
+            )
 
         legal = _LEGAL_TRANSITIONS[self._snapshot.state]
         if target not in legal:

@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import ValidationError
 
-from src.runner.api.deps import get_bus, get_fsm
+from src.runner.api.deps import get_bus, get_fsm, get_supervisor
 from src.runner.api.schemas import (
     JobSnapshotResponse,
     JobSpec,
@@ -43,10 +43,12 @@ from src.runner.state import (
     InvalidTransitionError,
     JobState,
 )
+from src.runner.supervisor import SupervisorBusy
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
     from src.runner.state import JobLifecycleFSM
+    from src.runner.supervisor import Supervisor
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -116,6 +118,7 @@ async def submit_job(
     ),
     fsm: "JobLifecycleFSM" = Depends(get_fsm),
     bus: "EventBus" = Depends(get_bus),
+    supervisor: "Supervisor" = Depends(get_supervisor),
 ) -> JobSubmittedResponse:
     # Validate the JSON part — extra="forbid" surfaces typos at 422
     # rather than silently dropping them.
@@ -135,27 +138,48 @@ async def submit_job(
     _ = await plugins_payload.read()
     await plugins_payload.close()
 
+    # Atomic submit + spawn — the supervisor owns both the FSM
+    # ``preparing → running`` transition and the subprocess launch.
+    # On spawn failure the FSM is rolled forward to ``failed`` so a
+    # future restart never sees a stuck ``preparing``.
     try:
-        snap = fsm.submit(spec.job_id)
-    except InvalidTransitionError as exc:
+        await supervisor.submit_and_spawn(
+            spec.job_id, spec.command, env=spec.env or None,
+        )
+    except SupervisorBusy as exc:
+        # Either a trainer is still running, or the FSM holds an
+        # active non-terminal job.
+        current = fsm.current()
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "job_in_progress",
-                "current_state": exc.current.value,
+                "current_state": current.state.value if current else "unknown",
+                "message": str(exc),
+            },
+        ) from exc
+    except (FileNotFoundError, OSError) as exc:
+        # The command can't be exec()'d. ``submit_and_spawn`` already
+        # rolled the FSM to ``failed`` and emitted ``spawn_failed``.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "spawn_failed",
                 "message": str(exc),
             },
         ) from exc
 
-    submit_event = bus.publish(
-        "job_submitted",
-        {"job_id": spec.job_id, "sequence": snap.sequence},
-    )
+    snap = fsm.current()
+    if snap is None:  # pragma: no cover — defensive; submit_and_spawn must have set it
+        raise RuntimeError("FSM has no snapshot after successful submit_and_spawn")
 
     return JobSubmittedResponse(
-        job_id=spec.job_id,
+        job_id=snap.job_id,
         sequence=snap.sequence,
-        offset=submit_event.offset,
+        # The bus has at least two events at this point (job_submitted
+        # at offset 0, trainer_spawned at offset 1). We point the
+        # client at the first so it can replay both with since=0.
+        offset=0,
     )
 
 
@@ -189,27 +213,38 @@ def get_job(
     response_model=JobStopAcceptedResponse,
     summary="Request graceful stop of a job",
 )
-def stop_job(
+async def stop_job(
     job_id: str,
     fsm: "JobLifecycleFSM" = Depends(get_fsm),
-    bus: "EventBus" = Depends(get_bus),
+    supervisor: "Supervisor" = Depends(get_supervisor),
 ) -> JobStopAcceptedResponse:
     _get_active_or_404(fsm, job_id)
 
-    try:
-        snap = fsm.transition(JobState.STOPPING, message="stop_requested")
-    except InvalidTransitionError as exc:
+    # Pre-check: only ``running`` accepts a stop. We could let the
+    # supervisor guard this (it does — InvalidTransitionError lands
+    # in the no-op branch), but surfacing 409 here is cleaner UX —
+    # the client gets the actual current_state instead of a generic
+    # 202 that secretly did nothing.
+    snap = fsm.current()
+    if snap is None or snap.state != JobState.RUNNING:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "stop_not_allowed",
-                "current_state": exc.current.value,
-                "message": str(exc),
+                "current_state": snap.state.value if snap is not None else "unknown",
+                "message": "stop only valid from running state",
             },
-        ) from exc
+        )
 
-    bus.publish("stop_requested", {"job_id": job_id, "sequence": snap.sequence})
+    # ``request_stop`` is split: the FSM transition + SIGTERM happen
+    # synchronously before it returns; the SIGKILL escalation runs as
+    # a background task spawned inside the supervisor. So awaiting
+    # the call costs ~one event-loop tick — the response is still
+    # essentially 202-and-go.
+    await supervisor.request_stop()
 
+    snap = fsm.current()
+    assert snap is not None  # _get_active_or_404 above guards this
     return JobStopAcceptedResponse(
         job_id=snap.job_id,
         state=snap.state.value,

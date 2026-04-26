@@ -17,8 +17,9 @@ from fastapi import Request
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
     from src.runner.state import JobLifecycleFSM
+    from src.runner.supervisor import Supervisor
 
-__all__ = ["get_bus", "get_fsm"]
+__all__ = ["get_bus", "get_fsm", "get_supervisor"]
 
 
 def get_fsm(request: Request) -> "JobLifecycleFSM":
@@ -29,3 +30,8 @@ def get_fsm(request: Request) -> "JobLifecycleFSM":
 def get_bus(request: Request) -> "EventBus":
     """Return the EventBus bound to the live FastAPI app."""
     return request.app.state.bus  # type: ignore[no-any-return]
+
+
+def get_supervisor(request: Request) -> "Supervisor":
+    """Return the Supervisor bound to the live FastAPI app."""
+    return request.app.state.supervisor  # type: ignore[no-any-return]
