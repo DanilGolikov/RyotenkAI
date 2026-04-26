@@ -8,11 +8,9 @@ Now supports plugin system for extensible validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.data.loaders.factory import DatasetLoaderFactory
 from src.data.validation.base import ValidationPlugin
 from src.pipeline.stages.base import PipelineStage
@@ -21,7 +19,6 @@ from src.pipeline.stages.dataset_validator.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
     SPLIT_TRAIN,
-    VALIDATION_MAX_SAMPLES_FAST,
     VALIDATION_MODE_ATTR,
     VALIDATION_MODE_FAST,
     VALIDATION_STATUS_FAILED,
@@ -33,6 +30,7 @@ from src.pipeline.stages.dataset_validator.constants import (
 )
 from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
 from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
+from src.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
 
@@ -117,6 +115,7 @@ class DatasetValidator(PipelineStage):
         self._loader_factory = DatasetLoaderFactory(config)
         self._format_checker = FormatChecker(config)
         self._plugin_loader = PluginLoader(config, secrets)
+        self._split_loader = DatasetSplitLoader(self._loader_factory)
 
         # Eagerly resolve the default plugin set so a misconfigured registry
         # fails fast at construction time (mirrors original behaviour, was
@@ -166,7 +165,7 @@ class DatasetValidator(PipelineStage):
 
         # Log all datasets scheduled for validation (for complete reporting)
         for dataset_name, (dataset_config, _strategy_phases) in datasets_to_validate.items():
-            dataset_path = self._get_dataset_train_ref(dataset_config)
+            dataset_path = self._split_loader.get_train_ref(dataset_config)
             validation_mode = getattr(
                 getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
             )
@@ -310,29 +309,28 @@ class DatasetValidator(PipelineStage):
         """
         logger.info(f"[VALIDATOR] Starting validation for dataset: {dataset_name}")
 
-        # Load dataset
-        loader = self._loader_factory.create_for_dataset(dataset_config)
-        dataset = self._load_dataset_for_validation(dataset_config, loader)
+        # Load train split
+        dataset = self._split_loader.load_train(dataset_config)
 
         if dataset is None:
             return Err(DatasetError(message=f"Failed to load dataset: {dataset_name}", code="DATASET_LOAD_ERROR"))
 
         # FORMAT CHECK FIRST — fail fast before quality plugins (before GPU)
-        fmt_result = self._check_dataset_format(dataset, dataset_name, strategy_phases)
+        fmt_result = self._format_checker.check(dataset, dataset_name, strategy_phases)
         if fmt_result.is_err():
             return fmt_result
 
         # Get dataset train ref for event tracking
-        dataset_path = self._get_dataset_train_ref(dataset_config)
+        dataset_path = self._split_loader.get_train_ref(dataset_config)
 
         # Fire callback: train dataset loaded
         if self._callbacks.on_dataset_loaded:
-            sample_count = self._get_dataset_size(dataset)
+            sample_count = self._split_loader.get_size(dataset)
             critical_threshold = getattr(getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0)
             self._callbacks.on_dataset_loaded(dataset_name, dataset_path, sample_count, critical_threshold)
 
         # Load plugins for this dataset (each item: (plugin_id, plugin_name, plugin_instance, apply_to_set))
-        plugins = self._load_plugins_for_dataset(dataset_config)
+        plugins = self._plugin_loader.load_for_dataset(dataset_config)
 
         # Run validations: train always
         train_plugins = [
@@ -352,10 +350,10 @@ class DatasetValidator(PipelineStage):
 
         # Optional eval
         eval_result: Result[dict[str, Any], AppError] | None = None
-        eval_dataset, eval_ref = self._try_load_eval_dataset_for_validation(dataset_config, loader)
+        eval_dataset, eval_ref = self._split_loader.try_load_eval(dataset_config)
         if eval_dataset is not None and eval_ref is not None:
             # FORMAT CHECK for eval dataset too
-            fmt_eval_result = self._check_dataset_format(eval_dataset, dataset_name, strategy_phases)
+            fmt_eval_result = self._format_checker.check(eval_dataset, dataset_name, strategy_phases)
             if fmt_eval_result.is_err():
                 return fmt_eval_result
 
@@ -474,122 +472,6 @@ class DatasetValidator(PipelineStage):
             final_result_data[WARNINGS_KEY] = aggregated_warnings
 
         return Ok(final_result_data)
-
-    @staticmethod
-    def _load_dataset_for_validation(
-        dataset_config,
-        loader,
-        *,
-        split_name: Literal["train", "eval"] = SPLIT_TRAIN,  # type: ignore[assignment]
-    ) -> Dataset | IterableDataset | None:
-        """
-        Load dataset for validation with source type awareness.
-
-        For HuggingFace: uses streaming mode to avoid loading entire dataset.
-        For local files: loads normally via loader.
-
-        Respects validation_mode from dataset_config:
-        - fast: limits to 10K samples
-        - full: loads entire dataset
-        """
-        from datasets import IterableDataset as HFIterableDataset
-
-        source_type = dataset_config.get_source_type()
-        validation_mode = getattr(
-            getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
-        )
-
-        if source_type == SOURCE_TYPE_HUGGINGFACE:
-            # HuggingFace: streaming mode + limit
-            try:
-                from datasets import load_dataset
-
-                # Get token if configured
-                token = None
-                if hasattr(loader, "token"):
-                    token = loader.token
-
-                src = (
-                    dataset_config.source_hf.train_id if split_name == SPLIT_TRAIN else dataset_config.source_hf.eval_id
-                )
-                if not src:
-                    return None
-
-                dataset = load_dataset(
-                    src,
-                    split="train",
-                    streaming=True,  # KEY: Don't download full dataset!
-                    token=token,
-                    trust_remote_code=True,
-                )
-
-                # Check if result is iterable dataset
-                if not isinstance(dataset, HFIterableDataset):
-                    logger.warning(f"Expected IterableDataset, got {type(dataset)}")
-                    return None
-
-                # Apply validation mode
-                if validation_mode == VALIDATION_MODE_FAST:
-                    max_samples = dataset_config.max_samples or VALIDATION_MAX_SAMPLES_FAST
-                    dataset = dataset.take(max_samples)
-                    logger.info(f"Loaded HF dataset (streaming, fast mode): {src}")
-                    logger.info(f"  Validation sample size: {max_samples}")
-                else:
-                    # full mode: no limit (will iterate through entire stream)
-                    logger.info(f"Loaded HF dataset (streaming, full mode): {src}")
-                    logger.warning("  Full validation mode - this may take a while for large datasets")
-
-                return dataset
-
-            except Exception as e:
-                logger.error(f"Failed to load HF dataset: {e}")
-                return None
-
-        else:
-            # Local files: normal load via loader
-            source_local = dataset_config.source_local
-            if source_local is None:
-                return None
-            local_path_str = (
-                source_local.local_paths.train if split_name == SPLIT_TRAIN else source_local.local_paths.eval
-            )
-            if not local_path_str:
-                return None
-
-            local_path = Path(local_path_str)
-            if not local_path.exists():
-                logger.error(f"Dataset not found: {local_path}")
-                return None
-
-            try:
-                dataset = loader.load(str(local_path), split="train")
-                total_samples = len(dataset)
-
-                # Apply validation mode for local datasets
-                if validation_mode == VALIDATION_MODE_FAST and total_samples > VALIDATION_MAX_SAMPLES_FAST:
-                    # Sample first 10K for fast mode
-                    dataset = dataset.select(range(VALIDATION_MAX_SAMPLES_FAST))
-                    logger.info(f"Loaded local dataset (fast mode): {local_path}")
-                    logger.info(f"  Validation sample: {VALIDATION_MAX_SAMPLES_FAST} / {total_samples}")
-                else:
-                    logger.info(f"Loaded local dataset (full mode): {local_path}")
-                    logger.info(f"  Total samples: {total_samples}")
-
-                return dataset
-
-            except Exception as e:
-                logger.error(f"Failed to load local dataset: {e}")
-                return None
-
-    @staticmethod
-    def _get_dataset_size(dataset: Dataset | IterableDataset) -> int:
-        """Get dataset size (works with both types)."""
-        from datasets import IterableDataset
-
-        if isinstance(dataset, IterableDataset):
-            return -1  # Unknown for streaming
-        else:
-            return len(dataset)
 
     def _run_plugin_validations(
         self,
@@ -789,36 +671,6 @@ class DatasetValidator(PipelineStage):
 
         return Ok(result_data)
 
-    @staticmethod
-    def _get_dataset_train_ref(dataset_config: Any) -> str:
-        """Get a stable train reference string for logging/events."""
-        try:
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE and dataset_config.source_hf is not None:
-                return dataset_config.source_hf.train_id
-            if dataset_config.source_local is not None:
-                return dataset_config.source_local.local_paths.train
-        except Exception:
-            pass
-        return "unknown"
-
-    def _try_load_eval_dataset_for_validation(
-        self,
-        dataset_config: Any,
-        loader: Any,
-    ) -> tuple[Dataset | IterableDataset | None, str | None]:
-        """Load eval dataset if configured; returns (dataset, ref)."""
-        try:
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
-                if dataset_config.source_hf is None or not dataset_config.source_hf.eval_id:
-                    return None, None
-                ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")
-                return ds, dataset_config.source_hf.eval_id
-
-            # local
-            if dataset_config.source_local is None or not dataset_config.source_local.local_paths.eval:
-                return None, None
-            ds = self._load_dataset_for_validation(dataset_config, loader, split_name="eval")
-            return ds, dataset_config.source_local.local_paths.eval
-
-        except Exception:
-            return None, None
+    def _get_dataset_train_ref(self, dataset_config: Any) -> str:
+        """Proxy to :meth:`DatasetSplitLoader.get_train_ref` — kept until callers migrate."""
+        return self._split_loader.get_train_ref(dataset_config)
