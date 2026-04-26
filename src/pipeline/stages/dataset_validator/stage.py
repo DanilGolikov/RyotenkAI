@@ -8,11 +8,9 @@ Now supports plugin system for extensible validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
 from src.data.loaders.factory import DatasetLoaderFactory
-from src.data.validation.base import ValidationPlugin
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.stages.dataset_validator.constants import (
@@ -30,6 +28,7 @@ from src.pipeline.stages.dataset_validator.constants import (
 )
 from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
 from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
+from src.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
 from src.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
 from src.utils.logger import logger
 from src.utils.result import AppError, DatasetError, Err, Ok, Result
@@ -116,6 +115,7 @@ class DatasetValidator(PipelineStage):
         self._format_checker = FormatChecker(config)
         self._plugin_loader = PluginLoader(config, secrets)
         self._split_loader = DatasetSplitLoader(self._loader_factory)
+        self._plugin_runner = PluginRunner(self._callbacks)
 
         # Eagerly resolve the default plugin set so a misconfigured registry
         # fails fast at construction time (mirrors original behaviour, was
@@ -338,11 +338,10 @@ class DatasetValidator(PipelineStage):
             for (plugin_id, plugin_name, p, apply_to) in plugins
             if SPLIT_TRAIN in apply_to
         ]
-        train_result = self._run_plugin_validations(
+        train_result = self._plugin_runner.run(
             dataset_name,
             dataset_path,
             dataset,
-            context,
             dataset_config,
             train_plugins,
             split_name=SPLIT_TRAIN,  # type: ignore[arg-type]
@@ -362,11 +361,10 @@ class DatasetValidator(PipelineStage):
                 for (plugin_id, plugin_name, p, apply_to) in plugins
                 if SPLIT_EVAL in apply_to
             ]
-            eval_result = self._run_plugin_validations(
+            eval_result = self._plugin_runner.run(
                 dataset_name,
                 eval_ref,
                 eval_dataset,
-                context,
                 dataset_config,
                 eval_plugins,
                 split_name=SPLIT_EVAL,  # type: ignore[arg-type]
@@ -484,192 +482,15 @@ class DatasetValidator(PipelineStage):
         *,
         split_name: Literal["train", "eval"],
     ) -> Result[dict[str, Any], AppError]:
-        """
-        Run plugin-based validations for a single dataset.
-
-        Args:
-            dataset_name: Unique dataset identifier
-            dataset_path: Dataset path/URI for event tracking
-            dataset: Loaded dataset
-            _context: Pipeline context (unused)
-            dataset_config: Dataset configuration
-            plugins: List of validation plugins to run
-            split_name: Dataset split name ("train" or "eval")
-
-        Returns:
-            Result with validation metrics or DatasetError
-        """
-        logger.info(f"[{dataset_name}] Running {len(plugins)} validation plugins on {split_name}")
-
-        all_metrics = {}
-        all_errors = []
-        all_warnings = []
-        all_recommendations = []
-        failed_plugins = []
-        critical_threshold_reached = False
-
-        for plugin_id, plugin_name, plugin, _apply_to in plugins:
-            logger.info(f"  [{dataset_name}] Running plugin: {plugin_id} ({plugin_name}, {split_name})")
-            plugin_started_at = perf_counter()
-
-            # Fire callback: plugin start
-            if self._callbacks.on_plugin_start:
-                self._callbacks.on_plugin_start(
-                    dataset_name,
-                    dataset_path,
-                    plugin_id,
-                    plugin_name,
-                    plugin.get_description(),
-                )
-
-            try:
-                # Run validation
-                result = plugin.validate(dataset)
-
-                # Collect metrics
-                for key, value in result.metrics.items():
-                    all_metrics[f"{split_name}.{plugin_id}.{key}"] = value
-
-                all_warnings.extend(result.warnings)
-
-                if result.passed:
-                    logger.info(
-                        f"    [{dataset_name}] ✓ {plugin_id} ({plugin_name}) passed "
-                        f"({result.execution_time_ms:.1f}ms)"
-                    )
-
-                    # Fire callback: plugin complete
-                    if self._callbacks.on_plugin_complete:
-                        self._callbacks.on_plugin_complete(
-                            dataset_name,
-                            dataset_path,
-                            plugin_id,
-                            plugin.name,
-                            result.params,
-                            result.thresholds,
-                            result.metrics,
-                            result.execution_time_ms,
-                        )
-                else:
-                    logger.error(f"    [{dataset_name}] ✗ {plugin_id} ({plugin_name}) failed")
-                    display_errors = list(result.errors)
-                    display_errors.extend(ValidationPlugin.render_error_groups(result.error_groups))
-                    all_errors.extend(display_errors)
-                    failed_plugins.append(plugin_id)
-
-                    # Get recommendations
-                    recommendations = plugin.get_recommendations(result)
-                    all_recommendations.extend(recommendations)
-
-                    # Fire callback: plugin failed (include config, metrics, and recommendations)
-                    if self._callbacks.on_plugin_failed:
-                        self._callbacks.on_plugin_failed(
-                            dataset_name,
-                            dataset_path,
-                            plugin_id,
-                            plugin.name,
-                            result.params,
-                            result.thresholds,
-                            result.metrics,
-                            result.execution_time_ms,
-                            display_errors,
-                            recommendations,
-                        )
-
-                    # Check critical failure threshold
-                    critical_threshold = getattr(
-                        getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0
-                    )
-                    if 0 < critical_threshold <= len(failed_plugins):
-                        critical_threshold_reached = True
-                        logger.error(
-                            f"    [{dataset_name}] Critical failure threshold reached: "
-                            f"{len(failed_plugins)}/{critical_threshold} plugins failed"
-                        )
-                        logger.error(f"    [{dataset_name}] Stopping validation for this dataset")
-                        break  # Stop validating this dataset
-            # noinspection PyBroadException
-            except Exception as e:
-                crashed_duration_ms = (perf_counter() - plugin_started_at) * 1000.0
-                error_msg = f"Plugin '{plugin_id}' ({plugin_name}) crashed: {e}"
-                logger.error(f"    [{dataset_name}] ✗ {error_msg}")
-                all_errors.append(error_msg)
-                failed_plugins.append(plugin_id)
-
-                # Fire callback for crashes too (consistency with regular failures)
-                if self._callbacks.on_plugin_failed:
-                    self._callbacks.on_plugin_failed(
-                        dataset_name,
-                        dataset_path,
-                        plugin_id,
-                        plugin.name,
-                        dict(plugin.params),
-                        dict(plugin.thresholds),
-                        all_metrics,
-                        crashed_duration_ms,
-                        [error_msg],
-                        [],
-                    )
-
-                # Check critical failure threshold for crashes too
-                critical_threshold = getattr(getattr(dataset_config, VALIDATIONS_ATTR, None), "critical_failures", 0)
-                if 0 < critical_threshold <= len(failed_plugins):
-                    critical_threshold_reached = True
-                    logger.error(
-                        f"    [{dataset_name}] Critical failure threshold reached: "
-                        f"{len(failed_plugins)}/{critical_threshold} plugins failed"
-                    )
-                    logger.error(f"    [{dataset_name}] Stopping validation for this dataset")
-                    break  # Stop validating this dataset
-
-        # Log results
-        logger.info(f"[{dataset_name}] Dataset Validation Metrics:")
-        for key, value in all_metrics.items():
-            logger.info(f"  - {key}: {value}")
-
-        if all_warnings:
-            logger.warning(f"[{dataset_name}] Validation Warnings:")
-            for warning in all_warnings:
-                logger.warning(f"  - {warning}")
-
-        # If there are errors, fail this dataset's validation
-        if all_errors:
-            logger.error(f"[{dataset_name}] Dataset Validation Failed:")
-            for error in all_errors:
-                logger.error(f"  - {error}")
-
-            # Show recommendations
-            if all_recommendations:
-                logger.info("")
-                logger.info(f"[{dataset_name}] 💡 Recommendations:")
-                for rec in all_recommendations:
-                    logger.info(f"  - {rec}")
-
-            # Fire callback: validation failed
-            if self._callbacks.on_validation_failed:
-                self._callbacks.on_validation_failed(dataset_name, dataset_path, all_errors)
-
-            error_summary = f"{len(all_errors)} validation errors"
-            error_code = (
-                "DATASET_VALIDATION_CRITICAL_FAILURE" if critical_threshold_reached else "DATASET_VALIDATION_ERROR"
-            )
-            return Err(DatasetError(message=error_summary, code=error_code, details={"errors": all_errors}))
-
-        # Success
-        logger.info(f"[{dataset_name}] ✅ All validation checks passed!")
-
-        # Fire callback: validation completed
-        if self._callbacks.on_validation_completed:
-            self._callbacks.on_validation_completed(dataset_name, dataset_path, all_metrics, all_warnings)
-
-        # Return result data
-        result_data = {
-            VALIDATION_STATUS_KEY: VALIDATION_STATUS_PASSED,
-            "warnings": all_warnings,
-            **all_metrics,
-        }
-
-        return Ok(result_data)
+        """Proxy to :meth:`PluginRunner.run` — kept until callers migrate."""
+        return self._plugin_runner.run(
+            dataset_name,
+            dataset_path,
+            dataset,
+            dataset_config,
+            plugins,
+            split_name=split_name,
+        )
 
     def _get_dataset_train_ref(self, dataset_config: Any) -> str:
         """Proxy to :meth:`DatasetSplitLoader.get_train_ref` — kept until callers migrate."""
