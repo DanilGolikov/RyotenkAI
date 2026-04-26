@@ -124,7 +124,7 @@ def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Resu
 
     This validation is intentionally dynamic:
     - It queries GPUProviderFactory.get_available_providers() (no hardcoded names).
-    - It is best-effort: some runtimes may not ship `src.pipeline`.
+    - It is best-effort: some runtimes may not ship `src.providers`.
     """
 
     # Local import to avoid heavy side-effects at module import time.
@@ -141,16 +141,19 @@ def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Resu
         return providers_validation
 
     try:
-        # Import triggers provider auto-registration (see src/pipeline/providers/__init__.py).
-        providers_mod = importlib.import_module("src.pipeline.providers")
+        # Importing src.providers.training triggers provider auto-registration
+        # (the package's __init__ imports each provider module). The
+        # importlib indirection lets modular runtimes that don't ship the
+        # providers tree skip this check via the ModuleNotFoundError branch.
+        providers_mod = importlib.import_module("src.providers.training")
         gpu_provider_factory = providers_mod.GPUProviderFactory
         available = gpu_provider_factory.get_available_providers()
     except ModuleNotFoundError as e:
         missing = getattr(e, "name", "") or ""
-        if missing.startswith("src.pipeline"):
+        if missing.startswith("src.providers"):
             logger.debug(
                 "[CFG:PROVIDER_REGISTRY] Skipping provider factory validation: "
-                "src.pipeline is not available in this runtime"
+                "src.providers is not available in this runtime"
             )
             return Ok(None)
         return _config_error(

@@ -102,7 +102,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
         )
         _assert_ok(validate_pipeline_active_provider_is_registered(cfg))  # type: ignore[arg-type]
 
-    def test_dependency_error_skips_when_src_pipeline_missing(self) -> None:
+    def test_dependency_error_skips_when_src_providers_missing(self) -> None:
         cfg = DummyPipelineCfg(
             providers={
                 "single_node": {
@@ -115,7 +115,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
         )
         with patch(
             "src.config.validators.cross.importlib.import_module",
-            side_effect=ModuleNotFoundError("nope", name="src.pipeline.providers"),
+            side_effect=ModuleNotFoundError("nope", name="src.providers.training"),
         ):
             result = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
         _assert_ok(result)

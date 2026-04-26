@@ -78,7 +78,7 @@ experiment_tracking:
 """,
     )
 
-    with patch("src.pipeline.providers.GPUProviderFactory.get_available_providers", return_value=["single_node"]):
+    with patch("src.providers.training.GPUProviderFactory.get_available_providers", return_value=["single_node"]):
         with pytest.raises(ValueError, match=r"Unknown provider: 'local'"):
             _ = PipelineConfig.from_yaml(cfg_path)
 
@@ -144,7 +144,7 @@ experiment_tracking:
 """,
     )
 
-    with patch("src.pipeline.providers.GPUProviderFactory.get_available_providers", return_value=["x"]):
+    with patch("src.providers.training.GPUProviderFactory.get_available_providers", return_value=["x"]):
         cfg = PipelineConfig.from_yaml(cfg_path)
 
     assert cfg.training.provider == "x"
@@ -152,7 +152,7 @@ experiment_tracking:
 
 def test_from_yaml_does_not_fail_when_pipeline_module_missing(tmp_path: Path) -> None:
     """
-    Remote training runtime may not include `src.pipeline` (only training subset is shipped).
+    Remote training runtime may not include `src.providers` (only training subset is shipped).
     In that case we must skip provider factory registry validation instead of crashing.
     """
     cfg_path = tmp_path / "pipeline.yaml"
@@ -215,14 +215,14 @@ experiment_tracking:
 """,
     )
 
-    # Simulate missing `src.pipeline` import in this runtime.
+    # Simulate missing `src.providers` import in this runtime.
     import importlib
 
     real_import_module = importlib.import_module
 
     def _fake_import_module(name: str, package=None):  # type: ignore[no-untyped-def]
-        if name.startswith("src.pipeline"):
-            raise ModuleNotFoundError("No module named 'src.pipeline'", name="src.pipeline")
+        if name.startswith("src.providers"):
+            raise ModuleNotFoundError("No module named 'src.providers'", name="src.providers")
         return real_import_module(name, package)
 
     with patch("importlib.import_module", side_effect=_fake_import_module):

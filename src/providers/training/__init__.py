@@ -17,8 +17,9 @@ from .interfaces import (
     SSHConnectionInfo,
 )
 
-# Importing this package should behave similarly to legacy `src.pipeline.providers`:
-# it triggers best-effort auto-registration of built-in providers.
+# Importing this package triggers best-effort auto-registration of built-in
+# providers — that's why the cross-validator imports it dynamically when
+# checking that the YAML's `training.provider` is a known name.
 auto_register_providers()
 
 __all__ = [
