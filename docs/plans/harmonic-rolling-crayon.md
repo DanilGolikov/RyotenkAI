@@ -476,7 +476,7 @@ class PluginPacker:
    - POST `127.0.0.1:8080/internal/events`
    - Conditional: only if `RYOTENKAI_RUNNER_URL` env установлен
    - Graceful degrade: если runner не отвечает 3 раза подряд — отключиться до конца сессии (training не падает)
-- 3.2 Регистрация в [`src/training/run_training.py`](src/training/run_training.py) как один из callbacks (рядом с MLflow + system_metrics + gpu_metrics + training_events)
+- 3.2 ✅ **DONE** — Регистрация в `src/training/trainers/factory.py` (где собирается callback list). Env-gated на `RYOTENKAI_RUNNER_URL` — callback подключается только когда trainer запущен runner-supervisor'ом, локальные runs остаются без него. Source-level regression-pin в `src/tests/unit/training/test_runner_event_callback_wiring.py` чтобы wire не отвалился при следующем рефакторе factory'и.
 - 3.3 Unit tests: events flow, retry, degradation, buffer overflow
 
 ### Phase 4 — IdleDetector + HealthReporter + MLflowRelay (1 день)

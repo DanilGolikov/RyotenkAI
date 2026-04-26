@@ -346,6 +346,32 @@ class TrainerFactory:
                 callback_interval = mlflow_config.system_metrics_callback_interval
                 callbacks.append(SystemMetricsCallback(log_every_n_steps=callback_interval))
 
+        # Phase 3.2 — runner-side event push.
+        #
+        # When the trainer subprocess runs inside the in-pod runner, the
+        # supervisor sets ``RYOTENKAI_RUNNER_URL=http://127.0.0.1:8080``
+        # in the spawn env (see TrainingLauncher._build_job_env). Picking
+        # the env up here threads a :class:`RunnerEventCallback` into the
+        # trainer's callback list so HF lifecycle hooks (on_train_begin /
+        # on_step_end / on_log / on_evaluate / on_save / on_train_end)
+        # fan out as structured ``training_started`` / ``step`` / ``log``
+        # / ``eval_metrics`` / ``checkpoint_saved`` / ``training_complete``
+        # events on the runner's bus → WebSocket → Mac.
+        #
+        # The callback no-ops when the env is unset, so local-mode runs
+        # (no runner attached) and unit tests stay unaffected. Activation
+        # is env-driven rather than config-driven so the same trainer
+        # binary works in both contexts without a YAML toggle.
+        import os as _os
+
+        from src.training.callbacks.runner_event_callback import (
+            RUNNER_URL_ENV,
+            RunnerEventCallback,
+        )
+
+        if _os.environ.get(RUNNER_URL_ENV):
+            callbacks.append(RunnerEventCallback())
+
         if callbacks:
             trainer_kwargs["callbacks"] = callbacks
 
