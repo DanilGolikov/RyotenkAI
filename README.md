@@ -120,14 +120,23 @@ Pipeline (control plane)              GPU Provider (single_node / RunPod)
          │                                         │
     SSH / API ──────────────────────────► Docker container
          │                                   │
-    rsync code ─────────────────────────►  /workspace/
+    rsync code ─────────────────────────►  /workspace/  (+ reward plugins)
          │                                   │
-    start training ─────────────────────►  accelerate launch train.py
-         │                                   │
-    monitor ◄───────────── logs, markers, GPU metrics
+    open SSH -L tunnel ─────────────────► Job Server (uvicorn :8080)
+         │  HTTP+WebSocket                   │
+    POST /jobs ─────────────────────────►  Supervisor.spawn()
+         │                                   │      │
+    subscribe events ◄─────────────────────  EventBus ◄── trainer callback
          │                                   │
     retrieve artifacts ◄────── adapters, checkpoints, merged weights
 ```
+
+The Job Server is a single-process FastAPI service that runs **inside
+the pod** alongside the trainer. It supervises the training subprocess,
+relays events back to the Mac over the SSH tunnel, and stops the pod on
+its own when the run finishes. Detailed wire format, FSM transitions,
+and troubleshooting matrix live in
+[`docs/runner-architecture.md`](docs/runner-architecture.md).
 
 ### Training Strategy Chain (inside GPU container)
 
@@ -501,6 +510,19 @@ The CLI follows kubectl-style `noun verb`. Every read command supports
 | `ryotenkai runs logs <run_dir> [--follow]` | Read or tail pipeline.log |
 | `ryotenkai runs report <run_dir>` | Generate the MLflow experiment report |
 | `ryotenkai runs rm <run_dir>` | Delete a run (local + MLflow by default) |
+
+### Live training (in-pod runner)
+
+These commands talk to the [Job Server](docs/runner-architecture.md)
+running inside the training pod. Each opens a short-lived SSH tunnel
+using the `attempts/<n>/job_submission.json` written by the launcher.
+
+| Command | Description |
+|---------|-------------|
+| `ryotenkai job status <run_dir> [--attempt N]` | Submission record + current FSM snapshot |
+| `ryotenkai job events <run_dir> [--attempt N]` | Replay then live-tail runner events |
+| `ryotenkai job metrics <run_dir>` | Latest GPU/RAM health snapshot |
+| `ryotenkai job stop <run_dir> [--grace SEC]` | Graceful stop request |
 
 ### Config / dataset
 

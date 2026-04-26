@@ -98,6 +98,28 @@ What the runtime passes to your `__init__`:
 | `reward` | `(params: dict)` |
 | `reports` | `()` (no kwargs) |
 
+### Where each kind runs (cloud training topology)
+
+When a run targets a remote provider (e.g. RunPod), only **`reward`**
+plugins ship to the in-pod training container — they need to be
+co-located with the trainer subprocess to score samples each step.
+The Mac control plane packs the active reward plugins as a single ZIP
+(`PluginPacker`) and uploads them as part of the job-submission
+multipart payload; the in-pod runner unpacks them under
+`/workspace/community/reward/<plugin_id>/` before spawning the
+trainer.
+
+`validation`, `evaluation`, and `reports` plugins always run on the
+**Mac control plane** — Stage 0 dataset validation, post-training
+evaluation, and report rendering happen locally so they can read
+project state, write to MLflow, and surface UI artifacts without a
+round-trip through the runner. Their secrets stay on the Mac and are
+never copied to the pod.
+
+This split keeps the docker image free of evaluation-only deps
+(judge SDKs, report renderers) and minimises what we have to trust
+inside the training container.
+
 ## `[[required_env]]` contract
 
 Every env var your plugin needs at runtime is declared in the manifest:
