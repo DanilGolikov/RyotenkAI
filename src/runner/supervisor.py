@@ -390,10 +390,18 @@ class Supervisor:
         rc = await self._proc.wait()
 
         # Drain any tail from the pumps before publishing the final
-        # event — give them one tick to finish.
+        # event — give them up to 2 s to finish. ALL exceptions are
+        # suppressed: a stuck pump (timeout), a cancelled pump
+        # (CancelledError), or a pump that raised mid-readline must
+        # never prevent the FSM from reaching its terminal state.
+        # Without this, a slow stderr writer could leave a job
+        # forever in ``running`` because the reap task crashed
+        # before its FSM transition.
         for task in (self._stdout_task, self._stderr_task):
             if task is not None and not task.done():
-                with contextlib.suppress(asyncio.CancelledError):
+                with contextlib.suppress(
+                    asyncio.CancelledError, TimeoutError, Exception,
+                ):
                     await asyncio.wait_for(task, timeout=2.0)
 
         signal_name = _signal_name_from_rc(rc)

@@ -292,6 +292,30 @@ class TestProcessGroup:
 # ---------------------------------------------------------------------------
 
 
+class TestReapResilience:
+    async def test_stuck_pump_does_not_block_reap(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM,
+    ) -> None:
+        # Replace the stdout pump with a never-finishing task before
+        # the trainer exits — the reap drain must time out cleanly
+        # and still drive the FSM to its terminal state. Regression
+        # for "_reap drain doesn't suppress TimeoutError" — without
+        # the fix the reap task crashes and the FSM stays stuck in
+        # ``running``.
+        await supervisor.submit_and_spawn("j-1", _py("pass"))
+        await _wait_for_state(fsm, JobState.RUNNING)
+
+        # Override the stdout pump with a never-resolving sleep.
+        # Cancel the original first so we don't leak a task.
+        if supervisor._stdout_task is not None:
+            supervisor._stdout_task.cancel()
+        supervisor._stdout_task = asyncio.create_task(asyncio.sleep(60))
+
+        # FSM must still reach a terminal state — the reap fixes
+        # the pump-tail timeout.
+        await _wait_for_state(fsm, JobState.COMPLETED, timeout=5.0)
+
+
 class TestShutdown:
     async def test_shutdown_kills_running_trainer(
         self, fsm: JobLifecycleFSM, bus: EventBus,
