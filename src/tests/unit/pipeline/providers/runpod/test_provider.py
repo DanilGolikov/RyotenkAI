@@ -447,8 +447,7 @@ def test_prepare_hooks_disabled_when_auto_stop_off() -> None:
     assert result.is_success()
     hooks = result.unwrap()
     assert hooks.env_vars == {}
-    assert hooks.pre_python == ""
-    assert hooks.post_python == ""
+    # Phase 6.5: pre_python / post_python fields removed.
     assert ssh.commands == []  # nothing uploaded
 
 
@@ -476,7 +475,11 @@ def test_prepare_hooks_skipped_without_api_key() -> None:
     assert result.unwrap().env_vars == {}
 
 
-def test_prepare_hooks_uploads_resources_and_returns_full_hooks() -> None:
+def test_prepare_hooks_returns_runpod_env_vars() -> None:
+    """Phase 6.5: hooks now only contribute env vars; the bash
+    snippets and resource uploads are gone (replaced by IdleDetector
+    + PodStopper inside the in-pod runner).
+    """
     p = _mk_provider(
         cfg_overrides={"cleanup": {"auto_stop_after_training": True, "keep_pod_on_error": True}}
     )
@@ -489,29 +492,16 @@ def test_prepare_hooks_uploads_resources_and_returns_full_hooks() -> None:
     assert result.is_success()
     hooks = result.unwrap()
 
-    # Env vars
+    # Env vars are forwarded to the trainer subprocess so the runner's
+    # PodStopper (Phase 4.4) can call the GraphQL podStop on terminal.
     assert hooks.env_vars["RUNPOD_API_KEY"] == "rk-secret"
     assert hooks.env_vars["RUNPOD_POD_ID"] == "pod-abc"
     assert hooks.env_vars["RUNPOD_AUTO_STOP"] == "true"
     assert hooks.env_vars["RUNPOD_KEEP_ON_ERROR"] == "true"
-    assert "WATCHDOG_WORKSPACE" in hooks.env_vars
 
-    # Pre-python: launches detached watchdog, verifies heartbeat
-    assert "setsid nohup bash" in hooks.pre_python
-    assert "watchdog.sh" in hooks.pre_python
-    assert ".watchdog_heartbeat" in hooks.pre_python
-
-    # Post-python: sources helper + calls _runpod_stop_pod
-    assert "runpod_stop_pod.sh" in hooks.post_python
-    assert "_runpod_stop_pod" in hooks.post_python
-
-    # Both resource files were uploaded + chmod +x applied
-    joined = "\n".join(ssh.commands)
-    assert "runpod_stop_pod.sh" in joined
-    assert "watchdog.sh" in joined
-    assert "chmod +x" in joined
-    # Script bodies uploaded via quoted heredoc (no shell expansion)
-    assert "RUNPOD_RESOURCE_EOF" in joined
+    # Nothing uploaded over SSH any more — IdleDetector + PodStopper
+    # already live inside the runner image.
+    assert ssh.commands == []
 
 
 def test_prepare_hooks_keep_on_error_false_flag() -> None:

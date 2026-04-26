@@ -112,34 +112,27 @@ class ProviderCapabilities:
 
 @dataclass(frozen=True)
 class TrainingScriptHooks:
-    """
-    Provider-specific customizations for the training launch script.
+    """Provider-specific env vars forwarded to the trainer subprocess.
 
-    Returned by ``IGPUProvider.prepare_training_script_hooks`` so the generic
-    ``TrainingDeploymentManager`` can stay provider-agnostic — it simply
-    merges env vars into ``.env`` and splices bash snippets around the
-    Python invocation inside the generated ``start_training.sh``.
+    Phase 6.5 simplification: previously this dataclass also carried
+    ``pre_python`` / ``post_python`` bash snippets that the legacy
+    launcher spliced into a generated ``start_training.sh``. After
+    Phase 6.3 the launcher is gone (the in-pod runner owns trainer
+    spawn) and the bash injection points have no caller — so the
+    fields are removed. Only ``env_vars`` survives, threading
+    provider-supplied values (RunPod auto-stop credentials, etc.)
+    into the JobSpec the launcher submits to the runner.
 
     Attributes:
-        env_vars: Extra environment variables to append to the pod's .env file
-            (e.g., API keys, pod IDs). Merged AFTER generic env vars so
-            provider values take precedence.
-        pre_python: Bash code injected **before** the Python training process
-            is launched. Typical use: spawn detached sidecar processes
-            (watchdog, telemetry). Must not block — sidecars should be
-            detached via ``setsid nohup ... & disown``.
-        post_python: Bash code injected **after** ``exit_code=$?`` capture.
-            Has access to ``$exit_code``. Typical use: graceful provider
-            cleanup (stop pod, release resources).
+        env_vars: Extra environment variables merged AFTER the
+            generic launcher env so provider values take precedence.
     """
 
     env_vars: dict[str, str] = field(default_factory=dict)
-    pre_python: str = ""
-    post_python: str = ""
 
     @classmethod
     def empty(cls) -> TrainingScriptHooks:
-        """Return hooks with no customizations — default for providers with nothing to inject."""
+        """Return hooks with no env contribution."""
         return cls()
 
 
