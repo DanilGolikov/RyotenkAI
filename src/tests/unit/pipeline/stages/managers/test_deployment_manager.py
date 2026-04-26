@@ -42,7 +42,7 @@ DATASET_CHAT_FIXTURE = "src/tests/fixtures/datasets/test_chat.jsonl"
 
 SINGLE_NODE_PROVIDER_CFG: dict[str, Any] = {
     "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+    "training": {"workspace_path": "/tmp/workspace"},
 }
 
 
@@ -94,8 +94,6 @@ def base_config() -> PipelineConfig:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),

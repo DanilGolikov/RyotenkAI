@@ -64,7 +64,6 @@ providers:
       on_interrupt: true
     training:
       workspace_path: /tmp/test_workspace
-      docker_image: test/training:latest
       mock_mode: true
     inference:
       serve:
@@ -77,9 +76,7 @@ inference:
   provider: single_node
   engine: vllm
   engines:
-    vllm:
-      merge_image: test/merge:latest
-      serve_image: test/vllm:latest
+    vllm: {}  # image pinned in src/inference/__about__.py::INFERENCE_IMAGES
   common:
     model_source: auto
 

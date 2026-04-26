@@ -41,9 +41,15 @@ class InferenceHealthCheckConfig(StrictBaseModel):
 
 
 class InferenceLoRAConfig(StrictBaseModel):
-    """LoRA handling policy for inference deployment."""
+    """LoRA handling policy for inference deployment.
 
-    merge_before_deploy: bool = Field(True, description="Default: merge adapter into base model before serving.")
+    Engine-agnostic LoRA settings only. Whether-to-merge is now an
+    engine concern (e.g. ``inference.engines.vllm.merge_before_deploy``)
+    because the answer depends on what the serving runtime supports
+    natively — vLLM can do either, but a future TGI/Triton engine
+    might force one or the other.
+    """
+
     adapter_path: str = Field("auto", description="'auto' or explicit adapter path/ref.")
 
 

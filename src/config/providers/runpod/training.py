@@ -20,20 +20,23 @@ class RunPodTrainingConfig(StrictBaseModel):
             training:
               gpu_type: "NVIDIA A40"
               cloud_type: "ALL"
-              image_name: "ryotenkai/ryotenkai-training-runtime:latest"
               container_disk_gb: 100
               volume_disk_gb: 20
               ports: "8888/http,22/tcp"
               template_id: null
+
+    The training pod image is pinned in
+    :data:`src.runner.__about__.RUNTIME_IMAGE` and is no longer a
+    user-facing config field — image versions are tied to the
+    release. Override via env ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
+    for CI / dev only.
     """
 
     # GPU configuration
     gpu_type: str = Field(..., description="REQUIRED: GPU type to request (RunPod GPU ID, e.g. 'NVIDIA A40').")
     cloud_type: str = Field("ALL", description="Cloud type: ALL, SECURE, COMMUNITY")
 
-    # Container configuration (pod runtime image)
-    # IMPORTANT: training is docker-only. The pod image MUST include all required deps + runtime contract checker.
-    image_name: str = Field(..., description="REQUIRED: Docker image for training pod (prebuilt runtime).")
+    # Container configuration (pod runtime image is hardcoded — see RUNTIME_IMAGE)
     container_disk_gb: int = Field(100, ge=10, description="Container disk size in GB")
     volume_disk_gb: int = Field(
         RUNPOD_TRAINING_VOLUME_DISK_GB_DEFAULT,

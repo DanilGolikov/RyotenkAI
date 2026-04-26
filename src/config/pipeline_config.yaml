@@ -341,7 +341,8 @@ providers:
     training:
       gpu_type: "NVIDIA RTX 2000 Ada Generation"  # REQUIRED: explicit GPU type (no default)
       cloud_type: ALL                 # ALL, SECURE, COMMUNITY
-      image_name: ryotenkai/ryotenkai-training-runtime:latest
+      # Training image is pinned to the release in
+      # src/runner/__about__.py::RUNTIME_IMAGE — no longer a YAML field.
       container_disk_gb: 100
       volume_disk_gb: 20
       ports: "8888/http,22/tcp"
@@ -352,7 +353,8 @@ providers:
       # pod: null  # Uncomment and fill when using runpod inference provider:
       # pod:
       #   name_prefix: "ryotenkai-vllm-pod"
-      #   image_name: "ryotenkai/inference-vllm:latest"
+      #   # Inference image is pinned per-engine in
+      #   # src/inference/__about__.py::INFERENCE_IMAGES — no YAML field.
       #   container_disk_gb: 50
       #   volume_disk_gb: 50   # Pod Volume for /workspace (used only without network volume)
       pod: null
@@ -422,9 +424,10 @@ inference:
 
   engines:
     vllm:
-      # REQUIRED: Unified inference image (used for both merge and serve)
-      merge_image: "ryotenkai/inference-vllm:v1.0"
-      serve_image: "ryotenkai/inference-vllm:v1.0"
+      # vLLM image is pinned in src/inference/__about__.py::INFERENCE_IMAGES.
+      # merge_before_deploy moved here from common.lora (Phase 6.6) since
+      # whether to merge a LoRA adapter is engine-specific.
+      merge_before_deploy: true      # Merge adapter into base model before serving
 
       # Optional: Technical parameters (reasonable defaults)
       # tensor_parallel_size: 1
@@ -439,8 +442,6 @@ inference:
       enabled: true
       timeout_seconds: 120
       interval_seconds: 5            # Also used for inference log polling
-    lora:
-      merge_before_deploy: true      # Merge adapter before serving
 
 # ============================================================================
 # EVALUATION (Stage: ModelEvaluator)

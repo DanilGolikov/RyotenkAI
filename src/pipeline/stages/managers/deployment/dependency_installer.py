@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 from src.pipeline.stages.managers.deployment.provider_config import (
-    get_single_node_training_cfg,
     is_single_node_provider,
 )
 from src.pipeline.stages.managers.deployment_constants import (
@@ -23,9 +22,10 @@ from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_STDERR_TRUNCATE,
     DEPLOYMENT_STDOUT_LINES,
 )
+from src.runner.__about__ import RUNTIME_IMAGE
 from src.utils.docker import ensure_docker_image
 from src.utils.logger import logger
-from src.utils.result import AppError, ConfigError, Err, Ok, ProviderError, Result
+from src.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from src.utils.config import PipelineConfig, Secrets
@@ -128,17 +128,15 @@ class DependencyInstaller:
 
         Runs on the host (via SSH) because in single_node docker-mode SSH
         is connected to the host, not inside a container.
+
+        The image is pinned in :data:`src.runner.__about__.RUNTIME_IMAGE`
+        as of Phase 6.6 — no longer a user config field.
         """
-        cfg = get_single_node_training_cfg(self.config)
-        image_val = cfg.get("docker_image")
-        if not isinstance(image_val, str) or not image_val.strip():
-            return Err(
-                ConfigError(
-                    message="providers.single_node.training.docker_image is required (no default in docker-only mode)",
-                    code="DOCKER_IMAGE_NOT_CONFIGURED",
-                )
-            )
-        image = image_val.strip()
+        # Image is pinned in code (Phase 6.6); we no longer read
+        # ``cfg["docker_image"]`` here. Future single_node-specific
+        # docker tunables (shm_size, container_name_prefix) live on
+        # the same ``get_single_node_training_cfg`` helper if needed.
+        image = RUNTIME_IMAGE
 
         logger.info(f"🐳 Training runtime image: {image}")
         pull_result = self._ensure_docker_image_present(ssh_client, image=image)

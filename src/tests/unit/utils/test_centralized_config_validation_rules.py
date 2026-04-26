@@ -71,8 +71,6 @@ def _inference_cfg_disabled() -> InferenceConfig:
         engine="vllm",
         engines=InferenceEnginesConfig(
             vllm=InferenceVLLMEngineConfig(
-                merge_image="test/merge:latest",
-                serve_image="test/vllm:latest",
             )
         ),
     )
@@ -173,8 +171,6 @@ def test_rule_5_inference_enabled_requires_supported_provider_engine() -> None:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         )

@@ -83,8 +83,6 @@ def _mk_cfg(
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),

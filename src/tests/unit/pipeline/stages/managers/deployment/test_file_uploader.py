@@ -35,7 +35,7 @@ CONFIG_FIXTURE = "src/tests/fixtures/configs/test_pipeline.yaml"
 
 SINGLE_NODE_PROVIDER_CFG: dict[str, Any] = {
     "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+    "training": {"workspace_path": "/tmp/workspace"},
 }
 
 
@@ -87,8 +87,6 @@ def base_config() -> PipelineConfig:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -141,8 +139,6 @@ def config_multi_dataset() -> PipelineConfig:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -231,8 +227,6 @@ def test_deploy_files_dataset_not_found_returns_err(secrets: DummySecrets):
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -318,8 +312,6 @@ def test_deploy_files_skips_unused_datasets(secrets: DummySecrets):
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -425,8 +417,6 @@ def test_deploy_files_huggingface_only_uploads_config_and_syncs_code(secrets: Du
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),

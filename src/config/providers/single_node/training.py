@@ -38,8 +38,11 @@ class SingleNodeTrainingConfig(StrictBaseModel):
         description="How training is executed on single_node. Docker-only: must be 'docker'.",
     )
 
-    # Docker runtime settings
-    docker_image: str = Field(..., description="Docker image for training runtime (required).")
+    # Docker runtime settings.
+    # The training image itself is pinned in
+    # :data:`src.runner.__about__.RUNTIME_IMAGE` (tied to the release,
+    # not user config). Override via env ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
+    # for CI / dev only.
     docker_shm_size: str = Field(
         "16g",
         description="Docker shared memory size (--shm-size). Increase for dataloaders / large batches if needed.",

@@ -14,29 +14,35 @@ class InferenceVLLMEngineConfig(StrictBaseModel):
     """
     vLLM runtime config.
 
-    Docker images (two-container strategy, used by inference.provider='single_node'):
-    - merge_image: ephemeral container for LoRA merge (transformers+peft+accelerate)
-    - serve_image: long-running container for vLLM serve (vLLM runtime only)
+    The docker image is pinned in
+    :data:`src.inference.__about__.INFERENCE_IMAGES` (one unified
+    image per :file:`docker/inference/Dockerfile` covers both LoRA
+    merge and vLLM serve — the legacy two-container strategy is
+    gone). Image versions are tied to releases — no user-facing
+    field. Override via env
+    ``RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_VLLM`` for CI / dev only.
 
-    Notes:
-    - For runpod (Pods + unified image) these fields are not used at runtime.
-    - We keep them in the schema for compatibility / explicit version tracking, but require them conditionally via InferenceConfig
-      validators only when the selected provider needs them.
-
-    OPTIONAL fields (runtime parameters with best-practice defaults):
-    - tensor_parallel_size, max_model_len, etc.
+    All fields here are runtime tuning knobs:
+    - ``merge_before_deploy``: lifted from ``inference.common.lora``
+      because whether/how to merge an adapter is engine-specific
+      (vLLM supports both merged and on-the-fly LoRA; future engines
+      may force one or the other).
+    - ``tensor_parallel_size``, ``max_model_len``,
+      ``gpu_memory_utilization``, ``quantization``, ``enforce_eager``:
+      vLLM-specific options with best-practice defaults.
     """
 
-    # =========================================================================
-    # Docker images (two-container strategy; required for inference.provider='single_node')
-    # =========================================================================
-    merge_image: str | None = Field(
-        default=None,
-        description="Docker image for LoRA merge job. Required for inference.provider='single_node'.",
-    )
-    serve_image: str | None = Field(
-        default=None,
-        description="Docker image for vLLM serve. Required for inference.provider='single_node'.",
+    # LoRA handling (engine-specific — merging is something the
+    # serving runtime decides, not a generic LoRA setting).
+    merge_before_deploy: bool = Field(
+        True,
+        description=(
+            "Merge the LoRA adapter into the base model checkpoint "
+            "before serving via vLLM. ``True`` produces a single "
+            "merged model (lower latency, larger disk); ``False`` "
+            "loads the adapter at vLLM startup (higher latency, "
+            "smaller disk)."
+        ),
     )
 
     # vLLM runtime config

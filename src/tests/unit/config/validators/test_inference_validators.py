@@ -9,12 +9,9 @@ pytestmark = pytest.mark.unit
 
 
 def _engines_cfg() -> InferenceEnginesConfig:
-    return InferenceEnginesConfig(
-        vllm=InferenceVLLMEngineConfig(
-            merge_image="test/merge:latest",
-            serve_image="test/vllm:latest",
-        )
-    )
+    # Phase 6.6: image fields removed (pinned via INFERENCE_IMAGES);
+    # vllm engine config is now empty by default — defaults are valid.
+    return InferenceEnginesConfig(vllm=InferenceVLLMEngineConfig())
 
 
 class TestInferenceConfigValidators:
@@ -75,14 +72,8 @@ class TestInferenceConfigValidators:
             engine="vllm",
         )
 
-    def test_negative_enabled_single_node_requires_images(self) -> None:
-        with pytest.raises(ValidationError) as e:
-            _ = InferenceConfig(
-                enabled=True,
-                provider="single_node",
-                engine="vllm",
-            )
-        msgs = [str(err.get("msg") or "") for err in e.value.errors()]
-        assert any("inference.engines.vllm.merge_image" in m for m in msgs)
-        assert any("inference.engines.vllm.serve_image" in m for m in msgs)
+    # Phase 6.6 deletion: image fields are no longer user-facing
+    # config (they're pinned in src.inference.__about__.INFERENCE_IMAGES),
+    # so the legacy "merge_image / serve_image required for single_node"
+    # validator is gone. Test deleted with the validator.
 

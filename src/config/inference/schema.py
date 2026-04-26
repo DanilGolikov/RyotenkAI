@@ -53,7 +53,6 @@ class InferenceConfig(StrictBaseModel):
         # Local import to avoid circular imports.
         from ..validators.inference import (
             validate_inference_enabled_is_supported,
-            validate_inference_images_required_for_provider,
         )
 
         if self.enabled and not (self.provider and self.provider.strip()):
@@ -61,8 +60,11 @@ class InferenceConfig(StrictBaseModel):
                 "inference.provider is required when inference.enabled=true "
                 "(pick a provider in Settings or set inference.provider in YAML)."
             )
+        # ``validate_inference_images_required_for_provider`` was removed
+        # in Phase 6.6 — images are now pinned in code (RUNTIME_IMAGE +
+        # INFERENCE_IMAGES) so there's nothing user-configurable to
+        # validate.
         validate_inference_enabled_is_supported(self)
-        validate_inference_images_required_for_provider(self)
         return self
 
 

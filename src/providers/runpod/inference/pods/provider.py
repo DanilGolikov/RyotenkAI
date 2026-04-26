@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
+from src.inference import resolve_inference_image
 from src.providers.constants import KEY_ID, KEY_NAME, RETRY_BACKOFF_FACTOR, SHA12_LEN
 from src.providers.inference.interfaces import (
     EndpointInfo,
@@ -306,7 +307,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             "pod": {
                 KEY_ID: pod_id,
                 KEY_NAME: pod_name,
-                "image_name": self._pod_cfg.image_name,
+                "image_name": resolve_inference_image(self._inf_cfg.engine),
                 "gpu_type_ids": self._pod_cfg.gpu_type_ids,
                 "gpu_count": self._pod_cfg.gpu_count,
                 "allowed_cuda_versions": self._pod_cfg.allowed_cuda_versions,
@@ -789,6 +790,9 @@ class RunPodPodInferenceProvider(IInferenceProvider):
     def _ensure_pod(self, *, network_volume_id: str | None, key_path: Path) -> Result[tuple[str, str], InferenceError]:
         assert self._api is not None
         pod_cfg = self._pod_cfg
+        # Image is pinned per engine (Phase 6.6); compute it once
+        # so the create-pod payload and the log line stay in sync.
+        pod_image = resolve_inference_image(self._inf_cfg.engine)
 
         # Deterministic name: with volume — bound to volume (one pod per volume); without — fixed ephemeral suffix.
         if network_volume_id:
@@ -862,7 +866,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             KEY_NAME: name_val,
             "cloudType": "SECURE",
             "computeType": "GPU",
-            "imageName": pod_cfg.image_name,
+            "imageName": pod_image,
             "gpuCount": int(pod_cfg.gpu_count),
             "gpuTypeIds": list(pod_cfg.gpu_type_ids),
             "gpuTypePriority": "availability",
@@ -887,7 +891,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         # Strip None values (RunPod API is strict about types).
         payload = {k: v for k, v in payload.items() if v is not None}
 
-        logger.info(f"☁️ Creating RunPod Pod for inference: name={name_val!r} image={pod_cfg.image_name!r}")
+        logger.info(f"☁️ Creating RunPod Pod for inference: name={name_val!r} image={pod_image!r}")
 
         last_err: str = _UNKNOWN_ERROR
         max_attempts = 4

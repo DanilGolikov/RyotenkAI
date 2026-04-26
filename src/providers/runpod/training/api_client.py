@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.providers.runpod.models import PodSnapshot, read_ssh_public_key
 from src.providers.runpod.sdk_adapter import RunPodSDKClient
+from src.runner.__about__ import RUNTIME_IMAGE
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
@@ -58,7 +59,9 @@ def build_pod_launch_kwargs(
 
     return {
         "name": name_val,
-        "image_name": train_cfg.image_name,
+        # Image is pinned in src.runner.__about__ — no longer a user
+        # config field as of Phase 6.6 (versions tied to release).
+        "image_name": RUNTIME_IMAGE,
         "gpu_type_id": train_cfg.gpu_type,
         "cloud_type": train_cfg.cloud_type,
         "support_public_ip": True,
@@ -96,8 +99,8 @@ class RunPodAPIClient:
         sdk_kwargs = build_pod_launch_kwargs(config, pod_name, public_key)
 
         train_cfg = config.training
-        logger.debug(f"[RUNPOD:CONFIG] image_name={train_cfg.image_name}, template_id={train_cfg.template_id}")
-        logger.info(f"📦 Using Docker image: {train_cfg.image_name}")
+        logger.debug(f"[RUNPOD:CONFIG] image={RUNTIME_IMAGE}, template_id={train_cfg.template_id}")
+        logger.info(f"📦 Using Docker image: {RUNTIME_IMAGE}")
 
         result = self._sdk.create_pod(**sdk_kwargs)
         if result.is_failure():
@@ -132,7 +135,7 @@ class RunPodAPIClient:
             f"   GPU: {pod_data.get('gpuCount')} x {gpu_type} | "
             f"vCPU: {pod_data.get('vcpuCount')} | RAM: {pod_data.get('memoryInGb')}GB | Cost: {_fmt_cost(cost)}"
         )
-        logger.info(f"   Image: {pod_data.get('imageName') or train_cfg.image_name}")
+        logger.info(f"   Image: {pod_data.get('imageName') or RUNTIME_IMAGE}")
         logger.info(
             f"   Disks: container={train_cfg.container_disk_gb}GB, volume={train_cfg.volume_disk_gb}GB, "
             f"mount={_VOLUME_MOUNT} | Ports: {train_cfg.ports}"

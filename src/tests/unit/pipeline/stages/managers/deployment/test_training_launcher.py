@@ -56,7 +56,7 @@ DATASET_CHAT_FIXTURE = "src/tests/fixtures/datasets/test_chat.jsonl"
 
 SINGLE_NODE_PROVIDER_CFG: dict[str, Any] = {
     "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+    "training": {"workspace_path": "/tmp/workspace"},
 }
 
 RUNPOD_PROVIDER_CFG: dict[str, Any] = {
@@ -117,8 +117,6 @@ def base_config() -> PipelineConfig:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -598,8 +596,6 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -680,8 +676,6 @@ def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets:
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),

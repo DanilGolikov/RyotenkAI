@@ -750,9 +750,27 @@ def start_training(self, ssh_client, context, provider=None) -> Result[dict, App
 
 ---
 
-### Phase 6.6 — Inference config cleanup (CORRECTED 2026-04-26)
+### Phase 6.6 — Hardcode all images, drop user-facing image fields (RE-CORRECTED 2026-04-26)
 
-**SCOPE CHANGED.** Поля `image_name` (training/runpod) и `docker_image` (training/single_node) **остаются** — это пользовательский выбор образа для обучения. Они не относятся к runner-image и не дублируются с `RUNTIME_IMAGE`.
+**Final scope per user (#2):** все docker-образы attached к релизу, не к user config. Версия образа bump'ается вместе с кодом — никакого дрейфа конфига vs. кода.
+
+User verbatim: "однако вопрос версий, смотри дилемма / а давай training образ тоже уберем из конфига, сделаем хардкодом / пускай версия образа будет привязана к релизу".
+
+**Что удаляем из user-facing config:**
+- `RunPodTrainingConfig.image_name` → pin to `RUNTIME_IMAGE`
+- `SingleNodeTrainingConfig.docker_image` → pin to `RUNTIME_IMAGE`
+- `InferenceVLLMEngineConfig.merge_image` → pin to `INFERENCE_IMAGES["vllm"]`
+- `InferenceVLLMEngineConfig.serve_image` → pin to `INFERENCE_IMAGES["vllm"]`
+- `RunPodInferencePodConfig.image_name` (если есть) → pin to `INFERENCE_IMAGES[engine]`
+
+**Что мигрируем (не удаляем — переносим в правильное место):**
+- `InferenceLoRAConfig.merge_before_deploy` (common.lora) → `InferenceVLLMEngineConfig.merge_before_deploy` (engine-specific concern)
+
+**Override mechanism (для CI и dev):**
+- `RYOTENKAI_RUNTIME_IMAGE_OVERRIDE` — для training/runner image (already exists в `__about__.py`)
+- `RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_VLLM` — для inference vllm image (NEW, per-engine)
+
+**Architectural intent:** user в YAML видит только функциональный выбор (provider, engine, hyperparams). Image версии — internal detail релиза.
 
 Реальный scope этой phase — **inference-side**:
 - Убрать дублирующие поля `merge_image` / `serve_image` из `InferenceVLLMEngineConfig` (один unified образ в `docker/inference/` теперь покрывает оба сценария — README уже это указывает)

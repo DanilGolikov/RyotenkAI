@@ -30,7 +30,7 @@ from src.utils.config import (
 
 SINGLE_NODE_PROVIDER_CFG: dict = {
     "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/ws", "docker_image": "test/runtime:latest"},
+    "training": {"workspace_path": "/tmp/ws"},
 }
 
 RUNPOD_PROVIDER_CFG: dict = {
@@ -91,8 +91,6 @@ def _mk_cfg(
             engine="vllm",
             engines=InferenceEnginesConfig(
                 vllm=InferenceVLLMEngineConfig(
-                    merge_image="test/merge:latest",
-                    serve_image="test/vllm:latest",
                 )
             ),
         ),
@@ -231,7 +229,7 @@ class TestValidateInferenceProviderConfig:
                 "runpod": RUNPOD_PROVIDER_CFG,
                 "single_node": {
                     "connect": {"ssh": {"alias": "pc"}},
-                    "training": {"workspace_path": "/tmp/ws", "docker_image": "test/runtime:latest"},
+                    "training": {"workspace_path": "/tmp/ws"},
                 },
             },
             training_provider="runpod",

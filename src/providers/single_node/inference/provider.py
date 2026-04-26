@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
+from src.inference import resolve_inference_image
 from src.pipeline.inference.vllm import VLLMEngine
 from src.providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
 from src.providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
@@ -129,11 +130,11 @@ class SingleNodeInferenceProvider(IInferenceProvider):
         self._run_id = run_id
 
         # MVP safety: we do not support native LoRA in vLLM yet.
-        if not self._inf_cfg.common.lora.merge_before_deploy:
+        if not self._engine_cfg.merge_before_deploy:
             return Err(
                 InferenceError(
                     message=(
-                        "inference.common.lora.merge_before_deploy=false is not supported in MVP. "
+                        "inference.engines.vllm.merge_before_deploy=false is not supported in MVP. "
                         "Set it to true (merge) to serve the trained adapter reliably."
                     ),
                     code="SINGLENODE_LORA_MERGE_REQUIRED",
@@ -280,8 +281,9 @@ class SingleNodeInferenceProvider(IInferenceProvider):
                 "provider": self.provider_type,
                 _KEY_ENGINE: "vllm",
                 "container_name": self._CONTAINER_NAME,
-                "serve_image": self._engine_cfg.serve_image,
-                "merge_image": self._engine_cfg.merge_image,
+                # Same unified image is used for both merge & serve;
+                # see docker/inference/README.md.
+                "image": resolve_inference_image(self._inf_cfg.engine),
                 "host_bind": self._serve_cfg.host,
                 "port": port,
                 "workspace": workspace,
@@ -355,8 +357,9 @@ class SingleNodeInferenceProvider(IInferenceProvider):
             _KEY_ENGINE: self._inf_cfg.engine,
             "ssh": ssh_block,
             "docker": {
-                "merge_image": self._engine_cfg.merge_image,
-                "serve_image": self._engine_cfg.serve_image,
+                # Same unified image is used for both merge & serve;
+                # see docker/inference/README.md.
+                "image": resolve_inference_image(self._inf_cfg.engine),
                 "container_name": VLLM_INFERENCE_CONTAINER_NAME,
                 "host_bind": self._serve_cfg.host,
                 "port": port,
@@ -720,17 +723,10 @@ PY
             Ok(None) if merge succeeded
             Err(str) if merge failed
         """
-        merge_image = (self._engine_cfg.merge_image or "").strip()
-        if not merge_image:
-            return Err(
-                InferenceError(
-                    message=(
-                        "inference.provider='single_node' requires inference.engines.vllm.merge_image "
-                        "(two-container strategy: merge container)"
-                    ),
-                    code="SINGLENODE_MERGE_IMAGE_NOT_CONFIGURED",
-                )
-            )
+        # Image is pinned in :data:`INFERENCE_IMAGES` — the unified
+        # docker/inference image covers both merge and serve, so this
+        # is the same image used downstream by ``_serve_vllm``.
+        merge_image = resolve_inference_image(self._inf_cfg.engine)
 
         # 1. Ensure merge image is available
         ensure_res = self._ensure_docker_image(
@@ -1039,17 +1035,9 @@ PY
         host_bind = self._provider_cfg.inference.serve.host
         port = self._provider_cfg.inference.serve.port
 
-        serve_image = (engine_cfg.serve_image or "").strip()
-        if not serve_image:
-            return Err(
-                InferenceError(
-                    message=(
-                        "inference.provider='single_node' requires inference.engines.vllm.serve_image "
-                        "(two-container strategy: serve container)"
-                    ),
-                    code="SINGLENODE_SERVE_IMAGE_NOT_CONFIGURED",
-                )
-            )
+        # Same unified inference image as the merge step — pinned in
+        # :data:`INFERENCE_IMAGES`.
+        serve_image = resolve_inference_image(self._inf_cfg.engine)
 
         # Ensure serve image is available
         ensure_res = self._ensure_docker_image(

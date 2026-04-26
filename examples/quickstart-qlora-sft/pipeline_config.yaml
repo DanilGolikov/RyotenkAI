@@ -112,7 +112,8 @@ providers:
       # TODO: Set the workspace directory on your GPU machine
       workspace_path: /home/user/workspace
       training_start_timeout: 30
-      docker_image: "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+      # Training image is pinned to the release in
+      # src/runner/__about__.py::RUNTIME_IMAGE — no longer a YAML field.
 
     inference:
       serve:
@@ -140,7 +141,8 @@ providers:
     training:
       gpu_type: "NVIDIA RTX A4000"
       cloud_type: "COMMUNITY"
-      image_name: "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+      # Training image is pinned to the release in
+      # src/runner/__about__.py::RUNTIME_IMAGE — no longer a YAML field.
       container_disk_gb: 30
       volume_disk_gb: 20
       ports: "8888/http,22/tcp"
@@ -149,7 +151,8 @@ providers:
     inference:
       pod:
         name_prefix: "ryotenkai-vllm"
-        image_name: "ryotenkai/inference-vllm:v1.0.0"
+        # Inference image is pinned per-engine in
+        # src/inference/__about__.py::INFERENCE_IMAGES — no YAML field.
         gpu_type_ids:
           - "NVIDIA RTX A4000"
           - "NVIDIA RTX A4500"
@@ -212,12 +215,15 @@ inference:
 
   engines:
     vllm:
-      serve_image: "ryotenkai/inference-vllm:v1.0.0"
+      # vLLM image is pinned in src/inference/__about__.py::INFERENCE_IMAGES.
       tensor_parallel_size: 1
       max_model_len: 4096
       gpu_memory_utilization: 0.90
       quantization: null
       enforce_eager: false
+      # merge_before_deploy moved out of common.lora into the engine config
+      # (Phase 6.6) — it's a vLLM-specific concern.
+      merge_before_deploy: true
 
   common:
     model_source: "auto"
@@ -226,8 +232,6 @@ inference:
       timeout_seconds: 120
       interval_seconds: 5
       retries: 20
-    lora:
-      merge_before_deploy: true
 
 # =============================================================================
 # EXPERIMENT TRACKING

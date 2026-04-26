@@ -72,21 +72,19 @@ class RunPodNetworkVolumeConfig(StrictBaseModel):
 
 
 class RunPodInferencePodConfig(StrictBaseModel):
-    """RunPod Pod settings for vLLM inference runtime."""
+    """RunPod Pod settings for vLLM inference runtime.
+
+    The pod docker image is pinned in
+    :data:`src.inference.__about__.INFERENCE_IMAGES` and resolved by
+    engine name at provision time — no user-facing image field.
+    Override via env ``RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_<ENGINE>``
+    for CI / dev only.
+    """
 
     name_prefix: str = Field(
         "ryotenkai-vllm-pod",
         min_length=1,
         description="Prefix for Pod name (a deterministic suffix will be added).",
-    )
-
-    image_name: str = Field(
-        ...,
-        min_length=1,
-        description=(
-            "Docker image for the Pod inference runtime. "
-            "Recommended: push `docker/inference/Dockerfile` as `<user>/inference-vllm:<tag>`."
-        ),
     )
 
     # Compute / placement (REST API: gpuTypeIds + gpuCount)

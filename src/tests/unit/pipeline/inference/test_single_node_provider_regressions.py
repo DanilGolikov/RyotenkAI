@@ -95,7 +95,6 @@ def mock_config(mock_ssh_config):
         connect=SingleNodeConnectConfig(ssh=mock_ssh_config),
         training=SingleNodeTrainingConfig(
             workspace_path="/home/testuser/workspace",
-            docker_image="test/runtime:latest",
         ),
         inference=SingleNodeInferenceConfig(
             serve=InferenceSingleNodeServeConfig(
@@ -111,8 +110,6 @@ def mock_config(mock_ssh_config):
 def mock_engine_config():
     """Mock engine configuration."""
     return InferenceVLLMEngineConfig(
-        merge_image="test-merge:v1.0",
-        serve_image="test-vllm:v0.6.3",
         tensor_parallel_size=1,
         max_model_len=4096,
         gpu_memory_utilization=0.90,
@@ -655,8 +652,6 @@ class TestHealthCheckBugFix:
         full_config.inference = Mock()
         full_config.inference.engines = Mock()
         full_config.inference.engines.vllm = InferenceVLLMEngineConfig(
-            merge_image="test-merge:v1.0",
-            serve_image="test-vllm:v0.6.3",
         )
         full_config.inference.common = Mock()
         full_config.inference.common.lora = Mock()

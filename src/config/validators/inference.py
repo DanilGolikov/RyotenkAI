@@ -3,10 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.constants import (
-    PROVIDER_SINGLE_NODE,
     SUPPORTED_INFERENCE_ENGINES,
     SUPPORTED_INFERENCE_PROVIDERS,
 )
+from src.inference import SUPPORTED_INFERENCE_ENGINES as _ENGINES_WITH_IMAGES
 
 if TYPE_CHECKING:
     from ..inference.schema import InferenceConfig
@@ -34,40 +34,17 @@ def validate_inference_enabled_is_supported(cfg: InferenceConfig) -> None:
             f"inference.enabled=true but inference.engine='{cfg.engine}' is not supported yet. "
             f"Supported engine for now: {', '.join(repr(e) for e in SUPPORTED_INFERENCE_ENGINES)}."
         )
-
-
-def validate_inference_images_required_for_provider(cfg: InferenceConfig) -> None:
-    """
-    Enforce provider-specific requirements for inference engine images.
-
-    Today:
-    - single_node uses a two-container Docker strategy and requires both `merge_image` and `serve_image`
-    - runpod (Pods) uses a unified image configured under `providers.runpod.inference.pod.image_name`
-    """
-
-    if not cfg.enabled:
-        return
-
-    # Only single_node runtime consumes these fields today.
-    if cfg.provider != PROVIDER_SINGLE_NODE:
-        return
-
-    vllm = cfg.engines.vllm
-    merge_image = (vllm.merge_image or "").strip()
-    serve_image = (vllm.serve_image or "").strip()
-
-    missing: list[str] = []
-    if not merge_image:
-        missing.append("inference.engines.vllm.merge_image")
-    if not serve_image:
-        missing.append("inference.engines.vllm.serve_image")
-    if missing:
+    # Belt-and-braces: an engine listed in SUPPORTED_INFERENCE_ENGINES
+    # but missing from :data:`INFERENCE_IMAGES` would crash later
+    # at provision time. Surface the gap here instead.
+    if cfg.engine not in _ENGINES_WITH_IMAGES:
         raise ValueError(
-            f"inference.enabled=true and inference.provider={PROVIDER_SINGLE_NODE!r} requires: {', '.join(missing)}"
+            f"inference.engine='{cfg.engine}' has no pinned docker image "
+            f"in src.inference.__about__.INFERENCE_IMAGES — "
+            f"add it there before enabling. Available: {sorted(_ENGINES_WITH_IMAGES)}."
         )
 
 
 __all__ = [
     "validate_inference_enabled_is_supported",
-    "validate_inference_images_required_for_provider",
 ]

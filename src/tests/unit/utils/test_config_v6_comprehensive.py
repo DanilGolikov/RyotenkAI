@@ -144,8 +144,6 @@ def test_dataset_local_paths_minimal_valid():
 def test_inference_vllm_minimal_valid():
     """InferenceVLLMEngineConfig with merge_image, serve_image REQUIRED validates."""
     config = InferenceVLLMEngineConfig(
-        merge_image="helix/merge:latest",
-        serve_image="vllm/vllm-openai:v0.7.0",
     )
     assert config.merge_image == "helix/merge:latest"
     assert config.serve_image == "vllm/vllm-openai:v0.7.0"

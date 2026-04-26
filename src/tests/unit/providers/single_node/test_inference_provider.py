@@ -45,7 +45,6 @@ def provider_cfg(ssh_cfg):
         connect=SingleNodeConnectConfig(ssh=ssh_cfg),
         training=SingleNodeTrainingConfig(
             workspace_path="/home/user/workspace",
-            docker_image="test/runtime:latest",
         ),
         inference=SingleNodeInferenceConfig(
             serve=InferenceSingleNodeServeConfig(
@@ -60,8 +59,6 @@ def provider_cfg(ssh_cfg):
 @pytest.fixture()
 def engine_cfg():
     return InferenceVLLMEngineConfig(
-        merge_image="test-merge:v1.0",
-        serve_image="test-vllm:v0.6.3",
         tensor_parallel_size=1,
         max_model_len=4096,
     )
@@ -642,8 +639,6 @@ class TestResolveLlmManifestBlock:
 class TestRunMergeContainerErrors:
     def test_fails_when_merge_image_not_configured(self, provider, engine_cfg, provider_cfg, secrets):
         engine_cfg_no_img = InferenceVLLMEngineConfig(
-            merge_image="",
-            serve_image="test-vllm:v0.6.3",
         )
         pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg_no_img)
         p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)

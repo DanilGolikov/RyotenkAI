@@ -57,7 +57,7 @@ class TestValidatePipelineProvidersConfig:
             providers={
                 "single_node": {
                     "connect": {"ssh": {"alias": "pc"}},
-                    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+                    "training": {"workspace_path": "/tmp/workspace"},
                 }
             },
             training=DummyTraining(provider="single_node", strategies=[]),
@@ -107,7 +107,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
             providers={
                 "single_node": {
                     "connect": {"ssh": {"alias": "pc"}},
-                    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+                    "training": {"workspace_path": "/tmp/workspace"},
                 }
             },
             training=DummyTraining(provider="single_node", strategies=[]),
@@ -144,7 +144,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
                 "runpod": {
                     "connect": {"ssh": {"key_path": "/tmp/id_ed25519"}},
                     "cleanup": {},
-                    "training": {"gpu_type": "NVIDIA A40", "image_name": "test/training-runtime:latest"},
+                    "training": {"gpu_type": "NVIDIA A40"},
                     "inference": {},
                 }
             },
@@ -230,21 +230,21 @@ class DummyExtendedPipelineCfg:
 
 _VALID_SINGLE_NODE_CFG = {
     "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/workspace", "docker_image": "test/training-runtime:latest"},
+    "training": {"workspace_path": "/tmp/workspace"},
 }
 
 _VALID_RUNPOD_CFG = {
     "connect": {"ssh": {"key_path": "/tmp/id_ed25519"}},
     "cleanup": {},
-    "training": {"gpu_type": "NVIDIA A40", "image_name": "test/training-runtime:latest"},
+    "training": {"gpu_type": "NVIDIA A40"},
     "inference": {},
 }
 
 _RUNPOD_WITH_POD_CFG = {
     "connect": {"ssh": {"key_path": "/tmp/id_ed25519"}},
     "cleanup": {},
-    "training": {"gpu_type": "NVIDIA A40", "image_name": "test/training-runtime:latest"},
-    "inference": {"pod": {"image_name": "test/inference-vllm:latest"}},
+    "training": {"gpu_type": "NVIDIA A40"},
+    "inference": {"pod": {}},  # image_name pinned in INFERENCE_IMAGES (Phase 6.6)
 }
 
 

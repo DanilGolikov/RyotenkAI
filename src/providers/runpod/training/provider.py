@@ -19,6 +19,7 @@ from src.providers.training.interfaces import (
     SSHConnectionInfo,
     TrainingScriptHooks,
 )
+from src.runner.__about__ import RUNTIME_IMAGE
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
@@ -96,7 +97,7 @@ class RunPodProvider(IGPUProvider):
 
         logger.info(
             f"[PROVIDER:INIT] RunPodProvider initialized: "
-            f"GPU={self._config.training.gpu_type}, image={self._config.training.image_name}"
+            f"GPU={self._config.training.gpu_type}, image={RUNTIME_IMAGE}"
         )
 
     @property
@@ -249,7 +250,7 @@ class RunPodProvider(IGPUProvider):
 
     def _create_and_wait_for_pod(
         self, pod_name: str
-    ) -> Result[tuple["PodSnapshot", "PodResourceInfo"], ProviderError]:
+    ) -> Result[tuple[PodSnapshot, PodResourceInfo], ProviderError]:
         """Create a pod and wait for it to become ready.
 
         If the pod fails to get SSH exposed TCP (community cloud limitation),

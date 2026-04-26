@@ -69,7 +69,6 @@ def valid_training_config():
     """Valid training config."""
     return SingleNodeTrainingConfig(
         workspace_path="/home/testuser/workspace",
-        docker_image="test/runtime:latest",
         training_start_timeout=60,
     )
 
@@ -293,7 +292,6 @@ class TestBoundaryCases:
         """Test minimum valid training_start_timeout (10)."""
         config = SingleNodeTrainingConfig(
             workspace_path="/workspace",
-            docker_image="test/runtime:latest",
             training_start_timeout=10,
         )
         assert config.training_start_timeout == 10
@@ -302,7 +300,6 @@ class TestBoundaryCases:
         """Test maximum valid training_start_timeout (600)."""
         config = SingleNodeTrainingConfig(
             workspace_path="/workspace",
-            docker_image="test/runtime:latest",
             training_start_timeout=600,
         )
         assert config.training_start_timeout == 600
@@ -554,7 +551,6 @@ class TestCombinatorial:
             cleanup=SingleNodeCleanupConfig(cleanup_workspace=cleanup, keep_on_error=keep_on_error),
             training=SingleNodeTrainingConfig(
                 workspace_path="/workspace",
-                docker_image="test/runtime:latest",
             ),
             inference=SingleNodeInferenceConfig(),
         )
@@ -592,7 +588,6 @@ class TestCombinatorial:
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(
                 workspace_path="/workspace",
-                docker_image="test/runtime:latest",
                 training_start_timeout=timeout,
             ),
             inference=SingleNodeInferenceConfig(),
