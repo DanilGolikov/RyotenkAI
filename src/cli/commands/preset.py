@@ -5,10 +5,17 @@ project's pipeline config (``[preset.scope]`` controls which top-level
 keys get replaced vs. preserved). Apply through
 :func:`src.community.preset_apply.apply_preset` so the CLI sees exactly
 what the API returns to the Web preview modal.
+
+Preset commands deliberately bypass :class:`CommunityCatalog` and call
+:func:`src.community.loader.load_presets` directly. Going through the
+catalog would trigger ``_populate_registries`` (which imports every
+plugin kind, and transitively the training-strategies factory) — a
+needless 2 s of import noise for a read-only ``preset ls``.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
@@ -29,15 +36,31 @@ preset_app = typer.Typer(
 )
 
 
+@lru_cache(maxsize=1)
+def _loaded_presets() -> list:  # type: ignore[type-arg]
+    """Pure preset scan — no plugin imports, no registry population.
+
+    Cached for the lifetime of the process so two preset verbs in a row
+    (e.g. ``preset show`` after ``preset ls``) don't re-walk the disk.
+    """
+    from src.community.loader import load_presets
+
+    return list(load_presets().presets)
+
+
+def _find_preset(preset_id: str):  # type: ignore[no-untyped-def]
+    return next(
+        (p for p in _loaded_presets() if p.manifest.preset.id == preset_id),
+        None,
+    )
+
+
 @preset_app.command("ls")
 def ls_cmd(ctx: typer.Context) -> None:
     """List installed presets."""
-    from src.community.catalog import catalog
-
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
-    catalog.ensure_loaded()
-    presets = catalog.presets()
+    presets = _loaded_presets()
 
     rows = [
         {
@@ -67,15 +90,9 @@ def show_cmd(
     preset_id: Annotated[str, typer.Argument(help="Preset id.")],
 ) -> None:
     """Show full preset manifest + body."""
-    from src.community.catalog import catalog
-
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
-    catalog.ensure_loaded()
-    match = next(
-        (p for p in catalog.presets() if p.manifest.preset.id == preset_id),
-        None,
-    )
+    match = _find_preset(preset_id)
     if match is None:
         raise die(f"preset not found: {preset_id}")
 
@@ -101,16 +118,11 @@ def apply_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Apply a preset to a config file — print or write the merged result."""
-    from src.community.catalog import catalog
     from src.community.preset_apply import apply_preset
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
-    catalog.ensure_loaded()
-    preset = next(
-        (p for p in catalog.presets() if p.manifest.preset.id == preset_id),
-        None,
-    )
+    preset = _find_preset(preset_id)
     if preset is None:
         raise die(f"preset not found: {preset_id}")
 
@@ -152,16 +164,11 @@ def diff_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Print the per-key diff a preset would apply to ``config``."""
-    from src.community.catalog import catalog
     from src.community.preset_apply import apply_preset
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
-    catalog.ensure_loaded()
-    preset = next(
-        (p for p in catalog.presets() if p.manifest.preset.id == preset_id),
-        None,
-    )
+    preset = _find_preset(preset_id)
     if preset is None:
         raise die(f"preset not found: {preset_id}")
 
