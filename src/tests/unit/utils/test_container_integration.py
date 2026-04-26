@@ -248,10 +248,9 @@ class TestFullWorkflow:
         """Should be able to access all container dependencies."""
         container = TrainingContainer(full_config)
 
-        # All should be accessible
+        # All should be accessible (Phase 6.3b removed completion_notifier)
         _ = container.config
         _ = container.memory_manager
-        _ = container.completion_notifier
         _ = container.strategy_factory
         _ = container.dataset_loader
         _ = container.trainer_factory
@@ -488,21 +487,15 @@ class TestForTestingFactory:
 
         assert container.memory_manager is mock_mm
 
-    def test_for_testing_with_custom_notifier(self, full_config):
-        """for_testing() should accept custom notifier."""
-        mock_notifier = MagicMock()
-
-        container = TrainingContainer.for_testing(full_config, completion_notifier=mock_notifier)
-
-        assert container.completion_notifier is mock_notifier
+    # Phase 6.3b: ``test_for_testing_with_custom_notifier`` removed
+    # along with the ``ICompletionNotifier`` protocol.
 
     def test_for_testing_all_deps_accessible(self, full_config):
         """for_testing() container should have all deps accessible."""
         container = TrainingContainer.for_testing(full_config)
 
-        # Should not raise
+        # Should not raise (Phase 6.3b removed completion_notifier)
         _ = container.memory_manager
-        _ = container.completion_notifier
         _ = container.strategy_factory
         _ = container.dataset_loader
         _ = container.trainer_factory

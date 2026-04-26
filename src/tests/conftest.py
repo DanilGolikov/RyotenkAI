@@ -712,26 +712,13 @@ def mock_trainer_factory():
 
 
 # =============================================================================
-# MOCK NOTIFIER FIXTURES
+# MOCK NOTIFIER FIXTURES — REMOVED in Phase 6.3b
 # =============================================================================
-
-
-@pytest.fixture
-def mock_notifier():
-    """Create mock ICompletionNotifier for testing."""
-
-    class MockNotifier:
-        def __init__(self):
-            self.complete_calls: list[dict] = []
-            self.failed_calls: list[tuple[str, dict]] = []
-
-        def notify_complete(self, data: dict[str, Any]) -> None:
-            self.complete_calls.append(data)
-
-        def notify_failed(self, error: str, data: dict[str, Any]) -> None:
-            self.failed_calls.append((error, data))
-
-    return MockNotifier()
+# Trainer-side completion signalling now flows through the in-pod
+# runner's RunnerEventCallback (loopback HTTP) → bus → WebSocket.
+# Tests that previously consumed ``mock_notifier`` are either updated
+# to assert on the WS event flow (Phase 6.3b new tests) or skipped /
+# deleted alongside the marker-file infra.
 
 
 # =============================================================================

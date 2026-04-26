@@ -147,12 +147,14 @@ def run_training(
         container = TrainingContainer.for_testing(config, memory_manager=mock_mm)
         output_path = run_training("config/test.yaml", container=container)
     """
-    notifier = None
+    # Phase 6.3b: ``notifier`` / ``failure_notified`` removed along
+    # with the marker-file notifier abstraction. Trainer-side terminal
+    # signalling is delegated to RunnerEventCallback (loopback HTTP to
+    # the in-pod runner) plus MLflow events.
     mlflow_mgr: MLflowManager | None = None
     mlflow_run_context = None
     memory_manager = None  # For finally block memory snapshot
     training_success = False
-    failure_notified = False
 
     try:
         logger.info("Starting LLM Training")
@@ -267,7 +269,11 @@ def run_training(
         else:
             logger.debug("[RUN_TRAINING:CONTAINER] Using injected TrainingContainer")
 
-        notifier = container.completion_notifier
+        # Phase 6.3b: completion-notifier abstraction removed. Trainer
+        # progress / terminal events now flow through the in-pod
+        # runner's RunnerEventCallback (pod) → bus → WebSocket (Mac).
+        # The trainer just logs locally; no marker files, no separate
+        # notifier object.
 
         # =====================================================================
         # 6. GET MEMORY MANAGER WITH CALLBACKS + LOG GPU DETECTION
@@ -436,16 +442,10 @@ def run_training(
                     source=SOURCE_RUN_TRAINING,
                 )
 
-            notifier.notify_failed(
-                str(error_msg),
-                {
-                    "error_type": "TrainingError",
-                    "model": config.model.name,
-                    "strategies": [s.strategy_type for s in strategies],
-                },
-            )
-            failure_notified = True
-
+            # Phase 6.3b: notifier.notify_failed call removed. The
+            # MLflow event above + the RunnerEventCallback's loopback
+            # event push (Phase 3) carry the same information; no
+            # marker file is written.
             raise RuntimeError(f"Training failed: {error_msg}")
 
         _ = result.unwrap()
@@ -489,16 +489,11 @@ def run_training(
         logger.info(f"Strategies: {' -> '.join(s.strategy_type for s in strategies)}")
         logger.info(f"Total phases: {len(strategies)}")
 
-        notifier.notify_complete(
-            {
-                "output_path": str(output_path),
-                "model_name": config.model.name,
-                "strategies": [s.strategy_type for s in strategies],
-                "total_phases": len(strategies),
-                "run_id": orchestrator.buffer.run_id if orchestrator.buffer else None,
-            }
-        )
-
+        # Phase 6.3b: notifier.notify_complete call removed. Logger
+        # lines above + MLflow event + RunnerEventCallback already
+        # carry the same metadata; the runner's FSM transitions to
+        # COMPLETED on natural exit and the Mac client sees it over
+        # WebSocket.
         return output_path
 
     except Exception as e:
@@ -513,13 +508,9 @@ def run_training(
                 error_type=type(e).__name__,
             )
 
-        if notifier is not None and not failure_notified:
-            with contextlib.suppress(Exception):
-                notifier.notify_failed(
-                    f"Unexpected error: {e!s}",
-                    {"error_type": type(e).__name__},
-                )
-
+        # Phase 6.3b: notifier.notify_failed for unexpected errors
+        # removed. The MLflow event above + the RunnerEventCallback
+        # error push handle the same notification path.
         raise
 
     finally:

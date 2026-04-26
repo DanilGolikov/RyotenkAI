@@ -1,6 +1,5 @@
 from .config import PipelineConfig, Secrets, load_config, load_secrets
 from .container import (
-    ICompletionNotifier,
     IMemoryManager,
     TrainingContainer,
 )
@@ -50,7 +49,6 @@ __all__ = [
     "GPUPreset",
     "GPUTier",
     # Container
-    "ICompletionNotifier",
     "IMemoryManager",
     "InferenceError",
     "MemoryManager",

@@ -1,13 +1,13 @@
 """
 Unit tests for Training Monitor Stage.
 
-Tests cover:
-- Initialization (with/without callbacks)
-- Execute method (success, errors, mock mode)
-- Wait for training start (timeout, fast completion)
-- Monitor training (completion, failure, timeout, race conditions)
-- Helper methods (process checks, markers, resources)
-- Callbacks integration
+NOTE (Phase 6.3b cutover, 2026-04-26):
+This file targets the LEGACY monitor (SSH-poll over marker files).
+Phase 6.3b replaced the implementation with a JobClient WebSocket
+event consumer; the new public surface is covered by
+``test_training_monitor_v2.py`` (sibling file). The legacy tests
+are skipped here pending deletion in the Phase 6.7 follow-up — kept
+as a paper-trail of what the old contract asserted.
 """
 
 from __future__ import annotations
@@ -21,6 +21,15 @@ from src.pipeline.stages.training_monitor import (
     TrainingMonitorEventCallbacks,
 )
 from src.utils.result import Ok
+
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Phase 6.3b cutover: legacy SSH-poll monitor replaced by "
+        "WebSocket event consumer. New tests live in "
+        "test_training_monitor_v2.py. This file will be deleted "
+        "in the Phase 6.7 follow-up commit."
+    ),
+)
 
 # =============================================================================
 # FIXTURES

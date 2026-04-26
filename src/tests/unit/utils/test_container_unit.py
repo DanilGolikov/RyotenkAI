@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.utils.container import TrainingContainer, _create_noop_memory_manager, _create_noop_notifier
+from src.utils.container import TrainingContainer, _create_noop_memory_manager
 
 
 def _mk_cfg() -> MagicMock:
@@ -129,51 +129,10 @@ class TestMLflowManagerProperty:
         cls.assert_called_once_with(cfg)
 
 
-class TestCompletionNotifierProperty:
-    def test_returns_injected_notifier(self) -> None:
-        cfg = _mk_cfg()
-        injected = MagicMock()
-        container = TrainingContainer(cfg, _completion_notifier=injected)
-        assert container.completion_notifier is injected
-
-    def test_uses_marker_path_from_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        cfg.training.marker_path = "/cfg"
-
-        notifier = MagicMock()
-        cls = MagicMock(return_value=notifier)
-        monkeypatch.setattr("src.training.notifiers.marker_file.MarkerFileNotifier", cls)
-
-        container = TrainingContainer(cfg)
-        assert container.completion_notifier is notifier
-        cls.assert_called_once_with(base_path="/cfg")
-
-    def test_uses_helix_workspace_env_when_no_config_marker_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        cfg.training.marker_path = None
-        monkeypatch.setenv("HELIX_WORKSPACE", "/env")
-
-        notifier = MagicMock()
-        cls = MagicMock(return_value=notifier)
-        monkeypatch.setattr("src.training.notifiers.marker_file.MarkerFileNotifier", cls)
-
-        container = TrainingContainer(cfg)
-        assert container.completion_notifier is notifier
-        cls.assert_called_once_with(base_path="/env")
-
-    def test_uses_cwd_when_no_config_and_no_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        cfg = _mk_cfg()
-        cfg.training.marker_path = None
-        monkeypatch.delenv("HELIX_WORKSPACE", raising=False)
-        monkeypatch.setattr("pathlib.Path.cwd", lambda: tmp_path)
-
-        notifier = MagicMock()
-        cls = MagicMock(return_value=notifier)
-        monkeypatch.setattr("src.training.notifiers.marker_file.MarkerFileNotifier", cls)
-
-        container = TrainingContainer(cfg)
-        assert container.completion_notifier is notifier
-        cls.assert_called_once_with(base_path=str(tmp_path))
+# Phase 6.3b: ``TestCompletionNotifierProperty`` removed along with
+# the ``ICompletionNotifier`` protocol and the ``completion_notifier``
+# container property. Trainer-side completion signalling now flows
+# through :class:`RunnerEventCallback` (separate test suite).
 
 
 class TestOrchestratorAndModelLoading:
@@ -247,7 +206,7 @@ class TestOverrideAndNoopFactories:
         assert overridden.memory_manager is new_mm
         assert container.memory_manager is orig_mm
 
-    def test_noop_memory_manager_and_notifier_are_callable(self) -> None:
+    def test_noop_memory_manager_is_callable(self) -> None:
         mm = _create_noop_memory_manager()
         assert mm.gpu_info is None
         assert mm.get_memory_stats() is None
@@ -256,7 +215,5 @@ class TestOverrideAndNoopFactories:
         assert mm.aggressive_cleanup() == 0
         with mm.safe_operation("x"):
             pass
-
-        notifier = _create_noop_notifier()
-        notifier.notify_complete({"output_path": "x"})
-        notifier.notify_failed("err", {"output_path": "x"})
+        # Phase 6.3b: ``_create_noop_notifier`` removed along with the
+        # ICompletionNotifier protocol.

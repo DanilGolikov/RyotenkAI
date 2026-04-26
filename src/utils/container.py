@@ -93,21 +93,11 @@ class IMemoryManager(Protocol):
         ...
 
 
-@runtime_checkable
-class ICompletionNotifier(Protocol):
-    """
-    Interface for training completion notification.
-
-    Allows pluggable notification strategies (marker files, logging, webhook).
-    """
-
-    def notify_complete(self, data: dict[str, Any]) -> None:
-        """Notify successful completion."""
-        ...
-
-    def notify_failed(self, error: str, data: dict[str, Any]) -> None:
-        """Notify failure."""
-        ...
+# Phase 6.3b: ``ICompletionNotifier`` protocol removed. Trainer-side
+# completion signalling now flows through
+# :class:`src.training.callbacks.runner_event_callback.RunnerEventCallback`
+# directly to the in-pod runner; the abstraction was a vestige of the
+# marker-file IPC and no longer carries weight.
 
 
 @runtime_checkable
@@ -247,8 +237,6 @@ class TrainingContainer:
     Attributes:
         config: Pipeline configuration (required)
         _memory_manager: Optional pre-configured MemoryManager
-        _completion_notifier: Optional completion notifier
-
     Usage:
         # Production
         container = TrainingContainer(config)
@@ -263,7 +251,6 @@ class TrainingContainer:
 
     # Private fields for dependency injection
     _memory_manager: IMemoryManager | None = field(default=None, repr=False)
-    _completion_notifier: ICompletionNotifier | None = field(default=None, repr=False)
     _strategy_factory: IStrategyFactory | None = field(default=None, repr=False)
     _trainer_factory: ITrainerFactory | None = field(default=None, repr=False)
     _dataset_loader: IDatasetLoader | None = field(default=None, repr=False)
@@ -484,40 +471,14 @@ class TrainingContainer:
         return self._lazy_mlflow_manager
 
     # =========================================================================
-    # COMPLETION NOTIFIER
+    # COMPLETION NOTIFIER (REMOVED — Phase 6.3b)
     # =========================================================================
-
-    @property
-    def completion_notifier(self) -> ICompletionNotifier:
-        """
-        Get completion notifier.
-
-        Returns injected mock or creates default MarkerFileNotifier.
-
-        Workspace path resolution (priority):
-            1. config.training.marker_path (explicit config)
-            2. HELIX_WORKSPACE env var (set by deployment_manager)
-            3. cwd() fallback (for local testing)
-
-        Returns:
-            ICompletionNotifier: Notifier instance
-        """
-        if self._completion_notifier is not None:
-            return self._completion_notifier
-
-        import os
-        from pathlib import Path
-
-        from src.training.notifiers.marker_file import MarkerFileNotifier
-
-        # Priority: config > HELIX_WORKSPACE env > cwd
-        marker_path = getattr(self.config.training, "marker_path", None)
-        if not marker_path:
-            marker_path = os.environ.get("HELIX_WORKSPACE")
-        if not marker_path:
-            marker_path = str(Path.cwd())
-
-        return MarkerFileNotifier(base_path=marker_path)
+    # The marker-file notifier abstraction (and the protocol that wrapped it)
+    # was deleted along with the marker-file IPC. Trainer-side completion
+    # signalling is handled by RunnerEventCallback pushing structured events
+    # to the in-pod runner; the runner's FSM transitions to terminal state
+    # on subprocess exit, and the Mac client subscribes to those events
+    # over WebSocket. No on-disk markers, no separate notifier object.
 
     # =========================================================================
     # ORCHESTRATOR FACTORY
@@ -605,7 +566,6 @@ class TrainingContainer:
         cls,
         config: PipelineConfig,
         memory_manager: IMemoryManager | None = None,
-        completion_notifier: ICompletionNotifier | None = None,
         strategy_factory: IStrategyFactory | None = None,
         trainer_factory: ITrainerFactory | None = None,
         dataset_loader: IDatasetLoader | None = None,
@@ -618,7 +578,6 @@ class TrainingContainer:
         Args:
             config: Pipeline configuration
             memory_manager: Mock memory manager (optional)
-            completion_notifier: Mock notifier (optional)
             strategy_factory: Mock strategy factory (optional)
             trainer_factory: Mock trainer factory (optional)
             dataset_loader: Mock dataset loader (optional)
@@ -627,12 +586,10 @@ class TrainingContainer:
             TrainingContainer: Container with test dependencies
         """
         mm = memory_manager or _create_noop_memory_manager()
-        notifier = completion_notifier or _create_noop_notifier()
 
         container = cls(
             config=config,
             _memory_manager=mm,
-            _completion_notifier=notifier,
             _strategy_factory=strategy_factory,
             _trainer_factory=trainer_factory,
             _dataset_loader=dataset_loader,
@@ -666,7 +623,6 @@ class TrainingContainer:
     def override(
         self,
         memory_manager: IMemoryManager | None = None,
-        completion_notifier: ICompletionNotifier | None = None,
         strategy_factory: IStrategyFactory | None = None,
         trainer_factory: ITrainerFactory | None = None,
         dataset_loader: IDatasetLoader | None = None,
@@ -678,7 +634,6 @@ class TrainingContainer:
 
         Args:
             memory_manager: Override memory manager
-            completion_notifier: Override notifier
             strategy_factory: Override strategy factory
             trainer_factory: Override trainer factory
             dataset_loader: Override dataset loader
@@ -689,7 +644,6 @@ class TrainingContainer:
         return TrainingContainer(
             config=self.config,
             _memory_manager=memory_manager or self._memory_manager,
-            _completion_notifier=completion_notifier or self._completion_notifier,
             _strategy_factory=strategy_factory or self._strategy_factory,
             _trainer_factory=trainer_factory or self._trainer_factory,
             _dataset_loader=dataset_loader or self._dataset_loader,
@@ -746,22 +700,9 @@ def _create_noop_memory_manager() -> IMemoryManager:
     return NoOpMemoryManager()
 
 
-def _create_noop_notifier() -> ICompletionNotifier:
-    """Create a no-op notifier for testing."""
-
-    class NoOpNotifier:
-        """Notifier that just logs (no file creation)."""
-
-        @staticmethod
-        def notify_complete(data: dict[str, Any]) -> None:
-            logger.info(f"[TEST] Training complete: {data.get('output_path', 'unknown')}")
-
-        @staticmethod
-        def notify_failed(error: str, data: dict[str, Any]) -> None:
-            _ = data  # Unused parameter (NoOp notifier)
-            logger.error(f"[TEST] Training failed: {error}")
-
-    return NoOpNotifier()
+# Phase 6.3b: ``_create_noop_notifier`` removed along with the
+# ICompletionNotifier protocol — see comment at the protocol's old
+# location near the top of this file.
 
 
 # =============================================================================
@@ -769,7 +710,6 @@ def _create_noop_notifier() -> ICompletionNotifier:
 # =============================================================================
 
 __all__ = [
-    "ICompletionNotifier",
     "IDatasetLoader",
     "IMemoryManager",
     "IStrategyFactory",

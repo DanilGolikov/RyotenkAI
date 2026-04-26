@@ -249,10 +249,9 @@ class TestRunTrainingFlow:
         orchestrator.buffer = buffer
         orchestrator.run_chain.return_value = Ok(None)
 
-        # Container stub
-        notifier = MagicMock()
+        # Container stub (Phase 6.3b: notifier abstraction removed —
+        # trainer events flow via RunnerEventCallback now).
         container = MagicMock()
-        container.completion_notifier = notifier
         container.create_memory_manager_with_callbacks.return_value = memory_manager
         container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
         container.create_orchestrator.return_value = orchestrator
@@ -267,7 +266,8 @@ class TestRunTrainingFlow:
         out = rt.run_training(str(tmp_path / "cfg.yaml"), resume=False, run_id="run_x", container=container)
 
         assert out.name == "checkpoint-final"
-        notifier.notify_complete.assert_called_once()
+        # Phase 6.3b: notifier.notify_complete assertion removed —
+        # the abstraction was deleted alongside the marker-file IPC.
         mlflow_mgr.enable_autolog.assert_called_once_with(log_models=False)
         mlflow_mgr.end_run.assert_called_once_with(status="FINISHED")
         assert run_ctx.entered is True
@@ -304,9 +304,7 @@ class TestRunTrainingFlow:
         orchestrator.buffer = None
         orchestrator.run_chain.return_value = Err("boom")
 
-        notifier = MagicMock()
         container = MagicMock()
-        container.completion_notifier = notifier
         container.create_memory_manager_with_callbacks.return_value = memory_manager
         container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
         container.create_orchestrator.return_value = orchestrator
@@ -318,8 +316,10 @@ class TestRunTrainingFlow:
         with pytest.raises(RuntimeError, match="Training failed: boom"):
             _ = rt.run_training(str(tmp_path / "cfg.yaml"), resume=False, run_id="run_x", container=container)
 
-        # Regression: previously notify_failed was called twice (explicit failure branch + outer except)
-        assert notifier.notify_failed.call_count == 1
+        # Phase 6.3b: notify_failed was called via the (now-deleted)
+        # ICompletionNotifier abstraction; the regression "called
+        # twice" is no longer reachable. MLflow is still expected to
+        # finalise with FAILED.
         mlflow_mgr.end_run.assert_called_once_with(status="FAILED")
 
     def test_run_training_continues_when_mlflow_setup_returns_none(self, monkeypatch, tmp_path):
@@ -350,9 +350,7 @@ class TestRunTrainingFlow:
         orchestrator.buffer = buffer
         orchestrator.run_chain.return_value = Ok(None)
 
-        notifier = MagicMock()
         container = MagicMock()
-        container.completion_notifier = notifier
         container.create_memory_manager_with_callbacks.return_value = memory_manager
         container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
         container.create_orchestrator.return_value = orchestrator
@@ -368,7 +366,7 @@ class TestRunTrainingFlow:
         container.create_orchestrator.assert_called_once()
         kwargs = container.create_orchestrator.call_args.kwargs
         assert kwargs["mlflow_manager"] is None
-        notifier.notify_complete.assert_called_once()
+        # Phase 6.3b: notify_complete assertion removed.
 
 
 # =============================================================================
