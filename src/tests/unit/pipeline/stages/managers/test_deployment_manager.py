@@ -342,52 +342,6 @@ def test_create_env_file_docker_mode_sets_workspace_to_container_path(base_confi
     assert 'export PYTHONPATH="/workspace"' in create_cmd
 
 
-def test_install_dependencies_single_node_uses_runtime_image_verify(manager: TrainingDeploymentManager):
-    """single_node: install_dependencies() must verify runtime image via docker on host."""
-    ssh_client = MagicMock()
-
-    with patch.object(manager, "_verify_single_node_docker_runtime", return_value=Ok(None)) as mock_verify:
-        result = manager.install_dependencies(ssh_client)
-
-    assert result.is_ok()
-    mock_verify.assert_called_once()
-
-
-def test_install_dependencies_cloud_verify_ok_skips_install(base_config: PipelineConfig, secrets: DummySecrets):
-    """runpod/cloud: if deps already present in image, we only verify."""
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    ssh_client = MagicMock()
-
-    with patch.object(TrainingDeploymentManager, "_verify_prebuilt_dependencies", return_value=Ok(None)) as mock_verify:
-        result = manager.install_dependencies(ssh_client)
-
-    assert result.is_ok()
-    mock_verify.assert_called_once()
-
-
-def test_install_dependencies_cloud_verify_fail_returns_err(base_config: PipelineConfig, secrets: DummySecrets):
-    """runpod/cloud: if deps missing in the image, we FAIL (no fallback install)."""
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    ssh_client = MagicMock()
-
-    with patch.object(TrainingDeploymentManager, "_verify_prebuilt_dependencies", return_value=Failure(ProviderError(message="missing packages", code="DEPS_MISSING"))):
-        result = manager.install_dependencies(ssh_client)
-
-    assert result.is_err()
-
-
 @pytest.mark.skip(reason=(
     "Requires experiment_tracking resolver: _create_env_file assumes "
     "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
@@ -634,29 +588,6 @@ def test_start_training_no_process_includes_log_details_in_err(base_config: Pipe
     assert "Log content:" in err
 
 
-def test_verify_prebuilt_dependencies_success(manager: TrainingDeploymentManager):
-    ssh_client = MagicMock()
-    ssh_client.exec_command.side_effect = [
-        (True, "OK\n", ""),  # verify_cmd
-        (True, "PyTorch: 2.x\nTransformers: 4.x\nTRL: 0.x\nPEFT: 0.x\n", ""),  # version_cmd
-    ]
-
-    result = manager._verify_prebuilt_dependencies(ssh_client)
-    assert result.is_ok()
-
-
-def test_verify_prebuilt_dependencies_failure_returns_err(manager: TrainingDeploymentManager):
-    ssh_client = MagicMock()
-    ssh_client.exec_command.return_value = (False, "", "ImportError")
-
-    result = manager._verify_prebuilt_dependencies(ssh_client)
-    assert result.is_err()
-    assert "Runtime contract check failed" in str(result.unwrap_err())
-
-
-    # NOTE: no runtime dependency installation in docker-only mode
-
-
 @pytest.mark.skip(reason=(
     "Requires experiment_tracking resolver: _create_env_file assumes "
     "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
@@ -732,124 +663,6 @@ def test_start_training_create_script_chmod_and_launch_failures(base_config: Pip
     assert result.is_err()
     assert "Failed to start training" in str(result.unwrap_err())
 
-
-def test_get_active_provider_name_returns_string_from_training_provider(secrets: DummySecrets):
-    """Falls back to training.provider string when get_active_provider_name() raises."""
-    cfg = MagicMock()
-    cfg.get_active_provider_name.side_effect = RuntimeError("not impl")
-    cfg.training.provider = "my_custom_provider"
-
-    mgr = TrainingDeploymentManager.__new__(TrainingDeploymentManager)
-    mgr.config = cfg
-
-    assert mgr._get_active_provider_name() == "my_custom_provider"
-
-
-def test_get_active_provider_name_non_string_provider_returns_single_node(secrets: DummySecrets):
-    """Falls back to PROVIDER_SINGLE_NODE when training.provider is not a string."""
-    from src.constants import PROVIDER_SINGLE_NODE
-
-    cfg = MagicMock()
-    cfg.get_active_provider_name.side_effect = RuntimeError("not impl")
-    cfg.training.provider = 42  # not a string
-
-    mgr = TrainingDeploymentManager.__new__(TrainingDeploymentManager)
-    mgr.config = cfg
-
-    assert mgr._get_active_provider_name() == PROVIDER_SINGLE_NODE
-
-
-def test_get_active_provider_name_no_training_attr_returns_single_node():
-    """Falls back to PROVIDER_SINGLE_NODE when config has no training attribute."""
-    from src.constants import PROVIDER_SINGLE_NODE
-
-    class _Cfg:
-        def get_active_provider_name(self) -> str:
-            raise RuntimeError("not impl")
-
-    mgr = TrainingDeploymentManager.__new__(TrainingDeploymentManager)
-    mgr.config = _Cfg()
-
-    assert mgr._get_active_provider_name() == PROVIDER_SINGLE_NODE
-
-
-# =============================================================================
-# Lines 618-626 – _verify_single_node_docker_runtime: no docker_image
-# =============================================================================
-
-def test_verify_single_node_docker_runtime_no_image_returns_config_error(
-    manager: TrainingDeploymentManager,
-):
-    """_verify_single_node_docker_runtime returns ConfigError when docker_image is absent."""
-    ssh_client = MagicMock()
-
-    # Patch training cfg to have no docker_image key
-    with patch.object(manager, "_get_single_node_training_cfg", return_value={"workspace_path": "/tmp/w"}):
-        result = manager._verify_single_node_docker_runtime(ssh_client)
-
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, ConfigError)
-    assert err.code == "DOCKER_IMAGE_NOT_CONFIGURED"
-
-
-# =============================================================================
-# Lines 631-632 – _verify_single_node_docker_runtime: image pull failure
-# =============================================================================
-
-def test_verify_single_node_docker_runtime_pull_failure_returns_error(
-    manager: TrainingDeploymentManager,
-):
-    """_verify_single_node_docker_runtime propagates pull failure from _ensure_docker_image_present."""
-    ssh_client = MagicMock()
-    pull_err = ProviderError(message="image not found", code="DOCKER_PULL_FAILED")
-
-    with patch.object(manager, "_ensure_docker_image_present", return_value=Failure(pull_err)):
-        result = manager._verify_single_node_docker_runtime(ssh_client)
-
-    assert result.is_err()
-    assert result.unwrap_err().code == "DOCKER_PULL_FAILED"
-
-
-# =============================================================================
-# Lines 640-650 – DOCKER_RUNTIME_CHECK_FAILED
-# =============================================================================
-
-def test_verify_single_node_docker_runtime_check_failed_no_ok_in_stdout(
-    manager: TrainingDeploymentManager,
-):
-    """DOCKER_RUNTIME_CHECK_FAILED when exec_command succeeds but stdout contains no 'OK'."""
-    ssh_client = MagicMock()
-    ssh_client.exec_command.return_value = (True, "FAILED: missing packages", "")
-
-    with patch.object(manager, "_ensure_docker_image_present", return_value=Ok(None)):
-        result = manager._verify_single_node_docker_runtime(ssh_client)
-
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, ProviderError)
-    assert err.code == "DOCKER_RUNTIME_CHECK_FAILED"
-
-
-def test_verify_single_node_docker_runtime_check_failed_exec_returns_false(
-    manager: TrainingDeploymentManager,
-):
-    """DOCKER_RUNTIME_CHECK_FAILED when exec_command itself returns success=False."""
-    ssh_client = MagicMock()
-    ssh_client.exec_command.return_value = (False, "", "container error")
-
-    with patch.object(manager, "_ensure_docker_image_present", return_value=Ok(None)):
-        result = manager._verify_single_node_docker_runtime(ssh_client)
-
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, ProviderError)
-    assert err.code == "DOCKER_RUNTIME_CHECK_FAILED"
-
-
-# =============================================================================
-# Lines 1046-1049 – _start_training_docker: TRAINING_COMPLETE marker
-# =============================================================================
 
 def test_start_training_docker_training_complete_marker_returns_ok(
     base_config: PipelineConfig, secrets: DummySecrets

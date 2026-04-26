@@ -9,35 +9,36 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_SINGLE_NODE
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.pipeline.stages.constants import PipelineContextKeys
 from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
+from src.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
 from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
+from src.pipeline.stages.managers.deployment.provider_config import (
+    get_active_provider_name,
+    get_cloud_training_cfg,
+    get_single_node_training_cfg,
+    is_single_node_provider,
+)
 from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
     DEPLOYMENT_CONTAINER_NAME_MAX_LEN,
-    DEPLOYMENT_DOCKER_PULL_TIMEOUT,
     DEPLOYMENT_DOCKER_VALUE,
-    DEPLOYMENT_DOCKER_VERIFY_TIMEOUT,
     DEPLOYMENT_ERROR_TRUNCATE,
     DEPLOYMENT_LAUNCH_TIMEOUT,
     DEPLOYMENT_LOG_TRUNCATE,
     DEPLOYMENT_MARKER_EXISTS,
     DEPLOYMENT_MODE_KEY,
-    DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
     DEPLOYMENT_SCRIPT_CHMOD_TIMEOUT,
-    DEPLOYMENT_STDERR_TRUNCATE,
-    DEPLOYMENT_STDOUT_LINES,
     DEPLOYMENT_TRAINING_START_TIMEOUT,
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
 from src.providers.training.interfaces import TrainingScriptHooks
-from src.utils.docker import docker_is_container_running, ensure_docker_image
+from src.utils.docker import docker_is_container_running
 from src.utils.logger import logger
-from src.utils.result import AppError, ConfigError, Err, Ok, ProviderError, Result
+from src.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from src.providers.training.interfaces import IGPUProvider
@@ -75,11 +76,6 @@ class TrainingDeploymentManager:
     # UV installation script
     UV_INSTALL_SCRIPT = "curl -LsSf https://astral.sh/uv/install.sh | sh"
 
-    # Docker images with pre-installed dependencies (skip pip install)
-    PREBUILT_IMAGES: ClassVar[list[str]] = [
-        "ryotenkai/ryotenkai-training-runtime",
-    ]
-
     def __init__(self, config: PipelineConfig, secrets: Secrets):
         """
         Initialize training deployment manager.
@@ -93,8 +89,10 @@ class TrainingDeploymentManager:
         self._workspace = self.DEFAULT_WORKSPACE
         self._code_syncer = CodeSyncer(config=config, secrets=secrets)
         self._file_uploader = FileUploader(config=config, secrets=secrets, code_syncer=self._code_syncer)
+        self._deps_installer = DependencyInstaller(config=config, secrets=secrets)
         self._code_syncer.set_workspace(self._workspace)
         self._file_uploader.set_workspace(self._workspace)
+        self._deps_installer.set_workspace(self._workspace)
         logger.debug("🚀 TrainingDeploymentManager initialized")
 
     @property
@@ -115,6 +113,7 @@ class TrainingDeploymentManager:
         self._workspace = workspace_path
         self._code_syncer.set_workspace(workspace_path)
         self._file_uploader.set_workspace(workspace_path)
+        self._deps_installer.set_workspace(workspace_path)
         logger.debug(f"[DEPLOY] Workspace: {self._workspace}")
 
     # =========================================================================
@@ -134,179 +133,43 @@ class TrainingDeploymentManager:
         return self._file_uploader.deploy_files(ssh_client, context)
 
     # =========================================================================
-    # PROVIDER HELPERS
+    # PROVIDER HELPERS — proxies onto deployment.provider_config functions
     # =========================================================================
 
     def _get_active_provider_name(self) -> str:
-        """
-        Best-effort active provider name.
-
-        Notes:
-        - PipelineConfig provides get_active_provider_name().
-        - Some unit tests may pass MagicMock-like configs.
-        """
-        try:
-            return self.config.get_active_provider_name()
-        except Exception:
-            training = getattr(self.config, "training", None)
-            name = getattr(training, "provider", None) if training else None
-            if isinstance(name, str) and name:
-                return name
-            return PROVIDER_SINGLE_NODE
+        return get_active_provider_name(self.config)
 
     def _is_single_node_provider(self) -> bool:
-        return self._get_active_provider_name() == PROVIDER_SINGLE_NODE
+        return is_single_node_provider(self.config)
+
+    def _get_single_node_training_cfg(self) -> dict[str, Any]:
+        return get_single_node_training_cfg(self.config)
+
+    def _get_cloud_training_cfg(self) -> dict[str, Any]:
+        return get_cloud_training_cfg(self.config)
 
     # =========================================================================
-    # DEPENDENCY INSTALLATION
+    # DEPENDENCY INSTALLATION — delegates to DependencyInstaller
     # =========================================================================
 
     def install_dependencies(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """
-        Docker-only dependency handling.
-
-        - single_node: verify the configured runtime image contains required packages
-          (runs `docker run --rm ... python -c "import ..."`) on the host.
-        - cloud providers (RunPod): SSH is inside the pod image, so we verify packages in-place.
-          If verification fails, we FAIL (image is the single source of truth).
-        """
-        if self._is_single_node_provider():
-            logger.info("🐳 single_node: docker-only deps (no host installs) — verifying runtime image...")
-            return self._verify_single_node_docker_runtime(ssh_client)
-
-        # Cloud providers: verify inside the current environment (pod container)
-        logger.info("☁️ cloud: docker-only deps — verifying runtime contract inside the current container...")
-        verify_result = self._verify_prebuilt_dependencies(ssh_client)
-        if verify_result.is_failure():
-            orig_err = verify_result.unwrap_err()
-            return Err(
-                ProviderError(
-                    message="Training runtime image missing required packages. Dependencies are docker-only (no fallback install).",
-                    code="RUNTIME_DEPS_MISSING",
-                    details=orig_err.to_log_dict(),
-                )
-            )
-
-        return Ok(None)
+        """Proxy to :meth:`DependencyInstaller.install`."""
+        return self._deps_installer.install(ssh_client)
 
     @staticmethod
     def _verify_prebuilt_dependencies(ssh_client: SSHClient) -> Result[None, ProviderError]:
-        """
-        Verify dependencies in prebuilt Docker image (RunPod mode).
-
-        This is for cloud providers (RunPod) where SSH connects INSIDE the pod's
-        Docker container, so we can directly check Python packages.
-
-        For single_node Docker mode, this method is NOT called - we skip
-        host checks entirely since deps are in the container.
-
-        Only checks that key packages are available, does NOT install anything.
-        """
-        logger.info("📦 Verifying prebuilt image dependencies (cloud mode)...")
-
-        # Single source of truth: runtime image must contain the contract checker.
-        # Python binary may be either `python3` or `python` depending on the image.
-        verify_cmd = (
-            "if command -v python3 >/dev/null 2>&1; then python3 /opt/helix/runtime_check.py; "
-            "elif command -v python >/dev/null 2>&1; then python /opt/helix/runtime_check.py; "
-            "elif [ -x /opt/conda/bin/python3 ]; then /opt/conda/bin/python3 /opt/helix/runtime_check.py; "
-            "elif [ -x /opt/conda/bin/python ]; then /opt/conda/bin/python /opt/helix/runtime_check.py; "
-            'else echo "PYTHON_NOT_FOUND"; exit 127; fi'
-        )
-        success, stdout, stderr = ssh_client.exec_command(
-            command=verify_cmd, background=False, timeout=DEPLOYMENT_PYTHON_VERIFY_TIMEOUT
-        )
-
-        if not success or "OK" not in (stdout or ""):
-            details = (stderr or stdout or "").strip()[:DEPLOYMENT_STDERR_TRUNCATE]
-            logger.error(f"❌ Runtime contract check failed: {details if details else 'unknown'}")
-            return Err(
-                ProviderError(
-                    message="Runtime contract check failed (missing deps or wrong image).",
-                    code="RUNTIME_CONTRACT_CHECK_FAILED",
-                    details={"output": details},
-                )
-            )
-
-        # Log versions for debugging (printed by the checker)
-        logger.info("✅ Runtime dependencies verified:")
-        for line in (stdout or "").strip().split("\n")[:DEPLOYMENT_STDOUT_LINES]:
-            logger.info(f"   {line}")
-
-        return Ok(None)
-
-    def _get_single_node_training_cfg(self) -> dict[str, Any]:
-        """Best-effort get providers.single_node.training config as raw dict."""
-        return self._get_provider_training_cfg("single_node")
-
-    def _get_cloud_training_cfg(self) -> dict[str, Any]:
-        """Best-effort get providers.<active_cloud_provider>.training config as raw dict."""
-        return self._get_provider_training_cfg(self._get_active_provider_name())
-
-    def _get_provider_training_cfg(self, provider_name: str) -> dict[str, Any]:
-        """
-        Best-effort get providers.<provider_name>.training config as raw dict.
-
-        Defensive: unit tests may inject MagicMock configs; provider config may be absent.
-        Falls back to the default provider config when the named provider is not found.
-        """
-        provider_cfg_obj: Any
-        try:
-            provider_cfg_obj = self.config.get_provider_config(provider_name)
-        except (AttributeError, KeyError, ValueError, TypeError):
-            try:
-                provider_cfg_obj = self.config.get_provider_config()
-            except (AttributeError, KeyError, ValueError, TypeError):
-                provider_cfg_obj = {}
-
-        provider_cfg = provider_cfg_obj if isinstance(provider_cfg_obj, dict) else {}
-        training_cfg = provider_cfg.get("training")
-        return training_cfg if isinstance(training_cfg, dict) else {}
-
-    def _ensure_docker_image_present(self, ssh_client: SSHClient, *, image: str) -> Result[None, ProviderError]:
-        """Ensure Docker image is available on the remote host."""
-        return ensure_docker_image(ssh=ssh_client, image=image, pull_timeout_seconds=DEPLOYMENT_DOCKER_PULL_TIMEOUT)
+        """Proxy to :meth:`DependencyInstaller.verify_prebuilt_dependencies`."""
+        return DependencyInstaller.verify_prebuilt_dependencies(ssh_client)
 
     def _verify_single_node_docker_runtime(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """
-        Verify dependencies inside the single_node training Docker runtime image.
+        """Proxy to :meth:`DependencyInstaller._verify_single_node_docker_runtime`."""
+        return self._deps_installer._verify_single_node_docker_runtime(ssh_client)
 
-        This must run on the host (via SSH) because in single_node docker-mode
-        SSH is connected to the host, not inside a container.
-        """
-        cfg = self._get_single_node_training_cfg()
-        image_val = cfg.get("docker_image")
-        if not isinstance(image_val, str) or not image_val.strip():
-            return Err(
-                ConfigError(
-                    message="providers.single_node.training.docker_image is required (no default in docker-only mode)",
-                    code="DOCKER_IMAGE_NOT_CONFIGURED",
-                )
-            )
-        image = image_val.strip()
-
-        logger.info(f"🐳 Training runtime image: {image}")
-        pull_result = self._ensure_docker_image_present(ssh_client, image=image)
-        if pull_result.is_failure():
-            return Err(pull_result.unwrap_err())  # type: ignore[union-attr]  # already ProviderError
-
-        logger.info("📦 Verifying Docker runtime image dependencies (single_node)...")
-        verify_cmd = f"docker run --rm --gpus all {image} python3 /opt/helix/runtime_check.py"
-        logger.info(f"🔎 Runtime contract check: {verify_cmd}")
-        success, stdout, stderr = ssh_client.exec_command(
-            command=verify_cmd, background=False, timeout=DEPLOYMENT_DOCKER_VERIFY_TIMEOUT
-        )
-        if not success or "OK" not in (stdout or ""):
-            return Err(
-                ProviderError(
-                    message=f"Training runtime image '{image}' missing required packages or failed to start.",
-                    code="DOCKER_RUNTIME_CHECK_FAILED",
-                    details={"image": image, "stderr": stderr[:DEPLOYMENT_ERROR_TRUNCATE] if stderr else "empty"},
-                )
-            )
-
-        logger.info("✅ Docker runtime image dependencies verified")
-        return Ok(None)
+    def _ensure_docker_image_present(
+        self, ssh_client: SSHClient, *, image: str
+    ) -> Result[None, ProviderError]:
+        """Proxy to :meth:`DependencyInstaller._ensure_docker_image_present` — used by TrainingLauncher tests."""
+        return self._deps_installer._ensure_docker_image_present(ssh_client, image=image)
 
     # =========================================================================
     # TRAINING EXECUTION
