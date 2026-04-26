@@ -33,12 +33,16 @@ RUN conda install -y python=3.12 && conda clean -afy
 # - openssh-server: RunPod SSH access
 # - rsync: code delivery (rsync requires remote binary)
 # - git: required for `trl @ git+...`
+# - dumb-init: PID 1 signal forwarding for the in-pod job server
+#   (uvicorn + sshd children must receive SIGTERM cleanly on
+#   container stop / `docker stop`). Standard pattern, ~20 KB.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
     rsync \
     git \
     curl \
     ca-certificates \
+    dumb-init \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -68,6 +72,21 @@ RUN mkdir -p /opt/helix
 COPY scripts/runtime_check.py /opt/helix/runtime_check.py
 RUN chmod +x /opt/helix/runtime_check.py
 
+# In-pod job server (Phase 0 baseline — minimal package, expanded in
+# Phase 1+ as src/runner gains dependencies on src/utils, etc.).
+#
+# Layout: /opt/ryotenkai/src/runner/...
+# We add ``/opt/ryotenkai`` to PYTHONPATH so ``from src.runner import
+# create_app`` resolves both at build time (uvicorn smoke import in
+# entrypoint.sh) and at runtime. The /workspace path the pipeline
+# rsyncs into stays first on PYTHONPATH (set per-run via ``.env``),
+# so a freshly-deployed src/utils overrides the image baseline if
+# the pipeline adds one — by design.
+RUN mkdir -p /opt/ryotenkai/src
+COPY src/__init__.py /opt/ryotenkai/src/__init__.py
+COPY src/runner /opt/ryotenkai/src/runner
+ENV PYTHONPATH="/opt/ryotenkai:${PYTHONPATH:-}"
+
 # Workspace contract
 RUN mkdir -p /workspace
 WORKDIR /workspace
@@ -77,14 +96,23 @@ ENV HF_HOME=/workspace/hf_cache \
     HUGGINGFACE_HUB_CACHE=/workspace/hf_cache \
     TRANSFORMERS_CACHE=/workspace/hf_cache
 
-# Entry point (starts sshd, then execs the passed command)
+# Entry point — starts sshd, then execs uvicorn (the in-pod job server).
+# Wrapped in dumb-init so SIGTERM from `docker stop` / RunPod podStop
+# reaches uvicorn (and through it, the trainer subprocess) cleanly.
 COPY docker/training/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 22
 
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["bash", "-lc", "tail -f /dev/null"]
+# dumb-init becomes PID 1 inside the container. It forwards SIGTERM /
+# SIGINT to its child (entrypoint.sh, which execs uvicorn), reaps
+# zombies, and exits with the child's status. Without it, uvicorn-as-
+# PID1 swallows signals and `docker stop` would always escalate to
+# the 10-second SIGKILL — losing in-flight checkpoints.
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint.sh"]
+# CMD intentionally empty: entrypoint.sh starts sshd + uvicorn in the
+# default path. Pass a custom command (e.g. `bash`) to override.
+CMD []
 
 LABEL maintainer="ryotenkai"
 LABEL description="RyotenkAI training runtime (CUDA+PyTorch+deps), docker-only execution"

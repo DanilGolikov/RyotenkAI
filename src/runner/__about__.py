@@ -1,0 +1,32 @@
+"""Pinned constants for the runner package.
+
+The ``RUNTIME_IMAGE`` value is the **single source of truth** for which
+docker image the Mac control plane provisions on RunPod / single_node
+hosts. Provider configs read this constant instead of carrying their
+own ``image_name`` / ``docker_image`` field — historical Pydantic
+fields are kept for one release as deprecated aliases.
+
+Override is supported only via ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
+environment variable, intended for CI smoke tests and dev iteration —
+*not* a user-facing config.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Final
+
+# Bumped in lock-step with the docker image published by
+# ``docker/training/build_and_push.sh``.
+_DEFAULT_RUNTIME_IMAGE: Final[str] = "ryotenkai/training-runtime:v0.1.0-runner"
+
+
+def _resolve_runtime_image() -> str:
+    override = os.environ.get("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", "").strip()
+    return override or _DEFAULT_RUNTIME_IMAGE
+
+
+RUNTIME_IMAGE: Final[str] = _resolve_runtime_image()
+
+
+__all__ = ["RUNTIME_IMAGE"]
