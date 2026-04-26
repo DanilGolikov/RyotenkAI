@@ -1,6 +1,6 @@
 # План: Job Server — in-pod control plane для удалённого обучения
 
-> Status: **APPROVED — в реализации**
+> Status: **APPROVED — Phase 6 cutover complete, ready for Phase 7 (CLI/Web UI)**
 > Author: daniil
 > Date: 2026-04-26
 > Worktree: `nice-jepsen-07d789` (на base `origin/RESEACRH` после fast-forward 67 commits)

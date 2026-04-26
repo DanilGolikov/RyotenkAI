@@ -38,12 +38,14 @@ class RunPodProviderConfig(StrictBaseModel):
             training:
               gpu_type: "NVIDIA A40"
               cloud_type: ALL
-              image_name: ryotenkai/ryotenkai-training-runtime:latest
+              # Image is pinned in src/runner/__about__.py::RUNTIME_IMAGE
+              # (Phase 6.6 — no longer a YAML field).
               container_disk_gb: 100
               volume_disk_gb: 20
             inference:
               volume: { name: helix-hf-cache, data_center_id: US-KS-2, size_gb: 200 }
-              pod: { image_name: "ryotenkai/inference-vllm:latest", gpu_count: 1, ports: ["22/tcp"] }
+              # Pod image is pinned in src/inference/__about__.py::INFERENCE_IMAGES.
+              pod: { gpu_count: 1, ports: ["22/tcp"] }
               serve: { port: 8000 }
     """
 
