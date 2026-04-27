@@ -162,6 +162,37 @@ required = ["EVAL_MY_JUDGE_KEY"]
 
 Reward plugins share the `EVAL_*` resolver with evaluation plugins (there is no dedicated `REWARD_*` namespace yet — see tech-debt note in the migration plan). The injection point is the `build_reward_plugin_result` factory; access in code via `self._secrets["EVAL_…"]`.
 
+## Shared domain code via `community/libs/`
+
+When your reward plugin needs domain code (a query compiler, a parser, a similarity scorer) that **another community plugin in a different kind** also needs, publish it under [`community/libs/`](../libs/) instead of vendoring it into the plugin folder. The catalog auto-registers each lib as `community_libs.<id>` in `sys.modules` before any plugin loads, so reward plugins can import without any extra wiring.
+
+Two-step contract:
+
+**1. Declare the dependency in `manifest.toml`:**
+
+```toml
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"   # PEP 440 specifier; omit for "any version"
+```
+
+Multiple `[[lib_requirements]]` blocks are allowed. The catalog refuses to load the plugin if a required lib is missing or its version doesn't satisfy the constraint — fail-fast, not a silent ImportError later.
+
+**2. Mirror it on the plugin class for cross-check:**
+
+```python
+from community_libs.helixql import extract_query_text, extract_schema_block
+
+class MyRewardPlugin(RewardPlugin):
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
+```
+
+The loader cross-checks the manifest's `[[lib_requirements]]` against `REQUIRED_LIBS` at load time — they must agree byte-for-byte. This catches drift where a developer updates one but forgets the other.
+
+The `helixql_compiler_semantic` reference plugin in this directory is the working template — see [`community/reward/helixql_compiler_semantic/manifest.toml`](helixql_compiler_semantic/manifest.toml) and [`plugin.py`](helixql_compiler_semantic/plugin.py).
+
+For authoring a **new** lib (not consuming one), see [`community/libs/README.md`](../libs/README.md).
+
 ## Multi-file reference
 
 [`community/evaluation/cerebras_judge/plugin/`](../evaluation/cerebras_judge/plugin) — same packaging principles apply. For complex reward plugins, split binary-install logic (`install_cli.py`), scoring (`scoring.py`) and the `RewardPlugin` subclass (`main.py`).

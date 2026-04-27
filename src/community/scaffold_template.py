@@ -81,6 +81,14 @@ def render_manifest(plugin_id: str, kind: ScaffoldKind, class_name: str) -> str:
         'module = "plugin"',
         f'class = "{class_name}"',
         "",
+        "# Optional: declare shared-domain libs from community/libs/ that this",
+        "# plugin imports. The loader cross-checks this against REQUIRED_LIBS",
+        "# on the plugin class — they must agree byte-for-byte.",
+        "#",
+        "# [[lib_requirements]]",
+        '# name = "helixql"',
+        '# version = ">=1.0.0,<2.0.0"   # PEP 440; omit for "any version"',
+        "",
     ]
     return "\n".join(lines)
 
@@ -179,6 +187,11 @@ def _reward_body(class_name: str, base_module: str, base_class: str) -> str:
         "\n"
         f"from {base_module} import {base_class}\n"
         "\n"
+        "# Uncomment to import shared domain code from community/libs/.\n"
+        "# Mirror each entry in manifest.toml under [[lib_requirements]] —\n"
+        "# the loader cross-checks both sides at load time.\n"
+        "# from community_libs.helixql import extract_query_text\n"
+        "\n"
         "if TYPE_CHECKING:\n"
         "    from datasets import Dataset\n"
         "\n"
@@ -187,6 +200,11 @@ def _reward_body(class_name: str, base_module: str, base_class: str) -> str:
         "\n"
         f"class {class_name}({base_class}):\n"
         '    """TODO: class docstring describing the reward signal."""\n'
+        "\n"
+        "    # Shared lib dependencies. Must agree with [[lib_requirements]]\n"
+        "    # in manifest.toml byte-for-byte. See community/reward/README.md\n"
+        "    # \"Shared domain code via community/libs/\" for details.\n"
+        "    # REQUIRED_LIBS = ((\"helixql\", \">=1.0.0,<2.0.0\"),)\n"
         "\n"
         "    def build_trainer_kwargs(\n"
         "        self,\n"
