@@ -2198,3 +2198,15 @@ test ! "$(ryotenkai-cli pod-list | grep <pod_id>)"  # pod gone
 mlflow ui  # run status = FINISHED, metrics include last hour
 ls attempts/<n>/artifacts/  # adapter present
 ```
+
+---
+
+# Phase 14 — see [`phase-14a-provider-abstraction.md`](./phase-14a-provider-abstraction.md)
+
+Phase 14 (provider abstraction harden) ships as **separate plan files
+per sub-phase**, per user mandate "на каждую фазу отдельный план".
+
+* [`phase-14a-provider-abstraction.md`](./phase-14a-provider-abstraction.md) — Phase 14.A: foundational
+  capability abstraction (`IGPUProvider` extension, `ITerminalActionProvider`
+  Protocol, `RYOTENKAI_RUNTIME_PROVIDER` env contract). Pending approval.
+* Phase 14.B → 14.F — separate plan files, written after 14.A merges.

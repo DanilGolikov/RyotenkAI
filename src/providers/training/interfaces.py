@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from src.pipeline.state import RunContext
@@ -31,6 +31,84 @@ class ProviderStatus(Enum):
     DISCONNECTING = "disconnecting"  # Cleaning up (cloud: terminating instance)
     UNAVAILABLE = "unavailable"  # Offline or error state
     ERROR = "error"  # Fatal error, requires manual intervention
+
+
+# ---------------------------------------------------------------------------
+# Phase 14.A — provider capability abstraction
+# ---------------------------------------------------------------------------
+
+
+class VolumeKind(str, Enum):
+    """Storage semantics for the provider's pod/host workspace.
+
+    Phase 14.A introduces this enum so the runner's terminal-hook
+    decision matrix (and downstream phases) can ask the provider
+    "is your workspace stoppable?" without parsing strings.
+
+    String values intentionally match the legacy ``RUNPOD_VOLUME_KIND``
+    env var values so the env-boundary translation in Phase 14.D is
+    simply ``VolumeKind(env_str)`` — no extra mapping table.
+    """
+
+    PERSISTENT = "persistent"
+    """Cloud pod with persistent volume — stoppable, ``/workspace``
+    survives podStop, recoverable via podResume. RunPod default."""
+
+    NETWORK = "network"
+    """Cloud pod with a network volume — terminate-only per RunPod
+    constraint (network-volume pods cannot be stopped). The
+    PodTerminator falls back to ``podTerminate`` regardless of
+    natural-completion vs failure when this is the volume kind."""
+
+    LOCAL_DISK = "local_disk"
+    """Local host (single_node) — no cloud volume semantics. The
+    provider's ``disconnect()`` handles workspace cleanup; the
+    PodTerminator decision matrix returns SKIPPED for any cloud
+    lifecycle action."""
+
+
+@dataclass(frozen=True)
+class AvailabilityVerdict:
+    """Outcome of probing a provider for pod/host availability.
+
+    Phase 14.A. Returned by :meth:`IGPUProvider.probe_availability`.
+    Used by future :class:`LaunchResumeService` (Phase 14.C) to decide
+    whether to wake a sleeping pod, restart-from-checkpoint a gone
+    pod, or just continue (already running).
+
+    Single_node always returns ``state="running"`` — the host is
+    always reachable; if it isn't, the SSH connect step in the
+    pipeline surfaces the real error.
+    """
+
+    state: Literal[
+        "running",
+        "sleeping_resumable",
+        "gone",
+        "probe_failed",
+        "unknown",
+    ]
+    """Provider-agnostic availability bucket.
+
+    * ``running`` — ready to accept work.
+    * ``sleeping_resumable`` — paused but recoverable (RunPod
+      ``EXITED`` / ``STOPPED`` / ``PAUSED``).
+    * ``gone`` — terminated; needs fresh-pod resume.
+    * ``probe_failed`` — transient probe error; caller decides.
+    * ``unknown`` — provider doesn't track availability.
+    """
+
+    resource_id: str
+    """Provider-specific resource identifier the verdict refers to.
+    Empty string is acceptable (single_node has no resource_id)."""
+
+    raw_status: str | None = None
+    """Provider-native status string for logs (e.g. RunPod's
+    ``desiredStatus``). ``None`` when the provider doesn't have one
+    or the probe couldn't reach the backend."""
+
+    message: str = ""
+    """Human-readable hint surfaced to operators in CLI / Web UI."""
 
 
 @dataclass(frozen=True)
@@ -98,6 +176,10 @@ class ProviderCapabilities:
     Provider capabilities and constraints.
 
     Used by orchestrator to validate training configs.
+
+    Phase 14.A: defaults safe — keyword-only construction is the only
+    used pattern across the codebase (verified via audit), so adding
+    fields with defaults does NOT break existing callers.
     """
 
     provider_type: str  # "local" or "cloud"
@@ -108,6 +190,37 @@ class ProviderCapabilities:
     # Constraints (from GPU info or config)
     gpu_name: str | None = None
     gpu_vram_gb: float | None = None
+
+    # ---- Phase 14.A — capability surface for the multi-provider refactor ----
+
+    supports_lifecycle_actions: bool = False
+    """True iff the provider implements :class:`ITerminalActionProvider`.
+
+    Two-source-of-truth invariant (Phase 14.A): this flag MUST equal
+    ``isinstance(provider, ITerminalActionProvider)``. Enforced by a
+    factory-level runtime assertion at boot. Failing assert =
+    blocker (provider author forgot to update one of the two)."""
+
+    volume_kind: VolumeKind = VolumeKind.PERSISTENT
+    """Storage semantics — drives the PodTerminator decision matrix
+    (Phase 14.B) and the launcher env builder (Phase 14.D).
+    Defaults to PERSISTENT because that's the RunPod default; provider
+    impls override (single_node = LOCAL_DISK)."""
+
+    has_pause_resume: bool = False
+    """Subset of :attr:`supports_lifecycle_actions`: True iff the
+    provider supports the FULL pause→resume cycle (not just terminate).
+    Single_node = False, RunPod = True. A future provider with
+    terminate-only semantics would have ``supports_lifecycle_actions=True``
+    but ``has_pause_resume=False``."""
+
+    runner_workspace_root: str = "/workspace"
+    """What ``HELIX_WORKSPACE`` / ``PYTHONPATH`` resolve to inside the
+    in-pod runner. Both RunPod and single_node currently use
+    ``/workspace`` (same value, but coming from the provider instead
+    of hardcoded in :func:`_build_job_env`). A future provider that
+    mounts a different path (e.g. ``/data``) only needs to override
+    this field — no edits to the launcher."""
 
 
 @dataclass(frozen=True)
@@ -284,6 +397,164 @@ class IGPUProvider(Protocol):
         """
         ...
 
+    # ---- Phase 14.A — capability methods ----
+
+    def required_runtime_env_vars(
+        self, *, resource_id: str | None,
+    ) -> dict[str, str]:
+        """Env vars the in-pod runner needs at boot.
+
+        Phase 14.A introduces this method as the single source of
+        truth for "what env vars must the launcher forward to the
+        runner so it boots correctly?".
+
+        ALWAYS includes ``RYOTENKAI_RUNTIME_PROVIDER`` keyed to
+        :attr:`provider_name` so the runner's bootstrap registry
+        (Phase 14.B) can pick the right :class:`IPodLifecycleClient`
+        impl without having to guess from other env presence.
+
+        Returns:
+            A flat dict of env-var name → value. Single_node returns
+            ``{RYOTENKAI_RUNTIME_PROVIDER: "single_node"}``. RunPod
+            additionally returns ``RUNPOD_API_KEY``,
+            ``RUNPOD_KEEP_ON_ERROR``, ``RUNPOD_VOLUME_KIND``, plus
+            ``RUNPOD_POD_ID`` when ``resource_id`` is provided.
+
+        Args:
+            resource_id: The provider's resource identifier
+                (RunPod pod_id, etc.). ``None`` when the launcher
+                calls before :meth:`connect` has assigned one — the
+                provider returns what it CAN (everything except
+                resource-keyed values).
+
+        Note:
+            Phase 14.A keeps both this method AND
+            :meth:`prepare_training_script_hooks` callable; both
+            return the same data on RunPod. Phase 14.D explicitly
+            collapses the legacy hooks API into this one. A FIXME in
+            the RunPod provider flags the redundancy.
+        """
+        ...
+
+    def probe_availability(self, resource_id: str) -> AvailabilityVerdict:
+        """Query the provider for pod/host availability.
+
+        Phase 14.A. Always defined for every provider so callers can
+        ``provider.probe_availability(...)`` unconditionally instead
+        of branching on provider name.
+
+        * Single_node returns ``state="running"`` immediately,
+          without any network round-trip — the host is always
+          reachable; SSH connect step surfaces real errors later.
+        * RunPod queries GraphQL via :class:`RunPodAPIClient.query_pod`
+          and maps ``desiredStatus`` to the verdict's bucket.
+
+        Returns:
+            :class:`AvailabilityVerdict`. Never raises — transient
+            probe errors map to ``state="probe_failed"``.
+
+        Args:
+            resource_id: Provider-specific identifier of the resource
+                to probe. Empty string is acceptable for providers
+                that don't track per-resource availability
+                (single_node).
+        """
+        ...
+
+
+@runtime_checkable
+class ITerminalActionProvider(Protocol):
+    """Capability-gated Protocol: provider can pause / resume / terminate.
+
+    Phase 14.A introduces this as a SEPARATE Protocol from
+    :class:`IGPUProvider` — providers that DON'T support cloud
+    lifecycle actions (single_node) intentionally do NOT implement
+    this. The type checker then prevents callers from accidentally
+    invoking ``.terminate()`` / ``.pause()`` / ``.resume()`` on a
+    single_node instance.
+
+    Two-source-of-truth invariant:
+        ``ProviderCapabilities.supports_lifecycle_actions``
+        MUST equal ``isinstance(provider, ITerminalActionProvider)``.
+        Verified at factory boot — failing assert is a blocker.
+
+    Why a separate Protocol (not just a flag on the base):
+        * Type-system enforcement — senior reviewers see at the call
+          site that ``.resume()`` is only callable when the type
+          says it's a :class:`ITerminalActionProvider`.
+        * Adding a third provider becomes a typed conformance
+          question, not a Liskov-violation review.
+
+    Why ``runtime_checkable``:
+        Callers need to ``isinstance(p, ITerminalActionProvider)``
+        to gate optional capability paths (Phase 14.B PodTerminator,
+        Phase 14.C LaunchResumeService).
+
+    All methods are sync to match the rest of the :class:`IGPUProvider`
+    surface; impls that need async transports (RunPod GraphQL) wrap
+    via ``asyncio.run`` — same pattern as
+    :meth:`RunPodAPIClient.query_pod`.
+    """
+
+    def terminate(
+        self, *, resource_id: str, reason: str,
+    ) -> Result[None, ProviderError]:
+        """Permanently delete the resource (irreversible).
+
+        Used by the runner's terminal-hook decision matrix (Phase
+        14.B) when ``terminal_state="cancelled"`` (user-stop) or
+        ``volume_kind=NETWORK`` (RunPod constraint).
+
+        Idempotent — already-gone resources return ``Ok``.
+
+        Args:
+            resource_id: Identifier of the resource to terminate
+                (e.g. RunPod ``pod_id``).
+            reason: Operator-visible reason string for telemetry +
+                logs (e.g. ``"user_stop"`` / ``"failed_safety"``).
+        """
+        ...
+
+    def pause(
+        self, *, resource_id: str,
+    ) -> Result[None, ProviderError]:
+        """Stop the resource preserving its workspace.
+
+        Phase 14.A. RunPod calls ``podStop``; resources can be
+        recovered via :meth:`resume`. For single_node this method
+        is NEVER callable (single_node does not implement this
+        Protocol).
+
+        Idempotent — already-stopped resources return ``Ok``.
+        """
+        ...
+
+    def resume(
+        self, *, resource_id: str,
+    ) -> Result[None, ProviderError]:
+        """Wake a previously :meth:`pause`-d resource.
+
+        Phase 14.A. RunPod calls ``podResume``. Caller is responsible
+        for capacity-aware retry — this method does ONE attempt
+        and returns its outcome. Phase 14.C's
+        :class:`LaunchResumeService` orchestrates the budget loop.
+        """
+        ...
+
 
 # Type alias for provider factory
 ProviderFactory = type[IGPUProvider]
+
+
+__all__ = [
+    "AvailabilityVerdict",
+    "GPUInfo",
+    "IGPUProvider",
+    "ITerminalActionProvider",
+    "ProviderCapabilities",
+    "ProviderFactory",
+    "ProviderStatus",
+    "SSHConnectionInfo",
+    "TrainingScriptHooks",
+    "VolumeKind",
+]

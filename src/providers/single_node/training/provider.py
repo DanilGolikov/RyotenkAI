@@ -11,14 +11,16 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_SINGLE_NODE
+from src.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
 from src.providers.training.interfaces import (
+    AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
     TrainingScriptHooks,
+    VolumeKind,
 )
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
@@ -566,6 +568,13 @@ class SingleNodeProvider(IGPUProvider):
         Returns capabilities based on:
             - Static config (provider type)
             - Detected GPU info (if connected)
+
+        Phase 14.A: capability fields populated to declare that
+        single_node has NO cloud lifecycle semantics — host is
+        always-on, no pause / resume / terminate. The class
+        intentionally does NOT inherit :class:`ITerminalActionProvider`,
+        so the type checker rejects ``provider.pause()`` at the
+        callsite when the provider is a SingleNodeProvider.
         """
         gpu_name = None
         gpu_vram_gb = None
@@ -583,11 +592,56 @@ class SingleNodeProvider(IGPUProvider):
             max_runtime_hours=None,  # Unlimited for local
             gpu_name=gpu_name,
             gpu_vram_gb=gpu_vram_gb,
+            # Phase 14.A capability fields:
+            supports_lifecycle_actions=False,  # No cloud terminate / pause / resume
+            volume_kind=VolumeKind.LOCAL_DISK,  # Workspace lives on user's host disk
+            has_pause_resume=False,
+            runner_workspace_root="/workspace",
         )
 
     def get_resource_info(self) -> None:
         """Local provider has no dynamic resource metadata."""
         return None
+
+    # ------------------------------------------------------------------
+    # Phase 14.A — capability methods (IGPUProvider extension)
+    # ------------------------------------------------------------------
+
+    def required_runtime_env_vars(
+        self, *, resource_id: str | None,
+    ) -> dict[str, str]:
+        """Env vars the in-pod runner needs.
+
+        Phase 14.A. Single_node has nothing provider-specific to
+        forward — only the bootstrap identity env var so the runner
+        registry (Phase 14.B) picks the :class:`NoOpPodLifecycleClient`
+        impl.
+
+        ``resource_id`` is intentionally ignored — single_node has
+        no per-resource credentials.
+        """
+        del resource_id  # unused for single_node
+        return {RUNTIME_PROVIDER_ENV_VAR: PROVIDER_SINGLE_NODE}
+
+    def probe_availability(
+        self, resource_id: str,
+    ) -> AvailabilityVerdict:
+        """Single_node host is always-on — return ``running`` immediately.
+
+        Phase 14.A. NO network round-trip, NO SSH probe — if the host
+        is genuinely unreachable, the pipeline's :meth:`connect`
+        step surfaces the real error. This method's contract is
+        "fast, never-raises probe", not "verify reachability".
+
+        Empty ``resource_id`` is acceptable (single_node has no
+        per-resource id).
+        """
+        return AvailabilityVerdict(
+            state="running",
+            resource_id=resource_id,
+            raw_status=None,
+            message="single_node host assumed always-on",
+        )
 
     def prepare_training_script_hooks(
         self,

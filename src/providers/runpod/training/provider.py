@@ -10,14 +10,17 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_RUNPOD
+from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
 from src.providers.training.interfaces import (
+    AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
+    ITerminalActionProvider,
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
     TrainingScriptHooks,
+    VolumeKind,
 )
 from src.runner.__about__ import RUNTIME_IMAGE
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -38,6 +41,18 @@ _GPU_CHECK_FAILED_CODE = "GPU_CHECK_FAILED"
 _POD_CREATE_MAX_RETRIES = 3
 _RECREATABLE_ERRORS = ("RUNPOD_NO_EXPOSED_TCP", "RUNPOD_POD_TIMEOUT", "RUNPOD_POD_FAILED")
 
+# Phase 14.A — RunPod-specific "pod is gone" markers. Used by
+# :meth:`RunPodProvider.probe_availability` to distinguish a
+# permanently-terminated pod (operator should ``run restart``) from
+# a transient API flap (operator should retry). Lower-cased on
+# match so case variations don't break detection.
+_GONE_ERROR_MARKERS: tuple[str, ...] = (
+    "not found",
+    "does not exist",
+    "no such pod",
+    "no pod with",
+)
+
 if TYPE_CHECKING:
     from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodSnapshot
@@ -46,7 +61,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ryotenkai")
 
 
-class RunPodProvider(IGPUProvider):
+class RunPodProvider(IGPUProvider, ITerminalActionProvider):
     """
     GPU provider for RunPod cloud.
 
@@ -55,6 +70,8 @@ class RunPodProvider(IGPUProvider):
         - Waits for pod to be ready
         - Provides SSH connection info
         - Automatic cleanup on disconnect
+        - Phase 14.A: implements :class:`ITerminalActionProvider`
+          (terminate / pause / resume) — single_node does NOT.
 
     Lifecycle:
         1. __init__: Parse config, initialize API client
@@ -452,13 +469,29 @@ class RunPodProvider(IGPUProvider):
         return Ok(self._gpu_info)
 
     def get_capabilities(self) -> ProviderCapabilities:
-        """Get provider capabilities."""
+        """Get provider capabilities.
+
+        Phase 14.A: populates the capability surface
+        (``supports_lifecycle_actions``, ``volume_kind``,
+        ``has_pause_resume``, ``runner_workspace_root``) so callers
+        can avoid string-checks like ``provider == "runpod"``.
+
+        Two-source-of-truth invariant: ``supports_lifecycle_actions``
+        ↔ ``isinstance(self, ITerminalActionProvider)``. RunPod
+        sets True and DOES inherit from the Protocol.
+        """
         gpu_name = self._config.training.gpu_type
         gpu_vram_gb = None
 
         if self._gpu_info:
             gpu_name = self._gpu_info.name
             gpu_vram_gb = self._gpu_info.vram_total_gb
+
+        # Today RunPod training pods always use a persistent volume
+        # (config has ``volume_disk_gb``, no network volume support).
+        # If/when network-volume training lands, this should read the
+        # provider config — keeping VolumeKind.PERSISTENT pinned for now.
+        volume_kind = VolumeKind.PERSISTENT
 
         return ProviderCapabilities(
             provider_type="cloud",
@@ -467,7 +500,185 @@ class RunPodProvider(IGPUProvider):
             max_runtime_hours=None,
             gpu_name=gpu_name,
             gpu_vram_gb=gpu_vram_gb,
+            # Phase 14.A capability fields:
+            supports_lifecycle_actions=True,
+            volume_kind=volume_kind,
+            has_pause_resume=True,  # podStop + podResume both supported
+            runner_workspace_root="/workspace",  # RunPod pod mount path
         )
+
+    # ------------------------------------------------------------------
+    # Phase 14.A — capability methods (IGPUProvider extension)
+    # ------------------------------------------------------------------
+
+    def required_runtime_env_vars(
+        self, *, resource_id: str | None,
+    ) -> dict[str, str]:
+        """Env vars the in-pod runner needs.
+
+        Phase 14.A. ALWAYS includes ``RYOTENKAI_RUNTIME_PROVIDER`` so
+        the runner's bootstrap registry (Phase 14.B) can pick the
+        right :class:`IPodLifecycleClient`.
+
+        Without ``resource_id`` we still return what we know — the
+        launcher calls AFTER :meth:`connect` so the empty-id case
+        is purely defensive.
+
+        FIXME(Phase 14.D): :meth:`prepare_training_script_hooks`
+        returns the same dict (with extra ``cleanup.auto_stop_after_training``
+        gating). Phase 14.D collapses both methods into this one.
+        """
+        env: dict[str, str] = {
+            RUNTIME_PROVIDER_ENV_VAR: PROVIDER_RUNPOD,
+            "RUNPOD_API_KEY": self._api_key,
+            "RUNPOD_KEEP_ON_ERROR": (
+                "true" if self._config.cleanup.keep_pod_on_error else "false"
+            ),
+            "RUNPOD_VOLUME_KIND": VolumeKind.PERSISTENT.value,
+        }
+        if resource_id:
+            env["RUNPOD_POD_ID"] = str(resource_id)
+        return env
+
+    def probe_availability(
+        self, resource_id: str,
+    ) -> AvailabilityVerdict:
+        """Query RunPod for pod state and map to provider-agnostic verdict.
+
+        Phase 14.A. Delegates to the existing
+        :meth:`RunPodAPIClient.query_pod` for transport; reuses the
+        :data:`_RUNPOD_STATUS_MAP` from
+        :mod:`src.pipeline.launch.pod_availability` for parity with
+        the legacy probe path. Phase 14.C will move that map into
+        this module.
+
+        Never raises — transient probe errors map to
+        ``state="probe_failed"``. Empty ``resource_id`` (defensive)
+        maps to ``state="unknown"`` so callers can branch on a
+        clearly-disambiguated bucket.
+        """
+        if not resource_id:
+            return AvailabilityVerdict(
+                state="unknown",
+                resource_id="",
+                message="probe_availability called without resource_id",
+            )
+
+        try:
+            result = self._graphql_api_client.query_pod(resource_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort probe
+            return AvailabilityVerdict(
+                state="probe_failed",
+                resource_id=resource_id,
+                message=f"query_pod raised: {exc!r}",
+            )
+
+        if result.is_failure():
+            err = result.unwrap_err()
+            err_msg = str(err).lower()
+            # RunPod's GraphQL returns various flavors of "pod is
+            # gone" — distinguish from transient "API flapping" so
+            # the operator-side UX (Phase 14.C) can branch:
+            # GONE → "use ``run restart`` to recreate from
+            # checkpoint"; PROBE_FAILED → "transient, retry later".
+            if any(marker in err_msg for marker in _GONE_ERROR_MARKERS):
+                return AvailabilityVerdict(
+                    state="gone",
+                    resource_id=resource_id,
+                    raw_status=None,
+                    message="Pod terminated or does not exist",
+                )
+            return AvailabilityVerdict(
+                state="probe_failed",
+                resource_id=resource_id,
+                message=str(err),
+            )
+
+        pod_data = result.unwrap()
+        if not isinstance(pod_data, dict):
+            return AvailabilityVerdict(
+                state="probe_failed",
+                resource_id=resource_id,
+                message="query_pod returned non-dict payload",
+            )
+
+        # Phase 14.C TODO: relocate _RUNPOD_STATUS_MAP here. For now
+        # we import to keep 14.A purely additive.
+        from src.pipeline.launch.pod_availability import (
+            PodAvailability,
+            _RUNPOD_STATUS_MAP,
+        )
+
+        raw_status = str(pod_data.get("desiredStatus") or "").upper()
+        mapped = _RUNPOD_STATUS_MAP.get(raw_status)
+        if mapped is None:
+            return AvailabilityVerdict(
+                state="probe_failed",
+                resource_id=resource_id,
+                raw_status=raw_status or None,
+                message=f"Unknown desiredStatus: {raw_status!r}",
+            )
+
+        # Map the legacy enum to our new state literal.
+        bucket: AvailabilityVerdict = AvailabilityVerdict(
+            state=(
+                "running" if mapped == PodAvailability.RUNNING
+                else "sleeping_resumable" if mapped == PodAvailability.SLEEPING_RESUMABLE
+                else "gone" if mapped == PodAvailability.GONE
+                else "probe_failed"
+            ),
+            resource_id=resource_id,
+            raw_status=raw_status,
+        )
+        return bucket
+
+    # ------------------------------------------------------------------
+    # Phase 14.A — ITerminalActionProvider methods
+    # ------------------------------------------------------------------
+
+    def terminate(
+        self, *, resource_id: str, reason: str,
+    ) -> Result[None, ProviderError]:
+        """Permanently delete the pod via ``podTerminate``.
+
+        Phase 14.A. Delegates to the existing
+        :meth:`RunPodTrainingPodControl.terminate_pod`. Idempotent —
+        already-gone pods return ``Ok``.
+
+        ``reason`` is currently logged but not forwarded to the
+        GraphQL call (RunPod doesn't accept a reason field). Phase
+        14.B's :class:`PodTerminator` will pipe it into telemetry.
+        """
+        logger.info(
+            "[PROVIDER:TERMINATE] pod=%s reason=%s", resource_id, reason,
+        )
+        return self._api_client.terminate_pod(resource_id)
+
+    def pause(
+        self, *, resource_id: str,
+    ) -> Result[None, ProviderError]:
+        """Stop the pod via ``podStop`` (preserves /workspace).
+
+        Phase 14.A. Delegates to the existing
+        :meth:`RunPodTrainingPodControl.stop_pod`. Idempotent —
+        already-stopped pods return ``Ok``.
+        """
+        logger.info("[PROVIDER:PAUSE] pod=%s", resource_id)
+        return self._api_client.stop_pod(pod_id=resource_id)
+
+    def resume(
+        self, *, resource_id: str,
+    ) -> Result[None, ProviderError]:
+        """Wake a stopped pod via ``podResume``.
+
+        Phase 14.A. Delegates to the existing
+        :meth:`RunPodTrainingPodControl.start_pod` (RunPod's
+        ``podResume`` mutation lives there). Single attempt — caller
+        orchestrates capacity-aware retry (Phase 14.C
+        :class:`LaunchResumeService`).
+        """
+        logger.info("[PROVIDER:RESUME] pod=%s", resource_id)
+        return self._api_client.start_pod(pod_id=resource_id)
 
     def get_pod_id(self) -> str | None:
         """Get current pod ID."""

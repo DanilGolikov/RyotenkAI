@@ -33,6 +33,20 @@ SUPPORTED_INFERENCE_PROVIDERS: Final[tuple[InferenceProviderName, ...]] = (
     PROVIDER_RUNPOD,
 )
 
+# Phase 14.A — runtime-side provider identity contract.
+#
+# The Mac launcher writes this env var into the JobSpec (value =
+# ``provider.provider_name``) so the in-pod runner's bootstrap
+# registry can pick the right :class:`IPodLifecycleClient` impl
+# without guessing from the presence/absence of provider-specific
+# vars (e.g. ``RUNPOD_API_KEY``). Single source of truth for
+# "which provider booted me?" inside the runner.
+#
+# Phase 14.B is what wires the runner-side registry to read this;
+# Phase 14.A only adds the constant + has each provider populate it
+# in :meth:`required_runtime_env_vars`.
+RUNTIME_PROVIDER_ENV_VAR: Final[str] = "RYOTENKAI_RUNTIME_PROVIDER"
+
 # ---------------------------------------------------------------------------
 # Inference engines
 # ---------------------------------------------------------------------------
