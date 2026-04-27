@@ -1568,10 +1568,27 @@ compatibility (per project policy).**
 
 # Phase 11 — Natural-completion sleep + heartbeat-aware terminal hook
 
-> Status: **PROPOSED — awaiting approval**
+> Status: **11.A ✅ + 11.B ✅ + 11.C-1 ✅ DONE; 11.C-2 surface + 11.D polish deferred**
 > Date: 2026-04-27
 > Predecessor: Phase 9.A/B/C (stop semantics) + Phase 10 placeholder
 > Worktree: `nice-jepsen-07d789`
+>
+> Commits:
+> * `fde5f3b` — Phase 11.A: flush MetricsBuffer on natural completion + completion.marker (45 tests)
+> * `04430a9` — Phase 11.B: podStop on natural completion + Mac heartbeat heuristic (43 tests)
+> * `42077be` — Phase 11.C-1: core resume infrastructure — PodMetadata + probe + retry (32 tests)
+>
+> What works after these three commits:
+> 1. Natural completion → CompletionCallback flushes MetricsBuffer → completion.marker written → PodTerminator picks `stopped_for_resume` (Mac asleep) or `stopped_for_resume_short_grace` (Mac alive) → podStop, /workspace preserved.
+> 2. Mac wake → reconnects via WS → reads completion.marker → forces MLflow run RUNNING → FINISHED if HF MLflow callback didn't get to end_run while Mac slept.
+> 3. Programmatic resume API: pod_metadata persists on Attempt; PodAvailabilityProbe + resume_pod_with_retry usable from any caller.
+>
+> What's deferred (Phase 11.C-2):
+> 1. CLI `runs ls` "(stopped)" hint + `run resume` invokes probe.
+> 2. REST `POST /runs/{id}/resume` endpoint.
+> 3. Web UI Resume button + badge.
+> 4. TrainingLauncher producer-side: populate `pod_metadata` when creating attempt.
+> 5. Phase 11.D doc-only polish (rename cancellation_telemetry → terminal_telemetry; runner-architecture.md "Sleep & resume" section).
 
 ## 11.0 Context
 
@@ -1884,7 +1901,14 @@ Fallback при exhausted retry: **fail fast**, NO auto-migration. User
 
 ## 11.6 Sub-phases
 
-### Phase 11.A — Flush + completion.marker on any exit (~6h, low-risk)
+### Phase 11.A — Flush + completion.marker on any exit (~6h, low-risk) ✅ DONE
+
+> Commit `fde5f3b` — 10 files changed, 2290 insertions, 102 deletions; 45 new tests.
+> Closed: Phase 9.B gap. flush_buffer now fires on natural completion via new
+> CompletionCallback (insert idx 1 in TrainerFactory). completion.marker is
+> always-written on natural end; Mac TrainingMonitor reconciles both
+> cancelled.marker and completion.marker via _reconcile_terminal_marker_if_present.
+
 
 **Goal**: закрыть Phase 9.B gap. Без касания pod_stopper.
 
@@ -1914,7 +1938,15 @@ Fallback при exhausted retry: **fail fast**, NO auto-migration. User
 
 **Manual smoke**: запустить mock-pipeline → assert `completion.marker` exists with `flushed_count > 0`.
 
-### Phase 11.B — `podStop` by default + heartbeat heuristic (~10h, medium-risk)
+### Phase 11.B — `podStop` by default + heartbeat heuristic (~10h, medium-risk) ✅ DONE
+
+> Commit `04430a9` — 15 files changed, 1703 insertions, 689 deletions; 43 new tests.
+> Closed: AUTO_STOP toggle (deleted). pod_stopper.py renamed to pod_terminator.py
+> with 8-row decision matrix (terminal_state × mac_alive × volume_kind × keep_on_error).
+> MacHeartbeat ledger added; WS handler + REST GET /jobs/{id} both call mark_active
+> so retriever polls extend grace beyond the 60s base. RUNPOD_VOLUME_KIND env pin'd
+> to "persistent" in TrainingLauncher (future-proof for network volumes).
+
 
 **Goal**: rewrite `pod_stopper.py` → `PodTerminator` с decision matrix § 11.1.
 
@@ -1942,7 +1974,49 @@ Fallback при exhausted retry: **fail fast**, NO auto-migration. User
 
 **Manual smoke**: real RunPod run → natural exit → verify pod в `EXITED` через 60s + GPU billing=$0/h в RunPod console.
 
-### Phase 11.C — Resume stopped pod (~10h, medium-risk)
+### Phase 11.C — Resume stopped pod (~10h, medium-risk) — split into 11.C-1 ✅ + 11.C-2 ⏭️
+
+> **Phase 11.C-1** — core resume infrastructure ✅ DONE.
+> Commit `42077be` — 4 files changed, 1103 insertions; 32 new tests.
+>
+> Landed:
+> * `PodMetadata` dataclass + `PipelineAttemptState.pod_metadata` field
+>   with graceful fallback for legacy attempts (returns None on missing
+>   pod_id; to_dict omits the key when None so legacy diff'ing tools
+>   see no spurious nulls).
+> * `PodAvailabilityProbe` + `ProbeResult` enum mapping RunPod
+>   desiredStatus → 5-way availability (RUNNING / SLEEPING_RESUMABLE /
+>   SLEEPING_RESUME_FAILED / GONE / PROBE_FAILED). Tolerates snake_case
+>   vs camelCase status keys; detects "not found" / "does not exist"
+>   markers as GONE vs PROBE_FAILED for actual outages.
+> * `resume_pod_with_retry` — capacity-aware backoff (10s, 30s, 60s,
+>   120s; 5min total budget) with `is_capacity_error` callable so
+>   caller plugs in `sdk_adapter._CAPACITY_MARKERS`. Returns
+>   `ResumeResult` with capacity_exhausted vs error_message
+>   distinction.
+> * `RunPodAPIClient.resume_pod()` + `.stop_pod()` Mac-side wrappers
+>   over SDK adapter's `start_pod` / `stop_pod`.
+> * `load_pod_metadata_for_run(run_dir)` helper for CLI / Web UI /
+>   launch_service callers.
+>
+> **Phase 11.C-2** — surface integration ⏭️ deferred to a separate
+> commit. Requires:
+>
+> * `TrainingLauncher` (or `GPUDeployer`) populates `pod_metadata`
+>   when persisting attempt state — producer side.
+> * `validate_resume_run` extension or new `prepare_resume_run` step
+>   that runs `PodAvailabilityProbe` + `resume_pod_with_retry` before
+>   re-spawning the pipeline.
+> * CLI: `ryotenkai runs ls` shows "(stopped)" hint when latest
+>   attempt's pod_metadata.last_known_status == "stopped". `ryotenkai
+>   run resume` invokes the probe before continuing.
+> * REST: `POST /api/v1/runs/{run_id}/resume` endpoint wires probe
+>   + retry into a launch flow.
+> * Web UI: badge + Resume button on RunDetail page.
+>
+> Phase 11.C-1 alone is operationally sufficient — operators can call
+> the API surface programmatically. 11.C-2 is the UX layer.
+
 
 **Goal**: Mac wake → CLI/UI resume → poke pod из EXITED → ModelRetriever.
 
@@ -1976,15 +2050,28 @@ Fallback при exhausted retry: **fail fast**, NO auto-migration. User
 2. CLI path: `ryotenkai run resume <run_id>` ⇒ pod поднимается ⇒ ModelRetriever ⇒ HF upload ⇒ pod terminated
 3. UI path: открыть Web UI → видеть badge "stopped" + кнопка Resume → клик → тот же flow
 
-### Phase 11.D — Observability + reconciliation polish (~4h, low-risk)
+### Phase 11.D — Observability + reconciliation polish (~4h, low-risk) — partially done
 
-**Goal**: dashboards/SLO видят все новые events. Mac reconciliation покрывает обе marker'и.
+**Done in 11.A/B**:
+* `cancellation_telemetry.py` already extended in 11.A with
+  `COMPLETION_FINALIZED` constant + `TERMINAL_EVENT_KINDS` superset.
+* PodTerminator already publishes `pod_terminal_decision`,
+  `pod_terminal_grace_started`, `pod_terminal_grace_ended`,
+  `pod_stop_attempt` (Phase 9.A carry-over) events.
+* Reconciliation matrix done in 11.A (`_reconcile_terminal_marker_if_present`).
 
-**Files**:
-* `src/runner/cancellation_telemetry.py` ⇒ rename to `src/runner/terminal_telemetry.py`. Add: `COMPLETION_FINALIZED`, `POD_TERMINAL_DECISION`, `POD_TERMINAL_GRACE_STARTED`, `POD_TERMINAL_GRACE_EXPIRED`, `POD_RESUME_STARTED`, `POD_RESUME_WARMING`, `POD_RESUME_COMPLETED`, `POD_RESUME_FAILED`. NO BC: rename callsites
-* `src/pipeline/stages/training_monitor.py` — finalize `_reconcile_terminal_marker_if_present` (added in 11.A, polish here)
-* `src/cli/run_rendering.py` — render-pretty для new events (operator UX)
-* `docs/runner-architecture.md` — добавить "Sleep & resume semantics" section: layer ownership, event chain table, decision matrix snapshot
+**Remaining (deferred to a doc-only commit alongside 11.C-2)**:
+* Rename `src/runner/cancellation_telemetry.py` ⇒ `src/runner/terminal_telemetry.py`.
+  Single search-replace; new `terminal_telemetry` is the better name now
+  that the module covers both cancellation AND completion + resume kinds.
+  NO BC: rename callsites.
+* Add resume-flow event kinds (`POD_RESUME_STARTED`, `POD_RESUME_WARMING`,
+  `POD_RESUME_COMPLETED`, `POD_RESUME_FAILED`) — wired alongside the
+  11.C-2 surface integration (the publishers will live in launch_service
+  / new resume endpoint, so the constants land with that commit).
+* `src/cli/run_rendering.py` — render-pretty for new events.
+* `docs/runner-architecture.md` — new "Sleep & resume semantics"
+  section.
 
 **Test plan**:
 * Smoke through full pipeline ⇒ count events ⇒ assert all expected kinds present

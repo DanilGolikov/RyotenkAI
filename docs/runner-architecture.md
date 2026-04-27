@@ -266,6 +266,101 @@ reuse with a different `ShutdownReason` enum value — adding pause
 later won't require architectural rework, just additional UI/CLI
 surface + a config knob.
 
+## Sleep & resume semantics (Phase 11)
+
+Phase 11 changed the natural-completion path from "always
+terminate" to "stop the pod (sleep) so the user can resume on Mac
+wake". User-stop is unchanged from Phase 9 — explicit user action
+still calls `podTerminate`.
+
+### Decision matrix
+
+The runner's `PodTerminator` (`src/runner/pod_terminator.py`) picks
+between four outcomes on every FSM terminal transition:
+
+| terminal | `mac_alive` | `volume_kind` | `KEEP_ON_ERROR` | Outcome | RunPod call |
+|---|---|---|---|---|---|
+| `cancelled` | * | * | * | `terminated_user_stop` | `podTerminate` |
+| `failed` | * | * | true | `kept_alive_for_debug` | (none) |
+| `failed` | true | persistent | false | `terminated_safety` | `podTerminate` |
+| `failed` | false | persistent | false | `stopped_for_resume` | `podStop` |
+| `failed` | * | network | false | `terminated_safety` | `podTerminate` |
+| `completed` | true | persistent | * | `stopped_for_resume_short_grace` | wait → `podStop` |
+| `completed` | false | persistent | * | `stopped_for_resume` | `podStop` |
+| `completed` | * | network | * | `terminated_safety` | `podTerminate` |
+
+`mac_alive` comes from `MacHeartbeat` (`src/runner/heartbeat.py`)
+which the WebSocket handler and REST `GET /jobs/{id}` handler
+both refresh via `mark_active()`. TTL = 60s. ModelRetriever's
+periodic GET keeps the heartbeat alive while it pulls adapters
+off the pod, so the SHORT_GRACE window effectively extends to
+cover the whole download (capped at 10 min).
+
+`volume_kind` is read from `RUNPOD_VOLUME_KIND` env (set by
+`TrainingLauncher._build_job_env`). RunPod constraint: pods with
+network volumes can't be stopped, only terminated — the matrix
+short-circuits to `terminated_safety` for `network`. Default
+`persistent` matches today's training-pod config.
+
+### Marker symmetry: `cancelled.marker` vs `completion.marker`
+
+Two marker files live in the attempt directory and drive Mac-side
+MLflow reconciliation when the trainer's MLflow callback couldn't
+reach upstream (Mac was asleep when `end_run` fired):
+
+| Marker | Written when | Reconciles to |
+|---|---|---|
+| `cancelled.marker` (Phase 9.C) | Cancellation flush exceeded 5s budget | MLflow `RUNNING` → `KILLED` |
+| `completion.marker` (Phase 11.A) | **Always** on natural completion | MLflow `RUNNING` → `FINISHED` |
+
+`completion.marker` is always-written so Mac on wake can tell
+"trainer finished naturally" from "trainer is still running, no
+recent events". The marker payload carries `flush_timed_out:
+bool` so the operator log warns about partial data when
+appropriate.
+
+When both markers exist (rare race — cancellation hit at the very
+end of natural completion), cancellation wins. Mac's
+`TrainingMonitor._reconcile_terminal_marker_if_present` walks
+`_TERMINAL_MARKER_PRIORITY` and forces the right MLflow status.
+
+### Resume flow on Mac wake
+
+Phase 11.C-1 ships the data-model + decision logic; the
+operator-facing surface (CLI hint, REST endpoint, Web UI button)
+lands in Phase 11.C-2.
+
+What's available today:
+
+* `PipelineAttemptState.pod_metadata: PodMetadata | None` —
+  persisted on every attempt that recorded a pod_id. Legacy
+  attempts (pre-Phase-11.C) deserialize to `None` and the probe
+  treats them as RUNNING.
+* `PodAvailabilityProbe`
+  (`src/pipeline/launch/pod_availability.py`) — queries the
+  provider's pod status, maps to one of:
+  * `RUNNING` — no action; SSH connect proceeds.
+  * `SLEEPING_RESUMABLE` — call `resume_pod_with_retry`.
+  * `SLEEPING_RESUME_FAILED` — capacity exhausted; surface to
+    user.
+  * `GONE` — terminated; user must `run restart` from a
+    checkpoint.
+  * `PROBE_FAILED` — RunPod outage; retry later.
+* `resume_pod_with_retry` — capacity-aware backoff (10s / 30s /
+  60s / 120s, total 5min budget) wrapping
+  `RunPodAPIClient.resume_pod`.
+
+### SLO targets (Phase 11)
+
+| Metric | Target |
+|---|---|
+| Natural completion → pod stopped (Mac asleep) | p95 < 5s |
+| Mac alive → grace + retriever done → pod stopped | p95 < 90s |
+| Resume from EXITED (capacity available) | p95 < 60s |
+| Resume capacity-exhausted error rate | < 5% |
+| `completion.marker` write success rate | > 99.9% |
+| MLflow run `FINISHED` reconciliation success | > 99% |
+
 ### Operator quick reference
 
 ```bash
