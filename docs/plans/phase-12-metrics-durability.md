@@ -1,6 +1,6 @@
 # Phase 12 — Metrics never lost
 
-> Status: **DRAFT — pending user approval**
+> Status: **12.A.1 ✅ DONE; 12.A.2 + 12.B + 12.C pending**
 > Author: daniil + agent
 > Date: 2026-04-27
 > Worktree: `nice-jepsen-07d789`
@@ -8,6 +8,10 @@
 > Theme: close the **two remaining durability gaps** Phase 11 left open
 > Migration policy: NO BACKWARDS COMPATIBILITY (carry-over)
 > Out of: § 11.11 placeholder in [`harmonic-rolling-crayon.md`](./harmonic-rolling-crayon.md)
+>
+> Commits:
+> * `ffa0beb` — Phase 12 plan committed (this file).
+> * `f05584f` — Phase 12.A.1: metrics buffer retrieval + Mac-side MLflow replay (54 new tests, 491/491 cross-phase regression pass).
 
 ---
 
@@ -326,7 +330,13 @@ Mirrors what `metrics_buffer.py:103` уже делает (`separators=(",",":")
 
 ---
 
-## 3. Phase 12.A — Metrics buffer retrieval + Mac-side replay (~6h, low-medium risk)
+## 3. Phase 12.A — Metrics buffer retrieval + Mac-side replay (~6h, low-medium risk) ✅ DONE
+
+> Commit `f05584f` — 13 files changed, 2715 insertions; 54 new tests
+> (16 replay + 15 retriever + 13 wire-up + 10 marker), all 7-cat
+> covered. Drive-by fix for pre-existing fragile `time.time` mock in
+> the upstream HF-upload-skip test. 200/200 phase-touching tests
+> green; 491/491 across slim-venv compatible Phase 9/11/12 surfaces.
 
 ### 3.1 Goal
 
