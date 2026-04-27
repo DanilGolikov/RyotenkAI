@@ -193,19 +193,25 @@ class TrainingMonitor(PipelineStage):
         try:
             watch_result = asyncio.run(self._watch(client, job_id))
 
-            # Phase 9.C — Mac-side reconciliation for SIGKILLed cancellations.
+            # Phase 9.C / Phase 11.A — Mac-side reconciliation for
+            # both terminal markers:
             #
-            # When the trainer's CancellationCallback hit its 5-second
-            # flush deadline (Phase 9.B), it wrote a cancelled.marker
-            # file in the workspace. The runner's terminal hook then
-            # SIGKILLed the trainer before HF's MLflow callback could
-            # close the run with status="KILLED". Result: MLflow shows
-            # the run stuck in RUNNING.
+            # * ``cancelled.marker`` (Phase 9.C) — written when the
+            #   CancellationCallback's 5-second flush deadline fires.
+            #   The runner SIGKILLed the trainer before HF MLflow
+            #   callback could close the run; MLflow shows RUNNING.
+            #   Reconcile to ``KILLED``.
+            # * ``completion.marker`` (Phase 11.A) — written on every
+            #   natural completion, regardless of flush outcome. If
+            #   Mac was asleep when HF MLflow callback ran, ``end_run``
+            #   timed out and the run is stuck in RUNNING. Reconcile
+            #   to ``FINISHED``.
             #
-            # Reconciliation runs here so the operator's MLflow UI
-            # reflects reality. Best-effort: any failure logs and
-            # moves on — the rest of the pipeline cleanup still runs.
-            self._reconcile_cancellation_marker_if_present(context)
+            # If both markers exist (rare race), cancellation wins —
+            # explicit user-stop overrides natural completion.
+            #
+            # Best-effort throughout: any failure logs and moves on.
+            self._reconcile_terminal_marker_if_present(context)
 
             return watch_result
         finally:
@@ -222,19 +228,42 @@ class TrainingMonitor(PipelineStage):
             except Exception as exc:
                 logger.debug(f"[MONITOR] client.aclose failed: {exc}")
 
-    # --- Phase 9.C reconciliation -------------------------------------------
+    # --- Phase 9.C / Phase 11.A reconciliation --------------------------
 
-    def _reconcile_cancellation_marker_if_present(
+    #: Mapping marker filename → (target MLflow status, reason label).
+    #: Cancellation must come first: if both markers exist (rare race
+    #: where trainer was cancelled mid-natural-completion), explicit
+    #: user-stop wins.
+    _TERMINAL_MARKER_PRIORITY: tuple[tuple[str, str, str], ...] = (
+        ("cancelled.marker", "KILLED", "cancellation"),
+        ("completion.marker", "FINISHED", "natural_completion"),
+    )
+
+    def _reconcile_terminal_marker_if_present(
         self, context: dict[str, Any],
     ) -> None:
-        """Read ``attempts/<n>/cancelled.marker``; if MLflow run is
-        still RUNNING force-set its status to KILLED.
+        """Reconcile MLflow run status against terminal-marker files.
 
-        Idempotent: if the marker is missing, MLflow upstream
-        unreachable, or the run is already terminal — silently skips.
-        Failure of any sub-step is logged at WARNING but never
-        re-raised; reconciliation is a best-effort restoration of
-        operator-visible state.
+        Two markers exist:
+
+        * ``cancelled.marker`` (Phase 9.C) — written when the
+          cancellation flush exceeded its 5-second budget; trainer
+          got SIGKILLed before HF could ``end_run("KILLED")``. Force
+          ``KILLED``.
+        * ``completion.marker`` (Phase 11.A) — written on every
+          natural completion. If Mac was asleep when HF tried to
+          ``end_run("FINISHED")``, the run is stuck in ``RUNNING``.
+          Force ``FINISHED``.
+
+        Behaviour:
+
+        * Both markers present ⇒ cancellation wins (priority list).
+        * Marker missing ⇒ silent skip.
+        * Marker JSON unreadable ⇒ warn + skip (don't bring down
+          the rest of the pipeline cleanup).
+        * MLflow run already terminal ⇒ NO-OP — the upstream MLflow
+          callback or earlier reconciliation already closed it.
+        * MLflow client fails (network / auth) ⇒ warn + skip.
         """
         from pathlib import Path
         import json
@@ -248,33 +277,57 @@ class TrainingMonitor(PipelineStage):
             # bypass pipeline_bootstrap won't have it.
             return
 
-        marker_path = Path(attempt_dir_str) / "cancelled.marker"
-        if not marker_path.is_file():
-            # Common case: trainer flush completed within budget; no
-            # marker written. Nothing to reconcile.
-            return
+        attempt_dir = Path(attempt_dir_str)
 
-        try:
-            payload = json.loads(marker_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning(
-                "[MONITOR] cancelled.marker exists at %s but is "
-                "unreadable (%s); skipping reconciliation",
-                marker_path, exc,
+        # Walk markers in priority order; first existing one wins.
+        for marker_name, target_status, reason in self._TERMINAL_MARKER_PRIORITY:
+            marker_path = attempt_dir / marker_name
+            if not marker_path.is_file():
+                continue
+
+            try:
+                payload = json.loads(marker_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "[MONITOR] %s exists at %s but is unreadable (%s); "
+                    "skipping reconciliation",
+                    marker_name, marker_path, exc,
+                )
+                # Don't try the next marker — disk read failure
+                # likely means the whole attempt dir is in a bad
+                # shape; bail.
+                return
+
+            run_id = payload.get("run_id")
+            if not run_id:
+                logger.info(
+                    "[MONITOR] %s at %s has no run_id; MLflow "
+                    "reconciliation skipped (no run to address)",
+                    marker_name, marker_path,
+                )
+                return
+
+            self._force_mlflow_run_status(
+                run_id=run_id,
+                target_status=target_status,
+                marker_name=marker_name,
+                reason=reason,
+                payload=payload,
             )
+            # First-found wins; do not process the lower-priority
+            # marker even if it's also present.
             return
 
-        run_id = payload.get("run_id")
-        if not run_id:
-            # Marker without run_id is still valid (trainer didn't
-            # know its run_id at write time) — log and skip.
-            logger.info(
-                "[MONITOR] cancelled.marker at %s has no run_id; "
-                "MLflow reconciliation skipped (no run to address)",
-                marker_path,
-            )
-            return
-
+    def _force_mlflow_run_status(
+        self,
+        *,
+        run_id: str,
+        target_status: str,
+        marker_name: str,
+        reason: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Force MLflow run from RUNNING → ``target_status``. Best-effort."""
         try:
             from mlflow.tracking import MlflowClient
 
@@ -289,23 +342,38 @@ class TrainingMonitor(PipelineStage):
                 # something else closed the run. No-op.
                 logger.debug(
                     "[MONITOR] MLflow run %s already terminal "
-                    "(status=%s); reconciliation no-op",
-                    run_id, current_status,
+                    "(status=%s); %s reconciliation no-op",
+                    run_id, current_status, reason,
                 )
                 return
 
-            client.set_terminated(run_id=run_id, status="KILLED")
-            logger.warning(
-                "[MONITOR] reconciled MLflow run %s: RUNNING → KILLED "
-                "(cancelled.marker indicated trainer SIGKILLed before "
-                "end_run)", run_id,
+            client.set_terminated(run_id=run_id, status=target_status)
+            # Use warning level for cancellation (operator should
+            # know SIGKILL fallback fired) and info for natural
+            # completion (expected post-sleep recovery).
+            log_fn = (
+                logger.warning if marker_name == "cancelled.marker"
+                else logger.info
+            )
+            extra_note = ""
+            if marker_name == "completion.marker" and payload.get(
+                "flush_timed_out",
+            ):
+                extra_note = (
+                    " — flush_timed_out=true; some metrics may be "
+                    "missing"
+                )
+            log_fn(
+                "[MONITOR] reconciled MLflow run %s: RUNNING → %s "
+                "(%s indicated %s)%s",
+                run_id, target_status, marker_name, reason, extra_note,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort
             logger.warning(
-                "[MONITOR] cancelled.marker reconciliation for "
-                "run_id=%s failed: %s — operator may need to manually "
-                "set the MLflow run status",
-                run_id, exc,
+                "[MONITOR] %s reconciliation for run_id=%s failed: %s "
+                "— operator may need to manually set the MLflow run "
+                "status",
+                marker_name, run_id, exc,
             )
 
     # --- async core -----------------------------------------------------

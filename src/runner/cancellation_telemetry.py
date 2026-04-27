@@ -43,9 +43,11 @@ __all__ = [
     "CANCELLATION_STARTED",
     "CANCELLATION_FINALIZED",
     "CANCELLATION_COMPLETED",
+    "COMPLETION_FINALIZED",
     "MLFLOW_RECONCILED_POST_SIGKILL",
     "CLEANUP_POD_FAILED",
     "CANCELLATION_EVENT_KINDS",
+    "TERMINAL_EVENT_KINDS",
     "now_ms",
     "latency_ms_since",
 ]
@@ -87,6 +89,20 @@ CANCELLATION_FINALIZED = "cancellation_finalized"
 #:   * ``exit_code``, ``signal`` — for forensics.
 CANCELLATION_COMPLETED = "cancellation_completed"
 
+#: Trainer's :class:`CompletionCallback.on_train_end` finished its
+#: MLflow flush on the **natural-completion** path (Phase 11.A) —
+#: training reached ``max_steps`` / ``num_train_epochs`` without
+#: anyone pressing Stop. Counterpart to
+#: :data:`CANCELLATION_FINALIZED`. Carries:
+#:   * ``flushed_count`` — records drained from the resilient buffer.
+#:   * ``flush_timed_out`` — bool; True ⇒ partial flush, marker
+#:     payload's ``reason`` is ``"flush_budget_exceeded"``.
+#:   * ``marker_written`` — bool; ``completion.marker`` is written
+#:     **always** on natural end (per Phase 11 design), so this
+#:     should be True except on disk-write failure.
+#:   * ``flush_budget_seconds`` — the deadline used (debug aid).
+COMPLETION_FINALIZED = "completion_finalized"
+
 #: Mac-side reconciliation forced an MLflow run from ``RUNNING`` →
 #: ``KILLED`` because the trainer SIGKILLed before ``end_run`` ran.
 #: Carries:
@@ -104,7 +120,8 @@ MLFLOW_RECONCILED_POST_SIGKILL = "mlflow_reconciled_post_sigkill"
 CLEANUP_POD_FAILED = "cleanup_pod_failed"
 
 
-#: Convenience set for grep / filter / dashboard wiring.
+#: Convenience set for grep / filter / dashboard wiring (cancellation
+#: chain only).
 CANCELLATION_EVENT_KINDS: frozenset[str] = frozenset({
     CANCELLATION_REQUESTED,
     CANCELLATION_STARTED,
@@ -112,6 +129,14 @@ CANCELLATION_EVENT_KINDS: frozenset[str] = frozenset({
     CANCELLATION_COMPLETED,
     MLFLOW_RECONCILED_POST_SIGKILL,
     CLEANUP_POD_FAILED,
+})
+
+#: Superset including the natural-completion path. Operator
+#: dashboards keying off "any terminal-flow event" should use this
+#: set; cancellation-only views (e.g. SLO alerts on cancel latency)
+#: stay on :data:`CANCELLATION_EVENT_KINDS`.
+TERMINAL_EVENT_KINDS: frozenset[str] = CANCELLATION_EVENT_KINDS | frozenset({
+    COMPLETION_FINALIZED,
 })
 
 

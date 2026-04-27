@@ -433,6 +433,38 @@ class TrainerFactory:
                 ),
             )
 
+            # Phase 11.A — natural-completion finalization.
+            #
+            # CompletionCallback mirrors CancellationCallback but for
+            # the happy path (training reaches max_steps /
+            # num_train_epochs naturally). Pre-Phase-11 the resilient
+            # MLflow buffer never flushed on natural exit — records
+            # accumulated during an upstream MLflow flap stayed on the
+            # pod's disk and never reached MLflow if Mac was asleep
+            # when the trainer closed.
+            #
+            # We append at index 1 (right after CancellationCallback,
+            # before the rest of the chain). on_train_end ordering
+            # between Cancellation and Completion doesn't matter — they
+            # are mutually exclusive (Cancellation owns
+            # ``_signalled=True`` path, Completion runs only when that
+            # flag is False).
+            #
+            # Same shared event_publisher channel + same mlflow_manager
+            # so the buffered HTTP loopback already in flight handles
+            # ``completion_finalized`` events identically to
+            # ``cancellation_finalized``.
+            from src.training.callbacks.completion_callback import (
+                CompletionCallback,
+            )
+            callbacks.insert(
+                1,
+                CompletionCallback(
+                    mlflow_manager=mlflow_manager,
+                    event_publisher=_cancellation_event_publisher,
+                ),
+            )
+
         if callbacks:
             trainer_kwargs["callbacks"] = callbacks
 

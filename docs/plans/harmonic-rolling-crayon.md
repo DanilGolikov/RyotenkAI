@@ -1563,3 +1563,559 @@ compatibility (per project policy).**
      B/C buffer extension, tail_logs, double end_run risk) was rejected
      during tech-lead review. Removed from this file; full text
      preserved in git history at the commit that introduced v2. -->
+
+---
+
+# Phase 11 — Natural-completion sleep + heartbeat-aware terminal hook
+
+> Status: **PROPOSED — awaiting approval**
+> Date: 2026-04-27
+> Predecessor: Phase 9.A/B/C (stop semantics) + Phase 10 placeholder
+> Worktree: `nice-jepsen-07d789`
+
+## 11.0 Context
+
+Сценарий "Mac закрыт, идёт обучение" вскрывает gap, который Phase 9
+не закрыл:
+
+1. **Phase 9.B** `flush_buffer()` зовётся **только** на cancellation
+   (`CancellationCallback.on_train_end` с `_signalled=True`). Natural
+   completion → buffer не flush'ится → backlog застревает на диске
+   пода.
+2. **Phase 9.A** при `RUNPOD_AUTO_STOP=true` делает `podTerminate` на
+   FSM=COMPLETED → диск стёрт → MetricsBuffer + адаптеры потеряны.
+   Default `AUTO_STOP=false` → pod живёт вечно, GPU billing течёт.
+3. **HF MLflow callback** на natural end вызывает `mlflow.end_run`
+   ⇒ если upstream MLflow на Mac недоступен (Mac в сне) → end_run
+   падает с timeout → run остаётся в `RUNNING` навсегда.
+4. **Адаптеры** в `output_dir` на поде → если pod terminate'нулся →
+   потеряны.
+
+### Цели Phase 11 (mandate от пользователя)
+
+| # | Требование | Закрывает |
+|---|---|---|
+| 1 | Natural completion ⇒ `podStop` (sleep), сохраняем `/workspace`. User Stop остаётся `podTerminate` (Phase 9.A) | проблема 2 |
+| 2 | Никаких env-флагов для toggle. `RUNPOD_AUTO_STOP` удалить (no backwards compat) | политика проекта |
+| 3 | Heartbeat heuristic: Mac alive → grace period (60s) на ModelRetriever; Mac в сне → `podStop` сразу | dual-path |
+| 4 | Mac wake → `ryotenkai run resume` (CLI) ИЛИ Web UI кнопка → `podResume` → ModelRetriever → `podTerminate` | recovery |
+| 5 | MetricsBuffer flush на ЛЮБОМ completion, не только cancellation | проблема 1 / Phase 9.B gap |
+| 6 | `completion.marker` симметрично `cancelled.marker` (Phase 9.C) — для MLflow reconciliation если Mac в сне когда trainer закрылся | проблема 3 |
+| 7 | Network-volume safety: `volume.kind == network` ⇒ fallback на `podTerminate` (constraint RunPod) | future-proof |
+| 8 | EventBus 10k cap — **не трогаем в Phase 11**. Persist on disk → Phase 12 (отдельный план) | scope discipline |
+
+### Migration policy: NO BACKWARDS COMPATIBILITY
+
+Удаляем `RUNPOD_AUTO_STOP` env entirely (cutover). `RUNPOD_KEEP_ON_ERROR`
+**оставляем** (Phase 9.A carry-over) — это про debug-форензику крашей,
+не про stop/sleep toggle. `pod_metadata` в state schema — расширение
+без deprecation alias; legacy runs (без `pod_metadata`) при resume
+получают graceful skip с человеческим hint'ом.
+
+## 11.1 Decision matrix `terminal_hook` — 4 outcome'а
+
+`Supervisor._reap` (`src/runner/supervisor.py:443-536`) уже зовёт
+`terminal_hook(target.value)` после FSM transition. Phase 9.A
+направил его в `stop_pod_on_terminal` ⇒ всегда `podTerminate`.
+Phase 11 расширяет до **decision matrix**.
+
+### Inputs
+
+| Сигнал | Источник | Тип |
+|---|---|---|
+| `terminal_state` | FSM (`completed` / `failed` / `cancelled`) | str |
+| `mac_alive` | `MacHeartbeat.is_alive()` (см. § 11.2) | bool |
+| `volume_kind` | `RUNPOD_VOLUME_KIND` env (default `persistent`) | str |
+| `keep_on_error` | `RUNPOD_KEEP_ON_ERROR` env (Phase 9.A carry-over) | bool |
+
+### Decision table
+
+| terminal_state | mac_alive | volume_kind | keep_on_error | **Outcome** | Action |
+|---|---|---|---|---|---|
+| `cancelled` | * | * | * | `terminated_user_stop` | `podTerminate` (Phase 9.A неизменно) |
+| `failed` | * | * | `true` | `kept_alive_for_debug` | NO-OP (SSH-forensics) |
+| `failed` | true | persistent | false | `terminated_safety` | `podTerminate` (failed = irrecoverable, storage не нужен) |
+| `failed` | false | persistent | false | `stopped_for_resume` | `podStop` (Mac в сне может ещё захотеть достать checkpoint) |
+| `failed` | * | network | false | `terminated_safety` | `podTerminate` (network volume не stop-able) |
+| `completed` | true | persistent | * | `stopped_for_resume_short_grace` | wait `GRACE_SECONDS_MAC_ALIVE=60s` → `podStop` если ModelRetriever не успел |
+| `completed` | false | persistent | * | `stopped_for_resume` | `podStop` сразу |
+| `completed` | * | network | * | `terminated_safety` | `podTerminate` (network volume — fallback) |
+
+### Outcome enum (publish'атся на bus)
+
+```python
+# src/runner/pod_terminator.py (renamed from pod_stopper.py)
+class PodTerminalOutcome(str, Enum):
+    TERMINATED_USER_STOP   = "terminated_user_stop"
+    TERMINATED_SAFETY      = "terminated_safety"
+    STOPPED_FOR_RESUME     = "stopped_for_resume"
+    STOPPED_FOR_RESUME_SHORT_GRACE = "stopped_for_resume_short_grace"
+    KEPT_ALIVE_FOR_DEBUG   = "kept_alive_for_debug"
+    DISABLED               = "disabled"   # missing API key / pod_id
+    SKIPPED                = "skipped"    # legacy
+    FAILED                 = "failed"     # all retries exhausted
+```
+
+Phase 9.A `TERMINATED` / `ALREADY_TERMINATED` ⇒ переименовать в
+`TERMINATED_USER_STOP` (no BC).
+
+## 11.2 Mac heartbeat heuristic
+
+### Что нам нужно
+
+Бинарный сигнал `mac_alive: bool` в момент `terminal_hook`.
+≤50 ms latency. Никаких лишних round-trips.
+
+### Решение: `last_ws_activity` timestamp
+
+`EventBus.subscribe` уже live-streams events через WebSocket. Когда
+WS-yield успешен — TCP socket жив (Mac читает). Это естественный
+heartbeat, без отдельного round-trip.
+
+```python
+# src/runner/heartbeat.py — NEW (~80 LoC)
+class MacHeartbeat:
+    """Ledger of last successful WS interaction.
+
+    Updated by WS subscribers on every successful event yield.
+    Read by PodTerminator on terminal_hook to gate the
+    short-grace-vs-immediate-stop decision.
+
+    TTL=60s — после этого считаем Mac asleep.
+    """
+    HEARTBEAT_TTL_SECONDS = 60.0
+
+    def __init__(self, *, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._last_active_ms: int = 0  # 0 = never seen
+
+    def mark_active(self) -> None: ...
+    def is_alive(self) -> bool: ...
+    def age_seconds(self) -> float | None: ...  # для observability
+```
+
+Wire-up:
+* `src/runner/main.py::_lifespan`: `app.state.heartbeat = MacHeartbeat()`
+* `src/runner/api/events.py` (WS handler): после успешного `ws.send_json(...)` → `app.state.heartbeat.mark_active()`. TCP backpressure ⇒ если send блокируется ⇒ `mark_active` не вызвался ⇒ корректно
+* `PodTerminator` (rewrite from `PodStopper`) принимает `heartbeat` через DI
+
+### `mark_active` ALSO from Mac → pod GET requests
+
+Дополнительно: ModelRetriever на Mac во время работы периодически
+делает `GET /jobs/{id}` для прогресса. Расширить `src/runner/api/jobs.py`
+чтобы `mark_active()` срабатывал и на этом пути → ModelRetriever
+который качает 5+ минут НЕ потеряет heartbeat'a после первых 60s
+(закрывает OQ2).
+
+## 11.3 Где flush'ить MetricsBuffer на natural completion
+
+### Решение: новый `CompletionCallback` + extracted helper
+
+| Опция | Pro | Contra | Решение |
+|---|---|---|---|
+| A. Расширить `CancellationCallback.on_train_end` (убрать `if not self._signalled: return`) | минимальный diff | SRP-нарушение, naming врёт | ❌ |
+| **B. Новый `CompletionCallback` + shared helper** | SRP, чистый naming, future extensible | +1 callback в registry | ✅ |
+| C. Один shared helper, оба callback'а вызывают | максимальный re-use | over-engineering, YAGNI | ❌ |
+
+**Final**: B + extracted `_flush_helper.py` для DRY между Cancellation
+и Completion.
+
+```python
+# src/training/callbacks/completion_callback.py — NEW (~150 LoC)
+class CompletionCallback(TrainerCallback):
+    """Flush MetricsBuffer + write completion.marker on natural end.
+
+    Counterpart to CancellationCallback: same I/O shape, same deadline
+    budget (5s), but fires on the happy path when training reaches
+    max_steps / num_train_epochs naturally.
+
+    Activation: registered alongside CancellationCallback in TrainerFactory
+    when RYOTENKAI_RUNNER_URL is set.
+
+    on_train_end behaviour:
+    * shutdown_handler.should_stop() == True → NO-OP (CancellationCallback owns)
+    * Manager unavailable                     → NO-OP
+    * Flush ok                                → completion.marker (always written, reason="natural_completion")
+    * Flush timed out                         → completion.marker (reason="flush_budget_exceeded")
+    """
+    FLUSH_TIMEOUT_SECONDS = 5.0  # symmetric with CancellationCallback
+```
+
+```python
+# src/training/callbacks/_flush_helper.py — NEW (~30 LoC)
+def run_flush_with_deadline(
+    flush_fn: Callable[[], int],
+    *,
+    timeout_seconds: float,
+) -> tuple[int, bool]:
+    """Returns (drained_count, timed_out). Reused by Cancellation +
+    Completion callbacks via concurrent.futures (Phase 9.B pattern)."""
+```
+
+### `completion.marker` payload
+
+Симметрично `cancelled.marker` (Phase 9.C):
+
+```json
+{
+    "run_id": "abc123",
+    "flushed_count": 42,
+    "ts_ms": 1700000000000,
+    "reason": "natural_completion" | "flush_budget_exceeded",
+    "flush_timed_out": false | true
+}
+```
+
+**Always-write на natural end** (не только timeout). Mac на post-sleep
+resume может определить что run завершился натурально и сделать
+reconciliation. Cost: 200 байт на диск пода — pragmatic.
+
+### Mac-side reconciliation extension
+
+`src/pipeline/stages/training_monitor.py::_reconcile_cancellation_marker_if_present`
+generalize до `_reconcile_terminal_marker_if_present` который читает
+**оба** marker'а:
+
+| Marker | MLflow status | Action |
+|---|---|---|
+| `cancelled.marker` exists | `RUNNING` | `set_terminated(KILLED)` (Phase 9.C path) |
+| `completion.marker` `flush_timed_out=true` | `RUNNING` | `set_terminated(FINISHED)` + log warning о partial data |
+| `completion.marker` `flush_timed_out=false` | `RUNNING` | `set_terminated(FINISHED)` (HF MLflow callback не дошёл — Mac был в сне) |
+| `completion.marker` `flush_timed_out=false` | `FINISHED` | NO-OP (HF успел закрыть run) |
+| оба marker'а | `RUNNING` | `cancelled.marker` побеждает (явное user-stop) → `KILLED` |
+
+## 11.4 Network-volume safety
+
+`RunPodProviderConfig.training` сейчас **НЕ** использует network
+volume (`build_pod_launch_kwargs` не передаёт `network_volume_id`).
+Inference flow использует, но это другой path.
+
+Future-proof: добавить env в `TrainingLauncher._build_job_env`:
+
+```python
+env["RUNPOD_VOLUME_KIND"] = (
+    "network" if pod_config.network_volume_id else "persistent"
+)
+```
+
+`PodTerminator.decide()` читает env. Default unset ⇒ treat as
+`persistent` (current behaviour). Decision table § 11.1 учитывает
+обе ветки.
+
+Mac side `provider.cleanup_pod` ⇒ всегда `podTerminate`. Decision
+matrix живёт **строго в pod runner**.
+
+## 11.5 Resume contract — `ryotenkai run resume <run_id>` + Web UI button
+
+Per user mandate: **и CLI, и кнопка в Web UI, решение за пользователем.
+Hint показывается когда обнаружен stopped pod.**
+
+### 11.5.1 State extension
+
+```python
+# src/pipeline/state/types.py
+@dataclass(frozen=True)
+class PodMetadata:
+    pod_id: str
+    provider: str            # "runpod" | "single_node"
+    created_at: str          # ISO 8601
+    last_known_status: str   # "running" | "stopped" | "terminated" | "unknown"
+
+@dataclass
+class Attempt:
+    # ... existing fields ...
+    pod_metadata: PodMetadata | None = None  # legacy=None
+```
+
+### 11.5.2 Pod availability probe
+
+```python
+# src/pipeline/launch/pod_availability.py — NEW (~150 LoC)
+class PodAvailability(str, Enum):
+    RUNNING                = "running"               # no action
+    SLEEPING_RESUMABLE     = "sleeping_resumable"    # call resume_pod_with_retry
+    SLEEPING_RESUME_FAILED = "sleeping_resume_failed"  # capacity exhausted
+    GONE                   = "gone"                  # fully terminated, fresh-checkpoint resume needed
+    PROBE_FAILED           = "probe_failed"          # RunPod outage, surface
+
+class PodAvailabilityProbe:
+    """Pre-flight check for resume runs.
+
+    Reads pod_metadata from last attempt; queries RunPod GraphQL.
+    Wires into validate_resume_run after config-drift check.
+    """
+    def probe(self, pod_metadata: PodMetadata) -> PodAvailability: ...
+```
+
+`validate_resume_run` (`restart_options.py:96-118`) расширяется: после
+config-hash check вызывает probe. Returns LaunchRequest extended with
+`pod_resume_required: bool`.
+
+### 11.5.3 Resume-with-retry (capacity-aware)
+
+```python
+# src/providers/runpod/training/lifecycle.py
+RESUME_RETRY_BUDGET_SECONDS = 300.0  # 5 минут общий
+RESUME_BACKOFFS = [10, 30, 60, 120]  # exponential
+
+def resume_pod_with_retry(self, pod_id: str) -> Result[None, ProviderError]:
+    """Resume + retry on capacity errors.
+
+    Strategy:
+    1. Try resume_pod (uses sdk_adapter.start_pod which calls runpod.resume_pod).
+    2. On capacity error (matches sdk_adapter._CAPACITY_MARKERS) → wait backoff[i] → retry.
+    3. After RESUME_RETRY_BUDGET_SECONDS exhausted → Err CAPACITY_NO_GPU_AVAILABLE.
+    4. Wait for pod_data.runtime field (max POD_READY_AFTER_RESUME_TIMEOUT=600s).
+    5. Emit pod_resume_warming event every 30s.
+    """
+```
+
+Fallback при exhausted retry: **fail fast**, NO auto-migration. User
+явно решает: ждать ещё или migrate to fresh pod.
+
+### 11.5.4 CLI + Web UI surface
+
+* CLI: `ryotenkai run resume <run_id>` (existing) — internally calls
+  probe + resume_pod_with_retry. `ryotenkai runs ls` показывает hint
+  "(stopped — run resume to continue)" когда `pod_metadata.last_known_status=stopped`.
+* Web UI: на `/runs` page для stopped run'ов показывается badge + button
+  "Resume" → POST `/api/v1/runs/{id}/resume` → kicks off pipeline в
+  background thread.
+
+## 11.6 Sub-phases
+
+### Phase 11.A — Flush + completion.marker on any exit (~6h, low-risk)
+
+**Goal**: закрыть Phase 9.B gap. Без касания pod_stopper.
+
+**Files**:
+* `src/training/callbacks/_flush_helper.py` — NEW. Extracted `run_flush_with_deadline`. ~30 LoC
+* `src/training/callbacks/completion_callback.py` — NEW. `CompletionCallback`. ~150 LoC
+* `src/training/callbacks/cancellation_callback.py` — REFACTOR. Использовать `_flush_helper`. ~10 LoC diff
+* `src/training/trainers/factory.py` — register `CompletionCallback` рядом с `CancellationCallback`. +5 LoC
+* `src/runner/cancellation_telemetry.py` — добавить `COMPLETION_FINALIZED` константу. Расширить set
+* `src/pipeline/stages/training_monitor.py` — generalize `_reconcile_cancellation_marker_if_present` → `_reconcile_terminal_marker_if_present`. ~50 LoC
+
+**Test plan (7-cat)**:
+1. Positive — natural completion + manager + flush ok ⇒ `completion.marker` written, count > 0
+2. Negative — `should_stop=True` ⇒ NO-OP (CancellationCallback owns)
+3. Boundary — `_signalled` flips during `on_train_end` ⇒ NO-OP wins
+4. Invariants — manager=None ⇒ NO-OP, no marker, no exception
+5. Dependency errors — flush_buffer raises ⇒ marker still written, callback не падает
+6. Regression — Phase 9.C `cancelled.marker` flow still works (CancellationCallback не сломан)
+7. Logic-specific — flush timeout ⇒ `flush_timed_out=true` в marker, callback не падает
+
+**Reconciliation tests** в `test_training_monitor_reconciliation.py`:
+* `completion.marker` + RUNNING → `set_terminated(FINISHED)`
+* `completion.marker` + FINISHED → NO-OP
+* `cancelled.marker` overrides `completion.marker` if both present
+
+**Integration**: `test_phase_11a_natural_completion_flush.py` — full callback chain, marker round-trip, MLflow reconciliation.
+
+**Manual smoke**: запустить mock-pipeline → assert `completion.marker` exists with `flushed_count > 0`.
+
+### Phase 11.B — `podStop` by default + heartbeat heuristic (~10h, medium-risk)
+
+**Goal**: rewrite `pod_stopper.py` → `PodTerminator` с decision matrix § 11.1.
+
+**Files**:
+* `src/runner/heartbeat.py` — NEW. `MacHeartbeat` (~80 LoC)
+* `src/runner/pod_terminator.py` — RENAMED + REWRITE from `pod_stopper.py`. Implement `decide_and_act` (~250 LoC). Удалить `should_stop_pod()`, `RUNPOD_AUTO_STOP` env handling
+* `src/runner/main.py::_lifespan` — wire `MacHeartbeat`, передавать в WS handler + `PodTerminator`. +15 LoC
+* `src/runner/api/events.py` (WS handler) — `heartbeat.mark_active()` после `ws.send_json`. +3 LoC
+* `src/runner/api/jobs.py` (GET handler) — `heartbeat.mark_active()` для retriever traffic (OQ2 mitigation). +3 LoC
+* `src/pipeline/stages/managers/deployment/training_launcher.py::_build_job_env` — добавить `RUNPOD_VOLUME_KIND`, удалить `RUNPOD_AUTO_STOP` если есть. +5 LoC
+* `src/providers/runpod/training/api_client.py` — добавить `stop_pod(pod_id)` thin wrapper. +15 LoC
+
+**Test plan (7-cat)**:
+1. Decision matrix exhaustive — все 8 строк table § 11.1 ⇒ assert outcome
+2. `STOPPED_FOR_RESUME` happy path — GraphQL `podStop` 200 ⇒ outcome string
+3. `STOPPED_FOR_RESUME_SHORT_GRACE` — heartbeat alive, retriever GET'ы продолжают `mark_active` → grace продлевается, outcome через провайдер cleanup_pod (idempotent с runner-side)
+4. `STOPPED_FOR_RESUME_SHORT_GRACE` timeout — heartbeat умер → `podStop` после 60s
+5. Network volume override — `RUNPOD_VOLUME_KIND=network` + `completed` ⇒ `TERMINATED_SAFETY`, `podTerminate`
+6. Idempotency — двойной call ⇒ already-stopped detected
+7. Retry exhaustion — flaky GraphQL ⇒ `FAILED` outcome
+
+**Heartbeat tests** в `test_heartbeat.py`: TTL boundary, mark_active monotonic, age_seconds correct, never seen → is_alive=false.
+
+**Integration**: `test_phase_11b_terminal_hook_decision_matrix.py` — full FSM + supervisor + bus + heartbeat + mock GraphQL.
+
+**Manual smoke**: real RunPod run → natural exit → verify pod в `EXITED` через 60s + GPU billing=$0/h в RunPod console.
+
+### Phase 11.C — Resume stopped pod (~10h, medium-risk)
+
+**Goal**: Mac wake → CLI/UI resume → poke pod из EXITED → ModelRetriever.
+
+**Files**:
+* `src/pipeline/state/types.py` — extend `Attempt` с `pod_metadata: PodMetadata | None`. NEW `PodMetadata`. ~30 LoC
+* `src/pipeline/state/store.py` — persist + load `pod_metadata`. ~20 LoC. NO BC: legacy runs (no metadata) показывают warning
+* `src/pipeline/launch/pod_availability.py` — NEW `PodAvailabilityProbe` (~150 LoC)
+* `src/pipeline/launch/restart_options.py::validate_resume_run` — call `PodAvailabilityProbe`. +20 LoC
+* `src/providers/runpod/training/lifecycle.py` — `resume_pod_with_retry` (~80 LoC)
+* `src/providers/runpod/training/api_client.py` — `resume_pod(pod_id)` wrapper. +15 LoC
+* `src/api/services/launch_service.py::launch` (mode=resume) — pass `pod_resume_required` flag. +5 LoC
+* `src/api/routers/runs.py` — NEW endpoint `POST /api/v1/runs/{run_id}/resume` для Web UI. ~40 LoC
+* `web/src/api/runs.ts` + `web/src/pages/RunDetail.tsx` (или эквивалент) — Resume button + badge "stopped". ~50 LoC
+* `src/cli/commands/runs.py` — extend `runs ls` to show "(stopped)" hint когда `pod_metadata.last_known_status=stopped`
+
+**Test plan (7-cat)**:
+1. Pod RUNNING — probe ⇒ no resume call
+2. Pod EXITED + capacity OK — resume_pod_with_retry success ⇒ wait runtime ⇒ Ok
+3. Pod EXITED + capacity exhausted — retry budget exhausted ⇒ `CAPACITY_NO_GPU_AVAILABLE`
+4. Pod GONE — probe ⇒ `POD_GONE_RESUME_NEEDS_NEW_POD`
+5. Probe API failure — RunPod 503 ⇒ `PROBE_FAILED`, surface to user
+6. Stale `pod_metadata` (legacy run) — graceful skip, return RUNNING
+7. Resume + warm-up timeout — `POD_RESUME_WARMUP_TIMEOUT` после 600s
+
+**Web UI tests**: Vitest + RTL — Resume button rendering логика (только для stopped runs), POST request shape.
+
+**Integration**: `test_phase_11c_resume_stopped_pod.py` — состыковать с RunPod sandbox или mock SDK. Validate full flow: state ⇒ probe ⇒ resume ⇒ tunnel ⇒ ModelRetriever.
+
+**Manual smoke**:
+1. Run, дождаться natural completion ⇒ pod в EXITED (Phase 11.B)
+2. CLI path: `ryotenkai run resume <run_id>` ⇒ pod поднимается ⇒ ModelRetriever ⇒ HF upload ⇒ pod terminated
+3. UI path: открыть Web UI → видеть badge "stopped" + кнопка Resume → клик → тот же flow
+
+### Phase 11.D — Observability + reconciliation polish (~4h, low-risk)
+
+**Goal**: dashboards/SLO видят все новые events. Mac reconciliation покрывает обе marker'и.
+
+**Files**:
+* `src/runner/cancellation_telemetry.py` ⇒ rename to `src/runner/terminal_telemetry.py`. Add: `COMPLETION_FINALIZED`, `POD_TERMINAL_DECISION`, `POD_TERMINAL_GRACE_STARTED`, `POD_TERMINAL_GRACE_EXPIRED`, `POD_RESUME_STARTED`, `POD_RESUME_WARMING`, `POD_RESUME_COMPLETED`, `POD_RESUME_FAILED`. NO BC: rename callsites
+* `src/pipeline/stages/training_monitor.py` — finalize `_reconcile_terminal_marker_if_present` (added in 11.A, polish here)
+* `src/cli/run_rendering.py` — render-pretty для new events (operator UX)
+* `docs/runner-architecture.md` — добавить "Sleep & resume semantics" section: layer ownership, event chain table, decision matrix snapshot
+
+**Test plan**:
+* Smoke through full pipeline ⇒ count events ⇒ assert all expected kinds present
+* Reconciliation matrix exhaustive (table § 11.3 — Mac-side reconciliation extension)
+
+**Manual smoke**: run, выключить Mac в момент step 50/100, разбудить через 10 минут, run resume ⇒ MLflow UI ⇒ run в `FINISHED` со всеми metrics.
+
+### SLO targets для Phase 11
+
+| Metric | Target |
+|---|---|
+| Natural completion → pod stopped (Mac asleep) | p95 < 5s |
+| Mac alive → grace period works → pod stopped (after retriever done) | p95 < 90s (60s grace + 30s retriever) |
+| Resume from EXITED (capacity available) | p95 < 60s |
+| Resume capacity-exhausted error rate | < 5% |
+| `completion.marker` write success rate | > 99.9% |
+| MLflow run `FINISHED` reconciliation success | > 99% |
+
+## 11.7 Cheat-sheet: где что трогаем
+
+| File | 11.A | 11.B | 11.C | 11.D |
+|---|---|---|---|---|
+| `src/training/callbacks/completion_callback.py` (NEW) | ✓ | | | |
+| `src/training/callbacks/_flush_helper.py` (NEW) | ✓ | | | |
+| `src/training/callbacks/cancellation_callback.py` | refactor | | | |
+| `src/training/trainers/factory.py` | register | | | |
+| `src/runner/heartbeat.py` (NEW) | | ✓ | | |
+| `src/runner/pod_stopper.py` → `pod_terminator.py` | | rewrite | | |
+| `src/runner/main.py::_lifespan` | | wire | | |
+| `src/runner/api/events.py` | | mark_active | | |
+| `src/runner/api/jobs.py` | | mark_active | | |
+| `src/runner/cancellation_telemetry.py` | extend | | | rename → terminal_telemetry |
+| `src/runner/supervisor.py` | | (no change — terminal_hook stays) | | |
+| `src/providers/runpod/training/api_client.py` | | stop_pod | resume_pod | |
+| `src/providers/runpod/training/lifecycle.py` | | | resume_pod_with_retry | |
+| `src/pipeline/launch/pod_availability.py` (NEW) | | | ✓ | |
+| `src/pipeline/launch/restart_options.py` | | | extend | |
+| `src/pipeline/state/types.py` / `store.py` | | | extend Attempt + PodMetadata | |
+| `src/pipeline/stages/training_monitor.py` | extend reconciliation | | | finalize |
+| `src/pipeline/stages/managers/deployment/training_launcher.py::_build_job_env` | | RUNPOD_VOLUME_KIND | | |
+| `src/api/services/launch_service.py` | | | pod_resume_required flag | |
+| `src/api/routers/runs.py` | | | NEW resume endpoint | |
+| `web/src/...` | | | NEW Resume button + badge | |
+| `src/cli/run_rendering.py` | | | | new events |
+| `src/cli/commands/runs.py` | | | extend `runs ls` | |
+| `docs/runner-architecture.md` | | | | extend |
+
+## 11.8 Risks (with mitigations)
+
+| # | Risk | L | I | Mitigation |
+|---|---|---|---|---|
+| R1 | `podResume` no GPU available (capacity exhausted) | M | H | retry budget 5min, exp backoffs, clear error, NO auto-migration |
+| R2 | Docker re-pull при resume → 5+ min wait | M | M | warm-up timeout 10min, progress events каждые 30s |
+| R3 | False mac_alive ⇒ pod ждёт 60s grace зря (~$0.05) | H | L | acceptable cost; cap GRACE=60s |
+| R4 | `podStop` mutation падает (RunPod outage) | L | H | retry 3x exp backoff (Phase 9.A pattern). On FAILED — pod продолжает жить → manual cleanup. Cleanup_pod_failed event |
+| R5 | TCP keepalive vs реальная активность Mac | M | L | TCP keepalive == socket alive — semantics OK для use-case |
+| R6 | Network volume в training-flow появится без обновления `RUNPOD_VOLUME_KIND` | L | H | Default unset ⇒ `persistent` ⇒ `podStop` upadёт по RunPod constraint → outcome=FAILED. Doc + lint rule |
+| R7 | `completion.marker` always-write на каждый run — диск нагрузка | L | L | marker tiny (~200B) |
+| R8 | Cancellation + Completion callbacks гонятся за flush | L | M | Mutually exclusive guard: Cancellation first checks `_signalled`; Completion first checks NOT `_signalled`. Atomic via shutdown_handler flag |
+| R9 | `pod_metadata` миграция legacy runs (без metadata) | H | L | NO BC: hint показывается, fail fast on resume; user re-creates run |
+| R10 | Resume-stopped-pod вызывает проблемы в `provider.connect()` | M | H | Dedicated integration test для post-resume connect path |
+| R11 | `RYOTENKAI_AUTO_STOP` carry — все ли callsites удалены | M | M | grep + remove + test |
+| R12 | `FLUSH_TIMEOUT_SECONDS=5` тесный для big buffer | L | M | env override `RYOTENKAI_FLUSH_TIMEOUT_SECONDS` (но YAGNI: not now) |
+| R13 | Web UI Resume button: race с CLI (двойной resume) | L | M | Idempotency: probe видит RUNNING ⇒ no-op; concurrent resume_pod calls ⇒ second получает "already running" |
+| R14 | Mac wake → много stopped pods → spam "Resume" в UI | L | L | Dashboard groups by status; default sort = "needs attention" |
+
+## 11.9 Open questions (resolved)
+
+| # | Question | Resolution |
+|---|---|---|
+| OQ1 | `RYOTENKAI_VOLUME_KIND` vs `RUNPOD_VOLUME_KIND` prefix | `RUNPOD_*` (provider-specific). При появлении других providers — общий механизм через `pod_config.volume.kind` field в state |
+| OQ2 | `GRACE=60s` достаточно ли для big retriever | YES — ModelRetriever GET /jobs/{id} запросы продлевают `mark_active`, эффективный grace растягивается на время retriever'a |
+| OQ3 | `completion.marker` always-write vs only-timeout | Always — позволяет Mac отличить "natural complete + Mac asleep" от "trainer ещё работает" snapshot'ом без round-trip |
+| OQ4 | Resume trigger — auto vs explicit | **И CLI, и Web UI кнопка**. Hint показывается когда обнаружен stopped pod. Решение за пользователем (per user mandate) |
+| OQ5 | `podStop` failure (R4) — насколько громко логировать | `cleanup_pod_failed` event (Phase 9.C) уже эмитится. SLO alert на rate > 1% |
+| OQ6 | `KEEP_ON_ERROR` остаётся? | **YES, оставляем** (Phase 9.A carry-over). Это про debug-форензику крашей, не про stop/sleep toggle (per user mandate) |
+| OQ7 | Docker re-pull pre-cache | NOT in 11.C scope. Add to backlog |
+| OQ8 | `pod_metadata.worker_id` для UX | NOT in 11.C scope (YAGNI). Add `last_known_datacenter` field позже если operator UX покажет need |
+| OQ9 | EventBus 10k cap для long sleep | **Phase 12** — отдельный план "Event durability" (persist on disk). Не в Phase 11 scope (per user mandate) |
+
+## 11.10 Effort estimate
+
+| Phase | Effort | Risk | Tests | Manual smoke |
+|---|---|---|---|---|
+| 11.A | 6h | low | 7 unit + reconciliation matrix + 1 integration | 5min mock |
+| 11.B | 10h | medium | 7 unit + heartbeat unit + 1 integration | 10min real RunPod |
+| 11.C | 10h | medium | 7 unit + Web UI vitest + 1 integration | 30min real sleep+resume |
+| 11.D | 4h | low | smoke + reconciliation matrix exhaustive | 10min |
+
+**Total: ~30h**, spread over 4 release windows. Каждый sub-phase
+landed as standalone commit с production observation 1-2 weeks
+между фазами (как Phase 9 rollout pattern).
+
+## 11.11 Future placeholder — Phase 12: Event durability
+
+Out of scope для Phase 11. `EventBus` 10k cap rinse при длинном
+сне Mac. Решение: persist events в JSONL на диск пода (`/workspace/events.jsonl`),
+Mac на reconnect читает с offset → ничего не теряется. Требует:
+* JSONL writer with rotation (cap files at 100MB, GC старых после 24h)
+* Mtime cursor для recovery semantics
+* `since=<offset>` query умеет читать file when buffer truncated
+
+Phase 11 сознательно НЕ блокирует Phase 12 — current ring buffer
+overflow семантика останется (`ReplayTruncatedError` close code 4410),
+Phase 12 добавит fallback path: WS handler ловит truncation → читает
+с диска → resumes WS stream.
+
+## 11.12 Verification (end-to-end happy path)
+
+После landed всех 4 sub-phases:
+
+```bash
+# 1. Build new image (with completion_callback wired into trainer)
+./docker/training/build_and_push.sh --bump minor
+
+# 2. Start a real run
+ryotenkai run start config/sapo_helixql.yaml
+
+# 3. Close laptop lid (simulate sleep)
+# wait 10-30 minutes — training continues, MetricsBuffer accumulates
+
+# 4. Open laptop, check Web UI
+# Expected: run shows "stopped" badge + "Resume" button OR
+# CLI: ryotenkai runs ls shows "(stopped — run resume to continue)"
+
+# 5. Click Resume (or `ryotenkai run resume <run_id>`)
+# Expected: pod resumes, ModelRetriever fires, HF upload completes,
+# MLflow run shows FINISHED with all metrics, pod terminated
+
+# 6. Verify
+test ! "$(ryotenkai-cli pod-list | grep <pod_id>)"  # pod gone
+mlflow ui  # run status = FINISHED, metrics include last hour
+ls attempts/<n>/artifacts/  # adapter present
+```

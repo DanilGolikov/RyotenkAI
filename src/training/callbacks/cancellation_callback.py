@@ -288,52 +288,39 @@ class CancellationCallback(TrainerCallback):
             )
             return
 
-        # Lazy import so this module stays slim-venv-importable.
-        from src.training._concurrent_helpers import (
-            TimeoutExceededError,
-            with_timeout,
+        # Phase 11.A — shared helper handles the deadline + branching
+        # so CompletionCallback (natural-completion counterpart) gets
+        # bit-identical behaviour for free. Helper never raises;
+        # outcome carries ``timed_out`` / ``raised`` / ``drained_count``.
+        from src.training.callbacks._flush_helper import (
+            run_flush_with_deadline,
         )
 
-        drained = 0
-        flush_timed_out = False
-        marker_path: object | None = None
+        outcome = run_flush_with_deadline(
+            manager.flush_buffer,  # type: ignore[attr-defined]
+            timeout_seconds=self._flush_timeout,
+            logger=logger,
+            label="CANCELLATION",
+        )
 
-        try:
-            drained = with_timeout(
-                manager.flush_buffer,  # type: ignore[attr-defined]
-                timeout_seconds=self._flush_timeout,
-            )
+        if not outcome.timed_out and not outcome.raised:
             logger.info(
                 "[CANCELLATION] on_train_end: flushed %d buffered MLflow "
                 "records before HF closes the run",
-                drained,
+                outcome.drained_count,
             )
-        except TimeoutExceededError:
+
+        marker_path: object | None = None
+        if outcome.timed_out:
             # The flush is still running in the background thread; we
             # just stopped waiting. HF Trainer's MLflow callback will
             # run next and close the run with whatever it knows. Phase
             # 9.C: write ``cancelled.marker`` so Mac-side
             # reconciliation can fix the upstream RunStatus if it
             # was left stuck on RUNNING.
-            flush_timed_out = True
-            logger.warning(
-                "[CANCELLATION] on_train_end: MLflow flush exceeded %.1fs "
-                "budget; proceeding to HF end_run regardless. Some "
-                "buffered metrics may not have made it to the upstream "
-                "run before exit.",
-                self._flush_timeout,
-            )
             marker_path = self._write_cancelled_marker(
                 run_id=self._safe_run_id(manager),
-                drained=drained,
-            )
-        except Exception as exc:  # noqa: BLE001 — best-effort by contract
-            # ``flush_buffer`` is documented as best-effort and shouldn't
-            # raise, but a programmer error in the manager surface
-            # could. Don't let it crash the trainer's exit path.
-            logger.warning(
-                "[CANCELLATION] on_train_end: flush_buffer raised "
-                "unexpectedly: %s — proceeding to HF end_run", exc,
+                drained=outcome.drained_count,
             )
 
         # Phase 9.C — emit ``cancellation_finalized`` so the Mac-side
@@ -346,8 +333,8 @@ class CancellationCallback(TrainerCallback):
         # * ``marker_written`` — bool; True ⇒ Mac will scan the
         #   marker file on the next poll.
         self._emit_finalized_event(
-            drained=drained,
-            flush_timed_out=flush_timed_out,
+            drained=outcome.drained_count,
+            flush_timed_out=outcome.timed_out,
             marker_written=marker_path is not None,
         )
 
