@@ -2165,19 +2165,11 @@ Fallback при exhausted retry: **fail fast**, NO auto-migration. User
 landed as standalone commit с production observation 1-2 weeks
 между фазами (как Phase 9 rollout pattern).
 
-## 11.11 Future placeholder — Phase 12: Event durability
+## 11.11 Phase 12 — see § 12 below
 
-Out of scope для Phase 11. `EventBus` 10k cap rinse при длинном
-сне Mac. Решение: persist events в JSONL на диск пода (`/workspace/events.jsonl`),
-Mac на reconnect читает с offset → ничего не теряется. Требует:
-* JSONL writer with rotation (cap files at 100MB, GC старых после 24h)
-* Mtime cursor для recovery semantics
-* `since=<offset>` query умеет читать file when buffer truncated
-
-Phase 11 сознательно НЕ блокирует Phase 12 — current ring buffer
-overflow семантика останется (`ReplayTruncatedError` close code 4410),
-Phase 12 добавит fallback path: WS handler ловит truncation → читает
-с диска → resumes WS stream.
+Originally a placeholder; promoted to a full plan with three
+sub-phases (12.A metrics retrieval + replay, 12.B EventBus
+durability, 12.C observability/GC/docs).
 
 ## 11.12 Verification (end-to-end happy path)
 
