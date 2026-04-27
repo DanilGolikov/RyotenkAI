@@ -1,40 +1,49 @@
-"""Phase 11.B — :class:`PodTerminator` + :func:`decide_terminal_outcome` contract.
+"""Phase 11.B / 14.B — :class:`PodTerminator` + :func:`decide_terminal_outcome` contract.
 
-Replaces Phase 9.A's ``test_pod_stopper.py``. The pure decision
-function is exhaustively pinned (8 rows of the matrix in § 11.1);
-the action dispatcher is tested with mock GraphQL transports so the
-tests run instantly without hitting RunPod.
+Phase 14.B § 1.5 extracted the RunPod GraphQL transport into
+:mod:`src.providers.runpod.runtime.lifecycle_client`. After
+extraction, this file tests:
+
+* :func:`decide_terminal_outcome` — pure function, exhaustively
+  pinned (8 rows of the matrix in § 11.1).
+* :class:`PodTerminator` dispatch — invokes the
+  :class:`IPodLifecycleClient` Protocol via a fake stub. NO HTTP,
+  NO GraphQL, NO env reads. RunPod-specific HTTP shape lives in
+  :mod:`src.tests.unit.providers.runpod.runtime.test_lifecycle_client`.
 
 7-category coverage:
 
 1. **Positive** — happy paths for each decision branch.
-2. **Negative** — missing creds → SKIPPED; KEPT_ALIVE_FOR_DEBUG
-   short-circuits without GraphQL.
+2. **Negative** — KEPT_ALIVE_FOR_DEBUG short-circuits without client call.
 3. **Boundary** — decision matrix corner cases (network volume,
-   unknown terminal_state, KEEP_ON_ERROR honoured only on failed).
+   unknown terminal_state, KEEP_ON_ERROR honoured only on failed,
+   invalid volume_kind clamped to persistent).
 4. **Invariants** — ``run_terminal_hook`` never propagates errors;
    action dispatcher is idempotent (already-gone → ALREADY_*).
-5. **Dependency errors** — flaky GraphQL → retries → FAILED.
+5. **Dependency errors** — client returns FAILED outcome → propagated.
 6. **Regressions** — Phase 9.A ``"outcome"`` event field still
    present alongside the new ``decision`` / ``action`` fields.
+   Phase 14.B adds ``provider`` + ``attempts_made``.
 7. **Logic-specific** — grace loop exits on heartbeat-lost OR
-   max-budget; podStop fires after grace.
+   max-budget; pause fires after grace.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import pytest
 
-from src.runner.heartbeat import MacHeartbeat
+from src.constants import PROVIDER_RUNPOD
 from src.runner.pod_terminator import (
-    DEFAULT_RUNPOD_GRAPHQL_URL,
     PodTerminalOutcome,
     PodTerminator,
     decide_terminal_outcome,
     run_terminal_hook,
+)
+from src.runner.runtime.lifecycle_client import (
+    IPodLifecycleClient,
+    LifecycleActionResult,
 )
 
 
@@ -101,15 +110,57 @@ class _ScriptedHeartbeat:
         pass
 
 
-def _mock_transport(handler):
-    """httpx mock transport — handler returns httpx.Response."""
-    return httpx.MockTransport(handler)
+class _FakeLifecycleClient:
+    """In-memory :class:`IPodLifecycleClient` for dispatch tests.
+
+    Records each call + returns scripted outcomes. NO HTTP — replaces
+    the pre-14.B ``httpx.MockTransport`` setup.
+    """
+
+    def __init__(
+        self,
+        *,
+        terminate_outcome: str = PodTerminalOutcome.TERMINATED,
+        pause_outcome: str = PodTerminalOutcome.STOPPED,
+        resume_outcome: str = "resumed",
+        attempts_made: int = 1,
+    ) -> None:
+        self._terminate_outcome = terminate_outcome
+        self._pause_outcome = pause_outcome
+        self._resume_outcome = resume_outcome
+        self._attempts_made = attempts_made
+        self.calls: list[tuple[str, str]] = []  # (method, resource_id)
+
+    @property
+    def provider_name(self) -> str:
+        return PROVIDER_RUNPOD
+
+    async def terminate(self, *, resource_id: str) -> LifecycleActionResult:
+        self.calls.append(("terminate", resource_id))
+        return LifecycleActionResult(
+            outcome=self._terminate_outcome, attempts_made=self._attempts_made,
+        )
+
+    async def pause(self, *, resource_id: str) -> LifecycleActionResult:
+        self.calls.append(("pause", resource_id))
+        return LifecycleActionResult(
+            outcome=self._pause_outcome, attempts_made=self._attempts_made,
+        )
+
+    async def resume(self, *, resource_id: str) -> LifecycleActionResult:
+        self.calls.append(("resume", resource_id))
+        return LifecycleActionResult(
+            outcome=self._resume_outcome, attempts_made=self._attempts_made,
+        )
 
 
 def _mk_terminator(
     *,
-    transport_handler=None,
-    sleep=None,
+    client: IPodLifecycleClient | None = None,
+    resource_id: str = "pod-abc",
+    volume_kind: str = "persistent",
+    keep_on_error: bool = False,
+    sleep: Any = None,
     grace_base: float = 0.05,
     grace_max: float = 0.5,
     grace_tick: float = 0.01,
@@ -119,42 +170,19 @@ def _mk_terminator(
     async def _no_sleep(_: float) -> None:
         return
 
-    if transport_handler is None:
-        # Default: every request returns 200 + success body for podStop AND podTerminate.
-        def default_handler(req: httpx.Request) -> httpx.Response:
-            body = req.read()
-            text = body.decode()
-            if "podTerminate" in text:
-                return httpx.Response(200, text='{"data":{"podTerminate":null}}')
-            if "podStop" in text:
-                return httpx.Response(200, text='{"data":{"podStop":null}}')
-            return httpx.Response(500, text='{"errors":[{"message":"unknown"}]}')
-
-        transport_handler = default_handler
-
-    transport = _mock_transport(transport_handler)
-
-    def factory() -> httpx.AsyncClient:
-        return httpx.AsyncClient(transport=transport, base_url="http://test")
-
     return PodTerminator(
-        graphql_url=DEFAULT_RUNPOD_GRAPHQL_URL,
-        http_client_factory=factory,
+        client=client or _FakeLifecycleClient(),
+        resource_id=resource_id,
+        volume_kind=volume_kind,
+        keep_on_error=keep_on_error,
         sleep=sleep or _no_sleep,
         grace_base_seconds=grace_base,
         grace_max_seconds=grace_max,
         grace_tick_seconds=grace_tick,
+        # Disable retry latency in unit tests (Phase 11.E knobs).
+        heartbeat_retry_attempts=0,
+        heartbeat_retry_tick_seconds=0.0,
     )
-
-
-def _env(**kw: str) -> dict[str, str]:
-    """Build an env dict with the right keys."""
-    base = {
-        "RUNPOD_API_KEY": "rk-secret",
-        "RUNPOD_POD_ID": "pod-abc",
-    }
-    base.update(kw)
-    return base
 
 
 # ---------------------------------------------------------------------------
@@ -176,18 +204,18 @@ class TestDecisionMatrixExhaustive:
                         keep_on_error=keep_on_error,
                     )
                     assert out == PodTerminalOutcome.TERMINATED_USER_STOP, (
-                        f"failed for mac_alive={mac_alive} "
-                        f"volume={volume_kind} keep={keep_on_error}"
+                        f"cancelled+{mac_alive}+{volume_kind}+{keep_on_error}"
                     )
 
     def test_failed_with_keep_on_error_kept_alive(self) -> None:
-        out = decide_terminal_outcome(
-            terminal_state="failed",
-            mac_alive=False,
-            volume_kind="persistent",
-            keep_on_error=True,
-        )
-        assert out == PodTerminalOutcome.KEPT_ALIVE_FOR_DEBUG
+        for mac_alive in (True, False):
+            out = decide_terminal_outcome(
+                terminal_state="failed",
+                mac_alive=mac_alive,
+                volume_kind="persistent",
+                keep_on_error=True,
+            )
+            assert out == PodTerminalOutcome.KEPT_ALIVE_FOR_DEBUG
 
     def test_failed_mac_alive_persistent_terminates(self) -> None:
         out = decide_terminal_outcome(
@@ -208,13 +236,14 @@ class TestDecisionMatrixExhaustive:
         assert out == PodTerminalOutcome.STOPPED_FOR_RESUME
 
     def test_failed_network_volume_terminates(self) -> None:
-        out = decide_terminal_outcome(
-            terminal_state="failed",
-            mac_alive=False,
-            volume_kind="network",
-            keep_on_error=False,
-        )
-        assert out == PodTerminalOutcome.TERMINATED_SAFETY
+        for mac_alive in (True, False):
+            out = decide_terminal_outcome(
+                terminal_state="failed",
+                mac_alive=mac_alive,
+                volume_kind="network",
+                keep_on_error=False,
+            )
+            assert out == PodTerminalOutcome.TERMINATED_SAFETY
 
     def test_completed_mac_alive_persistent_short_grace(self) -> None:
         out = decide_terminal_outcome(
@@ -235,64 +264,44 @@ class TestDecisionMatrixExhaustive:
         assert out == PodTerminalOutcome.STOPPED_FOR_RESUME
 
     def test_completed_network_volume_terminates(self) -> None:
-        out = decide_terminal_outcome(
-            terminal_state="completed",
-            mac_alive=True,
-            volume_kind="network",
-            keep_on_error=False,
-        )
-        assert out == PodTerminalOutcome.TERMINATED_SAFETY
+        for mac_alive in (True, False):
+            out = decide_terminal_outcome(
+                terminal_state="completed",
+                mac_alive=mac_alive,
+                volume_kind="network",
+                keep_on_error=False,
+            )
+            assert out == PodTerminalOutcome.TERMINATED_SAFETY
 
 
 # ---------------------------------------------------------------------------
-# 2. Negative — missing creds, KEPT_ALIVE no-op
+# 2. Negative — KEPT_ALIVE_FOR_DEBUG short-circuits without client call
 # ---------------------------------------------------------------------------
 
 
 class TestNegative:
-    async def test_kept_alive_skips_graphql(self) -> None:
+    async def test_kept_alive_skips_client_call(self) -> None:
+        # ``failed`` + ``keep_on_error=True`` ⇒ KEPT_ALIVE_FOR_DEBUG
+        # ⇒ NO client method invocation.
         publisher = _PublisherSpy()
-        called = {"count": 0}
+        client = _FakeLifecycleClient()
+        terminator = _mk_terminator(client=client, keep_on_error=True)
 
-        def transport(req: httpx.Request) -> httpx.Response:
-            called["count"] += 1
-            return httpx.Response(200, text='{"data":{}}')
-
-        terminator = _mk_terminator(transport_handler=transport)
         result = await terminator.decide_and_act(
             terminal_state="failed",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(RUNPOD_KEEP_ON_ERROR="true"),
         )
 
         assert result["decision"] == PodTerminalOutcome.KEPT_ALIVE_FOR_DEBUG
         assert result["action"] is None
-        assert called["count"] == 0  # No GraphQL call
+        assert client.calls == []  # No client methods called
 
-    async def test_missing_api_key_yields_skipped(self) -> None:
-        publisher = _PublisherSpy()
-        terminator = _mk_terminator()
-        env = {"RUNPOD_POD_ID": "pod-abc"}  # no API key
-        result = await terminator.decide_and_act(
-            terminal_state="cancelled",
-            heartbeat=_AlwaysAliveHeartbeat(),
-            bus_publish=publisher,
-            env=env,
-        )
-        assert result["action"] == PodTerminalOutcome.SKIPPED
-
-    async def test_missing_pod_id_yields_skipped(self) -> None:
-        publisher = _PublisherSpy()
-        terminator = _mk_terminator()
-        env = {"RUNPOD_API_KEY": "rk-x"}  # no pod_id
-        result = await terminator.decide_and_act(
-            terminal_state="cancelled",
-            heartbeat=_AlwaysAliveHeartbeat(),
-            bus_publish=publisher,
-            env=env,
-        )
-        assert result["action"] == PodTerminalOutcome.SKIPPED
+    # Note: pre-14.B "missing API key → SKIPPED" / "missing pod_id →
+    # SKIPPED" tests are removed. Phase 14.B § 1.7 moves credential
+    # validation to lifespan boot — missing creds raise
+    # :class:`BootstrapConfigError` and uvicorn refuses to start.
+    # The runner code path that ran with bad creds no longer exists.
 
 
 # ---------------------------------------------------------------------------
@@ -332,18 +341,25 @@ class TestBoundary:
         )
         assert out == PodTerminalOutcome.TERMINATED_USER_STOP
 
-    async def test_unknown_volume_kind_treated_as_persistent(self) -> None:
-        # Env value other than "persistent"/"network" → fall back to
-        # persistent (safer default).
+    async def test_unknown_volume_kind_clamped_to_persistent_in_constructor(
+        self,
+    ) -> None:
+        # Phase 14.B § 1.4 — constructor clamps invalid volume_kind to
+        # ``persistent`` (safety net mirroring
+        # :func:`resolve_volume_kind_from_env`'s clamping at boot).
         publisher = _PublisherSpy()
-        terminator = _mk_terminator()
+        client = _FakeLifecycleClient()
+        terminator = _mk_terminator(
+            client=client, volume_kind="garbage_value",
+        )
         result = await terminator.decide_and_act(
             terminal_state="completed",
             heartbeat=_AlwaysDeadHeartbeat(),
             bus_publish=publisher,
-            env=_env(RUNPOD_VOLUME_KIND="garbage"),
         )
+        # Clamped → "persistent" → completed+asleep → STOPPED_FOR_RESUME
         assert result["decision"] == PodTerminalOutcome.STOPPED_FOR_RESUME
+        assert ("pause", "pod-abc") in client.calls
 
 
 # ---------------------------------------------------------------------------
@@ -365,87 +381,62 @@ class TestInvariants:
             terminal_state="completed",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
+
         # Error event published for forensics.
         kinds = [k for k, _ in publisher.events]
         assert "pod_stop_error" in kinds
 
     async def test_already_terminated_idempotent(self) -> None:
-        # GraphQL returns "already terminated" → ALREADY_TERMINATED.
-        def handler(_req: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                200,
-                text='{"errors":[{"message":"pod does not exist"}]}',
-            )
-
-        terminator = _mk_terminator(transport_handler=handler)
+        # Client returns ALREADY_TERMINATED → propagated as action.
+        client = _FakeLifecycleClient(
+            terminate_outcome=PodTerminalOutcome.ALREADY_TERMINATED,
+        )
+        terminator = _mk_terminator(client=client)
         publisher = _PublisherSpy()
         result = await terminator.decide_and_act(
             terminal_state="cancelled",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
         assert result["action"] == PodTerminalOutcome.ALREADY_TERMINATED
 
     async def test_already_stopped_idempotent(self) -> None:
-        def handler(_req: httpx.Request) -> httpx.Response:
-            return httpx.Response(
-                200,
-                text='{"errors":[{"message":"pod is already stopped"}]}',
-            )
-
-        terminator = _mk_terminator(transport_handler=handler)
+        client = _FakeLifecycleClient(
+            pause_outcome=PodTerminalOutcome.ALREADY_STOPPED,
+        )
+        terminator = _mk_terminator(client=client)
         publisher = _PublisherSpy()
         result = await terminator.decide_and_act(
             terminal_state="completed",
             heartbeat=_AlwaysDeadHeartbeat(),  # asleep → STOPPED_FOR_RESUME
             bus_publish=publisher,
-            env=_env(),
         )
         assert result["action"] == PodTerminalOutcome.ALREADY_STOPPED
 
 
 # ---------------------------------------------------------------------------
-# 5. Dependency errors — flaky GraphQL
+# 5. Dependency errors — client returns FAILED → propagated
 # ---------------------------------------------------------------------------
 
 
 class TestDependencyErrors:
-    async def test_retry_exhaustion_returns_failed(self) -> None:
-        # All 3 attempts return 500 — should land on FAILED.
-        def handler(_req: httpx.Request) -> httpx.Response:
-            return httpx.Response(500, text='{"errors":["server boom"]}')
-
-        terminator = _mk_terminator(transport_handler=handler)
+    async def test_client_failed_propagates_to_action(self) -> None:
+        # Pre-14.B simulated this with a 500-only mock transport; now
+        # we just have the fake client return FAILED. HTTP-level retry
+        # behaviour is tested in test_lifecycle_client.py.
+        client = _FakeLifecycleClient(
+            terminate_outcome=PodTerminalOutcome.FAILED,
+            attempts_made=3,
+        )
+        terminator = _mk_terminator(client=client)
         publisher = _PublisherSpy()
         result = await terminator.decide_and_act(
             terminal_state="cancelled",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
         assert result["action"] == PodTerminalOutcome.FAILED
-
-    async def test_network_error_retried_then_failed(self) -> None:
-        attempts = {"n": 0}
-
-        def handler(_req: httpx.Request) -> httpx.Response:
-            attempts["n"] += 1
-            raise httpx.ConnectError("connection refused")
-
-        terminator = _mk_terminator(transport_handler=handler)
-        publisher = _PublisherSpy()
-        result = await terminator.decide_and_act(
-            terminal_state="cancelled",
-            heartbeat=_AlwaysAliveHeartbeat(),
-            bus_publish=publisher,
-            env=_env(),
-        )
-        # All 3 retries hit the connect error → FAILED.
-        assert result["action"] == PodTerminalOutcome.FAILED
-        assert attempts["n"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +455,6 @@ class TestRegressions:
             terminal_state="cancelled",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
 
         attempts = [
@@ -482,12 +472,11 @@ class TestRegressions:
         # Operator dashboards debug "why this outcome" by reading the
         # decision event payload — must carry the inputs that drove it.
         publisher = _PublisherSpy()
-        terminator = _mk_terminator()
+        terminator = _mk_terminator(keep_on_error=False)
         await terminator.decide_and_act(
             terminal_state="completed",
             heartbeat=_AlwaysDeadHeartbeat(),
             bus_publish=publisher,
-            env=_env(RUNPOD_KEEP_ON_ERROR="false"),
         )
 
         decisions = [
@@ -502,6 +491,28 @@ class TestRegressions:
         assert d["volume_kind"] == "persistent"
         assert d["keep_on_error"] is False
         assert d["heartbeat_age_seconds"] == 600.0
+
+    async def test_pod_stop_attempt_carries_phase_14b_fields(self) -> None:
+        # Phase 14.B adds ``provider`` + ``attempts_made`` to the
+        # ``pod_stop_attempt`` event so dashboards can disambiguate
+        # outcomes (e.g. ``skipped`` from runpod-no-creds vs
+        # ``skipped`` from single-node-no-op).
+        publisher = _PublisherSpy()
+        client = _FakeLifecycleClient(
+            terminate_outcome=PodTerminalOutcome.TERMINATED, attempts_made=2,
+        )
+        terminator = _mk_terminator(client=client)
+        await terminator.decide_and_act(
+            terminal_state="cancelled",
+            heartbeat=_AlwaysAliveHeartbeat(),
+            bus_publish=publisher,
+        )
+        attempts = [
+            payload for kind, payload in publisher.events
+            if kind == "pod_stop_attempt"
+        ]
+        assert attempts[0]["provider"] == PROVIDER_RUNPOD
+        assert attempts[0]["attempts_made"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +536,6 @@ class TestGraceLoop:
             terminal_state="completed",
             heartbeat=heartbeat,
             bus_publish=publisher,
-            env=_env(),
         )
 
         # Grace started + grace ended events emitted.
@@ -550,7 +560,6 @@ class TestGraceLoop:
             terminal_state="completed",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
 
         ends = [
@@ -559,23 +568,13 @@ class TestGraceLoop:
         ]
         assert ends[0]["reason"] == "max_budget_exceeded"
 
-    async def test_grace_followed_by_pod_stop_call(self) -> None:
-        # After grace exits (any reason), podStop is called.
-        called = {"podStop": 0, "podTerminate": 0}
-
-        def handler(req: httpx.Request) -> httpx.Response:
-            text = req.read().decode()
-            if "podStop" in text:
-                called["podStop"] += 1
-                return httpx.Response(200, text='{"data":{"podStop":null}}')
-            if "podTerminate" in text:
-                called["podTerminate"] += 1
-                return httpx.Response(200, text='{"data":{"podTerminate":null}}')
-            return httpx.Response(500)
-
+    async def test_grace_followed_by_pause_call(self) -> None:
+        # After grace exits (any reason), pause is called via the
+        # client (not terminate).
         publisher = _PublisherSpy()
+        client = _FakeLifecycleClient()
         terminator = _mk_terminator(
-            transport_handler=handler,
+            client=client,
             grace_base=0.001, grace_max=0.05, grace_tick=0.01,
         )
 
@@ -583,38 +582,51 @@ class TestGraceLoop:
             terminal_state="completed",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
 
         assert result["decision"] == PodTerminalOutcome.STOPPED_FOR_RESUME_SHORT_GRACE
         assert result["action"] == PodTerminalOutcome.STOPPED
-        assert called["podStop"] == 1
-        assert called["podTerminate"] == 0
+        # Exactly one pause call, no terminate call.
+        method_names = [m for m, _ in client.calls]
+        assert method_names == ["pause"]
 
-    async def test_user_stop_uses_terminate_not_stop(self) -> None:
-        # User-stop ⇒ podTerminate, never podStop. Sanity check that
-        # the dispatcher routes correctly.
-        called = {"podStop": 0, "podTerminate": 0}
-
-        def handler(req: httpx.Request) -> httpx.Response:
-            text = req.read().decode()
-            if "podStop" in text:
-                called["podStop"] += 1
-                return httpx.Response(200, text='{"data":{"podStop":null}}')
-            if "podTerminate" in text:
-                called["podTerminate"] += 1
-                return httpx.Response(200, text='{"data":{"podTerminate":null}}')
-            return httpx.Response(500)
-
+    async def test_user_stop_uses_terminate_not_pause(self) -> None:
         publisher = _PublisherSpy()
-        terminator = _mk_terminator(transport_handler=handler)
-
+        client = _FakeLifecycleClient()
+        terminator = _mk_terminator(client=client)
         await terminator.decide_and_act(
             terminal_state="cancelled",
             heartbeat=_AlwaysAliveHeartbeat(),
             bus_publish=publisher,
-            env=_env(),
         )
+        method_names = [m for m, _ in client.calls]
+        assert method_names == ["terminate"]
 
-        assert called["podTerminate"] == 1
-        assert called["podStop"] == 0
+
+# ---------------------------------------------------------------------------
+# 7b. Phase 14.B — resource_id wired through to client calls
+# ---------------------------------------------------------------------------
+
+
+class TestResourceIdPropagation:
+    async def test_resource_id_passed_to_terminate(self) -> None:
+        publisher = _PublisherSpy()
+        client = _FakeLifecycleClient()
+        terminator = _mk_terminator(client=client, resource_id="pod-zzz")
+        await terminator.decide_and_act(
+            terminal_state="cancelled",
+            heartbeat=_AlwaysAliveHeartbeat(),
+            bus_publish=publisher,
+        )
+        assert client.calls == [("terminate", "pod-zzz")]
+
+    async def test_resource_id_passed_to_pause(self) -> None:
+        publisher = _PublisherSpy()
+        client = _FakeLifecycleClient()
+        terminator = _mk_terminator(client=client, resource_id="pod-zzz")
+        await terminator.decide_and_act(
+            terminal_state="completed",
+            heartbeat=_AlwaysDeadHeartbeat(),  # → STOPPED_FOR_RESUME
+            bus_publish=publisher,
+        )
+        assert client.calls == [("pause", "pod-zzz")]

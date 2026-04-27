@@ -62,6 +62,9 @@ class TestFallback:
 
         monkeypatch.setattr(main_mod, "EventJournal", _BrokenJournal)
         monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+        # Phase 14.B — provide a default runtime provider so the
+        # lifespan can boot. Single-node = NoOp client, no creds.
+        monkeypatch.setenv("RYOTENKAI_RUNTIME_PROVIDER", "single_node")
 
         # Lifespan should NOT raise; runner boots in journal-less mode.
         with TestClient(create_app(supervisor_factory=MockSupervisor)) as client:

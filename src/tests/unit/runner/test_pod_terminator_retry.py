@@ -17,13 +17,34 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.constants import PROVIDER_RUNPOD
 from src.runner.heartbeat import MacHeartbeat
-from src.runner.pod_terminator import PodTerminator
+from src.runner.pod_terminator import PodTerminalOutcome, PodTerminator
+from src.runner.runtime.lifecycle_client import LifecycleActionResult
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _FakeClient:
+    """Minimal :class:`IPodLifecycleClient` for retry tests — every
+    method returns SKIPPED. The retry tests don't dispatch to the
+    client, but the constructor requires one."""
+
+    @property
+    def provider_name(self) -> str:
+        return PROVIDER_RUNPOD
+
+    async def terminate(self, *, resource_id: str) -> LifecycleActionResult:
+        return LifecycleActionResult(outcome=PodTerminalOutcome.SKIPPED, attempts_made=0)
+
+    async def pause(self, *, resource_id: str) -> LifecycleActionResult:
+        return LifecycleActionResult(outcome=PodTerminalOutcome.SKIPPED, attempts_made=0)
+
+    async def resume(self, *, resource_id: str) -> LifecycleActionResult:
+        return LifecycleActionResult(outcome=PodTerminalOutcome.SKIPPED, attempts_made=0)
 
 
 def _make_terminator(
@@ -33,6 +54,10 @@ def _make_terminator(
     heartbeat_retry_tick: float = 10.0,
 ) -> PodTerminator:
     return PodTerminator(
+        client=_FakeClient(),
+        resource_id="pod-test",
+        volume_kind="persistent",
+        keep_on_error=False,
         sleep=sleep or AsyncMock(),
         heartbeat_retry_attempts=heartbeat_retry_attempts,
         heartbeat_retry_tick_seconds=heartbeat_retry_tick,

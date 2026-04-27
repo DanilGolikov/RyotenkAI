@@ -1,22 +1,22 @@
-"""Phase 11.B — RunPod terminal-hook with stop-vs-terminate decision matrix.
+"""Phase 11.B / 14.B — Provider-agnostic terminal-hook decision matrix.
 
-Replaces Phase 9.A's :class:`PodStopper` (which always called
-``podTerminate``) with a smarter handler that picks between four
-actions based on terminal state, Mac heartbeat, and volume kind:
+Replaces Phase 9.A's :class:`PodStopper` with a smarter handler that
+picks between four actions based on terminal state, Mac heartbeat,
+and volume kind:
 
-* **Terminate** — pod fully deleted (``podTerminate``). For user-stop
-  (cancelled), failed runs without ``KEEP_ON_ERROR``, or any pod with
-  a network volume (RunPod constraint: network-volume pods cannot be
+* **Terminate** — pod fully deleted. For user-stop (cancelled),
+  failed runs without ``KEEP_ON_ERROR``, or any pod with a network
+  volume (cloud-provider constraint: network-volume pods cannot be
   stopped, only terminated).
-* **Stop (sleep)** — pod paused (``podStop``). GPU billing→0,
-  ``/workspace`` preserved, recoverable via ``podResume``. The default
-  for natural completion + Mac asleep (artifacts wait on disk for the
-  user to wake up and resume) and for failed runs when Mac is asleep
-  (operator may want to debug the checkpoint).
+* **Stop (sleep)** — pod paused. GPU billing→0, ``/workspace``
+  preserved, recoverable via the provider's resume call. Default for
+  natural completion + Mac asleep (artifacts wait on disk for the
+  user to wake up and resume) and for failed runs when Mac is
+  asleep (operator may want to debug the checkpoint).
 * **Stop with grace** — same as stop, but wait while Mac heartbeat
   stays alive (capped at 10 min). For natural completion + Mac alive:
   give the orchestrator's ``ModelRetriever`` time to SCP adapters off
-  the pod, then podStop. ``ModelRetriever`` GET requests refresh the
+  the pod, then stop. ``ModelRetriever`` GET requests refresh the
   heartbeat → grace effectively extends to cover the whole download.
 * **Keep alive** — no-op. For ``failed`` + ``KEEP_ON_ERROR=true``,
   reserved for SSH-forensics (Phase 9.A carry-over).
@@ -26,95 +26,64 @@ Decision matrix (Phase 11 § 11.1)
 
 | terminal | mac_alive | volume     | keep_err | outcome                       | action      |
 |----------|-----------|------------|----------|-------------------------------|-------------|
-| cancel   | *         | *          | *        | terminated_user_stop          | podTerminate|
+| cancel   | *         | *          | *        | terminated_user_stop          | terminate   |
 | failed   | *         | *          | true     | kept_alive_for_debug          | none        |
-| failed   | true      | persistent | false    | terminated_safety             | podTerminate|
-| failed   | false     | persistent | false    | stopped_for_resume            | podStop     |
-| failed   | *         | network    | false    | terminated_safety             | podTerminate|
-| complete | true      | persistent | *        | stopped_for_resume_short_grace| grace+podStop|
-| complete | false     | persistent | *        | stopped_for_resume            | podStop     |
-| complete | *         | network    | *        | terminated_safety             | podTerminate|
+| failed   | true      | persistent | false    | terminated_safety             | terminate   |
+| failed   | false     | persistent | false    | stopped_for_resume            | pause       |
+| failed   | *         | network    | false    | terminated_safety             | terminate   |
+| complete | true      | persistent | *        | stopped_for_resume_short_grace| grace+pause |
+| complete | false     | persistent | *        | stopped_for_resume            | pause       |
+| complete | *         | network    | *        | terminated_safety             | terminate   |
 
-Migration from Phase 9.A
-------------------------
+Phase 14.B migration
+--------------------
 
-* ``RUNPOD_AUTO_STOP`` env is **removed**. The new default behaviour
-  is "always act on terminal" (per user mandate § 11.1 — no toggle).
-  Operators who previously relied on ``AUTO_STOP=false`` to keep
-  pods alive for debugging now use ``RUNPOD_KEEP_ON_ERROR=true`` for
-  failed runs, or accept that successful runs go to ``stopped_for_resume``
-  (recoverable with ``podResume``, costs only storage).
-* ``RUNPOD_KEEP_ON_ERROR`` is **kept** (Phase 9.A carry-over). Honours
-  failed-only — user-stop always terminates.
-* ``RUNPOD_VOLUME_KIND`` is **new**. Set by ``TrainingLauncher._build_job_env``
-  to ``"network"`` when the training pod uses a RunPod network volume,
-  else ``"persistent"``. Default unset ⇒ treat as ``persistent``
-  (current training-flow behaviour).
+Pre-14.B this module owned RunPod GraphQL transport directly
+(``DEFAULT_RUNPOD_GRAPHQL_URL``, ``_ALREADY_GONE_RE``,
+``_call_mutation`` / ``_call_terminate`` / ``_call_stop``). Phase
+14.B § 1.5 extracted those into
+:mod:`src.providers.runpod.runtime.lifecycle_client` behind the
+:class:`~src.runner.runtime.lifecycle_client.IPodLifecycleClient`
+Protocol. The terminator now dispatches to ``self._client`` —
+RunPod, single-node, or any future provider all work through the
+same interface.
+
+Phase 14.B § 1.4 also moved env reads (``RUNPOD_VOLUME_KIND``,
+``RUNPOD_KEEP_ON_ERROR``, ``RUNPOD_POD_ID``) from per-call into the
+constructor. Lifespan reads env once at boot
+(:mod:`src.runner.runtime.provider_registry`); the terminator
+inherits that snapshot. Missing creds become :class:`BootstrapConfigError`
+at boot, not silent ``SKIPPED`` outcomes 4 hours later.
 
 Idempotency
 -----------
 
-Both ``podTerminate`` and ``podStop`` are idempotent on RunPod:
-already-gone / already-stopped pods return error strings we recognise
-as success (``_ALREADY_GONE_RE`` regex). The decision matrix doesn't
-peek at current pod state — it dispatches based on terminal info and
-the GraphQL call sorts out "already done" cases.
-
-When Mac calls ``provider.cleanup_pod()`` (canonical Mac-side path)
-and our in-pod terminator runs concurrently for the same pod:
-
-* Mac → ``podTerminate`` first → our subsequent ``podStop``/``podTerminate``
-  hits the already-gone path → outcome ``ALREADY_TERMINATED``.
-* Our → ``podStop`` first → Mac's ``podTerminate`` succeeds (stopped
-  pods can still be terminated).
-
-Both orderings converge to "pod gone or sleeping safely".
-
-Provider-agnostic surface
--------------------------
-
-This module is RunPod-specific by design — other providers (Lambda,
-single_node) have their own terminal hooks. The decision-function
-:func:`decide_terminal_outcome` is pure and provider-agnostic, but
-the action dispatch (:meth:`PodTerminator._call_terminate`,
-:meth:`PodTerminator._call_stop`) is RunPod GraphQL. Adding a second
-provider = sibling module + extracted ``ProviderTerminalHook`` Protocol.
+Both ``terminate`` and ``pause`` are idempotent: already-gone /
+already-stopped pods return ``ALREADY_TERMINATED`` /
+``ALREADY_STOPPED`` from the provider client. Mac's
+:meth:`provider.cleanup_pod` (canonical Mac-side path) and our
+in-pod terminator can run concurrently for the same pod — both
+orderings converge to "pod gone or sleeping safely".
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
-import re
 from typing import TYPE_CHECKING, Any
-
-import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from src.runner.heartbeat import MacHeartbeat
+    from src.runner.runtime.lifecycle_client import IPodLifecycleClient
 
 
 __all__ = [
-    "DEFAULT_RUNPOD_GRAPHQL_URL",
     "PodTerminalOutcome",
     "PodTerminator",
     "decide_terminal_outcome",
     "run_terminal_hook",
 ]
-
-
-DEFAULT_RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
-
-#: Regex matching RunPod error fragments that mean "the pod is already
-#: in the goal state" (gone, stopped, not running). Treated as success
-#: because the pod's intent is satisfied.
-_ALREADY_GONE_RE = re.compile(
-    r"already.*(stop|exit|terminat)|"
-    r"not\s+running|not\s+found|does\s+not\s+exist|no\s+such\s+pod",
-    re.IGNORECASE,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -132,16 +101,16 @@ class PodTerminalOutcome:
     """
 
     TERMINATED_USER_STOP = "terminated_user_stop"
-    """User clicked Stop → ``podTerminate`` (irreversible)."""
+    """User clicked Stop → terminate (irreversible)."""
 
     TERMINATED_SAFETY = "terminated_safety"
-    """Failed/network-volume → ``podTerminate`` (no resume path)."""
+    """Failed/network-volume → terminate (no resume path)."""
 
     STOPPED_FOR_RESUME = "stopped_for_resume"
-    """Mac asleep → ``podStop`` immediately (artifacts wait for resume)."""
+    """Mac asleep → pause immediately (artifacts wait for resume)."""
 
     STOPPED_FOR_RESUME_SHORT_GRACE = "stopped_for_resume_short_grace"
-    """Mac alive → wait for retriever, then ``podStop``."""
+    """Mac alive → wait for retriever, then pause."""
 
     KEPT_ALIVE_FOR_DEBUG = "kept_alive_for_debug"
     """``RUNPOD_KEEP_ON_ERROR=true`` on failed → no-op (SSH-forensics)."""
@@ -152,23 +121,23 @@ class PodTerminalOutcome:
     forward-compat (e.g. future ``RUNPOD_TERMINAL_OFF`` toggle)."""
 
     SKIPPED = "skipped"
-    """Decision wanted to act but creds missing (no API key / pod_id)."""
+    """Provider has nothing to act on (single-node NoOp client)."""
 
-    #: Action-stage outcomes (what actually happened on the GraphQL call).
+    #: Action-stage outcomes (what actually happened on the provider call).
     #: Reported alongside the decision outcome so operators can see
     #: "we wanted to terminate, the call returned already-gone".
 
     TERMINATED = "terminated"
-    """``podTerminate`` GraphQL returned success."""
+    """Provider terminate returned success."""
 
     ALREADY_TERMINATED = "already_terminated"
-    """``podTerminate`` returned an already-gone marker; idempotent."""
+    """Provider terminate returned an already-gone marker; idempotent."""
 
     STOPPED = "stopped"
-    """``podStop`` GraphQL returned success."""
+    """Provider pause returned success."""
 
     ALREADY_STOPPED = "already_stopped"
-    """``podStop`` returned an already-stopped/gone marker; idempotent."""
+    """Provider pause returned an already-stopped/gone marker; idempotent."""
 
     FAILED = "failed"
     """All retry attempts exhausted on transient errors."""
@@ -248,23 +217,31 @@ def decide_terminal_outcome(
 
 
 class PodTerminator:
-    """Calls RunPod GraphQL to terminate / stop the pod, with retries.
+    """Phase 14.B — provider-agnostic action dispatcher.
 
-    Construct once (env-driven config), inject from the lifespan,
-    invoke :meth:`decide_and_act` from the supervisor's reap path.
+    Construct once in the lifespan with the pre-resolved
+    :class:`~src.runner.runtime.lifecycle_client.IPodLifecycleClient` +
+    lifespan-static config (:attr:`_resource_id`, :attr:`_volume_kind`,
+    :attr:`_keep_on_error`). Invoke :meth:`decide_and_act` from the
+    supervisor's reap path.
 
-    Test seams: ``http_client_factory`` and ``sleep`` swappable so
-    retry timings don't actually wait in unit tests.
+    Test seams:
+        * ``client`` — inject a fake :class:`IPodLifecycleClient`
+          stub. Tests dispatch against the stub; HTTP-level coverage
+          lives next to the RunPod impl in
+          :mod:`src.tests.unit.providers.runpod.runtime`.
+        * ``sleep`` — swap so retry / grace timings don't actually
+          wait in unit tests.
     """
 
-    #: Base grace before podStop on the SHORT_GRACE path. ModelRetriever
+    #: Base grace before pause on the SHORT_GRACE path. ModelRetriever
     #: typically completes in 30-60s for a few-GB adapter; 60s is the
     #: minimum window. If retriever takes longer, its GET requests
     #: refresh the heartbeat and the grace loop keeps extending.
     GRACE_BASE_SECONDS: float = 60.0
 
     #: Hard cap on the SHORT_GRACE wait. Even if the heartbeat keeps
-    #: refreshing forever, we eventually podStop after this. Protects
+    #: refreshing forever, we eventually pause after this. Protects
     #: against runaway "Mac is alive but never finishes downloading"
     #: cases.
     GRACE_MAX_SECONDS: float = 600.0
@@ -291,10 +268,10 @@ class PodTerminator:
     def __init__(
         self,
         *,
-        graphql_url: str = DEFAULT_RUNPOD_GRAPHQL_URL,
-        request_timeout: float = 30.0,
-        max_attempts: int = 3,
-        http_client_factory: "Callable[[], httpx.AsyncClient] | None" = None,
+        client: "IPodLifecycleClient",
+        resource_id: str,
+        volume_kind: str,
+        keep_on_error: bool,
         sleep: "Callable[[float], Awaitable[None]] | None" = None,
         grace_base_seconds: float | None = None,
         grace_max_seconds: float | None = None,
@@ -302,12 +279,18 @@ class PodTerminator:
         heartbeat_retry_attempts: int | None = None,
         heartbeat_retry_tick_seconds: float | None = None,
     ) -> None:
-        self._url = graphql_url
-        self._timeout = request_timeout
-        self._max_attempts = max_attempts
-        self._http_factory = http_client_factory or (
-            lambda: httpx.AsyncClient(timeout=request_timeout)
+        self._client = client
+        self._resource_id = resource_id
+        # Defensive normalisation — pre-14.B caller passed env raw and
+        # we clamped invalid values to "persistent". Phase 14.B's
+        # provider_registry already does this clamping at boot, but
+        # we keep the safety net so direct callers (e.g. tests) get
+        # the same behaviour.
+        self._volume_kind = (
+            volume_kind if volume_kind in ("persistent", "network")
+            else "persistent"
         )
+        self._keep_on_error = keep_on_error
         self._sleep = sleep or asyncio.sleep
         self._grace_base = (
             grace_base_seconds if grace_base_seconds is not None
@@ -338,24 +321,16 @@ class PodTerminator:
         terminal_state: str,
         heartbeat: "MacHeartbeat",
         bus_publish: "Callable[[str, dict[str, Any]], Any]",
-        env: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Run the decision matrix + dispatch to the right action.
 
         Returns a dict with ``decision`` (intent) and ``action`` (what
-        actually happened on the GraphQL call, or ``None`` for no-op
+        actually happened on the provider call, or ``None`` for no-op
         outcomes). Caller publishes events from inside this method —
         we emit ``pod_terminal_decision`` after deciding and
         ``pod_stop_attempt`` after acting (Phase 9.A naming kept for
         backwards compat with operator dashboards).
         """
-        e = env if env is not None else os.environ
-        keep_on_error = (e.get("RUNPOD_KEEP_ON_ERROR") or "").lower() == "true"
-        volume_kind = (e.get("RUNPOD_VOLUME_KIND") or "persistent").lower()
-        if volume_kind not in ("persistent", "network"):
-            # Unknown value ⇒ assume persistent (safe default).
-            volume_kind = "persistent"
-
         # Phase 11.E — retry the heartbeat check before declaring Mac
         # dead. Without retries, a single missed control-plane ping
         # (or a Mac-side SCP-stream that briefly starved the
@@ -375,8 +350,8 @@ class PodTerminator:
         decision = decide_terminal_outcome(
             terminal_state=terminal_state,
             mac_alive=mac_alive,
-            volume_kind=volume_kind,
-            keep_on_error=keep_on_error,
+            volume_kind=self._volume_kind,
+            keep_on_error=self._keep_on_error,
         )
 
         # Publish decision regardless of action — operators see
@@ -389,8 +364,8 @@ class PodTerminator:
                 "mac_alive": mac_alive,
                 "heartbeat_age_seconds": heartbeat_age,
                 "heartbeat_retry_attempts_used": retry_attempts_used,
-                "volume_kind": volume_kind,
-                "keep_on_error": keep_on_error,
+                "volume_kind": self._volume_kind,
+                "keep_on_error": self._keep_on_error,
             },
         )
 
@@ -398,41 +373,29 @@ class PodTerminator:
         if decision == PodTerminalOutcome.KEPT_ALIVE_FOR_DEBUG:
             return {"decision": decision, "action": None}
 
-        # Decisions that need GraphQL — check creds first.
-        api_key = e.get("RUNPOD_API_KEY")
-        pod_id = e.get("RUNPOD_POD_ID")
-        if not api_key or not pod_id:
-            # Decision wanted to act but can't — surface as SKIPPED.
-            bus_publish(
-                "pod_stop_attempt",
-                {
-                    "terminal_state": terminal_state,
-                    "decision": decision,
-                    "action": PodTerminalOutcome.SKIPPED,
-                    # Phase 9.A `outcome` field — keep for backwards
-                    # compatibility with old dashboards / parsers
-                    # (Phase 11 plan § 11.6 — sub-phase 11.B).
-                    "outcome": PodTerminalOutcome.SKIPPED,
-                },
-            )
-            return {"decision": decision, "action": PodTerminalOutcome.SKIPPED}
-
-        # Dispatch.
+        # Dispatch through the provider client.
         if decision in (
             PodTerminalOutcome.TERMINATED_USER_STOP,
             PodTerminalOutcome.TERMINATED_SAFETY,
         ):
-            action = await self._call_terminate(api_key=api_key, pod_id=pod_id)
+            client_result = await self._client.terminate(
+                resource_id=self._resource_id,
+            )
         elif decision == PodTerminalOutcome.STOPPED_FOR_RESUME:
-            action = await self._call_stop(api_key=api_key, pod_id=pod_id)
+            client_result = await self._client.pause(
+                resource_id=self._resource_id,
+            )
         elif decision == PodTerminalOutcome.STOPPED_FOR_RESUME_SHORT_GRACE:
             await self._wait_grace(
                 heartbeat=heartbeat, bus_publish=bus_publish,
             )
-            action = await self._call_stop(api_key=api_key, pod_id=pod_id)
+            client_result = await self._client.pause(
+                resource_id=self._resource_id,
+            )
         else:  # pragma: no cover — defensive; decision matrix exhaustive
             return {"decision": decision, "action": None}
 
+        action = client_result.outcome
         bus_publish(
             "pod_stop_attempt",
             {
@@ -442,6 +405,10 @@ class PodTerminator:
                 # Phase 9.A `outcome` carry — old dashboards parse this.
                 # We promote ``action`` to be the canonical field.
                 "outcome": action,
+                # Phase 14.B — per-call retry pressure. Surfaces "we
+                # got there but it took 3 tries" to operator dashboards.
+                "attempts_made": client_result.attempts_made,
+                "provider": self._client.provider_name,
             },
         )
         return {"decision": decision, "action": action}
@@ -539,8 +506,8 @@ class PodTerminator:
         download keeps the grace alive automatically.
 
         Two exit conditions:
-        1. Heartbeat goes stale (Mac asleep) → break, podStop now.
-        2. ``GRACE_MAX_SECONDS`` reached → hard cap, podStop now.
+        1. Heartbeat goes stale (Mac asleep) → break, pause now.
+        2. ``GRACE_MAX_SECONDS`` reached → hard cap, pause now.
         """
         bus_publish(
             "pod_terminal_grace_started",
@@ -574,98 +541,6 @@ class PodTerminator:
                 )
                 return
 
-    # --- GraphQL calls ----------------------------------------------------
-
-    async def _call_terminate(
-        self, *, api_key: str, pod_id: str,
-    ) -> str:
-        """Send ``podTerminate`` mutation with retries."""
-        return await self._call_mutation(
-            api_key=api_key,
-            pod_id=pod_id,
-            mutation_name="podTerminate",
-            success_outcome=PodTerminalOutcome.TERMINATED,
-            already_outcome=PodTerminalOutcome.ALREADY_TERMINATED,
-        )
-
-    async def _call_stop(
-        self, *, api_key: str, pod_id: str,
-    ) -> str:
-        """Send ``podStop`` mutation with retries.
-
-        Phase 11.B: switched from the Phase 9.A always-terminate path
-        to a context-sensitive stop on natural completion / Mac asleep.
-        ``podStop`` preserves ``/workspace`` so adapters and
-        ``MetricsBuffer.jsonl`` remain fetchable on resume.
-        """
-        return await self._call_mutation(
-            api_key=api_key,
-            pod_id=pod_id,
-            mutation_name="podStop",
-            success_outcome=PodTerminalOutcome.STOPPED,
-            already_outcome=PodTerminalOutcome.ALREADY_STOPPED,
-        )
-
-    async def _call_mutation(
-        self,
-        *,
-        api_key: str,
-        pod_id: str,
-        mutation_name: str,
-        success_outcome: str,
-        already_outcome: str,
-    ) -> str:
-        """Generic GraphQL mutation caller — retries + idempotency.
-
-        Both ``podTerminate`` and ``podStop`` follow the same RunPod
-        envelope shape: HTTP 200 + ``"data":{"<mutation_name>":...}``
-        on success, ``"errors":[...]`` on failure (where the error
-        message may indicate idempotent already-done).
-        """
-        mutation = (
-            f'mutation{{{mutation_name}(input:{{podId:"{pod_id}"}})}}'
-        )
-        payload = {"query": mutation}
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        }
-
-        _last_error: str = ""  # noqa: F841 — kept for future enrichment
-        async with self._http_factory() as client:
-            for attempt in range(1, self._max_attempts + 1):
-                try:
-                    response = await client.post(
-                        self._url, json=payload, headers=headers,
-                    )
-                    text = response.text
-                except Exception as exc:
-                    _last_error = repr(exc)
-                else:
-                    # GraphQL success: 200 + ``"<mutation_name>"`` token
-                    # in body + no ``"errors"`` key.
-                    if (
-                        response.status_code == 200
-                        and f'"{mutation_name}"' in text
-                        and '"errors"' not in text
-                    ):
-                        return success_outcome
-                    # Idempotency: "already terminated" / "not running"
-                    # / "does not exist" → goal state matches intent.
-                    if _ALREADY_GONE_RE.search(text):
-                        return already_outcome
-                    _last_error = (
-                        f"http_status={response.status_code} "
-                        f"body={text[:300]}"
-                    )
-
-                if attempt < self._max_attempts:
-                    # Exponential-ish backoff: 5 s, 10 s, 15 s. Same
-                    # as Phase 9.A retry shape.
-                    await self._sleep(attempt * 5.0)
-
-        return PodTerminalOutcome.FAILED
-
 
 # ---------------------------------------------------------------------------
 # Convenience wrapper — used as the supervisor's terminal_hook closure
@@ -678,7 +553,6 @@ async def run_terminal_hook(
     terminal_state: str,
     heartbeat: "MacHeartbeat",
     bus_publish: "Callable[[str, dict[str, Any]], Any]",
-    env: dict[str, str] | None = None,
 ) -> None:
     """Wrap :meth:`PodTerminator.decide_and_act` for use as a
     ``terminal_hook`` callback on :class:`Supervisor`.
@@ -693,7 +567,6 @@ async def run_terminal_hook(
             terminal_state=terminal_state,
             heartbeat=heartbeat,
             bus_publish=bus_publish,
-            env=env,
         )
     except Exception as exc:  # pragma: no cover — defensive
         bus_publish(

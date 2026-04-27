@@ -56,6 +56,12 @@ from src.runner.mlflow_relay import (
 from src.runner.plugin_unpacker import PluginUnpacker
 from src.runner.heartbeat import MacHeartbeat
 from src.runner.pod_terminator import PodTerminator, run_terminal_hook
+from src.runner.runtime.provider_registry import (
+    resolve_keep_on_error_from_env,
+    resolve_lifecycle_client_from_env,
+    resolve_resource_id_from_env,
+    resolve_volume_kind_from_env,
+)
 from src.runner.state import JobLifecycleFSM
 from src.runner.supervisor import Supervisor, TerminalHook
 
@@ -192,7 +198,18 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         # PodTerminator reads on terminal hooks.
         heartbeat = MacHeartbeat()
 
-        pod_terminator = PodTerminator()
+        # Phase 14.B — env-driven lifecycle client resolution. This is
+        # the single env-reading seam; the terminator never touches
+        # ``os.environ`` again. ``BootstrapConfigError`` propagates
+        # so uvicorn exits non-zero on misconfigured env (Phase 14.B
+        # § 1.7 — no graceful degradation).
+        lifecycle_client = resolve_lifecycle_client_from_env(os.environ)
+        pod_terminator = PodTerminator(
+            client=lifecycle_client,
+            resource_id=resolve_resource_id_from_env(os.environ),
+            volume_kind=resolve_volume_kind_from_env(os.environ),
+            keep_on_error=resolve_keep_on_error_from_env(os.environ),
+        )
 
         async def _terminal_hook(terminal_state: str) -> None:
             await run_terminal_hook(

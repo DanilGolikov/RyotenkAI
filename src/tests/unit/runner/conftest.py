@@ -205,6 +205,18 @@ class MockSupervisor:
 # ---------------------------------------------------------------------------
 
 
+def _set_default_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 14.B — pin a default ``RYOTENKAI_RUNTIME_PROVIDER`` for
+    test fixtures so the lifespan can boot.
+
+    Default = ``single_node`` (uses the no-op lifecycle client; no
+    creds required). Tests that need RunPod semantics override the
+    env explicitly via their own ``monkeypatch.setenv`` — see
+    :mod:`test_main_lifespan_bootstrap` for the full provider matrix.
+    """
+    monkeypatch.setenv("RYOTENKAI_RUNTIME_PROVIDER", "single_node")
+
+
 @pytest.fixture
 def runner_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -217,6 +229,7 @@ def runner_client(
     :func:`runner_client_real`.
     """
     monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+    _set_default_runtime_env(monkeypatch)
     app = create_app(supervisor_factory=MockSupervisor)
     with TestClient(app) as client:
         yield client
@@ -232,5 +245,6 @@ def runner_client_real(
     process semantics (signals, exit codes, pump timing).
     """
     monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+    _set_default_runtime_env(monkeypatch)
     with TestClient(create_app()) as client:
         yield client

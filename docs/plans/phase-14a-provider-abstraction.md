@@ -52,15 +52,16 @@ grep-replace.
 
 | # | Sub-phase | Effort | Risk | Plan file |
 |---|---|---|---|---|
-| **14.A** | **Provider Capability Abstraction** (foundational — must land first) | ~1.5 days | Low | ✅ This file |
-| 14.B | Extract RunPod GraphQL client (`IPodLifecycleClient` Protocol, RunPod impl, NoOp impl, runner registry) | ~3 days | Medium | ⏭️ Separate plan, next session |
-| 14.C | Unify resume flow (`LaunchResumeService`, eliminate the 140-line duplicate) | ~2.5 days | Medium | ⏭️ Separate plan |
-| 14.D | Eliminate `RUNPOD_*` env hardcodes from shared code | ~1.5 days | Low | ⏭️ Separate plan |
-| 14.E | Core SRP/SoC fixes (lifespan circular binding, decide_and_act split, WS heartbeat decorator, MetricsDecimator policy split) | ~3 days | Low-Medium | ⏭️ Separate plan |
-| 14.F | Final cleanup, audit (replace 17 string-checks), provider AUTHORING.md guide, fakes for testing | ~2 days | Low | ⏭️ Separate plan |
+| **14.A** | **Provider Capability Abstraction** (foundational — must land first) | ~1.5 days | Low | ✅ This file (DONE — commit `1819cc4`) |
+| 14.B | Extract RunPod GraphQL client (`IPodLifecycleClient` Protocol, RunPod impl, NoOp impl, runner registry) | ~3.5 days est. / ~1 day actual | Medium | ✅ [`phase-14b-pod-terminator-extraction.md`](./phase-14b-pod-terminator-extraction.md) (DONE in worktree, uncommitted) |
+| 14.C | Unify resume flow (`LaunchResumeService`, eliminate the 140-line duplicate) | ~2.5 days | Medium-Low | 📋 [`phase-14c-launch-resume-unification.md`](./phase-14c-launch-resume-unification.md) (DRAFT) |
+| 14.D + 14.F | **MERGED** into single plan: Provider-leak elimination (env hardcodes + capability flags + 9 leak sites + AUTHORING.md link + test fakes) | ~3.5 days | Low-Medium | 📋 [`phase-14df-provider-leak-elimination.md`](./phase-14df-provider-leak-elimination.md) (DRAFT) |
+| 14.E | Core SRP/SoC fixes — focused (V1 lifespan circular binding, V3 WS heartbeat helper, V5 MLflow transport classifier; 2 won't-fix per KISS) | ~2 days | Low | 📋 [`phase-14e-srp-soc-fixes.md`](./phase-14e-srp-soc-fixes.md) (DRAFT) |
 
-**Total estimated effort across all sub-phases: ~13.5 engineer-days
-+ 2-4 days buffer = ~15-17 days.** This file delivers ONLY 14.A.
+**Total estimated effort across all sub-phases: ~12 engineer-days
+(down from initial 13.5 estimate — 14.D+F merge saves coordination
+overhead; 14.E focused scope drops 2 won't-fix violations).** This
+file delivers ONLY 14.A.
 
 ## Phase 14 zone-of-responsibility violations — full audit (informational)
 
