@@ -266,7 +266,7 @@ class TrainingLauncher:
         legacy ``pre_python`` / ``post_python`` bash injection points
         are dead after Phase 6.5 (the runner replaces watchdog.sh
         and runpod_stop_pod.sh with :class:`IdleDetector` and
-        :class:`PodStopper`). The dataclass still carries those
+        :class:`PodTerminator`). The dataclass still carries those
         fields for compatibility but we ignore them here.
         """
         if provider is None:
@@ -366,9 +366,11 @@ class TrainingLauncher:
         3. MLflow vars (resolved through
            :func:`resolve_mlflow_uris`).
         4. Provider hook env_vars (``RUNPOD_API_KEY``,
-           ``RUNPOD_AUTO_STOP``, etc.) — these intentionally win
+           ``RUNPOD_KEEP_ON_ERROR``, etc.) — these intentionally win
            over our defaults so a provider can override e.g.
-           ``LOG_LEVEL`` if it has a better idea.
+           ``LOG_LEVEL`` if it has a better idea. Phase 11.B removed
+           ``RUNPOD_AUTO_STOP`` (no toggle: PodTerminator's decision
+           matrix runs unconditionally on terminal hooks).
         """
         # ``single_node`` runs the trainer in a docker container with
         # the run dir mounted as ``/workspace``. Cloud providers run
@@ -415,8 +417,26 @@ class TrainingLauncher:
         # subprocess is in the same network namespace.
         env["RYOTENKAI_RUNNER_URL"] = "http://127.0.0.1:8080"
 
-        # Provider hooks merged LAST so e.g. RUNPOD_AUTO_STOP=true
-        # propagates to PodStopper without our defaults shadowing it.
+        # Phase 11.B — volume kind signal for PodTerminator.
+        #
+        # RunPod constraint: pods with a network volume cannot be
+        # stopped, only terminated. Training pod creation today does
+        # NOT use network volume (only ``volume_disk_gb`` =
+        # persistent volume disk is configured), so default
+        # ``"persistent"`` matches reality. If a future provider
+        # config adds network-volume support, this is the single
+        # place to flip — PodTerminator's decision matrix reads the
+        # env and falls back to ``podTerminate`` when ``"network"``.
+        #
+        # We pin the value (rather than leaving it unset) so the
+        # runner doesn't have to guess; explicit > implicit.
+        env["RUNPOD_VOLUME_KIND"] = "persistent"
+
+        # Provider hooks merged LAST so e.g. RUNPOD_API_KEY +
+        # RUNPOD_KEEP_ON_ERROR propagate without our defaults
+        # shadowing them. Note: ``RUNPOD_AUTO_STOP`` is NO LONGER
+        # honoured (Phase 11.B removed the toggle — PodTerminator
+        # always runs the decision matrix).
         if extra_env_vars:
             env.update(extra_env_vars)
 

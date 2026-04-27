@@ -70,9 +70,19 @@ async def stream_events(
 
     await websocket.accept()
 
+    # Phase 11.B — Mac heartbeat ledger. Every successful WS yield
+    # marks the heartbeat fresh; PodTerminator reads it on terminal
+    # hooks to decide between podStop (Mac asleep) and grace+podStop
+    # (Mac alive). When Mac is asleep, ``send_json`` will hang or
+    # raise (TCP backpressure / connection loss) ⇒ ``mark_active`` is
+    # NOT called ⇒ heartbeat goes stale ⇒ correct.
+    heartbeat = getattr(websocket.app.state, "heartbeat", None)
+
     try:
         async for event in bus.subscribe(since=since):
             await websocket.send_json(event.to_dict())
+            if heartbeat is not None:
+                heartbeat.mark_active()
     except BufferTruncatedError as exc:
         await websocket.close(
             code=_CLOSE_GONE,

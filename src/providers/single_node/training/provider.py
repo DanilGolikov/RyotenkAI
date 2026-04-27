@@ -328,7 +328,7 @@ class SingleNodeProvider(IGPUProvider):
     ) -> Result[None, ProviderError]:
         """Phase 9.B — terminate the training docker container, fail-soft.
 
-        Parity with the in-pod ``PodStopper.podTerminate`` for RunPod:
+        Parity with the in-pod ``PodTerminator`` for RunPod:
         the orchestrator's stop chain calls this after the trainer
         subprocess exits to remove the still-running docker container.
         Without it the container stays alive on the remote host

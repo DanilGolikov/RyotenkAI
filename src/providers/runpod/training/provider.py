@@ -497,8 +497,8 @@ class RunPodProvider(IGPUProvider):
 
         - ``watchdog.sh`` → :class:`src.runner.idle_detector.IdleDetector`
           (Phase 4.1)
-        - ``runpod_stop_pod.sh`` → :class:`src.runner.pod_stopper.PodStopper`
-          (Phase 4.4)
+        - ``runpod_stop_pod.sh`` → :class:`src.runner.pod_terminator.PodTerminator`
+          (Phase 4.4 → Phase 11.B decision matrix)
         - ``start_training.sh`` itself → :class:`Supervisor` subprocess
           spawn (Phase 2)
 
@@ -506,6 +506,14 @@ class RunPodProvider(IGPUProvider):
         vars the runner reads on startup. ``ssh_client`` is unused
         (no more file uploads); kept on the signature for protocol
         compatibility with :class:`IGPUProvider`.
+
+        Phase 11.B: ``RUNPOD_AUTO_STOP`` env removed (no-toggle
+        policy; PodTerminator always runs the decision matrix).
+        ``cleanup.auto_stop_after_training`` retained as a way to
+        skip wiring the RUNPOD_* creds entirely (e.g. for ephemeral
+        smoke runs that don't need the auto-clean path), but the
+        absence of creds simply maps to PodTerminalOutcome.SKIPPED;
+        no env-flag silently disables the matrix.
         """
         del ssh_client  # no SSH side-effects post Phase 6.5
 
@@ -526,7 +534,9 @@ class RunPodProvider(IGPUProvider):
         env_vars = {
             "RUNPOD_API_KEY": self._api_key,
             "RUNPOD_POD_ID": str(resource_id),
-            "RUNPOD_AUTO_STOP": "true",
+            # Phase 11.B: ``RUNPOD_AUTO_STOP`` removed (always-on
+            # decision matrix). ``RUNPOD_KEEP_ON_ERROR`` kept for
+            # debug-forensics on failed runs (Phase 9.A carry-over).
             "RUNPOD_KEEP_ON_ERROR": "true" if cleanup.keep_pod_on_error else "false",
         }
 

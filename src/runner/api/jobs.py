@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
 from src.runner.api.deps import (
@@ -219,10 +219,18 @@ async def submit_job(
 )
 def get_job(
     job_id: str,
+    request: Request,
     fsm: "JobLifecycleFSM" = Depends(get_fsm),
     bus: "EventBus" = Depends(get_bus),
 ) -> JobSnapshotResponse:
     _get_active_or_404(fsm, job_id)
+    # Phase 11.B — Mac heartbeat. ModelRetriever polls this endpoint
+    # while it SCPs adapters off the pod; each successful GET
+    # refreshes the heartbeat so the natural-completion grace
+    # window in PodTerminator stretches to cover the whole download.
+    heartbeat = getattr(request.app.state, "heartbeat", None)
+    if heartbeat is not None:
+        heartbeat.mark_active()
     return _snapshot_to_response(fsm, bus)
 
 

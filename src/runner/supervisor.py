@@ -85,10 +85,11 @@ __all__ = [
 # Async callback fired after every FSM transition into a terminal state
 # (completed / failed / cancelled). The single argument is the terminal
 # state name (``"completed"`` etc.). Used by :mod:`src.runner.main` to
-# wire :func:`src.runner.pod_stopper.stop_pod_on_terminal` — i.e.
-# auto-stop the RunPod billing once training finishes. Keeping this
-# protocol generic (rather than ``PodStopper``-typed) means the
-# supervisor stays provider-agnostic.
+# wire :func:`src.runner.pod_terminator.run_terminal_hook` — i.e.
+# pick between podStop / podTerminate based on the Phase 11.B decision
+# matrix once training finishes. Keeping this protocol generic (rather
+# than ``PodTerminator``-typed) means the supervisor stays
+# provider-agnostic.
 TerminalHook = Callable[[str], Awaitable[None]]
 
 

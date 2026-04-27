@@ -12,10 +12,10 @@ tests, depends on file-system heartbeat invariant.
 This module folds the same logic into the Python runner. Now the
 in-pod ``Supervisor`` itself decides when the run is dead (no Mac
 heartbeat, no GPU activity, exceeded max lifetime) and drives a
-graceful stop through the FSM. The actual pod removal happens via
-:mod:`src.runner.pod_stopper` (GraphQL ``podTerminate`` since
-Phase 9.A — switched from ``podStop`` so user-initiated stop is
-irreversible per § 9.1.E).
+graceful stop through the FSM. The actual pod removal / sleep
+happens via :mod:`src.runner.pod_terminator` (Phase 11.B decision
+matrix; user-initiated stop ⇒ ``podTerminate``, natural completion
+⇒ ``podStop`` to preserve ``/workspace`` for resume).
 
 Thresholds (mirror watchdog.sh exactly):
 

@@ -478,7 +478,12 @@ def test_prepare_hooks_skipped_without_api_key() -> None:
 def test_prepare_hooks_returns_runpod_env_vars() -> None:
     """Phase 6.5: hooks now only contribute env vars; the bash
     snippets and resource uploads are gone (replaced by IdleDetector
-    + PodStopper inside the in-pod runner).
+    + PodTerminator inside the in-pod runner).
+
+    Phase 11.B: ``RUNPOD_AUTO_STOP`` env var removed (no toggle —
+    PodTerminator's decision matrix runs unconditionally on terminal
+    hooks). ``RUNPOD_KEEP_ON_ERROR`` retained for failed-run debug
+    forensics (Phase 9.A carry-over).
     """
     p = _mk_provider(
         cfg_overrides={"cleanup": {"auto_stop_after_training": True, "keep_pod_on_error": True}}
@@ -493,13 +498,17 @@ def test_prepare_hooks_returns_runpod_env_vars() -> None:
     hooks = result.unwrap()
 
     # Env vars are forwarded to the trainer subprocess so the runner's
-    # PodStopper (Phase 4.4) can call the GraphQL podStop on terminal.
+    # PodTerminator (Phase 11.B) can call the right GraphQL mutation
+    # on terminal — podStop or podTerminate per the decision matrix.
     assert hooks.env_vars["RUNPOD_API_KEY"] == "rk-secret"
     assert hooks.env_vars["RUNPOD_POD_ID"] == "pod-abc"
-    assert hooks.env_vars["RUNPOD_AUTO_STOP"] == "true"
     assert hooks.env_vars["RUNPOD_KEEP_ON_ERROR"] == "true"
 
-    # Nothing uploaded over SSH any more — IdleDetector + PodStopper
+    # Phase 11.B regression: ``RUNPOD_AUTO_STOP`` env is removed
+    # entirely. No toggle disabling the PodTerminator decision matrix.
+    assert "RUNPOD_AUTO_STOP" not in hooks.env_vars
+
+    # Nothing uploaded over SSH any more — IdleDetector + PodTerminator
     # already live inside the runner image.
     assert ssh.commands == []
 

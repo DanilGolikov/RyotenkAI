@@ -42,7 +42,8 @@ from src.runner.mlflow_relay import (
     make_mlflow_forward_fn,
 )
 from src.runner.plugin_unpacker import PluginUnpacker
-from src.runner.pod_stopper import PodStopper, stop_pod_on_terminal
+from src.runner.heartbeat import MacHeartbeat
+from src.runner.pod_terminator import PodTerminator, run_terminal_hook
 from src.runner.state import JobLifecycleFSM
 from src.runner.supervisor import Supervisor, TerminalHook
 
@@ -101,13 +102,15 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
            transitions an unsafe state to ``failed`` — see
            :meth:`JobLifecycleFSM.restore_or_init`).
         2. Build EventBus with the env-driven default capacity.
-        3. Build :class:`PodStopper` and wire :func:`stop_pod_on_terminal`
-           as the supervisor's terminal hook so RunPod billing stops
-           the moment the FSM lands in ``completed`` / ``failed`` /
-           ``cancelled``. The hook is env-driven (see
-           :mod:`src.runner.pod_stopper`); when ``RUNPOD_AUTO_STOP``
-           is unset / ``false`` it returns ``"disabled"`` and the pod
-           keeps running — same contract as the legacy bash wrapper.
+        3. Build :class:`MacHeartbeat` (Phase 11.B) and :class:`PodTerminator`
+           (Phase 11.B). The heartbeat tracks Mac control-plane liveness
+           via WS yields + REST hits; the terminator picks between
+           ``podStop`` (sleep, default for natural completion) and
+           ``podTerminate`` (delete, default for user-stop / failed /
+           network-volume) per the decision matrix in
+           :mod:`src.runner.pod_terminator`. ``RUNPOD_AUTO_STOP`` env
+           is removed in Phase 11.B (no toggle — terminate-on-terminal
+           is always-on).
         4. Build Supervisor (or test double) bound to (fsm, bus, hook).
         5. Yield — endpoints serve traffic.
         6. On shutdown, stop the trainer first so its SIGTERM-driven
@@ -123,12 +126,19 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         # so we build it once at boot and reuse across requests.
         plugin_unpacker = PluginUnpacker(workspace_dir=workspace)
 
-        pod_stopper = PodStopper()
+        # Phase 11.B — heartbeat ledger lives at app.state level so
+        # both WS handler (post-yield mark_active) and REST handler
+        # (post-response mark_active) share the same instance the
+        # PodTerminator reads on terminal hooks.
+        heartbeat = MacHeartbeat()
+
+        pod_terminator = PodTerminator()
 
         async def _terminal_hook(terminal_state: str) -> None:
-            await stop_pod_on_terminal(
-                pod_stopper,
+            await run_terminal_hook(
+                pod_terminator,
                 terminal_state=terminal_state,
+                heartbeat=heartbeat,
                 bus_publish=bus.publish,
             )
 
@@ -146,7 +156,8 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
 
         app.state.fsm = fsm
         app.state.bus = bus
-        app.state.pod_stopper = pod_stopper
+        app.state.heartbeat = heartbeat  # Phase 11.B
+        app.state.pod_terminator = pod_terminator  # Phase 11.B (renamed from pod_stopper)
         app.state.plugin_unpacker = plugin_unpacker
         app.state.supervisor = supervisor
         app.state.mlflow_relay = mlflow_relay
