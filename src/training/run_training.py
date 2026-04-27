@@ -197,10 +197,15 @@ def run_training(
             # Ensure system metrics are ENABLED for the Provider (GPU)
             # This is critical for monitoring GPU usage during training
             # Note: accessing protected member for config check as specific property not exposed in interface
+            # Phase 14 follow-up — system_metrics moved into a nested
+            # block; older configs / mocks may not carry it, so we
+            # navigate via getattr.
             mlflow_config = getattr(mlflow_mgr, "_mlflow_config", None)
-            if mlflow_config and not mlflow_config.system_metrics_callback_enabled:
+            sm_block = getattr(mlflow_config, "system_metrics", None) if mlflow_config else None
+            sm_callback_enabled = bool(getattr(sm_block, "callback_enabled", False))
+            if mlflow_config and not sm_callback_enabled:
                 logger.warning("⚠️ System metrics callback is disabled in config! GPU monitoring will be missing.")
-                logger.info("i To fix: set experiment_tracking.mlflow.system_metrics_callback_enabled = true")
+                logger.info("i To fix: set experiment_tracking.mlflow.system_metrics.callback_enabled = true")
             else:
                 logger.info("✅ GPU System Metrics monitoring enabled for this Provider process")
 

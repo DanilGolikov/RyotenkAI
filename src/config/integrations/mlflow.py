@@ -30,6 +30,7 @@ from __future__ import annotations
 from pydantic import Field, field_validator, model_validator
 
 from ..base import StrictBaseModel
+from .system_metrics import SystemMetricsConfig
 
 
 class MLflowTrackingRef(StrictBaseModel):
@@ -84,10 +85,16 @@ class MLflowConfig(StrictBaseModel):
     experiment_name: str = Field(..., description="MLflow experiment name")
     run_description_file: str | None = Field(None)
 
-    system_metrics_sampling_interval: int = Field(5, ge=1, le=60)
-    system_metrics_samples_before_logging: int = Field(1, ge=1, le=10)
-    system_metrics_callback_enabled: bool = Field(False)
-    system_metrics_callback_interval: int = Field(10, ge=1, le=100)
+    # Phase 14 follow-up — was four flat ``system_metrics_*`` fields,
+    # collapsed into a single nested block with hardcoded defaults
+    # (see :class:`SystemMetricsConfig` for the per-knob defaults).
+    system_metrics: SystemMetricsConfig = Field(
+        default_factory=SystemMetricsConfig,
+        description=(
+            "MLflow system-metric collection settings (CPU / GPU / "
+            "RAM). Optional — sensible defaults if omitted."
+        ),
+    )
 
     @field_validator(
         "tracking_uri",

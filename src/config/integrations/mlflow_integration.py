@@ -16,6 +16,7 @@ from __future__ import annotations
 from pydantic import Field, field_validator
 
 from ..base import StrictBaseModel
+from .system_metrics import SystemMetricsConfig
 
 
 class MLflowIntegrationConfig(StrictBaseModel):
@@ -38,18 +39,16 @@ class MLflowIntegrationConfig(StrictBaseModel):
         description="Optional CA bundle path for HTTPS verification against MLflow.",
     )
 
-    system_metrics_sampling_interval: int = Field(
-        5, ge=1, le=60, description="System metrics sampling interval in seconds."
-    )
-    system_metrics_samples_before_logging: int = Field(
-        1, ge=1, le=10, description="Samples collected before logging to MLflow."
-    )
-    system_metrics_callback_enabled: bool = Field(
-        False,
-        description="Enable SystemMetricsCallback (may hang on some cloud GPU images).",
-    )
-    system_metrics_callback_interval: int = Field(
-        10, ge=1, le=100, description="Log system metrics every N steps (if callback enabled)."
+    # Phase 14 follow-up — was four flat ``system_metrics_*`` fields,
+    # collapsed into a single nested block with hardcoded defaults
+    # (see :class:`SystemMetricsConfig`). Operators tune via YAML;
+    # omitting the block yields working defaults.
+    system_metrics: SystemMetricsConfig = Field(
+        default_factory=SystemMetricsConfig,
+        description=(
+            "MLflow system-metric collection settings (CPU / GPU / "
+            "RAM). Optional — sensible defaults if omitted."
+        ),
     )
 
     @field_validator("tracking_uri", mode="before")

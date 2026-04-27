@@ -3,6 +3,7 @@ from .huggingface import HuggingFaceConfig, HuggingFaceHubConfig
 from .huggingface_integration import HuggingFaceIntegrationConfig
 from .mlflow import MLflowConfig
 from .mlflow_integration import MLflowIntegrationConfig
+from .system_metrics import SystemMetricsConfig
 
 __all__ = [
     "ExperimentTrackingConfig",
@@ -11,4 +12,5 @@ __all__ = [
     "HuggingFaceIntegrationConfig",
     "MLflowConfig",
     "MLflowIntegrationConfig",
+    "SystemMetricsConfig",
 ]

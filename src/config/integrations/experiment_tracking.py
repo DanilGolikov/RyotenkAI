@@ -23,7 +23,12 @@ from .mlflow import MLflowConfig, MLflowTrackingRef  # noqa: TC001, F401
 
 
 # Legacy fields that used to live at ``experiment_tracking.mlflow.*``.
-# Now live on the integration side.
+# Now live on the integration side. The four flat ``system_metrics_*``
+# fields were collapsed into a single nested
+# ``experiment_tracking.mlflow.system_metrics:`` block (post-14, by
+# analogy with ``training.metrics_buffer``); they are still listed
+# here so old YAMLs surface a clear migration hint instead of the
+# generic ``extra_forbidden`` Pydantic error.
 _LEGACY_MLFLOW_KEYS: set[str] = {
     "tracking_uri",
     "local_tracking_uri",

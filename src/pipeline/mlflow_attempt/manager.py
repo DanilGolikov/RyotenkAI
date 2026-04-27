@@ -76,8 +76,19 @@ class MLflowAttemptManager:
     def bootstrap(self) -> MLflowManager | None:
         """Create and configure MLflowManager (control-plane, system metrics off)."""
         try:
-            # 1. Force config setting — disable system metrics on the control-plane run
-            self._config.experiment_tracking.mlflow.system_metrics_callback_enabled = False
+            # 1. Force config setting — disable the system-metrics
+            # callback on the control-plane run. Phase 14 follow-up:
+            # ``system_metrics_callback_enabled`` moved into a nested
+            # ``system_metrics`` block; navigate via getattr/setattr
+            # so the mutation works whether the config carries the
+            # block or not (back-compat with mocks).
+            sm_block = getattr(
+                self._config.experiment_tracking.mlflow,
+                "system_metrics",
+                None,
+            )
+            if sm_block is not None:
+                sm_block.callback_enabled = False
 
             # 2. Force environment variable (critical for MLflow internals)
             import os
