@@ -7,31 +7,39 @@ Behaviour:
 2. Subscribe to the EventBus from ``since`` (default 0).
 3. Replay everything ≥ ``since`` that's still in the ring buffer,
    then live-stream new events.
-4. If the bus' buffer has truncated past ``since``, close 4410
-   (Gone) — the client falls back to the durable JSONL on disk.
-5. Close cleanly when the FSM enters a terminal state — the
+4. If the bus' buffer has truncated past ``since`` AND no disk
+   journal is attached (Phase 12.B), close 4410 (Gone) — the client
+   falls back to the durable JSONL on disk.
+5. Phase 12.B — when an :class:`EventJournal` IS attached, transparently
+   replay records older than the ring's tail from disk before
+   handing off to the live ring. The subscriber sees a continuous
+   monotonic offset stream regardless of whether the underlying
+   storage is RAM or disk. ``DiskJournalExhausted`` (offset older
+   than even the journal's oldest record) still maps to 4410.
+6. Close cleanly when the FSM enters a terminal state — the
    subscriber loop reads the final event then drains.
 
 Close codes (RFC 6455 application range 4xxx):
 - 4000  client cancelled / WebSocketDisconnect
 - 4404  job_id not bound to the active FSM
-- 4410  buffer truncated past requested ``since``
+- 4410  buffer truncated past requested ``since`` and not on disk
 - 4422  invalid query (negative ``since``, non-integer)
-
-Phase 1 ships replay + live streaming. The "close on terminal state"
-hook lands in Phase 2 once the supervisor emits the final lifecycle
-event; for now the connection stays open until the client closes it
-or the bus is shut down (lifespan exit).
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
 from src.runner.api.deps import get_bus, get_fsm
-from src.runner.event_bus import BufferTruncatedError
+from src.runner.event_bus import (
+    BufferTruncatedError,
+    DiskJournalExhausted,
+    Event,
+    EventBus,
+)
 
 if TYPE_CHECKING:
     pass
@@ -44,6 +52,63 @@ router = APIRouter(tags=["events"])
 _CLOSE_NOT_FOUND = 4404
 _CLOSE_GONE = 4410
 _CLOSE_INVALID = 4422
+
+
+async def _subscribe_with_disk_fallback(
+    bus: EventBus, since: int,
+) -> AsyncIterator[Event]:
+    """Yield events from disk first (when needed), then from the ring.
+
+    Phase 12.B contract:
+    * ``since >= ring_oldest`` (or ring empty) → straight ring subscribe.
+    * ``since < ring_oldest`` AND journal attached → drain the journal
+      from ``since`` up to (but not including) ``ring_oldest``, then
+      hand off to ``bus.subscribe(since=ring_oldest)`` so the live
+      stream picks up where disk replay stopped — no overlap.
+    * ``since < ring_oldest`` AND journal absent → fall through to
+      ``bus.subscribe`` which raises :class:`BufferTruncatedError`.
+    * ``since < disk_oldest`` → :class:`DiskJournalExhausted`.
+    """
+    journal = bus.journal
+    ring_oldest = bus.oldest_offset
+
+    # Fast path: ring covers the request, OR ring is empty (in which
+    # case ``subscribe`` will live-stream from publish forward).
+    if ring_oldest is None or since >= ring_oldest:
+        async for event in bus.subscribe(since=since):
+            yield event
+        return
+
+    # Slow path — disk replay needed. Verify journal can serve us.
+    if journal is None:
+        # Let ``subscribe`` raise BufferTruncatedError as before.
+        async for event in bus.subscribe(since=since):
+            yield event
+        return
+
+    disk_oldest = journal.oldest_persisted_offset()
+    if disk_oldest is None or since < disk_oldest:
+        raise DiskJournalExhausted(
+            requested_offset=since,
+            oldest_in_ring=ring_oldest,
+            oldest_on_disk=disk_oldest,
+        )
+
+    # Stage 1 — disk records ``[since, ring_oldest)``.
+    for record in journal.iter_records(since=since):
+        if record.offset >= ring_oldest:
+            break
+        yield Event(
+            offset=record.offset,
+            timestamp=record.ts,
+            kind=record.kind,
+            payload=dict(record.payload),
+        )
+
+    # Stage 2 — hand off to ring at exactly ``ring_oldest`` so we
+    # neither duplicate records (no overlap) nor leave a gap.
+    async for event in bus.subscribe(since=ring_oldest):
+        yield event
 
 
 @router.websocket("/jobs/{job_id}/events")
@@ -79,10 +144,16 @@ async def stream_events(
     heartbeat = getattr(websocket.app.state, "heartbeat", None)
 
     try:
-        async for event in bus.subscribe(since=since):
+        async for event in _subscribe_with_disk_fallback(bus, since=since):
             await websocket.send_json(event.to_dict())
             if heartbeat is not None:
                 heartbeat.mark_active()
+    except DiskJournalExhausted as exc:
+        await websocket.close(
+            code=_CLOSE_GONE,
+            reason=f"disk_exhausted; oldest_on_disk={exc.oldest_on_disk}",
+        )
+        return
     except BufferTruncatedError as exc:
         await websocket.close(
             code=_CLOSE_GONE,

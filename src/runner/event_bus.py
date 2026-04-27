@@ -21,11 +21,24 @@ Subscribers (Mac client over WebSocket) consume events via
 
 Buffer is a **bounded deque** of capacity ``RYOTENKAI_EVENT_BUFFER_SIZE``
 (default 10 000 events ≈ 10 MB at ~1 KB / event). When the buffer
-overflows, the oldest events are dropped — a subscriber that asked
-for ``since=N`` where ``N`` is older than the oldest event in the
-buffer gets a ``BufferTruncatedError`` so the client can decide
-whether to fall back to the durable JSONL on disk (Phase 1+ may add
-a chunked endpoint that streams the JSONL).
+overflows, the oldest events are dropped.
+
+Phase 12.B — durable journal
+----------------------------
+An optional :class:`~src.runner.event_journal.EventJournal` can be
+passed to :meth:`EventBus.__init__`. When attached, every published
+event is **also** written to a rotated JSONL file on disk
+(``<workspace>/.runner/events/``). The WS handler transparently
+falls back to disk replay when the requested ``since`` cursor is
+older than the ring's oldest offset but still present on disk. The
+``BufferTruncatedError`` exception still fires for offsets older
+than the journal's oldest record.
+
+A subscriber that asked for ``since=N`` where ``N`` is older than
+the oldest event in the buffer **AND** older than the oldest record
+on disk gets a ``BufferTruncatedError`` so the client can fall back
+to the durable ``state.jsonl`` / ``training.log`` if those preserved
+the data.
 
 Threading model
 ---------------
@@ -51,6 +64,7 @@ from typing import Any
 
 __all__ = [
     "BufferTruncatedError",
+    "DiskJournalExhausted",
     "Event",
     "EventBus",
     "DEFAULT_BUFFER_SIZE",
@@ -125,6 +139,12 @@ class BufferTruncatedError(LookupError):
     """The ``since`` offset requested by a subscriber is older than the
     oldest event still in the buffer.
 
+    Phase 12.B: when an :class:`EventJournal` is attached, this is
+    raised only after disk replay is also exhausted (the WS handler's
+    ``_subscribe_with_disk_fallback`` raises a more specific
+    :class:`DiskJournalExhausted` instead). On a journal-less bus it's
+    raised immediately as the original Phase 1 contract.
+
     The client can recover by either (a) accepting the loss and
     re-subscribing with the bus's current oldest offset, or (b)
     fetching missing events from the durable ``state.jsonl`` /
@@ -138,6 +158,33 @@ class BufferTruncatedError(LookupError):
         )
         self.requested_offset = requested_offset
         self.oldest_available = oldest_available
+
+
+class DiskJournalExhausted(LookupError):
+    """The ``since`` offset is older than even the journal's oldest
+    persisted record.
+
+    Phase 12.B-specific. Subclass of :class:`LookupError` so existing
+    catch sites that handle :class:`BufferTruncatedError` can be
+    widened with a single ``except LookupError`` if they want the
+    same fallback behaviour.
+
+    The WS handler maps this to close code 4410 (Gone).
+    """
+
+    def __init__(
+        self,
+        requested_offset: int,
+        oldest_in_ring: int | None,
+        oldest_on_disk: int | None,
+    ) -> None:
+        super().__init__(
+            f"disk journal exhausted: requested offset {requested_offset}, "
+            f"oldest_in_ring={oldest_in_ring}, oldest_on_disk={oldest_on_disk}",
+        )
+        self.requested_offset = requested_offset
+        self.oldest_in_ring = oldest_in_ring
+        self.oldest_on_disk = oldest_on_disk
 
 
 # ---------------------------------------------------------------------------
@@ -165,13 +212,57 @@ class EventBus:
     job_id — the API stays the same.
     """
 
-    def __init__(self, capacity: int | None = None) -> None:
+    def __init__(
+        self,
+        capacity: int | None = None,
+        *,
+        journal: Any | None = None,
+    ) -> None:
+        """
+        Args:
+            capacity: Ring-buffer size. Defaults to env-driven
+                       ``RYOTENKAI_EVENT_BUFFER_SIZE``.
+            journal:  Phase 12.B — optional
+                       :class:`~src.runner.event_journal.EventJournal`.
+                       When attached, every published event is also
+                       written to disk. The bus also reconciles its
+                       starting offset from
+                       ``journal.newest_persisted_offset()`` on init,
+                       so a runner restart resumes the offset
+                       sequence without collisions.
+        """
         self._capacity = capacity or _resolve_capacity()
         # Deque of Event objects; oldest at left, newest at right.
         # Bound enforced by deque(maxlen=...).
         self._buffer: deque[Event] = deque(maxlen=self._capacity)
         # Monotonic offset assigned to the next published event.
         self._next_offset = 0
+        # Phase 12.B § 2.9 — offset reconciliation across runner
+        # restarts. If a journal is attached and contains records,
+        # advance ``_next_offset`` past the highest persisted one so
+        # the next event we emit doesn't collide with what's already
+        # on disk.
+        self._journal = journal
+        if journal is not None:
+            try:
+                persisted = journal.newest_persisted_offset()
+            except Exception as exc:  # noqa: BLE001 — defensive
+                # A journal that can't tell us its newest offset is
+                # broken; fall back to fresh start at 0 and let the
+                # operator notice via subsequent events_disk_pressure
+                # signalling.
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[BUS] journal.newest_persisted_offset failed: %s "
+                    "— starting from 0 (offsets may collide)", exc,
+                )
+                persisted = None
+            if persisted is not None:
+                self._next_offset = persisted + 1
+        # Disk-pressure rate-limit: emit at most one
+        # ``events_disk_pressure`` warning per minute even if every
+        # publish fails to persist.
+        self._last_disk_pressure_ms: int = 0
         # Per-publish wakeup signal — replaced (atomic swap) on every
         # publish so that **multi-subscriber** broadcasts are race-free.
         #
@@ -250,6 +341,22 @@ class EventBus:
         self._buffer.append(event)
         self._next_offset += 1
 
+        # Phase 12.B — durable persistence. Write to disk BEFORE
+        # waking subscribers so a slow disk doesn't bottleneck the
+        # event loop on a publish/wake round-trip. Failures are
+        # rate-limited; the in-memory ring still holds the event so
+        # current subscribers see it normally.
+        if self._journal is not None:
+            try:
+                self._journal.append(
+                    offset=event.offset,
+                    ts=event.timestamp,
+                    kind=event.kind,
+                    payload=dict(event.payload),
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort persist
+                self._signal_disk_pressure(exc)
+
         # Atomic swap: stash the current signal, install a fresh one
         # for future waiters, then release the stashed one. Any
         # subscriber that snapshotted ``self._publish_signal`` before
@@ -262,6 +369,27 @@ class EventBus:
         self._publish_signal = asyncio.Event()
         stale.set()
         return event
+
+    def _signal_disk_pressure(self, exc: BaseException) -> None:
+        """Rate-limited warning when journal append fails.
+
+        Logs at WARN level at most once per minute (per bus instance).
+        Operators see "disk pressure" as a sustained pattern rather
+        than every single failed write spamming the log. We do NOT
+        publish a follow-up event because that could trigger a
+        cascading failure if the underlying disk pressure is itself
+        the cause of the journal write failing.
+        """
+        import logging
+        import time as _time
+        now_ms = int(_time.monotonic() * 1000)
+        if now_ms - self._last_disk_pressure_ms < 60_000:
+            return
+        self._last_disk_pressure_ms = now_ms
+        logging.getLogger(__name__).warning(
+            "[BUS] journal append failed (rate-limited 1/min): %s: %s",
+            type(exc).__name__, exc,
+        )
 
     async def subscribe(self, *, since: int = 0) -> AsyncIterator[Event]:
         """Replay buffered events from ``since`` onwards, then live-stream.
@@ -346,6 +474,8 @@ class EventBus:
         async iterators can drain and terminate.
 
         After ``close()``, :meth:`publish` raises :class:`RuntimeError`.
+        Also closes the attached journal (Phase 12.B) so its file
+        handle is fsync'd and released.
         """
         self._closed = True
         # Release whatever signal subscribers are currently waiting
@@ -353,3 +483,19 @@ class EventBus:
         # the purpose, since post-close there will be no further
         # publish() to populate it.
         self._publish_signal.set()
+        # Phase 12.B — close the journal too. Idempotent.
+        if self._journal is not None:
+            try:
+                self._journal.close()
+            except Exception:  # noqa: BLE001 — defensive on shutdown
+                pass
+
+    @property
+    def journal(self) -> Any | None:
+        """Phase 12.B — accessor for the attached journal.
+
+        Used by :class:`~src.runner.api.events` to perform disk
+        replay when a subscriber's ``since`` cursor falls outside
+        the ring buffer. ``None`` when no journal was attached.
+        """
+        return self._journal

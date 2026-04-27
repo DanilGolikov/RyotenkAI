@@ -37,6 +37,7 @@ from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
 from src.runner.event_bus import EventBus
+from src.runner.event_journal import EVENTS_DIR_REL, EventJournal
 from src.runner.mlflow_relay import (
     MLflowRelay,
     make_mlflow_forward_fn,
@@ -120,7 +121,26 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         workspace = _resolve_workspace()
         fsm = JobLifecycleFSM(workspace_dir=workspace)
         fsm.restore_or_init()
-        bus = EventBus()
+
+        # Phase 12.B — durable event journal under
+        # ``<workspace>/.runner/events/``. The bus reconciles its
+        # starting offset from the journal's newest persisted record
+        # so a runner restart resumes the offset sequence without
+        # collisions. If construction fails (read-only fs etc.), we
+        # log + fall back to the journal-less behaviour so the runner
+        # boots.
+        journal: EventJournal | None
+        try:
+            journal = EventJournal(root_dir=workspace / EVENTS_DIR_REL)
+        except Exception as exc:  # noqa: BLE001 — defensive
+            import logging
+            logging.getLogger(__name__).warning(
+                "[LIFESPAN] EventJournal init failed (%s); "
+                "falling back to ring-only behaviour", exc,
+            )
+            journal = None
+
+        bus = EventBus(journal=journal)
 
         # The plugin unpacker is stateless beyond its workspace path,
         # so we build it once at boot and reuse across requests.
@@ -156,6 +176,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
 
         app.state.fsm = fsm
         app.state.bus = bus
+        app.state.journal = journal  # Phase 12.B (None if init failed)
         app.state.heartbeat = heartbeat  # Phase 11.B
         app.state.pod_terminator = pod_terminator  # Phase 11.B (renamed from pod_stopper)
         app.state.plugin_unpacker = plugin_unpacker
