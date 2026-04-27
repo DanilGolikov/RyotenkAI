@@ -192,6 +192,11 @@ class TrainingLauncher:
             )
 
         job_id = self._resolve_job_id(context)
+        # Phase 14.D+F — provider supplies its own runtime env via
+        # ``required_runtime_env_vars``. The hooks dataclass'
+        # ``env_vars`` is preserved for back-compat (any provider
+        # that still uses ``prepare_training_script_hooks`` will
+        # see its values merged on top).
         job_spec = {
             "job_id": job_id,
             "command": [
@@ -201,7 +206,9 @@ class TrainingLauncher:
                 "--config",
                 DEPLOYMENT_CONFIG_PATH,
             ],
-            "env": self._build_job_env(context, hooks.env_vars),
+            "env": self._build_job_env(
+                context, provider, hooks.env_vars,
+            ),
         }
 
         try:
@@ -380,6 +387,7 @@ class TrainingLauncher:
     def _build_job_env(
         self,
         context: dict[str, Any],
+        provider: IGPUProvider | None,
         extra_env_vars: dict[str, str],
     ) -> dict[str, str]:
         """Compose the ``env`` block of the :class:`JobSpec`.
@@ -403,13 +411,18 @@ class TrainingLauncher:
            ``RUNPOD_AUTO_STOP`` (no toggle: PodTerminator's decision
            matrix runs unconditionally on terminal hooks).
         """
-        # ``single_node`` runs the trainer in a docker container with
-        # the run dir mounted as ``/workspace``. Cloud providers run
-        # in the pod where the workspace IS the run dir. This is the
-        # only path-aware setting; everything else is workspace-agnostic.
-        workspace_env = (
-            "/workspace" if is_single_node_provider(self.config) else self._workspace
+        # Phase 14.D+F — capability-driven dispatch (was
+        # ``is_single_node_provider(self.config)`` string check).
+        # Local providers (single_node) run the trainer in a docker
+        # container with the run dir mounted as ``/workspace``.
+        # Cloud providers run in the pod where the workspace IS the
+        # run dir.
+        is_local = (
+            provider.get_capabilities().is_local
+            if provider is not None
+            else is_single_node_provider(self.config)
         )
+        workspace_env = "/workspace" if is_local else self._workspace
         env: dict[str, str] = {
             "LOG_LEVEL": "DEBUG",
             "HELIX_WORKSPACE": workspace_env,
@@ -448,26 +461,30 @@ class TrainingLauncher:
         # subprocess is in the same network namespace.
         env["RYOTENKAI_RUNNER_URL"] = "http://127.0.0.1:8080"
 
-        # Phase 11.B — volume kind signal for PodTerminator.
-        #
-        # RunPod constraint: pods with a network volume cannot be
-        # stopped, only terminated. Training pod creation today does
-        # NOT use network volume (only ``volume_disk_gb`` =
-        # persistent volume disk is configured), so default
-        # ``"persistent"`` matches reality. If a future provider
-        # config adds network-volume support, this is the single
-        # place to flip — PodTerminator's decision matrix reads the
-        # env and falls back to ``podTerminate`` when ``"network"``.
-        #
-        # We pin the value (rather than leaving it unset) so the
-        # runner doesn't have to guess; explicit > implicit.
-        env["RUNPOD_VOLUME_KIND"] = "persistent"
+        # Phase 14.D+F — provider supplies its own runtime env vars.
+        # Replaces the pre-14.D hardcoded
+        # ``env["RUNPOD_VOLUME_KIND"] = "persistent"`` (which fired
+        # for ALL providers, including single_node where the var is
+        # meaningless). The provider's :meth:`required_runtime_env_vars`
+        # returns the full set keyed to the resource_id from the
+        # current run context — RunPod includes ``RUNPOD_*`` vars,
+        # single_node returns just ``RYOTENKAI_RUNTIME_PROVIDER``.
+        if provider is not None:
+            resource_id = (
+                context.get("resource_id") or context.get("pod_id")
+            )
+            env.update(
+                provider.required_runtime_env_vars(
+                    resource_id=resource_id if resource_id else None,
+                ),
+            )
 
-        # Provider hooks merged LAST so e.g. RUNPOD_API_KEY +
-        # RUNPOD_KEEP_ON_ERROR propagate without our defaults
-        # shadowing them. Note: ``RUNPOD_AUTO_STOP`` is NO LONGER
-        # honoured (Phase 11.B removed the toggle — PodTerminator
-        # always runs the decision matrix).
+        # Provider hooks merged LAST so any back-compat values
+        # (e.g. legacy ``prepare_training_script_hooks.env_vars``)
+        # propagate without the launcher's defaults shadowing them.
+        # Note: ``RUNPOD_AUTO_STOP`` is NO LONGER honoured (Phase
+        # 11.B removed the toggle — PodTerminator always runs the
+        # decision matrix).
         if extra_env_vars:
             env.update(extra_env_vars)
 

@@ -222,6 +222,22 @@ class ProviderCapabilities:
     mounts a different path (e.g. ``/data``) only needs to override
     this field — no edits to the launcher."""
 
+    # ---- Phase 14.D+F — provider-leak elimination ----
+
+    is_local: bool = False
+    """True for providers that run on a local always-on host
+    (single_node). False for cloud providers (RunPod). Replaces the
+    pre-14.D :func:`is_single_node_provider` string-check helper —
+    callers gate on this flag instead of comparing
+    ``provider_name == "single_node"``."""
+
+    supports_log_download: bool = False
+    """True iff the provider exposes a structured log-download path
+    (cloud providers SCP/HTTP-fetch; local hosts read directly).
+    Replaces the pre-14.F ``provider == PROVIDER_RUNPOD`` checks in
+    :class:`GPUDeployer`. Single_node = False (logs already on
+    host filesystem); RunPod = True."""
+
 
 @dataclass(frozen=True)
 class TrainingScriptHooks:
@@ -458,6 +474,33 @@ class IGPUProvider(Protocol):
                 to probe. Empty string is acceptable for providers
                 that don't track per-resource availability
                 (single_node).
+        """
+        ...
+
+    # ---- Phase 14.D+F — secrets validation ----
+
+    def required_secrets(self) -> tuple[str, ...]:
+        """Names of operator-environment secrets that MUST be
+        present at startup.
+
+        Phase 14.D+F replaces the hardcoded ``PROVIDER_RUNPOD``
+        secret-presence check in
+        :mod:`src.pipeline.bootstrap.startup_validator` with a
+        provider-driven loop:
+
+            for name in provider.required_secrets():
+                if not has_secret(secrets, name):
+                    raise StartupValidationError(...)
+
+        RunPod returns ``("RUNPOD_API_KEY",)``; single_node returns
+        ``()``. The startup validator iterates the tuple and checks
+        each name against :class:`Secrets` — missing → fail-fast
+        with the secret name in the error message.
+
+        Returns:
+            Sorted, immutable tuple of secret env-var names. Empty
+            tuple for providers that don't need any secret
+            (single_node host has none).
         """
         ...
 

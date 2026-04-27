@@ -597,7 +597,19 @@ class SingleNodeProvider(IGPUProvider):
             volume_kind=VolumeKind.LOCAL_DISK,  # Workspace lives on user's host disk
             has_pause_resume=False,
             runner_workspace_root="/workspace",
+            # Phase 14.D+F capability fields:
+            is_local=True,                  # always-on host
+            supports_log_download=False,    # logs already on host filesystem
         )
+
+    def required_secrets(self) -> tuple[str, ...]:
+        """Phase 14.D+F — single_node has no provider-managed secrets.
+
+        Returns an empty tuple so :mod:`startup_validator` skips
+        secret-presence checks for this provider entirely. Replaces
+        the pre-14.D inverse-of-PROVIDER_RUNPOD branch.
+        """
+        return ()
 
     def get_resource_info(self) -> None:
         """Local provider has no dynamic resource metadata."""

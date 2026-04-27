@@ -348,7 +348,14 @@ class GPUDeployer(PipelineStage):
         if self._released or self._provider is None:
             return
         logger.info("[DEPLOYER] Early release: terminating training pod after ModelRetriever.")
-        if self._provider_name == PROVIDER_RUNPOD and self._ssh_client:
+        # Phase 14.D+F — capability-driven dispatch (was
+        # ``self._provider_name == PROVIDER_RUNPOD`` string check).
+        # Cloud providers expose log-download via SCP/HTTP; local
+        # providers have logs already on the host filesystem.
+        if (
+            self._provider.get_capabilities().supports_log_download
+            and self._ssh_client
+        ):
             try:
                 self._download_remote_logs("early_release")
             except Exception as e:
@@ -459,7 +466,12 @@ class GPUDeployer(PipelineStage):
             if self._callbacks.on_cleanup:
                 self._callbacks.on_cleanup(self._provider_name)
 
-            if self._provider_name == PROVIDER_RUNPOD and self._ssh_client:
+            # Phase 14.D+F — capability-driven dispatch (was
+            # ``self._provider_name == PROVIDER_RUNPOD`` string check).
+            if (
+                self._provider.get_capabilities().supports_log_download
+                and self._ssh_client
+            ):
                 try:
                     self._download_remote_logs("cleanup")
                 except Exception as e:

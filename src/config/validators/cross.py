@@ -233,9 +233,11 @@ def validate_pipeline_inference_provider_config(cfg: PipelineConfig) -> Result[N
 
     provider: str = str(cfg.inference.provider)
 
-    # Only validate provider-config presence for providers that are configured via `providers:` registry.
-    # Some providers may eventually keep all config under `inference:*` (no `providers.*` block).
-    if provider not in {PROVIDER_SINGLE_NODE, PROVIDER_RUNPOD}:
+    # Phase 14.D+F — registry-membership check (was hardcoded
+    # ``{PROVIDER_SINGLE_NODE, PROVIDER_RUNPOD}`` set). Adding a
+    # third provider = update :data:`PROVIDER_TYPES` once; this
+    # gate then accepts it automatically.
+    if provider not in PROVIDER_TYPES:
         return Ok(None)
 
     provider_type = PROVIDER_TYPES.get(provider)

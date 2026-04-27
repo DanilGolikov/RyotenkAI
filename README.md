@@ -681,6 +681,13 @@ Join the Discord server for support, roadmap discussion, configs, and fine-tunin
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+**Adding a new GPU provider** — see
+[`src/providers/README.md`](src/providers/README.md) for the
+`IGPUProvider` Protocol contract, capability surface
+(Phase 14.A–F), the runner-side `IPodLifecycleClient` (Phase 14.B),
+and step-by-step instructions on integrating a new cloud or local
+provider.
+
 ## License
 
 [MIT](LICENSE) © Golikov Daniil

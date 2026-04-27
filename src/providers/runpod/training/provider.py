@@ -562,7 +562,19 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
             volume_kind=volume_kind,
             has_pause_resume=True,  # podStop + podResume both supported
             runner_workspace_root="/workspace",  # RunPod pod mount path
+            # Phase 14.D+F capability fields:
+            is_local=False,                # cloud provider
+            supports_log_download=True,    # SCP-based log fetch via RunPodAPIClient
         )
+
+    def required_secrets(self) -> tuple[str, ...]:
+        """Phase 14.D+F — RunPod requires the API key in the operator
+        environment.
+
+        Replaces the pre-14.D ``PROVIDER_RUNPOD`` secret-presence
+        branch in :mod:`src.pipeline.bootstrap.startup_validator`.
+        """
+        return ("RUNPOD_API_KEY",)
 
     # ------------------------------------------------------------------
     # Phase 14.A — capability methods (IGPUProvider extension)

@@ -107,7 +107,7 @@ class TestBuildJobEnv:
     def test_defaults_present(self) -> None:
         launcher = _make_launcher()
         launcher.set_workspace("/tmp/run-x")
-        env = launcher._build_job_env(context={}, extra_env_vars={})
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
         assert env["LOG_LEVEL"] == "DEBUG"
         assert env["HELIX_WORKSPACE"] == "/tmp/run-x"
         assert env["PYTHONPATH"] == "/tmp/run-x"
@@ -121,25 +121,26 @@ class TestBuildJobEnv:
     def test_single_node_workspace_is_container_path(self) -> None:
         launcher = _make_launcher(config=_config_obj(single_node=True))
         launcher.set_workspace("/host/run-dir")  # ignored for single_node
-        env = launcher._build_job_env(context={}, extra_env_vars={})
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
         # single_node container always sees /workspace because the
         # host run dir is mounted there
         assert env["HELIX_WORKSPACE"] == "/workspace"
 
     def test_hf_token_added_when_set(self) -> None:
         launcher = _make_launcher(secrets=_secrets_obj(hf_token="hf_xxx"))
-        env = launcher._build_job_env(context={}, extra_env_vars={})
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
         assert env["HF_TOKEN"] == "hf_xxx"
 
     def test_hf_token_omitted_when_unset(self) -> None:
         launcher = _make_launcher(secrets=_secrets_obj(hf_token=None))
-        env = launcher._build_job_env(context={}, extra_env_vars={})
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
         assert "HF_TOKEN" not in env
 
     def test_provider_hooks_override_defaults(self) -> None:
         launcher = _make_launcher()
         env = launcher._build_job_env(
             context={},
+            provider=None,
             extra_env_vars={"LOG_LEVEL": "WARNING", "RUNPOD_API_KEY": "k"},
         )
         assert env["LOG_LEVEL"] == "WARNING"  # overridden

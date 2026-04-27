@@ -66,7 +66,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         else:
             checks.append(ConfigCheck(label="HF_TOKEN not set", status="fail"))
 
-        runpod_key = os.environ.get("RUNPOD_API_KEY", "").strip()
+        # Phase 14.D+F — provider-driven secret check.
         # `get_active_provider_name()` raises when `training.provider` is
         # unset. That's expected at runtime (you can't launch without a
         # provider), but during the UI's pre-save validation we don't
@@ -80,11 +80,28 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
             )
         except ValueError:
             active_provider = None
-        if active_provider and "runpod" in (active_provider or "").lower():
+
+        # Resolve required secrets via the same registry the
+        # startup validator uses. Each provider declares its own
+        # tuple — adding a third provider with credentials = one
+        # registry update, no edits here.
+        from src.pipeline.bootstrap.startup_validator import (
+            _resolve_required_secrets_for_provider,
+        )
+        required_secrets = (
+            _resolve_required_secrets_for_provider(active_provider)
+            if active_provider
+            else ()
+        )
+        runpod_key = os.environ.get("RUNPOD_API_KEY", "").strip()
+        if "RUNPOD_API_KEY" in required_secrets:
             if runpod_key:
                 checks.append(ConfigCheck(label="RUNPOD_API_KEY found", status="ok"))
             else:
-                checks.append(ConfigCheck(label="RUNPOD_API_KEY not set (required for runpod provider)", status="fail"))
+                checks.append(ConfigCheck(
+                    label=f"RUNPOD_API_KEY not set (required for {active_provider} provider)",
+                    status="fail",
+                ))
         elif runpod_key:
             checks.append(ConfigCheck(label="RUNPOD_API_KEY found (optional)", status="ok"))
         else:

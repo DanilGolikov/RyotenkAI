@@ -29,9 +29,31 @@ import os
 from typing import TYPE_CHECKING
 
 from src.config.validators.runtime import validate_eval_plugin_secrets
-from src.constants import PROVIDER_RUNPOD
+from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 from src.utils.config import validate_strategy_chain
 from src.utils.logger import logger
+
+
+def _resolve_required_secrets_for_provider(
+    provider_name: str,
+) -> tuple[str, ...]:
+    """Phase 14.D+F — provider-driven secret requirements.
+
+    Returns the tuple of operator-environment secret names the
+    given provider needs at startup. Closed registry of two
+    providers today — matches
+    :mod:`src.runner.runtime.provider_registry`. Adding a third
+    provider = update both modules.
+
+    Lazy imports so this module stays importable without the
+    provider package loading its full dependency chain (the
+    runpod SDK in particular).
+    """
+    if provider_name == PROVIDER_RUNPOD:
+        return ("RUNPOD_API_KEY",)
+    if provider_name == PROVIDER_SINGLE_NODE:
+        return ()
+    return ()
 
 if TYPE_CHECKING:
     from src.utils.config import PipelineConfig, Secrets
@@ -80,7 +102,14 @@ class StartupValidator:
     def check_training_provider_secrets(
         *, config: PipelineConfig, secrets: Secrets
     ) -> None:
-        """Fail when the active training provider needs a secret we don't have."""
+        """Fail when the active training provider needs a secret we don't have.
+
+        Phase 14.D+F: provider-driven validation. Pre-14.D this hardcoded
+        ``active_provider == PROVIDER_RUNPOD`` and read ``runpod_api_key``
+        directly. Now we resolve the active provider's class and iterate
+        :meth:`IGPUProvider.required_secrets` — adding a third provider
+        is a one-line registry change, not a string-check edit here.
+        """
         try:
             active_provider = config.get_active_provider_name()
         except (ValueError, AttributeError):
@@ -89,30 +118,54 @@ class StartupValidator:
             # secrets required" rather than a validation failure.
             return
 
-        if active_provider == PROVIDER_RUNPOD and not getattr(
-            secrets, "runpod_api_key", None
-        ):
-            raise StartupValidationError(
-                f"RUNPOD_API_KEY is required when using provider {PROVIDER_RUNPOD!r}. "
-                "Set it via environment variable RUNPOD_API_KEY or in config/secrets.env."
-            )
+        # Map provider name → required secret tuple. Lazy-resolved
+        # so test-time stubs of provider modules don't trip on
+        # heavy imports. The map is closed (matches the registry in
+        # :mod:`src.runner.runtime.provider_registry`); adding a
+        # provider = update both registries.
+        required_secrets = _resolve_required_secrets_for_provider(
+            active_provider,
+        )
+        for secret_name in required_secrets:
+            attr_name = secret_name.lower()
+            if not getattr(secrets, attr_name, None):
+                raise StartupValidationError(
+                    f"{secret_name} is required when using provider "
+                    f"{active_provider!r}. Set it via environment "
+                    f"variable {secret_name} or in config/secrets.env.",
+                )
 
     @staticmethod
     def check_inference_provider_secrets(
         *, config: PipelineConfig, secrets: Secrets
     ) -> None:
-        """Fail when an enabled inference provider needs a secret we don't have."""
+        """Fail when an enabled inference provider needs a secret we don't have.
+
+        Phase 14.D+F: same provider-driven pattern as
+        :meth:`check_training_provider_secrets`. Inference reuses
+        the training provider's secret list — both surfaces hit
+        the same RunPod API key.
+        """
         inference_cfg = getattr(config, "inference", None)
-        if (
-            getattr(inference_cfg, "enabled", False) is True
-            and getattr(inference_cfg, "provider", None) in {PROVIDER_RUNPOD}
-            and not getattr(secrets, "runpod_api_key", None)
-        ):
-            raise StartupValidationError(
-                f"RUNPOD_API_KEY is required when using inference.provider="
-                f"{getattr(inference_cfg, 'provider', None)!r}. "
-                "Set it via environment variable RUNPOD_API_KEY or in config/secrets.env."
-            )
+        if not getattr(inference_cfg, "enabled", False):
+            return
+
+        inference_provider = getattr(inference_cfg, "provider", None)
+        if not isinstance(inference_provider, str):
+            return
+
+        required_secrets = _resolve_required_secrets_for_provider(
+            inference_provider,
+        )
+        for secret_name in required_secrets:
+            attr_name = secret_name.lower()
+            if not getattr(secrets, attr_name, None):
+                raise StartupValidationError(
+                    f"{secret_name} is required when using "
+                    f"inference.provider={inference_provider!r}. "
+                    f"Set it via environment variable {secret_name} "
+                    f"or in config/secrets.env.",
+                )
 
     @staticmethod
     def check_eval_plugin_secrets(
