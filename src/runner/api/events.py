@@ -135,19 +135,21 @@ async def stream_events(
 
     await websocket.accept()
 
-    # Phase 11.B — Mac heartbeat ledger. Every successful WS yield
-    # marks the heartbeat fresh; PodTerminator reads it on terminal
-    # hooks to decide between podStop (Mac asleep) and grace+podStop
-    # (Mac alive). When Mac is asleep, ``send_json`` will hang or
-    # raise (TCP backpressure / connection loss) ⇒ ``mark_active`` is
-    # NOT called ⇒ heartbeat goes stale ⇒ correct.
-    heartbeat = getattr(websocket.app.state, "heartbeat", None)
+    # Phase 14.E (V3) — heartbeat marking centralized in
+    # :mod:`src.runner.api._activity`. Pre-14.E the WS handler
+    # inlined the ``getattr(app.state, "heartbeat", ...)`` +
+    # ``mark_active`` calls; now :func:`send_ws_with_activity`
+    # owns the "send then mark" ordering. When Mac is asleep,
+    # ``send_json`` hangs or raises (TCP backpressure / connection
+    # loss) ⇒ mark_active never fires ⇒ heartbeat goes stale ⇒
+    # correct. PodTerminator reads the ledger on terminal hooks.
+    from src.runner.api._activity import send_ws_with_activity
 
     try:
         async for event in _subscribe_with_disk_fallback(bus, since=since):
-            await websocket.send_json(event.to_dict())
-            if heartbeat is not None:
-                heartbeat.mark_active()
+            await send_ws_with_activity(
+                websocket, event.to_dict(), websocket.app.state,
+            )
     except DiskJournalExhausted as exc:
         await websocket.close(
             code=_CLOSE_GONE,

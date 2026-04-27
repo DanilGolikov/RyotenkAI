@@ -224,13 +224,14 @@ def get_job(
     bus: "EventBus" = Depends(get_bus),
 ) -> JobSnapshotResponse:
     _get_active_or_404(fsm, job_id)
-    # Phase 11.B — Mac heartbeat. ModelRetriever polls this endpoint
-    # while it SCPs adapters off the pod; each successful GET
-    # refreshes the heartbeat so the natural-completion grace
-    # window in PodTerminator stretches to cover the whole download.
-    heartbeat = getattr(request.app.state, "heartbeat", None)
-    if heartbeat is not None:
-        heartbeat.mark_active()
+    # Phase 14.E (V3) — heartbeat marking via centralized helper
+    # (was inlined ``getattr(...) + if-not-None`` block). The
+    # ModelRetriever polls this endpoint while it SCPs adapters
+    # off the pod; each successful GET refreshes the heartbeat so
+    # PodTerminator's natural-completion grace window stretches
+    # to cover the whole download.
+    from src.runner.api._activity import mark_heartbeat_if_present
+    mark_heartbeat_if_present(request.app.state)
     return _snapshot_to_response(fsm, bus)
 
 

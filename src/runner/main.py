@@ -38,10 +38,7 @@ from src.runner.api import control as control_api
 from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
-from src.runner.cancellation_telemetry import (
-    EVENTS_DISK_PRESSURE,
-    EVENTS_ROTATED,
-)
+from src.runner.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from src.runner.event_bus import EventBus
 from src.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,
@@ -147,35 +144,17 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         # log + fall back to the journal-less behaviour so the runner
         # boots.
         #
-        # Phase 12.C — pre-bind a placeholder rotation callback. The
-        # actual ``bus.publish`` reference doesn't exist yet (we need
-        # the bus to construct the journal callback in turn), so we
-        # use a closure that reads the bus from app.state at fire time.
-        rotate_publisher = {"bus": None}
-
-        def _on_rotate(
-            *, from_seq: int, to_seq: int, file_size_bytes: int,
-            oldest_remaining_seq: int | None,
-        ) -> None:
-            target = rotate_publisher.get("bus")
-            if target is None:
-                return
-            try:
-                target.publish(EVENTS_ROTATED, {
-                    "from_seq": from_seq,
-                    "to_seq": to_seq,
-                    "file_size_bytes": file_size_bytes,
-                    "oldest_remaining_seq": oldest_remaining_seq,
-                })
-            except Exception:  # noqa: BLE001 — defensive
-                pass
-
+        # Phase 14.E (V1) — deferred binding via
+        # :meth:`EventBus.attach_journal_rotation_listener`. Replaces
+        # the pre-14.E circular-binding-closure pattern (mutable
+        # dict cell holding a future ``bus.publish`` reference). The
+        # ordering is: build journal → build bus → bus attaches as
+        # the journal's rotation observer. No rotations can fire
+        # between bus construction and the explicit attach call
+        # (rotations are append-driven; bus init does no appends).
         journal: EventJournal | None
         try:
-            journal = EventJournal(
-                root_dir=workspace / EVENTS_DIR_REL,
-                on_rotate=_on_rotate,
-            )
+            journal = EventJournal(root_dir=workspace / EVENTS_DIR_REL)
         except Exception as exc:  # noqa: BLE001 — defensive
             import logging
             logging.getLogger(__name__).warning(
@@ -185,8 +164,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
             journal = None
 
         bus = EventBus(journal=journal)
-        # Late-bind the bus so the rotation callback can publish through it.
-        rotate_publisher["bus"] = bus
+        bus.attach_journal_rotation_listener()
 
         # The plugin unpacker is stateless beyond its workspace path,
         # so we build it once at boot and reuse across requests.

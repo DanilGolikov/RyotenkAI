@@ -57,7 +57,17 @@ import time
 from collections.abc import Callable
 
 
-__all__ = ["MacHeartbeat"]
+__all__ = ["EXPLICIT_HEARTBEAT_TTL_SECONDS", "HEARTBEAT_TTL_SECONDS", "MacHeartbeat"]
+
+
+# Phase 14.E (V8) — module-level aliases so callers can import the
+# constants directly without having to pull the :class:`MacHeartbeat`
+# class for a one-off value read (the pre-14.E
+# :mod:`src.runner.api.control` re-imported the class JUST to read
+# ``EXPLICIT_HEARTBEAT_TTL_SECONDS``). Class attributes still live
+# below for backwards compatibility.
+HEARTBEAT_TTL_SECONDS: float = 60.0
+EXPLICIT_HEARTBEAT_TTL_SECONDS: float = 120.0
 
 
 class MacHeartbeat:
@@ -77,13 +87,18 @@ class MacHeartbeat:
     #: Default TTL for implicit pings (WS yields, REST GETs). Picked
     #: to cover typical OS sleep-detection grace (Mac power-nap can
     #: keep TCP alive for ~30-45s) plus a margin.
-    HEARTBEAT_TTL_SECONDS: float = 60.0
+    #: Phase 14.E (V8): also re-exported at module level as
+    #: ``HEARTBEAT_TTL_SECONDS`` so external readers don't need
+    #: the class.
+    HEARTBEAT_TTL_SECONDS: float = HEARTBEAT_TTL_SECONDS
 
     #: Default TTL for **explicit** control-plane pings (Phase 11.E).
     #: Set to 2× the recommended client ping interval (30 s) so a
     #: single missed ping doesn't immediately stale the heartbeat —
     #: the orchestrator gets one full retry cycle of slack.
-    EXPLICIT_HEARTBEAT_TTL_SECONDS: float = 120.0
+    #: Phase 14.E (V8): also re-exported at module level as
+    #: ``EXPLICIT_HEARTBEAT_TTL_SECONDS``.
+    EXPLICIT_HEARTBEAT_TTL_SECONDS: float = EXPLICIT_HEARTBEAT_TTL_SECONDS
 
     def __init__(
         self,

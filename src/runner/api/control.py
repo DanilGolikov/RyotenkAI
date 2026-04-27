@@ -98,12 +98,10 @@ def post_heartbeat(
     client can use this for a sanity check; otherwise it just
     discards the response.
     """
-    # Phase 11.E — avoid re-importing the constant inside every
-    # request; reach for it via the bound heartbeat instance so the
-    # endpoint adapts transparently if a future class subclass tunes
-    # the default.
-    from src.runner.heartbeat import MacHeartbeat as _Heartbeat
-    explicit_default = _Heartbeat.EXPLICIT_HEARTBEAT_TTL_SECONDS
+    # Phase 14.E (V8) — module-level constant import (was re-importing
+    # ``MacHeartbeat`` class for a one-off value read pre-14.E).
+    from src.runner.heartbeat import EXPLICIT_HEARTBEAT_TTL_SECONDS
+    explicit_default = EXPLICIT_HEARTBEAT_TTL_SECONDS
 
     ttl = (
         body.ttl_seconds

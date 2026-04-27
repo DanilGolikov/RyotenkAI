@@ -304,6 +304,51 @@ class EventBus:
             return None
         return self._buffer[0].offset
 
+    def attach_journal_rotation_listener(self) -> None:
+        """Phase 14.E (V1) — register self as the journal's rotation
+        observer.
+
+        Replaces the pre-14.E circular-binding-closure pattern
+        (``rotate_publisher = {"bus": None}`` mutable cell) in the
+        FastAPI lifespan. Called AFTER both the bus and journal
+        exist; safe no-op if no journal is attached.
+
+        Internally wires :meth:`_publish_rotation_event` as the
+        journal's ``on_rotate`` callback so every rotation
+        produces an :data:`EVENTS_ROTATED` event on the bus.
+        """
+        if self._journal is None:
+            return
+        self._journal.set_rotation_callback(self._publish_rotation_event)
+
+    def _publish_rotation_event(
+        self, *, from_seq: int, to_seq: int,
+        file_size_bytes: int, oldest_remaining_seq: int | None,
+    ) -> None:
+        """Internal — invoked by the journal on rotation.
+
+        Phase 14.E (V1). Failure-tolerant: if the bus is in any
+        state where publish fails, swallow so the journal's
+        rotation pipeline isn't blocked.
+        """
+        # Lazy import — :data:`EVENTS_ROTATED` lives in
+        # cancellation_telemetry, which already imports the bus
+        # module for the disk-pressure event kind. Avoid the
+        # module-load cycle.
+        try:
+            from src.runner.cancellation_telemetry import EVENTS_ROTATED
+            self.publish(
+                EVENTS_ROTATED,
+                {
+                    "from_seq": from_seq,
+                    "to_seq": to_seq,
+                    "file_size_bytes": file_size_bytes,
+                    "oldest_remaining_seq": oldest_remaining_seq,
+                },
+            )
+        except Exception:  # noqa: BLE001 — defensive
+            pass
+
     def publish(
         self, kind: str, payload: Mapping[str, Any], *, timestamp: str | None = None,
     ) -> Event:

@@ -134,6 +134,35 @@ class JournalRecord:
     payload: dict[str, Any]
 
 
+# -- Configuration validation (Phase 14.E V6) ---------------------------------
+
+
+def validate_journal_config(
+    *,
+    file_size_cap: int,
+    max_files: int,
+    fsync_batch: int,
+    fsync_interval_ms: int,
+) -> None:
+    """Phase 14.E (V6) — pure-function parameter validation.
+
+    Extracted from :class:`EventJournal.__init__` so callers can
+    fail-fast on bad config at bootstrap time without paying for
+    filesystem state initialization. Raises :class:`ValueError`
+    with a descriptive message — same exceptions the constructor
+    used to throw, so existing callers' error handling is
+    unchanged.
+    """
+    if file_size_cap <= 0:
+        raise ValueError("file_size_cap must be positive")
+    if max_files < 1:
+        raise ValueError("max_files must be >= 1")
+    if fsync_batch < 1:
+        raise ValueError("fsync_batch must be >= 1")
+    if fsync_interval_ms < 0:
+        raise ValueError("fsync_interval_ms must be >= 0")
+
+
 # -- Journal -----------------------------------------------------------------
 
 
@@ -169,19 +198,23 @@ class EventJournal:
             on_rotate: Phase 12.C — optional callback fired after each
                        rotation. Signature
                        ``(from_seq, to_seq, file_size_bytes, oldest_remaining_seq) -> None``.
-                       Caller (lifespan wiring) typically forwards
-                       this to ``bus.publish("events_rotated", ...)``.
+                       Phase 14.E added :meth:`set_rotation_callback`
+                       as a post-construction binding alternative —
+                       the lifespan now uses that to avoid the
+                       circular-binding-closure pattern. ``on_rotate``
+                       remains supported for direct test wiring.
                        Failure-tolerant: exceptions in the callback
                        are swallowed (don't block journal progress).
         """
-        if file_size_cap <= 0:
-            raise ValueError("file_size_cap must be positive")
-        if max_files < 1:
-            raise ValueError("max_files must be >= 1")
-        if fsync_batch < 1:
-            raise ValueError("fsync_batch must be >= 1")
-        if fsync_interval_ms < 0:
-            raise ValueError("fsync_interval_ms must be >= 0")
+        # Phase 14.E (V6) — extracted parameter validation. Pure
+        # function, no filesystem touch; callable from bootstrap
+        # to fail-fast on bad config without paying for state init.
+        validate_journal_config(
+            file_size_cap=file_size_cap,
+            max_files=max_files,
+            fsync_batch=fsync_batch,
+            fsync_interval_ms=fsync_interval_ms,
+        )
 
         self._root_dir = Path(root_dir)
         self._file_size_cap = file_size_cap
@@ -199,6 +232,20 @@ class EventJournal:
         self._closed: bool = False
 
         self._initialize()
+
+    def set_rotation_callback(self, callback: Any) -> None:
+        """Phase 14.E (V1) — post-construction binding.
+
+        The lifespan uses this to register :class:`EventBus` as the
+        rotation observer AFTER both objects exist, avoiding the
+        pre-14.E circular-binding-closure pattern (mutable dict cell
+        carrying a future ``bus.publish`` reference). The bus's
+        :meth:`attach_journal_rotation_listener` calls this method.
+
+        Idempotent — calling twice replaces the previous callback.
+        Pass ``None`` to detach.
+        """
+        self._on_rotate = callback
 
     # ------------------------------------------------------------------
     # Construction-time directory walk

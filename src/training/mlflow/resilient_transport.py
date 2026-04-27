@@ -85,6 +85,17 @@ _TRANSPORT_MESSAGE_MARKERS = (
 
 
 def _optional_exception_types() -> tuple[type[BaseException], ...]:
+    """Phase 14.E (V5): kept for backwards compatibility — the
+    bootstrap layer (:mod:`src.training.mlflow._classifier_bootstrap`)
+    now wraps this in an :class:`ExceptionClassifier` for proper
+    abstraction. This function still works for direct callers.
+
+    Module-level optional library imports — pulls ``requests`` /
+    ``urllib3`` exception types when those libraries are available
+    in the import path. Slim CI venvs without them get only the
+    builtin transport-shaped types (which is enough for the unit
+    tests that don't exercise the full retry path).
+    """
     types: list[type[BaseException]] = [
         ssl.SSLError,
         TimeoutError,
@@ -125,6 +136,61 @@ def _optional_exception_types() -> tuple[type[BaseException], ...]:
 
 
 _TRANSPORT_EXCEPTION_TYPES = _optional_exception_types()
+
+
+# Phase 14.E (V5) — :class:`ExceptionClassifier` Protocol seam.
+# Pre-14.E this module had module-level optional imports of
+# ``requests`` / ``urllib3`` to enumerate retryable exception types.
+# After 14.E the transport accepts a caller-injected classifier so
+# library knowledge can live in a separate bootstrap layer
+# (:mod:`src.training.mlflow._classifier_bootstrap`). The
+# default classifier uses :func:`_optional_exception_types` for
+# backwards compatibility — existing trainer init paths see
+# identical retry coverage.
+
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class ExceptionClassifier(Protocol):
+    """Decide whether an exception is a transient transport failure.
+
+    Phase 14.E (V5): replaces module-level ``isinstance(exc,
+    _TRANSPORT_EXCEPTION_TYPES)`` checks in the retry loop with
+    a swappable abstraction. Tests inject a fake classifier;
+    production wires :func:`make_default_classifier_for_mlflow`
+    from the bootstrap module.
+    """
+
+    def is_retryable(self, exc: BaseException) -> bool: ...
+
+
+class _DefaultClassifier:
+    """Default :class:`ExceptionClassifier` — reuses the legacy
+    :func:`_optional_exception_types` set.
+
+    Phase 14.E (V5): the bootstrap layer can override by passing
+    a custom classifier when constructing
+    :class:`ResilientMLflowTransport`. Default preserves pre-14.E
+    behaviour bit-for-bit.
+    """
+
+    _BUILTIN_TRANSPORT_TYPES = (
+        ssl.SSLError, TimeoutError, socket.timeout, socket.gaierror,
+        ConnectionError, ConnectionResetError, BrokenPipeError,
+    )
+
+    def __init__(
+        self,
+        types: tuple[type[BaseException], ...] | None = None,
+    ) -> None:
+        # Default to the full set (including optional requests +
+        # urllib3 if they're importable). Tests / bootstrap can
+        # narrow by passing only the built-in transport types.
+        self._types = types or _TRANSPORT_EXCEPTION_TYPES
+
+    def is_retryable(self, exc: BaseException) -> bool:
+        return isinstance(exc, self._types)
 
 
 class MLflowTransportCircuitBreaker:
@@ -177,6 +243,7 @@ class ResilientMLflowTransport:
         failure_threshold: int = _FAILURE_THRESHOLD,
         recovery_cooldown_s: float = _RECOVERY_COOLDOWN_S,
         warning_interval_s: float = _WARNING_INTERVAL_S,
+        classifier: ExceptionClassifier | None = None,
     ) -> None:
         self._breaker = MLflowTransportCircuitBreaker(
             failure_threshold=failure_threshold,
@@ -187,6 +254,10 @@ class ResilientMLflowTransport:
         self._module: Any = None
         self._originals: dict[tuple[str, str], Any] = {}
         self._buffer: Any | None = None  # Optional MetricsBuffer
+        # Phase 14.E (V5) — caller-injected exception classification.
+        # Default preserves pre-14.E behaviour (full
+        # :func:`_optional_exception_types` set).
+        self._classifier: ExceptionClassifier = classifier or _DefaultClassifier()
 
     def attach_buffer(self, buffer: Any) -> None:
         """Attach a MetricsBuffer for offline metric storage."""
@@ -454,7 +525,9 @@ class ResilientMLflowTransport:
         seen: set[int] = set()
         while current is not None and id(current) not in seen:
             seen.add(id(current))
-            if isinstance(current, _TRANSPORT_EXCEPTION_TYPES):
+            # Phase 14.E (V5) — classifier-driven check (was direct
+            # ``isinstance(current, _TRANSPORT_EXCEPTION_TYPES)``).
+            if self._classifier.is_retryable(current):
                 return True
 
             message = str(current)
@@ -467,6 +540,7 @@ class ResilientMLflowTransport:
 
 
 __all__ = [
+    "ExceptionClassifier",
     "MLflowTransportCircuitBreaker",
     "ResilientMLflowTransport",
 ]
