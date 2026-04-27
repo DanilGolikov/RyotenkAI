@@ -11,6 +11,13 @@ if [ -z "${ARTIFACTS_DESTINATION:-}" ]; then
     exit 1
 fi
 
+# Apply any pending schema migrations before starting the server.
+# Idempotent: no-op when the schema is already current. Required when the
+# server image is bumped across versions that introduced new schema
+# revisions (e.g. 3.8.x -> 3.11.x).
+echo "Running mlflow db upgrade..."
+mlflow db upgrade "${BACKEND_STORE_URI}"
+
 set -- \
     mlflow server \
     --host 0.0.0.0 \

@@ -1,8 +1,11 @@
 # MLflow Server with PostgreSQL Support
 # Based on official MLflow image + psycopg2
-# Updated to MLflow 3.8.1 (2025-01-01)
+# Updated to MLflow 3.11.1 (2026-04-28) — resolves server-client drift, picks up
+# 3.9-3.10 server-side stabilization fixes (TCP keepalive, log_batch dedupe,
+# SQLAlchemy connection pool leak, optimistic pagination, artifact path
+# traversal patch). 3.11.1 adds transformers 5.x autolog support.
 
-FROM ghcr.io/mlflow/mlflow:v3.8.1
+FROM ghcr.io/mlflow/mlflow:v3.11.1
 
 # Install PostgreSQL adapter + boto3 for S3/MinIO
 RUN pip install --no-cache-dir \
