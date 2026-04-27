@@ -492,6 +492,14 @@ class TrainingMonitor(PipelineStage):
                 "status": "completed",
                 "duration_seconds": duration,
                 "duration_human": str(timedelta(seconds=int(duration))),
+                # Phase 11.C-2 — hint for stage_execution_loop's
+                # _capture_pod_status_if_present. Maps to PodTerminator's
+                # default Phase 11.B outcome on natural completion:
+                # podStop ⇒ ``"stopped"``. ``PodAvailabilityProbe`` is
+                # the live source of truth; this just speeds up CLI /
+                # Web UI hints by avoiding a RunPod GraphQL query for
+                # the common case.
+                "pod_terminal_state": "stopped",
             })
 
         if cancelled:

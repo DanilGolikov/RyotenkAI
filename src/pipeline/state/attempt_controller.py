@@ -442,6 +442,84 @@ class AttemptController:
             self._active_attempt.pipeline_attempt_mlflow_run_id = attempt_run_id
         self._persist()
 
+    def set_pod_metadata(
+        self,
+        *,
+        pod_id: str,
+        provider: str,
+        created_at: str | None = None,
+        last_known_status: str | None = None,
+    ) -> None:
+        """Phase 11.C-2 — record pod identity on the active attempt.
+
+        Called from :class:`GPUDeployer` after the provider returns a
+        connected pod, so that:
+
+        * ``ryotenkai run resume`` knows which pod_id to probe (Phase
+          11.C-1 ``PodAvailabilityProbe``).
+        * ``ryotenkai runs ls`` can show a "(stopped)" hint when the
+          pod was stopped by Phase 11.B's natural-completion path.
+        * MLflow reconciliation (Phase 9.C / 11.A) has provider
+          context for forensics.
+
+        Auto-persists. Idempotent: re-calling with the same pod_id
+        is a no-op (overwrite is fine — the pod metadata for an
+        attempt is immutable once set).
+
+        Args:
+            pod_id: Provider-side identifier (e.g. RunPod pod_id).
+                Empty string is rejected.
+            provider: ``"runpod"`` / ``"single_node"`` / etc.
+            created_at: ISO 8601 timestamp; defaults to ``utc_now_iso()``
+                when not provided.
+            last_known_status: Optional initial status (typically
+                ``"running"`` right after provisioning). Updated later
+                via :meth:`update_pod_status` when the pod transitions
+                (Phase 11.B podStop / podTerminate events).
+        """
+        if not pod_id:
+            return
+        if self._active_attempt is None:
+            return
+        from src.pipeline.state.models import PodMetadata, utc_now_iso
+
+        self._active_attempt.pod_metadata = PodMetadata(
+            pod_id=pod_id,
+            provider=provider,
+            created_at=created_at or utc_now_iso(),
+            last_known_status=last_known_status,
+        )
+        self._persist()
+
+    def update_pod_status(self, *, last_known_status: str) -> None:
+        """Phase 11.C-2 — refresh ``pod_metadata.last_known_status``.
+
+        Called when the pod transitions (Phase 11.B podStop ⇒
+        ``"stopped"``; podTerminate ⇒ ``"terminated"``;
+        Phase 11.C-1 podResume ⇒ ``"running"``).
+
+        Best-effort: silent when no active attempt or no metadata
+        recorded — legacy attempts (no pod_metadata) won't synthesise
+        one out of thin air, they get upgraded only via the
+        explicit :meth:`set_pod_metadata` call from GPUDeployer.
+
+        Auto-persists.
+        """
+        if self._active_attempt is None:
+            return
+        meta = self._active_attempt.pod_metadata
+        if meta is None:
+            return
+        from src.pipeline.state.models import PodMetadata
+
+        self._active_attempt.pod_metadata = PodMetadata(
+            pod_id=meta.pod_id,
+            provider=meta.provider,
+            created_at=meta.created_at,
+            last_known_status=last_known_status,
+        )
+        self._persist()
+
     # ------------------------------------------------------------------
     # Read-only accessors
     # ------------------------------------------------------------------

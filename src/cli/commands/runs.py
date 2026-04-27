@@ -66,6 +66,9 @@ def ls_cmd(
                 "completed_at": row.completed_at,
                 "duration_s": duration_seconds(row.started_at, row.completed_at),
                 "config_name": row.config_name,
+                # Phase 11.C-2 — operator can grep on pod_status for
+                # "(stopped)" runs that need a Resume action.
+                "pod_status": row.pod_status,
             }
             for row in rows
         ])
@@ -74,15 +77,34 @@ def ls_cmd(
     else:
         renderer.heading(f"Runs in {runs_dir}/")
         renderer.text("")
+
+        def _status_with_pod_hint(row: Any) -> str:
+            """Phase 11.C-2 — show ``"(stopped)"`` next to terminal status
+            when the pod was stopped (Phase 11.B podStop outcome) and is
+            still resumable. Renders nothing for ``"running"`` /
+            ``"terminated"`` / legacy attempts so the column stays clean.
+            """
+            if row.pod_status == "stopped":
+                return f"{row.status} (stopped)"
+            return row.status
+
         renderer.table(
             headers=["Run ID", "Status", "Att", "Duration", "Config"],
             rows=[
-                (row.run_id, row.status, row.attempts,
+                (row.run_id, _status_with_pod_hint(row), row.attempts,
                  format_duration(row.started_at, row.completed_at) or "-",
                  row.config_name)
                 for row in rows
             ],
         )
+        # Footer hint: if any run is stopped, surface the Resume affordance.
+        if any(r.pod_status == "stopped" for r in rows):
+            renderer.text("")
+            renderer.text(
+                "Tip: runs marked '(stopped)' have a sleeping pod with "
+                "preserved /workspace. Use 'ryotenkai run resume <run-id>' "
+                "to wake the pod and continue.",
+            )
     renderer.flush()
 
 

@@ -240,6 +240,17 @@ class StageExecutionLoop:
                     if stage_result is not None:
                         context.update(stage_result)
 
+                    # Phase 11.C-2 — capture pod identity for resume.
+                    # Runs unconditionally (no-op when context lacks
+                    # ``resource_id`` / ``provider_name`` — e.g. mock
+                    # provider runs and stages other than GPUDeployer).
+                    self._capture_pod_metadata_if_present(context)
+                    # Phase 11.C-2 — propagate pod terminal state hint
+                    # from TrainingMonitor (when present) so CLI / UI
+                    # show the right "stopped" badge without a probe
+                    # round-trip.
+                    self._capture_pod_status_if_present(context)
+
                     # Orchestrator-level hook (e.g. early GPU release after
                     # MODEL_RETRIEVER). Runs BEFORE the success handler so
                     # any side effect it has is visible in logs/collectors.
@@ -551,6 +562,68 @@ class StageExecutionLoop:
         self._attempt_controller.record_stage_log_paths(
             stage_name=stage_name, log_paths=log_paths
         )
+
+    def _capture_pod_status_if_present(self, context: dict[str, Any]) -> None:
+        """Phase 11.C-2 — propagate ``pod_terminal_state`` to attempt.
+
+        :class:`TrainingMonitor` writes ``"stopped"`` into the context
+        when the trainer exited cleanly (Phase 11.B's natural-completion
+        path runs ``podStop``). Stages that don't deal with the pod
+        leave the key absent ⇒ no-op.
+
+        ``PodAvailabilityProbe`` is the live source of truth on resume
+        — this stored hint just lets ``ryotenkai runs ls`` show the
+        right badge without a RunPod GraphQL round-trip.
+        """
+        new_status = context.get("pod_terminal_state")
+        if not isinstance(new_status, str) or not new_status:
+            return
+        try:
+            self._attempt_controller.update_pod_status(
+                last_known_status=new_status,
+            )
+        except Exception:  # noqa: BLE001 — defensive
+            pass
+
+    def _capture_pod_metadata_if_present(self, context: dict[str, Any]) -> None:
+        """Phase 11.C-2 — persist pod identity to the active attempt.
+
+        Reads the GPUDeployer's contributions to ``context`` (``resource_id``
+        + ``provider_name``) and forwards them to
+        :meth:`AttemptController.set_pod_metadata`. The attempt's
+        ``pod_metadata`` field becomes available to ``ryotenkai run resume``
+        on Mac wake (see ``PodAvailabilityProbe`` in
+        ``src/pipeline/launch/pod_availability.py``).
+
+        Best-effort by design:
+
+        * No ``resource_id`` in context → silent skip. Stages other than
+          ``GPUDeployer`` don't put one there; mock-provider runs also
+          don't.
+        * ``set_pod_metadata`` errors don't propagate — the pipeline
+          continues even if state persistence has a hiccup. The
+          attempt loses the resume hint, but training proceeds.
+
+        Idempotent: subsequent calls with the same pod_id overwrite
+        identical data; calling on a non-GPUDeployer stage is a no-op.
+        """
+        resource_id = context.get("resource_id")
+        provider_name = context.get("provider_name")
+        if not isinstance(resource_id, str) or not resource_id:
+            return
+        if not isinstance(provider_name, str) or not provider_name:
+            return
+        try:
+            self._attempt_controller.set_pod_metadata(
+                pod_id=resource_id,
+                provider=provider_name,
+                last_known_status="running",
+            )
+        except Exception:  # noqa: BLE001 — defensive
+            # Persistence failure must not break the pipeline. Operator
+            # forensics still see provider events; the resume hint is
+            # the only thing lost.
+            pass
 
 
 __all__ = ["StageExecutionLoop"]

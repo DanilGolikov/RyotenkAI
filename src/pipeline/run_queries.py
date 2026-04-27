@@ -32,6 +32,15 @@ class RunSummaryRow:
     completed_at: str | None
     error: str | None = None
     group: str = ROOT_GROUP
+    #: Phase 11.C-2 — last_known_status from the latest attempt's
+    #: ``pod_metadata``. Populated by the pipeline's
+    #: ``_capture_pod_status_if_present`` hook on terminal stages.
+    #: ``"running"`` while training, ``"stopped"`` after Phase 11.B
+    #: ``podStop`` (resume possible), ``"terminated"`` after
+    #: ``podTerminate``. ``None`` for legacy attempts without
+    #: pod_metadata. CLI / Web UI use this to render a
+    #: ``"completed (stopped)"`` hint and surface the Resume affordance.
+    pod_status: str | None = None
 
     def __getitem__(self, key: str) -> Any:
         return self._aliases()[key]
@@ -54,6 +63,7 @@ class RunSummaryRow:
             "completed_at": self.completed_at,
             "error": self.error,
             "group": self.group,
+            "pod_status": self.pod_status,
         }
 
 
@@ -143,6 +153,14 @@ def build_run_summary_row(entry: Path, *, group: str = ROOT_GROUP) -> RunSummary
 
     first_start = state.attempts[0].started_at if state.attempts else None
     last_end = state.attempts[-1].completed_at if state.attempts else None
+    # Phase 11.C-2 — surface the last-known pod status from the most
+    # recent attempt. ``None`` ⇒ legacy attempt without pod_metadata
+    # (CLI / Web UI render no pod hint).
+    pod_status: str | None = None
+    if state.attempts:
+        latest_meta = state.attempts[-1].pod_metadata
+        if latest_meta is not None:
+            pod_status = latest_meta.last_known_status
     return RunSummaryRow(
         run_id=entry.name,
         run_dir=entry,
@@ -156,6 +174,7 @@ def build_run_summary_row(entry: Path, *, group: str = ROOT_GROUP) -> RunSummary
         completed_at=last_end,
         error=None,
         group=group,
+        pod_status=pod_status,
     )
 
 
