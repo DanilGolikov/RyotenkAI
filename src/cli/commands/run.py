@@ -147,13 +147,193 @@ def resume_cmd(
             dir_okay=False, resolve_path=True,
         ),
     ] = None,
+    skip_pod_probe: Annotated[
+        bool,
+        typer.Option(
+            "--skip-pod-probe",
+            help=(
+                "Skip the pre-flight pod availability check (Phase 11.C-2). "
+                "Use when the pod was created outside RyotenkAI or when the "
+                "probe is misbehaving — pipeline will fall back to its own "
+                "SSH connect step to surface real status."
+            ),
+        ),
+    ] = False,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Resume an interrupted run from its first failed / pending stage."""
+    """Resume an interrupted run from its first failed / pending stage.
+
+    Phase 11.C-2: when the run's latest attempt has a recorded
+    ``pod_metadata`` (Phase 11.C-1 schema), this command first
+    probes the pod's availability via :class:`PodAvailabilityProbe`
+    and, if it's sleeping (Phase 11.B ``podStop`` outcome), wakes it
+    via :func:`resume_pod_with_retry` BEFORE re-spawning the
+    pipeline. Without this pre-flight, the pipeline's own SSH
+    connect step would surface the sleeping pod as an unreachable
+    error.
+
+    Use ``--skip-pod-probe`` to bypass — useful for legacy runs
+    (no pod_metadata) or for runs created outside the standard
+    GPUDeployer flow.
+    """
+    if not skip_pod_probe and not dry_run:
+        _resume_pod_if_needed(run_dir)
+
     resolved = _resolve_config(config, run_dir)
     _exec_orchestrator(
         resolved, run_dir=run_dir, resume=True,
         restart_from_stage=None, dry_run=dry_run,
+    )
+
+
+def _resume_pod_if_needed(run_dir: Path) -> None:
+    """Phase 11.C-2 — pre-flight: wake pod if sleeping; surface clear errors.
+
+    Reads pod_metadata from the run directory; probes RunPod via
+    :class:`PodAvailabilityProbe`; if sleeping, calls
+    :func:`resume_pod_with_retry` and waits for the pod to be
+    reachable.
+
+    Failure modes (all surface as ``die`` with operator-friendly hints):
+
+    * ``GONE`` — pod terminated; pipeline can't continue from
+      checkpoint without a fresh pod. Hint at ``run restart``.
+    * ``SLEEPING_RESUME_FAILED`` — capacity exhausted; show actionable
+      error.
+    * ``PROBE_FAILED`` — RunPod GraphQL outage; suggest retry or
+      ``--skip-pod-probe``.
+
+    No-op when:
+
+    * Run has no pod_metadata (legacy / mock runs) — pipeline's own
+      connect step will surface real errors.
+    * Pod is already RUNNING — nothing to wake.
+    """
+    import asyncio
+
+    from src.pipeline.launch.pod_availability import (
+        PodAvailability,
+        PodAvailabilityProbe,
+        load_pod_metadata_for_run,
+        resume_pod_with_retry,
+    )
+
+    metadata = load_pod_metadata_for_run(run_dir)
+    if metadata is None:
+        # Legacy attempt or no pod recorded — let the pipeline's
+        # connect step surface real errors. Same UX as Phase 11.A
+        # behaviour.
+        return
+
+    typer.echo(f"Probing pod {metadata.pod_id} ({metadata.provider})...")
+
+    if metadata.provider != "runpod":
+        # Phase 11.C-2 only wires RunPod resume. single_node /
+        # other providers fall through to the pipeline's connect
+        # step.
+        return
+
+    # Resolve a query_pod transport for the probe. Lazy import the
+    # SDK adapter so CLI startup stays fast for non-resume paths.
+    import os
+
+    api_key = os.environ.get("RUNPOD_API_KEY")
+    if not api_key:
+        typer.echo(
+            "  (skipping pod probe: RUNPOD_API_KEY not in env)",
+        )
+        return
+    try:
+        from src.providers.runpod.training.api_client import RunPodAPIClient
+        client = RunPodAPIClient(api_key=api_key)
+    except Exception as exc:  # noqa: BLE001 — best-effort probe
+        typer.echo(f"  (skipping pod probe: {exc})")
+        return
+
+    def _query_pod(pod_id: str) -> dict:
+        result = client.query_pod(pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()
+            raise RuntimeError(err.message)
+        return result.unwrap()
+
+    probe = PodAvailabilityProbe(query_pod=_query_pod)
+    verdict = probe.probe(metadata)
+
+    typer.echo(f"  Pod status: {verdict.availability.value}")
+    if verdict.message:
+        typer.echo(f"  {verdict.message}")
+
+    if verdict.availability == PodAvailability.RUNNING:
+        return
+
+    if verdict.availability == PodAvailability.GONE:
+        raise die(
+            "Pod has been terminated; cannot resume in-place.",
+            hint=(
+                f"use 'ryotenkai run restart {run_dir} --from-stage <stage>' "
+                "to recreate from a checkpoint"
+            ),
+        )
+
+    if verdict.availability == PodAvailability.PROBE_FAILED:
+        raise die(
+            f"Pod probe failed: {verdict.message}",
+            hint=(
+                "RunPod may be experiencing an outage. Retry in a few "
+                "minutes, or pass --skip-pod-probe to let the pipeline "
+                "discover the real state via SSH"
+            ),
+        )
+
+    if verdict.availability == PodAvailability.SLEEPING_RESUMABLE:
+        # Wake it.
+        from src.providers.runpod.sdk_adapter import is_capacity_error_message
+
+        async def _resume_call(pod_id: str) -> bool:
+            result = client.resume_pod(pod_id)
+            if result.is_failure():
+                err = result.unwrap_err()
+                raise RuntimeError(err.message)
+            return True
+
+        typer.echo(
+            f"  Resuming pod (capacity-aware retry, ≤5min budget)...",
+        )
+        outcome = asyncio.run(
+            resume_pod_with_retry(
+                metadata.pod_id,
+                resume_call=_resume_call,
+                is_capacity_error=is_capacity_error_message,
+            ),
+        )
+
+        if not outcome.ok:
+            if outcome.capacity_exhausted:
+                raise die(
+                    f"Pod resume capacity unavailable: {outcome.error_message}",
+                    hint=(
+                        "RunPod has no GPU available right now in the "
+                        "pod's datacenter. Retry later, or use "
+                        "'ryotenkai run restart' to recreate from a "
+                        "checkpoint in a different region"
+                    ),
+                )
+            raise die(
+                f"Pod resume failed: {outcome.error_message}",
+                hint="check RunPod console; pass --skip-pod-probe to bypass",
+            )
+
+        typer.echo(
+            f"  Pod resumed in {outcome.elapsed_seconds:.1f}s "
+            f"({outcome.attempts} attempt(s))",
+        )
+        return
+
+    # Defensive: any other state → bail with a clear error.
+    raise die(
+        f"Unexpected pod availability: {verdict.availability.value}",
+        hint="pass --skip-pod-probe to bypass and let the pipeline retry",
     )
 
 

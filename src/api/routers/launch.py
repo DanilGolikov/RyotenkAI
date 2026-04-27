@@ -53,3 +53,33 @@ async def launch(
 @router.post("/interrupt", response_model=InterruptResponse)
 def interrupt(run_dir: Path = Depends(resolve_run_dir)) -> InterruptResponse:
     return launch_service.interrupt(run_dir)
+
+
+@router.post("/resume-pod", status_code=200)
+async def resume_pod(
+    run_dir: Path = Depends(resolve_run_dir),
+) -> dict[str, str | bool]:
+    """Phase 11.C-2 — wake a sleeping pod for the given run.
+
+    Web UI's "Resume" button calls this BEFORE re-launching the
+    pipeline. Idempotent — pod already RUNNING returns success
+    without any GraphQL round-trip on the wake side.
+
+    Response shape:
+
+    * ``availability`` — final :class:`PodAvailability` enum value.
+    * ``ok`` — true iff the pod is in ``RUNNING`` state after this
+      call (either was already running, or wake succeeded).
+    * ``message`` — human-readable detail for UI display.
+
+    Status codes:
+
+    * ``200`` — service ran cleanly. Inspect ``ok`` field for the
+      verdict; failure modes (capacity exhausted, GONE pod) come
+      back with ``200 ok=false`` so the UI can render a meaningful
+      error rather than a generic 5xx.
+    """
+    response = await run_in_threadpool(
+        launch_service.resume_pod_for_run, run_dir,
+    )
+    return response.to_dict()

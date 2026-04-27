@@ -109,10 +109,189 @@ class LaunchAlreadyRunningError(RuntimeError):
         self.pid = pid
 
 
+# ---------------------------------------------------------------------------
+# Phase 11.C-2 — pod resume service
+# ---------------------------------------------------------------------------
+
+
+class ResumePodResponse:
+    """Result of a ``resume_pod`` API call.
+
+    Plain class rather than a Pydantic schema for now — the surface
+    is small (3 fields) and used by exactly one router. If a second
+    consumer arrives, lift to ``src.api.schemas.launch`` like the
+    other responses.
+    """
+
+    __slots__ = ("availability", "ok", "message")
+
+    def __init__(
+        self, *, availability: str, ok: bool, message: str,
+    ) -> None:
+        self.availability = availability
+        self.ok = ok
+        self.message = message
+
+    def to_dict(self) -> dict[str, str | bool]:
+        return {
+            "availability": self.availability,
+            "ok": self.ok,
+            "message": self.message,
+        }
+
+
+def resume_pod_for_run(run_dir: Path) -> ResumePodResponse:
+    """Phase 11.C-2 — wake the run's pod if it's sleeping.
+
+    Used by:
+
+    * ``ryotenkai run resume`` (CLI) — invoked indirectly via
+      ``_resume_pod_if_needed`` helper that has its own progress
+      output. CLI calls the underlying probe + retry directly so
+      it can stream progress to stdout.
+    * ``POST /api/v1/runs/{run_id}/resume-pod`` (Web UI) — invokes
+      this service and returns the response shape.
+
+    Behaviour:
+
+    * No pod_metadata → ``RUNNING`` (legacy attempt — let the
+      pipeline's connect step surface real errors).
+    * Pod ``RUNNING`` → no-op success.
+    * Pod ``SLEEPING_RESUMABLE`` → wake via ``resume_pod_with_retry``
+      with the standard 5-min capacity-aware budget.
+    * Pod ``GONE`` / ``SLEEPING_RESUME_FAILED`` / ``PROBE_FAILED``
+      → return non-ok with operator-friendly message.
+
+    Synchronous facade — the underlying retry runs in
+    ``asyncio.run``. The router wraps the call in
+    :func:`run_in_threadpool` so FastAPI's event loop stays free.
+    """
+    import asyncio
+    import os
+
+    from src.pipeline.launch.pod_availability import (
+        PodAvailability,
+        PodAvailabilityProbe,
+        load_pod_metadata_for_run,
+        resume_pod_with_retry,
+    )
+
+    metadata = load_pod_metadata_for_run(run_dir)
+    if metadata is None:
+        return ResumePodResponse(
+            availability=PodAvailability.RUNNING.value,
+            ok=True,
+            message=(
+                "No pod metadata recorded for this run (legacy attempt). "
+                "Continue with normal resume flow."
+            ),
+        )
+
+    if metadata.provider != "runpod":
+        return ResumePodResponse(
+            availability=PodAvailability.RUNNING.value,
+            ok=True,
+            message=(
+                f"Provider {metadata.provider!r} doesn't have an in-pod "
+                "resume mechanism; continue with normal flow."
+            ),
+        )
+
+    api_key = os.environ.get("RUNPOD_API_KEY")
+    if not api_key:
+        return ResumePodResponse(
+            availability=PodAvailability.PROBE_FAILED.value,
+            ok=False,
+            message="RUNPOD_API_KEY not in environment",
+        )
+
+    from src.providers.runpod.training.api_client import RunPodAPIClient
+
+    client = RunPodAPIClient(api_key=api_key)
+
+    def _query_pod(pod_id: str) -> dict:
+        result = client.query_pod(pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()
+            raise RuntimeError(err.message)
+        return result.unwrap()
+
+    probe = PodAvailabilityProbe(query_pod=_query_pod)
+    verdict = probe.probe(metadata)
+
+    if verdict.availability == PodAvailability.RUNNING:
+        return ResumePodResponse(
+            availability=verdict.availability.value,
+            ok=True,
+            message=verdict.message or "Pod is already running",
+        )
+
+    if verdict.availability == PodAvailability.GONE:
+        return ResumePodResponse(
+            availability=verdict.availability.value,
+            ok=False,
+            message=verdict.message,
+        )
+
+    if verdict.availability == PodAvailability.PROBE_FAILED:
+        return ResumePodResponse(
+            availability=verdict.availability.value,
+            ok=False,
+            message=verdict.message,
+        )
+
+    if verdict.availability != PodAvailability.SLEEPING_RESUMABLE:
+        return ResumePodResponse(
+            availability=verdict.availability.value,
+            ok=False,
+            message=f"Unexpected pod state: {verdict.availability.value}",
+        )
+
+    # Wake.
+    from src.providers.runpod.sdk_adapter import is_capacity_error_message
+
+    async def _resume_call(pod_id: str) -> bool:
+        result = client.resume_pod(pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()
+            raise RuntimeError(err.message)
+        return True
+
+    outcome = asyncio.run(
+        resume_pod_with_retry(
+            metadata.pod_id,
+            resume_call=_resume_call,
+            is_capacity_error=is_capacity_error_message,
+        ),
+    )
+
+    if outcome.ok:
+        return ResumePodResponse(
+            availability=PodAvailability.RUNNING.value,
+            ok=True,
+            message=(
+                f"Pod resumed in {outcome.elapsed_seconds:.1f}s "
+                f"({outcome.attempts} attempt(s))"
+            ),
+        )
+
+    return ResumePodResponse(
+        availability=(
+            PodAvailability.SLEEPING_RESUME_FAILED.value
+            if outcome.capacity_exhausted
+            else PodAvailability.PROBE_FAILED.value
+        ),
+        ok=False,
+        message=outcome.error_message,
+    )
+
+
 __all__ = [
     "LaunchAlreadyRunningError",
+    "ResumePodResponse",
     "default_launch_mode",
     "interrupt",
     "launch",
     "list_restart_points",
+    "resume_pod_for_run",
 ]

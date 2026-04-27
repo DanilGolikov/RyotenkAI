@@ -23,7 +23,12 @@ _RUNPOD_SDK_CALL_FAILED = "RUNPOD_SDK_CALL_FAILED"
 _RUNPOD_SDK_VALIDATION_ERROR = "RUNPOD_SDK_VALIDATION_ERROR"
 _RUNPOD_SDK_UNEXPECTED_RESPONSE = "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
-_CAPACITY_MARKERS = (
+#: Phase 11.C-1+: substrings RunPod returns when capacity is
+#: temporarily unavailable. Used by ``create_pod_from_payload`` retry
+#: loop AND by Phase 11.C-2's ``resume_pod_with_retry`` to decide
+#: whether an error is transient (retry with backoff) vs fatal.
+#: Public symbol — Phase 11 callers import it for capacity detection.
+CAPACITY_MARKERS = (
     "no longer any instances available",
     "no instances available",
     "does not have the resources",
@@ -36,6 +41,9 @@ _CAPACITY_MARKERS = (
     "there are no instances currently available",
     "no available datacenter with requested resources",
 )
+# Backwards-compat alias for any local consumer that still grep's
+# the leading underscore. Will be removed when Phase 12 lands.
+_CAPACITY_MARKERS = CAPACITY_MARKERS
 
 _SDK_LOCK = threading.Lock()
 
@@ -50,9 +58,21 @@ def _coerce_ports(value: Any) -> str | None:
     return None
 
 
+def is_capacity_error_message(msg: str) -> bool:
+    """Phase 11.C-2 — public matcher used by ``resume_pod_with_retry``.
+
+    Pure string check against :data:`CAPACITY_MARKERS`. Callers pass
+    just the message text (not a ProviderError) so they don't need to
+    import the error class to use it.
+    """
+    lower = msg.lower()
+    return any(marker in lower for marker in CAPACITY_MARKERS)
+
+
 def _is_capacity_error(err: ProviderError) -> bool:
-    msg = err.message.lower()
-    return any(marker in msg for marker in _CAPACITY_MARKERS)
+    """Internal helper — operates on ProviderError. Kept for backwards
+    compat with ``create_pod_from_payload``'s retry loop."""
+    return is_capacity_error_message(err.message)
 
 
 class RunPodSDKClient:
