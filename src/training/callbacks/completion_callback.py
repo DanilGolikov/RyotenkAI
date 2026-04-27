@@ -45,7 +45,7 @@ Insertion order in the callback list:
   ordering vs the cancellation callback doesn't matter — the
   callbacks are mutually exclusive (cancellation owns
   ``_signalled=True``, completion owns the inverse).
-* ``[…]`` — TrainingEventsCallback / GPUMetricsCallback / SystemMetricsCallback
+* ``[…]`` — TrainingEventsCallback / SystemMetricsCallback
 * ``[end]`` — :class:`RunnerEventCallback`
 * ``[after end]`` — HF Trainer's auto-registered MLflow callback
   (always runs LAST on on_train_end so it ``end_run``'s the live
@@ -125,9 +125,9 @@ class CompletionCallback(TrainerCallback):
         shutdown_handler: object | None = None,
         mlflow_manager: object | None = None,
         flush_timeout_seconds: float | None = None,
-        event_publisher: "object | None" = None,
-        marker_writer: "object | None" = None,
-        workspace_dir: "object | None" = None,
+        event_publisher: object | None = None,
+        marker_writer: object | None = None,
+        workspace_dir: object | None = None,
     ) -> None:
         """Build a callback.
 
@@ -176,9 +176,9 @@ class CompletionCallback(TrainerCallback):
 
     def on_train_end(  # type: ignore[override]
         self,
-        args: "TrainingArguments",
-        state: "TrainerState",
-        control: "TrainerControl",
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
         **kwargs: object,
     ) -> None:
         """Flush MetricsBuffer + write completion.marker on natural end.
@@ -265,7 +265,7 @@ class CompletionCallback(TrainerCallback):
                 )
                 handler = get_shutdown_handler()
                 self._handler = handler  # cache for symmetry
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Resolution failure ⇒ assume not cancelled. Fail-safe:
                 # we'd rather double-flush than skip the natural-completion
                 # marker.
@@ -276,7 +276,7 @@ class CompletionCallback(TrainerCallback):
                 return False
         try:
             return bool(handler.should_stop())  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug(
                 "[COMPLETION] handler.should_stop() raised: %s — "
                 "assuming not cancelled", exc,
@@ -315,7 +315,7 @@ class CompletionCallback(TrainerCallback):
                     "flush_budget_seconds": float(self._flush_timeout),
                 },
             )
-        except Exception as exc:  # noqa: BLE001 — best-effort
+        except Exception as exc:
             logger.debug(
                 "[COMPLETION] failed to emit completion_finalized "
                 "event: %s", exc,
@@ -327,7 +327,7 @@ class CompletionCallback(TrainerCallback):
         run_id: str | None,
         drained: int,
         flush_timed_out: bool,
-    ) -> "object | None":
+    ) -> object | None:
         """Write ``<workspace>/completion.marker`` for Mac-side reconciliation.
 
         Best-effort: returns the resulting path on success, ``None``
@@ -350,7 +350,7 @@ class CompletionCallback(TrainerCallback):
                     "flush_timed_out": flush_timed_out,
                     "ts_ms": __import__("time").time() * 1000,
                 })
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug(
                     "[COMPLETION] injected marker_writer failed: %s",
                     exc,
@@ -366,10 +366,11 @@ class CompletionCallback(TrainerCallback):
             return None
 
         try:
-            from pathlib import Path
-            from src.utils.atomic_fs import atomic_write_text
             import json
             import time
+            from pathlib import Path
+
+            from src.utils.atomic_fs import atomic_write_text
 
             target = Path(workspace) / "completion.marker"
             reason = (
@@ -392,14 +393,14 @@ class CompletionCallback(TrainerCallback):
                 target, reason,
             )
             return target
-        except Exception as exc:  # noqa: BLE001 — best-effort
+        except Exception as exc:
             logger.warning(
                 "[COMPLETION] failed to write completion.marker: %s — "
                 "Mac-side reconciliation will skip", exc,
             )
             return None
 
-    def _resolve_workspace_dir(self) -> "object | None":
+    def _resolve_workspace_dir(self) -> object | None:
         """Resolve workspace path: explicit injection > env var > None."""
         if self._workspace_dir is not None:
             return self._workspace_dir

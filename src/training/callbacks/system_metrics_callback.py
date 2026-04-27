@@ -1,18 +1,32 @@
-"""
-System Metrics Callback for HuggingFace Trainer.
+"""System Metrics Callback for HuggingFace Trainer.
 
-Logs GPU, VRAM, CPU metrics to MLflow during training.
+Logs GPU, VRAM, CPU, RAM metrics to MLflow during training.
 
-Usage:
-    from src.training.callbacks.system_metrics_callback import SystemMetricsCallback
+Single source of truth for system metrics in this codebase. Writes
+through ``mlflow.log_metrics`` and ``mlflow.set_tags`` — both are
+monkey-patched by ``ResilientMLflowTransport`` so payloads are buffered
+to ``MetricsBuffer`` on offline windows and replayed on recovery.
 
-    callback = SystemMetricsCallback(log_every_n_steps=10)
-    trainer = SFTTrainer(..., callbacks=[callback])
+Behaviour:
+- **Per-step** (``on_step_end``): emits ``gpu/{idx}/utilization``,
+  ``gpu/{idx}/memory_used_gb``, ``gpu/{idx}/memory_percent``,
+  ``gpu/{idx}/temperature``, ``cpu/percent``, ``ram/used_gb``,
+  ``ram/percent``. Logs every step (no throttle) — at our typical
+  1-3 s/step training that's ~0.3-1 Hz of metric data, well within
+  MLflow comfort. Rank-zero only in DDP to avoid N-fold duplicates.
+- **Once** (``on_train_begin``): sets static run tags
+  ``system.gpu.count``, ``system.gpu.{i}.name``,
+  ``system.gpu.{i}.memory_total_gb``, ``system.driver.version``,
+  ``system.cpu.count``. Static info doesn't belong on time-series
+  graphs.
+
+Multi-GPU: iterates over all NVML devices, not just index 0.
 """
 
 from __future__ import annotations
 
 import contextlib
+import math
 from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
@@ -26,40 +40,34 @@ logger = get_logger(__name__)
 
 
 class SystemMetricsCallback(TrainerCallback):
-    """
-    Callback to log system metrics (GPU, VRAM, CPU) to MLflow.
+    """Logs system metrics (GPU, VRAM, CPU, RAM) to MLflow each step."""
 
-    Metrics logged:
-    - gpu/utilization: GPU utilization %
-    - gpu/memory_used_gb: VRAM used in GB
-    - gpu/memory_total_gb: Total VRAM in GB
-    - gpu/memory_percent: VRAM usage %
-    - gpu/temperature: GPU temperature °C
-    - cpu/percent: CPU utilization %
-    - ram/used_gb: RAM used in GB
-    - ram/percent: RAM usage %
-    """
-
-    def __init__(self, log_every_n_steps: int = 10):
-        """
-        Args:
-            log_every_n_steps: Log metrics every N training steps
-        """
-        self.log_every_n_steps = log_every_n_steps
+    def __init__(self) -> None:
         self._mlflow: Any | None = None
         self._pynvml: Any | None = None
-        self._gpu_handle: Any | None = None
+        self._gpu_handles: list[Any] = []
+        self._gpu_count: int = 0
         self._psutil: Any | None = None
         self._pynvml_available = False
         self._psutil_available = False
         self._setup_done = False
+        # First-failure logging guard so silent loops don't hide real
+        # issues but we don't spam at WARNING every step on chronic
+        # failures (e.g. NVML lost a device mid-training).
+        self._warned_gpu = False
+        self._warned_cpu = False
+        self._warned_log = False
+
+    # ------------------------------------------------------------------
+    # Setup / teardown
+    # ------------------------------------------------------------------
 
     def _setup(self) -> None:
-        """Lazy setup of monitoring libraries."""
+        """Lazy-init monitoring libraries on first hook invocation."""
         if self._setup_done:
             return
 
-        # Try to import MLflow
+        # MLflow
         try:
             import mlflow as mlflow_module
         except ImportError:
@@ -67,7 +75,7 @@ class SystemMetricsCallback(TrainerCallback):
             logger.warning("MLflow not available, system metrics will not be logged")
         self._mlflow = mlflow_module
 
-        # Try to import pynvml for GPU metrics
+        # NVML — multi-GPU
         try:
             import pynvml as _pynvml
         except ImportError as e:
@@ -80,13 +88,16 @@ class SystemMetricsCallback(TrainerCallback):
                 _pynvml.nvmlInit()
                 self._pynvml = _pynvml
                 self._pynvml_available = True
-                self._gpu_handle = _pynvml.nvmlDeviceGetHandleByIndex(0)
-                logger.debug("pynvml initialized for GPU metrics")
+                self._gpu_count = int(_pynvml.nvmlDeviceGetCount())
+                self._gpu_handles = [
+                    _pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._gpu_count)
+                ]
+                logger.debug(f"pynvml initialized — {self._gpu_count} GPU(s) visible")
             except (OSError, nvml_error) as e:  # type: ignore[misc]
                 logger.debug(f"pynvml not available: {e}")
                 self._pynvml_available = False
 
-        # Try to import psutil for CPU/RAM metrics
+        # psutil — CPU + RAM
         try:
             import psutil as _psutil
         except ImportError:
@@ -96,108 +107,178 @@ class SystemMetricsCallback(TrainerCallback):
         else:
             self._psutil = _psutil
             self._psutil_available = True
+            # Prime ``cpu_percent``: the first call returns ``0.0``
+            # because there's no previous reference window. Discard it
+            # here so the first real measurement in ``_get_cpu_metrics``
+            # reflects actual usage.
+            with contextlib.suppress(Exception):
+                self._psutil.cpu_percent(interval=None)
             logger.debug("psutil initialized for CPU/RAM metrics")
 
         self._setup_done = True
 
+    # ------------------------------------------------------------------
+    # Metric collection
+    # ------------------------------------------------------------------
+
     def _get_gpu_metrics(self) -> dict[str, float]:
-        """Get GPU metrics using pynvml."""
-        if not self._pynvml_available or not self._pynvml:
+        """Per-GPU metrics, keyed ``gpu/{idx}/<metric>``.
+
+        Skips keys for failed reads (no misleading 0.0 / NaN injected
+        into the payload — MLflow simply doesn't draw points for
+        absent keys).
+        """
+        if not self._pynvml_available or not self._gpu_handles:
             return {}
 
-        try:
-            # GPU utilization
-            util = self._pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle)  # type: ignore[union-attr]
+        out: dict[str, float] = {}
+        nvml_error = getattr(self._pynvml, "NVMLError", RuntimeError)
 
-            # Memory info
-            mem_info = self._pynvml.nvmlDeviceGetMemoryInfo(self._gpu_handle)  # type: ignore[union-attr]
-            mem_used_gb = float(mem_info.used) / (1024**3)
-            mem_total_gb = float(mem_info.total) / (1024**3)
-            mem_percent = (float(mem_info.used) / float(mem_info.total)) * 100
+        for idx, handle in enumerate(self._gpu_handles):
+            prefix = f"gpu/{idx}"
 
-            # Temperature
-            nvml_error = getattr(self._pynvml, "NVMLError", RuntimeError)
-            try:
-                temp_raw = self._pynvml.nvmlDeviceGetTemperature(self._gpu_handle, self._pynvml.NVML_TEMPERATURE_GPU)  # type: ignore[union-attr]
-                temp = float(temp_raw)
-            except (OSError, TypeError, ValueError, nvml_error):  # type: ignore[misc]
-                temp = 0.0
+            with contextlib.suppress(OSError, TypeError, ValueError, nvml_error):  # type: ignore[misc]
+                util = self._pynvml.nvmlDeviceGetUtilizationRates(handle)
+                out[f"{prefix}/utilization"] = float(util.gpu)
 
-            return {
-                "gpu/utilization": float(util.gpu),
-                "gpu/memory_used_gb": mem_used_gb,
-                "gpu/memory_total_gb": mem_total_gb,
-                "gpu/memory_percent": mem_percent,
-                "gpu/temperature": temp,
-            }
-        except Exception as e:
-            logger.debug(f"Failed to get GPU metrics: {e}")
-            return {}
+            with contextlib.suppress(OSError, TypeError, ValueError, nvml_error):  # type: ignore[misc]
+                mem = self._pynvml.nvmlDeviceGetMemoryInfo(handle)
+                used_gb = float(mem.used) / (1024**3)
+                total_gb = float(mem.total) / (1024**3)
+                out[f"{prefix}/memory_used_gb"] = used_gb
+                out[f"{prefix}/memory_total_gb"] = total_gb
+                if total_gb > 0:
+                    out[f"{prefix}/memory_percent"] = (used_gb / total_gb) * 100
+
+            with contextlib.suppress(OSError, TypeError, ValueError, nvml_error):  # type: ignore[misc]
+                temp = self._pynvml.nvmlDeviceGetTemperature(
+                    handle, self._pynvml.NVML_TEMPERATURE_GPU
+                )
+                # Temperature can legitimately be 0 only if the sensor
+                # reports it; treat genuine errors as missing instead.
+                temp_f = float(temp)
+                if not math.isnan(temp_f):
+                    out[f"{prefix}/temperature"] = temp_f
+
+        return out
 
     def _get_cpu_metrics(self) -> dict[str, float]:
-        """Get CPU/RAM metrics using psutil."""
+        """CPU + RAM metrics, system-level."""
         if not self._psutil_available:
             return {}
 
+        out: dict[str, float] = {}
         try:
-            # CPU
-            cpu_percent = self._psutil.cpu_percent(interval=None)  # type: ignore[union-attr]
-
-            # RAM
-            mem = self._psutil.virtual_memory()  # type: ignore[union-attr]
-            ram_used_gb = mem.used / (1024**3)
-            ram_percent = mem.percent
-
-            return {
-                "cpu/percent": cpu_percent,
-                "ram/used_gb": ram_used_gb,
-                "ram/percent": ram_percent,
-            }
+            out["cpu/percent"] = float(self._psutil.cpu_percent(interval=None))
+            mem = self._psutil.virtual_memory()
+            out["ram/used_gb"] = mem.used / (1024**3)
+            out["ram/percent"] = float(mem.percent)
         except Exception as e:
-            logger.debug(f"Failed to get CPU metrics: {e}")
-            return {}
+            if not self._warned_cpu:
+                logger.warning(f"psutil read failed (further failures suppressed): {e}")
+                self._warned_cpu = True
+        return out
+
+    # ------------------------------------------------------------------
+    # Hooks
+    # ------------------------------------------------------------------
+
+    def on_train_begin(
+        self,
+        args: TrainingArguments,  # noqa: ARG002
+        state: TrainerState,
+        control: TrainerControl,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> None:
+        """Set static system tags once per run (rank-0 only)."""
+        self._setup()
+
+        if not state.is_world_process_zero:
+            return
+        if self._mlflow is None:
+            return
+
+        tags: dict[str, str] = {}
+
+        if self._pynvml_available and self._gpu_handles:
+            tags["system.gpu.count"] = str(self._gpu_count)
+            for i, handle in enumerate(self._gpu_handles):
+                with contextlib.suppress(Exception):
+                    name = self._pynvml.nvmlDeviceGetName(handle)
+                    if isinstance(name, bytes):
+                        name = name.decode("utf-8", errors="replace")
+                    tags[f"system.gpu.{i}.name"] = str(name)
+                with contextlib.suppress(Exception):
+                    mem = self._pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    tags[f"system.gpu.{i}.memory_total_gb"] = (
+                        f"{mem.total / (1024**3):.1f}"
+                    )
+            with contextlib.suppress(Exception):
+                drv = self._pynvml.nvmlSystemGetDriverVersion()
+                if isinstance(drv, bytes):
+                    drv = drv.decode("utf-8", errors="replace")
+                tags["system.driver.version"] = str(drv)
+
+        if self._psutil_available:
+            with contextlib.suppress(Exception):
+                tags["system.cpu.count"] = str(self._psutil.cpu_count())
+
+        if not tags:
+            return
+
+        try:
+            self._mlflow.set_tags(tags)
+        except Exception as e:
+            logger.debug(f"Failed to set system tags: {e}")
 
     def on_step_end(
         self,
         args: TrainingArguments,  # noqa: ARG002
         state: TrainerState,
         control: TrainerControl,  # noqa: ARG002
-        **kwargs,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
     ) -> None:
-        """Log metrics at end of each step."""
+        """Log system metrics every step (rank-0 only)."""
         self._setup()
 
-        # Only log every N steps
-        if state.global_step % self.log_every_n_steps != 0:
+        # DDP guard: avoid N-fold duplicates from non-zero ranks.
+        if not state.is_world_process_zero:
             return
 
-        # Skip if MLflow not available
         if self._mlflow is None:
             return
 
-        # Collect metrics
-        metrics: dict[str, float] = {}  # type: ignore[unreachable]
-        metrics.update(self._get_gpu_metrics())
+        metrics: dict[str, float] = {}
+        try:
+            metrics.update(self._get_gpu_metrics())
+        except Exception as e:
+            if not self._warned_gpu:
+                logger.warning(f"GPU metric collection failed (further failures suppressed): {e}")
+                self._warned_gpu = True
+
         metrics.update(self._get_cpu_metrics())
 
-        # Log to MLflow
-        if metrics:
-            try:
-                self._mlflow.log_metrics(metrics, step=state.global_step)
-            except Exception as e:
-                logger.debug(f"Failed to log system metrics: {e}")
+        if not metrics:
+            return
+
+        try:
+            self._mlflow.log_metrics(metrics, step=state.global_step)
+        except Exception as e:
+            if not self._warned_log:
+                logger.warning(f"mlflow.log_metrics failed (further failures suppressed): {e}")
+                self._warned_log = True
 
     def on_train_end(
         self,
         args: TrainingArguments,  # noqa: ARG002
         state: TrainerState,  # noqa: ARG002
         control: TrainerControl,  # noqa: ARG002
-        **kwargs,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
     ) -> None:
-        """Cleanup pynvml on training end."""
-        if self._pynvml_available:
+        """Best-effort NVML shutdown."""
+        if self._pynvml_available and self._pynvml is not None:
             with contextlib.suppress(Exception):
-                self._pynvml.nvmlShutdown()  # type: ignore[union-attr]
+                self._pynvml.nvmlShutdown()
 
 
 __all__ = ["SystemMetricsCallback"]

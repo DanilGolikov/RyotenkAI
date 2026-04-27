@@ -103,9 +103,8 @@ def _install_fake_mlflow(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     fake.get_tracking_uri = lambda: "http://127.0.0.1:5002"  # type: ignore[attr-defined]
     fake.set_tracking_uri = lambda uri: None  # type: ignore[attr-defined, ARG005]
     fake.set_experiment = lambda name: None  # type: ignore[attr-defined, ARG005]
-    fake.enable_system_metrics_logging = lambda: None  # type: ignore[attr-defined]
-    fake.set_system_metrics_sampling_interval = lambda n: None  # type: ignore[attr-defined, ARG005]
-    fake.set_system_metrics_samples_before_logging = lambda n: None  # type: ignore[attr-defined, ARG005]
+    # Native MLflow sampler stubs were removed when the codebase stopped
+    # enabling the background sampler. Kept only ``log_*`` mocks below.
     fake.autolog = lambda **kw: None  # type: ignore[attr-defined, ARG005]
     fake.end_run = lambda **kw: None  # type: ignore[attr-defined, ARG005]
     fake.log_metric = lambda *a, **k: None  # type: ignore[attr-defined, ARG005]

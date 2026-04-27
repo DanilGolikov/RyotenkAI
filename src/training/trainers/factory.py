@@ -336,15 +336,22 @@ class TrainerFactory:
 
             callbacks.append(TrainingEventsCallback(mlflow_manager=mlflow_manager))
 
-            from src.training.callbacks.gpu_metrics_callback import GPUMetricsCallback
-
-            callbacks.append(GPUMetricsCallback(mlflow_manager=mlflow_manager))
-
-            if mlflow_config.system_metrics_callback_enabled:
+            # ``SystemMetricsCallback`` is the single source of truth for
+            # system metrics (CPU / GPU / RAM). It logs step-aligned
+            # ``gpu/{idx}/*``, ``cpu/*``, ``ram/*`` via ``mlflow.log_metrics``,
+            # which is monkey-patched by ``ResilientMLflowTransport`` so
+            # payloads survive offline windows through ``MetricsBuffer``.
+            #
+            # ``GPUMetricsCallback`` was removed in this refactor — it was a
+            # near-duplicate that wrote to a parallel ``system/gpu_0_*``
+            # namespace via ``nvidia-smi`` subprocess and didn't go through
+            # ``ResilientMLflowTransport`` consistently.
+            sm_block = getattr(mlflow_config, "system_metrics", None)
+            sm_callback_on = bool(getattr(sm_block, "callback_enabled", False))
+            if sm_callback_on:
                 from src.training.callbacks import SystemMetricsCallback
 
-                callback_interval = mlflow_config.system_metrics_callback_interval
-                callbacks.append(SystemMetricsCallback(log_every_n_steps=callback_interval))
+                callbacks.append(SystemMetricsCallback())
 
         # Phase 3.2 — runner-side event push.
         #

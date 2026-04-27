@@ -21,14 +21,11 @@ from ..base import StrictBaseModel
 from .huggingface import HuggingFaceHubConfig  # noqa: TC001  — required at runtime for Pydantic
 from .mlflow import MLflowConfig, MLflowTrackingRef  # noqa: TC001, F401
 
-
-# Legacy fields that used to live at ``experiment_tracking.mlflow.*``.
-# Now live on the integration side. The four flat ``system_metrics_*``
-# fields were collapsed into a single nested
-# ``experiment_tracking.mlflow.system_metrics:`` block (post-14, by
-# analogy with ``training.metrics_buffer``); they are still listed
-# here so old YAMLs surface a clear migration hint instead of the
-# generic ``extra_forbidden`` Pydantic error.
+# Legacy fields that used to live at ``experiment_tracking.mlflow.*``
+# (flat path). They were collapsed into the nested
+# ``experiment_tracking.mlflow.system_metrics:`` block; they're still
+# listed here so old YAMLs surface a clear migration hint instead of
+# the generic ``extra_forbidden`` Pydantic error.
 _LEGACY_MLFLOW_KEYS: set[str] = {
     "tracking_uri",
     "local_tracking_uri",
@@ -37,6 +34,25 @@ _LEGACY_MLFLOW_KEYS: set[str] = {
     "system_metrics_samples_before_logging",
     "system_metrics_callback_enabled",
     "system_metrics_callback_interval",
+}
+
+# Fields that used to live INSIDE the nested
+# ``experiment_tracking.mlflow.system_metrics:`` block but were removed
+# in the second refactor pass:
+#  - ``sampling_interval`` / ``samples_before_logging`` configured the
+#    native MLflow background sampler, which the codebase no longer
+#    enables (it bypassed ``ResilientMLflowTransport`` and dropped
+#    samples on offline windows).
+#  - ``callback_interval`` was a step-throttle for the HF Trainer
+#    callback that's no longer needed (we log every step on our typical
+#    1-3 s/step training; on tiny test models batching belongs in
+#    ``ResilientMLflowTransport``, not the callback).
+# Surface a targeted migration hint for the rare YAML that already
+# carried the nested form.
+_REMOVED_SYSTEM_METRICS_KEYS: set[str] = {
+    "sampling_interval",
+    "samples_before_logging",
+    "callback_interval",
 }
 
 # Legacy fields that used to live at ``experiment_tracking.huggingface.*``.
@@ -48,6 +64,13 @@ _MIGRATION_HINT = (
     "account per team). See docs/migration/integrations.md. Keep only "
     "``integration`` + ``experiment_name`` on mlflow, ``integration`` + "
     "``repo_id`` + ``private`` on huggingface."
+)
+
+_SYSTEM_METRICS_REMOVED_HINT = (
+    "These fields were removed: native MLflow sampler is no longer "
+    "enabled (it bypassed our offline buffer), and the HF Trainer "
+    "callback now logs every step. Only ``callback_enabled: bool`` "
+    "remains in the ``system_metrics:`` block."
 )
 
 
@@ -78,6 +101,17 @@ class ExperimentTrackingConfig(StrictBaseModel):
                     f"{legacy!r}. These fields moved to Settings → Integrations → "
                     f"MLflow. {_MIGRATION_HINT}"
                 )
+
+            # Targeted check for fields removed from the nested
+            # ``system_metrics`` block in the second refactor pass.
+            sm_block = mlflow.get("system_metrics")
+            if isinstance(sm_block, dict):
+                removed = sorted(set(sm_block.keys()) & _REMOVED_SYSTEM_METRICS_KEYS)
+                if removed:
+                    raise ValueError(
+                        "experiment_tracking.mlflow.system_metrics no longer "
+                        f"accepts {removed!r}. {_SYSTEM_METRICS_REMOVED_HINT}"
+                    )
 
         hf = data.get("huggingface")
         if isinstance(hf, dict):

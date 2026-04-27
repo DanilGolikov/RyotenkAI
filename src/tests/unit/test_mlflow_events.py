@@ -464,9 +464,9 @@ class TestMLflowManagerSetup:
         mlflow_config.local_tracking_uri = None
         mlflow_config.ca_bundle_path = None
         mlflow_config.experiment_name = "test_experiment"
-        mlflow_config.system_metrics_callback_enabled = False
-        mlflow_config.system_metrics_sampling_interval = 5.0
-        mlflow_config.system_metrics_samples_before_logging = 10
+        # Nested block — single field. Flat ``system_metrics_*`` fields
+        # were removed (sampler/throttle no longer used by the codebase).
+        mlflow_config.system_metrics.callback_enabled = False
         config.experiment_tracking.mlflow = mlflow_config
         config.model.name = "test/model"
         return config

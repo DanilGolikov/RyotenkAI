@@ -45,8 +45,7 @@ src/training/
 │   └── loader.py            # Load model and tokenizer
 │
 ├── callbacks/               # HuggingFace Trainer callbacks
-│   ├── gpu_metrics_callback.py     # GPU utilization / memory
-│   ├── system_metrics_callback.py  # CPU/RAM metrics
+│   ├── system_metrics_callback.py  # GPU + CPU + RAM metrics (single source)
 │   └── training_events_callback.py # Log training events
 │
 ├── reward_plugins/          # Reward model plugins (GRPO/SAPO)

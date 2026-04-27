@@ -74,14 +74,24 @@ class MLflowAttemptManager:
     # ---- setup --------------------------------------------------------------
 
     def bootstrap(self) -> MLflowManager | None:
-        """Create and configure MLflowManager (control-plane, system metrics off)."""
+        """Create and configure MLflowManager (control-plane, system metrics off).
+
+        Control-plane / orchestrator process must NOT register the
+        ``SystemMetricsCallback`` — system metrics are owned by the
+        trainer subprocess where the GPU work actually happens. We
+        force ``callback_enabled=False`` on the resolved MLflow config
+        before constructing the manager so the trainer-factory path
+        skips the callback for this process.
+
+        Note: the previous defensive calls to
+        ``mlflow.disable_system_metrics_logging()`` and the
+        ``MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING=false`` env var were
+        removed once the codebase stopped enabling the native MLflow
+        sampler entirely (Phase 14 follow-up cleanup). They are no
+        longer needed because nothing turns the native sampler ON
+        in the first place.
+        """
         try:
-            # 1. Force config setting — disable the system-metrics
-            # callback on the control-plane run. Phase 14 follow-up:
-            # ``system_metrics_callback_enabled`` moved into a nested
-            # ``system_metrics`` block; navigate via getattr/setattr
-            # so the mutation works whether the config carries the
-            # block or not (back-compat with mocks).
             sm_block = getattr(
                 self._config.experiment_tracking.mlflow,
                 "system_metrics",
@@ -90,23 +100,8 @@ class MLflowAttemptManager:
             if sm_block is not None:
                 sm_block.callback_enabled = False
 
-            # 2. Force environment variable (critical for MLflow internals)
-            import os
-
-            os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "false"
-
             manager = MLflowManager(self._config, runtime_role="control_plane")
-
-            # 3. Disable system metrics logging in MLflow client directly (best-effort)
-            try:
-                import mlflow
-
-                mlflow.disable_system_metrics_logging()
-            except Exception:
-                # MLflow may be missing or API may differ — manager.setup still handles it.
-                pass
-
-            manager.setup(disable_system_metrics=True)
+            manager.setup()
             self._manager = manager
             return manager
         except Exception as e:
@@ -145,13 +140,6 @@ class MLflowAttemptManager:
             runtime_tracking_uri if isinstance(runtime_tracking_uri, str) and runtime_tracking_uri else None
         )
         state.mlflow_ca_bundle_path = ca_bundle_path if isinstance(ca_bundle_path, str) and ca_bundle_path else None
-
-        try:
-            import mlflow
-
-            mlflow.disable_system_metrics_logging()
-        except Exception:
-            pass
 
         try:
             self._open_root_run(state=state, attempt=attempt)

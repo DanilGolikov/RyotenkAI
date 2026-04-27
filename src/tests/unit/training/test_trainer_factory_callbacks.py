@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.training.trainers.factory as tf
-from src.training.callbacks.gpu_metrics_callback import GPUMetricsCallback
 from src.training.callbacks.system_metrics_callback import SystemMetricsCallback
 from src.training.callbacks.training_events_callback import TrainingEventsCallback
 from src.training.trainers.factory import TrainerFactory
@@ -27,7 +26,6 @@ from src.utils.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
-
 
 pytestmark = pytest.mark.skip(
     reason=(
@@ -92,7 +90,13 @@ class FakeMLflowManager:
         return self._active
 
 
-def _mk_cfg(*, callback_enabled: bool, callback_interval: int) -> PipelineConfig:
+def _mk_cfg(*, callback_enabled: bool) -> PipelineConfig:
+    # Build the nested ``system_metrics`` block — the flat
+    # ``system_metrics_*`` fields were collapsed into a sub-block, and
+    # ``callback_interval`` was removed altogether (callback now logs
+    # every step, no throttle).
+    from src.config.integrations.system_metrics import SystemMetricsConfig
+
     return PipelineConfig(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         training=TrainingOnlyConfig(
@@ -135,8 +139,7 @@ def _mk_cfg(*, callback_enabled: bool, callback_interval: int) -> PipelineConfig
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
-                system_metrics_callback_enabled=callback_enabled,
-                system_metrics_callback_interval=callback_interval,
+                system_metrics=SystemMetricsConfig(callback_enabled=callback_enabled),
             )
         ),
     )
@@ -150,7 +153,7 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(callback_enabled=True, callback_interval=7)
+    cfg = _mk_cfg(callback_enabled=True)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -169,9 +172,9 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
     assert isinstance(training_cfg, DummyConfig)
     assert training_cfg.kwargs["report_to"] == ["mlflow"]
     assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
-    assert any(isinstance(cb, GPUMetricsCallback) for cb in callbacks)
-    sys_cb = next(cb for cb in callbacks if isinstance(cb, SystemMetricsCallback))
-    assert sys_cb.log_every_n_steps == 7
+    # GPUMetricsCallback removed — SystemMetricsCallback is the single
+    # source of truth for system metrics now.
+    assert any(isinstance(cb, SystemMetricsCallback) for cb in callbacks)
 
 
 def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -181,7 +184,7 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(callback_enabled=False, callback_interval=10)
+    cfg = _mk_cfg(callback_enabled=False)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -206,7 +209,7 @@ def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(callback_enabled=True, callback_interval=7)
+    cfg = _mk_cfg(callback_enabled=True)
     factory = TrainerFactory()
 
     trainer = factory.create(
@@ -222,7 +225,11 @@ def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.Monk
     callbacks = trainer.kwargs.get("callbacks")
     assert callbacks is not None
     assert any(isinstance(cb, TrainingEventsCallback) for cb in callbacks)
-    assert any(isinstance(cb, GPUMetricsCallback) for cb in callbacks)
+    # GPUMetricsCallback removed — SystemMetricsCallback is registered
+    # alongside TrainingEventsCallback whenever mlflow_config is set,
+    # regardless of mlflow_manager active state (this test verifies
+    # the latter).
+    assert any(isinstance(cb, SystemMetricsCallback) for cb in callbacks)
 
 
 def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -237,7 +244,7 @@ def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: p
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
-    cfg = _mk_cfg(callback_enabled=False, callback_interval=10)
+    cfg = _mk_cfg(callback_enabled=False)
     factory = TrainerFactory()
 
     trainer = factory.create(

@@ -9,12 +9,10 @@ Handles:
 
 from __future__ import annotations
 
-import contextlib
 import time
 from typing import TYPE_CHECKING, Any
 
 from src.training.constants import (
-    CATEGORY_TRAINING,
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
     TRUNCATE_ERROR_MSG,
@@ -111,17 +109,15 @@ class MlflowPhaseLogger:
             try:
                 import mlflow
 
-                # Stop system metrics logging for Parent Run before starting nested.
-                # Suppress because we don't care if it's already off.
-                with contextlib.suppress(Exception):
-                    mlflow.disable_system_metrics_logging()
+                # Native MLflow background sampler is no longer used in this
+                # codebase — ``SystemMetricsCallback`` (HF Trainer-aligned,
+                # buffered through ``ResilientMLflowTransport``) is the only
+                # source of system metrics. The previous toggling of
+                # ``mlflow.enable_system_metrics_logging`` /
+                # ``disable_system_metrics_logging`` around nested-run
+                # boundaries is now a no-op concern.
 
                 run = mlflow.start_run(run_name=run_name, nested=True)
-
-                mlflow_cfg = self.config.experiment_tracking.mlflow
-                if mlflow_cfg and mlflow_cfg.system_metrics_callback_enabled:
-                    with contextlib.suppress(Exception):
-                        mlflow.enable_system_metrics_logging()
 
                 mlflow.set_tags(
                     {
@@ -143,7 +139,7 @@ class MlflowPhaseLogger:
                     )
                 return run
 
-            except Exception as exc:  # noqa: BLE001 — retry loop owns it
+            except Exception as exc:
                 last_error = exc
 
                 if attempt >= _NESTED_RUN_MAX_ATTEMPTS:
@@ -187,9 +183,6 @@ class MlflowPhaseLogger:
 
             parent_run_id = self._mlflow_manager.parent_run_id if self._mlflow_manager else None
 
-            with contextlib.suppress(Exception):
-                mlflow.disable_system_metrics_logging()
-
             mlflow.end_run(status=status)
             logger.debug(f"[PE:MLFLOW_NESTED_RUN_ENDED] status={status}")
 
@@ -202,11 +195,6 @@ class MlflowPhaseLogger:
                     logger.debug(f"[PE:MLFLOW_PARENT_RUN_RESTORED] run_id={parent_run_id}")
                 else:
                     logger.debug(f"[PE:MLFLOW_PARENT_RUN_ALREADY_ACTIVE] run_id={parent_run_id}")
-
-                mlflow_cfg = self.config.experiment_tracking.mlflow
-                if mlflow_cfg and mlflow_cfg.system_metrics_callback_enabled:
-                    with contextlib.suppress(Exception):
-                        mlflow.enable_system_metrics_logging()
 
         except Exception as e:
             logger.debug(f"[PE:MLFLOW_NESTED_RUN_END_FAILED] {e}")

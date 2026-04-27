@@ -200,13 +200,14 @@ def _patch_gateway(mgr: MLflowManager, shared_client: _FakeClient) -> None:
 
 
 def test_setup_success_enables_system_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+    # NOTE: native MLflow background sampler is no longer enabled by the
+    # codebase — ``SystemMetricsCallback`` (HF Trainer-aligned, buffered
+    # through ``ResilientMLflowTransport``) replaced it. The test name
+    # is kept for git-blame continuity; the body now exercises the rest
+    # of the setup path (tracking URI / experiment) without sampler stubs.
     fake_mlflow, _shared = _install_fake_mlflow(monkeypatch)
-    # add setup APIs used in setup()
     fake_mlflow.set_tracking_uri = lambda uri: None  # type: ignore[attr-defined]
     fake_mlflow.set_experiment = lambda name: None  # type: ignore[attr-defined]
-    fake_mlflow.enable_system_metrics_logging = lambda: None  # type: ignore[attr-defined]
-    fake_mlflow.set_system_metrics_sampling_interval = lambda n: None  # type: ignore[attr-defined]
-    fake_mlflow.set_system_metrics_samples_before_logging = lambda n: None  # type: ignore[attr-defined]
 
     mgr = MLflowManager(_mk_cfg())
     # speed up: avoid network check via gateway

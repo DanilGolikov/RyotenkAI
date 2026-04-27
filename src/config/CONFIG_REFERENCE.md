@@ -916,10 +916,8 @@ experiment_tracking:
     # run_description_file: null
     # ca_bundle_path: "certs/mlflow-ca.pem"
 
-    system_metrics_sampling_interval: 5
-    system_metrics_samples_before_logging: 1
-    system_metrics_callback_enabled: false
-    system_metrics_callback_interval: 10
+    system_metrics:               # Optional — omit to keep defaults
+      callback_enabled: true      # default; set false only if pynvml hangs
 
   huggingface:                    # Optional — omit to disable HF Hub upload
     enabled: true
@@ -936,10 +934,12 @@ experiment_tracking:
 | `ca_bundle_path` | string \| null | `null` | Optional CA bundle path for HTTPS verification against MLflow |
 | `experiment_name` | string | - | Experiment name in MLflow |
 | `run_description_file` | string \| null | `null` | Path to `.md` run description file |
-| `system_metrics_sampling_interval` | int | `5` | System metrics sampling interval (sec) |
-| `system_metrics_samples_before_logging` | int | `1` | Samples to collect before logging |
-| `system_metrics_callback_enabled` | bool | `false` | Enable manual SystemMetricsCallback (may hang on some cloud images) |
-| `system_metrics_callback_interval` | int | `10` | Log system metrics every N training steps (if callback enabled) |
+| `system_metrics.callback_enabled` | bool | `true` | Enable HF Trainer `SystemMetricsCallback` (multi-GPU + CPU/RAM, step-aligned, buffered through `ResilientMLflowTransport`). Set `false` only if `pynvml.nvmlInit` hangs on your specific cloud GPU image. |
+
+**Removed fields** (migration hint surfaces a clear error if they appear in YAML):
+
+- `system_metrics_sampling_interval` / `system_metrics_samples_before_logging` — controlled the native MLflow background sampler. The codebase no longer enables it (it bypassed the offline buffer and silently dropped samples).
+- `system_metrics_callback_interval` — step-throttle for the HF Trainer callback. The callback now logs every step (≈0.3-1 Hz on typical 1-3 s/step training is well within MLflow comfort).
 
 Fallback rules:
 - At least one of `tracking_uri` or `local_tracking_uri` must be set.

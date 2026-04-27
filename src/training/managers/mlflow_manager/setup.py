@@ -11,19 +11,15 @@ Responsibilities:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
 from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from src.training.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
-from src.training.mlflow.autolog import MLflowAutologManager
 from src.training.mlflow.domain_logger import MLflowDomainLogger
 from src.training.mlflow.model_registry import MLflowModelRegistry
 from src.utils.logger import get_logger
-
-if TYPE_CHECKING:
-    pass
 
 logger = get_logger(__name__)
 
@@ -119,10 +115,19 @@ class MLflowSetupMixin:
             mlflow.set_experiment(self._mlflow_config.experiment_name)  # type: ignore[attr-defined]
             logger.info(f"MLflow experiment: {self._mlflow_config.experiment_name}")  # type: ignore[attr-defined]
 
-            if not disable_system_metrics and self._system_metrics_callback_enabled():
-                self._configure_system_metrics(mlflow)
-            else:
-                logger.debug("MLflow system metrics logging disabled for this process")
+            # Native MLflow background sampler (``enable_system_metrics_logging``)
+            # is intentionally NOT used: it bypasses our
+            # ``ResilientMLflowTransport`` and silently drops samples on
+            # offline windows. ``SystemMetricsCallback`` (registered by
+            # ``TrainerFactory`` when ``system_metrics.callback_enabled``
+            # is true) is the single source of truth — its payloads flow
+            # through ``mlflow.log_metrics`` → resilient transport →
+            # ``MetricsBuffer``.
+            #
+            # ``disable_system_metrics`` kwarg is retained for backwards
+            # compatibility with callers that still pass it; it has no
+            # effect on the new path.
+            _ = disable_system_metrics
 
             self._install_resilient_transport_if_needed(mlflow)
             self._build_subcomponents()
@@ -255,35 +260,6 @@ class MLflowSetupMixin:
                 pass
         except Exception as e:
             logger.debug(f"MLflow experiment restore skipped: {e}")
-
-    def _system_metrics_block(self) -> Any | None:
-        """Phase 14 follow-up — read the nested ``system_metrics``
-        sub-block off the resolved MLflow config.
-
-        Returns ``None`` if the config is missing the block (older
-        MLflow tracking refs that haven't been resolved yet, or
-        non-MLflow configs in the test path). Callers fall back to
-        defaults when this returns None.
-        """
-        return getattr(self._mlflow_config, "system_metrics", None)  # type: ignore[attr-defined]
-
-    def _system_metrics_callback_enabled(self) -> bool:
-        """Phase 14 follow-up — capability check via nested block."""
-        block = self._system_metrics_block()
-        return bool(getattr(block, "callback_enabled", False))
-
-    def _configure_system_metrics(self, mlflow: Any) -> None:
-        """Enable and configure system metrics logging."""
-        try:
-            mlflow.enable_system_metrics_logging()
-            block = self._system_metrics_block()
-            interval = getattr(block, "sampling_interval", 1)
-            samples = getattr(block, "samples_before_logging", 1)
-            mlflow.set_system_metrics_sampling_interval(interval)
-            mlflow.set_system_metrics_samples_before_logging(samples)
-            logger.info(f"MLflow system metrics enabled (interval={interval}s, samples={samples})")
-        except Exception as e:
-            logger.debug(f"System metrics logging not available: {e}")
 
     def _build_subcomponents(self) -> None:
         """Update mlflow-dependent subcomponents after successful setup."""
