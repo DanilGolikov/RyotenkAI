@@ -162,7 +162,18 @@ class EventJournal:
         max_files: int = DEFAULT_MAX_FILES,
         fsync_batch: int = DEFAULT_FSYNC_BATCH,
         fsync_interval_ms: int = DEFAULT_FSYNC_INTERVAL_MS,
+        on_rotate: Any = None,
     ) -> None:
+        """
+        Args:
+            on_rotate: Phase 12.C — optional callback fired after each
+                       rotation. Signature
+                       ``(from_seq, to_seq, file_size_bytes, oldest_remaining_seq) -> None``.
+                       Caller (lifespan wiring) typically forwards
+                       this to ``bus.publish("events_rotated", ...)``.
+                       Failure-tolerant: exceptions in the callback
+                       are swallowed (don't block journal progress).
+        """
         if file_size_cap <= 0:
             raise ValueError("file_size_cap must be positive")
         if max_files < 1:
@@ -177,6 +188,7 @@ class EventJournal:
         self._max_files = max_files
         self._fsync_batch = fsync_batch
         self._fsync_interval_ms = fsync_interval_ms
+        self._on_rotate = on_rotate
 
         # Discovered + active state populated by _initialize().
         self._current_fh: IO[bytes] | None = None
@@ -341,7 +353,22 @@ class EventJournal:
         Drop-oldest enforcement: if the file count would exceed
         ``max_files`` after opening the next file, the oldest existing
         file is unlinked first.
+
+        Phase 12.C — after the rotation completes successfully, fires
+        the ``on_rotate`` callback (if attached) with the from/to
+        sequence numbers, the size of the just-closed file, and the
+        oldest-remaining seq. Used by the lifespan to publish
+        ``events_rotated`` on the bus.
         """
+        # Capture the size of the file we're about to close, for the
+        # telemetry payload.
+        from_seq = self._current_seq
+        from_path = self._file_for(from_seq)
+        try:
+            from_size = from_path.stat().st_size
+        except OSError:
+            from_size = 0
+
         # Close current.
         if self._current_fh is not None:
             try:
@@ -375,6 +402,21 @@ class EventJournal:
         new_path = self._file_for(next_seq)
         self._current_fh = new_path.open("ab")
         self._current_size = 0
+
+        # Phase 12.C — fire telemetry callback. Failures swallowed so
+        # the journal doesn't block on a misbehaving subscriber.
+        if self._on_rotate is not None:
+            remaining = self._list_existing_seqs()
+            oldest_remaining = remaining[0] if remaining else None
+            try:
+                self._on_rotate(
+                    from_seq=from_seq,
+                    to_seq=next_seq,
+                    file_size_bytes=from_size,
+                    oldest_remaining_seq=oldest_remaining,
+                )
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.debug("[JOURNAL] on_rotate callback failed: %s", exc)
 
     def close(self) -> None:
         """Flush + close. Idempotent."""

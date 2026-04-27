@@ -46,7 +46,13 @@ __all__ = [
     "COMPLETION_FINALIZED",
     "MLFLOW_RECONCILED_POST_SIGKILL",
     "CLEANUP_POD_FAILED",
+    # Phase 12.C — durability telemetry
+    "EVENTS_DISK_PRESSURE",
+    "EVENTS_ROTATED",
+    "EVENTS_GC_RAN",
+    "METRICS_BUFFER_RETRIEVED",
     "CANCELLATION_EVENT_KINDS",
+    "DURABILITY_EVENT_KINDS",
     "TERMINAL_EVENT_KINDS",
     "now_ms",
     "latency_ms_since",
@@ -120,6 +126,46 @@ MLFLOW_RECONCILED_POST_SIGKILL = "mlflow_reconciled_post_sigkill"
 CLEANUP_POD_FAILED = "cleanup_pod_failed"
 
 
+#: Phase 12.C — :class:`EventBus` failed to write a record to its
+#: :class:`EventJournal`. Rate-limited 1/min per bus instance to
+#: avoid feedback loops where the disk-pressure event itself
+#: floods the journal. Carries:
+#:   * ``error_code`` — usually ``"OSError"`` or ``"IOError"``.
+#:   * ``total_bytes`` — current journal footprint at signalling time.
+#:   * ``file_count`` — how many JSONL files exist.
+EVENTS_DISK_PRESSURE = "events_disk_pressure"
+
+#: Phase 12.C — :class:`EventJournal` advanced from
+#: ``events.NNN.jsonl`` → ``events.NNN+1.jsonl`` because the cap was
+#: hit. Carries:
+#:   * ``from_seq`` — file just closed.
+#:   * ``to_seq`` — new active file.
+#:   * ``file_size_bytes`` — bytes written to the just-closed file.
+#:   * ``oldest_remaining_seq`` — smallest seq still on disk after
+#:     drop-oldest enforcement.
+EVENTS_ROTATED = "events_rotated"
+
+#: Phase 12.C — :class:`EventJournal` deleted at least one file
+#: during init-time crash recovery (interrupted ``.tmp`` file or
+#: stale rotation residue). Distinct from the per-rotate drop-oldest
+#: which is implicit in :data:`EVENTS_ROTATED`. Carries:
+#:   * ``deleted_seqs`` — list of seq numbers deleted.
+#:   * ``deleted_bytes`` — cumulative size of removed files.
+EVENTS_GC_RAN = "events_gc_ran"
+
+#: Phase 12.C — :class:`ModelRetriever` finished its
+#: ``metrics_buffer.jsonl`` retrieval + replay attempt (Phase 12.A.1).
+#: Mirrors :class:`ModelRetrieverEventCallbacks.on_metrics_buffer_retrieved`
+#: as a structured bus event so dashboards can track replay outcomes
+#: per attempt. Carries:
+#:   * ``replayed`` — int, count of metrics shipped to MLflow.
+#:   * ``line_count`` — int, lines in the retrieved buffer file.
+#:   * ``size_bytes`` — int, remote file size.
+#:   * ``missing`` — bool, True ⇒ trainer drain succeeded; healthy.
+#:   * ``oversized`` — bool, True ⇒ buffer over the 100 MiB safety cap.
+METRICS_BUFFER_RETRIEVED = "metrics_buffer_retrieved"
+
+
 #: Convenience set for grep / filter / dashboard wiring (cancellation
 #: chain only).
 CANCELLATION_EVENT_KINDS: frozenset[str] = frozenset({
@@ -131,13 +177,24 @@ CANCELLATION_EVENT_KINDS: frozenset[str] = frozenset({
     CLEANUP_POD_FAILED,
 })
 
-#: Superset including the natural-completion path. Operator
-#: dashboards keying off "any terminal-flow event" should use this
-#: set; cancellation-only views (e.g. SLO alerts on cancel latency)
-#: stay on :data:`CANCELLATION_EVENT_KINDS`.
+#: Phase 12.C — durability-related event kinds (journal +
+#: metrics-buffer retrieval). Use this set when wiring "data
+#: durability" dashboards or alerts. Disjoint from
+#: :data:`CANCELLATION_EVENT_KINDS`.
+DURABILITY_EVENT_KINDS: frozenset[str] = frozenset({
+    EVENTS_DISK_PRESSURE,
+    EVENTS_ROTATED,
+    EVENTS_GC_RAN,
+    METRICS_BUFFER_RETRIEVED,
+})
+
+#: Superset including the natural-completion path AND durability
+#: events. Operator dashboards keying off "any terminal / durability
+#: signal" should use this set; cancellation-only views (e.g. SLO
+#: alerts on cancel latency) stay on :data:`CANCELLATION_EVENT_KINDS`.
 TERMINAL_EVENT_KINDS: frozenset[str] = CANCELLATION_EVENT_KINDS | frozenset({
     COMPLETION_FINALIZED,
-})
+}) | DURABILITY_EVENT_KINDS
 
 
 # ---------------------------------------------------------------------------

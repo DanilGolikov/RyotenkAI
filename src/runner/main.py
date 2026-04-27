@@ -25,6 +25,7 @@ The app binds ``127.0.0.1:8080`` per :file:`docker/training/entrypoint.sh`
 
 from __future__ import annotations
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -36,8 +37,17 @@ from src.runner.__about__ import RUNTIME_IMAGE
 from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
+from src.runner.cancellation_telemetry import (
+    EVENTS_DISK_PRESSURE,
+    EVENTS_ROTATED,
+)
 from src.runner.event_bus import EventBus
-from src.runner.event_journal import EVENTS_DIR_REL, EventJournal
+from src.runner.event_journal import (
+    DEFAULT_FILE_SIZE_CAP,
+    DEFAULT_MAX_FILES,
+    EVENTS_DIR_REL,
+    EventJournal,
+)
 from src.runner.mlflow_relay import (
     MLflowRelay,
     make_mlflow_forward_fn,
@@ -129,9 +139,36 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         # collisions. If construction fails (read-only fs etc.), we
         # log + fall back to the journal-less behaviour so the runner
         # boots.
+        #
+        # Phase 12.C — pre-bind a placeholder rotation callback. The
+        # actual ``bus.publish`` reference doesn't exist yet (we need
+        # the bus to construct the journal callback in turn), so we
+        # use a closure that reads the bus from app.state at fire time.
+        rotate_publisher = {"bus": None}
+
+        def _on_rotate(
+            *, from_seq: int, to_seq: int, file_size_bytes: int,
+            oldest_remaining_seq: int | None,
+        ) -> None:
+            target = rotate_publisher.get("bus")
+            if target is None:
+                return
+            try:
+                target.publish(EVENTS_ROTATED, {
+                    "from_seq": from_seq,
+                    "to_seq": to_seq,
+                    "file_size_bytes": file_size_bytes,
+                    "oldest_remaining_seq": oldest_remaining_seq,
+                })
+            except Exception:  # noqa: BLE001 — defensive
+                pass
+
         journal: EventJournal | None
         try:
-            journal = EventJournal(root_dir=workspace / EVENTS_DIR_REL)
+            journal = EventJournal(
+                root_dir=workspace / EVENTS_DIR_REL,
+                on_rotate=_on_rotate,
+            )
         except Exception as exc:  # noqa: BLE001 — defensive
             import logging
             logging.getLogger(__name__).warning(
@@ -141,6 +178,8 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
             journal = None
 
         bus = EventBus(journal=journal)
+        # Late-bind the bus so the rotation callback can publish through it.
+        rotate_publisher["bus"] = bus
 
         # The plugin unpacker is stateless beyond its workspace path,
         # so we build it once at boot and reuse across requests.
@@ -183,14 +222,88 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         app.state.supervisor = supervisor
         app.state.mlflow_relay = mlflow_relay
 
+        # Phase 12.C — periodic journal health check. Emits
+        # ``events_disk_pressure`` when the journal footprint passes
+        # 90% of (file_size_cap × max_files). Operator dashboards use
+        # the signal to alert on sustained disk-pressure rather than
+        # on a single failed write. Running as a background task tied
+        # to lifespan; cancelled on shutdown.
+        health_task: asyncio.Task[None] | None = None
+        if journal is not None:
+            health_task = asyncio.create_task(
+                _periodic_journal_health_check(bus=bus, journal=journal)
+            )
+
         try:
             yield
         finally:
+            if health_task is not None:
+                health_task.cancel()
+                try:
+                    await health_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                    pass
             await mlflow_relay.stop()
             await supervisor.shutdown()
             bus.close()
 
     return _lifespan
+
+
+_JOURNAL_HEALTH_INTERVAL_S = 60.0
+_JOURNAL_DISK_PRESSURE_THRESHOLD_FRACTION = 0.9
+
+
+async def _periodic_journal_health_check(
+    *,
+    bus: EventBus,
+    journal: EventJournal,
+    interval_s: float = _JOURNAL_HEALTH_INTERVAL_S,
+    threshold_fraction: float = _JOURNAL_DISK_PRESSURE_THRESHOLD_FRACTION,
+) -> None:
+    """Phase 12.C — background task that monitors journal footprint.
+
+    Every ``interval_s`` seconds, computes ``total_bytes / cap``
+    where cap = ``file_size_cap × max_files``. When the ratio
+    crosses ``threshold_fraction`` (default 90%), publishes an
+    ``events_disk_pressure`` event. Each crossing fires once;
+    while we stay over the threshold no further events are emitted
+    until the bus' rate-limit interval (1 min from
+    :meth:`EventBus._signal_disk_pressure`) elapses — but that
+    rate limit is for the WRITE-failure path; this health check
+    is fire-and-forget.
+
+    Cancellation: this is run as ``asyncio.create_task`` from the
+    lifespan and cancelled on shutdown. Catches CancelledError to
+    exit cleanly without leaking warnings.
+    """
+    cap_bytes = DEFAULT_FILE_SIZE_CAP * DEFAULT_MAX_FILES
+    threshold_bytes = int(cap_bytes * threshold_fraction)
+    last_alerted = False
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            return
+        try:
+            total = journal.total_bytes()
+            files = journal.file_count()
+        except Exception:  # noqa: BLE001 — defensive
+            continue
+        if total > threshold_bytes:
+            if not last_alerted:
+                try:
+                    bus.publish(EVENTS_DISK_PRESSURE, {
+                        "total_bytes": total,
+                        "file_count": files,
+                        "threshold_bytes": threshold_bytes,
+                        "cap_bytes": cap_bytes,
+                    })
+                except Exception:  # noqa: BLE001 — defensive
+                    pass
+                last_alerted = True
+        else:
+            last_alerted = False
 
 
 def _build_mlflow_relay() -> MLflowRelay:

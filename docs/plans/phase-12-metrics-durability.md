@@ -1,6 +1,6 @@
 # Phase 12 — Metrics never lost
 
-> Status: **12.A.1 ✅ DONE; 12.A.2 + 12.B + 12.C pending**
+> Status: **✅ COMPLETE — 12.A.1, 12.A.2, 12.B, 12.C all landed**
 > Author: daniil + agent
 > Date: 2026-04-27
 > Worktree: `nice-jepsen-07d789`
@@ -11,7 +11,10 @@
 >
 > Commits:
 > * `ffa0beb` — Phase 12 plan committed (this file).
-> * `f05584f` — Phase 12.A.1: metrics buffer retrieval + Mac-side MLflow replay (54 new tests, 491/491 cross-phase regression pass).
+> * `f05584f` — Phase 12.A.1: metrics buffer retrieval + Mac-side MLflow replay (54 new tests).
+> * `68fd04f` — Phase 12.A.2: config-driven metrics decimation (default lossless) (37 new tests).
+> * `496b001` — Phase 12.B: EventBus durability via JSONL journal + WS disk replay (46 new tests).
+> * (this commit) — Phase 12.C: durability telemetry constants + periodic health check + docs (11 new tests). Total: **148 new tests** across all sub-phases.
 
 ---
 
@@ -485,7 +488,13 @@ Simulate full sleep-and-resume:
 
 ---
 
-## 3.A — Phase 12.A.2: config-driven metrics decimation (~2h, low risk)
+## 3.A — Phase 12.A.2: config-driven metrics decimation (~2h, low risk) ✅ DONE
+
+> Commit `68fd04f` — 9 files changed, 1038 insertions; 37 new tests
+> (17 schema + 14 decimator + 6 manager helper). User-mandated
+> default `keep_all=true` (lossless). Bug-fix during testing:
+> `training_start_time=0.0` was falsy in legacy `or time.time()`
+> shortcut → switched to explicit `is None` check.
 
 ### 3.A.1 Mandate (от user)
 
@@ -629,7 +638,16 @@ backwards-compat issue per project policy.
 
 ---
 
-## 4. Phase 12.B — EventBus durability + WS replay (~10h, medium risk)
+## 4. Phase 12.B — EventBus durability + WS replay (~10h, medium risk) ✅ DONE
+
+> Commit `496b001` — 8 files changed, 1719 insertions; 46 new tests
+> (22 journal + 11 bus+journal + 6 disk replay + 4 lifespan + 3
+> reference). Per-write `flush()` + batched `fsync()` discovered as a
+> requirement during testing — readers couldn't see fresh writes
+> without flush-per-append. Critical bug-fix landed. 386/386
+> phase-12-touching tests green.
+
+
 
 ### 4.1 Goal
 
@@ -858,7 +876,16 @@ through disk records (offset field uniform across ring + disk).
 
 ---
 
-## 5. Phase 12.C — Observability + GC + docs (~3h, low risk)
+## 5. Phase 12.C — Observability + GC + docs (~3h, low risk) ✅ DONE
+
+> Commit pending — 11 new tests in test_durability_telemetry.py
+> covering kind constants, on_rotate callback shape, bus rate-limit,
+> and the periodic health check fire-once-per-crossing semantics.
+> docs/runner-architecture.md gained "Durability semantics (Phase
+> 12)" section + telemetry events table + storage-layout summary.
+> 403/403 phase-12-touching tests green.
+
+
 
 ### 5.1 New event kinds
 

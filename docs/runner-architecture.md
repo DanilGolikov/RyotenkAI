@@ -103,6 +103,7 @@ its own connection.
 |---|---|---|
 | Pod, `/workspace/.ryotenkai/state.jsonl` | Append-only FSM transition log | One JSON record per transition. |
 | Pod, `/workspace/.ryotenkai/state.json` | Last known state | Atomic write via `atomic_write_json`. |
+| Pod, `/workspace/.runner/events/events.NNN.jsonl` | Phase 12.B durable event journal (rotated, 5 × 100 MB) | One JSON record per event (`v`, `offset`, `ts`, `kind`, `payload`). |
 | Mac, `<run>/attempts/<n>/job_submission.json` | SSH endpoint + `job_id` to dial back into the pod | `JobSubmission` schema v1. |
 | Mac, `<run>/attempts/<n>/job_events.jsonl` | Caught-up runner events | One JSON record per event (offset / kind / payload). |
 | Mac, `<run>/pipeline_state.json` | High-level run status | Existing `PipelineStateStore`. |
@@ -386,6 +387,72 @@ test -f attempts/<n>/cancelled.marker && echo "yes"
 | `LaunchAbortedError` before submit | Preflight or stale-plugin check refused the launch | `run_preflight` output in the launcher logs |
 | `RunnerEventCallback` silent | 3 consecutive 5xx → callback self-disabled for the session | Trainer keeps running; check pod-side `internal/events` access log |
 
+## Durability semantics (Phase 12)
+
+The runner persists two streams to pod disk so a Mac sleep window
+longer than the ring buffer's capacity (~5.5 min at typical event
+rate) doesn't lose data.
+
+### EventBus journal — `<workspace>/.runner/events/`
+
+Append-only JSONL files, rotated at 100 MB, capped at 5 files
+(500 MB total). Schema versioned per record (`v=1` today). On crash
+recovery, the runner picks up the highest-numbered file and continues
+appending. fsync batched: every 50 events OR 1 s, whichever fires
+first. Per-write `flush()` (cheap) keeps records visible to concurrent
+readers without paying fsync latency on the publisher path.
+
+WebSocket subscribers transparently get disk replay when their
+`since=N` cursor is older than the in-memory ring's oldest offset
+but still present on disk. The 4410 close code now fires only when
+the requested offset is older than the oldest persisted record (a
+truly impossible cursor — `DiskJournalExhausted`). Legacy
+`BufferTruncatedError` keeps the same close code for journal-less
+buses (test fixtures, fall-back boot mode).
+
+### MLflow metrics buffer — `/workspace/metrics_buffer.jsonl`
+
+The trainer's `ResilientMLflowTransport` buffers metric calls when
+the MLflow upstream is unreachable. On natural completion the
+`CompletionCallback` drains the buffer (5 s budget). If MLflow is
+still asleep at that point — which is the entire reason we buffered
+in the first place — the buffer file remains.
+
+After Mac wake + pod resume, `ModelRetriever` fetches the buffer file
+alongside the model artefacts and replays each record into the
+**same MLflow run_id** that was active during training. The buffer
+file only contains records the trainer never managed to flush, so
+replay is safe-by-construction (no dedup required).
+
+By default, `training.metrics_buffer.keep_all=true` — every metric
+is preserved losslessly. See **Metrics buffer** below for the opt-in
+decimation policy.
+
+### Storage layout summary
+
+| Path | Owner | Lifecycle | Retrieved by |
+|---|---|---|---|
+| `/workspace/.ryotenkai/state.jsonl` | FSM | append-only, never GC'd | n/a (Mac doesn't read) |
+| `/workspace/.runner/events/events.NNN.jsonl` | EventBus journal | rotation cap 500 MB | n/a (replayed via WS only) |
+| `/workspace/metrics_buffer.jsonl` | Resilient MLflow transport | drained on flush | ModelRetriever (Phase 12.A.1) |
+| `/workspace/.runner/buffer.flush_offset` | Resilient transport | last successful drain marker | (informational only) |
+| `/workspace/output/` | Trainer | grows during training | ModelRetriever (existing) |
+| `/workspace/completion.marker` | CompletionCallback | one-shot per attempt | TrainingMonitor (Phase 11.A) |
+| `/workspace/cancelled.marker` | CancellationCallback | one-shot per attempt | TrainingMonitor (Phase 9.C) |
+
+### Telemetry events (Phase 12.C)
+
+| Kind | Source | Payload | Use |
+|---|---|---|---|
+| `events_disk_pressure` | EventBus / health-check | `total_bytes`, `file_count`, `threshold_bytes` | Alert on sustained 90%+ journal footprint. |
+| `events_rotated` | EventJournal on_rotate | `from_seq`, `to_seq`, `file_size_bytes`, `oldest_remaining_seq` | Track rotation cadence. |
+| `events_gc_ran` | EventJournal init | `deleted_seqs`, `deleted_bytes` | Audit crash-recovery cleanup. |
+| `metrics_buffer_retrieved` | ModelRetriever (Mac) | `replayed`, `line_count`, `size_bytes`, `missing`, `oversized` | Audit replay outcomes per attempt. |
+
+The full set is exposed in `src.runner.cancellation_telemetry` as
+`DURABILITY_EVENT_KINDS` (disjoint from `CANCELLATION_EVENT_KINDS`)
+and in `TERMINAL_EVENT_KINDS` (superset for "any flow signal" views).
+
 ## Metrics buffer (Phase 12.A.2 — config-driven decimation)
 
 When the MLflow upstream is unreachable (typically because the Mac is
@@ -456,6 +523,7 @@ operators who:
 | `RUNPOD_AUTO_STOP` | Pod | Set `false` to keep the pod alive after terminal FSM (debug). |
 | `RUNPOD_KEEP_ON_ERROR` | Pod | Set `true` to keep the pod alive on `failed` only. |
 | `COMMUNITY_STRICT` | Pod | Forces fail-fast plugin loading. The runner image sets this to `1` after the first `PluginUnpacker` call. |
+| `WORKSPACE_PATH` | Pod | Workspace root for the trainer; default `/workspace`. Drives the `MetricsBuffer` location (Phase 12.A) and the EventJournal path (Phase 12.B). |
 
 ## Cross-references
 
