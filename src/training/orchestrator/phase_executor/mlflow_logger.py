@@ -10,6 +10,7 @@ Handles:
 from __future__ import annotations
 
 import contextlib
+import time
 from typing import TYPE_CHECKING, Any
 
 from src.training.constants import (
@@ -24,6 +25,23 @@ from src.utils.logger import logger
 if TYPE_CHECKING:
     from src.utils.config import PipelineConfig, StrategyPhaseConfig
     from src.utils.container import IMLflowManager
+
+
+# Phase 9.B — retry-with-grace constants for ``start_nested_run``.
+#
+# Real-world flap profile we cover: Mac sleeps for ≤30 seconds at a
+# phase boundary (CPT → SFT → DPO), the trainer hits ``start_run`` mid-
+# flap, fails on the first try, retries with exponential backoff, and
+# the upstream comes back online before the budget expires. 5 attempts
+# at 1s + 2s + 4s + 8s + 16s = 31s total wait.
+#
+# When the budget is exhausted we still return ``None`` (current
+# behaviour) — losing the nested run is degraded but acceptable; the
+# trainer continues writing into the parent run as a fallback so we
+# never crash mid-cycle on a transient outage.
+_NESTED_RUN_MAX_ATTEMPTS: int = 5
+_NESTED_RUN_INITIAL_BACKOFF_S: float = 1.0
+_NESTED_RUN_BACKOFF_MULTIPLIER: float = 2.0
 
 
 class MlflowPhaseLogger:
@@ -48,43 +66,110 @@ class MlflowPhaseLogger:
     # Nested run lifecycle
     # ------------------------------------------------------------------
 
-    def start_nested_run(self, phase_idx: int, phase: StrategyPhaseConfig) -> Any:
+    def start_nested_run(
+        self,
+        phase_idx: int,
+        phase: StrategyPhaseConfig,
+        *,
+        sleep: Any | None = None,
+    ) -> Any:
         """
-        Start MLflow nested run for phase.
+        Start MLflow nested run for phase, with Phase 9.B retry-grace.
 
-        Returns run object or None if MLflow is disabled.
+        Returns the run object on success, or ``None`` after all retry
+        attempts exhausted (or MLflow disabled). When MLflow upstream
+        flaps for a short window — e.g. Mac asleep at the phase
+        boundary in a multi-strategy chain — the retry loop covers up
+        to ~31 seconds before giving up.
+
+        Retry policy: 5 attempts with exponential backoff
+        (1s → 2s → 4s → 8s → 16s, total 31s). Picked to cover the
+        common "Mac quick nap" cancellation pattern; longer Mac
+        sleeps (overnight) still fall through to ``None`` and the
+        trainer writes into the parent run as a fallback.
+
+        Args:
+            phase_idx: 0-based phase index, used for the run name +
+                ``mlflow.phase_idx`` tag.
+            phase: phase config (provides ``strategy_type``).
+            sleep: injectable sleep function for tests — defaults to
+                :func:`time.sleep`. Tests pass a no-op so the backoff
+                doesn't actually wait.
+
+        Returns:
+            The MLflow run object if any attempt succeeded; ``None``
+            otherwise.
         """
         if self._mlflow_manager is None or not self._mlflow_manager.is_active:
             return None
 
-        try:
-            import mlflow
+        sleep_fn = sleep if sleep is not None else time.sleep
+        run_name = f"phase_{phase_idx}_{phase.strategy_type}"
+        last_error: Exception | None = None
 
-            run_name = f"phase_{phase_idx}_{phase.strategy_type}"
+        for attempt in range(1, _NESTED_RUN_MAX_ATTEMPTS + 1):
+            try:
+                import mlflow
 
-            # Stop system metrics logging for Parent Run before starting nested
-            with contextlib.suppress(Exception):
-                mlflow.disable_system_metrics_logging()
-
-            run = mlflow.start_run(run_name=run_name, nested=True)
-
-            mlflow_cfg = self.config.experiment_tracking.mlflow
-            if mlflow_cfg and mlflow_cfg.system_metrics_callback_enabled:
+                # Stop system metrics logging for Parent Run before starting nested.
+                # Suppress because we don't care if it's already off.
                 with contextlib.suppress(Exception):
-                    mlflow.enable_system_metrics_logging()
+                    mlflow.disable_system_metrics_logging()
 
-            mlflow.set_tags(
-                {
-                    TAG_PHASE_IDX: str(phase_idx),
-                    TAG_STRATEGY_TYPE: phase.strategy_type,
-                }
-            )
+                run = mlflow.start_run(run_name=run_name, nested=True)
 
-            logger.debug(f"[PE:MLFLOW_NESTED_RUN_STARTED] phase_{phase_idx}_{phase.strategy_type}")
-            return run
-        except Exception as e:
-            logger.debug(f"[PE:MLFLOW_NESTED_RUN_START_FAILED] {e}")
-            return None
+                mlflow_cfg = self.config.experiment_tracking.mlflow
+                if mlflow_cfg and mlflow_cfg.system_metrics_callback_enabled:
+                    with contextlib.suppress(Exception):
+                        mlflow.enable_system_metrics_logging()
+
+                mlflow.set_tags(
+                    {
+                        TAG_PHASE_IDX: str(phase_idx),
+                        TAG_STRATEGY_TYPE: phase.strategy_type,
+                    }
+                )
+
+                if attempt > 1:
+                    logger.info(
+                        "[PE:MLFLOW_NESTED_RUN_STARTED_AFTER_RETRY] "
+                        "phase=%d strategy=%s attempt=%d",
+                        phase_idx, phase.strategy_type, attempt,
+                    )
+                else:
+                    logger.debug(
+                        "[PE:MLFLOW_NESTED_RUN_STARTED] phase_%d_%s",
+                        phase_idx, phase.strategy_type,
+                    )
+                return run
+
+            except Exception as exc:  # noqa: BLE001 — retry loop owns it
+                last_error = exc
+
+                if attempt >= _NESTED_RUN_MAX_ATTEMPTS:
+                    # Budget exhausted — fall through to the warn + return.
+                    break
+
+                backoff = _NESTED_RUN_INITIAL_BACKOFF_S * (
+                    _NESTED_RUN_BACKOFF_MULTIPLIER ** (attempt - 1)
+                )
+                logger.warning(
+                    "[PE:MLFLOW_NESTED_RUN_START_RETRY] phase=%d strategy=%s "
+                    "attempt=%d/%d failed (%s); waiting %.1fs",
+                    phase_idx, phase.strategy_type,
+                    attempt, _NESTED_RUN_MAX_ATTEMPTS, exc, backoff,
+                )
+                sleep_fn(backoff)
+
+        # All attempts failed — log warning and return None.
+        # Trainer falls back to writing into the parent run.
+        logger.warning(
+            "[PE:MLFLOW_NESTED_RUN_START_FAILED] phase=%d strategy=%s "
+            "after %d attempts: %s — phase will log into parent run",
+            phase_idx, phase.strategy_type,
+            _NESTED_RUN_MAX_ATTEMPTS, last_error,
+        )
+        return None
 
     def end_nested_run(self, run: Any, status: str = "FINISHED") -> None:
         """

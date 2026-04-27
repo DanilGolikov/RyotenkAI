@@ -125,9 +125,27 @@ class TestPhase9ACancellationCallbackWiring:
         on ``on_step_end`` so HF observes it before it decides whether
         to keep stepping."""
         src = _factory_source()
-        assert "callbacks.insert(0, CancellationCallback())" in src, (
+        # Match either the 9.A signature (no kwargs) or the 9.B
+        # signature (passes mlflow_manager). The pin is "insert(0,
+        # CancellationCallback(...))" with no positional args before
+        # the kwarg. ``CancellationCallback(`` immediately after
+        # ``insert(0,`` and ``)`` closing within ~120 chars is enough.
+        assert "callbacks.insert(" in src, (
             "TrainerFactory must insert CancellationCallback at index 0 "
             "(BEFORE HF MLflow callback). Phase 9.1.E ordering decision."
+        )
+        # Find the actual insert call and confirm the index is 0.
+        insert_idx = src.find("callbacks.insert(")
+        assert insert_idx >= 0
+        # Read ahead and ensure the first arg is exactly ``0``.
+        snippet = src[insert_idx:insert_idx + 120]
+        assert "callbacks.insert(\n                0," in snippet or \
+               "callbacks.insert(0," in snippet, (
+            "callbacks.insert(...) must use index 0 as the first arg; "
+            f"snippet was: {snippet!r}"
+        )
+        assert "CancellationCallback(" in snippet, (
+            "insert(0, ...) must construct CancellationCallback"
         )
 
     def test_cancellation_wire_is_env_gated(self) -> None:
@@ -137,7 +155,7 @@ class TestPhase9ACancellationCallbackWiring:
         both callbacks."""
         src = _factory_source()
         env_check = src.find("environ.get(RUNNER_URL_ENV)")
-        cancel_insert = src.find("callbacks.insert(0, CancellationCallback())")
+        cancel_insert = src.find("callbacks.insert(")
         assert env_check >= 0, "missing env-driven activation gate"
         assert cancel_insert >= 0, "missing CancellationCallback insert"
         # Insert MUST come AFTER the env check (inside the conditional).
@@ -146,9 +164,9 @@ class TestPhase9ACancellationCallbackWiring:
         )
         # Wider window than the RunnerEventCallback test because Phase 9.A
         # added ~30 lines of explanatory comments between the env check
-        # and the cancel-insert. ~2000 chars still tolerates a few more
+        # and the cancel-insert. ~2500 chars still tolerates a few more
         # comment blocks before becoming a real problem.
-        assert (cancel_insert - env_check) < 2000, (
+        assert (cancel_insert - env_check) < 2500, (
             "env check and CancellationCallback insert are too far "
             "apart — likely a refactor broke the conditional grouping"
         )
@@ -160,19 +178,18 @@ class TestPhase9ACancellationCallbackWiring:
         - ``RunnerEventCallback.append`` happens at the existing
           end-of-list position so its event hooks fire AFTER HF
           completes a step.
-        - ``CancellationCallback.insert(0, ...)`` puts it at the
-          BEGINNING so its on_step_end hook fires BEFORE the HF
-          MLflow callback (which auto-registers at the end of the
-          list).
+        - ``CancellationCallback`` is inserted at index 0 so its
+          on_step_end hook fires BEFORE the HF MLflow callback
+          (which auto-registers at the end of the list).
 
         If a future refactor swaps the order in source, the
         runtime semantic changes. Pin both spots."""
         src = _factory_source()
         runner_append = src.find("callbacks.append(RunnerEventCallback())")
-        cancel_insert = src.find("callbacks.insert(0, CancellationCallback())")
+        cancel_insert = src.find("callbacks.insert(")
         assert runner_append < cancel_insert, (
             "RunnerEventCallback.append must come BEFORE "
-            "CancellationCallback.insert in source order"
+            "callbacks.insert(0, CancellationCallback(...)) in source order"
         )
 
 

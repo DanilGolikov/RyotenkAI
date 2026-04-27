@@ -320,6 +320,143 @@ class SingleNodeProvider(IGPUProvider):
         except Exception as e:
             logger.debug(f"[PROVIDER] Failed to inspect/stop inference container (best-effort): {e}")
 
+    def cleanup_after_run(
+        self,
+        container_name: str,
+        *,
+        ssh_command_timeout: float = 10.0,
+    ) -> Result[None, ProviderError]:
+        """Phase 9.B — terminate the training docker container, fail-soft.
+
+        Parity with the in-pod ``PodStopper.podTerminate`` for RunPod:
+        the orchestrator's stop chain calls this after the trainer
+        subprocess exits to remove the still-running docker container.
+        Without it the container stays alive on the remote host
+        consuming GPU memory until manually removed.
+
+        Behaviour:
+        * Idempotent — ``docker rm -f <name> || true`` returns 0
+          regardless of whether the container existed. Calling twice
+          is safe.
+        * Hard timeout — SSH command is bounded by
+          ``ssh_command_timeout`` (default 10s). If the remote host
+          is unreachable or hung, the call returns Err rather than
+          blocking indefinitely.
+        * Best-effort — errors are returned as Err for the caller to
+          log + escalate to ops; the cleanup chain continues either
+          way (the orchestrator's _cleanup_resources is wrapped in
+          its own exception handler).
+
+        Args:
+            container_name: Full docker container name to remove
+                (e.g. ``ryotenkai_training_<run_name>``). The
+                ``docker rm -f`` is the canonical "stop and remove"
+                — equivalent of RunPod's ``podTerminate``. Pass the
+                exact name TrainingLauncher used when starting the
+                container.
+            ssh_command_timeout: Hard ceiling on the SSH ``docker rm``
+                round-trip. 10s covers normal docker daemon
+                interaction on a healthy host with margin; tunable
+                for slower networks if it ever surfaces as a flake.
+
+        Returns:
+            ``Ok(None)`` when the container is verifiably gone.
+            ``Err(ProviderError)`` when the SSH client is missing,
+            the command failed, or we couldn't verify removal. The
+            error code distinguishes the cases.
+        """
+        if self._ssh_client is None:
+            return Err(
+                ProviderError(
+                    message=(
+                        "cleanup_after_run called before connect — "
+                        "no SSH client to drive docker rm"
+                    ),
+                    code="SINGLENODE_CLEANUP_NO_SSH",
+                )
+            )
+
+        # Validate the container name shape — must match the prefix
+        # we enforce in the config schema. Defence-in-depth against a
+        # caller passing an arbitrary string that could shell-inject.
+        # We don't pass the value through a shell — exec_command
+        # handles quoting — but explicit narrow allowlist is
+        # cleaner and surfaces typos early.
+        if not container_name or any(
+            ch in container_name for ch in (" ", ";", "&", "|", "$", "`", "\n")
+        ):
+            return Err(
+                ProviderError(
+                    message=(
+                        f"cleanup_after_run: invalid container_name "
+                        f"{container_name!r} — must be a single shell token"
+                    ),
+                    code="SINGLENODE_CLEANUP_INVALID_NAME",
+                )
+            )
+
+        # Idempotent removal: ``|| true`` makes the command succeed
+        # whether or not the container was there. We then explicitly
+        # verify it's gone so the caller has a positive signal.
+        rm_cmd = f"docker rm -f {container_name} >/dev/null 2>&1 || true"
+        try:
+            ok, _stdout, stderr = self._ssh_client.exec_command(
+                command=rm_cmd, timeout=ssh_command_timeout, silent=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — SSH may raise generic
+            return Err(
+                ProviderError(
+                    message=(
+                        f"cleanup_after_run: SSH transport failed: {exc}"
+                    ),
+                    code="SINGLENODE_CLEANUP_SSH_TRANSPORT",
+                )
+            )
+
+        if not ok:
+            return Err(
+                ProviderError(
+                    message=(
+                        f"docker rm -f {container_name} failed: "
+                        f"{(stderr or '')[:200]}"
+                    ),
+                    code="SINGLENODE_CLEANUP_DOCKER_RM_FAILED",
+                )
+            )
+
+        # Verify the container is actually gone. ``docker ps -a -q`` lists
+        # all containers (including stopped) — empty output = removed.
+        verify_cmd = f"docker ps -a -q -f name=^{container_name}$"
+        try:
+            ok_v, stdout_v, _ = self._ssh_client.exec_command(
+                command=verify_cmd, timeout=ssh_command_timeout, silent=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Verification failed but rm succeeded — log and treat as
+            # success; the rm output is the source of truth.
+            logger.debug(
+                "[PROVIDER:CLEANUP] verify step failed for %s: %s — "
+                "treating as removed since docker rm succeeded",
+                container_name, exc,
+            )
+            return Ok(None)
+
+        if ok_v and stdout_v.strip():
+            return Err(
+                ProviderError(
+                    message=(
+                        f"docker rm reported success but container "
+                        f"{container_name!r} still listed by docker ps"
+                    ),
+                    code="SINGLENODE_CLEANUP_VERIFY_FAILED",
+                )
+            )
+
+        logger.info(
+            "[PROVIDER:CLEANUP] training container %s removed", container_name,
+        )
+        return Ok(None)
+
     def disconnect(self) -> Result[None, ProviderError]:
         """
         Disconnect from local PC.

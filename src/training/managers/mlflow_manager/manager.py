@@ -153,6 +153,77 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             return None
         return self._gateway.uri
 
+    # =========================================================================
+    # PHASE 9.B — explicit drain + terminate-by-status helpers
+    # =========================================================================
+    #
+    # Both helpers proxy to the underlying ``ResilientMLflowTransport`` /
+    # MLflow client so the cancellation callback (and any future
+    # finalization layer) doesn't have to know about the resilient
+    # transport's existence. Keeps the manager's surface narrow.
+
+    def flush_buffer(self) -> int:
+        """Drain the resilient transport's buffered metrics now.
+
+        Phase 9.B explicit-drain entry point used by
+        :class:`~src.training.callbacks.cancellation_callback.CancellationCallback`
+        on ``on_train_end`` (wrapped in a 5-second hard budget — see
+        :func:`~src.training._concurrent_helpers.with_timeout`).
+
+        Returns the number of records drained. ``0`` when the manager
+        is not active or no records were pending. Best-effort by
+        contract — failures in the underlying drain are logged inside
+        the transport, not raised.
+        """
+        if self._mlflow is None:
+            return 0
+        return self._resilient_transport.flush_buffer()
+
+    def set_run_terminated(
+        self, run_id: str, status: str = "KILLED",
+    ) -> bool:
+        """Force-set a run's terminal status via the MLflow client.
+
+        Used by Mac-side reconciliation in Phase 9.C: when the runner
+        wrote a ``cancelled.marker`` file (its 5-second flush budget
+        ran out and the process was SIGKILLed before ``end_run``
+        committed) but the MLflow UI still shows ``RunStatus.RUNNING``,
+        the orchestrator calls this from Mac to bring the upstream in
+        sync.
+
+        Wraps :py:meth:`mlflow.tracking.MlflowClient.set_terminated`,
+        which takes a string status from the canonical RunStatus enum
+        (``FINISHED``, ``FAILED``, ``KILLED``, ``SCHEDULED``).
+        Best-effort: returns ``False`` when the manager isn't active
+        or the upstream call raises; failure is logged but never
+        propagates so reconciliation can be safely fire-and-forget.
+
+        Args:
+            run_id: The MLflow run id to terminate.
+            status: One of MLflow's RunStatus strings. Defaults to
+                ``"KILLED"`` which is the canonical "stopped by user"
+                status (Phase 9.1.C — single source of truth).
+
+        Returns:
+            ``True`` when the upstream call returned without error,
+            ``False`` otherwise (manager inactive, MLflow unreachable,
+            run_id unknown to the tracking server, etc.).
+        """
+        if self._mlflow is None:
+            return False
+        client = self.client
+        if client is None:
+            return False
+        try:
+            client.set_terminated(run_id=run_id, status=status)
+            return True
+        except Exception as exc:  # noqa: BLE001 — best-effort by contract
+            logger.warning(
+                "[MLFLOW] set_run_terminated(run_id=%s, status=%s) failed: %s",
+                run_id, status, exc,
+            )
+            return False
+
     def adopt_existing_run(self, run_id: str) -> Any:
         """Reopen an existing MLflow run_id as the active root run on this manager.
 

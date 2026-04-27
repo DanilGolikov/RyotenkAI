@@ -397,7 +397,19 @@ class TrainerFactory:
                 CancellationCallback,
             )
 
-            callbacks.insert(0, CancellationCallback())
+            # Pass the live ``mlflow_manager`` so the callback's
+            # Phase 9.B ``on_train_end`` can drain the resilient
+            # transport buffer into the same MLflow run HF closes.
+            # ``mlflow_manager`` is bound earlier in this function
+            # (the same one TrainingEventsCallback / GPUMetricsCallback
+            # use). When ``mlflow_config`` is None — tracking
+            # disabled — we still pass it (could be ``None``) and
+            # the callback's flush path becomes a no-op via
+            # ``_resolve_mlflow_manager`` returning None.
+            callbacks.insert(
+                0,
+                CancellationCallback(mlflow_manager=mlflow_manager),
+            )
 
         if callbacks:
             trainer_kwargs["callbacks"] = callbacks

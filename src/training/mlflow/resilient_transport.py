@@ -274,6 +274,63 @@ class ResilientMLflowTransport:
             except Exception as e:
                 logger.debug("[BUFFER] Flush error: %s", e)
 
+    def flush_buffer(self) -> int:
+        """Phase 9.B — public, explicit drain of the metrics buffer.
+
+        Where the implicit drain (:meth:`_flush_buffer` in
+        :meth:`_make_wrapper`) only fires on the fast-path "next live
+        metric arrived after recovery", this public method lets a
+        finalization layer (cancellation callback, lifespan shutdown,
+        future debug CLI) trigger the drain explicitly without
+        synthesising a fake metric call.
+
+        Used by :class:`~src.training.callbacks.cancellation_callback.CancellationCallback.on_train_end`
+        wrapped in :func:`~src.training._concurrent_helpers.with_timeout`
+        so the 5-second hard budget is enforced at the call site.
+
+        Behaviour:
+        * Idempotent — empty buffer returns ``0`` immediately.
+        * Best-effort — drain failures are logged but never raised;
+          the live MLflow run still gets closed by HF Trainer's
+          MLflow callback after we return.
+        * Bypasses the circuit breaker (uses the stored unpatched
+          ``log_metric`` original) — a transient stall on the live
+          path must not block draining historical metrics that are
+          already known-pending on disk.
+
+        Returns:
+            Number of buffered records drained. ``0`` when the buffer
+            is empty, no buffer attached, or no original
+            ``log_metric`` is available (transport not installed).
+        """
+        if self._buffer is None:
+            return 0
+
+        # MetricsBuffer exposes ``count`` for in-flight entries; we
+        # read it BEFORE calling flush so the return value reflects
+        # the drain even if ``flush`` resets the counter to zero.
+        try:
+            pending = int(self._buffer.count)
+        except Exception:  # noqa: BLE001 — defensive; buffers may differ
+            pending = 0
+        if pending == 0:
+            return 0
+
+        log_metric_original = self._originals.get(("module", "log_metric"))
+        if log_metric_original is None:
+            logger.warning(
+                "[BUFFER] flush_buffer called but transport not installed; "
+                "%d pending entries remain on disk", pending,
+            )
+            return 0
+
+        try:
+            self._buffer.flush(log_metric_original)
+            return pending
+        except Exception as exc:  # noqa: BLE001 — best-effort by contract
+            logger.warning("[BUFFER] explicit flush_buffer failed: %s", exc)
+            return 0
+
     def _make_wrapper(self, operation: str, original: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(original)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
