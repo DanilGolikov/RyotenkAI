@@ -74,12 +74,16 @@ class MacHeartbeat:
     deterministic counters; production uses :func:`time.monotonic`.
     """
 
-    #: After this many seconds of silence we consider the Mac asleep.
-    #: Picked to cover typical OS sleep-detection grace (Mac power-nap
-    #: can keep TCP alive for ~30-45s) plus a margin. Lowering creates
-    #: false-asleep flips on slow networks; raising delays the
-    #: ``podStop`` decision unnecessarily.
+    #: Default TTL for implicit pings (WS yields, REST GETs). Picked
+    #: to cover typical OS sleep-detection grace (Mac power-nap can
+    #: keep TCP alive for ~30-45s) plus a margin.
     HEARTBEAT_TTL_SECONDS: float = 60.0
+
+    #: Default TTL for **explicit** control-plane pings (Phase 11.E).
+    #: Set to 2× the recommended client ping interval (30 s) so a
+    #: single missed ping doesn't immediately stale the heartbeat —
+    #: the orchestrator gets one full retry cycle of slack.
+    EXPLICIT_HEARTBEAT_TTL_SECONDS: float = 120.0
 
     def __init__(
         self,
@@ -99,7 +103,7 @@ class MacHeartbeat:
                 contract.
         """
         self._clock = clock or time.monotonic
-        self._ttl = (
+        self._default_ttl = (
             ttl_seconds if ttl_seconds is not None
             else self.HEARTBEAT_TTL_SECONDS
         )
@@ -117,8 +121,15 @@ class MacHeartbeat:
         # start at ``0.0``. A sentinel float would silently misclassify
         # a legitimate 0-timestamp mark as "never seen".
         self._last_active_s: float | None = None
+        # Phase 11.E — TTL of the most recent ``mark_active`` call.
+        # Implicit pings (WS / REST) use the default; explicit
+        # control-plane pings use a longer TTL so a single missed
+        # cycle doesn't stale the heartbeat. We track the most-recent
+        # TTL because a fresh long-TTL ping should reset the freshness
+        # contract, not be capped by an earlier short-TTL value.
+        self._last_ttl_s: float = self._default_ttl
 
-    def mark_active(self) -> None:
+    def mark_active(self, *, ttl_seconds: float | None = None) -> None:
         """Record that we just had a successful interaction with the Mac.
 
         Called from:
@@ -128,21 +139,37 @@ class MacHeartbeat:
           fails, ``mark_active`` is not called ⇒ heartbeat goes
           stale ⇒ correct.
         * REST GET handler — after the response is serialised.
-          ``ModelRetriever`` polls ``/jobs/{id}`` while it works,
-          so a long retriever keeps the heartbeat fresh even
-          without WS.
+        * **Phase 11.E** — explicit ``POST /api/v1/control/heartbeat``
+          from the Mac orchestrator's ``ControlPlaneHeartbeat`` service.
+          This is the **process-active** signal: while the Mac
+          orchestrator process is alive, it pings every 30 s so the
+          pod knows long-running work (e.g. ``ModelRetriever`` SCP'ing
+          model adapters via a separate SSH stream) is still in flight,
+          even when no WS / REST traffic is hitting the runner.
 
-        Idempotent: every call updates the timestamp to "now".
-        Multiple calls within the same loop iteration cost nothing.
+        Args:
+            ttl_seconds: Override the default TTL for THIS mark.
+                ``None`` ⇒ use the constructor's default (typically
+                :attr:`HEARTBEAT_TTL_SECONDS` = 60s).
+                Phase 11.E callers pass
+                :attr:`EXPLICIT_HEARTBEAT_TTL_SECONDS` (120 s) so a
+                missed ping doesn't immediately flip the heartbeat.
+
+        Idempotent: every call updates the timestamp to "now" and
+        the TTL to the new value. Multiple calls within the same
+        loop iteration cost nothing.
         """
         self._last_active_s = self._clock()
+        self._last_ttl_s = (
+            ttl_seconds if ttl_seconds is not None else self._default_ttl
+        )
 
     def is_alive(self) -> bool:
-        """Did the Mac touch us within the TTL window?
+        """Did the Mac touch us within the most-recent TTL window?
 
         Returns:
             True iff a positive timestamp exists AND it's no older
-            than :attr:`HEARTBEAT_TTL_SECONDS`.
+            than the TTL of the most recent ``mark_active`` call.
             False on a fresh runner (never seen anyone) OR after a
             silent gap longer than the TTL.
 
@@ -153,7 +180,7 @@ class MacHeartbeat:
         last = self._last_active_s
         if last is None:
             return False
-        return (self._clock() - last) < self._ttl
+        return (self._clock() - last) < self._last_ttl_s
 
     def age_seconds(self) -> float | None:
         """How long since the last interaction.

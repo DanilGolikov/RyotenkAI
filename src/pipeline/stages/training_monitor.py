@@ -146,6 +146,18 @@ class TrainingMonitor(PipelineStage):
         # via :meth:`JobClient.subscribe_events` resume from the
         # right place.
         self._last_offset: int = 0
+        # Phase 11.E — handles for pipeline-level teardown. Captured
+        # from context on first execute(); torn down later in
+        # :meth:`cleanup` (called by the orchestrator AFTER all
+        # downstream stages, including ModelRetriever, have run).
+        # Why pipeline-level instead of stage-level: ``ModelRetriever``
+        # streams adapters via a separate SSH ``tar | ssh`` pipeline
+        # that bypasses the runner's FastAPI; without the tunnel
+        # staying up the in-pod heartbeat cannot be refreshed and
+        # :class:`PodTerminator` would podStop the pod mid-download.
+        self._tunnel: SSHTunnelManager | None = None
+        self._client: JobClient | None = None
+        self._heartbeat_service: Any | None = None
 
     # --- public entry point ---------------------------------------------
 
@@ -173,6 +185,11 @@ class TrainingMonitor(PipelineStage):
         client: JobClient | None = context.get("job_client")
         tunnel: SSHTunnelManager | None = context.get("ssh_tunnel")
         job_id: str | None = context.get("job_id")
+        # Phase 11.E — capture for pipeline-level teardown in cleanup().
+        # See class docstring for why pipeline-level instead of stage.
+        self._client = client
+        self._tunnel = tunnel
+        self._heartbeat_service = context.get("control_plane_heartbeat")
         if client is None or job_id is None:
             return Err(
                 TrainingError(
@@ -190,43 +207,80 @@ class TrainingMonitor(PipelineStage):
         if self._callbacks.on_training_started:
             self._callbacks.on_training_started()
 
-        try:
-            watch_result = asyncio.run(self._watch(client, job_id))
+        # Phase 11.E — no try/finally for tunnel teardown anymore.
+        # Resources captured on ``self`` are torn down in :meth:`cleanup`
+        # at orchestrator finalize-time, AFTER ModelRetriever has run.
+        # An exception escaping ``_watch`` propagates up the stack
+        # cleanly — orchestrator's reverse-order cleanup() will still
+        # tear down the captured handles.
+        watch_result = asyncio.run(self._watch(client, job_id))
 
-            # Phase 9.C / Phase 11.A — Mac-side reconciliation for
-            # both terminal markers:
-            #
-            # * ``cancelled.marker`` (Phase 9.C) — written when the
-            #   CancellationCallback's 5-second flush deadline fires.
-            #   The runner SIGKILLed the trainer before HF MLflow
-            #   callback could close the run; MLflow shows RUNNING.
-            #   Reconcile to ``KILLED``.
-            # * ``completion.marker`` (Phase 11.A) — written on every
-            #   natural completion, regardless of flush outcome. If
-            #   Mac was asleep when HF MLflow callback ran, ``end_run``
-            #   timed out and the run is stuck in RUNNING. Reconcile
-            #   to ``FINISHED``.
-            #
-            # If both markers exist (rare race), cancellation wins —
-            # explicit user-stop overrides natural completion.
-            #
-            # Best-effort throughout: any failure logs and moves on.
-            self._reconcile_terminal_marker_if_present(context)
+        # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
+        # terminal markers:
+        #
+        # * ``cancelled.marker`` (Phase 9.C) — written when the
+        #   CancellationCallback's 5-second flush deadline fires.
+        #   The runner SIGKILLed the trainer before HF MLflow
+        #   callback could close the run; MLflow shows RUNNING.
+        #   Reconcile to ``KILLED``.
+        # * ``completion.marker`` (Phase 11.A) — written on every
+        #   natural completion, regardless of flush outcome. If
+        #   Mac was asleep when HF MLflow callback ran, ``end_run``
+        #   timed out and the run is stuck in RUNNING. Reconcile
+        #   to ``FINISHED``.
+        #
+        # If both markers exist (rare race), cancellation wins —
+        # explicit user-stop overrides natural completion.
+        #
+        # Best-effort throughout: any failure logs and moves on.
+        self._reconcile_terminal_marker_if_present(context)
 
-            return watch_result
-        finally:
-            # Tear down whatever the launcher opened, regardless of
-            # outcome. Errors swallowed — we already have a return
-            # value to surface; ssh teardown noise must not mask it.
-            if tunnel is not None:
-                try:
-                    asyncio.run(tunnel.close())
-                except Exception as exc:
-                    logger.debug(f"[MONITOR] tunnel.close failed: {exc}")
+        return watch_result
+
+    def cleanup(self) -> None:
+        """Phase 11.E — pipeline-level teardown.
+
+        Called by the orchestrator's reverse-order cleanup AFTER all
+        downstream stages (notably :class:`ModelRetriever`) have run.
+        Tears down resources captured during :meth:`execute` in this
+        order:
+
+        1. Stop the :class:`ControlPlaneHeartbeat` service so it
+           doesn't keep pinging a tunnel we're about to close. We
+           stop it first so a stop-during-close race doesn't surface
+           as a transient error in the heartbeat task's logs.
+        2. Close the :class:`JobClient` HTTP pool.
+        3. Close the SSH tunnel (port forward + ControlMaster socket).
+
+        Idempotent — second call is a no-op. All errors logged at
+        DEBUG and swallowed; teardown failure must NOT mask whatever
+        the pipeline result is.
+        """
+        # 1. Heartbeat service.
+        if self._heartbeat_service is not None:
             try:
-                asyncio.run(client.aclose())
-            except Exception as exc:
+                asyncio.run(self._heartbeat_service.stop())
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug(
+                    f"[MONITOR] control-plane heartbeat stop failed: {exc}"
+                )
+            self._heartbeat_service = None
+
+        # 2. JobClient HTTP pool.
+        if self._client is not None:
+            try:
+                asyncio.run(self._client.aclose())
+            except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug(f"[MONITOR] client.aclose failed: {exc}")
+            self._client = None
+
+        # 3. SSH tunnel.
+        if self._tunnel is not None:
+            try:
+                asyncio.run(self._tunnel.close())
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug(f"[MONITOR] tunnel.close failed: {exc}")
+            self._tunnel = None
 
     # --- Phase 9.C / Phase 11.A reconciliation --------------------------
 

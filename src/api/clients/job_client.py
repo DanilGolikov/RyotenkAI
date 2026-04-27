@@ -206,6 +206,45 @@ class JobClient:
             return False
         return response.status_code == 200
 
+    async def send_heartbeat(
+        self, *, ttl_seconds: float | None = None,
+    ) -> bool:
+        """Phase 11.E — explicit "control plane is active" ping.
+
+        Used by :class:`ControlPlaneHeartbeat` to tell the in-pod
+        runner that the Mac orchestrator process is still alive and
+        actively managing this run. While these pings keep landing,
+        :class:`MacHeartbeat` stays fresh and :class:`PodTerminator`
+        will pick the SHORT_GRACE / "alive" terminal-hook path
+        regardless of WS / REST traffic.
+
+        The ping is fire-and-forget from the orchestrator's
+        standpoint — transient httpx errors return ``False`` and the
+        caller logs + retries on the next interval. The pod side
+        retry logic in :class:`PodTerminator` accommodates a single
+        missed ping cycle.
+
+        Args:
+            ttl_seconds: Override the runner's default explicit TTL
+                (120 s). Mostly useful for tests; production code
+                passes ``None``.
+
+        Returns:
+            ``True`` on a 200 response, ``False`` on any non-200
+            status or transport error.
+        """
+        body: dict[str, Any] = {}
+        if ttl_seconds is not None:
+            body["ttl_seconds"] = float(ttl_seconds)
+        try:
+            response = await self._client.post(
+                "/api/v1/control/heartbeat",
+                json=body,
+            )
+        except httpx.HTTPError:
+            return False
+        return response.status_code == 200
+
     # --- REST endpoints ----------------------------------------------------
 
     async def submit_job(

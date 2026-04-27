@@ -174,6 +174,10 @@ class TestEventDispatch:
         assert result.is_ok()
         assert result.unwrap()["status"] == "completed"
         assert len(completions) == 1
+        # Phase 11.E — teardown moved to cleanup() so the SSH tunnel
+        # + JobClient stay alive through ModelRetriever.
+        client.aclose.assert_not_awaited()
+        monitor.cleanup()
         client.aclose.assert_awaited()
 
     def test_trainer_exited_nonzero_returns_err(self) -> None:
@@ -309,7 +313,10 @@ class TestReplayTruncated:
 
 
 class TestTunnelTeardown:
-    def test_tunnel_and_client_closed_on_success(self) -> None:
+    def test_tunnel_and_client_closed_on_cleanup(self) -> None:
+        # Phase 11.E — teardown happens in cleanup() (orchestrator
+        # finalize) instead of execute().finally so the SSH tunnel +
+        # JobClient stay alive across stages including ModelRetriever.
         monitor = _make_monitor()
         client = _make_client(events=[
             {"offset": 0, "kind": "trainer_exited",
@@ -321,6 +328,11 @@ class TestTunnelTeardown:
 
         result = monitor.execute(_ctx_with_handles(client, tunnel=tunnel))
         assert result.is_ok()
+        # Execute does NOT close — kept alive for downstream stages.
+        tunnel.close.assert_not_awaited()
+        client.aclose.assert_not_awaited()
+        # Cleanup tears them down.
+        monitor.cleanup()
         tunnel.close.assert_awaited()
         client.aclose.assert_awaited()
 

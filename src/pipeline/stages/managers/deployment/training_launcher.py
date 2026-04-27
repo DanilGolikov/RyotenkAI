@@ -44,6 +44,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from src.api.clients.job_client import JobClient, JobClientError
+from src.api.services.control_plane_heartbeat import ControlPlaneHeartbeat
 from src.api.services.tunnel_service import (
     SSHTunnelEndpoint,
     SSHTunnelError,
@@ -231,6 +232,36 @@ class TrainingLauncher:
         context["job_client"] = client
         context["ssh_tunnel"] = tunnel
         context["job_id"] = job_id
+
+        # Phase 11.E — start the control-plane heartbeat. While the
+        # orchestrator process is alive, this service POSTs to
+        # ``/api/v1/control/heartbeat`` every 30 s so the in-pod
+        # :class:`MacHeartbeat` stays fresh (TTL 120 s) regardless
+        # of WS / REST traffic. This is critical for ModelRetriever:
+        # its tar+ssh adapter download bypasses the runner's
+        # FastAPI entirely, and without explicit pings the heartbeat
+        # would stale out and trigger ``podStop`` mid-download.
+        # TrainingMonitor's :meth:`cleanup` (pipeline-level, runs
+        # AFTER ModelRetriever) stops this service.
+        try:
+            heartbeat_service = ControlPlaneHeartbeat(client)
+            asyncio.run(heartbeat_service.start())
+            context["control_plane_heartbeat"] = heartbeat_service
+            logger.info(
+                "[LAUNCHER] Control-plane heartbeat started "
+                "(ping every 30 s, TTL 120 s)"
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            # Heartbeat startup failure is NOT fatal: the implicit
+            # WS / REST heartbeat still works for the duration of
+            # TrainingMonitor's WS subscription. ModelRetriever may
+            # see stale heartbeat → podStop mid-download in the
+            # worst case, but that's a degradation, not a failure.
+            logger.warning(
+                "[LAUNCHER] control-plane heartbeat failed to start: %s. "
+                "Continuing without explicit pings; ModelRetriever may "
+                "see stale heartbeat on long downloads.", exc,
+            )
 
         # Persist the SSH endpoint so out-of-process CLI commands
         # (``ryotenkai job status``, ``... events``, ``... stop``)

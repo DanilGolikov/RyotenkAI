@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Protocol
 from fastapi import FastAPI
 
 from src.runner.__about__ import RUNTIME_IMAGE
+from src.runner.api import control as control_api
 from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
 from src.runner.api import jobs as jobs_api
@@ -382,6 +383,8 @@ def create_app(
     app.include_router(jobs_api.router, prefix=API_V1_PREFIX)
     app.include_router(internal_api.router, prefix=API_V1_PREFIX)
     app.include_router(events_api.router, prefix=API_V1_PREFIX)
+    # Phase 11.E — control-plane heartbeat surface
+    app.include_router(control_api.router, prefix=API_V1_PREFIX)
 
     return app
 

@@ -16,6 +16,7 @@ from fastapi import Request
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
+    from src.runner.heartbeat import MacHeartbeat
     from src.runner.mlflow_relay import MLflowRelay
     from src.runner.plugin_unpacker import PluginUnpacker
     from src.runner.state import JobLifecycleFSM
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 __all__ = [
     "get_bus",
     "get_fsm",
+    "get_heartbeat",
     "get_mlflow_relay",
     "get_plugin_unpacker",
     "get_supervisor",
@@ -58,3 +60,12 @@ def get_mlflow_relay(request: Request) -> "MLflowRelay":
     branching on configuration.
     """
     return request.app.state.mlflow_relay  # type: ignore[no-any-return]
+
+
+def get_heartbeat(request: Request) -> "MacHeartbeat":
+    """Return the Mac heartbeat ledger bound to the live FastAPI app.
+
+    Phase 11.B + 11.E. The ledger tracks last successful Mac↔pod
+    interaction; :class:`PodTerminator` reads it on terminal hooks.
+    """
+    return request.app.state.heartbeat  # type: ignore[no-any-return]

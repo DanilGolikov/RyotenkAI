@@ -273,6 +273,21 @@ class PodTerminator:
     #: response when heartbeat dies; larger = less event-bus chatter.
     GRACE_TICK_SECONDS: float = 10.0
 
+    #: Phase 11.E — number of retry checks before declaring Mac dead
+    #: on the natural-completion path. Each retry sleeps
+    #: :attr:`HEARTBEAT_RETRY_TICK_SECONDS` seconds before re-reading
+    #: the heartbeat. With defaults of 3 retries × 10 s = 30 s total
+    #: window, the orchestrator's 30 s ping cadence is guaranteed to
+    #: land at least once during the retry loop, so any momentary
+    #: heartbeat staleness (e.g. the Mac's just-now-asleep window
+    #: waiting for the next ping) self-corrects.
+    HEARTBEAT_RETRY_ATTEMPTS: int = 3
+
+    #: Sleep between heartbeat retries. Picked to bracket the Mac's
+    #: 30 s ping interval with 3× safety: 3 retries × 10 s = 30 s
+    #: round-trip.
+    HEARTBEAT_RETRY_TICK_SECONDS: float = 10.0
+
     def __init__(
         self,
         *,
@@ -284,6 +299,8 @@ class PodTerminator:
         grace_base_seconds: float | None = None,
         grace_max_seconds: float | None = None,
         grace_tick_seconds: float | None = None,
+        heartbeat_retry_attempts: int | None = None,
+        heartbeat_retry_tick_seconds: float | None = None,
     ) -> None:
         self._url = graphql_url
         self._timeout = request_timeout
@@ -303,6 +320,16 @@ class PodTerminator:
         self._grace_tick = (
             grace_tick_seconds if grace_tick_seconds is not None
             else self.GRACE_TICK_SECONDS
+        )
+        # Phase 11.E — retry knobs.
+        self._heartbeat_retry_attempts = (
+            heartbeat_retry_attempts if heartbeat_retry_attempts is not None
+            else self.HEARTBEAT_RETRY_ATTEMPTS
+        )
+        self._heartbeat_retry_tick = (
+            heartbeat_retry_tick_seconds
+            if heartbeat_retry_tick_seconds is not None
+            else self.HEARTBEAT_RETRY_TICK_SECONDS
         )
 
     async def decide_and_act(
@@ -329,7 +356,20 @@ class PodTerminator:
             # Unknown value ⇒ assume persistent (safe default).
             volume_kind = "persistent"
 
-        mac_alive = heartbeat.is_alive()
+        # Phase 11.E — retry the heartbeat check before declaring Mac
+        # dead. Without retries, a single missed control-plane ping
+        # (or a Mac-side SCP-stream that briefly starved the
+        # orchestrator's heartbeat thread) would flip ``mac_alive`` to
+        # False and trigger ``STOPPED_FOR_RESUME`` mid-ModelRetriever.
+        # The retry loop polls the ledger N times with
+        # ``heartbeat_retry_tick`` seconds between attempts; the Mac's
+        # 30 s ping cadence is guaranteed to land at least once during
+        # the default 3×10 s = 30 s window.
+        mac_alive, retry_attempts_used = await self._check_heartbeat_with_retries(
+            heartbeat=heartbeat,
+            terminal_state=terminal_state,
+            bus_publish=bus_publish,
+        )
         heartbeat_age = heartbeat.age_seconds()
 
         decision = decide_terminal_outcome(
@@ -348,6 +388,7 @@ class PodTerminator:
                 "terminal_state": terminal_state,
                 "mac_alive": mac_alive,
                 "heartbeat_age_seconds": heartbeat_age,
+                "heartbeat_retry_attempts_used": retry_attempts_used,
                 "volume_kind": volume_kind,
                 "keep_on_error": keep_on_error,
             },
@@ -404,6 +445,81 @@ class PodTerminator:
             },
         )
         return {"decision": decision, "action": action}
+
+    # --- heartbeat retry --------------------------------------------------
+
+    async def _check_heartbeat_with_retries(
+        self,
+        *,
+        heartbeat: "MacHeartbeat",
+        terminal_state: str,
+        bus_publish: "Callable[[str, dict[str, Any]], Any]",
+    ) -> tuple[bool, int]:
+        """Poll the heartbeat ledger up to N times before declaring Mac dead.
+
+        Phase 11.E. The first read is free; if it returns ``True`` we
+        skip the loop entirely (fast path, no extra latency on the
+        common case where the orchestrator has been actively pinging).
+        Otherwise we sleep ``heartbeat_retry_tick`` seconds and re-read
+        up to ``heartbeat_retry_attempts`` more times.
+
+        Why retry only when first read is False:
+            We never want to delay the terminal hook unnecessarily. The
+            retry loop's cost is bounded — only paid when the heartbeat
+            looks stale, which is the only case where a wrong decision
+            would actually hurt. When Mac is clearly alive (orchestrator
+            actively pinging), we get the SHORT_GRACE path with zero
+            retry latency.
+
+        Why NOT retry on cancelled/failed:
+            User-stop and automatic-failure paths have well-defined
+            outcomes regardless of heartbeat (terminate / honour
+            KEEP_ON_ERROR). Heartbeat retries only matter for natural
+            completion, where the wrong call (mac_alive=False when in
+            fact the orchestrator is just heads-down on SCP) costs us
+            data.
+
+        Returns:
+            ``(mac_alive, attempts_used)`` — ``attempts_used`` is the
+            number of retries we actually performed (0 when first read
+            already returned True, up to ``heartbeat_retry_attempts``
+            when we exhausted the loop). Surfaced in the
+            ``pod_terminal_decision`` event so operators see how
+            close we came to a wrong call.
+        """
+        # Fast path — first read decides on positive answer.
+        if heartbeat.is_alive():
+            return True, 0
+
+        # Retry path — only meaningful for natural completion.
+        if terminal_state != "completed":
+            return False, 0
+
+        bus_publish(
+            "pod_terminal_heartbeat_retry_started",
+            {
+                "max_attempts": self._heartbeat_retry_attempts,
+                "tick_seconds": self._heartbeat_retry_tick,
+            },
+        )
+
+        for attempt in range(1, self._heartbeat_retry_attempts + 1):
+            await self._sleep(self._heartbeat_retry_tick)
+            if heartbeat.is_alive():
+                bus_publish(
+                    "pod_terminal_heartbeat_retry_recovered",
+                    {
+                        "attempt": attempt,
+                        "max_attempts": self._heartbeat_retry_attempts,
+                    },
+                )
+                return True, attempt
+
+        bus_publish(
+            "pod_terminal_heartbeat_retry_exhausted",
+            {"attempts": self._heartbeat_retry_attempts},
+        )
+        return False, self._heartbeat_retry_attempts
 
     # --- grace loop -------------------------------------------------------
 
