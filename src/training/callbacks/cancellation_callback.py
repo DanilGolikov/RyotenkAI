@@ -126,6 +126,9 @@ class CancellationCallback(TrainerCallback):
         shutdown_handler: object | None = None,
         mlflow_manager: object | None = None,
         flush_timeout_seconds: float | None = None,
+        event_publisher: "object | None" = None,
+        marker_writer: "object | None" = None,
+        workspace_dir: "object | None" = None,
     ) -> None:
         """Build a callback.
 
@@ -143,6 +146,25 @@ class CancellationCallback(TrainerCallback):
                 ``FLUSH_TIMEOUT_SECONDS`` budget — tests use a tiny
                 value (e.g. 0.1s) to assert the timeout path
                 without waiting in real time.
+            event_publisher: callable ``(kind: str, payload: dict) -> None``
+                that emits a structured event into the runner's
+                EventBus. Phase 9.C — used to emit
+                ``cancellation_finalized`` after the flush. Default
+                ``None`` = no telemetry emission (e.g. local-mode
+                trainings without runner attached).
+            marker_writer: callable ``(payload: dict) -> Path | None``
+                that writes the cancelled.marker file to the workspace
+                when the flush deadline exceeds. Default ``None`` =
+                lazy resolution via :func:`atomic_write_text` against
+                ``workspace_dir / cancelled.marker``. Tests inject
+                a stub returning a sentinel path.
+            workspace_dir: directory the trainer writes
+                ``cancelled.marker`` to when the flush exceeds budget.
+                Default ``None`` = read from ``HELIX_WORKSPACE`` env
+                var (set by ``TrainingLauncher._build_job_env``).
+                Mac side scans ``attempts/<n>/cancelled.marker`` for
+                reconciliation; the trainer's HELIX_WORKSPACE points
+                at exactly that attempt directory in production.
         """
         self._handler = shutdown_handler
         self._mlflow_manager = mlflow_manager
@@ -152,6 +174,11 @@ class CancellationCallback(TrainerCallback):
             else self.FLUSH_TIMEOUT_SECONDS
         )
         self._signalled = False  # idempotency: we only log once per cancel
+        # Phase 9.C plumbing — both nullable; production wires either
+        # both or neither. Validated lazily on first use.
+        self._event_publisher = event_publisher
+        self._marker_writer = marker_writer
+        self._workspace_dir = workspace_dir
 
     def _resolve_handler(self) -> object:
         """Resolve the global handler on first use.
@@ -267,6 +294,10 @@ class CancellationCallback(TrainerCallback):
             with_timeout,
         )
 
+        drained = 0
+        flush_timed_out = False
+        marker_path: object | None = None
+
         try:
             drained = with_timeout(
                 manager.flush_buffer,  # type: ignore[attr-defined]
@@ -281,15 +312,20 @@ class CancellationCallback(TrainerCallback):
             # The flush is still running in the background thread; we
             # just stopped waiting. HF Trainer's MLflow callback will
             # run next and close the run with whatever it knows. Phase
-            # 9.C will write ``cancelled.marker`` here so Mac-side
+            # 9.C: write ``cancelled.marker`` so Mac-side
             # reconciliation can fix the upstream RunStatus if it
             # was left stuck on RUNNING.
+            flush_timed_out = True
             logger.warning(
                 "[CANCELLATION] on_train_end: MLflow flush exceeded %.1fs "
                 "budget; proceeding to HF end_run regardless. Some "
                 "buffered metrics may not have made it to the upstream "
                 "run before exit.",
                 self._flush_timeout,
+            )
+            marker_path = self._write_cancelled_marker(
+                run_id=self._safe_run_id(manager),
+                drained=drained,
             )
         except Exception as exc:  # noqa: BLE001 — best-effort by contract
             # ``flush_buffer`` is documented as best-effort and shouldn't
@@ -299,6 +335,153 @@ class CancellationCallback(TrainerCallback):
                 "[CANCELLATION] on_train_end: flush_buffer raised "
                 "unexpectedly: %s — proceeding to HF end_run", exc,
             )
+
+        # Phase 9.C — emit ``cancellation_finalized`` so the Mac-side
+        # consumer of the WS event stream knows the trainer's flush
+        # is done (or timed out). Carries enough metadata for
+        # operator forensics + Mac-side reconciliation:
+        #
+        # * ``flushed_count`` — buffered records that made it.
+        # * ``flush_timed_out`` — primary signal for reconciliation.
+        # * ``marker_written`` — bool; True ⇒ Mac will scan the
+        #   marker file on the next poll.
+        self._emit_finalized_event(
+            drained=drained,
+            flush_timed_out=flush_timed_out,
+            marker_written=marker_path is not None,
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 9.C helpers — telemetry event + cancelled.marker
+    # ------------------------------------------------------------------
+
+    def _emit_finalized_event(
+        self,
+        *,
+        drained: int,
+        flush_timed_out: bool,
+        marker_written: bool,
+    ) -> None:
+        """Best-effort telemetry — never raises into the trainer's
+        exit path."""
+        publisher = self._event_publisher
+        if publisher is None:
+            logger.debug(
+                "[CANCELLATION] no event_publisher injected — "
+                "skipping cancellation_finalized telemetry",
+            )
+            return
+        try:
+            from src.runner.cancellation_telemetry import (
+                CANCELLATION_FINALIZED,
+            )
+            publisher(
+                CANCELLATION_FINALIZED,
+                {
+                    "flushed_count": int(drained),
+                    "flush_timed_out": bool(flush_timed_out),
+                    "marker_written": bool(marker_written),
+                    "flush_budget_seconds": float(self._flush_timeout),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.debug(
+                "[CANCELLATION] failed to emit cancellation_finalized "
+                "event: %s",
+                exc,
+            )
+
+    def _safe_run_id(self, manager: object) -> str | None:
+        """Pull the active run_id from the manager defensively.
+
+        ``MlflowManager.run_id`` is the documented surface; tests may
+        inject a stub without it. Defensive ``getattr`` keeps the
+        marker path's payload meaningful when available, ``None``
+        otherwise.
+        """
+        return getattr(manager, "run_id", None)
+
+    def _write_cancelled_marker(
+        self,
+        *,
+        run_id: str | None,
+        drained: int,
+    ) -> "object | None":
+        """Write ``<workspace>/cancelled.marker`` for Mac-side reconciliation.
+
+        Best-effort: returns the resulting path on success, ``None``
+        when we couldn't determine a workspace or the write failed.
+        Never raises — the trainer is exiting and any failure here
+        just means reconciliation will skip; not catastrophic.
+
+        Defensive resolution order for the workspace dir:
+        1. Constructor-injected ``workspace_dir`` (tests).
+        2. ``HELIX_WORKSPACE`` env var (production — set by
+           ``TrainingLauncher._build_job_env`` to the attempt
+           directory's path on the pod's perspective).
+        3. ``None`` — log-and-skip.
+        """
+        # Custom writer was injected — defer to it.
+        if self._marker_writer is not None:
+            try:
+                return self._marker_writer({  # type: ignore[operator]
+                    "run_id": run_id,
+                    "flushed_count": drained,
+                    "ts_ms": __import__("time").time() * 1000,
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "[CANCELLATION] injected marker_writer failed: %s",
+                    exc,
+                )
+                return None
+
+        workspace = self._resolve_workspace_dir()
+        if workspace is None:
+            logger.debug(
+                "[CANCELLATION] no workspace dir resolved — "
+                "skipping cancelled.marker write",
+            )
+            return None
+
+        try:
+            from pathlib import Path
+            from src.utils.atomic_fs import atomic_write_text
+            import json
+            import time
+
+            target = Path(workspace) / "cancelled.marker"
+            payload = json.dumps({
+                "run_id": run_id,
+                "flushed_count": int(drained),
+                "ts_ms": int(time.time() * 1000),
+                "reason": "flush_budget_exceeded",
+            }, indent=2)
+            atomic_write_text(target, payload)
+            logger.warning(
+                "[CANCELLATION] wrote cancelled.marker to %s — "
+                "Mac-side reconciliation will pick this up to "
+                "force-set MLflow run status to KILLED",
+                target,
+            )
+            return target
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "[CANCELLATION] failed to write cancelled.marker: %s — "
+                "Mac-side reconciliation will skip",
+                exc,
+            )
+            return None
+
+    def _resolve_workspace_dir(self) -> "object | None":
+        """Resolve workspace path: explicit injection > env var > None."""
+        if self._workspace_dir is not None:
+            return self._workspace_dir
+        import os
+        env_value = os.environ.get("HELIX_WORKSPACE")
+        if env_value:
+            return env_value
+        return None
 
     def _resolve_mlflow_manager(self) -> object | None:
         """Return the injected MlflowManager (or ``None`` if unavailable).

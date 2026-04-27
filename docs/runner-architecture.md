@@ -191,6 +191,95 @@ shares the same shape:
 ring buffer drops the oldest events first; clients receive
 `ReplayTruncatedError` if they ask for an offset that has rolled off.
 
+## Stop semantics (Phase 9)
+
+`ryotenkai job stop` is **irreversible**. Pod is terminated (RunPod
+`podTerminate`, single_node `docker rm -f`), the run is closed in
+MLflow with `RunStatus.KILLED`, and the trainer's last checkpoint
+(at the most recent `save_steps` boundary) stays on disk in
+`attempts/<n>/`.
+
+### Layer ownership at stop
+
+| Layer | Stop responsibility |
+|---|---|
+| User CLI / Web UI | Send stop intent via `JobClient.request_stop` |
+| Mac control plane FastAPI | Proxy stop request; on terminal event invoke `provider.cleanup_pod()` (PRIMARY pod removal) + read `cancelled.marker` for MLflow reconciliation |
+| Runner Supervisor (in-pod) | SIGTERM trainer pgid; SIGKILL escalation after `--grace`; FSM transitions; emit `cancellation_started` / `cancellation_completed` |
+| Trainer subprocess | `ShutdownHandler` flag → `CancellationCallback` cooperative loop exit → `flush_buffer` (5s budget) → emit `cancellation_finalized`; HF Trainer's MLflow callback closes the run with `KILLED` |
+| In-pod `PodStopper` | Safety-net: at FSM terminal → `podTerminate` (delete, not sleep). User-stop ignores `RUNPOD_KEEP_ON_ERROR` |
+| Single-node provider | `cleanup_after_run(container_name)` — `docker rm -f` via SSH (10s timeout, fail-soft) |
+
+### Cancellation event chain
+
+Six event kinds telegraph the stop chain end-to-end. All carry
+`latency_ms` measured against the `requested_at_ms` anchor stamped
+on `cancellation_started` so dashboards can build SLO histograms
+without correlating across processes.
+
+| Event kind | Emitted by | Carries |
+|---|---|---|
+| `stop_requested` | Supervisor (kept for backwards-compat) | `grace_seconds` |
+| `cancellation_started` | Supervisor | `requested_at_ms`, `grace_seconds`, `reason` |
+| `cancellation_finalized` | CancellationCallback (trainer) | `flushed_count`, `flush_timed_out`, `marker_written`, `flush_budget_seconds` |
+| `trainer_exited` | Supervisor (existing) | `exit_code`, `signal`, `cancellation_requested` |
+| `cancellation_completed` | Supervisor | `total_latency_ms`, `terminal_state`, `exit_code`, `signal`, `requested_at_ms` |
+| `pod_stop_attempt` | PodStopper (existing) | `terminal_state`, `outcome` |
+| `mlflow_reconciled_post_sigkill` | Mac TrainingMonitor | `run_id`, `marker_path` |
+| `cleanup_pod_failed` | Mac orchestrator (reserved) | `provider`, `pod_id`, `error_code`, `message` |
+
+Constants live in `src/runner/cancellation_telemetry.py` — single
+source of truth so dashboards / SLO alerts grep for stable strings.
+
+### SIGKILL fallback: `cancelled.marker`
+
+When the trainer's MLflow flush exceeds its 5-second budget the
+process may be SIGKILLed by the supervisor's grace timer before
+HF's MLflow callback runs. To rescue the operator-visible state:
+
+1. `CancellationCallback.on_train_end` writes
+   `<workspace>/cancelled.marker` containing
+   `{run_id, flushed_count, ts_ms, reason}` via
+   `atomic_write_text`.
+2. Mac `TrainingMonitor` after the WS subscription returns:
+   - reads `attempts/<n>/cancelled.marker` (atomic — partial files
+     never seen),
+   - calls `MlflowClient.get_run(run_id).info.status` — if `RUNNING`,
+   - calls `MlflowClient.set_terminated(run_id, status="KILLED")`,
+   - emits `mlflow_reconciled_post_sigkill` for forensics.
+3. If the marker is absent (normal flow — flush completed in time)
+   reconciliation is a no-op.
+
+The marker is workspace-scoped (one per attempt) so reconciliation
+can't apply the wrong run_id. Best-effort throughout: any failure
+logs at WARNING and the rest of cleanup proceeds — the operator
+can still manually fix the MLflow status if everything fails.
+
+### Pause: explicitly out of scope
+
+Pause / Resume is a separate plan (placeholder in
+`harmonic-rolling-crayon.md` Phase 10). Today: Stop = terminate;
+Resume creates a new attempt + new pod from the prior checkpoint
+(`ryotenkai run resume <run>`). The `CancellationCallback`
+flag-driven cooperative exit is the same mechanism Pause would
+reuse with a different `ShutdownReason` enum value — adding pause
+later won't require architectural rework, just additional UI/CLI
+surface + a config knob.
+
+### Operator quick reference
+
+```bash
+# Watch a running cancellation chain in real time (text mode renderer):
+ryotenkai job events <run_dir> --follow | grep -E "cancellation|trainer_exited|pod_stop"
+
+# After-the-fact: reconstruct the chain from the runner's event store
+# and pull total latency.
+grep cancellation_completed pipeline.log | head
+
+# Did SIGKILL fire before flush?
+test -f attempts/<n>/cancelled.marker && echo "yes"
+```
+
 ## Failure modes & where to look
 
 | Symptom | Likely cause | First place to check |

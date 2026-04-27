@@ -134,6 +134,14 @@ class Supervisor:
         # handler so it knows whether to land in ``cancelled`` or
         # ``failed`` on a non-zero exit.
         self._cancellation_requested = False
+        # Phase 9.C: epoch-ms anchor stamped on ``request_stop`` so
+        # downstream telemetry events (``cancellation_finalized`` from
+        # the trainer-side callback, ``cancellation_completed`` from
+        # this supervisor's reap path) can carry ``latency_ms``
+        # measured against a single point in time. ``None`` means
+        # "no cancellation requested" — used to gate the completed
+        # event so natural exits don't emit cancellation telemetry.
+        self._cancellation_started_at_ms: int | None = None
         # Optional post-terminal callback (see :data:`TerminalHook`).
         # Production wires this to RunPod auto-stop; tests usually
         # leave it ``None``.
@@ -298,8 +306,36 @@ class Supervisor:
         except InvalidTransitionError:
             return
 
+        # Phase 9.C — anchor for the cancellation chain's latency
+        # bookkeeping. Stamped BEFORE bus publishes so the event
+        # payload carries the same anchor downstream consumers see.
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_STARTED,
+            now_ms,
+        )
+        self._cancellation_started_at_ms = now_ms()
         self._cancellation_requested = True
+
+        # Backwards-compat: keep the existing ``stop_requested`` event
+        # for any consumer that grep'd it pre-9.C. The new
+        # ``cancellation_started`` carries the structured telemetry
+        # payload; both fire on the same FSM transition.
         self._bus.publish("stop_requested", {"grace_seconds": grace_seconds})
+        self._bus.publish(
+            CANCELLATION_STARTED,
+            {
+                "requested_at_ms": self._cancellation_started_at_ms,
+                "grace_seconds": grace_seconds,
+                # ``reason`` is informational — supervisor doesn't know
+                # why the user stopped; it just got the request. Other
+                # callers (idle_detector, max_lifetime) populate it
+                # via a future ``request_stop(reason="idle_timeout")``
+                # parameter — wired separately if/when those paths
+                # gain dedicated reason strings. Default is the
+                # canonical "user clicked stop" reason.
+                "reason": "user_stop",
+            },
+        )
         self._signal_group(signal.SIGTERM)
 
         # Background escalation. Held as a task reference so it isn't
@@ -464,6 +500,32 @@ class Supervisor:
             # The FSM is already terminal — extremely rare race where
             # ``shutdown()`` ran during reap. Tolerate.
             pass
+
+        # Phase 9.C — emit ``cancellation_completed`` telemetry only
+        # when the run was actually cancelled. Natural exits and
+        # crashes still get ``trainer_exited`` (handled above) but
+        # the cancellation-specific event is silent for them — keeps
+        # the operator dashboards focused on real stop chains.
+        if (
+            self._cancellation_requested
+            and self._cancellation_started_at_ms is not None
+        ):
+            from src.runner.cancellation_telemetry import (
+                CANCELLATION_COMPLETED,
+                latency_ms_since,
+            )
+            self._bus.publish(
+                CANCELLATION_COMPLETED,
+                {
+                    "total_latency_ms": latency_ms_since(
+                        self._cancellation_started_at_ms,
+                    ),
+                    "terminal_state": target.value,
+                    "exit_code": rc,
+                    "signal": signal_name,
+                    "requested_at_ms": self._cancellation_started_at_ms,
+                },
+            )
 
         # Fire the terminal hook AFTER the FSM transition lands. Errors
         # in the hook (e.g. RunPod GraphQL outage) must not affect the

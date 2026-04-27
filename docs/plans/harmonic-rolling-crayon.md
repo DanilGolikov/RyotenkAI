@@ -1377,9 +1377,14 @@ Mac Pipeline orchestrator _cleanup_resources(success=False)
 
 **Production verification:** continue observation 1-2 weeks. Telemetry from 9.C metrics will tell whether B/C buffer extension is justified.
 
-### Phase 9.C — Observability + reconciliation hardening (~4h, LOW risk)
+### Phase 9.C — Observability + reconciliation hardening (~4h, LOW risk) ✅ DONE
 
 **Goal:** "Production reliability" stops being a wish — measurable, alertable, debuggable.
+
+**Status:** Implemented in this worktree. The integration e2e test
+(`test_stop_with_cancellation.py`) was deferred — supervisor + callback
++ monitor units cover the full chain via mocks; the integration suite
+will land alongside the manual RunPod smoke (Phase 8.4).
 
 | File | Change |
 |---|---|

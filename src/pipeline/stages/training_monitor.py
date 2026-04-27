@@ -191,7 +191,23 @@ class TrainingMonitor(PipelineStage):
             self._callbacks.on_training_started()
 
         try:
-            return asyncio.run(self._watch(client, job_id))
+            watch_result = asyncio.run(self._watch(client, job_id))
+
+            # Phase 9.C — Mac-side reconciliation for SIGKILLed cancellations.
+            #
+            # When the trainer's CancellationCallback hit its 5-second
+            # flush deadline (Phase 9.B), it wrote a cancelled.marker
+            # file in the workspace. The runner's terminal hook then
+            # SIGKILLed the trainer before HF's MLflow callback could
+            # close the run with status="KILLED". Result: MLflow shows
+            # the run stuck in RUNNING.
+            #
+            # Reconciliation runs here so the operator's MLflow UI
+            # reflects reality. Best-effort: any failure logs and
+            # moves on — the rest of the pipeline cleanup still runs.
+            self._reconcile_cancellation_marker_if_present(context)
+
+            return watch_result
         finally:
             # Tear down whatever the launcher opened, regardless of
             # outcome. Errors swallowed — we already have a return
@@ -205,6 +221,92 @@ class TrainingMonitor(PipelineStage):
                 asyncio.run(client.aclose())
             except Exception as exc:
                 logger.debug(f"[MONITOR] client.aclose failed: {exc}")
+
+    # --- Phase 9.C reconciliation -------------------------------------------
+
+    def _reconcile_cancellation_marker_if_present(
+        self, context: dict[str, Any],
+    ) -> None:
+        """Read ``attempts/<n>/cancelled.marker``; if MLflow run is
+        still RUNNING force-set its status to KILLED.
+
+        Idempotent: if the marker is missing, MLflow upstream
+        unreachable, or the run is already terminal — silently skips.
+        Failure of any sub-step is logged at WARNING but never
+        re-raised; reconciliation is a best-effort restoration of
+        operator-visible state.
+        """
+        from pathlib import Path
+        import json
+
+        from src.pipeline.stages.constants import PipelineContextKeys
+
+        attempt_dir_str = context.get(PipelineContextKeys.ATTEMPT_DIRECTORY)
+        if not isinstance(attempt_dir_str, str) or not attempt_dir_str:
+            # No attempt dir in context — same defensive default as
+            # ``_persist_job_submission`` in the launcher; tests that
+            # bypass pipeline_bootstrap won't have it.
+            return
+
+        marker_path = Path(attempt_dir_str) / "cancelled.marker"
+        if not marker_path.is_file():
+            # Common case: trainer flush completed within budget; no
+            # marker written. Nothing to reconcile.
+            return
+
+        try:
+            payload = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "[MONITOR] cancelled.marker exists at %s but is "
+                "unreadable (%s); skipping reconciliation",
+                marker_path, exc,
+            )
+            return
+
+        run_id = payload.get("run_id")
+        if not run_id:
+            # Marker without run_id is still valid (trainer didn't
+            # know its run_id at write time) — log and skip.
+            logger.info(
+                "[MONITOR] cancelled.marker at %s has no run_id; "
+                "MLflow reconciliation skipped (no run to address)",
+                marker_path,
+            )
+            return
+
+        try:
+            from mlflow.tracking import MlflowClient
+
+            client = MlflowClient()
+            run = client.get_run(run_id)
+            current_status = getattr(
+                getattr(run, "info", None), "status", None,
+            )
+
+            if current_status != "RUNNING":
+                # Already terminal (KILLED / FAILED / FINISHED) —
+                # something else closed the run. No-op.
+                logger.debug(
+                    "[MONITOR] MLflow run %s already terminal "
+                    "(status=%s); reconciliation no-op",
+                    run_id, current_status,
+                )
+                return
+
+            client.set_terminated(run_id=run_id, status="KILLED")
+            logger.warning(
+                "[MONITOR] reconciled MLflow run %s: RUNNING → KILLED "
+                "(cancelled.marker indicated trainer SIGKILLed before "
+                "end_run)", run_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.warning(
+                "[MONITOR] cancelled.marker reconciliation for "
+                "run_id=%s failed: %s — operator may need to manually "
+                "set the MLflow run status",
+                run_id, exc,
+            )
 
     # --- async core -----------------------------------------------------
 

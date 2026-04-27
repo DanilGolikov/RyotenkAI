@@ -65,15 +65,30 @@ class TestFactoryWiring:
         )
 
     def test_factory_appends_callback_when_env_set(self) -> None:
-        # The exact append call is what binds the callback into the
+        # The append call is what binds the callback into the
         # trainer's callback list. A future refactor that splits the
         # factory should preserve this line (or move it to wherever
         # callbacks are aggregated; the test then fails LOUDLY and the
         # owner updates the pin).
+        #
+        # Phase 9.C — the factory now binds the constructor return value
+        # to a local name (``runner_event_callback``) so the cancellation
+        # callback can reuse its publish channel. Accept either:
+        #   * ``callbacks.append(RunnerEventCallback())`` (pre-9.C)
+        #   * ``runner_event_callback = RunnerEventCallback()``
+        #     followed by ``callbacks.append(runner_event_callback)``
         src = _factory_source()
-        assert "callbacks.append(RunnerEventCallback())" in src, (
-            "TrainerFactory must append RunnerEventCallback() when "
-            "RYOTENKAI_RUNNER_URL is set in the trainer env."
+        legacy = "callbacks.append(RunnerEventCallback())" in src
+        named = (
+            "runner_event_callback = RunnerEventCallback()" in src
+            and "callbacks.append(runner_event_callback)" in src
+        )
+        assert legacy or named, (
+            "TrainerFactory must append RunnerEventCallback when "
+            "RYOTENKAI_RUNNER_URL is set in the trainer env. Either form: "
+            "callbacks.append(RunnerEventCallback()) OR "
+            "runner_event_callback = RunnerEventCallback() + "
+            "callbacks.append(runner_event_callback)."
         )
 
     def test_wire_is_env_gated_not_unconditional(self) -> None:
@@ -92,7 +107,10 @@ class TestFactoryWiring:
         # ``import os as _os`` aliases os in the factory; tolerate either.
         if env_check < 0:
             env_check = src.find("environ.get(RUNNER_URL_ENV)")
+        # Either pre-9.C inline append or 9.C named-binding append.
         append_call = src.find("callbacks.append(RunnerEventCallback())")
+        if append_call < 0:
+            append_call = src.find("callbacks.append(runner_event_callback)")
         assert env_check >= 0, "missing env-driven activation gate"
         assert append_call >= 0, "missing append call"
         # The append must come AFTER the env check (within ~400 chars
@@ -162,13 +180,36 @@ class TestPhase9ACancellationCallbackWiring:
         assert cancel_insert > env_check, (
             "CancellationCallback insert must be inside the env check"
         )
-        # Wider window than the RunnerEventCallback test because Phase 9.A
-        # added ~30 lines of explanatory comments between the env check
-        # and the cancel-insert. ~2500 chars still tolerates a few more
-        # comment blocks before becoming a real problem.
-        assert (cancel_insert - env_check) < 2500, (
+        # Wider window than the RunnerEventCallback test because
+        # Phase 9.A/B/C added explanatory comments between the env
+        # check and the cancel-insert. ~4000 chars still tolerates a
+        # few more comment blocks before becoming a real problem.
+        assert (cancel_insert - env_check) < 4000, (
             "env check and CancellationCallback insert are too far "
             "apart — likely a refactor broke the conditional grouping"
+        )
+
+    def test_cancellation_wire_passes_event_publisher_phase_9c(self) -> None:
+        """Phase 9.C: factory must wire ``event_publisher=`` so the
+        callback can emit ``cancellation_finalized`` via the same
+        runner publish channel as RunnerEventCallback.
+
+        Pin the kwarg name so a refactor that drops the wire is
+        caught LOUDLY. Without ``event_publisher`` injected, Mac-side
+        operator dashboards never see the trainer-side flush
+        outcome → reconciliation degrades silently."""
+        src = _factory_source()
+        # Factory builds a closure ``_cancellation_event_publisher``
+        # that calls ``runner_event_callback._publish(..., flush_now=True)``.
+        # Both bits are part of the contract.
+        assert "event_publisher" in src, (
+            "TrainerFactory must pass event_publisher=... to "
+            "CancellationCallback (Phase 9.C wiring)."
+        )
+        assert "flush_now=True" in src, (
+            "Cancellation publisher must call _publish with "
+            "flush_now=True so cancellation_finalized lands "
+            "immediately, not buffered"
         )
 
     def test_cancellation_wire_after_runner_event_callback(self) -> None:
@@ -186,7 +227,10 @@ class TestPhase9ACancellationCallbackWiring:
         runtime semantic changes. Pin both spots."""
         src = _factory_source()
         runner_append = src.find("callbacks.append(RunnerEventCallback())")
+        if runner_append < 0:
+            runner_append = src.find("callbacks.append(runner_event_callback)")
         cancel_insert = src.find("callbacks.insert(")
+        assert runner_append >= 0, "missing RunnerEventCallback append"
         assert runner_append < cancel_insert, (
             "RunnerEventCallback.append must come BEFORE "
             "callbacks.insert(0, CancellationCallback(...)) in source order"

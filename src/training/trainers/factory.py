@@ -370,7 +370,8 @@ class TrainerFactory:
         )
 
         if _os.environ.get(RUNNER_URL_ENV):
-            callbacks.append(RunnerEventCallback())
+            runner_event_callback = RunnerEventCallback()
+            callbacks.append(runner_event_callback)
 
             # Phase 9.A — cooperative cancellation.
             #
@@ -406,9 +407,30 @@ class TrainerFactory:
             # disabled — we still pass it (could be ``None``) and
             # the callback's flush path becomes a no-op via
             # ``_resolve_mlflow_manager`` returning None.
+            #
+            # Phase 9.C — event_publisher reuses the RunnerEventCallback's
+            # publish path so the cancellation_finalized event rides
+            # the same buffered HTTP loopback channel as every other
+            # trainer-side event. Single PUB → single channel → single
+            # reconciliation surface on the Mac.
+            #
+            # We wrap with ``flush_now=True`` so the cancellation
+            # event lands immediately rather than buffering with the
+            # rest — by the time on_train_end fires, the trainer is
+            # about to exit and the buffer has no further flush
+            # opportunities. Operator visibility wins over micro-
+            # batching here.
+            def _cancellation_event_publisher(
+                kind: str, payload: dict[str, Any],
+            ) -> None:
+                runner_event_callback._publish(kind, payload, flush_now=True)
+
             callbacks.insert(
                 0,
-                CancellationCallback(mlflow_manager=mlflow_manager),
+                CancellationCallback(
+                    mlflow_manager=mlflow_manager,
+                    event_publisher=_cancellation_event_publisher,
+                ),
             )
 
         if callbacks:

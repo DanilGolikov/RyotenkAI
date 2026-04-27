@@ -399,3 +399,218 @@ class TestShutdown:
         assert not s.is_running
 
 
+# ---------------------------------------------------------------------------
+# Phase 9.C — cancellation telemetry chain
+# ---------------------------------------------------------------------------
+
+
+class TestCancellationTelemetry:
+    """Phase 9.C wires the supervisor into the cancellation event
+    chain. The two events the supervisor owns are
+    ``cancellation_started`` (FSM running → stopping) and
+    ``cancellation_completed`` (FSM stopping → terminal).
+
+    The contract these tests pin:
+    * ``cancellation_started`` carries ``requested_at_ms`` (epoch
+      anchor), ``grace_seconds``, and ``reason``.
+    * Legacy ``stop_requested`` event still fires alongside (no
+      backwards-compat break for old subscribers).
+    * ``cancellation_completed`` fires ONLY when stop was requested
+      — natural exits / native crashes do NOT emit it.
+    * ``cancellation_completed.total_latency_ms`` is anchored to
+      ``cancellation_started.requested_at_ms`` and never negative.
+    """
+
+    @staticmethod
+    def _events_of(bus: EventBus, kind: str) -> list[dict]:
+        return [
+            e.payload for e in list(bus._buffer) if e.kind == kind
+        ]
+
+    async def test_request_stop_emits_cancellation_started(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_STARTED,
+        )
+
+        code = (
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: __import__('sys').exit(0))\n"
+            "time.sleep(60)\n"
+        )
+        await supervisor.submit_and_spawn("j-cs", _py(code))
+        await _wait_for_state(fsm, JobState.RUNNING)
+        await supervisor.request_stop(grace_seconds=2.0)
+        await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
+
+        started = self._events_of(bus, CANCELLATION_STARTED)
+        assert len(started) == 1
+        payload = started[0]
+        assert "requested_at_ms" in payload
+        assert isinstance(payload["requested_at_ms"], int)
+        assert payload["requested_at_ms"] > 0
+        assert payload["grace_seconds"] == 2.0
+        assert payload["reason"] == "user_stop"
+
+    async def test_legacy_stop_requested_still_emitted(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        # Backwards compat — pre-9.C consumers grep'd ``stop_requested``.
+        # The 9.C addition is additive; the legacy event still fires.
+        code = (
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: __import__('sys').exit(0))\n"
+            "time.sleep(60)\n"
+        )
+        await supervisor.submit_and_spawn("j-legacy", _py(code))
+        await _wait_for_state(fsm, JobState.RUNNING)
+        await supervisor.request_stop(grace_seconds=2.0)
+        await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
+
+        legacy = self._events_of(bus, "stop_requested")
+        assert len(legacy) == 1
+        assert legacy[0] == {"grace_seconds": 2.0}
+
+    async def test_request_stop_emits_cancellation_completed(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_COMPLETED,
+            CANCELLATION_STARTED,
+        )
+
+        code = (
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: __import__('sys').exit(0))\n"
+            "time.sleep(60)\n"
+        )
+        await supervisor.submit_and_spawn("j-cc", _py(code))
+        await _wait_for_state(fsm, JobState.RUNNING)
+        await supervisor.request_stop(grace_seconds=2.0)
+        await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
+
+        started = self._events_of(bus, CANCELLATION_STARTED)
+        completed = self._events_of(bus, CANCELLATION_COMPLETED)
+        assert len(started) == 1
+        assert len(completed) == 1
+
+        completed_payload = completed[0]
+        assert "total_latency_ms" in completed_payload
+        assert isinstance(completed_payload["total_latency_ms"], int)
+        assert completed_payload["total_latency_ms"] >= 0
+        # ``requested_at_ms`` from started must equal the one in
+        # completed — same anchor for downstream joins.
+        assert (
+            completed_payload["requested_at_ms"]
+            == started[0]["requested_at_ms"]
+        )
+        assert completed_payload["terminal_state"] == "cancelled"
+        # exit_code can be 0 (clean signal handler exit) or -15
+        # (asyncio's "killed by SIGTERM" convention). Both are valid
+        # cancellation outcomes — what matters is that the FSM
+        # respected the stop request.
+        assert completed_payload["exit_code"] in (0, -15, 143)
+
+    async def test_natural_exit_does_not_emit_cancellation_completed(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_COMPLETED,
+            CANCELLATION_STARTED,
+        )
+
+        # No request_stop — pure natural exit. Neither cancellation
+        # event should fire; operator dashboards must stay focused on
+        # actual stop chains.
+        await supervisor.submit_and_spawn("j-nat", _py("pass"))
+        await _wait_for_state(fsm, JobState.COMPLETED)
+
+        assert self._events_of(bus, CANCELLATION_STARTED) == []
+        assert self._events_of(bus, CANCELLATION_COMPLETED) == []
+
+    async def test_native_crash_does_not_emit_cancellation_completed(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_COMPLETED,
+            CANCELLATION_STARTED,
+        )
+
+        # rc=1 (failed, but no stop request). Cancellation events are
+        # silent — this is FSM=failed without a user stop.
+        await supervisor.submit_and_spawn(
+            "j-crash", _py("import sys; sys.exit(1)"),
+        )
+        await _wait_for_state(fsm, JobState.FAILED)
+
+        assert self._events_of(bus, CANCELLATION_STARTED) == []
+        assert self._events_of(bus, CANCELLATION_COMPLETED) == []
+
+    async def test_sigkill_escalation_still_emits_completed(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        # Trainer ignores SIGTERM → SIGKILL escalates → FSM=cancelled.
+        # ``cancellation_completed`` MUST still fire (we requested
+        # stop, even if escalated). ``terminal_state`` is "cancelled"
+        # because the supervisor honors the stop request even for
+        # SIGKILL exits.
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_COMPLETED,
+        )
+
+        code = (
+            "import signal, time, sys\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "print('READY', flush=True)\n"
+            "time.sleep(60)\n"
+        )
+        await supervisor.submit_and_spawn("j-kill", _py(code))
+        await _wait_for_state(fsm, JobState.RUNNING)
+
+        # Wait for READY then request stop with tight grace.
+        async def _wait_ready() -> None:
+            deadline = asyncio.get_event_loop().time() + 5.0
+            while asyncio.get_event_loop().time() < deadline:
+                for ev in list(bus._buffer):
+                    if (
+                        ev.kind == "trainer_log"
+                        and ev.payload.get("line") == "READY"
+                    ):
+                        return
+                await asyncio.sleep(0.02)
+            raise AssertionError("trainer never printed READY")
+
+        await _wait_ready()
+        await supervisor.request_stop(grace_seconds=0.3)
+        await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
+
+        completed = self._events_of(bus, CANCELLATION_COMPLETED)
+        assert len(completed) == 1
+        assert completed[0]["terminal_state"] == "cancelled"
+        assert completed[0]["signal"] == "SIGKILL"
+
+    async def test_completed_latency_never_negative(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+    ) -> None:
+        # Invariant: even if the test runs on a clock-skewed CI box,
+        # ``total_latency_ms`` is clamped at 0 by ``latency_ms_since``.
+        from src.runner.cancellation_telemetry import (
+            CANCELLATION_COMPLETED,
+        )
+
+        code = (
+            "import signal, time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: __import__('sys').exit(0))\n"
+            "time.sleep(60)\n"
+        )
+        await supervisor.submit_and_spawn("j-inv", _py(code))
+        await _wait_for_state(fsm, JobState.RUNNING)
+        await supervisor.request_stop(grace_seconds=2.0)
+        await _wait_for_state(fsm, JobState.CANCELLED, timeout=3.0)
+
+        completed = self._events_of(bus, CANCELLATION_COMPLETED)
+        assert len(completed) == 1
+        assert completed[0]["total_latency_ms"] >= 0
+
+

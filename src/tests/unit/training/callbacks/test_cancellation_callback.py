@@ -83,7 +83,20 @@ _helper_module = _importlib_util.module_from_spec(_helper_spec)
 # Stub the parent package shell so ``from src.training._concurrent_helpers
 # import ...`` finds both the parent and the leaf in sys.modules
 # without running ``src.training/__init__.py``.
-_sys.modules.setdefault("src.training", _types.ModuleType("src.training"))
+#
+# IMPORTANT: set ``__path__`` so Python treats the stub as a package
+# (not a plain module). Without ``__path__`` other tests in the same
+# pytest collection — e.g. ``test_system_metrics_callback.py`` which
+# does ``from src.training.callbacks.system_metrics_callback import X``
+# — fail because Python rejects sub-attribute lookup on a non-package
+# module shell. Pointing ``__path__`` at the real source dir lets the
+# regular import machinery still find the modules on disk.
+if "src.training" not in _sys.modules:
+    _training_shell = _types.ModuleType("src.training")
+    _training_shell.__path__ = [  # type: ignore[attr-defined]
+        str(_pathlib.Path(__file__).resolve().parents[4] / "training"),
+    ]
+    _sys.modules["src.training"] = _training_shell
 _sys.modules["src.training._concurrent_helpers"] = _helper_module
 _helper_spec.loader.exec_module(_helper_module)
 
@@ -522,3 +535,253 @@ class TestLogicSpecific:
             f"expected exactly 1 transition log, got {len(cancel_logs)}: "
             f"{[r.message for r in cancel_logs]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9.C — cancellation_finalized telemetry + cancelled.marker
+# ---------------------------------------------------------------------------
+
+
+class _PublisherSpy:
+    """Records ``(kind, payload)`` invocations.
+
+    Mirrors the runtime contract: the callback hands us a ``(str, dict)``
+    tuple via the publisher callable and we just append it. Tests
+    assert on the kind strings + payload schema.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def __call__(self, kind: str, payload: dict[str, object]) -> None:
+        self.events.append((kind, dict(payload)))
+
+
+class TestPhase9CFinalizedEvent:
+    """``on_train_end`` MUST emit ``cancellation_finalized`` after the
+    flush attempt — both on success and on timeout. Operator
+    dashboards key off this event for "trainer finished its end-of-run
+    bookkeeping" — without it Mac side can't tell whether the trainer
+    crashed mid-finalize or just hadn't reached on_train_end yet.
+    """
+
+    def test_emits_finalized_event_on_successful_flush(self) -> None:
+        from src.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+
+        publisher = _PublisherSpy()
+        manager = _StubMlflowManager(flush_return=7)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            event_publisher=publisher,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        assert len(publisher.events) == 1
+        kind, payload = publisher.events[0]
+        assert kind == CANCELLATION_FINALIZED
+        assert payload["flushed_count"] == 7
+        assert payload["flush_timed_out"] is False
+        assert payload["marker_written"] is False
+        assert "flush_budget_seconds" in payload
+
+    def test_emits_finalized_event_on_timeout_with_marker_flag(
+        self, tmp_path: Any,
+    ) -> None:
+        from src.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+
+        publisher = _PublisherSpy()
+        # Slow flush forces timeout.
+        manager = _StubMlflowManager(flush_blocks_for=0.5)
+        # Inject explicit workspace dir → marker writer goes to the
+        # default ``atomic_write_text`` path against this tmp_path.
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            event_publisher=publisher,
+            flush_timeout_seconds=0.05,
+            workspace_dir=tmp_path,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        # Exactly one finalized event, with timed_out=True and
+        # marker_written=True.
+        assert len(publisher.events) == 1
+        kind, payload = publisher.events[0]
+        assert kind == CANCELLATION_FINALIZED
+        assert payload["flush_timed_out"] is True
+        assert payload["marker_written"] is True
+        assert payload["flushed_count"] == 0
+
+    def test_no_event_when_clean_exit_without_signal(self) -> None:
+        # Training ended naturally — _signalled stays False → no flush
+        # → no finalized event. Keep dashboards focused on real
+        # cancellation chains.
+        publisher = _PublisherSpy()
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=False),
+            mlflow_manager=_StubMlflowManager(),
+            event_publisher=publisher,
+        )
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+        assert publisher.events == []
+
+    def test_publisher_exception_does_not_propagate(self) -> None:
+        # Best-effort contract: a publisher that explodes must not
+        # crash the trainer's exit path. Use a publisher that raises
+        # on every call.
+        def _bad_publisher(kind: str, payload: dict) -> None:
+            raise RuntimeError("event bus offline")
+
+        manager = _StubMlflowManager(flush_return=3)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            event_publisher=_bad_publisher,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        # MUST NOT raise.
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+        # Flush still happened (publisher fires AFTER flush).
+        assert manager.flush_calls == 1
+
+    def test_no_publisher_means_no_telemetry_no_crash(self) -> None:
+        # Local-mode runs (no runner attached) pass publisher=None.
+        # Callback must still work — flush + log only, no event.
+        manager = _StubMlflowManager(flush_return=2)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            event_publisher=None,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+        assert manager.flush_calls == 1
+
+
+class TestPhase9CMarkerWrite:
+    """When the flush budget is exceeded, the callback writes
+    ``cancelled.marker`` to the workspace so the Mac-side
+    TrainingMonitor can run reconciliation against the upstream MLflow
+    run on its next poll."""
+
+    def test_marker_file_written_to_workspace_on_timeout(
+        self, tmp_path: Any,
+    ) -> None:
+        manager = _StubMlflowManager(flush_blocks_for=0.5)
+
+        class _ManagerWithRunId(_StubMlflowManager):
+            run_id = "abc123"
+
+        manager = _ManagerWithRunId(flush_blocks_for=0.5)
+
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            flush_timeout_seconds=0.05,
+            workspace_dir=tmp_path,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        marker = tmp_path / "cancelled.marker"
+        assert marker.exists()
+        import json as _json
+        body = _json.loads(marker.read_text())
+        assert body["run_id"] == "abc123"
+        assert body["reason"] == "flush_budget_exceeded"
+        assert isinstance(body["ts_ms"], int)
+
+    def test_no_marker_on_successful_flush(self, tmp_path: Any) -> None:
+        manager = _StubMlflowManager(flush_return=5)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            workspace_dir=tmp_path,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        marker = tmp_path / "cancelled.marker"
+        assert not marker.exists()
+
+    def test_no_marker_on_clean_exit(self, tmp_path: Any) -> None:
+        # Clean exit (no signal): on_train_end is no-op → no marker.
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=False),
+            mlflow_manager=_StubMlflowManager(),
+            workspace_dir=tmp_path,
+        )
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+        marker = tmp_path / "cancelled.marker"
+        assert not marker.exists()
+
+    def test_workspace_resolution_falls_back_to_env(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No ``workspace_dir`` injected → callback must fall back to
+        # ``HELIX_WORKSPACE`` env var (the production wiring).
+        monkeypatch.setenv("HELIX_WORKSPACE", str(tmp_path))
+
+        manager = _StubMlflowManager(flush_blocks_for=0.5)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            flush_timeout_seconds=0.05,
+            # No workspace_dir argument.
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        marker = tmp_path / "cancelled.marker"
+        assert marker.exists()
+
+    def test_no_workspace_resolved_skips_marker_silently(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Neither injected workspace nor HELIX_WORKSPACE env →
+        # marker write skipped; finalized event still emitted with
+        # marker_written=False.
+        monkeypatch.delenv("HELIX_WORKSPACE", raising=False)
+        publisher = _PublisherSpy()
+        manager = _StubMlflowManager(flush_blocks_for=0.5)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            event_publisher=publisher,
+            flush_timeout_seconds=0.05,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        # Single finalized event, marker_written=False.
+        assert len(publisher.events) == 1
+        _, payload = publisher.events[0]
+        assert payload["flush_timed_out"] is True
+        assert payload["marker_written"] is False
+
+    def test_injected_marker_writer_is_used_when_provided(self) -> None:
+        # Custom marker writer takes precedence over default
+        # atomic_write_text path. Pin DI seam.
+        captured: dict[str, object] = {}
+
+        def _writer(payload: dict[str, object]) -> str:
+            captured["payload"] = payload
+            return "/sentinel/cancelled.marker"
+
+        manager = _StubMlflowManager(flush_blocks_for=0.5)
+        cb = CancellationCallback(
+            shutdown_handler=_StubHandler(requested=True),
+            mlflow_manager=manager,
+            flush_timeout_seconds=0.05,
+            marker_writer=_writer,
+        )
+        cb.on_step_end(args=None, state=_state(1), control=_control())
+        cb.on_train_end(args=None, state=_state(2), control=_control())
+
+        # Custom writer was invoked with the expected payload shape.
+        assert "payload" in captured
+        assert "ts_ms" in captured["payload"]  # type: ignore[operator]
+        assert "flushed_count" in captured["payload"]  # type: ignore[operator]
