@@ -68,6 +68,41 @@ community/libs/
    the conftest call `preload_community_libs(libs_root_for(COMMUNITY_ROOT))`
    at module top-level (not in a fixture).
 
+## Declaring lib usage on the consumer side
+
+Plugins that import from `community_libs.<lib>` MUST list it in
+`manifest.toml`:
+
+```toml
+[plugin]
+...
+libs = ["helixql"]
+```
+
+The loader pre-validates these before the plugin is asked to do any
+work — a missing or misspelled lib name surfaces as a precise
+"plugin foo declares libs=['ghost'] but those packages are not
+present under community/libs/" error rather than an opaque
+`ImportError` deeper in.
+
+For plugins that subclass `BasePlugin`, mirror the declaration on
+the class to opt into a strict cross-check:
+
+```python
+class MyPlugin(ValidationPlugin):
+    REQUIRED_LIBS = ("helixql",)
+```
+
+The loader compares the Python tuple to `[plugin].libs` as a **set**
+(order doesn't matter) and refuses to load on drift. Leaving
+`REQUIRED_LIBS = ()` skips the check entirely — the manifest stays
+authoritative.
+
+After editing `REQUIRED_LIBS`, run
+`ryotenkai community sync-libs community/<kind>/<plugin>` to
+re-render `manifest.toml`'s `libs` field (sorted, unique) so the
+next load passes the cross-check.
+
 ## Contract: how the loader sees libs
 
 - `community/libs/` is **not** a plugin kind — `PLUGIN_KIND_DIRS` in

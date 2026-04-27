@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 class HelixQLPreferenceSemanticsValidator(ValidationPlugin):
+    REQUIRED_LIBS = ("helixql",)
     supports_streaming = True
 
     def _validate_contract(self) -> None:

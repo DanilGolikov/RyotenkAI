@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "sft"
 stability = "stable"
 description = "Validates gold HelixQL via Helix CLI compile (syntax + analysis, no cargo)."
+libs = ["helixql"]
 
 [plugin.entry_point]
 module = "plugin"

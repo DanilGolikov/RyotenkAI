@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "sapo"
 stability = "stable"
 description = "Checks that the sample is suitable for prompt-only GRPO/SAPO mode."
+libs = ["helixql"]
 
 [plugin.entry_point]
 module = "plugin"

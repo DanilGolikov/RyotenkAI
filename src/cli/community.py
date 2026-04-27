@@ -32,6 +32,7 @@ from src.community.scaffold import scaffold_plugin_manifest, scaffold_preset_man
 from src.community.sync import (
     SyncResult,
     sync_plugin_envs,
+    sync_plugin_libs,
     sync_plugin_manifest,
     sync_preset_manifest,
 )
@@ -636,6 +637,80 @@ def sync_envs_cmd(
 
     try:
         result = sync_plugin_envs(path)
+    except Exception as exc:
+        typer.echo(_style_err(f"error: {exc}"), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not result.changed:
+        typer.echo(
+            f"{_style_dim('·')} {_rel(manifest_path)} already in sync (no changes)"
+        )
+        return
+
+    typer.echo(result.diff)
+    if dry_run:
+        typer.echo(_style_warn("[dry-run]") + f" {_rel(manifest_path)} not modified")
+        return
+
+    manifest_path.write_text(result.new_text, encoding="utf-8")
+    typer.echo(f"{_style_ok('✓')} updated {_rel(manifest_path)}")
+
+
+# ---------------------------------------------------------------------------
+# sync-libs
+# ---------------------------------------------------------------------------
+
+
+@community_app.command("sync-libs")
+def sync_libs_cmd(
+    path: Annotated[
+        Path,
+        typer.Argument(
+            exists=True,
+            dir_okay=True,
+            file_okay=False,
+            resolve_path=True,
+            help="A single plugin folder whose REQUIRED_LIBS should be propagated to manifest.toml.",
+        ),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Print the diff that would be written; do not modify manifest.toml.",
+        ),
+    ] = False,
+) -> None:
+    """Re-render manifest's [plugin].libs from the plugin class's REQUIRED_LIBS.
+
+    The plugin Python module is imported (just like the loader does at
+    runtime), the ``REQUIRED_LIBS`` ClassVar is read, and the manifest's
+    ``[plugin].libs`` field is rewritten to match. Useful after editing
+    the lib dependencies in code — running this keeps the load-time
+    cross-check happy without hand-editing TOML.
+
+    Output is normalised to sorted unique names so re-runs produce
+    stable diffs.
+
+    \b
+    Examples:
+      ryotenkai community sync-libs community/reward/helixql_compiler_semantic
+      ryotenkai community sync-libs community/validation/my_plugin --dry-run
+    """
+    role = _classify_path(path)
+    if role != "plugin":
+        _die(
+            f"sync-libs only works on a single plugin folder; got {role!r} "
+            f"for {_rel(path)}"
+        )
+
+    manifest_path = path / "manifest.toml"
+    if not manifest_path.is_file():
+        typer.echo(_style_err(f"error: no manifest.toml in {_rel(path)}"), err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        result = sync_plugin_libs(path)
     except Exception as exc:
         typer.echo(_style_err(f"error: {exc}"), err=True)
         raise typer.Exit(code=1) from exc

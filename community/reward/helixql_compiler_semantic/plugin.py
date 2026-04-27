@@ -174,6 +174,8 @@ def _install_helix_cli(*, version: str = "latest") -> Path:
 class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
     """Domain plugin for HelixQL GRPO/SAPO reward."""
 
+    REQUIRED_LIBS = ("helixql",)
+
     def _validate_params(self) -> None:
         backend = str(self.params.get("validation_backend", _BACKEND_COMPILE)).strip().lower()
         if backend not in _SUPPORTED_BACKENDS:

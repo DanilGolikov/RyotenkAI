@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "semantic"
 stability = "stable"
 description = "Compares the model's HelixQL answer to the expected answer using a deterministic semantic score (sequence ratio + token jaccard + hard-eval hits)."
+libs = ["helixql"]
 
 [plugin.entry_point]
 module = "plugin"

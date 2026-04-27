@@ -10,6 +10,7 @@ from src.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save
 
 
 class HelixQLSemanticMatchPlugin(EvaluatorPlugin):
+    REQUIRED_LIBS = ("helixql",)
     requires_expected_answer = True
 
     def _validate_contract(self) -> None:

@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "syntax_check"
 stability = "stable"
 description = "Validates model_answer via Helix CLI compile (syntax + analysis, no cargo)."
+libs = ["helixql"]
 
 [plugin.entry_point]
 module = "plugin"

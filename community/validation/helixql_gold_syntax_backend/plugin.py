@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 class HelixQLGoldSyntaxBackendValidator(ValidationPlugin):
     """Validate gold HelixQL answers via ``helix compile``."""
 
+    REQUIRED_LIBS = ("helixql",)
     required_fields: ClassVar[list[str]] = []
     supports_streaming = True
 

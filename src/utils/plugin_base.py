@@ -79,6 +79,21 @@ class BasePlugin:
     #: at all and only declare envs in TOML.
     REQUIRED_ENV: ClassVar[tuple[RequiredEnvSpec, ...]] = ()
 
+    #: Names of ``community/libs/<name>/`` packages this plugin imports
+    #: from (e.g. ``("helixql",)``). Mirror of ``[plugin].libs`` in
+    #: ``manifest.toml``: when both sides are non-empty the loader
+    #: cross-checks them and raises on drift. Leaving the default empty
+    #: tuple skips the check; the manifest's ``libs`` list is then the
+    #: only source of truth (which is fine for plugins that don't
+    #: subclass :class:`BasePlugin` or that prefer to keep declarations
+    #: in TOML only).
+    #:
+    #: Order does not matter — comparison is performed on the sorted
+    #: set so plugin authors don't have to keep Python and TOML in
+    #: lockstep ordering. ``ryotenkai community sync-libs <plugin>``
+    #: writes ``manifest.toml``'s ``libs`` from this declaration.
+    REQUIRED_LIBS: ClassVar[tuple[str, ...]] = ()
+
     @classmethod
     def get_description(cls) -> str:
         """Return the plugin description.

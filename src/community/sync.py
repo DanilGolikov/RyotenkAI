@@ -16,10 +16,30 @@ from pathlib import Path
 from typing import Any, Literal
 
 from src.community.inference import InferredPlugin, bump_version, infer_plugin
+from src.community.libs import libs_root_for, preload_community_libs
 from src.community.loader import _import_plugin_class
 from src.community.manifest import PluginManifest, PresetManifest
 from src.community.scaffold import build_plugin_manifest_dict
 from src.community.toml_writer import dump_manifest_toml
+
+
+def _preload_libs_for(plugin_dir: Path) -> None:
+    """Preload ``community_libs.*`` for the catalog that owns ``plugin_dir``.
+
+    Plugins under ``community/<kind>/<id>/`` may do
+    ``from community_libs.<lib> import …`` at module load time. Sync
+    commands import the plugin module directly via
+    :func:`_import_plugin_class`, which short-circuits the catalog —
+    so the namespace would otherwise be missing and the import would
+    raise ``ModuleNotFoundError``. We do the preload ourselves so
+    sync-envs / sync-libs can be invoked against an arbitrary plugin
+    folder without first warming up the catalog.
+
+    Idempotent (the catalog or another sync call may already have
+    preloaded the same root).
+    """
+    community_root = plugin_dir.parents[1]
+    preload_community_libs(libs_root_for(community_root))
 
 Bump = Literal["patch", "minor", "major"]
 
@@ -269,6 +289,7 @@ def sync_plugin_envs(plugin_dir: Path) -> SyncResult:
             "cannot import to read REQUIRED_ENV"
         )
 
+    _preload_libs_for(plugin_dir)
     plugin_cls = _import_plugin_class(plugin_dir, module_name, class_name)
     declared = getattr(plugin_cls, "REQUIRED_ENV", ())
 
@@ -283,6 +304,71 @@ def sync_plugin_envs(plugin_dir: Path) -> SyncResult:
 
     # Re-validate the whole manifest so a bad REQUIRED_ENV declaration
     # surfaces here instead of at the next loader run.
+    PluginManifest.model_validate(merged)
+
+    new_text = dump_manifest_toml(merged)
+    changed = new_text != old_text
+    diff = _unified_diff(old_text, new_text, path=str(manifest_path))
+    return SyncResult(new_text=new_text, old_text=old_text, changed=changed, diff=diff)
+
+
+def sync_plugin_libs(plugin_dir: Path) -> SyncResult:
+    """Rewrite manifest's ``[plugin].libs`` from the class's REQUIRED_LIBS.
+
+    Imports the plugin module the same way the loader does, reads the
+    Python-side ``REQUIRED_LIBS`` ClassVar, and writes that as the
+    manifest's ``[plugin].libs`` field. Use this after editing the
+    declared lib dependencies in code so the TOML side never drifts and
+    the load-time cross-check in :func:`_crosscheck_required_libs`
+    keeps passing.
+
+    Order semantics: the field on the class is a tuple, but the TOML
+    list is normalised to **sorted order** at write time. Cross-check
+    is set-based, so this normalisation is invisible to the loader and
+    keeps the diff stable across re-runs.
+
+    No-op when the class doesn't declare ``REQUIRED_LIBS`` (or declares
+    it empty) — the manifest's ``libs`` field stays the only source of
+    truth and is removed if it was previously synced from a now-empty
+    ClassVar.
+    """
+    manifest_path = plugin_dir / "manifest.toml"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"no manifest.toml in {plugin_dir}")
+
+    old_text = manifest_path.read_text(encoding="utf-8")
+    existing = tomllib.loads(old_text)
+    plugin_block = existing.get("plugin", {}) or {}
+    entry_point = plugin_block.get("entry_point", {}) or {}
+    module_name = entry_point.get("module", "plugin")
+    class_name = entry_point.get("class") or entry_point.get("class_name")
+    if not class_name:
+        raise ValueError(
+            f"manifest at {manifest_path} has no [plugin.entry_point].class — "
+            "cannot import to read REQUIRED_LIBS"
+        )
+
+    _preload_libs_for(plugin_dir)
+    plugin_cls = _import_plugin_class(plugin_dir, module_name, class_name)
+    declared = getattr(plugin_cls, "REQUIRED_LIBS", ())
+    if declared and (
+        not isinstance(declared, tuple)
+        or any(not isinstance(x, str) for x in declared)
+    ):
+        raise TypeError(
+            f"plugin {plugin_cls.__name__}.REQUIRED_LIBS must be a tuple of "
+            f"strings; got {type(declared).__name__}"
+        )
+
+    merged = dict(existing)
+    merged_plugin = dict(plugin_block)
+    if declared:
+        merged_plugin["libs"] = sorted(set(declared))
+    else:
+        merged_plugin.pop("libs", None)
+    merged["plugin"] = merged_plugin
+
+    # Re-validate so a bogus REQUIRED_LIBS surfaces here, not on next load.
     PluginManifest.model_validate(merged)
 
     new_text = dump_manifest_toml(merged)
@@ -376,6 +462,7 @@ def _unified_diff(a: str, b: str, *, path: str) -> str:
 __all__ = [
     "SyncResult",
     "sync_plugin_envs",
+    "sync_plugin_libs",
     "sync_plugin_manifest",
     "sync_preset_manifest",
 ]

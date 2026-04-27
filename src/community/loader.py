@@ -323,8 +323,89 @@ def _crosscheck_required_env(
         )
 
 
+def _crosscheck_required_libs(
+    plugin_cls: type, manifest: PluginManifest
+) -> None:
+    """If the class declares ``REQUIRED_LIBS``, verify it matches the manifest.
+
+    Comparison is on **sets** rather than ordered tuples — order in
+    ``[plugin].libs`` and ``REQUIRED_LIBS`` carries no meaning, and
+    forcing alignment would just create busywork for plugin authors.
+
+    Empty Python-side tuple skips the check entirely; the manifest's
+    ``libs`` stays authoritative. Mismatch raises :class:`ValueError`
+    with the specific diff so the author can decide which side to fix
+    (or run ``sync-libs`` to push code → TOML).
+    """
+    declared = getattr(plugin_cls, "REQUIRED_LIBS", ())
+    if not declared:
+        return
+
+    if not isinstance(declared, tuple) or any(not isinstance(x, str) for x in declared):
+        raise TypeError(
+            f"plugin {plugin_cls.__name__}.REQUIRED_LIBS must be a tuple of "
+            f"strings; got {type(declared).__name__}"
+        )
+
+    py_set = set(declared)
+    toml_set = set(manifest.plugin.libs)
+    if py_set == toml_set:
+        return
+
+    diffs: list[str] = []
+    only_in_py = sorted(py_set - toml_set)
+    only_in_toml = sorted(toml_set - py_set)
+    if only_in_py:
+        diffs.append(
+            f"declared in REQUIRED_LIBS but missing from manifest: {only_in_py}"
+        )
+    if only_in_toml:
+        diffs.append(
+            f"declared in manifest but missing from REQUIRED_LIBS: {only_in_toml}"
+        )
+
+    raise ValueError(
+        f"REQUIRED_LIBS ↔ manifest cross-check failed for plugin "
+        f"{manifest.plugin.id!r}:\n  - "
+        + "\n  - ".join(diffs)
+        + "\nRun `ryotenkai community sync-libs <plugin>` to align the "
+        "manifest with REQUIRED_LIBS."
+    )
+
+
+def _validate_libs_present(
+    manifest: PluginManifest, *, community_root: Path
+) -> None:
+    """Verify each ``[plugin].libs`` entry exists under ``community/libs/``.
+
+    Plugins import from ``community_libs.<name>`` at module load time,
+    which would otherwise fail with an opaque ``ImportError`` deep in
+    pytest collection or the API request handler. Surfacing the
+    missing lib at manifest-load time gives the user a precise
+    actionable error: "this plugin needs community/libs/<name>/, but
+    that folder doesn't exist".
+    """
+    libs_dir = community_root / "libs"
+    missing: list[str] = []
+    for lib_name in manifest.plugin.libs:
+        candidate = libs_dir / lib_name
+        if not candidate.is_dir() or not (candidate / "__init__.py").is_file():
+            missing.append(lib_name)
+    if missing:
+        raise ValueError(
+            f"plugin {manifest.plugin.id!r} declares libs={missing!r} but "
+            f"those packages are not present under {libs_dir}/. Add the "
+            f"missing community/libs/<name>/ folder (with __init__.py), "
+            f"or remove the entry from manifest.toml's [plugin].libs."
+        )
+
+
 def _attach_community_metadata(
-    plugin_cls: type, manifest: PluginManifest, source_path: Path
+    plugin_cls: type,
+    manifest: PluginManifest,
+    source_path: Path,
+    *,
+    community_root: Path,
 ) -> None:
     """Mirror manifest fields onto the plugin class so runtime code can read them.
 
@@ -334,11 +415,19 @@ def _attach_community_metadata(
     :class:`PluginSecretsResolver`. Optional or non-secret envs are
     handled by the plugin itself (or B2's ``_env`` helper).
 
-    Also runs the REQUIRED_ENV cross-check (A7) — see
-    :func:`_crosscheck_required_env` — *before* mirroring metadata, so
-    a manifest/code mismatch fails the load fast with a precise diff.
+    Cross-checks (run **before** mirroring metadata so a contract
+    violation fails the load fast with a precise diff):
+
+    - REQUIRED_ENV ↔ manifest's ``[[required_env]]`` (A7).
+    - REQUIRED_LIBS ↔ manifest's ``[plugin].libs``.
+    - Each ``[plugin].libs`` entry must resolve to an existing folder
+      under ``community_root/libs/`` — passed explicitly because
+      zip-extracted plugins live under ``community/.cache/`` and
+      can't be located relative to ``source_path``.
     """
     _crosscheck_required_env(plugin_cls, manifest)
+    _crosscheck_required_libs(plugin_cls, manifest)
+    _validate_libs_present(manifest, community_root=community_root)
 
     plugin_cls.name = manifest.plugin.id  # type: ignore[attr-defined]
     plugin_cls.version = manifest.plugin.version  # type: ignore[attr-defined]
@@ -455,7 +544,12 @@ def load_plugins(
         # plugin's contract violation doesn't take the whole catalog
         # down in production.
         try:
-            _attach_community_metadata(plugin_cls, manifest, source_root)
+            _attach_community_metadata(
+                plugin_cls,
+                manifest,
+                source_root,
+                community_root=root,
+            )
         except Exception as exc:
             if is_strict:
                 raise

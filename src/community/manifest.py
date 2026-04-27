@@ -25,6 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 #: at manifest-load time.
 _PARAM_FIELD_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
+#: Names in ``[plugin].libs`` are folder names under ``community/libs/``;
+#: that folder is also imported as ``community_libs.<name>``, so the name
+#: MUST be a valid Python identifier in ``snake_case``. Same rule as
+#: :data:`_PARAM_FIELD_NAME_RE` — kept as a separate constant for the
+#: sake of readable error messages.
+_LIB_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
 PluginKind = Literal["validation", "evaluation", "reward", "reports"]
 
 Stability = Literal["stable", "beta", "experimental"]
@@ -249,10 +256,45 @@ class PluginSpec(BaseModel):
     #: has no business declaring strategy compatibility.
     supported_strategies: list[str] = Field(default_factory=list)
 
+    #: Names of ``community/libs/<name>/`` packages this plugin imports
+    #: from (e.g. ``["helixql"]``). The loader verifies each listed
+    #: lib is present under ``community/libs/`` before loading the
+    #: plugin — missing libs surface as a precise load error rather
+    #: than an opaque ``ImportError`` deeper in. Plugins that declare
+    #: ``REQUIRED_LIBS`` on their class are cross-checked against this
+    #: list at load time; ``ryotenkai community sync-libs <plugin>``
+    #: writes this field from the ClassVar so the two never drift.
+    libs: list[str] = Field(
+        default_factory=list,
+        description=(
+            "community_libs.<name> packages this plugin imports. Each "
+            "entry must be a snake_case identifier matching a folder "
+            "under community/libs/."
+        ),
+    )
+
     @model_validator(mode="after")
     def _fill_name(self) -> PluginSpec:
         if not self.name:
             object.__setattr__(self, "name", self.id)
+        return self
+
+    @model_validator(mode="after")
+    def _check_libs(self) -> PluginSpec:
+        # Reject names that don't look like Python identifiers — those
+        # would never resolve as ``community_libs.<name>`` anyway.
+        invalid = [name for name in self.libs if not _LIB_NAME_RE.match(name)]
+        if invalid:
+            raise ValueError(
+                f"libs entries must match {_LIB_NAME_RE.pattern!r} "
+                f"(snake_case Python identifiers); offenders: {invalid}"
+            )
+        # Duplicates are almost always a copy-paste mistake. Surface
+        # them rather than silently de-duping at load.
+        if len(set(self.libs)) != len(self.libs):
+            seen: set[str] = set()
+            dups = sorted({n for n in self.libs if (n in seen) or seen.add(n)})  # type: ignore[func-returns-value]
+            raise ValueError(f"duplicate entries in libs: {dups}")
         return self
 
     @model_validator(mode="after")
@@ -397,6 +439,7 @@ class PluginManifest(BaseModel):
             "stability": self.plugin.stability,
             "kind": self.plugin.kind,
             "supported_strategies": list(self.plugin.supported_strategies),
+            "libs": list(self.plugin.libs),
             "params_schema": params_to_json_schema(self.params_schema),
             "thresholds_schema": params_to_json_schema(self.thresholds_schema),
             "suggested_params": dict(self.suggested_params),

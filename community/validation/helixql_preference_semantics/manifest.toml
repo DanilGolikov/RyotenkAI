@@ -6,6 +6,7 @@ version = "1.0.0"
 category = "dpo"
 stability = "stable"
 description = "Checks that chosen/rejected pairs are domain-consistent and chosen is objectively better than rejected."
+libs = ["helixql"]
 
 [plugin.entry_point]
 module = "plugin"

@@ -28,6 +28,10 @@ _TOP_KEY_ORDER = (
     # Reward-only (appended last in [plugin] so existing non-reward
     # manifests don't shift).
     "supported_strategies",
+    # community_libs.<name> dependencies — last among the [plugin]
+    # body fields because empty libs= is the common case and a long
+    # list shouldn't push the entry-point block down.
+    "libs",
     # Entry point — module before class.
     "module",
     "class",

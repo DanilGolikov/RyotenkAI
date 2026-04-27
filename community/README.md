@@ -215,6 +215,54 @@ platform utilities (string/dict/retry) belong in `src/utils/`. See
 [`community/libs/README.md`](libs/README.md) for the full contract,
 authoring rules, and an example layout.
 
+### Declaring libs in your manifest
+
+Plugins that import from `community_libs.<lib>` MUST declare each lib
+in `[plugin].libs` so the loader can pre-validate the dependency
+before the plugin is asked to do any work:
+
+```toml
+[plugin]
+id   = "my_plugin"
+kind = "validation"
+...
+libs = ["helixql"]
+```
+
+Each entry must be a snake_case identifier matching a folder under
+`community/libs/`. The loader fails the load with a precise message
+if a listed lib doesn't exist on disk — much friendlier than an
+opaque `ImportError` later.
+
+### Cross-check via `REQUIRED_LIBS`
+
+Mirror the `[plugin].libs` declaration on the class to opt into a
+strict load-time cross-check (same shape as `REQUIRED_ENV`):
+
+```python
+class MyPlugin(ValidationPlugin):
+    REQUIRED_LIBS = ("helixql",)
+    ...
+```
+
+When both sides are non-empty, the loader compares them as sets
+(order does not matter) and refuses to load on mismatch. Leaving
+`REQUIRED_LIBS = ()` skips the check — the manifest is the only
+source of truth in that case, useful for plugins that don't subclass
+`BasePlugin` or that prefer to keep declarations in TOML only.
+
+### Auto-generation from code
+
+After editing `REQUIRED_LIBS`, run:
+
+```sh
+ryotenkai community sync-libs community/<kind>/<plugin_id>
+```
+
+That re-renders `[plugin].libs` from the ClassVar (sorted, unique)
+so the next load passes the cross-check. Pair with `--dry-run` to
+preview the diff first.
+
 ## Reward batch-kwargs contract
 
 The reward kind is the only one whose runtime invocation passes
