@@ -170,35 +170,25 @@ class ProbeResult:
 # ---------------------------------------------------------------------------
 
 
-#: Mapping from RunPod's pod ``desiredStatus`` field to internal availability.
-#: RunPod uses ``RUNNING`` / ``EXITED`` / ``STOPPED`` / ``TERMINATED``;
-#: we map all "stopped-ish" states to SLEEPING_RESUMABLE.
-_RUNPOD_STATUS_MAP: dict[str, PodAvailability] = {
-    "RUNNING": PodAvailability.RUNNING,
-    "EXITED": PodAvailability.SLEEPING_RESUMABLE,
-    "STOPPED": PodAvailability.SLEEPING_RESUMABLE,
-    "PAUSED": PodAvailability.SLEEPING_RESUMABLE,
-    "TERMINATED": PodAvailability.GONE,
-    "DEAD": PodAvailability.GONE,
-}
-
-
 class PodAvailabilityProbe:
     """Queries the provider for pod status; maps to :class:`PodAvailability`.
 
-    The transport is injected via constructor — tests pass a mock
-    callable returning ``(status_str, error)`` tuples; production
-    wires :class:`RunPodAPIClient.query_pod` adapted to that shape.
+    The transport AND the provider-specific status mapper are both
+    injected via constructor. Phase 14.C dropped the hardcoded
+    ``_RUNPOD_STATUS_MAP`` from this module — the RunPod provider
+    now owns its vocabulary, exposed via
+    :func:`map_runpod_desired_status_to_availability`.
 
     Provider-agnostic by design: when single_node grows resume
-    semantics, we plug a parallel transport without touching the
-    decision logic.
+    semantics, we plug a parallel transport + mapper without
+    touching this class.
     """
 
     def __init__(
         self,
         *,
         query_pod: "Callable[[str], dict[str, Any]] | None" = None,
+        status_mapper: "Callable[[str], PodAvailability] | None" = None,
     ) -> None:
         """Build a probe.
 
@@ -209,8 +199,27 @@ class PodAvailabilityProbe:
                 error; the probe catches and maps to PROBE_FAILED.
                 ``None`` ⇒ probe always returns PROBE_FAILED (used
                 only in tests; production passes a real transport).
+            status_mapper: Callable mapping a provider's raw status
+                string (e.g. RunPod's ``desiredStatus``) to a
+                :class:`PodAvailability` enum. ``None`` ⇒ default
+                to RunPod's mapper (lazily imported). Phase 14.C
+                added this seam so tests + future providers don't
+                inherit the RunPod default — pass an explicit mapper
+                for cleanliness.
         """
         self._query_pod = query_pod
+        if status_mapper is None:
+            # Lazy default — uses the thin RunPod status-mapper
+            # module (Phase 14.C) which lives at the package
+            # boundary so importing it does NOT trigger the heavy
+            # training/api_client → SDK chain. This keeps slim CI
+            # venvs (no ``runpod`` SDK installed) able to import
+            # this module without crashing.
+            from src.providers.runpod._status_mapper import (
+                map_runpod_desired_status_to_availability,
+            )
+            status_mapper = map_runpod_desired_status_to_availability
+        self._status_mapper = status_mapper
 
     def probe(self, pod_metadata: "PodMetadata | None") -> ProbeResult:
         """Probe pod availability.
@@ -277,9 +286,7 @@ class PodAvailabilityProbe:
                 message="Pod data missing desiredStatus field",
             )
 
-        availability = _RUNPOD_STATUS_MAP.get(
-            runpod_status.upper(), PodAvailability.PROBE_FAILED,
-        )
+        availability = self._status_mapper(runpod_status)
         return ProbeResult(
             availability=availability,
             pod_id=pod_metadata.pod_id,

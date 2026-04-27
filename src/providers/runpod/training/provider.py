@@ -54,11 +54,23 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
+    from src.pipeline.launch.pod_availability import PodAvailability
     from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodSnapshot
     from src.utils.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
+
+
+# Phase 14.C — :func:`map_runpod_desired_status_to_availability` lives
+# in :mod:`src.providers.runpod._status_mapper` (a sibling-of-package
+# thin module) so importing the helper does NOT trigger this
+# package's heavy ``training/__init__.py`` chain. We re-export it
+# here for symmetry — callers who already import from the provider
+# module keep working.
+from src.providers.runpod._status_mapper import (
+    map_runpod_desired_status_to_availability,
+)
 
 
 class RunPodProvider(IGPUProvider, ITerminalActionProvider):
@@ -116,6 +128,51 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
             f"[PROVIDER:INIT] RunPodProvider initialized: "
             f"GPU={self._config.training.gpu_type}, image={RUNTIME_IMAGE}"
         )
+
+    @classmethod
+    def from_resume_metadata(cls, *, api_key: str) -> "RunPodProvider":
+        """Phase 14.C — minimal-construction factory for resume flow.
+
+        Bypasses the heavy Pydantic config validator (which requires
+        a full :class:`RunPodProviderConfig` with training, cleanup,
+        connect, etc. sections). The resume flow only invokes
+        :class:`ITerminalActionProvider` methods (terminate / pause /
+        resume) and :meth:`probe_availability`, which read:
+
+          * ``self._api_key``
+          * ``self._graphql_api_client`` (RunPodAPIClient — used by
+            ``probe_availability`` to call ``query_pod``)
+          * ``self._api_client`` (:class:`RunPodTrainingPodControl`
+            — used by ``terminate``/``pause``/``resume`` to call
+            ``terminate_pod``/``stop_pod``/``start_pod``)
+          * ``self._status``
+
+        Construction via ``object.__new__`` is intentional — same
+        pattern Phase 14.A and Phase 14.B test fixtures use. If
+        ``__init__`` ever grows new attributes the lifecycle methods
+        rely on, this factory needs an update; the factory test pins
+        which attributes are required.
+        """
+        provider = object.__new__(cls)
+        provider._api_key = api_key
+        provider._secrets = None  # type: ignore[assignment]
+        provider._status = ProviderStatus.AVAILABLE
+        provider._pod_id = None
+        provider._ssh_connection_info = None
+        provider._gpu_info = None
+        provider._pod_info = None
+        provider._had_error = False
+        provider._config = None  # type: ignore[assignment]
+        # Mirror :meth:`__init__` wiring: GraphQL client for
+        # query_pod, training-pod-control for terminate/stop/start.
+        provider._graphql_api_client = RunPodAPIClient(
+            api_base_url=RUNPOD_API_BASE_URL,
+            api_key=api_key,
+        )
+        provider._api_client = RunPodTrainingPodControl(
+            api=provider._graphql_api_client,
+        )
+        return provider
 
     @property
     def provider_name(self) -> str:
@@ -602,20 +659,25 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
                 message="query_pod returned non-dict payload",
             )
 
-        # Phase 14.C TODO: relocate _RUNPOD_STATUS_MAP here. For now
-        # we import to keep 14.A purely additive.
-        from src.pipeline.launch.pod_availability import (
-            PodAvailability,
-            _RUNPOD_STATUS_MAP,
-        )
+        # Phase 14.C — relocated map. Provider owns the RunPod GraphQL
+        # vocabulary; the shared probe (:class:`PodAvailabilityProbe`)
+        # now consumes ``map_runpod_desired_status_to_availability``
+        # instead of importing the raw dict.
+        from src.pipeline.launch.pod_availability import PodAvailability
 
         raw_status = str(pod_data.get("desiredStatus") or "").upper()
-        mapped = _RUNPOD_STATUS_MAP.get(raw_status)
-        if mapped is None:
+        if not raw_status:
             return AvailabilityVerdict(
                 state="probe_failed",
                 resource_id=resource_id,
-                raw_status=raw_status or None,
+                message="Pod data missing desiredStatus field",
+            )
+        mapped = map_runpod_desired_status_to_availability(raw_status)
+        if mapped == PodAvailability.PROBE_FAILED:
+            return AvailabilityVerdict(
+                state="probe_failed",
+                resource_id=resource_id,
+                raw_status=raw_status,
                 message=f"Unknown desiredStatus: {raw_status!r}",
             )
 

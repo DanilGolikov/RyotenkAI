@@ -187,87 +187,60 @@ def resume_cmd(
 
 
 def _resume_pod_if_needed(run_dir: Path) -> None:
-    """Phase 11.C-2 — pre-flight: wake pod if sleeping; surface clear errors.
+    """Phase 14.C — thin CLI adapter over :class:`LaunchResumeService`.
 
-    Reads pod_metadata from the run directory; probes RunPod via
-    :class:`PodAvailabilityProbe`; if sleeping, calls
-    :func:`resume_pod_with_retry` and waits for the pod to be
-    reachable.
+    Translates the service's typed :class:`ResumeOutcome` into
+    ``typer.echo`` progress + ``die()`` hints. Resume orchestration
+    itself (probe, retry, capacity handling) is owned by the
+    service; both this CLI and the REST surface in
+    :func:`src.api.services.launch_service.resume_pod_for_run`
+    delegate to it.
 
     Failure modes (all surface as ``die`` with operator-friendly hints):
 
     * ``GONE`` — pod terminated; pipeline can't continue from
       checkpoint without a fresh pod. Hint at ``run restart``.
-    * ``SLEEPING_RESUME_FAILED`` — capacity exhausted; show actionable
+    * ``SLEEPING_RESUME_FAILED`` (capacity exhausted) — show actionable
       error.
     * ``PROBE_FAILED`` — RunPod GraphQL outage; suggest retry or
       ``--skip-pod-probe``.
 
-    No-op when:
+    Skipped no-op (silent / message-only) when:
 
-    * Run has no pod_metadata (legacy / mock runs) — pipeline's own
-      connect step will surface real errors.
-    * Pod is already RUNNING — nothing to wake.
+    * Run has no pod_metadata (legacy / mock runs).
+    * Provider doesn't support in-pod resume (single_node, future
+      always-on providers).
+    * RUNPOD_API_KEY missing.
     """
-    import asyncio
-
-    from src.pipeline.launch.pod_availability import (
-        PodAvailability,
-        PodAvailabilityProbe,
-        load_pod_metadata_for_run,
-        resume_pod_with_retry,
+    from src.pipeline.launch.resume_service import (
+        LaunchResumeService, ResumeProgress,
     )
+    from src.pipeline.launch.pod_availability import PodAvailability
 
-    metadata = load_pod_metadata_for_run(run_dir)
-    if metadata is None:
-        # Legacy attempt or no pod recorded — let the pipeline's
-        # connect step surface real errors. Same UX as Phase 11.A
-        # behaviour.
+    def _echo(evt: ResumeProgress) -> None:
+        # Probing line has no leading indent (matches pre-14.C UX);
+        # subsequent verdict / resuming / resumed lines are indented
+        # 2 spaces for readability.
+        if evt.kind == "probing":
+            typer.echo(evt.message)
+        else:
+            typer.echo(f"  {evt.message}")
+
+    outcome = LaunchResumeService().resume(run_dir, on_progress=_echo)
+
+    if outcome.ok:
+        # Includes the "skipped" path — service emits no progress
+        # for skipped (it's silent except in the verdict step).
+        # Pre-14.C printed "(skipping pod probe: ...)" in a few
+        # cases; service now returns the message in outcome.message
+        # without echoing. For UX parity, surface the message when
+        # availability == "skipped" and the run has metadata.
+        if outcome.availability == "skipped" and outcome.message:
+            typer.echo(f"  ({outcome.message})")
         return
 
-    typer.echo(f"Probing pod {metadata.pod_id} ({metadata.provider})...")
-
-    if metadata.provider != "runpod":
-        # Phase 11.C-2 only wires RunPod resume. single_node /
-        # other providers fall through to the pipeline's connect
-        # step.
-        return
-
-    # Resolve a query_pod transport for the probe. Lazy import the
-    # SDK adapter so CLI startup stays fast for non-resume paths.
-    import os
-
-    api_key = os.environ.get("RUNPOD_API_KEY")
-    if not api_key:
-        typer.echo(
-            "  (skipping pod probe: RUNPOD_API_KEY not in env)",
-        )
-        return
-    try:
-        from src.providers.runpod.training.api_client import RunPodAPIClient
-        client = RunPodAPIClient(api_key=api_key)
-    except Exception as exc:  # noqa: BLE001 — best-effort probe
-        typer.echo(f"  (skipping pod probe: {exc})")
-        return
-
-    def _query_pod(pod_id: str) -> dict:
-        result = client.query_pod(pod_id)
-        if result.is_failure():
-            err = result.unwrap_err()
-            raise RuntimeError(err.message)
-        return result.unwrap()
-
-    probe = PodAvailabilityProbe(query_pod=_query_pod)
-    verdict = probe.probe(metadata)
-
-    typer.echo(f"  Pod status: {verdict.availability.value}")
-    if verdict.message:
-        typer.echo(f"  {verdict.message}")
-
-    if verdict.availability == PodAvailability.RUNNING:
-        return
-
-    if verdict.availability == PodAvailability.GONE:
+    # Failure paths.
+    if outcome.availability == PodAvailability.GONE.value:
         raise die(
             "Pod has been terminated; cannot resume in-place.",
             hint=(
@@ -276,9 +249,20 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
             ),
         )
 
-    if verdict.availability == PodAvailability.PROBE_FAILED:
+    if outcome.capacity_exhausted:
         raise die(
-            f"Pod probe failed: {verdict.message}",
+            f"Pod resume capacity unavailable: {outcome.message}",
+            hint=(
+                "RunPod has no GPU available right now in the "
+                "pod's datacenter. Retry later, or use "
+                "'ryotenkai run restart' to recreate from a "
+                "checkpoint in a different region"
+            ),
+        )
+
+    if outcome.availability == PodAvailability.PROBE_FAILED.value:
+        raise die(
+            f"Pod probe failed: {outcome.message}",
             hint=(
                 "RunPod may be experiencing an outage. Retry in a few "
                 "minutes, or pass --skip-pod-probe to let the pipeline "
@@ -286,54 +270,9 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
             ),
         )
 
-    if verdict.availability == PodAvailability.SLEEPING_RESUMABLE:
-        # Wake it.
-        from src.providers.runpod.sdk_adapter import is_capacity_error_message
-
-        async def _resume_call(pod_id: str) -> bool:
-            result = client.resume_pod(pod_id)
-            if result.is_failure():
-                err = result.unwrap_err()
-                raise RuntimeError(err.message)
-            return True
-
-        typer.echo(
-            f"  Resuming pod (capacity-aware retry, ≤5min budget)...",
-        )
-        outcome = asyncio.run(
-            resume_pod_with_retry(
-                metadata.pod_id,
-                resume_call=_resume_call,
-                is_capacity_error=is_capacity_error_message,
-            ),
-        )
-
-        if not outcome.ok:
-            if outcome.capacity_exhausted:
-                raise die(
-                    f"Pod resume capacity unavailable: {outcome.error_message}",
-                    hint=(
-                        "RunPod has no GPU available right now in the "
-                        "pod's datacenter. Retry later, or use "
-                        "'ryotenkai run restart' to recreate from a "
-                        "checkpoint in a different region"
-                    ),
-                )
-            raise die(
-                f"Pod resume failed: {outcome.error_message}",
-                hint="check RunPod console; pass --skip-pod-probe to bypass",
-            )
-
-        typer.echo(
-            f"  Pod resumed in {outcome.elapsed_seconds:.1f}s "
-            f"({outcome.attempts} attempt(s))",
-        )
-        return
-
-    # Defensive: any other state → bail with a clear error.
     raise die(
-        f"Unexpected pod availability: {verdict.availability.value}",
-        hint="pass --skip-pod-probe to bypass and let the pipeline retry",
+        f"Pod resume failed: {outcome.message}",
+        hint="check RunPod console; pass --skip-pod-probe to bypass",
     )
 
 

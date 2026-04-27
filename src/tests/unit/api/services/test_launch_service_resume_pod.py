@@ -93,29 +93,76 @@ def _seed_run(tmp_path: Path, *, with_pod: bool, provider: str = "runpod") -> Pa
 # ---------------------------------------------------------------------------
 
 
-@requires_runpod_sdk
-class TestRunningPath:
-    def test_pod_running_returns_ok(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        run_dir = _seed_run(tmp_path, with_pod=True)
-        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
+class TestRESTAdapterDelegation:
+    """Phase 14.C — REST adapter is now a 5-line wrapper over
+    :class:`LaunchResumeService`. The probe / resume / capacity /
+    GONE / running scenarios live in
+    :mod:`src.tests.unit.pipeline.launch.test_resume_service` (against
+    a fake provider). Here we just pin the field-by-field mapping
+    from :class:`ResumeOutcome` → :class:`ResumePodResponse`.
+    """
 
-        fake_client = MagicMock()
-        fake_client.query_pod.return_value = MagicMock(
-            is_failure=lambda: False,
-            unwrap=lambda: {"desiredStatus": "RUNNING"},
+    def test_running_outcome_maps_to_resume_pod_response(
+        self, tmp_path: Path,
+    ) -> None:
+        from src.pipeline.launch.resume_service import ResumeOutcome
+
+        outcome = ResumeOutcome(
+            availability="running", ok=True, message="Pod is already running",
         )
 
         with patch(
-            "src.providers.runpod.training.api_client.RunPodAPIClient",
-            return_value=fake_client,
+            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            return_value=outcome,
         ):
-            result = resume_pod_for_run(run_dir)
+            result = resume_pod_for_run(tmp_path)
 
         assert isinstance(result, ResumePodResponse)
         assert result.ok is True
         assert result.availability == "running"
+        assert result.message == "Pod is already running"
+
+    def test_gone_outcome_maps_to_not_ok_response(
+        self, tmp_path: Path,
+    ) -> None:
+        from src.pipeline.launch.resume_service import ResumeOutcome
+
+        outcome = ResumeOutcome(
+            availability="gone", ok=False,
+            message="Pod has been terminated",
+        )
+
+        with patch(
+            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            return_value=outcome,
+        ):
+            result = resume_pod_for_run(tmp_path)
+
+        assert result.ok is False
+        assert result.availability == "gone"
+        assert "terminated" in result.message.lower()
+
+    def test_resumed_outcome_maps_to_running_response(
+        self, tmp_path: Path,
+    ) -> None:
+        from src.pipeline.launch.resume_service import ResumeOutcome
+
+        outcome = ResumeOutcome(
+            availability="running", ok=True,
+            message="Pod resumed in 2.5s (1 attempt(s))",
+            elapsed_seconds=2.5,
+            attempts_made=1,
+        )
+
+        with patch(
+            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            return_value=outcome,
+        ):
+            result = resume_pod_for_run(tmp_path)
+
+        assert result.ok is True
+        assert result.availability == "running"
+        assert "resumed" in result.message.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -134,10 +181,15 @@ class TestLegacyPath:
         assert "legacy" in result.message.lower() or "no pod" in result.message.lower()
 
     def test_non_runpod_provider_skipped(self, tmp_path: Path) -> None:
+        # Phase 14.C: non-runpod providers ⇒ availability="skipped",
+        # ok=True (run continues). Pre-14.C returned "running" — the
+        # new outcome string makes operator dashboards see the
+        # explicit "no resume needed" branch rather than a misleading
+        # "running" status.
         run_dir = _seed_run(tmp_path, with_pod=True, provider="single_node")
         result = resume_pod_for_run(run_dir)
         assert result.ok is True
-        assert result.availability == "running"
+        assert result.availability == "skipped"
         assert "single_node" in result.message
 
 
@@ -147,37 +199,28 @@ class TestLegacyPath:
 
 
 class TestFailurePaths:
-    def test_missing_api_key_returns_probe_failed(
+    def test_missing_api_key_returns_skipped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        # Phase 14.C unifies CLI + REST behaviour: missing API key ⇒
+        # ``availability="skipped", ok=True`` so the run continues
+        # (the underlying SSH connect step surfaces real errors if
+        # the pod is actually down). Pre-14.C, the API surface
+        # returned ``ok=False, availability="probe_failed"`` while
+        # the CLI silently skipped — an inconsistency the unified
+        # service eliminates.
         monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
         run_dir = _seed_run(tmp_path, with_pod=True)
         result = resume_pod_for_run(run_dir)
-        assert result.ok is False
-        assert result.availability == "probe_failed"
+        assert result.ok is True
+        assert result.availability == "skipped"
         assert "RUNPOD_API_KEY" in result.message
 
-    @requires_runpod_sdk
-    def test_pod_gone_returns_not_ok(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        run_dir = _seed_run(tmp_path, with_pod=True)
-        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
-
-        fake_client = MagicMock()
-        fake_client.query_pod.return_value = MagicMock(
-            is_failure=lambda: False,
-            unwrap=lambda: {"desiredStatus": "TERMINATED"},
-        )
-
-        with patch(
-            "src.providers.runpod.training.api_client.RunPodAPIClient",
-            return_value=fake_client,
-        ):
-            result = resume_pod_for_run(run_dir)
-
-        assert result.ok is False
-        assert result.availability == "gone"
+    # Phase 14.C: pod-gone-returns-not-ok scenario covered by
+    # :class:`TestNegative.test_pod_gone_returns_not_ok` in
+    # :mod:`src.tests.unit.pipeline.launch.test_resume_service` —
+    # against a fake provider, no SDK requirement.
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -185,32 +228,9 @@ class TestFailurePaths:
 # ---------------------------------------------------------------------------
 
 
-@requires_runpod_sdk
-class TestSleepingResume:
-    def test_sleeping_pod_woken_successfully(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        run_dir = _seed_run(tmp_path, with_pod=True)
-        monkeypatch.setenv("RUNPOD_API_KEY", "test-key")
-
-        fake_client = MagicMock()
-        fake_client.query_pod.return_value = MagicMock(
-            is_failure=lambda: False,
-            unwrap=lambda: {"desiredStatus": "EXITED"},
-        )
-        fake_client.resume_pod.return_value = MagicMock(
-            is_failure=lambda: False,
-        )
-
-        with patch(
-            "src.providers.runpod.training.api_client.RunPodAPIClient",
-            return_value=fake_client,
-        ):
-            result = resume_pod_for_run(run_dir)
-
-        assert result.ok is True
-        assert result.availability == "running"
-        assert "resumed" in result.message.lower()
+# Phase 14.C: sleeping → wake scenario covered exhaustively by
+# :class:`TestPositive.test_sleeping_pod_resumes_successfully` in
+# :mod:`src.tests.unit.pipeline.launch.test_resume_service`.
 
 
 # ---------------------------------------------------------------------------
