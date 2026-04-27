@@ -1,17 +1,24 @@
 """
-Local JSONL metrics buffer with smart decimation.
+Local JSONL metrics buffer with config-driven decimation.
 
 Buffers MLflow metrics to disk when the circuit breaker is open (MLflow server
 unreachable — e.g. laptop sleeping). Metrics are flushed back to MLflow when
-connectivity recovers, or downloaded by the pipeline on resume.
+connectivity recovers, or downloaded by the pipeline on resume (Phase 12.A.1).
 
-Decimation policy (reduces buffer size for long trainings):
-- First 10 min:  keep ALL metrics
-- 10–30 min:     keep every 2nd step
-- 30+ min:       keep every 5th step
+Decimation policy
+-----------------
+Phase 12.A.2 made decimation **config-driven**. By default every metric is
+preserved losslessly (``keep_all=true``); set ``training.metrics_buffer.keep_all=false``
+to enable adaptive decimation. The legacy three-tier defaults
+(``1 / 2 / 5`` keep_every per ``10 / 30 / late`` minute window) ARE preserved
+inside :class:`DecimationWindowConfig` — flipping ``keep_all=false`` without
+tuning the windows reproduces the pre-12.A.2 behaviour.
 
-Yields ~40% of raw metrics for a typical 1-hour training — sufficient for
-trend analysis while keeping the buffer file under 1 MB.
+Yields ~40% of raw metrics for a typical 1-hour training when configured for
+decimation — sufficient for trend analysis while keeping the buffer file under
+1 MB. With the new lossless default, expect proportionally larger files
+(typical ~2–10 MB on a 1h run) — well within the 100 MiB Mac-side retrieval
+cap (Phase 12.A.1 :class:`MetricsBufferRetriever`).
 """
 
 from __future__ import annotations
@@ -25,28 +32,114 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Decimation thresholds (seconds from training start)
-_DECIMATE_TIER1_END = 600  # 10 minutes — keep all
-_DECIMATE_TIER2_END = 1800  # 30 minutes — keep every 2nd step
-_DECIMATE_TIER2_EVERY = 2
-_DECIMATE_TIER3_EVERY = 5  # 30+ min — keep every 5th step
-
 _DEFAULT_BUFFER_FILENAME = "metrics_buffer.jsonl"
 
 
 class MetricsDecimator:
-    """Decides whether a metric at a given step/time should be kept."""
+    """Decides whether a metric at a given step/time should be kept.
 
-    def __init__(self, training_start_time: float | None = None) -> None:
-        self._start_time = training_start_time or time.time()
+    Phase 12.A.2: optionally accepts a
+    :class:`~src.config.training.metrics_buffer.MetricsBufferConfig`.
+    Construction without one keeps the legacy default (``keep_all=True``) so
+    existing call sites that didn't propagate the config (tests, ad-hoc
+    instantiation) get the **safer, more permissive** lossless behaviour.
+    """
+
+    # Defaults retained as module-level constants so tests / fallbacks
+    # don't have to spin up a Pydantic model just to query them.
+    DEFAULT_WINDOW_FIRST_S: float = 600.0   # 10 min
+    DEFAULT_WINDOW_FIRST_KEEP_EVERY: int = 1
+    DEFAULT_WINDOW_MID_S: float = 1800.0    # 30 min — boundary between mid/late
+    DEFAULT_WINDOW_MID_KEEP_EVERY: int = 2
+    DEFAULT_WINDOW_LATE_KEEP_EVERY: int = 5
+
+    def __init__(
+        self,
+        training_start_time: float | None = None,
+        *,
+        config: Any | None = None,
+    ) -> None:
+        # Phase 12.A.2 — explicit `is None` check so a caller that
+        # legitimately wants ``training_start_time=0.0`` (tests anchoring
+        # to a synthetic clock) doesn't fall through to ``time.time()``.
+        # The legacy ``or time.time()`` was subtly buggy because 0.0 is
+        # falsy in Python.
+        self._start_time = (
+            training_start_time
+            if training_start_time is not None
+            else time.time()
+        )
+        self._keep_all, self._windows = self._extract_decimation(config)
+
+    @classmethod
+    def _extract_decimation(
+        cls, config: Any | None,
+    ) -> tuple[bool, tuple[float, int, float, int, int]]:
+        """Pull the five window numbers out of a
+        :class:`MetricsBufferConfig` (Phase 12.A.2).
+
+        Returns the legacy defaults when ``config is None`` so existing
+        call sites still work. Read defensively — production code passes
+        a Pydantic model, but tests can pass a SimpleNamespace stand-in
+        and we don't want to import the Pydantic class here (keeps the
+        trainer-side trampoline light).
+        """
+        # No config → lossless (keep_all=True).
+        if config is None:
+            return True, (
+                cls.DEFAULT_WINDOW_FIRST_S,
+                cls.DEFAULT_WINDOW_FIRST_KEEP_EVERY,
+                cls.DEFAULT_WINDOW_MID_S,
+                cls.DEFAULT_WINDOW_MID_KEEP_EVERY,
+                cls.DEFAULT_WINDOW_LATE_KEEP_EVERY,
+            )
+
+        keep_all = bool(getattr(config, "keep_all", True))
+        decim = getattr(config, "decimation", None)
+
+        first_s = float(
+            getattr(decim, "window_first_minutes", 10) * 60.0
+            if decim is not None
+            else cls.DEFAULT_WINDOW_FIRST_S
+        )
+        first_keep = int(
+            getattr(decim, "window_first_keep_every", cls.DEFAULT_WINDOW_FIRST_KEEP_EVERY)
+            if decim is not None
+            else cls.DEFAULT_WINDOW_FIRST_KEEP_EVERY
+        )
+        mid_minutes = (
+            float(getattr(decim, "window_mid_minutes", 30))
+            if decim is not None
+            else 30.0
+        )
+        # Boundary between mid and late = first + mid (in seconds).
+        mid_boundary_s = first_s + mid_minutes * 60.0
+        mid_keep = int(
+            getattr(decim, "window_mid_keep_every", cls.DEFAULT_WINDOW_MID_KEEP_EVERY)
+            if decim is not None
+            else cls.DEFAULT_WINDOW_MID_KEEP_EVERY
+        )
+        late_keep = int(
+            getattr(decim, "window_late_keep_every", cls.DEFAULT_WINDOW_LATE_KEEP_EVERY)
+            if decim is not None
+            else cls.DEFAULT_WINDOW_LATE_KEEP_EVERY
+        )
+
+        return keep_all, (first_s, first_keep, mid_boundary_s, mid_keep, late_keep)
 
     def should_keep(self, step: int) -> bool:
-        elapsed = time.time() - self._start_time
-        if elapsed < _DECIMATE_TIER1_END:
+        # Phase 12.A.2 lossless default.
+        if self._keep_all:
             return True
-        if elapsed < _DECIMATE_TIER2_END:
-            return step % _DECIMATE_TIER2_EVERY == 0
-        return step % _DECIMATE_TIER3_EVERY == 0
+
+        first_s, first_keep, mid_boundary_s, mid_keep, late_keep = self._windows
+        elapsed = time.time() - self._start_time
+
+        if elapsed < first_s:
+            return step % first_keep == 0
+        if elapsed < mid_boundary_s:
+            return step % mid_keep == 0
+        return step % late_keep == 0
 
 
 class MetricsBuffer:
@@ -61,9 +154,22 @@ class MetricsBuffer:
         buffer_dir: str | Path = "/workspace",
         *,
         training_start_time: float | None = None,
+        config: Any | None = None,
     ) -> None:
+        """
+        Args:
+            buffer_dir:           Directory holding ``metrics_buffer.jsonl``.
+                                  Default ``/workspace`` matches the trainer-
+                                  side runtime layout.
+            training_start_time:  Wall-clock timestamp anchoring the
+                                  decimation windows. ``None`` → ``time.time()``.
+            config:               Phase 12.A.2 — optional
+                                  :class:`MetricsBufferConfig`. ``None`` =
+                                  lossless default (``keep_all=True``);
+                                  drives :class:`MetricsDecimator`.
+        """
         self._path = Path(buffer_dir) / _DEFAULT_BUFFER_FILENAME
-        self._decimator = MetricsDecimator(training_start_time)
+        self._decimator = MetricsDecimator(training_start_time, config=config)
         self._count = 0
 
     @property

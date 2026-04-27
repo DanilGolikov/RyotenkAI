@@ -195,19 +195,45 @@ class MLflowSetupMixin:
             return
         self._resilient_transport.install(mlflow)  # type: ignore[attr-defined]
 
-        # Attach metrics buffer for offline buffering during circuit-breaker-open periods
+        # Attach metrics buffer for offline buffering during circuit-breaker-open periods.
+        # Phase 12.A.2 — pass training.metrics_buffer config through if it's
+        # reachable on the manager. Defensive lookup so test instances built
+        # with partial mocks still work; absent config = lossless default
+        # (keep_all=True), which is strictly more permissive than legacy.
         try:
             import os
 
             from src.training.mlflow.metrics_buffer import MetricsBuffer
 
             workspace = os.environ.get("WORKSPACE_PATH", "/workspace")
-            buffer = MetricsBuffer(buffer_dir=workspace)
+            buffer_config = self._resolve_metrics_buffer_config()
+            buffer = MetricsBuffer(buffer_dir=workspace, config=buffer_config)
             self._resilient_transport.attach_buffer(buffer)  # type: ignore[attr-defined]
         except Exception as e:
             from src.utils.logger import get_logger
 
             get_logger(__name__).debug("Metrics buffer not attached: %s", e)
+
+    def _resolve_metrics_buffer_config(self) -> Any | None:
+        """Best-effort lookup of ``training.metrics_buffer`` from the
+        manager's pipeline config.
+
+        Returns ``None`` when the config isn't reachable — caller falls
+        back to MetricsBuffer's lossless default. Callers who want
+        custom decimation set ``training.metrics_buffer.keep_all=false``
+        in their YAML; everyone else gets the safer keep-everything
+        behaviour.
+        """
+        # MLflowManager.__init__ stashes the PipelineConfig on `self.config`.
+        # ``training`` is a top-level field; ``metrics_buffer`` is the
+        # Phase 12.A.2 sub-block.
+        pipeline_cfg = getattr(self, "config", None)
+        if pipeline_cfg is None:
+            return None
+        training_cfg = getattr(pipeline_cfg, "training", None)
+        if training_cfg is None:
+            return None
+        return getattr(training_cfg, "metrics_buffer", None)
 
     def _restore_deleted_experiments(self) -> None:
         """Restore soft-deleted experiments before setting the active one."""

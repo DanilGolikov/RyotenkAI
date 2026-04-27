@@ -386,6 +386,66 @@ test -f attempts/<n>/cancelled.marker && echo "yes"
 | `LaunchAbortedError` before submit | Preflight or stale-plugin check refused the launch | `run_preflight` output in the launcher logs |
 | `RunnerEventCallback` silent | 3 consecutive 5xx → callback self-disabled for the session | Trainer keeps running; check pod-side `internal/events` access log |
 
+## Metrics buffer (Phase 12.A.2 — config-driven decimation)
+
+When the MLflow upstream is unreachable (typically because the Mac is
+asleep), the trainer's :class:`ResilientMLflowTransport` buffers
+``mlflow.log_metric`` calls to ``<workspace>/metrics_buffer.jsonl``.
+Phase 12.A.1 retrieves and replays this file on Mac wake. Phase 12.A.2
+exposes the **decimation policy** as user config so long runs can
+trade per-step granularity for bounded disk + replay overhead — or,
+by default, keep every metric losslessly.
+
+### Default behaviour: lossless
+
+Old configs without a ``training.metrics_buffer`` block — and any new
+config that omits the block — inherit ``keep_all=true``:
+
+```yaml
+training:
+  metrics_buffer:
+    keep_all: true   # default; every metric preserved
+```
+
+This is **strictly more permissive** than the Phase 9 hard-coded
+3-tier policy. Per the user mandate: data fidelity is the default;
+decimation is opt-in.
+
+### Opt-in decimation for very long runs
+
+Flip ``keep_all=false`` to enable the three-window decimator. Each
+window keeps every Nth step within a time band:
+
+```yaml
+training:
+  metrics_buffer:
+    keep_all: false
+    decimation:
+      window_first_minutes: 10        # 0–10 min
+      window_first_keep_every: 1        # keep every step
+      window_mid_minutes: 30          # 10–40 min
+      window_mid_keep_every: 2          # keep every other step
+      window_late_keep_every: 5         # 40+ min: keep every 5th step
+```
+
+The defaults shown above mirror the legacy Phase 9 hard-coded
+behaviour, so flipping ``keep_all=false`` without tuning the windows
+reproduces the pre-12.A.2 buffer shape. Tuning the windows is for
+operators who:
+
+* Run for many hours and don't need per-step granularity in the late
+  bulk of training.
+* Care more about replay throughput than fine-grained loss curves.
+
+### Schema constraints
+
+* All five window numbers must be ``>= 1``.
+* Unknown keys under ``metrics_buffer`` or ``decimation`` are
+  rejected at config-load time (``StrictBaseModel`` ``extra=forbid``).
+* Schema source: :class:`MetricsBufferConfig` /
+  :class:`DecimationWindowConfig` in
+  ``src.config.training.metrics_buffer``.
+
 ## Configuration knobs
 
 | Env var | Where | What |

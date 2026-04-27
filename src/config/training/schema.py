@@ -12,6 +12,7 @@ from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
 # NOTE: Runtime import is required for Pydantic field type.
 from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
 from .lora import AdaLoraConfig, LoraConfig, QloraConfig  # noqa: TC001
+from .metrics_buffer import MetricsBufferConfig  # noqa: TC001
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
 
 if TYPE_CHECKING:
@@ -98,6 +99,19 @@ class TrainingOnlyConfig(StrictBaseModel):
     hyperparams: GlobalHyperparametersConfig = Field(
         ...,  # REQUIRED: User must explicitly set core hyperparams
         description="Global training hyperparameters (5 core required + optional advanced)",
+    )
+
+    # =========================================================================
+    # METRICS BUFFER (Phase 12.A.2)
+    # =========================================================================
+    metrics_buffer: MetricsBufferConfig = Field(
+        default_factory=MetricsBufferConfig,
+        description=(
+            "Controls MetricsBuffer decimation policy. By default every "
+            "metric is preserved losslessly (keep_all=true); flip to "
+            "keep_all=false on very long runs where buffer disk / "
+            "replay overhead matters more than per-step granularity."
+        ),
     )
 
     @field_validator("type")
