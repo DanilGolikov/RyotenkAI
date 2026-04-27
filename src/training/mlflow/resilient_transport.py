@@ -22,10 +22,13 @@ flap-and-recover sequence.
 from __future__ import annotations
 
 import functools
+import json
+import os
 import socket
 import ssl
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from src.utils.logger import get_logger
@@ -36,6 +39,15 @@ _PATCHED_MARKER = "_ryotenkai_resilient_transport_owner"
 _FAILURE_THRESHOLD = 3
 _RECOVERY_COOLDOWN_S = 60.0
 _WARNING_INTERVAL_S = 30.0
+# Phase 12.A — flush-offset marker written after every successful drain.
+# Lives in ``<workspace>/.runner/buffer.flush_offset`` so Mac-side
+# :class:`MetricsBufferRetriever` can fetch it alongside the buffer
+# for forensic visibility into "did the trainer ever drain?". The
+# replay logic in Phase 12.A.1 does NOT need this marker for
+# correctness — the buffer file invariant (un-flushed only) carries
+# the source of truth.
+_FLUSH_OFFSET_RELPATH = ".runner/buffer.flush_offset"
+_FLUSH_OFFSET_SCHEMA_VERSION = 1
 _FLUENT_METHODS = (
     "log_metric",
     "log_metrics",
@@ -268,11 +280,20 @@ class ResilientMLflowTransport:
         log_metric_original = self._originals.get(("module", "log_metric"))
         if log_metric_original is None:
             log_metric_original = original if operation == "log_metric" else None
-        if log_metric_original is not None:
-            try:
-                self._buffer.flush(log_metric_original)
-            except Exception as e:
-                logger.debug("[BUFFER] Flush error: %s", e)
+        if log_metric_original is None:
+            return
+        try:
+            pending = int(getattr(self._buffer, "count", 0) or 0)
+        except Exception:  # noqa: BLE001 — defensive; some buffers may differ
+            pending = 0
+        try:
+            self._buffer.flush(log_metric_original)
+        except Exception as e:
+            logger.debug("[BUFFER] Flush error: %s", e)
+            return
+        # Phase 12.A — record drain success for Mac-side forensics.
+        if pending > 0:
+            self._write_flush_offset_marker(drained_count=pending)
 
     def flush_buffer(self) -> int:
         """Phase 9.B — public, explicit drain of the metrics buffer.
@@ -326,10 +347,59 @@ class ResilientMLflowTransport:
 
         try:
             self._buffer.flush(log_metric_original)
-            return pending
         except Exception as exc:  # noqa: BLE001 — best-effort by contract
             logger.warning("[BUFFER] explicit flush_buffer failed: %s", exc)
             return 0
+
+        # Phase 12.A — record drain success for Mac-side forensics.
+        # Cross-fence with implicit drain: same marker, same shape,
+        # written at the same point — after any successful drain that
+        # actually touched at least one record.
+        self._write_flush_offset_marker(drained_count=pending)
+        return pending
+
+    # ------------------------------------------------------------------
+    # Phase 12.A — flush-offset marker
+    # ------------------------------------------------------------------
+
+    def _write_flush_offset_marker(self, *, drained_count: int) -> None:
+        """Write ``<workspace>/.runner/buffer.flush_offset`` after a
+        successful drain.
+
+        Best-effort. The marker is purely forensic — Mac-side
+        :class:`MetricsBufferRetriever` fetches it alongside
+        ``metrics_buffer.jsonl`` so an operator can answer "did the
+        trainer ever manage to drain, or did the buffer stay full
+        the whole training?". Failure to write the marker NEVER
+        propagates; the buffer file itself is the canonical
+        invariant for replay correctness (un-flushed entries only).
+
+        Format:
+            ``{"v":1,"drained_count":N,"drained_at_ms":<int>}``
+        """
+        try:
+            workspace = Path(
+                os.environ.get("WORKSPACE_PATH", "/workspace")
+            )
+            marker_dir = workspace / ".runner"
+            marker_path = marker_dir / "buffer.flush_offset"
+            marker_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "v": _FLUSH_OFFSET_SCHEMA_VERSION,
+                "drained_count": int(drained_count),
+                "drained_at_ms": int(time.time() * 1000),
+            }
+            # Atomic-ish: write to a tmp file then rename, so a Mac
+            # retrieval racing the trainer never sees a half-written
+            # marker.
+            tmp_path = marker_path.with_suffix(".tmp")
+            tmp_path.write_text(
+                json.dumps(payload, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(tmp_path, marker_path)
+        except OSError as exc:
+            logger.debug("[BUFFER] flush-offset marker write failed: %s", exc)
 
     def _make_wrapper(self, operation: str, original: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(original)

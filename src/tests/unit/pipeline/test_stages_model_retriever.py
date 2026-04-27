@@ -436,8 +436,12 @@ class TestModelRetrieverExecute:
             retriever, "_download_model", lambda: (_ for _ in ()).throw(AssertionError("should not download"))
         )
 
-        # deterministic duration
-        times = iter([100.0, 101.5])
+        # deterministic duration — generous iterator so logging.LogRecord
+        # consumes time.time() freely without exhausting the sequence
+        # (logging hits time.time per emitted record). The 100 → 101.5
+        # delta is what the assertion below cares about.
+        _seq = [100.0] + [100.0] * 50 + [101.5] + [101.5] * 50
+        times = iter(_seq)
         monkeypatch.setattr("time.time", lambda: next(times))
 
         # Avoid real SSH construction

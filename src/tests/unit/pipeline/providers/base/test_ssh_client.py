@@ -626,3 +626,105 @@ def test_upload_directory_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     res = c.upload_directory(local, "/remote")
     assert res.is_failure()
     assert res.unwrap_err().code == "SSH_UPLOAD_IO_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# Phase 12.A.1 — single-file download_file
+# ---------------------------------------------------------------------------
+
+
+def test_download_file_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Happy path: SCP returncode 0 → Ok(None), no exception."""
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        # Simulate SCP placing the file on disk.
+        # cmd is the scp argv list; last element is local destination.
+        local = Path(cmd[-1])
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text("contents", encoding="utf-8")
+        return _RunResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+
+    c = SSHClient(host="pc", username=None)
+    local = tmp_path / "metrics_buffer.jsonl"
+    res = c.download_file("/workspace/metrics_buffer.jsonl", local)
+
+    assert res.is_success()
+    assert local.exists()
+    assert local.read_text() == "contents"
+    # SCP command shape: scp <opts> alias:remote local
+    assert captured["cmd"][0] == "scp"
+    assert captured["cmd"][-2] == "pc:/workspace/metrics_buffer.jsonl"
+    assert captured["cmd"][-1] == str(local)
+
+
+def test_download_file_explicit_mode_includes_port_and_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _RunResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+
+    c = SSHClient(host="1.2.3.4", port=2222, username="root", key_path="/tmp/k")
+    res = c.download_file("/remote/x", tmp_path / "x")
+    assert res.is_success()
+
+    # SCP argv must include `-P 2222 -i /tmp/k` somewhere before the
+    # remote path.
+    cmd = captured["cmd"]
+    assert "-P" in cmd
+    assert "2222" in cmd
+    assert "-i" in cmd
+    assert "/tmp/k" in cmd
+    # Last two args: source remote, dest local.
+    assert cmd[-2] == "root@1.2.3.4:/remote/x"
+
+
+def test_download_file_returncode_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(cmd, **kwargs):
+        return _RunResult(returncode=1, stdout="", stderr="permission denied")
+
+    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+
+    c = SSHClient(host="pc", username=None)
+    res = c.download_file("/remote/x", tmp_path / "x")
+    assert res.is_failure()
+    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_FAILED"
+    assert "permission denied" in res.unwrap_err().message
+
+
+def test_download_file_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(cmd, **kwargs):
+        raise ssh_mod.subprocess.TimeoutExpired(cmd="scp", timeout=1)
+
+    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+
+    c = SSHClient(host="pc", username=None)
+    res = c.download_file("/remote/x", tmp_path / "x", timeout=1)
+    assert res.is_failure()
+    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_TIMEOUT"
+
+
+def test_download_file_oserror(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_run(cmd, **kwargs):
+        raise OSError("broken pipe")
+
+    monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
+
+    c = SSHClient(host="pc", username=None)
+    res = c.download_file("/remote/x", tmp_path / "x")
+    assert res.is_failure()
+    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_IO_ERROR"

@@ -14,12 +14,18 @@ from typing import TYPE_CHECKING, Any
 
 from src.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
 from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import StageNames
+from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, ModelError, Ok, Result
 from src.utils.ssh_client import SSHClient
 
 from src.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
+from src.pipeline.stages.model_retriever.metrics_buffer_retriever import (
+    MetricsBufferRetriever,
+)
+from src.pipeline.stages.model_retriever.metrics_replay import (
+    BufferedMetricsReplay,
+)
 from src.pipeline.stages.model_retriever.model_card import ModelCardGenerator
 from src.pipeline.stages.model_retriever.types import (
     ModelCardContext,
@@ -273,6 +279,20 @@ class ModelRetriever(PipelineStage):
                 if self._callbacks.on_local_download_completed:
                     self._callbacks.on_local_download_completed(str(local_model_path))
 
+        # Phase 12.A.1 — best-effort buffered MLflow metrics replay.
+        # Runs AFTER HF upload / local download (so adapters are safe)
+        # but BEFORE provider.cleanup_pod (so /workspace still exists).
+        # Failure of this step is intentionally non-fatal — the run
+        # already shipped its model artefacts; replay is opportunistic
+        # data recovery for the metrics dimension.
+        try:
+            self._retrieve_and_replay_metrics_buffer(context)
+        except Exception as exc:  # noqa: BLE001 — fail-open by contract
+            logger.warning(
+                "[METRICS_REPLAY] retrieval+replay raised unexpectedly: %s. "
+                "Continuing — model artefacts already secured.", exc,
+            )
+
         logger.info(f"Cleanup will be handled by {self._provider_name} provider")
 
         if hf_uploaded:
@@ -299,6 +319,194 @@ class ModelRetriever(PipelineStage):
                 },
             )
         )
+    # ------------------------------------------------------------------
+    # Phase 12.A.1 — metrics buffer retrieval + replay
+    # ------------------------------------------------------------------
+
+    def _retrieve_and_replay_metrics_buffer(
+        self, context: dict[str, Any]
+    ) -> None:
+        """Retrieve ``metrics_buffer.jsonl`` from pod and replay into
+        MLflow.
+
+        Best-effort. Never raises — caller wraps in defensive try/except
+        as a second line of defence. Logs every outcome (missing,
+        oversized, fetch error, replay error, success) so operator
+        sees exactly what happened in pipeline.log.
+
+        Skipped silently when:
+        * SSH client is None (mock mode / no-pod paths).
+        * No MLflow run id available on context (MLflow tracking
+          disabled in this run).
+        """
+        if self._ssh_client is None:
+            logger.debug(
+                "[METRICS_REPLAY] no SSH client — skipping (mock mode?)"
+            )
+            return
+
+        run_id = self._resolve_mlflow_run_id(context)
+        attempt_dir = self._resolve_attempt_directory(context)
+        if attempt_dir is None:
+            logger.info(
+                "[METRICS_REPLAY] no attempt directory in context — skipping"
+            )
+            return
+
+        # 1. Retrieve the buffer file.
+        retriever = MetricsBufferRetriever(
+            self._ssh_client,
+            workspace_path=self._workspace_path,
+        )
+        fetch = retriever.fetch(local_dir=attempt_dir)
+
+        # Healthy case: trainer's drain succeeded — buffer absent.
+        if fetch.missing:
+            if fetch.error:
+                logger.info(
+                    "[METRICS_REPLAY] buffer probe failed (%s) — skipping",
+                    fetch.error,
+                )
+            else:
+                logger.info(
+                    "[METRICS_REPLAY] no buffered metrics on pod — "
+                    "trainer drain already succeeded"
+                )
+            if self._callbacks.on_metrics_buffer_retrieved:
+                self._callbacks.on_metrics_buffer_retrieved(
+                    0, 0, 0, True, False,
+                )
+            return
+
+        # Operator-visible: buffer existed but was deliberately skipped.
+        if fetch.oversized:
+            logger.warning(
+                "[METRICS_REPLAY] buffer oversized (%d bytes) — skipped",
+                fetch.size_bytes,
+            )
+            if self._callbacks.on_metrics_buffer_retrieved:
+                self._callbacks.on_metrics_buffer_retrieved(
+                    0, 0, fetch.size_bytes, False, True,
+                )
+            return
+
+        # Download failed for unexpected reason.
+        if fetch.local_path is None:
+            logger.warning(
+                "[METRICS_REPLAY] fetch failed: %s",
+                fetch.error or "unknown error",
+            )
+            if self._callbacks.on_metrics_buffer_retrieved:
+                self._callbacks.on_metrics_buffer_retrieved(
+                    0, 0, fetch.size_bytes, False, False,
+                )
+            return
+
+        # 2. Buffer is on Mac. Replay into MLflow.
+        if not run_id:
+            # We have data but no run to write into. Keep the file
+            # around for forensics — the operator can manually replay
+            # it later via `mlflow.tracking.MlflowClient.log_metric`.
+            logger.warning(
+                "[METRICS_REPLAY] %d buffered records retrieved but no "
+                "MLflow run_id available — preserved at %s",
+                fetch.line_count, fetch.local_path,
+            )
+            if self._callbacks.on_metrics_buffer_retrieved:
+                self._callbacks.on_metrics_buffer_retrieved(
+                    0, fetch.line_count, fetch.size_bytes, False, False,
+                )
+            return
+
+        client = self._build_mlflow_client()
+        if client is None:
+            logger.warning(
+                "[METRICS_REPLAY] MlflowClient unavailable; %d records "
+                "preserved locally at %s for manual replay",
+                fetch.line_count, fetch.local_path,
+            )
+            if self._callbacks.on_metrics_buffer_retrieved:
+                self._callbacks.on_metrics_buffer_retrieved(
+                    0, fetch.line_count, fetch.size_bytes, False, False,
+                )
+            return
+
+        replayer = BufferedMetricsReplay(client)
+        result = replayer.replay(
+            buffer_path=fetch.local_path,
+            run_id=run_id,
+        )
+
+        if self._callbacks.on_metrics_buffer_retrieved:
+            self._callbacks.on_metrics_buffer_retrieved(
+                result.replayed,
+                fetch.line_count,
+                fetch.size_bytes,
+                False,
+                False,
+            )
+
+        logger.info(
+            "[METRICS_REPLAY] replayed %d/%d metrics (run=%s, %dms)",
+            result.replayed, fetch.line_count, run_id, result.duration_ms,
+        )
+
+    @staticmethod
+    def _resolve_mlflow_run_id(context: dict[str, Any]) -> str | None:
+        """Pick the best MLflow run id to replay into.
+
+        Phase 12.A.1 ships with a single source of truth: the parent
+        run id (``MLFLOW_PARENT_RUN_ID``). Multi-phase nested metrics
+        all land in the parent, which is the same place HF Trainer's
+        own MLflow callback writes them — Mac-side replay matches
+        that semantic. A future Phase 12.A.3 can extend the buffer
+        format with a per-record ``run_id`` if nested-run granularity
+        becomes important.
+        """
+        run_id = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
+        if isinstance(run_id, str) and run_id.strip():
+            return run_id.strip()
+        # Fallback: some test contexts use the explicit string key.
+        run_id_alt = context.get("mlflow_parent_run_id") or context.get(
+            "mlflow_run_id"
+        )
+        if isinstance(run_id_alt, str) and run_id_alt.strip():
+            return run_id_alt.strip()
+        return None
+
+    @staticmethod
+    def _resolve_attempt_directory(
+        context: dict[str, Any],
+    ) -> Path | None:
+        raw = context.get(PipelineContextKeys.ATTEMPT_DIRECTORY) or context.get(
+            "attempt_directory"
+        )
+        if not raw:
+            return None
+        try:
+            return Path(str(raw))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _build_mlflow_client() -> Any | None:
+        """Construct an :class:`mlflow.tracking.MlflowClient` if MLflow
+        is importable. Returns ``None`` when the package is absent or
+        construction fails (e.g. malformed tracking URI). Replay then
+        gracefully no-ops with the buffer file preserved locally.
+        """
+        try:
+            from mlflow.tracking import MlflowClient
+        except ImportError:
+            return None
+        try:
+            return MlflowClient()
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning(
+                "[METRICS_REPLAY] MlflowClient construction failed: %s", exc,
+            )
+            return None
+
     def _execute_mock(
         self, context: dict[str, Any], resource_id: str
     ) -> Result[dict[str, Any], AppError]:

@@ -619,6 +619,108 @@ class SSHClient:
             ProviderError(message="Download failed", code="SSH_DOWNLOAD_FAILED", details={})
         )
 
+    def download_file(
+        self,
+        remote_path: str,
+        local_path: Path,
+        timeout: int = 300,
+    ) -> Result[None, ProviderError]:
+        """
+        Download a single file from server using SCP.
+
+        Phase 12.A — symmetrical to :meth:`upload_file` but inverted.
+        Used by ``MetricsBufferRetriever`` to fetch
+        ``/workspace/metrics_buffer.jsonl`` after natural completion
+        before the volume is reclaimed by ``cleanup_pod``.
+
+        Single-file SCP avoids the tar-pipeline overhead of
+        :meth:`download_directory` for tiny files (typical
+        metrics_buffer.jsonl is < 1 MB even on a long run with
+        keep_all=true).
+
+        Args:
+            remote_path: Remote file path (e.g. ``/workspace/metrics_buffer.jsonl``).
+            local_path:  Local file path to write to. Parent directory
+                          must exist.
+            timeout:     SCP timeout in seconds (default 5 min).
+
+        Returns:
+            Result[None, ProviderError]:
+                - ``Ok(None)`` on success.
+                - ``Err(ProviderError)`` on SCP failure, timeout, or
+                  unexpected I/O error. Caller should treat as
+                  best-effort (Phase 12 is fail-open).
+        """
+        # Build SCP command (download direction: remote → local)
+        if self._is_alias_mode:
+            scp_cmd = [
+                "scp",
+                *self.ssh_base_opts,
+                f"{self.host}:{remote_path}",
+                str(local_path),
+            ]
+        else:
+            scp_cmd = ["scp", "-P", str(self.port)]
+            if self.key_path:
+                scp_cmd.extend(["-i", self.key_path])
+            scp_cmd.extend(
+                [
+                    *self.ssh_base_opts,
+                    f"{self.ssh_target}:{remote_path}",
+                    str(local_path),
+                ]
+            )
+
+        logger.info(f"📥 Downloading file: {remote_path} -> {local_path}")
+
+        try:
+            result = subprocess.run(
+                scp_cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                return Err(
+                    ProviderError(
+                        message=f"SCP download failed: {stderr}",
+                        code="SSH_DOWNLOAD_FILE_FAILED",
+                        details={
+                            _REMOTE_PATH_KEY: remote_path,
+                            _LOCAL_PATH_KEY: str(local_path),
+                        },
+                    )
+                )
+
+            logger.info(f"✅ File downloaded: {local_path}")
+            return Ok(None)
+
+        except subprocess.TimeoutExpired:
+            return Err(
+                ProviderError(
+                    message=f"SCP download timeout (>{timeout}s)",
+                    code="SSH_DOWNLOAD_FILE_TIMEOUT",
+                    details={
+                        _REMOTE_PATH_KEY: remote_path,
+                        _LOCAL_PATH_KEY: str(local_path),
+                        "timeout": timeout,
+                    },
+                )
+            )
+        except OSError as e:
+            return Err(
+                ProviderError(
+                    message=f"SCP download I/O error: {e}",
+                    code="SSH_DOWNLOAD_FILE_IO_ERROR",
+                    details={
+                        _REMOTE_PATH_KEY: remote_path,
+                        _LOCAL_PATH_KEY: str(local_path),
+                    },
+                )
+            )
+
     def upload_directory(
         self,
         local_path: Path,

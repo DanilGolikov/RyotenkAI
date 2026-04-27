@@ -33,6 +33,20 @@ class ModelRetrieverEventCallbacks:
     on_local_download_completed: Callable[[str], None] | None = None
     on_local_download_failed: Callable[[str], None] | None = None
     on_retrieval_completed: Callable[[bool, str | None], None] | None = None
+    # Phase 12.A.1 — fired after the metrics_buffer.jsonl retrieval +
+    # MLflow replay attempt. Contract:
+    #   replayed:   number of MLflow log_metric writes that succeeded.
+    #   line_count: number of lines in the retrieved buffer (0 when
+    #               nothing was retrieved).
+    #   size_bytes: bytes of the retrieved file (0 when missing /
+    #               oversized).
+    #   missing:    True iff the trainer's drain succeeded
+    #               (buffer absent on pod). The healthy case.
+    #   oversized:  True iff the file existed but exceeded the safety
+    #               cap and was deliberately skipped.
+    on_metrics_buffer_retrieved: (
+        Callable[[int, int, int, bool, bool], None] | None
+    ) = None
 
 
 @dataclass(frozen=True)
