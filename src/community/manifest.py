@@ -66,14 +66,11 @@ Stability = Literal["stable", "beta", "experimental"]
 #:                  ``_required_secrets`` ClassVar from entries with
 #:                  ``secret=true, optional=false``.
 #:   v5 (2026-04) — current. Adds ``[plugin].author`` (free-form
-#:                  ``"Name <email>"`` recommended). Replaces the v4
-#:                  ``[plugin].libs = [...]`` shorthand with top-level
-#:                  ``[[lib_requirements]]`` blocks: each entry has a
-#:                  ``name`` (must match a ``community/libs/<name>/``
-#:                  package) and an optional PEP 440 ``version``
-#:                  specifier (e.g. ``">=1.0.0,<2.0.0"``). Empty
-#:                  version means "any". Loader rejects the v4 shape
-#:                  with a precise migration hint.
+#:                  ``"Name <email>"`` recommended). Top-level
+#:                  ``[[lib_requirements]]`` blocks declare each
+#:                  ``community/libs/<name>/`` dependency with an
+#:                  optional PEP 440 ``version`` specifier (e.g.
+#:                  ``">=1.0.0,<2.0.0"``). Empty version means "any".
 LATEST_SCHEMA_VERSION = 5
 
 #: Lib manifests evolve independently of plugin manifests. Bump only
@@ -411,29 +408,6 @@ class PluginSpec(BaseModel):
     #: every other kind the field MUST be empty — a validation plugin
     #: has no business declaring strategy compatibility.
     supported_strategies: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_v4_libs_shape(cls, data: Any) -> Any:
-        """Catch v4-style ``[plugin].libs = [...]`` with a migration hint.
-
-        v4 shipped a string-list field on the plugin block; v5 moved
-        that to a top-level ``[[lib_requirements]]`` array of tables
-        with optional version constraints. A bare Pydantic
-        ``extra="forbid"`` failure here would just say "libs not
-        permitted" — actionable, but not super helpful for an author
-        upgrading from a working v4 manifest.
-        """
-        if isinstance(data, dict) and "libs" in data:
-            raise ValueError(
-                "[plugin].libs was removed in schema v5. Move each entry "
-                "into a top-level [[lib_requirements]] block with an "
-                "optional `version` specifier:\n\n"
-                "  [[lib_requirements]]\n"
-                "  name = \"helixql\"\n"
-                "  # version = \">=1.0.0\"  # optional PEP 440 specifier"
-            )
-        return data
 
     @model_validator(mode="after")
     def _fill_name(self) -> PluginSpec:

@@ -145,17 +145,6 @@ class TestSchema:
         with pytest.raises(ValueError, match="snake_case"):
             LibRequirement(name="Bad-Name", version="")
 
-    def test_v4_libs_field_raises_migration_hint(self) -> None:
-        # A leftover v4 manifest with [plugin].libs = [...] should
-        # surface a migration error, not Pydantic's vague "extra fields".
-        with pytest.raises(ValueError, match="schema v5"):
-            PluginSpec(
-                id="x",
-                kind="validation",
-                libs=["alpha"],
-                entry_point=EntryPoint(module="plugin", **{"class": "X"}),
-            )
-
     def test_lib_requirements_unique_by_name(self) -> None:
         with pytest.raises(ValueError, match="duplicate"):
             PluginManifest(
