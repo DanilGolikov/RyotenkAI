@@ -1,3 +1,5 @@
+schema_version = 5
+
 [plugin]
 id = "helixql_gold_syntax_backend"
 kind = "validation"
@@ -6,6 +8,8 @@ version = "1.0.0"
 category = "sft"
 stability = "stable"
 description = "Validates gold HelixQL via Helix CLI compile (syntax + analysis, no cargo)."
+
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
 
 [plugin.entry_point]
 module = "plugin"
@@ -47,3 +51,7 @@ description = "Path to the `helix` CLI used to compile gold queries."
 optional = true
 secret = false
 managed_by = ""
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"

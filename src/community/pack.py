@@ -14,7 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.community.manifest import PluginManifest, PresetManifest
+from src.community.manifest import LibManifest, PluginManifest, PresetManifest
 
 # Patterns inside the plugin folder that are excluded from the archive.
 _EXCLUDED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
@@ -71,9 +71,12 @@ def _validate_manifest(source: Path) -> None:
         PluginManifest.model_validate(doc)
     elif "preset" in doc:
         PresetManifest.model_validate(doc)
+    elif "lib" in doc:
+        LibManifest.model_validate(doc)
     else:
         raise ValueError(
-            f"{manifest_path} has neither [plugin] nor [preset] section — cannot pack"
+            f"{manifest_path} has none of [plugin] / [preset] / [lib] — "
+            f"cannot pack"
         )
 
 

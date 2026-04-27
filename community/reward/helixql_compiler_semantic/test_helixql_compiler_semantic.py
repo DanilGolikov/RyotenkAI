@@ -28,7 +28,7 @@ from plugin import (
     _coerce_column,
 )
 
-from src.training.reward_plugins.registry import RewardPluginRegistry
+from src.training.reward_plugins.registry import reward_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,14 +59,14 @@ class TestHelixQLCompilerSemanticRewardPluginRegistration:
 
         catalog.ensure_loaded()
 
-        assert "helixql_compiler_semantic" in RewardPluginRegistry._registry
+        assert "helixql_compiler_semantic" in reward_registry.list_ids()
 
     def test_registered_class_is_correct(self) -> None:
         from src.community.catalog import catalog
 
         catalog.ensure_loaded()
 
-        cls = RewardPluginRegistry._registry.get("helixql_compiler_semantic")
+        cls = reward_registry.get_class("helixql_compiler_semantic")
         # Community plugins are loaded under a synthetic module namespace, so
         # identity (``cls is HelixQLCompilerSemanticRewardPlugin``) does not
         # hold. Compare by class name instead — the catalog guarantees a
@@ -203,7 +203,7 @@ class TestBuildTrainerKwargs:
 
 
 class TestCompilerRewardFunction:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_returns_minus_one(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
@@ -223,7 +223,7 @@ class TestCompilerRewardFunction:
         scores = compiler_reward(completions=[])
         assert scores == []
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_empty_schema_returns_minus_one(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
@@ -235,7 +235,7 @@ class TestCompilerRewardFunction:
         )
         assert scores == [-1.0]
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_empty_query_returns_minus_one(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
@@ -247,7 +247,7 @@ class TestCompilerRewardFunction:
         )
         assert scores == [-1.0]
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_multiple_completions_all_get_scored(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         ds = _make_dataset_with_features("prompt", "reference_answer")
@@ -271,7 +271,7 @@ class TestCompilerRewardFunction:
 
 
 class TestSemanticRewardFunction:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_semantic_does_not_require_helix_cli(self, _mock_which: Any) -> None:
         """Semantic reward is a pure string/semantic metric and must work without the helix CLI."""
         plugin = _make_plugin()
@@ -352,7 +352,7 @@ class TestSemanticRewardFunction:
 
 
 class TestCompilerCaching:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_same_args_returns_cached_result(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -360,7 +360,7 @@ class TestCompilerCaching:
         r2 = compiler.validate(schema="Node User {}", query="QUERY Get () => x <- N<User> RETURN x")
         assert r1 is r2
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_different_queries_not_cached_together(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -368,7 +368,7 @@ class TestCompilerCaching:
         compiler.validate(schema="Node User {}", query="QUERY B () => y <- N<Order> RETURN y")
         assert len(compiler._cache) == 2
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_sets_cli_missing_error_type(self, _mock_which: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]

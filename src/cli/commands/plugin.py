@@ -191,7 +191,7 @@ def sync_cmd(
     path: Annotated[
         Path,
         typer.Argument(
-            help="Plugin or preset folder.",
+            help="Plugin, preset, or lib folder.",
             exists=True, file_okay=False, dir_okay=True, resolve_path=True,
         ),
     ],
@@ -201,13 +201,26 @@ def sync_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Re-run manifest inference, 3-way-merge with on-disk file, bump version."""
-    from src.community.sync import sync_plugin_manifest, sync_preset_manifest
+    from src.community.constants import LIBS_DIR_NAME, PRESET_DIR_NAME
+    from src.community.sync import (
+        sync_lib_manifest,
+        sync_plugin_manifest,
+        sync_preset_manifest,
+    )
 
     if bump not in ("patch", "minor", "major"):
         raise typer.BadParameter("--bump must be one of: patch, minor, major")
 
-    is_preset = path.parent.name == "presets" or (path / "preset.yaml").exists()
-    runner = sync_preset_manifest if is_preset else sync_plugin_manifest
+    is_preset = (
+        path.parent.name == PRESET_DIR_NAME or (path / "preset.yaml").exists()
+    )
+    is_lib = path.parent.name == LIBS_DIR_NAME and (path / "manifest.toml").exists()
+    if is_lib:
+        runner = sync_lib_manifest
+    elif is_preset:
+        runner = sync_preset_manifest
+    else:
+        runner = sync_plugin_manifest
     try:
         result = runner(path, bump=bump)
     except FileNotFoundError as exc:

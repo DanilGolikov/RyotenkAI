@@ -1,4 +1,4 @@
-"""Pydantic models for community manifests (plugins and presets).
+"""Pydantic models for community manifests (plugins, libs, presets).
 
 Schema v3 (2026-04): plugin params/thresholds are described via
 :class:`ParamFieldSchema` — a typed, field-level description that the
@@ -7,6 +7,18 @@ required-markers) using the same ``FieldRenderer`` as the main
 config builder. At API boundary :meth:`PluginManifest.ui_manifest`
 emits the schemas in JSON Schema shape so the frontend does not
 need to know about our TOML-specific keys.
+
+Plugin schema v5 (2026-04): adds ``author`` to ``[plugin]`` and
+replaces the v4 ``[plugin].libs = [...]`` shorthand with top-level
+``[[lib_requirements]]`` blocks that carry an optional PEP 440
+specifier (e.g. ``version = ">=1.0.0,<2.0.0"``) — symmetric with
+the existing ``[[required_env]]`` shape.
+
+Lib manifests live alongside plugin manifests under
+``community/libs/<name>/manifest.toml``. A lib's manifest is
+deliberately minimal: ``id`` + ``version`` (PEP 440) carry the
+load-time + dependency-check semantics; ``description`` / ``author``
+are surface-only metadata for the UI catalogue.
 """
 
 from __future__ import annotations
@@ -14,6 +26,8 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
+from packaging.specifiers import InvalidSpecifier, SpecifierSet
+from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: Field names in ``[params_schema.X]`` / ``[thresholds_schema.X]`` must
@@ -24,6 +38,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 #: every consumer to special-case identifiers — we'd rather catch it
 #: at manifest-load time.
 _PARAM_FIELD_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+#: Names in ``[plugin].libs`` are folder names under ``community/libs/``;
+#: that folder is also imported as ``community_libs.<name>``, so the name
+#: MUST be a valid Python identifier in ``snake_case``. Same rule as
+#: :data:`_PARAM_FIELD_NAME_RE` — kept as a separate constant for the
+#: sake of readable error messages.
+_LIB_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 PluginKind = Literal["validation", "evaluation", "reward", "reports"]
 
@@ -39,12 +60,24 @@ Stability = Literal["stable", "beta", "experimental"]
 #:   v3 (2026-04) — ``params_schema`` / ``thresholds_schema`` via
 #:                  :class:`ParamFieldSchema`; introduced the ``required_env``
 #:                  block alongside the legacy ``[secrets].required``.
-#:   v4 (2026-04) — current. Dropped ``[secrets].required`` — every
-#:                  required env (secret or not, optional or not) is now
-#:                  declared via ``[[required_env]]``. The loader derives
-#:                  the runtime ``_required_secrets`` ClassVar from
-#:                  entries with ``secret=true, optional=false``.
-LATEST_SCHEMA_VERSION = 4
+#:   v4 (2026-04) — dropped ``[secrets].required`` — every required env
+#:                  (secret or not, optional or not) is now declared via
+#:                  ``[[required_env]]``. The loader derives the runtime
+#:                  ``_required_secrets`` ClassVar from entries with
+#:                  ``secret=true, optional=false``.
+#:   v5 (2026-04) — current. Adds ``[plugin].author`` (free-form
+#:                  ``"Name <email>"`` recommended). Top-level
+#:                  ``[[lib_requirements]]`` blocks declare each
+#:                  ``community/libs/<name>/`` dependency with an
+#:                  optional PEP 440 ``version`` specifier (e.g.
+#:                  ``">=1.0.0,<2.0.0"``). Empty version means "any".
+LATEST_SCHEMA_VERSION = 5
+
+#: Lib manifests evolve independently of plugin manifests. Bump only
+#: when the on-disk shape under ``community/libs/<name>/manifest.toml``
+#: changes. v1 is the inaugural shape: ``[lib]`` with ``id``, ``version``,
+#: ``description``, ``author``.
+LATEST_LIB_SCHEMA_VERSION = 1
 
 #: Leaf types accepted in ``[params_schema.X] type``. ``enum`` is rendered
 #: as a JSON-Schema string with an ``enum`` list; everything else maps
@@ -111,6 +144,127 @@ class CompatSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     min_core_version: str = ""
+
+
+class LibRequirement(BaseModel):
+    """A plugin's declared dependency on a community/libs/<name>/ package.
+
+    Symmetric with :class:`RequiredEnvSpec` (top-level
+    ``[[lib_requirements]]`` blocks in the plugin's ``manifest.toml``).
+    Each entry pins a *name* (which must match a real lib folder under
+    ``community/libs/``) and an optional PEP 440 specifier:
+
+    .. code-block:: toml
+
+        [[lib_requirements]]
+        name = "helixql"
+        version = ">=1.0.0,<2.0.0"
+
+    An empty ``version`` means "any version" — the loader still checks
+    that the lib *exists*, just doesn't constrain its version.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    version: str = ""
+
+    @model_validator(mode="after")
+    def _check_name_format(self) -> LibRequirement:
+        if not _LIB_NAME_RE.match(self.name):
+            raise ValueError(
+                f"lib_requirements.name must match {_LIB_NAME_RE.pattern!r} "
+                f"(snake_case identifier matching a community/libs/<name>/ "
+                f"folder); got {self.name!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_version_specifier(self) -> LibRequirement:
+        if not self.version:
+            return self
+        try:
+            SpecifierSet(self.version)
+        except InvalidSpecifier as exc:
+            raise ValueError(
+                f"lib_requirements.version for {self.name!r} is not a valid "
+                f"PEP 440 specifier set: {exc}. Examples: '>=1.0.0', "
+                f"'>=1.0.0,<2.0.0', '~=1.2', '==1.0.0'."
+            ) from exc
+        return self
+
+
+class LibSpec(BaseModel):
+    """Body of [lib] section in lib manifest.toml."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    version: str = "1.0.0"
+    description: str = ""
+    #: Free-form attribution. See :class:`PluginSpec.author` — same
+    #: shape and recommendation.
+    author: str = ""
+
+    @model_validator(mode="after")
+    def _check_id_format(self) -> LibSpec:
+        if not _LIB_NAME_RE.match(self.id):
+            raise ValueError(
+                f"lib.id must match {_LIB_NAME_RE.pattern!r} (snake_case "
+                f"identifier — same shape as the folder name under "
+                f"community/libs/); got {self.id!r}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_version_format(self) -> LibSpec:
+        try:
+            Version(self.version)
+        except InvalidVersion as exc:
+            raise ValueError(
+                f"lib {self.id!r} version {self.version!r} is not a valid "
+                f"PEP 440 version: {exc}"
+            ) from exc
+        return self
+
+
+class LibManifest(BaseModel):
+    """Full lib manifest loaded from ``community/libs/<name>/manifest.toml``.
+
+    Lib manifests evolve on their own ``schema_version`` axis (see
+    :data:`LATEST_LIB_SCHEMA_VERSION`); changes here don't affect the
+    plugin manifest schema number.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = Field(default=LATEST_LIB_SCHEMA_VERSION)
+    lib: LibSpec
+
+    @model_validator(mode="after")
+    def _check_schema_version(self) -> LibManifest:
+        if self.schema_version < 1:
+            raise ValueError(
+                f"lib schema_version must be >= 1; got {self.schema_version}"
+            )
+        if self.schema_version > LATEST_LIB_SCHEMA_VERSION:
+            raise ValueError(
+                f"lib manifest declares schema_version={self.schema_version}, "
+                f"but this RyotenkAI build supports up to "
+                f"v{LATEST_LIB_SCHEMA_VERSION}. Upgrade the host to load "
+                f"this lib."
+            )
+        return self
+
+    def ui_manifest(self) -> dict[str, Any]:
+        """Flatten into the shape consumed by the web UI / ``/libs`` API."""
+        return {
+            "schema_version": self.schema_version,
+            "id": self.lib.id,
+            "version": self.lib.version,
+            "description": self.lib.description,
+            "author": self.lib.author,
+        }
 
 
 class ParamFieldSchema(BaseModel):
@@ -242,6 +396,12 @@ class PluginSpec(BaseModel):
     category: str = ""
     stability: Stability = "stable"
     description: str = ""
+    #: Free-form attribution string for the plugin author. Recommended
+    #: format ``"Name <email>"`` (Cargo / npm convention) so downstream
+    #: tooling can split it cheaply, but enforcement stops at "non-empty
+    #: when set" — multi-author plugins or ones owned by a team can use
+    #: whatever form fits. Empty string means "no author declared".
+    author: str = ""
     entry_point: EntryPoint
     #: For kind="reward" this MUST be a non-empty list of strategy types
     #: the plugin is compatible with (e.g. ``["grpo", "sapo"]``). For
@@ -296,6 +456,30 @@ class PluginManifest(BaseModel):
             "project env vars live)."
         ),
     )
+    lib_requirements: list[LibRequirement] = Field(
+        default_factory=list,
+        description=(
+            "Community libs this plugin imports from, with optional PEP 440 "
+            "version constraints. Each entry's ``name`` must resolve to a "
+            "package under community/libs/; the loader version-checks each "
+            "satisfied lib against its manifest before the plugin loads."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_lib_requirements_unique(self) -> PluginManifest:
+        names = [req.name for req in self.lib_requirements]
+        if len(set(names)) != len(names):
+            seen: set[str] = set()
+            dups = sorted(
+                {n for n in names if (n in seen) or seen.add(n)}  # type: ignore[func-returns-value]
+            )
+            raise ValueError(
+                f"duplicate lib_requirements names: {dups}. Merge into a "
+                f"single entry — version constraints can be combined with "
+                f"a comma, e.g. version=\">=1.0.0,<2.0.0\"."
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_schema_version(self) -> PluginManifest:
@@ -397,11 +581,15 @@ class PluginManifest(BaseModel):
             "stability": self.plugin.stability,
             "kind": self.plugin.kind,
             "supported_strategies": list(self.plugin.supported_strategies),
+            "author": self.plugin.author,
             "params_schema": params_to_json_schema(self.params_schema),
             "thresholds_schema": params_to_json_schema(self.thresholds_schema),
             "suggested_params": dict(self.suggested_params),
             "suggested_thresholds": dict(self.suggested_thresholds),
             "required_env": [spec.model_dump() for spec in self.required_env],
+            "lib_requirements": [
+                req.model_dump() for req in self.lib_requirements
+            ],
         }
 
 
@@ -488,6 +676,11 @@ class PresetManifest(BaseModel):
 __all__ = [
     "CompatSpec",
     "EntryPoint",
+    "LATEST_LIB_SCHEMA_VERSION",
+    "LATEST_SCHEMA_VERSION",
+    "LibManifest",
+    "LibRequirement",
+    "LibSpec",
     "ParamFieldSchema",
     "ParamFieldType",
     "PluginKind",
@@ -498,7 +691,7 @@ __all__ = [
     "PresetRequirements",
     "PresetScope",
     "PresetSpec",
-    "SecretsSpec",
+    "RequiredEnvSpec",
     "Stability",
     "field_to_json_schema",
     "params_to_json_schema",

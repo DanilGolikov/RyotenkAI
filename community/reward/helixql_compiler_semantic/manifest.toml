@@ -1,3 +1,5 @@
+schema_version = 5
+
 [plugin]
 id = "helixql_compiler_semantic"
 kind = "reward"
@@ -7,6 +9,8 @@ category = "semantic"
 stability = "stable"
 description = "Domain reward for HelixQL GRPO/SAPO: compiles generated queries against the schema and scores semantic similarity to the reference answer."
 supported_strategies = ["grpo", "sapo"]
+
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
 
 [plugin.entry_point]
 module = "plugin"
@@ -38,3 +42,7 @@ description = "Path to the `helix` CLI binary used by the compile-validation bac
 optional = true
 secret = false
 managed_by = ""
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"

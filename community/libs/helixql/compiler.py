@@ -1,9 +1,16 @@
 """Lightweight wrapper around the Helix CLI for query validation.
 
 Uses ``helix compile --quiet`` which performs parsing, semantic analysis,
-and Rust code generation **without** invoking ``cargo check``.  This makes
-it safe to call per-sample (~8 ms) whereas ``helix check`` triggers a full
-Rust build (minutes) since Helix CLI ≥ 2.3.
+and Rust code generation **without** invoking ``cargo check``. That keeps
+per-sample latency in the millisecond range whereas ``helix check``
+triggers a full Rust build (minutes) since Helix CLI ≥ 2.3.
+
+Three plugins (``helixql_preference_semantics``,
+``helixql_gold_syntax_backend``, ``helixql_generated_syntax_backend``)
+used to redeclare the same lazy-init pattern over :class:`HelixCompiler`.
+:func:`get_compiler` consolidates that into a single
+``timeout_seconds``-keyed cache so plugins with the same configuration
+share one compiler (and its result cache) without per-class boilerplate.
 """
 
 from __future__ import annotations
@@ -30,7 +37,8 @@ class HelixCompiler:
     """Stateless, cached wrapper for ``helix init`` + ``helix compile``.
 
     Instances are cheap — keep one per plugin and share the result cache
-    across samples.
+    across samples. Use :func:`get_compiler` to obtain a process-wide
+    cached instance keyed by ``timeout_seconds``.
     """
 
     _CLI_NAME: ClassVar[str] = "helix"
@@ -98,4 +106,43 @@ class HelixCompiler:
         return CompileResult(ok=False, error_type="compiler_error")
 
 
-__all__ = ["CompileResult", "HelixCompiler"]
+_COMPILER_CACHE: dict[int, HelixCompiler] = {}
+
+
+def get_compiler(*, timeout_seconds: int = 10) -> HelixCompiler:
+    """Return a process-wide cached :class:`HelixCompiler`.
+
+    Plugins used to keep their own ``_compiler`` instance attribute and a
+    boilerplate ``_get_compiler()`` accessor that lazy-initialised it.
+    With this factory:
+
+    * the compiler instance — and its result cache — is shared across
+      every plugin asking for the same ``timeout_seconds``;
+    * the lazy-init pattern collapses into a single call site;
+    * tests can :func:`reset_compiler_cache` between cases to swap the
+      underlying CLI for a fake.
+
+    The cache is intentionally per-timeout: one plugin asking for a 5-s
+    timeout shouldn't share a compiler with another asking for 30 s
+    (the timeout is part of the contract — callers expect their
+    requested ceiling to apply).
+    """
+    cached = _COMPILER_CACHE.get(timeout_seconds)
+    if cached is not None:
+        return cached
+    instance = HelixCompiler(timeout_seconds=timeout_seconds)
+    _COMPILER_CACHE[timeout_seconds] = instance
+    return instance
+
+
+def reset_compiler_cache() -> None:
+    """Drop every cached compiler. Test-only helper."""
+    _COMPILER_CACHE.clear()
+
+
+__all__ = [
+    "CompileResult",
+    "HelixCompiler",
+    "get_compiler",
+    "reset_compiler_cache",
+]

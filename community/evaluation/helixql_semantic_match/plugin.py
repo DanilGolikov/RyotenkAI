@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from community_libs.helixql import semantic_match_details
 from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
 from src.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
-from src.utils.domains.helixql import semantic_match_details
 
 
 class HelixQLSemanticMatchPlugin(EvaluatorPlugin):
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
     requires_expected_answer = True
 
     def _validate_contract(self) -> None:

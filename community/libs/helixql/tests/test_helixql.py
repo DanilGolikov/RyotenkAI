@@ -1,18 +1,21 @@
 """
-Tests for src.utils.domains.helixql — HelixQL domain library.
+Tests for community_libs.helixql — moved from src/utils/domains/test_helixql.py
+when the HelixQL helpers were relocated out of src/ into community/libs/.
 
 Coverage:
 - extract_schema_block: positive, negative, edge cases
 - normalize_query_text: whitespace invariants
 - hard_eval_errors: each error type, combinations
 - semantic_match_details: exact match, near match, scoring, hard error penalty, empty inputs
+- extract_schema_and_query: dispatch over messages/fields, missing keys
 """
 
 from __future__ import annotations
 
 import pytest
 
-from src.utils.domains.helixql import (
+from community_libs.helixql import (
+    extract_schema_and_query,
     extract_schema_block,
     hard_eval_errors,
     normalize_query_text,
@@ -36,7 +39,6 @@ class TestExtractSchemaBlock:
         assert extract_schema_block("") == ""
 
     def test_returns_empty_on_none_coerced(self) -> None:
-        # Function accepts str; passing empty string is the boundary
         assert extract_schema_block("") == ""
 
     def test_strips_surrounding_whitespace(self) -> None:
@@ -123,7 +125,6 @@ class TestHardEvalErrors:
         assert "contains_colon_equals" in errors
 
     def test_multiple_errors_returned(self) -> None:
-        # Both markdown fence and not starting with QUERY
         query = "```\nsome invalid code\n```"
         errors = hard_eval_errors("", query)
         assert len(errors) >= 1
@@ -180,15 +181,12 @@ class TestSemanticMatchDetails:
         assert result["score"] < 1.0
 
     def test_near_match_threshold(self) -> None:
-        # Minor variation — should score >= 0.8 to be near match
         q1 = "QUERY GetAll () =>\n    items <- N<User>\n    RETURN items"
         q2 = "QUERY GetAll () =>\n    users <- N<User>\n    RETURN users"
         result = semantic_match_details(candidate=q1, expected=q2)
-        # near_match depends on score and hard_eval_pass
         assert isinstance(result["near_match"], bool)
 
     def test_hard_errors_penalize_score(self) -> None:
-        # Query with markdown fence will have hard errors
         bad_query = "```\nSELECT * FROM users\n```"
         good_query = "QUERY GetAll () => items <- N<User> RETURN items"
         result = semantic_match_details(candidate=bad_query, expected=good_query)
@@ -233,13 +231,11 @@ class TestSemanticMatchDetails:
             assert len(score_str.split(".")[1]) <= 4
 
     def test_user_text_affects_exclusion_errors(self) -> None:
-        # With user_text requesting exclusion, missing exclusion is an error
         user_text = "exclude `age`"
         candidate = "QUERY Get () =>\n    items <- N<User>\n    RETURN items"
         expected = "QUERY Get () =>\n    items <- N<User>{::!{age}}\n    RETURN items"
         result_with_user = semantic_match_details(candidate=candidate, expected=expected, user_text=user_text)
         result_without_user = semantic_match_details(candidate=candidate, expected=expected)
-        # Hard errors differ based on user_text
         assert len(result_with_user["hard_eval_errors"]) >= len(result_without_user["hard_eval_errors"])
 
     @pytest.mark.parametrize(
@@ -252,3 +248,58 @@ class TestSemanticMatchDetails:
     def test_identical_queries_always_score_one(self, candidate: str, expected: str) -> None:
         result = semantic_match_details(candidate=candidate, expected=expected)
         assert result["score"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# extract_schema_and_query  (new helper that consolidates plugin dispatch)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSchemaAndQuery:
+    def test_pulls_schema_from_prompt_and_query_from_reference_answer(self) -> None:
+        sample = {
+            "prompt": "Generate a query.\n```helixschema\nNode User {}\n```\n",
+            "reference_answer": "QUERY GetAll () =>\n    items <- N<User>\n    RETURN items",
+        }
+        schema, query = extract_schema_and_query(sample)
+        assert schema == "Node User {}"
+        assert query.startswith("QUERY GetAll")
+
+    def test_falls_back_to_messages_for_prompt(self) -> None:
+        sample = {
+            "messages": [
+                {"role": "system", "content": "you are helpful"},
+                {"role": "user", "content": "make a query.\n```helixschema\nNode A {}\n```"},
+            ],
+            "reference_answer": "QUERY X () => RETURN x",
+        }
+        schema, _ = extract_schema_and_query(sample)
+        assert schema == "Node A {}"
+
+    def test_returns_empty_when_keys_missing(self) -> None:
+        schema, query = extract_schema_and_query({})
+        assert schema == ""
+        assert query == ""
+
+    def test_respects_custom_query_keys(self) -> None:
+        sample = {"prompt": "x", "completion": "QUERY Z () => RETURN z"}
+        _, query = extract_schema_and_query(sample, query_keys=("completion",))
+        assert query == "QUERY Z () => RETURN z"
+
+    def test_first_matching_query_key_wins(self) -> None:
+        sample = {
+            "prompt": "p",
+            "reference_answer": "first",
+            "expected": "second",
+        }
+        _, query = extract_schema_and_query(sample)
+        assert query == "first"
+
+    def test_handles_attribute_style_sample(self) -> None:
+        class _S:
+            prompt = "p\n```helixschema\nNode B {}\n```"
+            reference_answer = "QUERY Q () => RETURN q"
+
+        schema, query = extract_schema_and_query(_S())
+        assert schema == "Node B {}"
+        assert query == "QUERY Q () => RETURN q"

@@ -20,6 +20,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.community.constants import ALL_PLUGIN_KINDS, COMMUNITY_ROOT
+from src.community.libs import (
+    LibLoadFailure,
+    LoadedLib,
+    libs_fingerprint_entries,
+    libs_root_for,
+    load_libs,
+)
 from src.community.loader import (
     LoadedPlugin,
     LoadedPreset,
@@ -51,6 +58,7 @@ class CommunityCatalog:
         self._root = root
         self._plugins: dict[str, list[LoadedPlugin]] = {}
         self._presets: list[LoadedPreset] = []
+        self._libs: list[LoadedLib] = []
         #: Per-kind list of plugins that failed to load on the last
         #: refresh. Surfaced via :meth:`failures` and through the
         #: ``GET /plugins/{kind}`` API so the UI can render an error
@@ -58,6 +66,11 @@ class CommunityCatalog:
         #: failures; ``"all"`` is reserved by the API endpoint for a
         #: combined view.
         self._failures: dict[str, list[LoadFailure]] = {}
+        #: Lib failures kept on a separate axis from plugin failures —
+        #: lib loading runs first and a broken lib will probably
+        #: cascade into plugin failures (missing import), so users
+        #: should see them grouped, not interleaved.
+        self._lib_failures: list[LibLoadFailure] = []
         self._loaded = False
         self._lock = threading.Lock()
         self._fingerprint: tuple[tuple[str, float], ...] = ()
@@ -95,7 +108,9 @@ class CommunityCatalog:
     def _reset_state(self) -> None:
         self._plugins.clear()
         self._presets.clear()
+        self._libs.clear()
         self._failures.clear()
+        self._lib_failures.clear()
         self._loaded = False
 
     def _compute_fingerprint(self) -> tuple[tuple[str, float], ...]:
@@ -127,11 +142,38 @@ class CommunityCatalog:
                     candidate = child / filename
                     if candidate.is_file():
                         _append(entries, candidate, self._root)
+        # community/libs/<lib>/{__init__.py,*.py} — surface that decides
+        # which libs are preloaded into community_libs.* and what their
+        # top-level modules are. Deep edits inside libs aren't tracked
+        # (same rule as src/) — restart the backend after those.
+        entries.extend(libs_fingerprint_entries(libs_root_for(self._root)))
         return tuple(sorted(entries))
 
     def _load_locked(self) -> None:
         logger.info("[COMMUNITY_CATALOG] loading from %s", self._root)
-        all_results = load_all_plugins(root=self._root)
+        # Load shared libs FIRST: plugin modules import from
+        # ``community_libs.<name>`` at module-load time, so the
+        # namespace must exist before _import_plugin_class executes.
+        # ``load_libs`` parses each lib's manifest, registers the
+        # subpackage in sys.modules, and returns successes + failures.
+        lib_result = load_libs(libs_root=libs_root_for(self._root))
+        self._libs = list(lib_result.libs)
+        self._lib_failures = list(lib_result.failures)
+        if self._libs:
+            logger.info(
+                "[COMMUNITY_CATALOG] loaded libs: %s",
+                ", ".join(
+                    f"{lib.manifest.lib.id}@{lib.manifest.lib.version}"
+                    for lib in self._libs
+                ),
+            )
+        if self._lib_failures:
+            logger.warning(
+                "[COMMUNITY_CATALOG] %d lib(s) failed to load",
+                len(self._lib_failures),
+            )
+        libs_by_id = {lib.manifest.lib.id: lib.manifest for lib in self._libs}
+        all_results = load_all_plugins(root=self._root, libs_by_id=libs_by_id)
         # Split the LoadResult shape into the catalog's separate stores —
         # registries only see successes, the UI gets failures alongside.
         self._plugins = {kind: result.plugins for kind, result in all_results.items()}
@@ -209,6 +251,33 @@ class CommunityCatalog:
     def presets(self) -> list[LoadedPreset]:
         self.ensure_loaded()
         return list(self._presets)
+
+    def libs(self) -> list[LoadedLib]:
+        """Return every successfully loaded :class:`LoadedLib`.
+
+        Used by the loader's plugin lib-version cross-check (each
+        plugin's ``[[lib_requirements]]`` is matched against the
+        installed lib manifests) and by the future ``GET /libs`` API
+        endpoint for the catalogue UI.
+        """
+        self.ensure_loaded()
+        return list(self._libs)
+
+    def get_lib(self, lib_id: str) -> LoadedLib:
+        """Return one :class:`LoadedLib` by id, or raise ``KeyError``.
+
+        Symmetric with :meth:`get` for plugins. Used by the loader's
+        version-check at plugin load time.
+        """
+        for lib in self.libs():
+            if lib.manifest.lib.id == lib_id:
+                return lib
+        raise KeyError(f"lib {lib_id!r} is not in community catalog")
+
+    def lib_failures(self) -> list[LibLoadFailure]:
+        """Return lib load failures from the most recent refresh."""
+        self.ensure_loaded()
+        return list(self._lib_failures)
 
     def failures(self, kind: str | None = None) -> list[LoadFailure]:
         """Return load failures from the most recent refresh.

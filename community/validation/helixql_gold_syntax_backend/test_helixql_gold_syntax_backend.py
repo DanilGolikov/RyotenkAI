@@ -80,10 +80,10 @@ def _run_validate(samples: list[dict[str, Any]], config: dict[str, Any] | None =
 class TestGoldSyntaxValidatorRegistration:
     def test_is_registered(self) -> None:
         from src.community.catalog import catalog
-        from src.data.validation.registry import ValidationPluginRegistry
+        from src.data.validation.registry import validation_registry
 
         catalog.reload()
-        assert "helixql_gold_syntax_backend" in ValidationPluginRegistry.list_plugins()
+        assert "helixql_gold_syntax_backend" in validation_registry.list_ids()
 
     def test_name_classvar(self) -> None:
         assert HelixQLGoldSyntaxBackendValidator.name == "helixql_gold_syntax_backend"
@@ -173,7 +173,7 @@ class TestExtractSchemaAndQuery:
 
 
 class TestCompilerViaPlugin:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_returns_cli_missing(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -181,7 +181,7 @@ class TestCompilerViaPlugin:
         assert result.ok is False
         assert result.error_type == "cli_missing"
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_caches_result(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -190,7 +190,7 @@ class TestCompilerViaPlugin:
         assert r1 is r2
         assert len(compiler._cache) == 1
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_different_queries_cached_separately(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -205,7 +205,7 @@ class TestCompilerViaPlugin:
 
 
 class TestGoldSyntaxValidatorValidate:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_all_fail(self, _mock: Any) -> None:
         result = _run_validate([VALID_SAMPLE])
         assert result.passed is False
@@ -228,7 +228,7 @@ class TestGoldSyntaxValidatorValidate:
         assert result.passed is False  # 0/0=0.0 < default threshold 1.0
 
     def test_pass_rate_threshold_lower_bound(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_SAMPLE, VALID_SAMPLE], config={**BASE_PARAMS, "min_pass_rate": 0.0})
         assert result.passed is True
 
@@ -237,7 +237,7 @@ class TestGoldSyntaxValidatorValidate:
         assert result.plugin_name == "helixql_gold_syntax_backend"
 
     def test_metrics_include_pass_rate(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_SAMPLE])
         assert "pass_rate" in result.metrics
         assert "checked_samples" in result.metrics
@@ -277,7 +277,7 @@ class TestGoldSyntaxValidatorValidate:
         assert groups["missing_query"] == [1, 3]
 
     def test_recommendations_on_failure(self) -> None:
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = _run_validate([VALID_SAMPLE])
         plugin = _make_plugin()
         recs = plugin.get_recommendations(result)
