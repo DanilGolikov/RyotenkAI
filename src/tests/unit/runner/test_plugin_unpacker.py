@@ -211,3 +211,72 @@ class TestCorruptArchive:
         unpacker = PluginUnpacker(tmp_path)
         with pytest.raises(PluginUnpackError, match="valid ZIP"):
             unpacker.unpack(b"this is not a zip file")
+
+
+class TestLibs:
+    """The ``libs`` top-level dir must be recognised so reward plugins
+    declaring ``[[lib_requirements]]`` find their imports at trainer
+    startup."""
+
+    def test_libs_extracted_to_community_libs_dir(self, tmp_path: Path) -> None:
+        zip_bytes = _make_zip({
+            "reward/plugin_a/manifest.toml": b"plugin",
+            "reward/plugin_a/plugin.py": b"# stub\n",
+            "libs/helixql/manifest.toml": b"lib",
+            "libs/helixql/__init__.py": b'__version__ = "1.0.0"\n',
+            "libs/helixql/extract.py": b"def extract(): ...\n",
+        })
+        unpacker = PluginUnpacker(tmp_path)
+        result = unpacker.unpack(zip_bytes)
+
+        assert "reward/plugin_a" in result.installed
+        assert "libs/helixql" in result.installed
+        # Lib body lands at <workspace>/community/libs/<id>/.
+        community = tmp_path / "community"
+        assert (community / "libs" / "helixql" / "manifest.toml").exists()
+        assert (community / "libs" / "helixql" / "__init__.py").exists()
+        assert (community / "libs" / "helixql" / "extract.py").exists()
+
+    def test_libs_only_payload_extracts(self, tmp_path: Path) -> None:
+        # Edge case: a payload with libs but no plugins. Realistically
+        # the launcher always pairs them, but the unpacker shouldn't
+        # care — it processes whatever recognised top-level dirs are
+        # present.
+        zip_bytes = _make_zip({
+            "libs/helixql/manifest.toml": b"lib",
+            "libs/helixql/__init__.py": b"\n",
+        })
+        unpacker = PluginUnpacker(tmp_path)
+        result = unpacker.unpack(zip_bytes)
+        assert result.installed == ("libs/helixql",)
+
+    def test_lib_with_nested_subdir(self, tmp_path: Path) -> None:
+        # Libs can have arbitrary subtrees (e.g. submodules); make
+        # sure the routing doesn't truncate them.
+        zip_bytes = _make_zip({
+            "libs/helixql/__init__.py": b"\n",
+            "libs/helixql/sub/__init__.py": b"\n",
+            "libs/helixql/sub/util.py": b"def helper(): ...\n",
+        })
+        unpacker = PluginUnpacker(tmp_path)
+        unpacker.unpack(zip_bytes)
+        community = tmp_path / "community"
+        assert (community / "libs" / "helixql" / "sub" / "util.py").exists()
+
+    def test_libs_force_overwrite(self, tmp_path: Path) -> None:
+        # Pin: force=True replaces an existing libs/<id>/ folder
+        # (mirrors plugin behaviour). Single-tenant pod always wants
+        # the freshest payload.
+        community = tmp_path / "community"
+        existing = community / "libs" / "helixql"
+        existing.mkdir(parents=True)
+        (existing / "stale.py").write_text("old content")
+
+        zip_bytes = _make_zip({
+            "libs/helixql/__init__.py": b"new\n",
+        })
+        unpacker = PluginUnpacker(tmp_path)
+        unpacker.unpack(zip_bytes, force=True)
+
+        assert not (existing / "stale.py").exists()
+        assert (existing / "__init__.py").read_bytes() == b"new\n"

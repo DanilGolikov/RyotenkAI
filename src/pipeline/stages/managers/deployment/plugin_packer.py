@@ -44,11 +44,13 @@ Reused infrastructure (do NOT reinvent):
 from __future__ import annotations
 
 import io
+import tomllib
 import zipfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.community.constants import COMMUNITY_ROOT, PLUGIN_KIND_DIRS
+from src.community.constants import COMMUNITY_ROOT, LIBS_DIR_NAME, PLUGIN_KIND_DIRS
+from src.community.manifest import PluginManifest
 from src.community.validate_manifest import validate_manifest_dir
 
 if TYPE_CHECKING:
@@ -57,6 +59,7 @@ if TYPE_CHECKING:
     from src.utils.config import PipelineConfig
 
 __all__ = [
+    "LibRef",
     "PluginPackError",
     "PluginPacker",
     "PluginRef",
@@ -95,6 +98,26 @@ class PluginRef:
 
     kind: str
     plugin_id: str
+    source_path: Path
+
+
+@dataclass(frozen=True)
+class LibRef:
+    """A single shared lib to ship alongside the plugins that need it.
+
+    Reward plugins can declare ``[[lib_requirements]]`` in their
+    manifest pointing at packages under ``community/libs/`` (e.g.
+    ``community_libs.helixql``). Without shipping the lib body, the
+    pod-side ``import community_libs.helixql`` fails because
+    :class:`PluginPacker` only ever copied ``community/reward/<id>/``.
+    This struct travels with each lib resolved from a packed plugin's
+    requirements.
+
+    ``source_path`` may point at a folder OR a ``.zip`` archive — the
+    packer handles both, mirroring :func:`src.community.libs._list_lib_entries`.
+    """
+
+    lib_id: str
     source_path: Path
 
 
@@ -145,6 +168,7 @@ class PluginPacker:
     ) -> None:
         self._config = config
         self._community_root = community_root
+        self._libs_root = community_root / LIBS_DIR_NAME
 
     # --- discovery --------------------------------------------------------
 
@@ -193,10 +217,74 @@ class PluginPacker:
             )
         return refs
 
+    def determine_required_libs(
+        self, plugin_refs: list[PluginRef],
+    ) -> list[LibRef]:
+        """Walk plugin manifests; collect unique :class:`LibRef`s.
+
+        For each :class:`PluginRef` we parse ``manifest.toml``, read the
+        ``[[lib_requirements]]`` blocks, and resolve each requirement's
+        ``name`` to a folder OR ``.zip`` archive under
+        ``community/libs/<name>/``. Folder wins on collision (mirrors
+        :func:`src.community.libs._list_lib_entries`).
+
+        Order is preserved: libs of the first plugin appear first,
+        deduplicated across plugins so a lib referenced by two reward
+        plugins is shipped exactly once.
+
+        Version constraints declared in ``[[lib_requirements]]`` are
+        NOT enforced here — that's :func:`src.community.loader._validate_lib_requirements_satisfied`'s
+        job at catalog load time on the pod. The packer only resolves
+        identity (name → source path) and ships the bytes.
+
+        Raises:
+            PluginPackError: a referenced lib has no matching folder
+                or zip under ``community/libs/``. We fail loud rather
+                than ship a payload that would ImportError at trainer
+                startup.
+        """
+        seen: set[str] = set()
+        refs: list[LibRef] = []
+
+        for plugin in plugin_refs:
+            manifest = _load_plugin_manifest(plugin.source_path)
+            for req in manifest.lib_requirements:
+                if req.name in seen:
+                    continue
+                source = self._resolve_lib_source(req.name)
+                if source is None:
+                    raise PluginPackError(
+                        f"plugin {plugin.plugin_id!r} requires lib "
+                        f"{req.name!r} but it is missing under "
+                        f"{self._libs_root}",
+                    )
+                seen.add(req.name)
+                refs.append(LibRef(lib_id=req.name, source_path=source.resolve()))
+        return refs
+
+    def _resolve_lib_source(self, lib_id: str) -> Path | None:
+        """Find ``community/libs/<lib_id>/`` (folder) or ``<lib_id>.zip``.
+
+        Folder wins on collision. Mirrors
+        :func:`src.community.libs._list_lib_entries` so packer/loader
+        agree on which source feeds a given lib id.
+        """
+        folder = self._libs_root / lib_id
+        if folder.is_dir():
+            return folder
+        archive = self._libs_root / f"{lib_id}.zip"
+        if archive.is_file():
+            return archive
+        return None
+
     # --- packing ----------------------------------------------------------
 
-    def pack(self, refs: list[PluginRef]) -> bytes:
-        """Build a ZIP containing all ``refs`` and return the bytes.
+    def pack(
+        self,
+        plugin_refs: list[PluginRef],
+        lib_refs: list[LibRef] | None = None,
+    ) -> bytes:
+        """Build a ZIP containing all plugin + lib refs; return bytes.
 
         Each plugin's manifest is validated (via the standalone
         :func:`validate_manifest_dir`) before any byte hits the
@@ -205,19 +293,25 @@ class PluginPacker:
         filtered out — same rules :mod:`src.community.pack` applies
         to single-plugin archives.
 
-        Empty input is a programming error: the launcher should
-        only call ``pack`` when there's at least one plugin to
-        deliver. We raise so a silent empty payload doesn't slip
-        past the test suite.
+        Libs are NOT manifest-validated by this packer. The Mac side
+        already loaded them via ``catalog`` for any prior dev work,
+        and the pod side runs ``load_libs`` at trainer startup which
+        will surface a broken lib manifest in the same place a
+        normally-installed lib would.
+
+        Empty plugin input is a programming error: the launcher should
+        only call ``pack`` when there's at least one plugin to deliver.
+        Empty ``lib_refs`` is fine — most reward plugins don't need
+        any shared libs.
         """
-        if not refs:
+        if not plugin_refs:
             raise PluginPackError(
-                "pack() called with empty refs — caller must skip "
+                "pack() called with empty plugin_refs — caller must skip "
                 "the multipart upload entirely when no reward "
                 "plugins are required",
             )
 
-        for ref in refs:
+        for ref in plugin_refs:
             result = validate_manifest_dir(ref.source_path)
             if not result.is_valid:
                 # ManifestValidationResult formats issues as
@@ -236,12 +330,14 @@ class PluginPacker:
         # output — a power user inspecting a pod-shipped payload
         # gets a familiar archive.
         with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            for ref in refs:
+            for ref in plugin_refs:
                 _write_plugin(zf, ref)
+            for lib in lib_refs or ():
+                _write_lib(zf, lib)
         return buf.getvalue()
 
     def pack_required(self) -> bytes:
-        """Convenience: discover + pack in one call.
+        """Convenience: discover + pack plugins **and their libs** in one call.
 
         Returns ``b""`` when the config doesn't reference any reward
         plugins (e.g. SFT-only) — letting the caller skip the
@@ -249,10 +345,11 @@ class PluginPacker:
         signal "no payload needed", separate from the
         :class:`PluginPackError` raised when something is wrong.
         """
-        refs = self.determine_required_plugins()
-        if not refs:
+        plugin_refs = self.determine_required_plugins()
+        if not plugin_refs:
             return b""
-        return self.pack(refs)
+        lib_refs = self.determine_required_libs(plugin_refs)
+        return self.pack(plugin_refs, lib_refs)
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +365,37 @@ def _is_excluded(path: Path, *, root: Path) -> bool:
     if path.name in _EXCLUDED_NAMES:
         return True
     return any(path.name.endswith(suf) for suf in _EXCLUDED_SUFFIXES)
+
+
+def _load_plugin_manifest(plugin_dir: Path) -> PluginManifest:
+    """Parse ``<plugin_dir>/manifest.toml`` into a :class:`PluginManifest`.
+
+    Raises :class:`PluginPackError` on read/parse/validation failure so
+    the packer's failure surface stays uniform — callers don't have to
+    distinguish ``OSError`` vs ``tomllib.TOMLDecodeError`` vs
+    ``ValidationError``.
+    """
+    manifest_path = plugin_dir / "manifest.toml"
+    try:
+        text = manifest_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PluginPackError(
+            f"cannot read manifest at {manifest_path}: {exc}",
+        ) from exc
+
+    try:
+        payload = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise PluginPackError(
+            f"manifest at {manifest_path} is invalid TOML: {exc}",
+        ) from exc
+
+    try:
+        return PluginManifest.model_validate(payload)
+    except Exception as exc:
+        raise PluginPackError(
+            f"manifest at {manifest_path} failed validation: {exc}",
+        ) from exc
 
 
 def _write_plugin(zf: zipfile.ZipFile, ref: PluginRef) -> None:
@@ -287,3 +415,51 @@ def _write_plugin(zf: zipfile.ZipFile, ref: PluginRef) -> None:
         rel = path.relative_to(ref.source_path)
         archive_name = f"{base}/{rel.as_posix()}"
         zf.write(path, archive_name)
+
+
+def _write_lib(zf: zipfile.ZipFile, ref: LibRef) -> None:
+    """Write a lib's source tree into ``zf`` under ``libs/<lib_id>/``.
+
+    Two source shapes are supported (mirrors
+    :func:`src.community.libs._list_lib_entries`):
+
+    - ``<community>/libs/<lib_id>/`` (folder) — recurse like
+      :func:`_write_plugin`, applying the same exclusion rules so
+      ``__pycache__`` and ``.pyc`` artefacts don't bloat the payload.
+    - ``<community>/libs/<lib_id>.zip`` — copy each member through
+      preserving its in-archive layout. Excluded by directory name
+      (``__pycache__``) and suffix to keep parity with the folder
+      path.
+    """
+    base = f"{LIBS_DIR_NAME}/{ref.lib_id}"
+
+    if ref.source_path.is_dir():
+        for path in sorted(ref.source_path.rglob("*")):
+            if not path.is_file():
+                continue
+            if _is_excluded(path, root=ref.source_path):
+                continue
+            rel = path.relative_to(ref.source_path)
+            archive_name = f"{base}/{rel.as_posix()}"
+            zf.write(path, archive_name)
+        return
+
+    # Archive form. Re-zip into the unified payload so the unpacker
+    # only deals with one wire format.
+    with zipfile.ZipFile(ref.source_path, "r") as src_zip:
+        for info in sorted(src_zip.infolist(), key=lambda i: i.filename):
+            if info.is_dir():
+                continue
+            rel = info.filename
+            # Mirror _is_excluded() rules without going through Path so
+            # the in-archive forward-slash convention stays intact.
+            parts = rel.split("/")
+            if any(p in _EXCLUDED_DIRS for p in parts):
+                continue
+            name = parts[-1]
+            if name in _EXCLUDED_NAMES:
+                continue
+            if any(name.endswith(suf) for suf in _EXCLUDED_SUFFIXES):
+                continue
+            with src_zip.open(info) as src:
+                zf.writestr(f"{base}/{rel}", src.read())

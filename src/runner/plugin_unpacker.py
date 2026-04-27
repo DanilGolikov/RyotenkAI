@@ -35,9 +35,22 @@ Wire format expected (matches :class:`PluginPacker`)::
     │   │   └── ...
     │   └── <plugin_id_b>/
     │       └── ...
+    └── libs/
+        └── <lib_id>/
+            ├── manifest.toml
+            ├── __init__.py
+            └── ...
 
-Anything outside the ``<kind>/<id>/`` layout (loose files at the
-ZIP root, unknown kinds) is logged and skipped — defensive against
+Top-level entries in :data:`RECOGNISED_KINDS` are recognised. Plugin
+kinds (``"reward"``) land at ``<workspace>/community/<kind>/<id>/``;
+shared libs (``"libs"``) land at ``<workspace>/community/libs/<id>/``
+where :func:`src.community.catalog.load_libs` finds them at trainer
+startup. Both share the same ``parts[0]/parts[1]/<rel>`` routing —
+``libs`` is just another top-level dir name that maps 1:1 to the
+on-disk layout.
+
+Anything outside the recognised top-level layout (loose files at the
+ZIP root, unknown top-dirs) is logged and skipped — defensive against
 malformed payloads. The zip-bomb / path-traversal protections are
 inline:
 
@@ -72,11 +85,20 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
-# Plugin kinds we accept on the pod. ``reward`` is the only one
-# that ever travels here today; the tuple is centralised so adding
-# a future kind (e.g. a runtime-loaded validation plugin) is a
+# Top-level archive directories the unpacker recognises:
+#
+# - ``reward`` — the only plugin kind that travels to the pod today
+#   (trainer subprocess consumes reward plugins from
+#   ``<workspace>/community/reward/<id>/``).
+# - ``libs`` — shared domain code under ``community/libs/<id>/`` that
+#   reward plugins import via ``community_libs.<id>``. Required so
+#   plugins declaring ``[[lib_requirements]]`` find their imports at
+#   trainer startup; without it the pod-side trainer would
+#   ``ImportError`` at module-import time.
+#
+# Adding a future kind (e.g. a runtime-loaded validation plugin) is a
 # one-line change with a clear contract.
-RECOGNISED_KINDS: tuple[str, ...] = ("reward",)
+RECOGNISED_KINDS: tuple[str, ...] = ("reward", "libs")
 
 
 # Soft cap on total uncompressed bytes per payload. 256 MiB is
@@ -288,23 +310,24 @@ class PluginUnpacker:
         # Pass 2 — extract.
         target_root.mkdir(parents=True, exist_ok=True)
         installed: list[str] = []
-        for (kind, plugin_id), entries in sorted(per_plugin.items()):
-            plugin_dir = target_root / kind / plugin_id
-            if plugin_dir.exists():
+        # ``entry_id`` is the plugin id for plugin kinds and the lib id
+        # for the ``libs`` kind — both routed to ``community/<kind>/<id>``.
+        for (kind, entry_id), entries in sorted(per_plugin.items()):
+            entry_dir = target_root / kind / entry_id
+            if entry_dir.exists():
                 if not force:
                     raise PluginUnpackError(
-                        f"plugin {kind}/{plugin_id} already installed; "
-                        f"force=False",
+                        f"{kind}/{entry_id} already installed; force=False",
                     )
-                shutil.rmtree(plugin_dir)
-            plugin_dir.mkdir(parents=True)
+                shutil.rmtree(entry_dir)
+            entry_dir.mkdir(parents=True)
             for relpath, info in entries:
-                dest = plugin_dir / relpath
+                dest = entry_dir / relpath
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 with archive.open(info) as src, dest.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
-            installed.append(f"{kind}/{plugin_id}")
-            logger.info("plugin installed: %s/%s → %s", kind, plugin_id, plugin_dir)
+            installed.append(f"{kind}/{entry_id}")
+            logger.info("installed: %s/%s → %s", kind, entry_id, entry_dir)
 
         return PluginUnpackResult(
             installed=tuple(installed),
