@@ -4,7 +4,7 @@ Drop a Python package here when **two or more community plugins**
 across **two or more kinds** need the same domain code (e.g. a query
 compiler wrapper, a parser, a semantic-similarity scorer). The
 catalog automatically registers each subpackage as
-`community_libs.<name>` in `sys.modules` before any plugin loads, so
+`community_libs.<id>` in `sys.modules` before any plugin loads, so
 plugins can import without thinking about it:
 
 ```python
@@ -18,14 +18,49 @@ from community_libs.helixql.extract import extract_schema_and_query
 ```
 community/libs/
 ├── README.md
-└── <lib_name>/
-    ├── __init__.py        # public re-exports (lazy, see below)
-    ├── <module>.py        # implementation modules
+└── <lib_name>/                 # OR <lib_name>.zip — both work
+    ├── manifest.toml           # required — declares id, version, author, …
+    ├── __init__.py             # required — every lib is a Python package
+    ├── <module>.py             # implementation modules
     ├── ...
-    └── tests/             # unit tests for the lib (no __init__.py)
-        ├── conftest.py    # preloads the namespace at collection time
+    └── tests/                  # unit tests for the lib (no __init__.py)
+        ├── conftest.py         # preloads the namespace at collection time
         └── test_*.py
 ```
+
+## Manifest
+
+Every lib needs a `manifest.toml` with at least `id` (matching the
+folder/zip stem) and a PEP 440 `version`:
+
+```toml
+schema_version = 1
+
+[lib]
+id = "helixql"
+version = "1.0.0"
+description = "HelixQL compiler wrapper, …"
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
+```
+
+The loader fails the load with a precise per-failure message when:
+- `manifest.toml` is missing,
+- `[lib].id` doesn't match the folder/zip stem,
+- `version` isn't valid PEP 440,
+- the package has no `__init__.py`.
+
+## Distribution: folder OR zip
+
+Same precedence rule as plugins:
+
+| Form | When to use |
+|---|---|
+| `community/libs/<name>/`     | dev-time iteration. Folder wins on collision. |
+| `community/libs/<name>.zip`  | distribution. Auto-extracted to `community/.cache/<hash>/<name>/` on first load and re-used until the zip's mtime changes. |
+
+Build the zip with `ryotenkai community pack community/libs/<name>`
+(filters out `__pycache__`, validates the manifest, drops the
+archive next to the source).
 
 ## What belongs here
 
@@ -70,38 +105,46 @@ community/libs/
 
 ## Declaring lib usage on the consumer side
 
-Plugins that import from `community_libs.<lib>` MUST list it in
+Plugins that import from `community_libs.<lib>` MUST list each
+dependency as a top-level `[[lib_requirements]]` block in their
 `manifest.toml`:
 
 ```toml
-[plugin]
-...
-libs = ["helixql"]
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"   # PEP 440 specifier; omit for "any version"
 ```
 
-The loader pre-validates these before the plugin is asked to do any
-work — a missing or misspelled lib name surfaces as a precise
-"plugin foo declares libs=['ghost'] but those packages are not
-present under community/libs/" error rather than an opaque
-`ImportError` deeper in.
+The loader pre-validates each requirement against the catalog of
+loaded libs:
+
+- **Missing lib** — clear "requires lib X but no such lib is
+  loaded" error.
+- **Version mismatch** — "lib X is at version 1.0.0 but plugin
+  requires `>=2.0`". Plugin won't register.
+- **Empty `version`** — only presence is checked.
 
 For plugins that subclass `BasePlugin`, mirror the declaration on
-the class to opt into a strict cross-check:
+the class to opt into a strict cross-check. Three shapes work,
+pick whichever reads best:
 
 ```python
 class MyPlugin(ValidationPlugin):
-    REQUIRED_LIBS = ("helixql",)
+    REQUIRED_LIBS = ("helixql",)                              # name only
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)          # (name, version)
+
+    from src.community.manifest import LibRequirement
+    REQUIRED_LIBS = (LibRequirement(name="helixql", version=">=1.0.0"),)
 ```
 
-The loader compares the Python tuple to `[plugin].libs` as a **set**
-(order doesn't matter) and refuses to load on drift. Leaving
-`REQUIRED_LIBS = ()` skips the check entirely — the manifest stays
-authoritative.
+Cross-check is set-keyed by name; when both sides supply a
+`version`, they must match byte-for-byte. Empty `REQUIRED_LIBS = ()`
+skips the check.
 
-After editing `REQUIRED_LIBS`, run
-`ryotenkai community sync-libs community/<kind>/<plugin>` to
-re-render `manifest.toml`'s `libs` field (sorted, unique) so the
-next load passes the cross-check.
+After editing `REQUIRED_LIBS`, run `ryotenkai community sync
+community/<kind>/<plugin>` to re-render `[[lib_requirements]]` from
+the ClassVar (along with the rest of the manifest sync). Pair with
+`--dry-run` to preview the diff first.
 
 ## Contract: how the loader sees libs
 
@@ -111,15 +154,25 @@ next load passes the cross-check.
   is invisible to `load_all_plugins`. (Tests in
   `src/tests/unit/community/test_libs_isolation.py` pin this
   invariant.)
-- Preload runs once per `catalog.ensure_loaded()`, before plugins are
-  loaded. Same root → no-op. Different root → namespace replaced and
-  cached subpackages purged from `sys.modules`.
+- Loading runs once per `catalog.ensure_loaded()`, **before** plugins
+  load. Each lib's `manifest.toml` is parsed, validated against
+  :class:`LibManifest`, and the package is registered under
+  `community_libs.<id>` in `sys.modules`. Same root → idempotent.
+  Different root → namespace replaced, cached subpackages purged.
 - Empty/absent `community/libs/` → no namespace registered. Existing
   plugins keep working; they just don't have any shared lib to
   import.
-- Fingerprint covers `__init__.py` + every direct `*.py` of every
-  lib. Edits to deeper files (e.g. `lib/sub/foo.py`) require a
-  manual backend restart, same rule as `src/`.
+- Folder vs zip: folder beats zip on collision (a warning is logged).
+  Zip libs are extracted to `community/.cache/<hash>/<id>/` on first
+  load and re-used until the zip's mtime changes.
+- Fingerprint covers each lib's `manifest.toml` + every direct
+  `*.py` at the lib root, plus the `*.zip` archive itself. Edits to
+  deeper files (e.g. `lib/sub/foo.py`) require a manual backend
+  restart, same rule as `src/`.
+- Failures (missing manifest, mismatched id, bad version, no
+  `__init__.py`) are captured as :class:`LibLoadFailure` and
+  surfaced via `catalog.lib_failures()` so the UI catalogue can
+  render an actionable error banner.
 
 ## Migration from `src/utils/domains/`
 

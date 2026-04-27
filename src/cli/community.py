@@ -25,14 +25,15 @@ import typer
 from src.community.constants import (
     ALL_PLUGIN_KINDS,
     COMMUNITY_ROOT,
+    LIBS_DIR_NAME,
     PRESET_DIR_NAME,
 )
 from src.community.pack import PackResult, pack_community_folder
 from src.community.scaffold import scaffold_plugin_manifest, scaffold_preset_manifest
 from src.community.sync import (
     SyncResult,
+    sync_lib_manifest,
     sync_plugin_envs,
-    sync_plugin_libs,
     sync_plugin_manifest,
     sync_preset_manifest,
 )
@@ -67,7 +68,8 @@ community_app = typer.Typer(
 PathRole = Literal[
     "plugin",           # leaf folder with plugin.py / plugin/ package
     "preset",           # leaf folder with *.yaml under community/presets/
-    "kind_dir",         # community/{validation,evaluation,reward,reports,presets}
+    "lib",              # leaf folder under community/libs/ with manifest.toml
+    "kind_dir",         # community/{validation,evaluation,reward,reports,presets,libs}
     "community_root",   # community/ itself
     "unknown",          # anything else
 ]
@@ -96,9 +98,15 @@ def _classify_path(path: Path) -> PathRole:
     # Kind dir — direct child of a "community" folder with a known name.
     if (
         resolved.parent.name == "community"
-        and resolved.name in (*ALL_PLUGIN_KINDS, PRESET_DIR_NAME)
+        and resolved.name in (*ALL_PLUGIN_KINDS, PRESET_DIR_NAME, LIBS_DIR_NAME)
     ):
         return "kind_dir"
+
+    # Lib leaf — parent is "libs" and folder contains a manifest.toml +
+    # __init__.py. Checked BEFORE the preset/plugin probes so a lib
+    # never accidentally classifies as something else.
+    if resolved.parent.name == LIBS_DIR_NAME and (resolved / "manifest.toml").is_file():
+        return "lib"
 
     # Preset leaf — parent is "presets" and folder contains at least one yaml.
     if resolved.parent.name == PRESET_DIR_NAME and _has_yaml(resolved):
@@ -124,7 +132,7 @@ def _has_yaml(path: Path) -> bool:
 
 def _looks_like_community_root(path: Path) -> bool:
     """True if ``path`` has at least one known kind subdirectory."""
-    known = {*ALL_PLUGIN_KINDS, PRESET_DIR_NAME}
+    known = {*ALL_PLUGIN_KINDS, PRESET_DIR_NAME, LIBS_DIR_NAME}
     return any((path / name).is_dir() for name in known)
 
 
@@ -135,10 +143,13 @@ def _iter_subfolders(path: Path) -> list[Path]:
     )
 
 
+_LeafRole = Literal["plugin", "preset", "lib"]
+
+
 @dataclass(frozen=True, slots=True)
 class Target:
     path: Path
-    role: Literal["plugin", "preset"]
+    role: _LeafRole
 
 
 def _collect_targets(path: Path, *, kind_override: str | None = None) -> list[Target]:
@@ -146,13 +157,13 @@ def _collect_targets(path: Path, *, kind_override: str | None = None) -> list[Ta
 
     * Leaf folder → [Target(that folder)]
     * Kind folder → every plausible leaf inside
-    * Community root → every leaf under every kind folder
+    * Community root → every leaf under every kind folder (including libs/)
     """
     role_override = _role_from_kind_flag(kind_override)
 
     classification = _classify_path(path)
 
-    if classification in ("plugin", "preset"):
+    if classification in ("plugin", "preset", "lib"):
         role = role_override or classification
         return [Target(path=path, role=role)]  # type: ignore[arg-type]
 
@@ -172,27 +183,30 @@ def _collect_targets(path: Path, *, kind_override: str | None = None) -> list[Ta
     return []
 
 
-def _role_from_kind_flag(kind: str | None) -> Literal["plugin", "preset"] | None:
+def _role_from_kind_flag(kind: str | None) -> _LeafRole | None:
     if kind in (None, "auto"):
         return None
-    if kind in ("plugin", "preset"):
+    if kind in ("plugin", "preset", "lib"):
         return kind  # type: ignore[return-value]
-    raise typer.BadParameter("--kind must be 'auto', 'plugin' or 'preset'")
+    raise typer.BadParameter("--kind must be 'auto', 'plugin', 'preset', or 'lib'")
 
 
 def _leaves_in_kind_dir(
     kind_dir: Path,
     *,
-    role_override: Literal["plugin", "preset"] | None = None,
+    role_override: _LeafRole | None = None,
 ) -> list[Target]:
-    default_role: Literal["plugin", "preset"] = (
-        "preset" if kind_dir.name == PRESET_DIR_NAME else "plugin"
-    )
+    if kind_dir.name == PRESET_DIR_NAME:
+        default_role: _LeafRole = "preset"
+    elif kind_dir.name == LIBS_DIR_NAME:
+        default_role = "lib"
+    else:
+        default_role = "plugin"
     role = role_override or default_role
     targets: list[Target] = []
     for leaf in _iter_subfolders(kind_dir):
         classification = _classify_path(leaf)
-        if classification in ("plugin", "preset"):
+        if classification in ("plugin", "preset", "lib"):
             targets.append(Target(path=leaf, role=classification))
         else:
             # Not a valid leaf but the user asked for the whole kind dir;
@@ -426,19 +440,29 @@ def sync_cmd(
     ] = False,
     kind: Annotated[
         str,
-        typer.Option("--kind", help="'auto' (default) | 'plugin' | 'preset'."),
+        typer.Option("--kind", help="'auto' (default) | 'plugin' | 'preset' | 'lib'."),
     ] = "auto",
 ) -> None:
     """Re-run inference, 3-way-merge the result with manifest.toml, and bump version.
 
-    Deletions in `params_schema` mean the parameter is no longer referenced
-    from source — review the diff first (run with --dry-run).
+    Works on plugins, presets, and libs. The classifier inspects each
+    leaf folder and dispatches to the right merger:
+
+    - **plugin** — re-runs AST inference + reads ``REQUIRED_ENV`` and
+      ``REQUIRED_LIBS`` from the class, merges with existing TOML.
+    - **preset** — refreshes ``entry_point.file`` from disk and bumps
+      version.
+    - **lib** — re-formats ``manifest.toml`` to canonical shape and
+      bumps ``[lib].version``.
+
+    Deletions in `params_schema` mean the parameter is no longer
+    referenced from source — review the diff first (run with --dry-run).
 
     \b
     Examples:
       ryotenkai community sync community/validation/min_samples
-      ryotenkai community sync community/validation --dry-run
-      ryotenkai community sync community/ --bump minor
+      ryotenkai community sync community/libs/helixql --bump minor
+      ryotenkai community sync community/ --dry-run
     """
     if bump not in ("patch", "minor", "major"):
         raise typer.BadParameter("--bump must be one of: patch, minor, major")
@@ -453,8 +477,11 @@ def sync_cmd(
 
 
 def _run_sync(target: Target, *, bump: str) -> SyncResult:
-    runner = sync_preset_manifest if target.role == "preset" else sync_plugin_manifest
-    return runner(target.path, bump=bump)  # type: ignore[arg-type]
+    if target.role == "preset":
+        return sync_preset_manifest(target.path, bump=bump)
+    if target.role == "lib":
+        return sync_lib_manifest(target.path, bump=bump)
+    return sync_plugin_manifest(target.path, bump=bump)
 
 
 def _sync_single(target: Target, *, bump: str, dry_run: bool) -> None:
@@ -637,80 +664,6 @@ def sync_envs_cmd(
 
     try:
         result = sync_plugin_envs(path)
-    except Exception as exc:
-        typer.echo(_style_err(f"error: {exc}"), err=True)
-        raise typer.Exit(code=1) from exc
-
-    if not result.changed:
-        typer.echo(
-            f"{_style_dim('·')} {_rel(manifest_path)} already in sync (no changes)"
-        )
-        return
-
-    typer.echo(result.diff)
-    if dry_run:
-        typer.echo(_style_warn("[dry-run]") + f" {_rel(manifest_path)} not modified")
-        return
-
-    manifest_path.write_text(result.new_text, encoding="utf-8")
-    typer.echo(f"{_style_ok('✓')} updated {_rel(manifest_path)}")
-
-
-# ---------------------------------------------------------------------------
-# sync-libs
-# ---------------------------------------------------------------------------
-
-
-@community_app.command("sync-libs")
-def sync_libs_cmd(
-    path: Annotated[
-        Path,
-        typer.Argument(
-            exists=True,
-            dir_okay=True,
-            file_okay=False,
-            resolve_path=True,
-            help="A single plugin folder whose REQUIRED_LIBS should be propagated to manifest.toml.",
-        ),
-    ],
-    dry_run: Annotated[
-        bool,
-        typer.Option(
-            "--dry-run",
-            help="Print the diff that would be written; do not modify manifest.toml.",
-        ),
-    ] = False,
-) -> None:
-    """Re-render manifest's [plugin].libs from the plugin class's REQUIRED_LIBS.
-
-    The plugin Python module is imported (just like the loader does at
-    runtime), the ``REQUIRED_LIBS`` ClassVar is read, and the manifest's
-    ``[plugin].libs`` field is rewritten to match. Useful after editing
-    the lib dependencies in code — running this keeps the load-time
-    cross-check happy without hand-editing TOML.
-
-    Output is normalised to sorted unique names so re-runs produce
-    stable diffs.
-
-    \b
-    Examples:
-      ryotenkai community sync-libs community/reward/helixql_compiler_semantic
-      ryotenkai community sync-libs community/validation/my_plugin --dry-run
-    """
-    role = _classify_path(path)
-    if role != "plugin":
-        _die(
-            f"sync-libs only works on a single plugin folder; got {role!r} "
-            f"for {_rel(path)}"
-        )
-
-    manifest_path = path / "manifest.toml"
-    if not manifest_path.is_file():
-        typer.echo(_style_err(f"error: no manifest.toml in {_rel(path)}"), err=True)
-        raise typer.Exit(code=1)
-
-    try:
-        result = sync_plugin_libs(path)
     except Exception as exc:
         typer.echo(_style_err(f"error: {exc}"), err=True)
         raise typer.Exit(code=1) from exc

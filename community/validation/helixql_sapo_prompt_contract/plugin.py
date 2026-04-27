@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class HelixQLSAPOPromptContractValidator(ValidationPlugin):
-    REQUIRED_LIBS = ("helixql",)
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
     supports_streaming = True
 
     def _validate_contract(self) -> None:

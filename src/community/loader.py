@@ -31,6 +31,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
+
 from src.community.archive import ensure_extracted, resolve_extraction_root
 from src.community.constants import (
     ALL_PLUGIN_KINDS,
@@ -39,7 +42,13 @@ from src.community.constants import (
     PLUGIN_KIND_DIRS,
     PRESET_DIR_NAME,
 )
-from src.community.manifest import PluginKind, PluginManifest, PresetManifest
+from src.community.manifest import (
+    LibManifest,
+    LibRequirement,
+    PluginKind,
+    PluginManifest,
+    PresetManifest,
+)
 from src.utils.logger import logger
 
 
@@ -323,38 +332,74 @@ def _crosscheck_required_env(
         )
 
 
+def _normalise_required_libs(
+    declared: object, *, plugin_cls_name: str
+) -> list[LibRequirement]:
+    """Convert a class's ``REQUIRED_LIBS`` to a canonical ``LibRequirement`` list.
+
+    Three input forms are accepted (mirrors how authors actually want
+    to declare deps in code):
+
+    - ``("helixql",)`` — name only, no version constraint.
+    - ``(("helixql", ">=1.0.0"),)`` — tuple shorthand: (name, version).
+    - ``(LibRequirement(name="helixql", version=">=1.0.0"),)`` —
+      explicit, useful when copy-pasting from a manifest.
+
+    Any other shape raises :class:`TypeError` so contract violations
+    surface at load time, not at first runtime use.
+    """
+    if not isinstance(declared, tuple):
+        raise TypeError(
+            f"plugin {plugin_cls_name}.REQUIRED_LIBS must be a tuple; "
+            f"got {type(declared).__name__}"
+        )
+
+    out: list[LibRequirement] = []
+    for entry in declared:
+        if isinstance(entry, LibRequirement):
+            out.append(entry)
+            continue
+        if isinstance(entry, str):
+            out.append(LibRequirement(name=entry, version=""))
+            continue
+        if isinstance(entry, tuple) and len(entry) == 2 and all(isinstance(p, str) for p in entry):
+            out.append(LibRequirement(name=entry[0], version=entry[1]))
+            continue
+        raise TypeError(
+            f"plugin {plugin_cls_name}.REQUIRED_LIBS entries must be a "
+            f"name-string, a (name, version) tuple, or a LibRequirement "
+            f"instance; got {type(entry).__name__}: {entry!r}"
+        )
+    return out
+
+
 def _crosscheck_required_libs(
     plugin_cls: type, manifest: PluginManifest
 ) -> None:
     """If the class declares ``REQUIRED_LIBS``, verify it matches the manifest.
 
-    Comparison is on **sets** rather than ordered tuples — order in
-    ``[plugin].libs`` and ``REQUIRED_LIBS`` carries no meaning, and
-    forcing alignment would just create busywork for plugin authors.
+    Comparison treats lib_requirements as a *set keyed by name* —
+    order is irrelevant (the loader never iterates them in order and
+    forcing alignment would just create busywork). For each name that
+    appears on both sides, the version specifier must be byte-identical
+    so the cross-check catches typos like ``"<2.0"`` vs ``">=1.0,<2.0"``.
 
     Empty Python-side tuple skips the check entirely; the manifest's
-    ``libs`` stays authoritative. Mismatch raises :class:`ValueError`
-    with the specific diff so the author can decide which side to fix
-    (or run ``sync-libs`` to push code → TOML).
+    ``[[lib_requirements]]`` stays authoritative. That's the right
+    default for plugins that don't subclass ``BasePlugin`` or that
+    prefer to maintain the dep list in TOML only.
     """
     declared = getattr(plugin_cls, "REQUIRED_LIBS", ())
     if not declared:
         return
 
-    if not isinstance(declared, tuple) or any(not isinstance(x, str) for x in declared):
-        raise TypeError(
-            f"plugin {plugin_cls.__name__}.REQUIRED_LIBS must be a tuple of "
-            f"strings; got {type(declared).__name__}"
-        )
-
-    py_set = set(declared)
-    toml_set = set(manifest.plugin.libs)
-    if py_set == toml_set:
-        return
+    py_reqs = _normalise_required_libs(declared, plugin_cls_name=plugin_cls.__name__)
+    py_by_name = {r.name: r.version for r in py_reqs}
+    toml_by_name = {r.name: r.version for r in manifest.lib_requirements}
 
     diffs: list[str] = []
-    only_in_py = sorted(py_set - toml_set)
-    only_in_toml = sorted(toml_set - py_set)
+    only_in_py = sorted(set(py_by_name) - set(toml_by_name))
+    only_in_toml = sorted(set(toml_by_name) - set(py_by_name))
     if only_in_py:
         diffs.append(
             f"declared in REQUIRED_LIBS but missing from manifest: {only_in_py}"
@@ -363,40 +408,87 @@ def _crosscheck_required_libs(
         diffs.append(
             f"declared in manifest but missing from REQUIRED_LIBS: {only_in_toml}"
         )
+    for name in sorted(set(py_by_name) & set(toml_by_name)):
+        py_ver = py_by_name[name]
+        toml_ver = toml_by_name[name]
+        if py_ver != toml_ver:
+            diffs.append(
+                f"{name}: version code={py_ver!r} vs toml={toml_ver!r}"
+            )
+
+    if not diffs:
+        return
 
     raise ValueError(
         f"REQUIRED_LIBS ↔ manifest cross-check failed for plugin "
         f"{manifest.plugin.id!r}:\n  - "
         + "\n  - ".join(diffs)
-        + "\nRun `ryotenkai community sync-libs <plugin>` to align the "
+        + "\nRun `ryotenkai community sync <plugin>` to align the "
         "manifest with REQUIRED_LIBS."
     )
 
 
-def _validate_libs_present(
-    manifest: PluginManifest, *, community_root: Path
+def _validate_lib_requirements_satisfied(
+    manifest: PluginManifest,
+    *,
+    libs_by_id: dict[str, LibManifest],
 ) -> None:
-    """Verify each ``[plugin].libs`` entry exists under ``community/libs/``.
+    """For each ``[[lib_requirements]]`` entry, check the lib exists at the
+    declared version (or any version if the constraint is empty).
 
-    Plugins import from ``community_libs.<name>`` at module load time,
-    which would otherwise fail with an opaque ``ImportError`` deep in
-    pytest collection or the API request handler. Surfacing the
-    missing lib at manifest-load time gives the user a precise
-    actionable error: "this plugin needs community/libs/<name>/, but
-    that folder doesn't exist".
+    ``libs_by_id`` carries the manifests of every lib successfully
+    loaded by :func:`src.community.libs.load_libs`. Plugins are loaded
+    AFTER libs in :class:`CommunityCatalog._load_locked` so this dict
+    is fully populated by the time we run.
+
+    Two failure modes:
+
+    - **Missing lib** — the plugin names a lib that doesn't exist
+      under ``community/libs/`` (or failed to load on its own).
+    - **Version mismatch** — the lib exists, but its declared
+      ``manifest.lib.version`` doesn't satisfy the requirement's
+      PEP 440 specifier set.
+
+    Both raise :class:`ValueError` with an actionable message; the
+    plugin won't be registered.
     """
-    libs_dir = community_root / "libs"
-    missing: list[str] = []
-    for lib_name in manifest.plugin.libs:
-        candidate = libs_dir / lib_name
-        if not candidate.is_dir() or not (candidate / "__init__.py").is_file():
-            missing.append(lib_name)
-    if missing:
+    if not manifest.lib_requirements:
+        return
+
+    errors: list[str] = []
+    for req in manifest.lib_requirements:
+        lib_manifest = libs_by_id.get(req.name)
+        if lib_manifest is None:
+            errors.append(
+                f"requires lib {req.name!r} but no such lib is loaded "
+                f"(check community/libs/{req.name}/manifest.toml — "
+                f"is the folder there? did its own load fail?)"
+            )
+            continue
+        if not req.version:
+            # No constraint — presence alone is sufficient.
+            continue
+        actual = lib_manifest.lib.version
+        try:
+            specifier = SpecifierSet(req.version)
+            installed = Version(actual)
+        except Exception as exc:  # already validated on parse, but be defensive
+            errors.append(
+                f"failed to parse lib {req.name!r} version {actual!r} "
+                f"vs requirement {req.version!r}: {exc}"
+            )
+            continue
+        if installed not in specifier:
+            errors.append(
+                f"lib {req.name!r} is at version {actual} but plugin "
+                f"requires {req.version!r} — bump the lib or relax the "
+                f"constraint in [[lib_requirements]]"
+            )
+
+    if errors:
         raise ValueError(
-            f"plugin {manifest.plugin.id!r} declares libs={missing!r} but "
-            f"those packages are not present under {libs_dir}/. Add the "
-            f"missing community/libs/<name>/ folder (with __init__.py), "
-            f"or remove the entry from manifest.toml's [plugin].libs."
+            f"plugin {manifest.plugin.id!r} lib_requirements not satisfied:"
+            "\n  - " + "\n  - ".join(errors)
         )
 
 
@@ -405,7 +497,7 @@ def _attach_community_metadata(
     manifest: PluginManifest,
     source_path: Path,
     *,
-    community_root: Path,
+    libs_by_id: dict[str, LibManifest] | None = None,
 ) -> None:
     """Mirror manifest fields onto the plugin class so runtime code can read them.
 
@@ -419,15 +511,23 @@ def _attach_community_metadata(
     violation fails the load fast with a precise diff):
 
     - REQUIRED_ENV ↔ manifest's ``[[required_env]]`` (A7).
-    - REQUIRED_LIBS ↔ manifest's ``[plugin].libs``.
-    - Each ``[plugin].libs`` entry must resolve to an existing folder
-      under ``community_root/libs/`` — passed explicitly because
-      zip-extracted plugins live under ``community/.cache/`` and
-      can't be located relative to ``source_path``.
+    - REQUIRED_LIBS ↔ manifest's ``[[lib_requirements]]`` (set-keyed
+      by name; version specifiers must match byte-for-byte).
+    - Each ``[[lib_requirements]]`` entry must resolve to a lib
+      loaded by :func:`src.community.libs.load_libs`, and the lib's
+      version must satisfy the requirement's PEP 440 specifier
+      (when one is given).
+
+    ``libs_by_id`` is the catalog's per-load snapshot of installed
+    libs (``{lib.id: LibManifest}``). It defaults to ``{}`` so unit
+    tests calling this function directly don't have to pass it,
+    accepting that lib_requirements checks become a no-op in that
+    case — the catalog *does* pass the dict through in production.
     """
+    libs = libs_by_id or {}
     _crosscheck_required_env(plugin_cls, manifest)
     _crosscheck_required_libs(plugin_cls, manifest)
-    _validate_libs_present(manifest, community_root=community_root)
+    _validate_lib_requirements_satisfied(manifest, libs_by_id=libs)
 
     plugin_cls.name = manifest.plugin.id  # type: ignore[attr-defined]
     plugin_cls.version = manifest.plugin.version  # type: ignore[attr-defined]
@@ -441,6 +541,7 @@ def load_plugins(
     *,
     root: Path = COMMUNITY_ROOT,
     strict: bool | None = None,
+    libs_by_id: dict[str, LibManifest] | None = None,
 ) -> LoadResult:
     """Load every plugin of the given kind under ``root/<kind>/``.
 
@@ -452,6 +553,12 @@ def load_plugins(
     ``strict`` controls fail-fast behaviour: ``True`` re-raises the
     first exception, ``False`` swallows everything into ``failures``,
     ``None`` (default) consults the ``COMMUNITY_STRICT`` env var.
+
+    ``libs_by_id`` is the catalog's snapshot of currently-loaded libs
+    (``{lib.id: LibManifest}``), used to satisfy each plugin's
+    ``[[lib_requirements]]`` block at load time. Defaults to an empty
+    dict — direct callers (tests) get a no-op lib check, the catalog
+    populates this from its own ``load_libs`` pass.
     """
     is_strict = _resolve_strict(strict)
     kind_dir = root / PLUGIN_KIND_DIRS[kind]
@@ -548,7 +655,7 @@ def load_plugins(
                 plugin_cls,
                 manifest,
                 source_root,
-                community_root=root,
+                libs_by_id=libs_by_id,
             )
         except Exception as exc:
             if is_strict:
@@ -661,9 +768,15 @@ def load_presets(
 
 
 def load_all_plugins(
-    *, root: Path = COMMUNITY_ROOT, strict: bool | None = None
+    *,
+    root: Path = COMMUNITY_ROOT,
+    strict: bool | None = None,
+    libs_by_id: dict[str, LibManifest] | None = None,
 ) -> dict[str, LoadResult]:
-    return {kind: load_plugins(kind, root=root, strict=strict) for kind in ALL_PLUGIN_KINDS}
+    return {
+        kind: load_plugins(kind, root=root, strict=strict, libs_by_id=libs_by_id)
+        for kind in ALL_PLUGIN_KINDS
+    }
 
 
 __all__ = [

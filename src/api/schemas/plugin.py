@@ -16,10 +16,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-# Re-export the canonical RequiredEnvSpec — see module docstring for
-# rationale. The CI gate (`make check-openapi`) ensures the front-end
-# generated types stay in sync.
-from src.community.manifest import RequiredEnvSpec
+# Re-export canonical models — see module docstring for rationale.
+# The CI gate (`make check-openapi`) ensures the front-end generated
+# types stay in sync.
+from src.community.manifest import (
+    LATEST_SCHEMA_VERSION,
+    LibRequirement,
+    RequiredEnvSpec,
+)
 
 PluginKind = Literal["reward", "validation", "evaluation", "reports"]
 
@@ -34,7 +38,7 @@ class PluginManifest(BaseModel):
     default is purely an OpenAPI documentation hint.
     """
 
-    schema_version: int = 4
+    schema_version: int = LATEST_SCHEMA_VERSION
     id: str
     name: str
     version: str = "1.0.0"
@@ -45,6 +49,8 @@ class PluginManifest(BaseModel):
     #: For reward plugins — which ``strategy_type`` values are supported.
     #: Empty for all other kinds.
     supported_strategies: list[str] = Field(default_factory=list)
+    #: Free-form attribution string ("Name <email>" recommended).
+    author: str = ""
     #: JSON Schema object describing plugin parameters.
     params_schema: dict[str, Any] = Field(default_factory=dict)
     #: JSON Schema object describing plugin thresholds.
@@ -54,6 +60,10 @@ class PluginManifest(BaseModel):
     #: Declarative env contract — UI surfaces these as inputs in the
     #: Configure modal. Empty list when the plugin doesn't need envs.
     required_env: list[RequiredEnvSpec] = Field(default_factory=list)
+    #: Community libs this plugin imports from, with optional PEP 440
+    #: version constraints. Catalog UI uses these for the dependency
+    #: tree view; the loader uses them for version-aware presence checks.
+    lib_requirements: list[LibRequirement] = Field(default_factory=list)
 
 
 class PluginLoadError(BaseModel):

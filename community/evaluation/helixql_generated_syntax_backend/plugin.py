@@ -15,7 +15,7 @@ from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
 
 
 class HelixQLGeneratedSyntaxBackendPlugin(EvaluatorPlugin):
-    REQUIRED_LIBS = ("helixql",)
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
 
     def _validate_contract(self) -> None:
         timeout_seconds = self._param("timeout_seconds")

@@ -1,3 +1,5 @@
+schema_version = 5
+
 [plugin]
 id = "helixql_semantic_match"
 kind = "evaluation"
@@ -6,7 +8,8 @@ version = "1.0.0"
 category = "semantic"
 stability = "stable"
 description = "Compares the model's HelixQL answer to the expected answer using a deterministic semantic score (sequence ratio + token jaccard + hard-eval hits)."
-libs = ["helixql"]
+
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
 
 [plugin.entry_point]
 module = "plugin"
@@ -20,3 +23,7 @@ default = 0.7
 
 [suggested_thresholds]
 min_mean_score = 0.7
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"

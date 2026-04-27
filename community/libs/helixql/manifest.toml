@@ -1,0 +1,7 @@
+schema_version = 1
+
+[lib]
+id = "helixql"
+version = "1.0.0"
+description = "HelixQL compiler wrapper, schema/query extraction helpers, and semantic-similarity scoring used by validation, evaluation, and reward plugins."
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
