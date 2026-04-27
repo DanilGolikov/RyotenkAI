@@ -68,6 +68,40 @@ class TestShouldStop:
             == expected
         )
 
+    def test_user_stop_ignores_keep_on_error(self) -> None:
+        """Phase 9.1.B regression: user-initiated stop (terminal_state
+        ``cancelled`` → ``failed=False``) **always** terminates the pod,
+        regardless of ``KEEP_ON_ERROR``.
+
+        ``KEEP_ON_ERROR`` is a debug affordance for AUTOMATIC failures
+        (idle, crash, OOM) only. An explicit user click in the CLI / Web
+        UI overrides it — pin that decision so a future tweak to the
+        decision table doesn't accidentally re-introduce the keep-alive
+        path on user-stop.
+        """
+        # User-stop equivalent: terminal_state="cancelled" surfaces as
+        # ``failed=False`` to ``should_stop_pod``.
+        assert should_stop_pod(
+            auto_stop="true",
+            failed=False,  # cancelled, NOT failed
+            keep_on_error="true",  # debug affordance set
+        ) is True
+
+    def test_failed_with_keep_on_error_is_only_keep_path(self) -> None:
+        """Tighten the contract: KEEP_ON_ERROR has effect ONLY when
+        ``failed=True``. Any other combination terminates."""
+        # Only this exact combination keeps the pod alive.
+        assert should_stop_pod(
+            auto_stop="true", failed=True, keep_on_error="true",
+        ) is False
+        # All neighbours flip back to "terminate".
+        assert should_stop_pod(
+            auto_stop="true", failed=True, keep_on_error="false",
+        ) is True
+        assert should_stop_pod(
+            auto_stop="true", failed=False, keep_on_error="true",
+        ) is True
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -129,7 +163,7 @@ class TestEnvShortCircuits:
 
         def _h(request: httpx.Request) -> httpx.Response:
             responses.append(request)
-            return httpx.Response(200, json={"data": {"podStop": {"id": "pod-1"}}})
+            return httpx.Response(200, json={"data": {"podTerminate": None}})
 
         stopper = _make_stopper(_h)
         outcome = await stopper.stop_if_needed(
@@ -141,7 +175,7 @@ class TestEnvShortCircuits:
                 "RUNPOD_POD_ID": "p",
             },
         )
-        assert outcome == PodStopOutcome.STOPPED
+        assert outcome == PodStopOutcome.TERMINATED
         assert len(responses) == 1
 
     async def test_missing_api_key_skips(self) -> None:
@@ -171,13 +205,17 @@ class TestEnvShortCircuits:
 
 
 def _success_handler(request: httpx.Request) -> httpx.Response:
-    return httpx.Response(200, json={"data": {"podStop": {"id": "pod-xyz"}}})
+    # ``podTerminate`` returns null on success — RunPod signals success
+    # via ``data.podTerminate`` key presence + absence of ``errors``.
+    return httpx.Response(200, json={"data": {"podTerminate": None}})
 
 
 def _already_stopped_handler(request: httpx.Request) -> httpx.Response:
+    # Idempotency on ``podTerminate``: post-deletion the API returns
+    # "not found" / "does not exist" — Phase 9.A widened the regex.
     return httpx.Response(
         200,
-        json={"errors": [{"message": "Pod already stopped — not running"}]},
+        json={"errors": [{"message": "Pod not found — does not exist"}]},
     )
 
 
@@ -192,7 +230,7 @@ class _FlakyHandler:
         self.calls += 1
         if self.calls <= self.fail_count:
             return httpx.Response(500, text="transient backend error")
-        return httpx.Response(200, json={"data": {"podStop": {"id": "pod-xyz"}}})
+        return httpx.Response(200, json={"data": {"podTerminate": None}})
 
 
 _FULL_ENV = {
@@ -209,7 +247,7 @@ class TestGraphQLSuccess:
         outcome = await stopper.stop_if_needed(
             terminal_state="completed", env=_FULL_ENV,
         )
-        assert outcome == PodStopOutcome.STOPPED
+        assert outcome == PodStopOutcome.TERMINATED
 
 
 @pytest.mark.asyncio
@@ -219,7 +257,7 @@ class TestGraphQLIdempotent:
         outcome = await stopper.stop_if_needed(
             terminal_state="completed", env=_FULL_ENV,
         )
-        assert outcome == PodStopOutcome.ALREADY_STOPPED
+        assert outcome == PodStopOutcome.ALREADY_TERMINATED
 
 
 @pytest.mark.asyncio
@@ -230,7 +268,7 @@ class TestGraphQLRetry:
         outcome = await stopper.stop_if_needed(
             terminal_state="completed", env=_FULL_ENV,
         )
-        assert outcome == PodStopOutcome.STOPPED
+        assert outcome == PodStopOutcome.TERMINATED
         assert flaky.calls == 3
 
 
@@ -281,7 +319,7 @@ class TestStopOnTerminalWrap:
         )
         assert ("pod_stop_attempt", {
             "terminal_state": "completed",
-            "outcome": PodStopOutcome.STOPPED,
+            "outcome": PodStopOutcome.TERMINATED,
         }) in events
 
     async def test_swallows_unexpected_exception(self) -> None:

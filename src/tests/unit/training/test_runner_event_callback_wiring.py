@@ -106,6 +106,76 @@ class TestFactoryWiring:
         )
 
 
+class TestPhase9ACancellationCallbackWiring:
+    """Phase 9.A regression: CancellationCallback must be inserted at
+    index 0 of the callback list inside the same env-gated block."""
+
+    def test_factory_imports_cancellation_callback(self) -> None:
+        src = _factory_source()
+        assert "CancellationCallback" in src, (
+            "TrainerFactory must import CancellationCallback "
+            "(Phase 9.A wiring)."
+        )
+
+    def test_factory_inserts_cancellation_callback_at_index_zero(self) -> None:
+        """Insert at idx 0, not append — must run BEFORE HF Trainer's
+        auto-registered MLflow callback. Order is the contract: HF
+        MLflow callback owns ``end_run()`` on ``on_train_end``; our
+        callback flips ``control.should_save+should_training_stop``
+        on ``on_step_end`` so HF observes it before it decides whether
+        to keep stepping."""
+        src = _factory_source()
+        assert "callbacks.insert(0, CancellationCallback())" in src, (
+            "TrainerFactory must insert CancellationCallback at index 0 "
+            "(BEFORE HF MLflow callback). Phase 9.1.E ordering decision."
+        )
+
+    def test_cancellation_wire_is_env_gated(self) -> None:
+        """Same env gate as RunnerEventCallback — CancellationCallback
+        only runs inside the in-pod runner where stop signals are
+        meaningful. Local-mode trainings (no runner attached) skip
+        both callbacks."""
+        src = _factory_source()
+        env_check = src.find("environ.get(RUNNER_URL_ENV)")
+        cancel_insert = src.find("callbacks.insert(0, CancellationCallback())")
+        assert env_check >= 0, "missing env-driven activation gate"
+        assert cancel_insert >= 0, "missing CancellationCallback insert"
+        # Insert MUST come AFTER the env check (inside the conditional).
+        assert cancel_insert > env_check, (
+            "CancellationCallback insert must be inside the env check"
+        )
+        # Wider window than the RunnerEventCallback test because Phase 9.A
+        # added ~30 lines of explanatory comments between the env check
+        # and the cancel-insert. ~2000 chars still tolerates a few more
+        # comment blocks before becoming a real problem.
+        assert (cancel_insert - env_check) < 2000, (
+            "env check and CancellationCallback insert are too far "
+            "apart — likely a refactor broke the conditional grouping"
+        )
+
+    def test_cancellation_wire_after_runner_event_callback(self) -> None:
+        """Both callbacks live in the same env-gated block. The order
+        in source (Runner first, then Cancellation) is intentional:
+
+        - ``RunnerEventCallback.append`` happens at the existing
+          end-of-list position so its event hooks fire AFTER HF
+          completes a step.
+        - ``CancellationCallback.insert(0, ...)`` puts it at the
+          BEGINNING so its on_step_end hook fires BEFORE the HF
+          MLflow callback (which auto-registers at the end of the
+          list).
+
+        If a future refactor swaps the order in source, the
+        runtime semantic changes. Pin both spots."""
+        src = _factory_source()
+        runner_append = src.find("callbacks.append(RunnerEventCallback())")
+        cancel_insert = src.find("callbacks.insert(0, CancellationCallback())")
+        assert runner_append < cancel_insert, (
+            "RunnerEventCallback.append must come BEFORE "
+            "CancellationCallback.insert in source order"
+        )
+
+
 @pytest.mark.skipif(
     factory_mod is None,
     reason="factory module failed to import in this environment",

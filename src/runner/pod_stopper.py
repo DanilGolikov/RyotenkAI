@@ -1,26 +1,46 @@
-"""RunPod self-stop hook — Python replacement for ``runpod_stop_pod.sh``.
+"""RunPod self-terminate hook — in-pod safety-net for the stop chain.
 
 After a job reaches a terminal FSM state (``completed`` / ``failed`` /
 ``cancelled``), the pod has finished its work and any further uptime
-is pure cost. This module sends the RunPod GraphQL ``podStop``
+is pure cost. This module sends the RunPod GraphQL ``podTerminate``
 mutation from inside the pod itself — no Mac round-trip needed
 (useful when the user closes their laptop right after launch).
+
+Phase 9.A: switched from ``podStop`` (sleep — pod alive, storage
+billing continues, recoverable via ``podResume``) to ``podTerminate``
+(delete — pod fully removed, irreversible). Stop semantics are now
+"stop = remove" per § 9.1.E. Resume across cancellation creates a
+new attempt + new pod from the prior checkpoint, so keeping the old
+pod alive served no operational purpose and only generated storage
+cost.
+
+Defense-in-depth:
+This in-pod stopper is the **safety-net**, not the primary path.
+Mac control plane's ``provider.cleanup_pod()`` is the canonical
+removal route (called by the pipeline orchestrator's
+``_cleanup_resources``). The in-pod stopper covers the case
+"Mac control plane died mid-stop" — both paths are idempotent
+(RunPod returns 404 / "not found" after the first delete).
 
 The hook honours the same env-var contract as the legacy bash
 wrapper so deployment configs don't need to change:
 
 ==================================== ====================================
-``RUNPOD_AUTO_STOP``                  Master toggle. ``"true"`` → stop on
-                                       terminal; anything else → never
-                                       stop. Default: ``"true"``.
+``RUNPOD_AUTO_STOP``                  Master toggle. ``"true"`` →
+                                       terminate on terminal FSM;
+                                       anything else → never terminate.
+                                       Default: ``"true"``.
 ``RUNPOD_API_KEY``                    GraphQL auth token. Missing →
                                        hook logs and skips (no crash).
 ``RUNPOD_POD_ID``                     Pod identifier for the mutation.
                                        Missing → skip.
 ``RUNPOD_KEEP_ON_ERROR``              ``"true"`` keeps the pod alive
-                                       on ``failed`` so on-call can
-                                       SSH in. ``"false"`` (default)
-                                       stops in all terminal states.
+                                       ONLY on ``failed`` (automatic
+                                       crash) so on-call can SSH in.
+                                       **Has no effect on user-stop**
+                                       (``cancelled``) — explicit user
+                                       action always terminates.
+                                       Phase 9.1.B locked decision.
 ==================================== ====================================
 
 Provider-agnostic:
@@ -32,10 +52,11 @@ let the lifespan choose by env. Phase 5+ may extract a
 ``ProviderStopHook`` Protocol if a second implementation arrives.
 
 Idempotency:
-``podStop`` on RunPod is idempotent — already-stopped pods return
-an error string we recognise as success. The retry loop (3 attempts
-with exponential backoff) handles transient network errors but
-treats "already stopped" as success on any attempt.
+``podTerminate`` on RunPod is idempotent — already-terminated pods
+return error strings we recognise as success ("not found", "does
+not exist"). The retry loop (3 attempts with exponential backoff)
+handles transient network errors but treats "already terminated"
+as success on any attempt.
 """
 
 from __future__ import annotations
@@ -60,11 +81,13 @@ __all__ = [
 
 DEFAULT_RUNPOD_GRAPHQL_URL = "https://api.runpod.io/graphql"
 
-# Recognised "already stopped / not running" error fragments — we
-# treat them as success because the goal state matches our intent.
-# Lifted verbatim from the legacy bash regex.
-_ALREADY_STOPPED_RE = re.compile(
-    r"already.*(stop|exit)|not\s+running",
+# Recognised "already terminated / not found" error fragments — we
+# treat them as success because the goal state (pod gone) matches
+# our intent. Phase 9.A widened the regex to include "terminat" and
+# "not found" / "does not exist" since ``podTerminate`` returns
+# different error shapes than ``podStop`` did.
+_ALREADY_GONE_RE = re.compile(
+    r"already.*(stop|exit|terminat)|not\s+running|not\s+found|does\s+not\s+exist|no\s+such\s+pod",
     re.IGNORECASE,
 )
 
@@ -82,14 +105,23 @@ def should_stop_pod(
 ) -> bool:
     """Pure decision function — separated so it's trivially testable.
 
-    Mirrors the legacy bash logic:
-    - ``RUNPOD_AUTO_STOP != "true"`` → never stop.
-    - terminal in ``failed`` AND ``RUNPOD_KEEP_ON_ERROR == "true"``
-      → keep alive for debug.
-    - otherwise → stop.
+    Decision table:
+    - ``RUNPOD_AUTO_STOP != "true"`` → never terminate (pod kept alive
+      for ops to inspect; e.g. CI smoke runs).
+    - terminal == ``failed`` AND ``RUNPOD_KEEP_ON_ERROR == "true"``
+      → keep pod alive for crash forensics.
+    - terminal == ``cancelled`` (user-initiated stop) → **always**
+      terminate, regardless of ``KEEP_ON_ERROR``. Phase 9.1.B
+      decision: explicit user action overrides the debug affordance;
+      ``KEEP_ON_ERROR`` is for *automatic* failures only.
+    - terminal == ``completed`` → terminate (run finished, nothing
+      to debug).
     """
     if (auto_stop or "").lower() != "true":
         return False
+    # KEEP_ON_ERROR is honored ONLY on FSM=failed. User-stop
+    # (terminal_state="cancelled" → ``failed=False``) always
+    # terminates; this branch is the explicit narrowing.
     return not (failed and (keep_on_error or "false").lower() == "true")
 
 
@@ -100,17 +132,24 @@ def should_stop_pod(
 
 class PodStopOutcome:
     """Result categories for :meth:`PodStopper.stop`. Strings rather
-    than an enum so they round-trip cleanly through the bus payload."""
+    than an enum so they round-trip cleanly through the bus payload.
+
+    Phase 9.A: switched mutation from ``podStop`` (sleep — pod alive,
+    storage billing continues) to ``podTerminate`` (delete — full
+    removal). The ``TERMINATED`` / ``ALREADY_TERMINATED`` outcomes
+    replace the prior ``STOPPED`` / ``ALREADY_STOPPED`` to make the
+    operator-visible event payload reflect the new semantics.
+    """
 
     DISABLED = "disabled"  # AUTO_STOP=false or KEEP_ON_ERROR matched
     SKIPPED = "skipped"  # missing API key / pod id
-    STOPPED = "stopped"  # GraphQL podStop succeeded
-    ALREADY_STOPPED = "already_stopped"
+    TERMINATED = "terminated"  # GraphQL podTerminate succeeded
+    ALREADY_TERMINATED = "already_terminated"  # idempotent — pod was already gone
     FAILED = "failed"  # all retries exhausted
 
 
 class PodStopper:
-    """Calls ``podStop`` GraphQL mutation when the FSM lands in terminal.
+    """Calls ``podTerminate`` GraphQL mutation when the FSM lands in terminal.
 
     Construct lazily (env-driven config), inject from the lifespan,
     invoke :meth:`stop_if_needed` from the supervisor's reap path
@@ -172,12 +211,21 @@ class PodStopper:
         return await self._call_graphql(api_key=api_key, pod_id=pod_id)
 
     async def _call_graphql(self, *, api_key: str, pod_id: str) -> str:
-        """Send podStop with retries; return one of the OUTCOME values."""
-        # Build the mutation the way the legacy script did — the
-        # backend tolerates both inline-quoted and variable-style
-        # queries, but we keep the wire shape identical for parity.
+        """Send podTerminate with retries; return one of the OUTCOME values.
+
+        Phase 9.A: switched from ``podStop`` (pod sleeps, storage
+        billing continues, pod recoverable via ``podResume``) to
+        ``podTerminate`` (pod fully deleted, irreversible). User-stop
+        is now an irreversible terminate by design — Resume across
+        cancellation creates a new attempt + new pod from the prior
+        checkpoint, no need to keep the old pod alive (§ 9.1.E).
+        """
+        # Inline-quoted GraphQL mutation; variable-style would require
+        # an extra ``variables: {...}`` field in the payload but the
+        # backend accepts either. Inline keeps the request body
+        # uniform with the rest of the runner's GraphQL calls.
         mutation = (
-            'mutation{podStop(input:{podId:"' + pod_id + '"}){id}}'
+            'mutation{podTerminate(input:{podId:"' + pod_id + '"})}'
         )
         payload = {"query": mutation}
         headers = {
@@ -201,13 +249,25 @@ class PodStopper:
                 except Exception as exc:
                     _last_error = repr(exc)
                 else:
-                    # Success: GraphQL returns ``{"data":{"podStop":{"id":"..."}}}``.
-                    if response.status_code == 200 and '"id"' in text:
-                        return PodStopOutcome.STOPPED
-                    # Idempotency: "already stopped" / "not running"
-                    # also counts as success.
-                    if _ALREADY_STOPPED_RE.search(text):
-                        return PodStopOutcome.ALREADY_STOPPED
+                    # Success: GraphQL returns
+                    # ``{"data":{"podTerminate":null}}`` on a successful
+                    # delete (the mutation has no return body — RunPod
+                    # signals success by responding 200 + presence of
+                    # ``"data":{"podTerminate"`` in the JSON envelope).
+                    # We accept either an explicit null or any value
+                    # under that key — the absence of the ``errors``
+                    # key is what matters.
+                    if (
+                        response.status_code == 200
+                        and '"podTerminate"' in text
+                        and '"errors"' not in text
+                    ):
+                        return PodStopOutcome.TERMINATED
+                    # Idempotency: "already terminated" / "not found"
+                    # / "does not exist" also count as success — the
+                    # goal state (pod gone) matches our intent.
+                    if _ALREADY_GONE_RE.search(text):
+                        return PodStopOutcome.ALREADY_TERMINATED
                     _last_error = (
                         f"http_status={response.status_code} body={text[:300]}"
                     )

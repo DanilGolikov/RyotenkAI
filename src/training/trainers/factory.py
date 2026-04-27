@@ -372,6 +372,33 @@ class TrainerFactory:
         if _os.environ.get(RUNNER_URL_ENV):
             callbacks.append(RunnerEventCallback())
 
+            # Phase 9.A — cooperative cancellation.
+            #
+            # ``CancellationCallback`` polls the global
+            # :class:`ShutdownHandler` flag on each ``on_step_end`` and
+            # turns it into HF's own ``TrainerControl(should_save,
+            # should_training_stop)`` so the trainer saves + exits at
+            # the next checkpoint boundary instead of being SIGKILLed
+            # mid-step. Same activation gate as ``RunnerEventCallback``
+            # — when the supervisor sets ``RYOTENKAI_RUNNER_URL`` we
+            # know we're inside the in-pod runner and stop signals are
+            # meaningful.
+            #
+            # **Inserted at index 0** — BEFORE HF Trainer's
+            # auto-registered MLflow callback. HF MLflow callback owns
+            # the final ``end_run()`` on ``on_train_end``; our callback
+            # only flips control flags. Order guarantees that on the
+            # cancelled step, HF observes ``should_save+should_training_stop``,
+            # checkpoints, then HF MLflow callback runs and closes the
+            # run with the correct status (driven by 9.A's
+            # ``executor.py`` finally block which picks ``KILLED`` when
+            # ``handle_graceful_shutdown`` propagated ``TRAINING_INTERRUPTED``).
+            from src.training.callbacks.cancellation_callback import (
+                CancellationCallback,
+            )
+
+            callbacks.insert(0, CancellationCallback())
+
         if callbacks:
             trainer_kwargs["callbacks"] = callbacks
 

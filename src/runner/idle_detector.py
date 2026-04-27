@@ -5,16 +5,17 @@ Background
 The legacy bash ``watchdog.sh`` was an independent process inside the
 pod that polled GPU utilisation and a ``.pipeline_heartbeat`` file
 written by the Mac. If the pipeline disappeared (laptop sleep) AND
-the GPU stayed idle for too long, watchdog.sh sent a SIGTERM via
-the RunPod ``podStop`` GraphQL endpoint. Brittle: 165 lines of bash,
-no tests, depends on file-system heartbeat invariant.
+the GPU stayed idle for too long, watchdog.sh sent a stop request
+to the RunPod GraphQL endpoint. Brittle: 165 lines of bash, no
+tests, depends on file-system heartbeat invariant.
 
 This module folds the same logic into the Python runner. Now the
 in-pod ``Supervisor`` itself decides when the run is dead (no Mac
 heartbeat, no GPU activity, exceeded max lifetime) and drives a
-graceful stop through the FSM. ``runpod_stop_pod.sh`` becomes a
-thin Python-callable shim used only for the actual GraphQL ``podStop``
-mutation when the run terminates.
+graceful stop through the FSM. The actual pod removal happens via
+:mod:`src.runner.pod_stopper` (GraphQL ``podTerminate`` since
+Phase 9.A — switched from ``podStop`` so user-initiated stop is
+irreversible per § 9.1.E).
 
 Thresholds (mirror watchdog.sh exactly):
 

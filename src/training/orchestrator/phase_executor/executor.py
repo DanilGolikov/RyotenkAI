@@ -33,6 +33,27 @@ if TYPE_CHECKING:
     from src.utils.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
+# Phase 9.A: error code emitted by ``PhaseTrainingRunner.handle_graceful_shutdown``.
+# Pinned here as a constant rather than imported because the symbol is the
+# *contract* between training_runner and executor — neither side owns it.
+_TRAINING_INTERRUPTED_CODE = "TRAINING_INTERRUPTED"
+
+
+def _is_cancellation_error(result: "Result[Any, TrainingError]") -> bool:
+    """Did this Result fail because the user cancelled training?
+
+    Returns True only when the failure carries the cancellation code,
+    not for generic training failures. Used by the finally block in
+    :meth:`PhaseExecutor.execute` to pick MLflow ``RunStatus.KILLED``
+    over ``FAILED`` so cancelled runs are visually distinct on the
+    MLflow UI from genuine crashes.
+    """
+    if not result.is_failure():
+        return False
+    err = result.unwrap_err()
+    return isinstance(err, TrainingError) and err.code == _TRAINING_INTERRUPTED_CODE
+
+
 class PhaseExecutor:
     """
     Executes a single training phase with full error handling.
@@ -154,6 +175,15 @@ class PhaseExecutor:
         # 1. START MLFLOW NESTED RUN (before cache check so cache hits are tracked)
         nested_run_ctx = self._mlflow_logger.start_nested_run(phase_idx, phase)
         phase_succeeded = False
+        # Phase 9.A: track user-initiated cancellation separately from
+        # genuine failure. Without this flag the finally block below
+        # closes the nested MLflow run as ``FAILED`` whenever
+        # ``phase_succeeded == False`` — including the cancelled
+        # branch, where ``training_runner.handle_graceful_shutdown``
+        # returns Err(TrainingError(code="TRAINING_INTERRUPTED")). The
+        # flag turns into ``RunStatus.KILLED`` in the finally block,
+        # the canonical MLflow signal for "stopped by user".
+        was_cancelled = False
 
         try:
             self._mlflow_logger.log_phase_start(phase_idx, phase)
@@ -169,6 +199,8 @@ class PhaseExecutor:
                     if cache_result is not None:
                         self._mlflow_logger.log_cache_hit(phase_idx, phase)
                         phase_succeeded = cache_result.is_ok()
+                        if not phase_succeeded:
+                            was_cancelled = _is_cancellation_error(cache_result)
                         return cache_result
                 elif upstream_retrained:
                     logger.warning(
@@ -192,6 +224,12 @@ class PhaseExecutor:
             # 4-12. TRAINING (includes dataset loading, trainer creation, training, checkpointing)
             run_result = self._training_runner.run(phase_idx, phase, model, buffer)
             if run_result.is_failure():
+                # Distinguish user-initiated cancellation from a genuine
+                # training failure. The training runner tags graceful
+                # shutdown with ``code="TRAINING_INTERRUPTED"`` (see
+                # ``handle_graceful_shutdown``); anything else is a real
+                # failure (OOM, dataset corrupt, plugin error, ...).
+                was_cancelled = _is_cancellation_error(run_result)
                 return run_result
 
             trained_model, final_checkpoint, metrics = run_result.unwrap()
@@ -212,7 +250,15 @@ class PhaseExecutor:
             return Ok(trained_model)
 
         finally:
-            mlflow_status = "FINISHED" if phase_succeeded else "FAILED"
+            # MLflow ``RunStatus`` is the single source of truth for
+            # how an operator distinguishes "user cancelled" from
+            # "training failed" on the MLflow UI. Phase 9.1.C decision.
+            if was_cancelled:
+                mlflow_status = "KILLED"
+            elif phase_succeeded:
+                mlflow_status = "FINISHED"
+            else:
+                mlflow_status = "FAILED"
             self._mlflow_logger.end_nested_run(nested_run_ctx, status=mlflow_status)
             self._current_trainer = None
             self._current_output_dir = None

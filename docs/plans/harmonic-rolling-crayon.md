@@ -1154,3 +1154,407 @@ Outstanding follow-ups (none blocking — out of scope for this plan):
    from ``RunnerEventCallback`` when relay is enabled). The runner
    side is in place; the trainer-side opt-in is a separate change
    that's only useful for the air-gapped pod scenario.
+
+---
+
+# Phase 9 — Stop semantics & MLflow finalization (REWORKED)
+
+> Status: **PROPOSED v2 — awaiting approval**
+> Date: 2026-04-27
+> Rework reason: tech-lead review of v1 surfaced over-engineering
+> (B/C buffer extension premature, 5 sources of truth for status,
+> double end_run conflict with HF MLflow callback, signal.alarm
+> fragility in tests, missing observability). Reworked into 9.A /
+> 9.B / 9.C with explicit test gates between sub-phases — 9.A is
+> low-risk and lands first; 9.B/9.C only proceed once 9.A is stable
+> in prod.
+
+## 9.0 Context
+
+The stop chain has three production-affecting gaps verified by
+post-implementation audit:
+
+1. **Cancelled runs show as `FAILED` in MLflow.** The bug lives in
+   `phase_executor/executor.py:215` finally block which writes
+   `mlflow_status="FAILED"` whenever `phase_succeeded=False` —
+   regardless of whether the trainer was crashed (failed) or
+   user-stopped (cancelled). Operators cannot distinguish causes
+   from MLflow UI; reliability metrics are polluted.
+
+2. **`MetricsBuffer.flush()` never runs at shutdown.** Buffered
+   entries (offline metrics during MLflow flap) only drain on
+   recovery via `_make_wrapper`. SIGTERM → trainer exits → process
+   dies → buffer file persists on the now-terminated pod's disk →
+   gone forever once `delete_pod` removes the volume.
+
+3. **`PodStopper` uses `podStop` (sleep), not `podTerminate`
+   (delete).** User expectation per UX: Stop = remove. Sleep-state
+   pods cost storage and confuse operators looking for "running"
+   resources in the RunPod console.
+
+In addition, the operational surface lacks **any observability**
+on the cancellation chain — no metrics for cancellation latency,
+no structured events for the cancellation phase boundaries, no
+health signal on MLflow finalize success rate. Without these,
+"production reliability" is wishful.
+
+## 9.1 Architectural decisions (single source of truth)
+
+**A. Pod lifecycle ownership — Mac primary, in-pod safety-net.**
+`provider.cleanup_pod()` on Mac is the canonical path. In-pod
+`PodStopper` runs at FSM terminal as a safety-net for "Mac died
+mid-stop". Both paths idempotent (`delete_pod` returns 404 OK,
+`docker rm -f || true` likewise).
+
+**B. User-Stop ignores `RUNPOD_KEEP_ON_ERROR`.** Explicit user
+action = explicit "delete". `KEEP_ON_ERROR` keeps the pod alive
+ONLY on automatic FSM=`failed` (idle, crash, OOM) — debug
+affordance for crash forensics, never for cancellation.
+
+**C. ONE source of truth for run status — MLflow `RunStatus`.**
+Mapping: FSM `cancelled` → MLflow `KILLED`, FSM `failed` → MLflow
+`FAILED`, FSM `completed` → MLflow `FINISHED`. **No custom
+`status=cancelled` tag.** `RunStatus` enum is semantic; tags would
+duplicate the truth and create drift. Operators read one number on
+the MLflow UI.
+
+**D. MLflow finalization in main thread, not signal handler.**
+Signal handler (`ShutdownHandler._handle_sigterm`) sets a flag
+ONLY — no I/O, no MLflow calls. `mlflow.set_tag` does HTTP that is
+not reentrant in signal context; deadlock guaranteed otherwise.
+
+**E. `CancellationCallback` runs BEFORE HF Trainer's MLflow
+callback.** HF Trainer auto-registers its own MLflow callback
+when `report_to=["mlflow"]`. That callback owns `end_run()` on
+`on_train_end`. Our callback's job is narrower: cooperative loop
+exit (`control.should_save=True; control.should_training_stop=True`)
++ `flush_buffer` BEFORE HF closes the run. **Never call
+`end_run()` ourselves** — that's HF's contract; double-close
+raises `MlflowException`. Insert order in factory: `callbacks
+= [CancellationCallback, ...rest, HF MLflow callback]`.
+
+**F. Hard 5-second budget on flush + MLflow finalization,
+implemented via `concurrent.futures.ThreadPoolExecutor` +
+`Future.result(timeout=5.0)`.** Portable, mock-friendly, works in
+pytest (unlike `signal.alarm` which is Unix-main-thread-only and
+breaks under forking).
+
+**G. Observability is non-negotiable.** Every architectural change
+in 9.A/9.B/9.C ships with paired structured events + latency
+markers. "What happened during cancellation" must be answerable
+from logs in <60 seconds.
+
+**H. `cancelled.marker` reconciliation file** is a SIGKILL fallback
+ONLY (Mac-side reconciliation reads it when MLflow shows `RUNNING`
+but FSM says `cancelled`, then force-calls `MlflowClient.set_terminated(run_id, status="KILLED")`).
+NOT used in normal flow. Atomic write via existing util.
+
+**I. Stop = irreversible terminate. Pause = explicit future
+plan (Phase 10 placeholder).** Resume across stop already works
+via `ryotenkai run resume` (new attempt + new pod from prior
+checkpoint); pod terminate has no impact on resume.
+
+## 9.2 Layer ownership matrix
+
+| Layer | Stop-chain responsibility |
+|---|---|
+| User CLI / Web UI | Send stop intent (`JobClient.request_stop`) |
+| Mac control plane (FastAPI) | Proxy stop request; on terminal event invoke `provider.cleanup_pod()` (PRIMARY) + Mac-side MLflow reconciliation if marker file present |
+| Runner Supervisor (in-pod) | SIGTERM trainer pgid; SIGKILL escalation after `--grace`; FSM transitions; emit `cancellation_*` structured events |
+| Trainer subprocess | `ShutdownHandler` sets flag → `CancellationCallback` cooperative loop exit → `flush_buffer` → HF closes run with `KILLED` |
+| In-pod `PodStopper` | Safety-net: at FSM terminal → `podTerminate`. User-stop ignores `KEEP_ON_ERROR` |
+| Provider (Mac) | `cleanup_pod()` — RunPod `delete_pod`, single_node `docker rm -f` via SSH (10s timeout, fail-soft) |
+| Pipeline orchestrator | `_cleanup_resources()` calls `provider.cleanup_pod` in finally |
+
+## 9.3 Sequence diagram (final-state, all 9.A/B/C combined)
+
+```
+USER: ryotenkai job stop <run> --grace 30
+  │
+  ▼
+Mac CLI / Web UI ─► JobClient.request_stop(grace=30)
+  │
+  ▼ (over ssh -L tunnel)
+Pod runner POST /jobs/{id}/stop
+  │
+  ├─ FSM: RUNNING → STOPPING (sync; emit cancellation_started event)
+  ├─ Supervisor.killpg(SIGTERM)        ◄── API responds 202 here
+  └─ background: schedule killpg(SIGKILL) after grace=30s
+
+Trainer subprocess
+  │
+  ├─ SIGTERM → ShutdownHandler._handle_sigterm
+  │     → ShutdownState.requested = True (signal-safe; flag only)
+  │
+  ├─ HF Trainer cycle on_step_end:
+  │     CancellationCallback sees ShutdownHandler.should_stop() → True
+  │     → control.should_save = True
+  │     → control.should_training_stop = True
+  │     ◄── trainer saves checkpoint at NEXT step boundary, exits loop
+  │
+  └─ CancellationCallback.on_train_end:
+        with concurrent_futures_timeout(5.0s):
+          ① resilient_transport.flush_buffer()  ◄── drains any backlog
+          ② emit cancellation_finalized event
+        ◄── HF MLflow callback runs AFTER our callback:
+            mlflow.end_run(status="KILLED")   ◄── single end_run, single status
+
+Pod Supervisor _reap()
+  │
+  ├─ rc=0 + cancellation_requested → FSM: STOPPING → CANCELLED
+  ├─ emit cancellation_completed event (latency from cancellation_started)
+  └─ terminal_hook → PodStopper.terminate_if_needed()
+        if FSM=CANCELLED:                 → podTerminate (always)
+        elif FSM=FAILED + KEEP_ON_ERROR:  → skipped (debug affordance)
+        else FSM=FAILED:                  → podTerminate
+
+Mac TrainingMonitor
+  │
+  ├─ subscribe_events delivers trainer_exited
+  ├─ on_training_completed/cancelled callback fires
+  └─ returns Result to orchestrator
+
+Mac Pipeline orchestrator _cleanup_resources(success=False)
+  │
+  ├─ provider.cleanup_pod(pod_id) — PRIMARY
+  │     RunPod: sdk.delete_pod(pod_id) — idempotent
+  │     single_node: ssh exec docker rm -f <container> || true (10s)
+  │
+  └─ Reconciliation step (Phase 9.C):
+        if attempts/<n>/cancelled.marker exists AND
+        MlflowClient.get_run(run_id).status == "RUNNING":
+          MlflowClient.set_terminated(run_id, status="KILLED")
+          log_event("mlflow_reconciled_post_sigkill")
+```
+
+## 9.4 Phase breakdown with explicit test gates
+
+### Phase 9.A — Critical bugfix (~6h, LOW risk, lands first)
+
+**Goal:** Close the FAILED-vs-CANCELLED bug + switch pod to terminate.
+80% of production risk closed in minimal blast radius.
+
+| File | Change |
+|---|---|
+| `src/training/orchestrator/phase_executor/training_runner.py` | `handle_graceful_shutdown` returns `TrainingError(code="TRAINING_INTERRUPTED")` (specific code, not generic). |
+| `src/training/orchestrator/phase_executor/executor.py:~215` | Finally block: detect `was_cancelled = isinstance(error, TrainingError) and error.code == "TRAINING_INTERRUPTED"`. Choose `mlflow_status = "KILLED" if was_cancelled else ("FINISHED" if phase_succeeded else "FAILED")`. **Closes PR-2.** |
+| `src/training/callbacks/cancellation_callback.py` (NEW) | HF `TrainerCallback`. `on_step_end`: if `ShutdownHandler.should_stop()` → set `control.should_save=True, control.should_training_stop=True`. **No MLflow calls in this callback in 9.A.** |
+| `src/training/trainers/factory.py` | Insert `CancellationCallback` at index 0 of callback list (env-gated `RYOTENKAI_RUNNER_URL` like `RunnerEventCallback`). |
+| `src/runner/pod_stopper.py:~179` | Mutation: `podStop` → `podTerminate`. Outcome enum: `STOPPED` → `TERMINATED`. User-stop (FSM=cancelled) **always** terminate. |
+| `src/runner/pod_stopper.py::should_stop_pod` | Honor `KEEP_ON_ERROR` ONLY when `terminal_state == "failed"`, not `"cancelled"`. |
+
+**Test gate 9.A:**
+- New: `src/tests/unit/training/test_cancellation_callback.py` — 7-cat coverage (positive flag→control flags, negative no-flag→noop, boundary flag-mid-step, invariants no-raise, regressions never-deadlock).
+- Updated: `src/tests/unit/runner/test_pod_stopper.py` — mutation `podStop`→`podTerminate`, user-stop ignores KEEP_ON_ERROR test added.
+- Updated: `src/tests/unit/training/orchestrator/test_phase_executor_*.py` (existing) — assert `mlflow_status="KILLED"` when `TRAINING_INTERRUPTED` flows through.
+- All existing 196 runner + 51 router + 38 CLI tests still green.
+
+**Production verification (after 9.A merge):**
+- 1 manual RunPod smoke: `ryotenkai job stop <run>` → MLflow UI shows `KILLED` not `FAILED` → RunPod console shows pod gone (not "stopped").
+- 1 week observation in real workloads → if no regressions, proceed to 9.B.
+
+### Phase 9.B — Buffer flush + single_node parity + retry-grace (~6h, MEDIUM risk)
+
+**Goal:** Close MLflow buffer loss + bring single_node to parity + cover phase-boundary Mac-sleep.
+
+| File | Change |
+|---|---|
+| `src/training/mlflow/resilient_transport.py` | New public `flush_buffer() -> int` method on `ResilientMLflowTransport` — drains `MetricsBuffer` using stored `_originals[("module", "log_metric")]`. Returns count of drained entries. |
+| `src/training/managers/mlflow_manager/manager.py` | Public `flush_buffer()` proxy + `set_run_terminated(run_id, status)` helper using `MlflowClient.set_terminated`. |
+| `src/training/callbacks/cancellation_callback.py` | Extended: `on_train_end` (NOT signal handler!) calls `mlflow_manager.flush_buffer()` inside `_with_timeout(5.0)` helper. Does NOT call `end_run` (HF MLflow callback owns that). |
+| `src/training/orchestrator/phase_executor/mlflow_logger.py::start_nested_run` | Wrap `mlflow.start_run(nested=True)` in retry loop (5 attempts, 1s→2s→4s→8s→16s backoff = ~30s total). On final failure → return None as today, log warning. **Covers short Mac sleep on phase boundary** (95% of practical cases). |
+| `src/providers/single_node/training/provider.py` | Add `cleanup_after_run(container_name) -> Result[None, ProviderError]`. SSH command with `ConnectTimeout=5 ServerAliveInterval=2 ServerAliveCountMax=3` + asyncio 10s timeout: `docker rm -f <container> >/dev/null 2>&1 \|\| true`. Wired into existing `disconnect()` cleanup chain. |
+| `src/training/_concurrent_helpers.py` (NEW) | Tiny helper `with_timeout(coro_or_callable, seconds) -> Result` using `concurrent.futures.ThreadPoolExecutor`. Portable across platforms. |
+
+**Explicit decision: B/C buffer extension DEFERRED.** `start_nested_run` retry-grace covers the actually-likely scenario (Mac asleep <30s on phase boundary). If real telemetry from 9.C shows >5% phase boundaries hit by Mac sleep >30s, revisit with concrete data — not speculation.
+
+**Test gate 9.B:**
+- New: `src/tests/unit/training/mlflow/test_resilient_transport_flush.py` — `flush_buffer()` drains all categories, returns count, idempotent on empty.
+- New: `src/tests/unit/training/test_cancellation_callback_finalize.py` — flush called on `on_train_end`, 5s timeout enforced, no `end_run` call (assert HF callback owns that).
+- New: `src/tests/unit/providers/single_node/test_cleanup_after_run.py` — docker rm idempotent, SSH unavailable → fail-soft Result, 10s timeout enforced via mock.
+- New: `src/tests/unit/training/orchestrator/test_start_nested_run_retry.py` — retry-grace 5 attempts, exponential backoff, final fail returns None.
+- Existing tests still green.
+
+**Production verification:** continue observation 1-2 weeks. Telemetry from 9.C metrics will tell whether B/C buffer extension is justified.
+
+### Phase 9.C — Observability + reconciliation hardening (~4h, LOW risk)
+
+**Goal:** "Production reliability" stops being a wish — measurable, alertable, debuggable.
+
+| File | Change |
+|---|---|
+| `src/runner/event_bus.py` (or new `src/runner/cancellation_telemetry.py`) | Define event kinds: `cancellation_requested`, `cancellation_started`, `cancellation_finalized`, `cancellation_completed`, `mlflow_reconciled_post_sigkill`, `cleanup_pod_failed`. Each carries `latency_ms` from previous step + structured payload. |
+| `src/runner/supervisor.py` | Emit `cancellation_started` on FSM=STOPPING transition. Emit `cancellation_completed` with full latency (request → reap) on FSM terminal. |
+| `src/training/callbacks/cancellation_callback.py` | Emit `cancellation_finalized` after flush + before HF closes run. Includes drained-entry count. |
+| `src/utils/atomic_fs.py` (existing) | Reused — no change. |
+| `src/training/callbacks/cancellation_callback.py` (extension) | If `_with_timeout(5s)` fired → write `<workspace>/cancelled.marker` via `atomic_write_text` with `{job_id, run_id, reason, ts}`. |
+| `src/pipeline/stages/training_monitor.py` (extension) | After terminal Result, before returning: if `attempts/<n>/cancelled.marker` exists AND `MlflowClient.get_run(run_id).status == "RUNNING"` → call `MlflowClient.set_terminated(run_id, status="KILLED")`. Emit `mlflow_reconciled_post_sigkill` event. |
+| `docs/runner-architecture.md` | New "Stop semantics" section: what stop does, why irreversible, observability events to grep, reconciliation flow. |
+
+**Telemetry budget targets (SLO candidates):**
+
+| Metric | Target |
+|---|---|
+| Cancellation request → FSM CANCELLED | p95 < 35s (grace + 5s) |
+| MLflow finalize within 5s budget | > 99% |
+| Pod terminate success rate | > 99.5% |
+| Marker-file fallback rate | < 1% (high rate = MLflow upstream chronically slow) |
+
+**Test gate 9.C:**
+- New: `src/tests/unit/runner/test_cancellation_telemetry.py` — events emitted with correct latency_ms, structured payload schema valid.
+- New: `src/tests/unit/pipeline/stages/test_training_monitor_reconciliation.py` — marker present + MLflow RUNNING → set_terminated called; marker absent → no reconciliation; MLflow already KILLED → no reconciliation.
+- New: `src/tests/integration/runner/test_stop_with_cancellation.py` — full e2e: submit → request_stop → CancellationCallback fires → `KILLED` in MLflow → FSM=CANCELLED → terminate called → cancellation_completed event with latency.
+- All existing tests green.
+
+**Production verification:** 2 weeks of telemetry data. Validate SLO targets met. If marker-file fallback >1% — revisit grace window. If retry-grace failures >5% on phase boundary — open Phase 9.D for B/C buffer extension.
+
+## 9.5 Risks (after rework, with mitigations)
+
+| ID | Risk | Phase | Sev | Likelihood | Mitigation |
+|---|---|---|---:|---:|---|
+| **PR-1** | `executor.py` finally still overrides KILLED with FAILED if `was_cancelled` thread-through breaks | 9.A | 5 | 2 | Direct unit test asserting `mlflow_status` based on TrainingError code. Code review checklist: any future change to finally must preserve was_cancelled. |
+| **PR-2** | Double `end_run` if our callback ordering wrong + HF callback both invoke | 9.B | 4 | 3 | Insert at index 0 (BEFORE HF MLflow callback). Test: assert callback list ordering. Don't call `end_run` ourselves — only flush_buffer + telemetry. |
+| **PR-3** | Single-node SSH cleanup hangs > 10s timeout | 9.B | 3 | 3 | `concurrent.futures` timeout + SSH-level `ConnectTimeout=5 ServerAliveInterval=2`. Failure returns Err, never raises. |
+| **PR-4** | Reconciliation race: Mac calls `set_terminated` while pod's HF MLflow callback also calls `end_run` (rare: marker present BUT pod actually finished) | 9.C | 3 | 2 | `set_terminated` is idempotent in MLflow API (already-terminated returns OK). Marker only triggers reconcile when MLflow status is `RUNNING`, so pod's `end_run` not yet committed. |
+| **PR-5** | `concurrent.futures.ThreadPoolExecutor` leaks threads if not properly cleaned at exit | 9.B | 2 | 3 | Use as context manager (`with ThreadPoolExecutor(max_workers=1) as ex`) — auto-shutdown. |
+| **PR-6** | Telemetry events fan-out balloons WebSocket payload | 9.C | 2 | 2 | Each cancellation chain emits ≤6 events with bounded payload (<1KB). Within ring buffer 10k capacity. |
+| **PR-7** | Manual RunPod smoke gate blocks 9.B/9.C indefinitely if real-hardware unavailable | meta | 3 | 4 | Permit "1 successful staging-env smoke" as alternative to RunPod. Document criteria. |
+| **PR-8** | retry-grace 30s on phase boundary still insufficient for long Mac naps | 9.B | 3 | 2 | Telemetry in 9.C measures actual occurrence. Open 9.D (B/C buffer) only when data shows it's >5%. |
+| **PR-9** | KEEP_ON_ERROR semantic divergence: in-pod respects it, Mac orchestrator's `_cleanup_resources` doesn't | 9.A | 3 | 4 | EXPLICIT: Mac side `cleanup_pod` ALSO honors `KEEP_ON_ERROR` for failed runs. Add provider config flag `keep_on_error` (defaults from env). User-stop bypasses it (FSM=cancelled, not failed). |
+| **PR-10** | Rollback complexity: 9.A touches 6 files atomic, hard to revert if subtle regression | 9.A | 4 | 2 | 9.A is small enough to land as ONE commit. Revert = git revert <sha>. CI test gate must be green before merge. No env-flag rollback (per project NO-BACKWARDS-COMPAT policy). |
+
+## 9.6 Open questions resolved
+
+| OQ | Resolution |
+|---|---|
+| Single source of truth for status | MLflow `RunStatus` only. No custom tag. § 9.1.C |
+| Double `end_run` with HF callback | Our callback inserts at idx 0, BEFORE HF; only flushes, never closes run. § 9.1.E |
+| `signal.alarm` in tests | Replaced with `concurrent.futures.Future.result(timeout=5)`. § 9.1.F |
+| B/C buffer extension | Deferred. `start_nested_run` retry-grace 30s in 9.B; revisit only if telemetry from 9.C shows >5% phase-boundary failures. § 9.4 (9.B) |
+| `tail_logs` before cleanup | Removed. Trainer_log events already flowed to Mac via WebSocket; no SSH scrape needed. |
+| `cancelled.marker` for normal flow | NO. Marker is SIGKILL fallback only, written when `_with_timeout(5s)` fires. § 9.1.H |
+| Mac orchestrator KEEP_ON_ERROR | Yes — Mac-side cleanup honors it on `failed` (parity with PodStopper). User-stop = cancelled = always terminate. § 9.5 PR-9 |
+
+## 9.7 Verification matrix
+
+### Per-phase gates (each must pass before next phase merges)
+
+```bash
+# 9.A gate
+pytest src/tests/unit/training/test_cancellation_callback.py -v       # NEW
+pytest src/tests/unit/training/orchestrator/test_phase_executor_killed_status.py -v  # NEW or extended
+pytest src/tests/unit/runner/test_pod_stopper.py -v                   # UPDATED
+pytest src/tests/unit/ src/tests/smoke -q                             # full regression
+
+# 9.B gate
+pytest src/tests/unit/training/mlflow/test_resilient_transport_flush.py -v        # NEW
+pytest src/tests/unit/training/test_cancellation_callback_finalize.py -v          # NEW
+pytest src/tests/unit/providers/single_node/test_cleanup_after_run.py -v          # NEW
+pytest src/tests/unit/training/orchestrator/test_start_nested_run_retry.py -v     # NEW
+
+# 9.C gate
+pytest src/tests/unit/runner/test_cancellation_telemetry.py -v        # NEW
+pytest src/tests/unit/pipeline/stages/test_training_monitor_reconciliation.py -v  # NEW
+pytest src/tests/integration/runner/test_stop_with_cancellation.py -v  # NEW e2e
+```
+
+### Manual verification (cumulative across phases)
+
+```bash
+# Run a SAPO config end-to-end with stop in the middle
+ryotenkai run start --config sapo.yaml &
+sleep 120
+ryotenkai job stop <run_dir> --grace 30
+
+# Verify (after 9.A):
+#   - MLflow UI: run.status == KILLED (not FAILED)
+#   - RunPod console: pod gone (not "stopped" — actually deleted)
+
+# Verify (after 9.B):
+#   - attempts/<n>/training.log: contains last batch metrics
+#   - MLflow metrics: no gaps in last save_steps window before stop
+#   - single_node test: docker ps -a → no leftover container
+
+# Verify (after 9.C):
+#   - grep for cancellation_started/finalized/completed events with latency_ms
+#   - SLO check: cancellation_completed.latency_ms p95 < 35000
+#   - Telemetry: marker-file fallback rate < 1% over 2 weeks
+```
+
+### Cleanup grep checks (post-9.A)
+
+```bash
+# No more podStop in production code
+! grep -rn "podStop(" src/ --include="*.py"
+# KEEP_ON_ERROR only honored on failed, not cancelled
+grep -A 3 "KEEP_ON_ERROR" src/runner/pod_stopper.py | grep -q "FSM.*FAILED\|terminal_state.*failed"
+```
+
+## 9.8 Phase ordering & rollout
+
+```
+9.A (~6h, low risk)
+  │
+  ├─ Implement + test
+  ├─ Code review (focus: was_cancelled thread-through correctness)
+  ├─ Merge
+  ├─ Manual RunPod smoke
+  └─ Observe 1 week in real workloads
+       │
+       └─ Stable → proceed to 9.B
+       └─ Regression → revert merge commit, root-cause, retry
+
+9.B (~6h, medium risk)
+  │
+  ├─ Implement + test (HF callback ordering critical)
+  ├─ Code review (focus: no double end_run, no thread leak)
+  ├─ Merge
+  ├─ Manual smoke
+  └─ Observe 1-2 weeks (telemetry from 9.C will tell us)
+
+9.C (~4h, low risk)
+  │
+  ├─ Implement + test
+  ├─ Wire telemetry to existing dashboards (or add new section)
+  ├─ Merge
+  ├─ Define SLO alerts (cancellation_completed.latency, marker rate)
+  └─ Observe 2 weeks → validate SLO targets
+
+(Phase 9.D — B/C buffer extension)
+  │
+  └─ Open ONLY if telemetry from 9.C shows phase-boundary failure rate > 5%.
+       Otherwise close as YAGNI.
+```
+
+## 9.9 Future placeholder — Phase 10: Pause semantics
+
+Pause/Resume is intentionally OUT of scope. Current architecture
+makes it a separate plan because:
+
+- **Storage / cost trade-off** — pause = pod alive (billing on
+  storage); needs design decision on max-paused-duration policy.
+- **State preservation** — checkpoint-on-pause must be at step
+  boundary (HF Trainer `should_save+should_training_stop` flow);
+  reconnect logic if pod alive vs new-pod-from-checkpoint if pod
+  reaped.
+- **UX surface** — `ryotenkai job pause` CLI + Web UI button +
+  resume from paused vs resume from cancelled (different flows).
+
+Phase 9 deliberately does NOT block Phase 10. The
+`CancellationCallback` flag-driven cooperative exit is the same
+mechanism Pause would reuse with a different reason code
+(`ShutdownReason.PAUSE` vs `ShutdownReason.SIGTERM`). Adding pause
+later = mostly UI/CLI work + a config knob, not architectural
+rework.
+
+---
+
+**Total estimated effort: 16h (9.A 6h + 9.B 6h + 9.C 4h), spread
+over 3 release windows with stability observation between phases.
+Single-cutover within each phase, no inter-phase backwards
+compatibility (per project policy).**
+
+<!-- v1 of Phase 9 (single-cutover, 5 sources of truth, signal.alarm,
+     B/C buffer extension, tail_logs, double end_run risk) was rejected
+     during tech-lead review. Removed from this file; full text
+     preserved in git history at the commit that introduced v2. -->
