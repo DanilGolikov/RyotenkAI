@@ -2201,6 +2201,8 @@ export interface components {
             is_locked: boolean;
             /** Lock Pid */
             lock_pid?: number | null;
+            /** Pod Status */
+            pod_status?: string | null;
         };
         /** RunSummary */
         RunSummary: {
@@ -2237,6 +2239,8 @@ export interface components {
              * @default (root)
              */
             group: string;
+            /** Pod Status */
+            pod_status?: string | null;
         };
         /** RunsListResponse */
         RunsListResponse: {

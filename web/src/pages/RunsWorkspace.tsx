@@ -10,6 +10,10 @@ import { LogDock } from '../components/LogDock'
 import { RunRow } from '../components/RunRow'
 import { StageTimeline } from '../components/StageTimeline'
 import { StatusPill } from '../components/StatusPill'
+import {
+  PodStatusBadge,
+  ResumePodButton,
+} from '../components/ResumePodButton'
 import { Card, EmptyState, SectionHeader, Spinner } from '../components/ui'
 import { formatDateTime, formatDuration } from '../lib/format'
 import type { RunSummary } from '../api/types'
@@ -189,6 +193,10 @@ function RunDetailPanel({ runId }: { runId: string }) {
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <StatusPill status={run.status} />
+            {/* Phase 11.C-2 — sleeping-pod hint next to the run status.
+                Only renders when pod_status === 'stopped'; silent on
+                running / terminated / legacy attempts. */}
+            <PodStatusBadge podStatus={run.pod_status} />
             <h1 className="text-xl font-semibold text-ink truncate">{run.logical_run_id}</h1>
           </div>
           <div className="mt-1 text-xs text-ink-3 flex gap-4 flex-wrap">
@@ -236,6 +244,15 @@ function RunDetailPanel({ runId }: { runId: string }) {
           >
             Delete
           </button>
+          {/* Phase 11.C-2 — Resume affordance for runs whose pod
+              was put to sleep on natural completion (Phase 11.B
+              podStop outcome). One click probes RunPod, wakes the
+              pod via resume_pod_with_retry, then the operator can
+              hit Launch to continue the pipeline. Hidden when the
+              pod isn't sleeping. */}
+          {run.pod_status === 'stopped' && !run.is_locked && (
+            <ResumePodButton runId={runId} variant="compact" />
+          )}
           <button type="button" onClick={() => setLaunchOpen(true)} className="btn-primary">
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M5 12h14" /><path d="M12 5l7 7-7 7" />

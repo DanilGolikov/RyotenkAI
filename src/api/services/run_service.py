@@ -68,6 +68,10 @@ def _summary_row_to_schema(row: RunSummaryRow, runs_dir: Path) -> RunSummary:
         duration_seconds=duration,
         error=row.error,
         group=row.group,
+        # Phase 11.C-2 — Web UI uses pod_status to render the
+        # "(stopped)" badge + Resume button. ``None`` for legacy
+        # attempts without recorded pod_metadata.
+        pod_status=row.pod_status,
     )
 
 
@@ -112,6 +116,15 @@ def _run_detail(state: PipelineState, run_dir: Path, runs_dir: Path) -> RunDetai
     lock_pid = read_lock_pid(run_dir)
     is_locked = lock_pid is not None and is_process_alive(lock_pid)
 
+    # Phase 11.C-2 — surface latest attempt's pod_metadata.last_known_status
+    # so Web UI can render the "(stopped)" badge + Resume button without
+    # walking the attempts array client-side.
+    pod_status: str | None = None
+    if state.attempts:
+        latest_meta = state.attempts[-1].pod_metadata
+        if latest_meta is not None:
+            pod_status = latest_meta.last_known_status
+
     return RunDetail(
         schema_version=state.schema_version,
         logical_run_id=state.logical_run_id,
@@ -137,6 +150,7 @@ def _run_detail(state: PipelineState, run_dir: Path, runs_dir: Path) -> RunDetai
         next_attempt_no=predict_next_attempt_no(run_dir),
         is_locked=is_locked,
         lock_pid=lock_pid,
+        pod_status=pod_status,
     )
 
 

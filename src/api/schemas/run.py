@@ -21,6 +21,12 @@ class RunSummary(BaseModel):
     duration_seconds: float | None = None
     error: str | None = None
     group: str = "(root)"
+    #: Phase 11.C-2 — last-known pod status from the latest attempt's
+    #: ``pod_metadata.last_known_status``. ``"running"`` while training,
+    #: ``"stopped"`` after Phase 11.B podStop (UI shows Resume affordance),
+    #: ``"terminated"`` after podTerminate. ``None`` for legacy attempts
+    #: without recorded pod_metadata.
+    pod_status: str | None = None
 
 
 class RunsListResponse(BaseModel):
@@ -59,6 +65,10 @@ class RunDetail(BaseModel):
     next_attempt_no: int = 1
     is_locked: bool = False
     lock_pid: int | None = None
+    #: Phase 11.C-2 — last-known pod status from the latest attempt.
+    #: Same shape as :attr:`RunSummary.pod_status`. ``"stopped"`` ⇒
+    #: Web UI surfaces the Resume button; other values ⇒ no badge.
+    pod_status: str | None = None
 
 
 class CreateRunRequest(BaseModel):

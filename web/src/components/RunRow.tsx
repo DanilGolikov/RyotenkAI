@@ -1,5 +1,6 @@
 import type { RunSummary } from '../api/types'
 import { StatusPill } from './StatusPill'
+import { PodStatusBadge } from './ResumePodButton'
 import { formatDuration } from '../lib/format'
 
 export function RunRow({
@@ -29,6 +30,11 @@ export function RunRow({
             {run.run_id}
           </span>
           <StatusPill status={run.status} compact />
+          {/* Phase 11.C-2 — sleeping-pod hint per row. Self-hides
+              when pod isn't stopped, so list stays clean for normal
+              runs. Operator clicks the row to drill into RunsWorkspace
+              detail and use the Resume button there. */}
+          <PodStatusBadge podStatus={run.pod_status} />
         </div>
         <div className="flex gap-3 mt-1 text-2xs text-ink-3">
           <span className="truncate max-w-[180px]">{run.config_name}</span>
