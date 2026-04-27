@@ -102,6 +102,60 @@ class StageRunState:
 
 
 @dataclass(slots=True)
+class PodMetadata:
+    """Phase 11.C — pod identity persisted on the attempt.
+
+    Lets ``ryotenkai run resume`` see whether there's a stopped pod
+    waiting for retrieval (pod sleeping with /workspace intact) vs. a
+    legacy run (no metadata recorded) vs. a terminated pod (gone for
+    good). The probe (``PodAvailabilityProbe``) reads this on resume
+    to decide whether to call ``podResume`` before re-running the
+    pipeline.
+
+    Fields:
+        pod_id: Provider-side identifier (RunPod pod_id).
+        provider: ``"runpod"`` / ``"single_node"`` / etc.
+        created_at: ISO-8601 — for forensics.
+        last_known_status: Coarse status string updated by the runner
+            on transition events. ``"running"`` while training,
+            ``"stopped"`` after Phase 11.B's ``podStop`` action,
+            ``"terminated"`` after ``podTerminate``. ``None`` when
+            we haven't queried yet (fresh attempt).
+
+    Sealed-defaults: every field except pod_id is optional. Legacy
+    runs (no metadata in JSON) deserialize to ``None``; the probe
+    treats them as "RUNNING / unknown" and skips the resume step.
+    """
+    pod_id: str
+    provider: str = "runpod"
+    created_at: str = ""
+    last_known_status: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pod_id": self.pod_id,
+            "provider": self.provider,
+            "created_at": self.created_at,
+            "last_known_status": self.last_known_status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PodMetadata | None:
+        # Empty dict / missing pod_id ⇒ no metadata. Legacy attempts
+        # produce {} or omit the key entirely; both yield ``None``
+        # so the probe knows to skip.
+        pod_id = data.get("pod_id")
+        if not isinstance(pod_id, str) or not pod_id:
+            return None
+        return cls(
+            pod_id=pod_id,
+            provider=str(data.get("provider", "runpod")),
+            created_at=str(data.get("created_at", "")),
+            last_known_status=data.get("last_known_status"),
+        )
+
+
+@dataclass(slots=True)
 class PipelineAttemptState:
     attempt_id: str
     attempt_no: int
@@ -121,6 +175,10 @@ class PipelineAttemptState:
     training_run_id: str | None = None
     enabled_stage_names: list[str] = field(default_factory=list)
     stage_runs: dict[str, StageRunState] = field(default_factory=dict)
+    #: Phase 11.C — provider pod identity for resume / status probing.
+    #: ``None`` when the attempt was created before Phase 11.C or
+    #: the provider doesn't expose a pod_id (e.g. mock provider).
+    pod_metadata: PodMetadata | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -142,6 +200,10 @@ class PipelineAttemptState:
             "training_run_id": self.training_run_id,
             "enabled_stage_names": list(self.enabled_stage_names),
             "stage_runs": {name: state.to_dict() for name, state in self.stage_runs.items()},
+            # Phase 11.C — None ⇒ omit ``pod_metadata`` from the JSON
+            # so legacy diff'ing tools don't see spurious null fields.
+            **({"pod_metadata": self.pod_metadata.to_dict()}
+               if self.pod_metadata is not None else {}),
         }
 
     @classmethod
@@ -152,6 +214,13 @@ class PipelineAttemptState:
             for stage_name, stage_data in stage_runs_raw.items():
                 if isinstance(stage_data, dict):
                     stage_runs[str(stage_name)] = StageRunState.from_dict(stage_data, stage_name=str(stage_name))
+
+        # Phase 11.C — graceful fallback for legacy attempts.
+        pod_meta_raw = data.get("pod_metadata")
+        pod_metadata: PodMetadata | None = None
+        if isinstance(pod_meta_raw, dict):
+            pod_metadata = PodMetadata.from_dict(pod_meta_raw)
+
         return cls(
             attempt_id=str(data.get("attempt_id", "")),
             attempt_no=int(data.get("attempt_no", 0) or 0),
@@ -171,6 +240,7 @@ class PipelineAttemptState:
             training_run_id=data.get("training_run_id"),
             enabled_stage_names=[str(x) for x in data.get("enabled_stage_names", []) if isinstance(x, str)],
             stage_runs=stage_runs,
+            pod_metadata=pod_metadata,
         )
 
 

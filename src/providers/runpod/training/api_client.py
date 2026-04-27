@@ -189,6 +189,62 @@ class RunPodAPIClient:
         logger.info(f"✅ Pod {pod_id} terminated")
         return Ok(None)
 
+    def stop_pod(self, pod_id: str) -> Result[None, ProviderError]:
+        """Phase 11.C — pause pod (sleep), preserves /workspace.
+
+        Mirrors the in-pod runner's :class:`PodTerminator` ``podStop``
+        path but called from Mac side. Useful when the orchestrator
+        wants to clean up a stopped pod after the retriever finished
+        (rare path — usually the in-pod terminator already stopped
+        the pod). Idempotent: SDK returns success even if pod is
+        already sleeping / gone.
+        """
+        logger.info(f"⏸️  Stopping (sleeping) pod {pod_id}...")
+        result = self._sdk.stop_pod(pod_id=pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()  # type: ignore[union-attr]
+            logger.error(f"Failed to stop pod {pod_id}: {err}")
+            return Err(
+                ProviderError(
+                    message=f"Failed to stop pod: {err.message}",
+                    code=err.code,
+                    details={_POD_ID_KEY: pod_id},
+                )
+            )
+        logger.info(f"✅ Pod {pod_id} stopped (sleeping)")
+        return Ok(None)
+
+    def resume_pod(self, pod_id: str) -> Result[None, ProviderError]:
+        """Phase 11.C — resume pod from sleep state.
+
+        Wakes a previously stopped pod (Phase 11.B's ``podStop``
+        path) so the orchestrator can re-attach SSH and run
+        :class:`ModelRetriever` to pull artifacts off ``/workspace``.
+
+        Failure modes:
+        * Capacity exhausted ⇒ ProviderError with RUNPOD_NO_GPU
+          marker (caller's :func:`resume_pod_with_retry` matches
+          ``_CAPACITY_MARKERS`` to schedule retries).
+        * Pod already running ⇒ SDK returns success — no-op,
+          idempotent.
+        * Pod terminated ⇒ ProviderError with "not found" / "does
+          not exist" message (caller surfaces as POD_GONE).
+        """
+        logger.info(f"▶️  Resuming pod {pod_id}...")
+        result = self._sdk.start_pod(pod_id=pod_id)
+        if result.is_failure():
+            err = result.unwrap_err()  # type: ignore[union-attr]
+            logger.error(f"Failed to resume pod {pod_id}: {err}")
+            return Err(
+                ProviderError(
+                    message=f"Failed to resume pod: {err.message}",
+                    code=err.code,
+                    details={_POD_ID_KEY: pod_id},
+                )
+            )
+        logger.info(f"✅ Pod {pod_id} resume request accepted")
+        return Ok(None)
+
     def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
         """Get SSH connection info for a pod."""
         pod_result = self.query_pod(pod_id)
