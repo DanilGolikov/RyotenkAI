@@ -79,6 +79,29 @@ class BasePlugin:
     #: at all and only declare envs in TOML.
     REQUIRED_ENV: ClassVar[tuple[RequiredEnvSpec, ...]] = ()
 
+    #: Declarative dependency on ``community/libs/<name>/`` packages.
+    #: Mirror of the manifest's top-level ``[[lib_requirements]]``
+    #: blocks; the loader cross-checks the two when this attribute is
+    #: non-empty and refuses the load on drift.
+    #:
+    #: Three input shapes are accepted (whichever reads best):
+    #:
+    #:     REQUIRED_LIBS = ("helixql",)                              # name only
+    #:     REQUIRED_LIBS = (("helixql", ">=1.0.0"),)                 # (name, version)
+    #:     REQUIRED_LIBS = (LibRequirement(name="...", version="..."),)
+    #:
+    #: ``version`` strings are PEP 440 specifier sets (e.g. ``">=1.0.0,<2.0.0"``);
+    #: empty means "any version, just verify presence". Cross-check is
+    #: keyed by name (set), but version specifiers must match the TOML
+    #: byte-for-byte to catch typos like ``"<2.0"`` vs ``">=1.0,<2.0"``.
+    #:
+    #: Empty default opts out — the manifest's ``[[lib_requirements]]``
+    #: stays the only source of truth, which is what you want for
+    #: plugins that don't subclass :class:`BasePlugin` or prefer to
+    #: keep deps in TOML only. ``ryotenkai community sync <plugin>``
+    #: writes the manifest from this declaration.
+    REQUIRED_LIBS: ClassVar[tuple[Any, ...]] = ()
+
     @classmethod
     def get_description(cls) -> str:
         """Return the plugin description.

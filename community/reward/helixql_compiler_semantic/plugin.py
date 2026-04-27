@@ -11,9 +11,13 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
+from community_libs.helixql import (
+    extract_query_text,
+    extract_schema_block,
+    get_compiler,
+    semantic_match_details,
+)
 from src.training.reward_plugins.base import RewardPlugin
-from src.utils.domains.helixql import extract_query_text, extract_schema_block, semantic_match_details
-from src.utils.domains.helixql_cli import HelixCompiler
 from src.utils.logger import logger
 
 _DEFAULT_TIMEOUT_SECONDS = 10
@@ -170,9 +174,7 @@ def _install_helix_cli(*, version: str = "latest") -> Path:
 class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
     """Domain plugin for HelixQL GRPO/SAPO reward."""
 
-    def __init__(self, params: dict[str, Any]):
-        self._compiler: HelixCompiler | None = None
-        super().__init__(params)
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
 
     def _validate_params(self) -> None:
         backend = str(self.params.get("validation_backend", _BACKEND_COMPILE)).strip().lower()
@@ -212,11 +214,9 @@ class HelixQLCompilerSemanticRewardPlugin(RewardPlugin):
     def _backend(self) -> str:
         return str(self.params.get("validation_backend", _BACKEND_COMPILE)).strip().lower()
 
-    def _get_compiler(self) -> HelixCompiler:
-        if self._compiler is None:
-            timeout = int(self.params.get("timeout_seconds", _DEFAULT_TIMEOUT_SECONDS))
-            self._compiler = HelixCompiler(timeout_seconds=timeout)
-        return self._compiler
+    def _get_compiler(self):
+        timeout = int(self.params.get("timeout_seconds", _DEFAULT_TIMEOUT_SECONDS))
+        return get_compiler(timeout_seconds=timeout)
 
     def _semantic_only_score(self, *, output: str, reference: str, prompt: str) -> float:
         """

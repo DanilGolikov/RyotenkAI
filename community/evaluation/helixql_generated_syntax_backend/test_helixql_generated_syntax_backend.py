@@ -80,10 +80,10 @@ def _make_plugin(
 class TestSyntaxBackendPluginRegistration:
     def test_is_registered(self) -> None:
         from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import EvaluatorPluginRegistry
+        from src.evaluation.plugins.registry import evaluator_registry
 
         catalog.reload()
-        assert "helixql_generated_syntax_backend" in EvaluatorPluginRegistry._registry
+        assert "helixql_generated_syntax_backend" in evaluator_registry.list_ids()
 
     def test_name_classvar(self) -> None:
         assert HelixQLGeneratedSyntaxBackendPlugin.name == "helixql_generated_syntax_backend"
@@ -145,13 +145,13 @@ class TestSyntaxBackendEvaluate:
         result = plugin.evaluate([])
         assert result.sample_count == 0
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_all_fail_cli_missing(self, _mock: Any) -> None:
         plugin = _make_plugin()
         result = plugin.evaluate([_make_sample()])
         assert result.metrics.get("error_taxonomy.cli_missing", 0) == 1
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_valid_ratio_zero(self, _mock: Any) -> None:
         plugin = _make_plugin()
         result = plugin.evaluate([_make_sample()])
@@ -169,14 +169,14 @@ class TestSyntaxBackendEvaluate:
             question="no fence",
             metadata={"schema_context": "Node User {}"},
         )
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = plugin.evaluate([sample])
         assert result.metrics.get("error_taxonomy.missing_schema", 0) == 0
 
     def test_sample_with_schema_in_question_fence(self) -> None:
         plugin = _make_plugin()
         sample = _make_sample(question="Get all\n```helixschema\nNode User {}\n```")
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = plugin.evaluate([sample])
         assert result.metrics.get("error_taxonomy.missing_schema", 0) == 0
         assert result.metrics.get("error_taxonomy.cli_missing", 0) == 1
@@ -189,13 +189,13 @@ class TestSyntaxBackendEvaluate:
 
     def test_threshold_failure(self) -> None:
         plugin = _make_plugin(thresholds={"min_valid_ratio": 1.0})
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = plugin.evaluate([_make_sample()])
         assert result.passed is False
 
     def test_threshold_zero_always_passes(self) -> None:
         plugin = _make_plugin(thresholds={"min_valid_ratio": 0.0})
-        with patch("src.utils.domains.helixql_cli.shutil.which", return_value=None):
+        with patch("community_libs.helixql.compiler.shutil.which", return_value=None):
             result = plugin.evaluate([_make_sample()])
         assert result.passed is True
 
@@ -224,7 +224,7 @@ class TestSyntaxBackendEvaluate:
 
 
 class TestSyntaxBackendCompilerCaching:
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_helix_missing_cli_missing(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -232,7 +232,7 @@ class TestSyntaxBackendCompilerCaching:
         assert result.ok is False
         assert result.error_type == "cli_missing"
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_caching_same_args(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]
@@ -241,7 +241,7 @@ class TestSyntaxBackendCompilerCaching:
         assert r1 is r2
         assert len(compiler._cache) == 1
 
-    @patch("src.utils.domains.helixql_cli.shutil.which", return_value=None)
+    @patch("community_libs.helixql.compiler.shutil.which", return_value=None)
     def test_different_queries_separate_cache_entries(self, _mock: Any) -> None:
         plugin = _make_plugin()
         compiler = plugin._get_compiler()  # type: ignore[attr-defined]

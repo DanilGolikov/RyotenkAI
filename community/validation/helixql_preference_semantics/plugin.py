@@ -7,13 +7,13 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from src.data.validation.base import ValidationPlugin, ValidationResult
-from src.utils.domains.helixql import (
+from community_libs.helixql import (
     extract_query_text,
     extract_schema_block,
+    get_compiler,
     semantic_match_details,
 )
-from src.utils.domains.helixql_cli import HelixCompiler
+from src.data.validation.base import ValidationPlugin, ValidationResult
 
 _MIN_VALID_RATIO_DEFAULT = 0.95
 
@@ -22,15 +22,8 @@ if TYPE_CHECKING:
 
 
 class HelixQLPreferenceSemanticsValidator(ValidationPlugin):
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
     supports_streaming = True
-
-    def __init__(
-        self,
-        params: dict[str, Any] | None = None,
-        thresholds: dict[str, Any] | None = None,
-    ) -> None:
-        self._compiler: HelixCompiler | None = None
-        super().__init__(params, thresholds)
 
     def _validate_contract(self) -> None:
         timeout_seconds = self.params.get("timeout_seconds")
@@ -44,10 +37,11 @@ class HelixQLPreferenceSemanticsValidator(ValidationPlugin):
                 "helixql_preference_semantics requires params.max_error_examples >= -1"
             )
 
-    def _get_compiler(self) -> HelixCompiler:
-        if self._compiler is None:
-            self._compiler = HelixCompiler(timeout_seconds=int(self.params["timeout_seconds"]))
-        return self._compiler
+    def _get_compiler(self):
+        # Pass-through to the shared community_libs.helixql cache so multiple
+        # plugin instances configured with the same timeout share one
+        # compiler — and one validate() result cache.
+        return get_compiler(timeout_seconds=int(self.params["timeout_seconds"]))
 
     def validate(
         self,

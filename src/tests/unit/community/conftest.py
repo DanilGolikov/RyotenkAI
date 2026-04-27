@@ -159,6 +159,62 @@ def fake_secrets() -> Callable[..., Secrets]:
     return _factory
 
 
+# ---------------------------------------------------------------------------
+# Global-state isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _invalidate_global_catalog_after_test():
+    """Force the global ``catalog`` to reload before the next test, and
+    restore the production ``community_libs`` namespace.
+
+    Two leaks this guards against:
+
+    1. **Plugin registries** — tests that build a fresh
+       ``CommunityCatalog(root=tmp_path)`` call ``_populate_registries``
+       which mutates the *module-level* singletons (``validation_registry``,
+       ``evaluator_registry``, etc.). The global catalog's ``_loaded=True``
+       flag would otherwise short-circuit the next ``ensure_loaded`` call
+       and leave the registries empty for the next test. Resetting
+       ``_loaded`` here costs nothing until the next test actually
+       touches the global catalog.
+
+    2. **``community_libs`` namespace** — tests that call
+       ``preload_community_libs(tmp_libs)`` swap ``sys.modules['community_libs']``
+       to a tmp tree. Pytest's per-plugin ``pytest_collectstart`` hooks
+       (``community/<kind>/<plugin>/conftest.py``) execute the
+       sibling ``plugin.py`` at collection time, and that module does
+       ``from community_libs.<lib> import …`` at module level — so a
+       polluted namespace at the moment of collection raises
+       ``AttributeError`` *before* the next test's body even runs.
+       We restore the namespace at teardown so the next collector sees
+       the real tree.
+    """
+    import sys
+
+    from src.community.constants import LIBS_NAMESPACE
+
+    prefix = f"{LIBS_NAMESPACE}."
+    snapshot = {
+        name: sys.modules[name]
+        for name in list(sys.modules)
+        if name == LIBS_NAMESPACE or name.startswith(prefix)
+    }
+    yield
+    # Drop everything currently in the namespace, then restore the
+    # snapshot. If the test never touched the namespace this is a
+    # no-op (snapshot == current state).
+    for name in list(sys.modules):
+        if name == LIBS_NAMESPACE or name.startswith(prefix):
+            del sys.modules[name]
+    for name, module in snapshot.items():
+        sys.modules[name] = module
+    from src.community.catalog import catalog as _global_catalog
+
+    _global_catalog._loaded = False
+
+
 __all__ = [
     "fake_secrets",
     "make_plugin_dir",

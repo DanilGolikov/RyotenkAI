@@ -7,15 +7,16 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from community_libs.helixql import extract_query_text, extract_schema_block
 from src.data.validation.base import ValidationPlugin, ValidationResult
 from src.training.constants import COL_MESSAGES, COL_PROMPT
-from src.utils.domains.helixql import extract_query_text, extract_schema_block
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
 
 class HelixQLSAPOPromptContractValidator(ValidationPlugin):
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
     supports_streaming = True
 
     def _validate_contract(self) -> None:

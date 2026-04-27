@@ -1,3 +1,5 @@
+schema_version = 5
+
 [plugin]
 id = "helixql_generated_syntax_backend"
 kind = "evaluation"
@@ -6,6 +8,8 @@ version = "1.0.0"
 category = "syntax_check"
 stability = "stable"
 description = "Validates model_answer via Helix CLI compile (syntax + analysis, no cargo)."
+
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
 
 [plugin.entry_point]
 module = "plugin"
@@ -41,3 +45,7 @@ description = "Path to the `helix` CLI binary used to compile generated queries.
 optional = true
 secret = false
 managed_by = ""
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"

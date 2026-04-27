@@ -66,10 +66,10 @@ def _make_plugin(thresholds: dict[str, Any] | None = None) -> HelixQLSemanticMat
 class TestSemanticMatchPluginRegistration:
     def test_is_registered(self) -> None:
         from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import EvaluatorPluginRegistry
+        from src.evaluation.plugins.registry import evaluator_registry
 
         catalog.reload()
-        assert "helixql_semantic_match" in EvaluatorPluginRegistry._registry
+        assert "helixql_semantic_match" in evaluator_registry.list_ids()
 
     def test_name_classvar(self) -> None:
         assert HelixQLSemanticMatchPlugin.name == "helixql_semantic_match"

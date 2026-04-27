@@ -5,16 +5,17 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any
 
+from community_libs.helixql import (
+    extract_query_text,
+    extract_schema_block,
+    get_compiler,
+)
 from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
 from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
-from src.utils.domains.helixql import extract_query_text, extract_schema_block
-from src.utils.domains.helixql_cli import HelixCompiler
 
 
 class HelixQLGeneratedSyntaxBackendPlugin(EvaluatorPlugin):
-    def __init__(self, params: dict[str, Any], thresholds: dict[str, Any]) -> None:
-        self._compiler: HelixCompiler | None = None
-        super().__init__(params, thresholds)
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
 
     def _validate_contract(self) -> None:
         timeout_seconds = self._param("timeout_seconds")
@@ -28,10 +29,8 @@ class HelixQLGeneratedSyntaxBackendPlugin(EvaluatorPlugin):
                 "helixql_generated_syntax_backend thresholds.min_valid_ratio must be in [0, 1]"
             )
 
-    def _get_compiler(self) -> HelixCompiler:
-        if self._compiler is None:
-            self._compiler = HelixCompiler(timeout_seconds=int(self.params["timeout_seconds"]))
-        return self._compiler
+    def _get_compiler(self):
+        return get_compiler(timeout_seconds=int(self.params["timeout_seconds"]))
 
     def evaluate(self, samples: list[EvalSample]) -> EvalResult:
         if not samples:

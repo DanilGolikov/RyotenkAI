@@ -195,6 +195,103 @@ Authors should NOT poke `os.environ` or `self._secrets` directly.
 The helpers give us a place to add validation, telemetry, and per-test
 mocking without touching every plugin folder.
 
+## Sharing code across plugins — `community/libs/`
+
+When two or more plugins in **different kinds** need the same domain
+code (e.g. a HelixQL compiler wrapper used by validation, reward, and
+evaluation), put it in `community/libs/<lib>/` rather than
+copy-pasting or pulling into `src/`. The catalog automatically
+registers each subpackage as `community_libs.<lib>` in `sys.modules`
+before any plugin loads:
+
+```python
+# inside any community/<kind>/<plugin>/plugin.py
+from community_libs.helixql.compiler import get_compiler
+from community_libs.helixql.semantics import semantic_match_details
+```
+
+Single-plugin helpers stay in the plugin's own folder. Generic
+platform utilities (string/dict/retry) belong in `src/utils/`. See
+[`community/libs/README.md`](libs/README.md) for the full contract,
+authoring rules, and an example layout.
+
+### Declaring lib dependencies (with version constraints)
+
+Plugins that import from `community_libs.<lib>` MUST declare each
+dependency as a top-level `[[lib_requirements]]` block. Each entry
+carries a `name` (snake_case, matching a `community/libs/<name>/`
+folder) and an optional PEP 440 `version` specifier:
+
+```toml
+schema_version = 5
+
+[plugin]
+id   = "my_plugin"
+kind = "validation"
+...
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"   # PEP 440 specifier; omit for "any version"
+```
+
+The loader pre-validates each entry against the catalog of installed
+libs **before** the plugin is loaded:
+
+- **Missing lib** — clear "requires lib X but no such lib is loaded"
+  error rather than an opaque `ImportError` deeper in.
+- **Version mismatch** — "lib X is at version 1.0.0 but plugin
+  requires `>=2.0`". Plugin won't register.
+- **Empty `version`** — only presence is checked.
+
+### Cross-check via `REQUIRED_LIBS` (optional code-side declaration)
+
+Mirror the manifest on the class to opt into a strict load-time
+cross-check (same shape as `REQUIRED_ENV`). Three input forms are
+accepted (whichever reads best):
+
+```python
+class MyPlugin(ValidationPlugin):
+    # Bare names — matches any version declared in TOML.
+    REQUIRED_LIBS = ("helixql",)
+
+    # Or with explicit constraints — must match TOML byte-for-byte.
+    REQUIRED_LIBS = (("helixql", ">=1.0.0,<2.0.0"),)
+
+    # Or LibRequirement instances if you want full type-checking.
+    from src.community.manifest import LibRequirement
+    REQUIRED_LIBS = (LibRequirement(name="helixql", version=">=1.0.0"),)
+```
+
+The loader compares Python and TOML as a set (keyed by name); when
+both sides supply a `version`, they must match byte-for-byte to
+catch typos. Leaving `REQUIRED_LIBS = ()` skips the check — the
+manifest stays the only source of truth.
+
+### Auto-generation from code
+
+After editing `REQUIRED_LIBS`, run:
+
+```sh
+ryotenkai community sync community/<kind>/<plugin_id>
+```
+
+The unified `sync` command re-renders `[[lib_requirements]]` from
+the ClassVar (sorted, unique) along with everything else
+(`required_env`, `params_schema`, version bump). When code is
+silent on the `version` field, an existing TOML version is
+preserved — so a bare `("helixql",)` in code never wipes a
+hand-typed `">=1.0.0"` in TOML. Pair with `--dry-run` to preview
+the diff first.
+
+### Plugin author
+
+Every manifest may declare an `author` string in the `[plugin]`
+block. Recommended format `"Name <email>"` (Cargo / npm convention)
+but the field is free-form. Surfaced through `GET /plugins/{kind}`
+so the catalog UI can attribute plugins to their owner.
+
 ## Reward batch-kwargs contract
 
 The reward kind is the only one whose runtime invocation passes

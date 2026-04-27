@@ -13,10 +13,13 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-# Keys that should appear first inside ``[plugin]`` / ``[preset]`` for
-# readability (others fall back to alphabetical order).
+# Keys that should appear first inside ``[plugin]`` / ``[preset]`` /
+# ``[lib]`` for readability (others fall back to alphabetical order).
 _TOP_KEY_ORDER = (
-    # Plugin/preset root identity.
+    # Schema versioning — always first so it shows up at the top of
+    # the file when present at the document root.
+    "schema_version",
+    # Plugin/preset/lib root identity.
     "id",
     "kind",
     "name",
@@ -28,6 +31,9 @@ _TOP_KEY_ORDER = (
     # Reward-only (appended last in [plugin] so existing non-reward
     # manifests don't shift).
     "supported_strategies",
+    # Author attribution. Lives under [plugin] / [lib]; comes after
+    # description so the human-facing fields cluster together.
+    "author",
     # Entry point — module before class.
     "module",
     "class",
@@ -61,10 +67,10 @@ _PLUGIN_SECTION_ORDER = (
     "compat",
 )
 
-#: Top-level array-of-tables sections. Emitted AFTER the section order
-#: pass so dotted ``[[required_env]]`` blocks land at the bottom of the
-#: manifest in a deterministic order.
-_PLUGIN_AOT_KEYS = ("required_env",)
+#: Top-level array-of-tables sections, in emission order. Always
+#: rendered AFTER the named section pass so they land at the bottom of
+#: the manifest in a deterministic order.
+_PLUGIN_AOT_KEYS = ("required_env", "lib_requirements")
 
 #: Field order within a single ``[[required_env]]`` block. Mirrors the
 #: ParamFieldSchema-style "type/default first, descriptive bits after"
@@ -77,8 +83,15 @@ _REQUIRED_ENV_FIELD_ORDER = (
     "managed_by",
 )
 
+#: Field order within a single ``[[lib_requirements]]`` block. ``name``
+#: first, then ``version`` — the only two fields that exist for now.
+_LIB_REQ_FIELD_ORDER = ("name", "version")
+
 # Top-level section order of a preset manifest.
 _PRESET_SECTION_ORDER = ("preset", "preset.entry_point")
+
+# Top-level section order of a lib manifest.
+_LIB_SECTION_ORDER = ("lib",)
 
 
 def _escape_str(value: str) -> str:
@@ -255,13 +268,31 @@ def dump_manifest_toml(
     in ``manifest`` but missing from the order land at the end in a
     deterministic (sorted) position.
     """
-    order = tuple(section_order) if section_order is not None else (
-        _PLUGIN_SECTION_ORDER if "plugin" in manifest else _PRESET_SECTION_ORDER
-    )
+    if section_order is not None:
+        order = tuple(section_order)
+    elif "plugin" in manifest:
+        order = _PLUGIN_SECTION_ORDER
+    elif "lib" in manifest:
+        order = _LIB_SECTION_ORDER
+    else:
+        order = _PRESET_SECTION_ORDER
     scheduled: frozenset[str] = frozenset(order)
 
     lines: list[str] = []
     todo = set(todo_fields)
+
+    # Top-level scalars (currently just ``schema_version``) — emitted
+    # before any section header so they appear at the top of the file,
+    # matching how authors hand-write manifests.
+    root_scalars = [
+        k
+        for k, v in manifest.items()
+        if not isinstance(v, Mapping) and not isinstance(v, list)
+    ]
+    if root_scalars:
+        for key in _sort_keys(root_scalars):
+            lines.append(f"{key} = {_format_scalar(manifest[key])}")
+        lines.append("")
 
     for path in order:
         body = _resolve(manifest, path)
@@ -282,16 +313,20 @@ def dump_manifest_toml(
                 continue
             _emit_section(lines, child, body[key], todo_fields=todo, scheduled=scheduled)
 
-    # Top-level array-of-tables (e.g. [[required_env]]) — always after
-    # the section order pass, in a fixed key order so diffs stay small.
+    # Top-level array-of-tables (e.g. [[required_env]],
+    # [[lib_requirements]]) — always after the section order pass, in
+    # a fixed key order so diffs stay small.
     if "plugin" in manifest:
         for aot_key in _PLUGIN_AOT_KEYS:
             entries = manifest.get(aot_key)
             if not entries:
                 continue
-            field_order = (
-                _REQUIRED_ENV_FIELD_ORDER if aot_key == "required_env" else ()
-            )
+            if aot_key == "required_env":
+                field_order = _REQUIRED_ENV_FIELD_ORDER
+            elif aot_key == "lib_requirements":
+                field_order = _LIB_REQ_FIELD_ORDER
+            else:
+                field_order = ()
             _emit_array_of_tables(
                 lines, aot_key, list(entries), field_order=field_order
             )

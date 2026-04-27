@@ -1,12 +1,23 @@
+"""Semantic-similarity scoring + hard-rule checks for HelixQL queries.
+
+Lifted verbatim from the old ``src/utils/domains/helixql.py`` — only
+imports and module path changed. The scoring weights, regexes and
+``hard_eval_errors`` taxonomy are part of the public contract that
+plugins (validation / evaluation / reward) consume; changing them is
+a behavioural change visible to every reward run, so they live behind
+this stable surface.
+"""
+
 from __future__ import annotations
 
 import re
 from difflib import SequenceMatcher
 from typing import Any
 
-from src.utils.text_utils import extract_nested_text
-
-# Semantic scoring weights (WPS432)
+# Semantic scoring weights — sum to 1.0; "exact" is added on top of the
+# weighted base when ``candidate == expected`` post-normalisation, to
+# ensure exact matches always score 1.0 even if the sequence/jaccard
+# calculations would round down.
 _SCORE_WEIGHT_SEQUENCE = 0.55
 _SCORE_WEIGHT_JACCARD = 0.25
 _SCORE_WEIGHT_EXACT = 0.20
@@ -15,24 +26,22 @@ _PENALTY_PER_ERROR = 0.15
 _NEAR_MATCH_THRESHOLD = 0.8
 
 QUERY_LINE_RE = re.compile(r"^\s*QUERY\s+", flags=re.MULTILINE)
-QUERY_SIG_RE = re.compile(r"^\s*QUERY\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*=>", flags=re.MULTILINE)
-SCHEMA_FENCE_RE = re.compile(r"```helixschema\n([\s\S]*?)\n```", flags=re.MULTILINE)
+QUERY_SIG_RE = re.compile(
+    r"^\s*QUERY\s+([A-Za-z_][A-Za-z0-9_]*)\s*\((.*?)\)\s*=>",
+    flags=re.MULTILINE,
+)
 EXCLUSION_RE = re.compile(r"::!\{([^}]*)\}")
 RERANK_RRF_CALL_RE = re.compile(r"::RerankRRF\s*\(([^)]*)\)", flags=re.MULTILINE)
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
-# Backward-compatible alias — domain plugins keep importing this name.
-extract_query_text = extract_nested_text
-
-
-def extract_schema_block(text: str) -> str:
-    match = SCHEMA_FENCE_RE.search(text or "")
-    if not match:
-        return ""
-    return (match.group(1) or "").strip()
-
 
 def normalize_query_text(text: str) -> str:
+    """Collapse whitespace and drop blank lines.
+
+    Used as the canonical form for both sequence-ratio and exact-match
+    comparison — small formatting differences (extra spaces, trailing
+    newline) shouldn't affect the score.
+    """
     stripped = (text or "").strip()
     if not stripped:
         return ""
@@ -85,7 +94,10 @@ def _has_invalid_rerank_rrf_args(query_text: str) -> bool:
 def _extract_required_exclusions_from_prompt(user_text: str) -> list[str]:
     if not user_text or re.search(r"(exclude|exclusion)", user_text, flags=re.IGNORECASE) is None:
         return []
-    lines = [line for line in user_text.splitlines() if re.search(r"(exclude|exclusion)", line, flags=re.IGNORECASE)]
+    lines = [
+        line for line in user_text.splitlines()
+        if re.search(r"(exclude|exclusion)", line, flags=re.IGNORECASE)
+    ]
     fields = re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", "\n".join(lines))
     seen: set[str] = set()
     ordered: list[str] = []
@@ -109,6 +121,16 @@ def _extract_excluded_fields(query_text: str) -> list[str]:
 
 
 def hard_eval_errors(user_text: str, query_text: str) -> list[str]:
+    """Return a list of hard-rule violations for ``query_text``.
+
+    Each entry is one of a fixed set of error tags
+    (``not_starting_with_query``, ``contains_markdown_fence``,
+    ``contains_colon_equals``, ``missing_query_keyword``,
+    ``embed_vector_misuse``, ``rerank_rrf_invalid_args``,
+    ``missing_required_exclusions``). The returned list is the
+    canonical input to the score-penalty calculation in
+    :func:`semantic_match_details`.
+    """
     errors: list[str] = []
     output = query_text or ""
     if not output.lstrip().startswith("QUERY"):
@@ -133,6 +155,19 @@ def hard_eval_errors(user_text: str, query_text: str) -> list[str]:
 
 
 def semantic_match_details(*, candidate: str, expected: str, user_text: str = "") -> dict[str, Any]:
+    """Compute a [0,1] semantic match score between two HelixQL queries.
+
+    The result dict carries the score plus enough breakdown for plugin
+    UI / reports to explain the verdict:
+
+    - ``score``         — final number, capped to [0,1] and rounded to 4 dp.
+    - ``exact_match``   — bool, True iff normalised forms are equal.
+    - ``near_match``    — bool, True iff score ≥ 0.8 AND no hard errors.
+    - ``sequence_ratio``— ``difflib.SequenceMatcher.ratio()``.
+    - ``token_jaccard`` — token-level Jaccard similarity.
+    - ``hard_eval_pass``— bool, True iff hard_eval_errors is empty.
+    - ``hard_eval_errors`` — list[str] of violation tags.
+    """
     candidate_norm = normalize_query_text(candidate)
     expected_norm = normalize_query_text(expected)
     if not candidate_norm or not expected_norm:
@@ -184,7 +219,9 @@ def semantic_match_details(*, candidate: str, expected: str, user_text: str = ""
 
 
 __all__ = [
-    "extract_query_text",
-    "extract_schema_block",
+    "QUERY_LINE_RE",
+    "QUERY_SIG_RE",
+    "hard_eval_errors",
+    "normalize_query_text",
     "semantic_match_details",
 ]

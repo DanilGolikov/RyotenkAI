@@ -1,3 +1,5 @@
+schema_version = 5
+
 [plugin]
 id = "helixql_preference_semantics"
 kind = "validation"
@@ -6,6 +8,8 @@ version = "1.0.0"
 category = "dpo"
 stability = "stable"
 description = "Checks that chosen/rejected pairs are domain-consistent and chosen is objectively better than rejected."
+
+author = "Daniil Golikoff <daniil.golikoff@gmail.com>"
 
 [plugin.entry_point]
 module = "plugin"
@@ -36,3 +40,7 @@ max_error_examples = 10
 
 [suggested_thresholds]
 min_valid_ratio = 1.0
+
+[[lib_requirements]]
+name = "helixql"
+version = ">=1.0.0,<2.0.0"
