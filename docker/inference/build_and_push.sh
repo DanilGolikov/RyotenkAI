@@ -43,6 +43,11 @@ PUSH_IMAGE=true
 SKIP_LOGIN=false
 IMAGE_NAME="inference-vllm"
 
+# Dependency profile baked as labels + version.txt; tag stays clean
+# semver. Bump in lock-step with the FROM line in Dockerfile.
+DEFAULT_VLLM_BASE_VERSION="v0.6.3.post1"
+VLLM_BASE_VERSION="${VLLM_BASE_VERSION:-$DEFAULT_VLLM_BASE_VERSION}"
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --username)   DOCKER_USERNAME="$2"; shift 2 ;;
@@ -140,8 +145,11 @@ if [[ "$PUSH_IMAGE" == "true" ]] && [[ "$SKIP_LOGIN" == "false" ]]; then
 fi
 
 echo "Building ${FULL_IMAGE}:${VERSION}..."
+echo "  vllm base: ${VLLM_BASE_VERSION}"
 docker build \
     --platform linux/amd64 \
+    --build-arg "IMAGE_VERSION=${VERSION}" \
+    --build-arg "VLLM_BASE_VERSION=${VLLM_BASE_VERSION}" \
     -f Dockerfile \
     -t "${FULL_IMAGE}:${VERSION}" \
     -t "${FULL_IMAGE}:latest" \
@@ -170,13 +178,13 @@ echo "============================================================"
 echo -e "${GREEN}Done${NC}"
 echo "============================================================"
 echo ""
-echo "Update your pipeline config:"
-echo "  inference:"
-echo "    engines:"
-echo "      vllm:"
-echo "        merge_image: \"${FULL_IMAGE}:${VERSION}\""
-echo "        serve_image: \"${FULL_IMAGE}:${VERSION}\""
+echo "Pin in code (single source of truth):"
+echo "  src/inference/__about__.py:"
+echo "    _DEFAULT_INFERENCE_IMAGES: Final[dict[str, str]] = {"
+echo "        \"vllm\": \"${FULL_IMAGE}:${VERSION}\","
+echo "    }"
 echo ""
-echo "  # RunPod pods (if used):"
-echo "  # providers.runpod.inference.pod.image_name: \"${FULL_IMAGE}:${VERSION}\""
+echo "Inspect dependency profile of the published image:"
+echo "  docker run --rm ${FULL_IMAGE}:${VERSION} cat /opt/ryotenkai/version.txt"
+echo "  docker inspect ${FULL_IMAGE}:${VERSION} | jq '.[0].Config.Labels'"
 echo ""

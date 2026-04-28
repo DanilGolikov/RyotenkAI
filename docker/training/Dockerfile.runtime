@@ -16,7 +16,22 @@
 #
 # ==============================================================================
 
+# Build-time descriptors — passed in by ``build_and_push.sh`` so the
+# tag stays a clean semver (``v1.0.2``) while the dependency profile
+# (CUDA / Python / Torch) is introspectable via ``docker inspect``
+# and via ``/opt/ryotenkai/version.txt`` inside the container.
+ARG IMAGE_VERSION="dev"
+ARG CUDA_VERSION="12.4"
+ARG PYTHON_VERSION="3.12"
+ARG TORCH_VERSION="2.5.1"
+
 FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel
+
+# Re-declare ARGs after FROM so they're available in the build-stage.
+ARG IMAGE_VERSION
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+ARG TORCH_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -102,6 +117,13 @@ ENV HF_HOME=/workspace/hf_cache \
 COPY docker/training/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Self-describing version manifest — lets operators inspect what's
+# inside without consulting the tag. ``docker run --rm <image> cat
+# /opt/ryotenkai/version.txt`` works against any pulled image.
+RUN printf 'ryotenkai-training-runtime %s\ncuda: %s\npython: %s\ntorch: %s\n' \
+    "${IMAGE_VERSION}" "${CUDA_VERSION}" "${PYTHON_VERSION}" "${TORCH_VERSION}" \
+    > /opt/ryotenkai/version.txt
+
 EXPOSE 22
 
 # dumb-init becomes PID 1 inside the container. It forwards SIGTERM /
@@ -114,5 +136,15 @@ ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint.sh"]
 # default path. Pass a custom command (e.g. `bash`) to override.
 CMD []
 
-LABEL maintainer="ryotenkai"
-LABEL description="RyotenkAI training runtime (CUDA+PyTorch+deps), docker-only execution"
+# OCI image-spec labels (https://github.com/opencontainers/image-spec).
+# Tools like ``docker inspect``, GitHub Container Registry UI, and
+# Trivy all read these — keep them set so the dependency profile is
+# discoverable without unpacking the image.
+LABEL org.opencontainers.image.title="ryotenkai-training-runtime" \
+      org.opencontainers.image.description="RyotenkAI training runtime (CUDA + PyTorch + deps), docker-only execution" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.vendor="ryotenkai" \
+      org.opencontainers.image.licenses="proprietary" \
+      ryotenkai.cuda="${CUDA_VERSION}" \
+      ryotenkai.python="${PYTHON_VERSION}" \
+      ryotenkai.torch="${TORCH_VERSION}"

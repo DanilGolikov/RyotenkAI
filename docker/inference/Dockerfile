@@ -18,8 +18,19 @@
 #
 # ==============================================================================
 
+# Build-time descriptors — passed in by ``build_and_push.sh`` so the
+# tag stays a clean semver while the dependency profile (vLLM base
+# version, PEFT, etc.) is introspectable via ``docker inspect`` and
+# ``/opt/ryotenkai/version.txt``.
+ARG IMAGE_VERSION="dev"
+ARG VLLM_BASE_VERSION="v0.6.3.post1"
+
 # Base: Official vLLM image (GPU-ready)
 FROM vllm/vllm-openai:v0.6.3.post1
+
+# Re-declare ARGs after FROM so they're available in the build-stage.
+ARG IMAGE_VERSION
+ARG VLLM_BASE_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -75,11 +86,24 @@ ENV HF_HOME=/workspace/hf_cache \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Self-describing version manifest (mirrors training image).
+RUN mkdir -p /opt/ryotenkai && \
+    printf 'ryotenkai-inference-vllm %s\nvllm_base: %s\n' \
+    "${IMAGE_VERSION}" "${VLLM_BASE_VERSION}" \
+    > /opt/ryotenkai/version.txt
+
 EXPOSE 22
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash", "-lc", "tail -f /dev/null"]
 
-LABEL maintainer="ryotenkai"
-LABEL description="Inference runtime (vLLM + merge deps + SSH)"
-LABEL vllm.base="vllm/vllm-openai:v0.6.3.post1"
+# OCI image-spec labels (https://github.com/opencontainers/image-spec).
+# Tools like ``docker inspect``, GitHub Container Registry UI, and
+# Trivy all read these — keep the dependency profile discoverable
+# without unpacking the image.
+LABEL org.opencontainers.image.title="ryotenkai-inference-vllm" \
+      org.opencontainers.image.description="RyotenkAI inference runtime (vLLM + merge deps + SSH)" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.vendor="ryotenkai" \
+      org.opencontainers.image.licenses="proprietary" \
+      ryotenkai.vllm_base="${VLLM_BASE_VERSION}"
