@@ -1,4 +1,4 @@
-from .config import PipelineConfig, Secrets, load_config, load_secrets
+from .config import PipelineConfig, Secrets, load_secrets
 from .container import (
     IMemoryManager,
     TrainingContainer,
@@ -70,7 +70,6 @@ __all__ = [
     "console",
     "err",
     "get_memory_manager",
-    "load_config",
     "load_secrets",
     "logger",
     "ok",

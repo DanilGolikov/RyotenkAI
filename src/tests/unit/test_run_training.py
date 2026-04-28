@@ -257,7 +257,7 @@ class TestRunTrainingFlow:
         container.create_orchestrator.return_value = orchestrator
 
         # Patch module functions
-        monkeypatch.setattr(rt, "load_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "load_pipeline_config", lambda p: cfg)
         monkeypatch.setattr(rt, "_setup_mlflow", lambda c: mlflow_mgr)
         monkeypatch.setattr(rt.EnvironmentReporter, "collect", classmethod(lambda cls=None: env_reporter))
         monkeypatch.setenv("MLFLOW_PARENT_RUN_ID", "parent_123")
@@ -309,7 +309,7 @@ class TestRunTrainingFlow:
         container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
         container.create_orchestrator.return_value = orchestrator
 
-        monkeypatch.setattr(rt, "load_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "load_pipeline_config", lambda p: cfg)
         monkeypatch.setattr(rt, "_setup_mlflow", lambda c: mlflow_mgr)
         monkeypatch.setattr(rt.EnvironmentReporter, "collect", classmethod(lambda cls=None: env_reporter))
 
@@ -355,7 +355,7 @@ class TestRunTrainingFlow:
         container.load_model_and_tokenizer.return_value = (_ModelStub(), object())
         container.create_orchestrator.return_value = orchestrator
 
-        monkeypatch.setattr(rt, "load_config", lambda p: cfg)
+        monkeypatch.setattr(rt, "load_pipeline_config", lambda p: cfg)
         monkeypatch.setattr(rt, "_setup_mlflow", lambda c: None)
         monkeypatch.setattr(rt.EnvironmentReporter, "collect", classmethod(lambda cls=None: env_reporter))
 

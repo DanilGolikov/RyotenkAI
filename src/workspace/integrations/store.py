@@ -84,9 +84,9 @@ class IntegrationStore(WorkspaceStore[IntegrationMetadata, IntegrationConfigVers
     def create(
         self,
         *,
-        id: str,  # noqa: A002 — public API
+        id: str,
         name: str,
-        type: str,  # noqa: A002 — public API
+        type: str,
         description: str = "",
     ) -> IntegrationMetadata:
         if self.exists():

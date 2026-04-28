@@ -59,7 +59,7 @@ class IntegrationRegistry(WorkspaceRegistry[IntegrationRegistryEntry]):
         *,
         integration_id: str,
         name: str,
-        type: str,  # noqa: A002 — public API
+        type: str,
         path: Path,
     ) -> IntegrationRegistryEntry:
         self.validate_id(integration_id)

@@ -48,11 +48,11 @@ from src.training.constants import (
     TRUNCATE_SHA_DISPLAY,
 )
 from src.training.managers.mlflow_manager import MLflowManager
-from src.utils.config import load_config
 from src.utils.container import TrainingContainer
 from src.utils.environment import EnvironmentReporter
 from src.utils.logger import logger
 from src.utils.run_naming import generate_run_name
+from src.workspace.integrations.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from src.utils.config import PipelineConfig
@@ -175,7 +175,7 @@ def run_training(
         except Exception as e:
             logger.warning(f"DEBUG: Failed to inspect config module: {e}")
 
-        config = load_config(Path(config_path))
+        config = load_pipeline_config(Path(config_path))
         strategies = config.training.get_strategy_chain()
 
         logger.info("Training config loaded")

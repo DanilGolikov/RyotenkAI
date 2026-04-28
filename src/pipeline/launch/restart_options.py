@@ -23,7 +23,7 @@ from src.pipeline.launch.restart_rules import compute_restart_points
 from src.pipeline.stages.constants import CANONICAL_STAGE_ORDER
 from src.pipeline.state import PipelineStateStore
 from src.pipeline.state.queries import first_unfinished_stage
-from src.utils.config import load_config
+from src.workspace.integrations.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,7 +80,7 @@ def load_restart_point_options(
 ) -> tuple[Path, list[RestartPointOption]]:
     resolved_run_dir = run_dir.expanduser().resolve()
     resolved_config = resolve_config_path_for_run(resolved_run_dir, config_path)
-    config = load_config(resolved_config)
+    config = load_pipeline_config(resolved_config)
     points = list_restart_points(resolved_run_dir, config)
     return resolved_config, [RestartPointOption(**point) for point in points]
 
@@ -97,7 +97,7 @@ def validate_resume_run(run_dir: Path, config_path: Path | None = None) -> tuple
     resolved_run_dir = run_dir.expanduser().resolve()
     state = PipelineStateStore(resolved_run_dir).load()
     resolved_config = resolve_config_path_for_run(resolved_run_dir, config_path)
-    config = load_config(resolved_config)
+    config = load_pipeline_config(resolved_config)
     config_hashes = compute_config_hashes(config)
 
     if state.model_dataset_config_hash:

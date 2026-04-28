@@ -22,8 +22,8 @@ from src.pipeline.constants import (
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
-from src.pipeline.state import RunContext
 from src.pipeline.launch import LaunchPreparationError, PreparedAttempt
+from src.pipeline.launch.run_lock_guard import RunLockGuard
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import StageNames
 from src.pipeline.state import (
@@ -32,8 +32,8 @@ from src.pipeline.state import (
     PipelineState,
     PipelineStateError,
     PipelineStateStore,
+    RunContext,
 )
-from src.pipeline.launch.run_lock_guard import RunLockGuard
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
@@ -61,60 +61,54 @@ class PipelineOrchestrator:
 
     def __init__(
         self,
-        config_path: Path | None = None,
-        run_directory: Path | None = None,
-        settings: RuntimeSettings | None = None,
         *,
-        config: PipelineConfig | None = None,
+        config: PipelineConfig,
         env: dict[str, str] | None = None,  # noqa: ARG002 — Step 4 will pipe to load_secrets
         metadata: dict[str, Any] | None = None,
+        run_directory: Path | None = None,
+        settings: RuntimeSettings | None = None,
     ):
-        """Initialize the orchestrator.
+        """Initialize the orchestrator from a pre-loaded config.
 
-        Two construction shapes are accepted:
+        Caller (CLI / API / project adapter) loads the YAML via
+        :func:`src.workspace.integrations.loader.load_pipeline_config`
+        — that runs the UX-layer integration resolver and returns a
+        fully-resolved :class:`PipelineConfig` with ``_source_path``
+        set. The orchestrator only consumes the resolved object; it
+        knows nothing about ``integration: <id>`` shorthand or the
+        registry behind it.
 
-        1. **Legacy (positional path)**::
-
-               PipelineOrchestrator(config_path, run_directory=...)
-
-           Bootstrap loads the YAML and resolves integrations.
-
-        2. **Variant 1 (keyword, pre-loaded)**::
-
-               PipelineOrchestrator(
-                   config=already_loaded_pipeline_config,
-                   metadata={"project_id": "X", "actor": "agent:claude"},
-                   env={...},  # Step 4 — explicit env mapping
-               )
-
-           Caller (CLI / API / project adapter) has already invoked
-           :func:`src.utils.config.load_config` to produce a fully-resolved
-           ``PipelineConfig``. ``metadata`` is stamped onto
-           :class:`PipelineState` at fresh-run init and mirrored to MLflow
-           as ``meta.*`` tags by the orchestrator.
-
-        Exactly one of ``{config, config_path}`` must be supplied. Both
-        forms produce identical pipelines — the difference is only WHO
-        loads the config (Variant 1: caller; Legacy: bootstrap).
+        Args:
+            config: Fully-loaded :class:`PipelineConfig` (must have
+                ``_source_path`` set — the loader handles this).
+            env: Explicit env mapping (e.g. ``process_env ∪
+                project_env.json`` from the project adapter). When
+                ``None``, ``load_secrets()`` reads ``os.environ``
+                directly.
+            metadata: Caller-supplied audit / lineage tags. Stamped
+                onto :class:`PipelineState` at fresh-run init and
+                mirrored to MLflow as ``meta.*`` tags. Adapter
+                provides ``project_id`` / ``actor`` /
+                ``config_version_hash`` invariants.
+            run_directory: Optional explicit run dir (resume / restart
+                paths). When ``None`` a fresh dir under
+                ``settings.runs_base_dir`` is created.
+            settings: Optional :class:`RuntimeSettings`. When ``None``,
+                read from env via :func:`load_runtime_settings`. The
+                project adapter overrides this to relocate
+                ``runs_base_dir`` inside ``<project>/runs/``.
 
         Construction is two-phase:
 
-        1. Declare per-run mutable state (run_ctx, _run_lock_guard, etc.) and
-           the AttemptController — its save_fn closes over ``self._state_store``
-           so the controller must exist before anything that might mutate state.
-        2. :meth:`PipelineBootstrap.build` does the heavy wiring (config load,
-           validation, component construction). The frozen result is copied
-           onto ``self.*`` fields to keep backward compatibility with callers
-           that read ``orch.config`` / ``orch.stages`` / etc.
+        1. Declare per-run mutable state (run_ctx, _run_lock_guard, etc.)
+           and the AttemptController — its save_fn closes over
+           ``self._state_store`` so the controller must exist before
+           anything that might mutate state.
+        2. :meth:`PipelineBootstrap.build` does the heavy wiring
+           (validation, component construction). The frozen result is
+           copied onto ``self.*`` fields so callers and tests can read
+           ``orch.config`` / ``orch.stages`` / etc.
         """
-        if (config is None) == (config_path is None):
-            raise ValueError(
-                "PipelineOrchestrator: exactly one of {config, config_path} "
-                "must be supplied (got "
-                f"config={config is not None!r}, "
-                f"config_path={config_path is not None!r})"
-            )
-
         # ----- Phase 1: per-run mutable state + single-writer controller -----
         self.settings: RuntimeSettings = settings or load_runtime_settings()
         # Do not name this attribute `run` — it would shadow
@@ -136,7 +130,6 @@ class PipelineOrchestrator:
 
         # ----- Phase 2: delegate wiring to PipelineBootstrap -----
         bootstrap = PipelineBootstrap.build(
-            config_path=config_path,
             config=config,
             metadata=metadata,
             run_ctx=self.run_ctx,
@@ -538,7 +531,10 @@ class PipelineOrchestrator:
 
 def run_pipeline(config_path: str) -> int:
     """
-    Main entry point for running the pipeline.
+    Developer-convenience entry point (``python -m src.pipeline.orchestrator``).
+
+    The user-facing CLI (``ryotenkai run start``) goes through the
+    project adapter; this helper exists only for ad-hoc debugging.
 
     Args:
         config_path: Path to pipeline configuration file
@@ -546,8 +542,11 @@ def run_pipeline(config_path: str) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
+    from src.workspace.integrations.loader import load_pipeline_config
+
     try:
-        orchestrator = PipelineOrchestrator(Path(config_path))
+        cfg = load_pipeline_config(config_path)
+        orchestrator = PipelineOrchestrator(config=cfg)
         result = orchestrator.run()
 
         if result.is_success():

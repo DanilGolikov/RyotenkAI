@@ -31,7 +31,7 @@ from .integrations import (
     MLflowConfig,
 )
 from .model import ModelConfig
-from .pipeline import PipelineConfig, load_config
+from .pipeline import PipelineConfig
 from .providers.ssh import SSHConfig, SSHConnectSettings
 from .reports import ReportsConfig
 from .runtime import RuntimeSettings, load_runtime_settings
@@ -89,7 +89,6 @@ __all__ = [
     "StrictBaseModel",
     "TrainingConfig",
     "TrainingOnlyConfig",
-    "load_config",
     "load_runtime_settings",
     "load_secrets",
     "validate_strategy_chain",

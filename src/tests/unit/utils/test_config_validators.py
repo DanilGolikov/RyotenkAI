@@ -13,7 +13,7 @@ import pytest
 from pydantic import ValidationError
 from unittest.mock import patch
 
-from src.config.integrations.mlflow import MLflowTrackingRef
+from src.config.integrations.mlflow import MLflowConfig
 from src.utils.config import (
     AdaLoraConfig,
     DatasetConfig,
@@ -119,7 +119,7 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
         },
         providers={},
         experiment_tracking=ExperimentTrackingConfig(
-            mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test-exp")
+            mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test-exp")
         ),
     )
 
@@ -151,7 +151,7 @@ class TestMLflowConfig:
         assert cfg.tracking_uri is None
 
     def test_mlflow_requires_at_least_one_tracking_uri(self) -> None:
-        with pytest.raises(ValidationError, match="At least one of 'tracking_uri' or 'local_tracking_uri' must be set"):
+        with pytest.raises(ValidationError, match="needs either"):
             _ = MLflowConfig(
                 tracking_uri=None,
                 local_tracking_uri=None,

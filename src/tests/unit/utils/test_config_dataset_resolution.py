@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.mlflow import MLflowTrackingRef
+from src.config.integrations.mlflow import MLflowConfig
 from src.utils.config import (
     DatasetConfig,
     ExperimentTrackingConfig,
@@ -110,7 +110,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -125,7 +125,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -140,7 +140,7 @@ class TestGetDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -162,7 +162,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -177,7 +177,7 @@ class TestPrimaryDataset:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -203,7 +203,7 @@ class TestDatasetForStrategy:
             ),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -225,7 +225,7 @@ class TestDatasetForStrategy:
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
             experiment_tracking=ExperimentTrackingConfig(
-                mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
 
@@ -247,7 +247,7 @@ class TestValidateDatasets:
                 ),
                 inference=_inference_cfg_disabled(),
                 experiment_tracking=ExperimentTrackingConfig(
-                    mlflow=MLflowTrackingRef(integration="mlflow-test", experiment_name="test")
+                    mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
                 ),
             )
 

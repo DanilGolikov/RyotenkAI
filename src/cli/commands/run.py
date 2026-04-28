@@ -186,14 +186,10 @@ def _exec_orchestrator(
                 settings=project_settings,
             )
         else:
-            # Anonymous / ad-hoc path. We load the YAML in the CLI
-            # layer (running the integration resolver pass via
-            # ``load_pipeline_config``), then hand a fully-resolved
-            # ``PipelineConfig`` to the orchestrator via the keyword
-            # shape. The legacy positional ``config_path`` shim still
-            # works for callers that haven't migrated, but bypasses
-            # integration resolution — so always prefer the keyword
-            # path when integrations might be referenced.
+            # Anonymous / ad-hoc path. CLI loads the YAML (which runs
+            # the UX-layer integration resolver) and hands a fully-
+            # resolved ``PipelineConfig`` to the orchestrator. There
+            # is no legacy positional path-based constructor anymore.
             assert config is not None
             from src.workspace.integrations.loader import load_pipeline_config
 

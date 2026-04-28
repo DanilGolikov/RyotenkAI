@@ -39,7 +39,7 @@ from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import PipelineContextKeys
 from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-from src.utils.config import load_config, load_secrets
+from src.utils.config import load_secrets
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -99,8 +99,7 @@ class PipelineBootstrap:
     def build(
         cls,
         *,
-        config_path: Path | None = None,
-        config: PipelineConfig | None = None,
+        config: PipelineConfig,
         secrets: Secrets | None = None,
         metadata: dict[str, Any] | None = None,
         run_ctx: RunContext,
@@ -109,15 +108,15 @@ class PipelineBootstrap:
         on_stage_completed: Callable[[str], None],
         on_shutdown_signal: Callable[[str], None],
     ) -> BootstrapResult:
-        """Load + validate config, then wire every collaborator.
+        """Wire every collaborator from a pre-loaded config.
 
-        Accepts either ``config_path`` (legacy: bootstrap loads YAML
-        itself) OR a pre-loaded ``config: PipelineConfig`` (Variant 1
-        boundary: caller has already invoked :func:`load_config` to
-        produce a fully-resolved config).
+        Caller responsibility: load + resolve the YAML via
+        :func:`src.workspace.integrations.loader.load_pipeline_config`
+        (UX layer) before constructing the orchestrator. By the time
+        bootstrap runs, ``config`` is a fully-resolved ``PipelineConfig``
+        with ``_source_path`` set.
 
-        Exactly one of ``{config, config_path}`` must be supplied.
-        Optionally ``secrets`` and ``metadata`` can also be passed in
+        Optionally ``secrets`` and ``metadata`` can be passed in
         pre-built — both have safe defaults (``load_secrets()`` and
         ``{}`` respectively).
 
@@ -127,36 +126,21 @@ class PipelineBootstrap:
         (``on_stage_completed``, ``on_shutdown_signal``) have the same
         requirement — they read/write orchestrator-owned state.
         """
-        if (config is None) == (config_path is None):
-            raise ValueError(
-                "PipelineBootstrap.build: exactly one of {config, config_path} "
-                "must be supplied (got "
-                f"config={config is not None!r}, "
-                f"config_path={config_path is not None!r})"
-            )
-
         logger.info("Initializing Pipeline Orchestrator")
 
-        # Step 1: Load config + secrets, fail-fast validation.
+        # Step 1: Validate the pre-loaded config + load secrets.
         try:
-            if config is None:
-                # Legacy path: bootstrap owns YAML loading + resolution.
-                assert config_path is not None  # narrowed by mutual-exclusion above
-                config = load_config(config_path)
-            else:
-                # Variant 1 path: caller already loaded + resolved. Derive
-                # ``config_path`` from the config's source attribute set
-                # by ``load_config`` so downstream consumers (state_store,
-                # config_drift, etc.) keep working unchanged.
-                source_path = getattr(config, "_source_path", None)
-                if source_path is None:
-                    raise ValueError(
-                        "PipelineBootstrap.build: pre-loaded config has no "
-                        "_source_path; call load_config() instead of "
-                        "constructing PipelineConfig directly, or pass "
-                        "config_path explicitly"
-                    )
-                config_path = source_path
+            source_path = getattr(config, "_source_path", None)
+            if source_path is None:
+                raise ValueError(
+                    "PipelineBootstrap.build: pre-loaded config has no "
+                    "_source_path. Use "
+                    "``src.workspace.integrations.loader.load_pipeline_config(path)`` "
+                    "instead of constructing PipelineConfig directly — that "
+                    "loader stamps _source_path so downstream consumers "
+                    "(state_store, config_drift, …) work."
+                )
+            config_path: Path = source_path
 
             if secrets is None:
                 secrets = load_secrets()

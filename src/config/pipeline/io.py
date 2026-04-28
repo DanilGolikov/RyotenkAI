@@ -6,32 +6,6 @@ from typing import Any, cast
 import yaml
 
 
-def load_config(config_path: str | Path):
-    """Load + validate a pipeline config from YAML.
-
-    Pure: parse YAML → validate via :class:`PipelineConfig` schema →
-    return. **No integration resolution, no registry lookups, no UX
-    concerns.** If your YAML uses ``integration: <id>`` shortcuts,
-    use :func:`src.workspace.integrations.loader.load_pipeline_config`
-    instead — that's the UX-layer entry point that runs the resolver
-    pass before validation.
-
-    Args:
-        config_path: Path to the YAML file.
-
-    Returns:
-        PipelineConfig: validated configuration.
-
-    Raises:
-        FileNotFoundError: config file doesn't exist.
-        ValidationError: config fails Pydantic validation.
-    """
-    # Local imports to avoid import-time cycles.
-    from .schema import PipelineConfig
-
-    return PipelineConfig.from_yaml(config_path)
-
-
 class PipelineIOMixin:
     """
     I/O helpers for PipelineConfig.
@@ -107,5 +81,4 @@ class PipelineIOMixin:
 
 __all__ = [
     "PipelineIOMixin",
-    "load_config",
 ]

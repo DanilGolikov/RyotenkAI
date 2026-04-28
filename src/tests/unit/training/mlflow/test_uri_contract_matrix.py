@@ -244,5 +244,5 @@ class TestCombinatorial:
         assert resolved.runtime_tracking_uri == expected_runtime
 
     def test_blank_tracking_and_local_uri_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="At least one of 'tracking_uri' or 'local_tracking_uri' must be set"):
+        with pytest.raises(ValidationError, match="needs either"):
             _cfg(tracking_uri="   ", local_tracking_uri="   ")

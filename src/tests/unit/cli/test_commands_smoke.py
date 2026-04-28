@@ -106,7 +106,9 @@ def test_dataset_validate_no_validation_plugins(
     fake_cfg = type("Cfg", (), {"datasets": {"d1": FakeDataset()}})()
 
     monkeypatch.setattr(
-        "src.utils.config.load_config", lambda _: fake_cfg, raising=True,
+        "src.workspace.integrations.loader.load_pipeline_config",
+        lambda _: fake_cfg,
+        raising=True,
     )
     config_path = tmp_path / "config.yaml"
     config_path.write_text("model: {}\n", encoding="utf-8")
@@ -224,7 +226,7 @@ def test_run_start_dry_run_succeeds(
     config_path.write_text("model: {}\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "src.utils.config.load_config",
+        "src.workspace.integrations.loader.load_pipeline_config",
         lambda _: type("Cfg", (), {})(),
         raising=True,
     )

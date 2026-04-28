@@ -25,12 +25,15 @@ def _mk_orchestrator(
     secrets: Any,
     stages: list[Any] | None = None,
 ) -> PipelineOrchestrator:
+    # Bootstrap reads ``config._source_path`` to record the canonical
+    # config path on PipelineState — the real ``load_pipeline_config``
+    # helper sets it; tests stamp it on the mock here.
+    config._source_path = config_path
     with (
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
         patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
         patch.object(StageRegistry, "_build_stages", return_value=stages or []),
     ):
-        return PipelineOrchestrator(config_path)
+        return PipelineOrchestrator(config=config)
 
 
 def _mk_config() -> MagicMock:
@@ -627,7 +630,13 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         orch._validation_artifact_mgr.on_dataset_loaded("ds", "/nonexistent", 5, 0)  # must not raise
 
     def test_run_pipeline_exit_codes(self) -> None:
-        with patch("src.pipeline.orchestrator.PipelineOrchestrator") as MockOrch:
+        with (
+            patch("src.pipeline.orchestrator.PipelineOrchestrator") as MockOrch,
+            patch(
+                "src.workspace.integrations.loader.load_pipeline_config",
+                return_value=MagicMock(),
+            ),
+        ):
             inst = MockOrch.return_value
 
             inst.run.return_value = Ok({})

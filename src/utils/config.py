@@ -41,7 +41,6 @@ from src.config import (
     StrictBaseModel,
     TrainingConfig,
     TrainingOnlyConfig,
-    load_config,
     load_secrets,
     validate_strategy_chain,
 )
@@ -82,7 +81,6 @@ __all__ = [
     "StrictBaseModel",
     "TrainingConfig",
     "TrainingOnlyConfig",
-    "load_config",
     "load_secrets",
     "validate_strategy_chain",
 ]
