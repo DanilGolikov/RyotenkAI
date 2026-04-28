@@ -1,9 +1,15 @@
-"""Custom exceptions for integration resolution.
+"""Custom exceptions for integration resolution (UX layer).
 
 Surface targeted, actionable errors when an integration referenced by a
 project YAML cannot be resolved against the Settings → Integrations
 registry. The CLI top-level handler converts these into clean,
 human-readable messages instead of raw Python tracebacks.
+
+These live in the UX layer (``src/workspace/integrations/``) because
+*integration* is a UX/registry concept — the core orchestrator never
+sees these exceptions; they're raised by
+:mod:`src.workspace.integrations.resolver` before the YAML reaches
+core's ``PipelineConfig`` validation.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ class IntegrationResolverError(Exception):
 
 
 class IntegrationNotFoundError(IntegrationResolverError):
-    """The integration id referenced by a project ref is not in the registry.
+    """The integration id referenced by a project YAML is not in the registry.
 
     Example trigger: project YAML declares
     ``experiment_tracking.mlflow.integration: "helixql-mlflow"`` but the

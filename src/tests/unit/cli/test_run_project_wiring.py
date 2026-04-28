@@ -89,11 +89,16 @@ class TestPositive:
     ) -> None:
         config = tmp_path / "x.yaml"
         config.write_text("# stub\n", encoding="utf-8")
+        cfg_obj = MagicMock(name="PipelineConfig")
 
         with (
             patch(
                 "src.workspace.projects.adapter.load_project_inputs",
             ) as load_mock,
+            patch(
+                "src.workspace.integrations.loader.load_pipeline_config",
+                return_value=cfg_obj,
+            ) as cli_loader,
             patch(
                 "src.pipeline.orchestrator.PipelineOrchestrator"
             ) as orch_cls,
@@ -103,10 +108,12 @@ class TestPositive:
             result = runner.invoke(run_app, ["start", "--config", str(config)])
 
         assert result.exit_code == 0, result.output
-        # No adapter call on the anonymous path.
+        # No project adapter call on the anonymous path.
         load_mock.assert_not_called()
-        # Legacy positional shim, not the new keyword shape.
-        assert orch_cls.call_args.args[0] == config
+        # CLI loader was called (with integration-resolution pass).
+        cli_loader.assert_called_once()
+        # Orchestrator gets the keyword shape with the loaded config.
+        assert orch_cls.call_args.kwargs.get("config") is cfg_obj
 
     def test_run_start_config_plus_project_treats_config_as_override(
         self, runner: CliRunner, stub_inputs: ProjectInputs, tmp_path: Path,

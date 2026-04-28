@@ -1,14 +1,15 @@
 """Project-level experiment-tracking block.
 
-PR3 change: legacy inline fields (``tracking_uri``, ``local_tracking_uri``,
-``ca_bundle_path``, ``system_metrics_*``, ``enabled``) are moved to
-Settings → Integrations. The project YAML only references an integration
-by id plus project-local knobs (``experiment_name`` / ``repo_id``).
+Core schema. No UX/registry concepts: by the time a
+``ExperimentTrackingConfig`` is being validated, the
+``integration: <id>`` shorthand has already been expanded inline by
+:func:`src.workspace.integrations.resolver.resolve_yaml_integrations`
+(if it was used). That's why ``mlflow`` is just ``MLflowConfig | None``
+and not the old ``MLflowTrackingRef | MLflowConfig`` Union.
 
-StrictBaseModel already rejects unknown fields (``extra='forbid'``). We
-add a ``model_validator(mode='before')`` that turns that default
-low-signal Pydantic message into a user-friendly migration hint so
-``tracking_uri: …`` on the old path points at the exact solution.
+Legacy guard kept: catastrophic mis-edits to the nested
+``system_metrics:`` block surface as a migration hint instead of the
+generic ``extra_forbidden`` Pydantic error.
 """
 
 from __future__ import annotations
@@ -19,22 +20,7 @@ from pydantic import Field, model_validator
 
 from ..base import StrictBaseModel
 from .huggingface import HuggingFaceHubConfig  # noqa: TC001  — required at runtime for Pydantic
-from .mlflow import MLflowConfig, MLflowTrackingRef  # noqa: TC001, F401
-
-# Legacy fields that used to live at ``experiment_tracking.mlflow.*``
-# (flat path). They were collapsed into the nested
-# ``experiment_tracking.mlflow.system_metrics:`` block; they're still
-# listed here so old YAMLs surface a clear migration hint instead of
-# the generic ``extra_forbidden`` Pydantic error.
-_LEGACY_MLFLOW_KEYS: set[str] = {
-    "tracking_uri",
-    "local_tracking_uri",
-    "ca_bundle_path",
-    "system_metrics_sampling_interval",
-    "system_metrics_samples_before_logging",
-    "system_metrics_callback_enabled",
-    "system_metrics_callback_interval",
-}
+from .mlflow import MLflowConfig  # noqa: TC001  — required at runtime for Pydantic
 
 # Fields that used to live INSIDE the nested
 # ``experiment_tracking.mlflow.system_metrics:`` block but were removed
@@ -55,17 +41,6 @@ _REMOVED_SYSTEM_METRICS_KEYS: set[str] = {
     "callback_interval",
 }
 
-# Legacy fields that used to live at ``experiment_tracking.huggingface.*``.
-_LEGACY_HF_KEYS: set[str] = {"enabled"}
-
-
-_MIGRATION_HINT = (
-    "Migration: move these keys to Settings → Integrations (one shared "
-    "account per team). See docs/migration/integrations.md. Keep only "
-    "``integration`` + ``experiment_name`` on mlflow, ``integration`` + "
-    "``repo_id`` + ``private`` on huggingface."
-)
-
 _SYSTEM_METRICS_REMOVED_HINT = (
     "These fields were removed: native MLflow sampler is no longer "
     "enabled (it bypassed our offline buffer), and the HF Trainer "
@@ -75,52 +50,27 @@ _SYSTEM_METRICS_REMOVED_HINT = (
 
 
 class ExperimentTrackingConfig(StrictBaseModel):
-    """Project-level references to reusable tracking integrations.
+    """Project-level experiment-tracking block.
 
-    ``mlflow`` field accepts two shapes:
-
-    1. :class:`MLflowTrackingRef` — the *project YAML input shape*: an
-       ``integration`` id + project-local fields (``experiment_name``,
-       ``run_description_file``). This is what users write.
-    2. :class:`MLflowConfig` — the *resolved runtime shape*, produced by
-       :func:`src.config.integrations.resolver.resolve_pipeline_config`
-       at config-load time. The resolver merges the project ref with
-       the integration's ``current.yaml`` from
-       ``~/.ryotenkai/integrations/<id>/`` and replaces the ref slot
-       with a fully-populated ``MLflowConfig``.
-
-    Pydantic discriminates by structure: project YAML always parses as
-    ``MLflowTrackingRef`` (legacy inline keys are rejected up-front by
-    :meth:`_reject_legacy_keys`). The ``MLflowConfig`` branch only
-    matters for the runtime mutation done by the resolver.
-
-    Same partition for ``huggingface``; resolver only verifies the
-    referenced integration exists in the registry (no body merge —
-    project ref already carries every project-local field).
+    Both ``mlflow`` and ``huggingface`` are core runtime types — by
+    the time validation runs, the UX-layer resolver has already
+    inlined any ``integration: <id>`` shorthand into the corresponding
+    fields. Pipeline stages read
+    ``cfg.experiment_tracking.mlflow.tracking_uri`` etc. directly.
     """
 
-    mlflow: MLflowTrackingRef | MLflowConfig | None = Field(None)
+    mlflow: MLflowConfig | None = Field(None)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_legacy_keys(cls, data: Any) -> Any:
-        """Turn the generic ``extra_forbidden`` error into a migration hint."""
+    def _reject_removed_system_metrics_keys(cls, data: Any) -> Any:
+        """Targeted migration hint for fields removed from the
+        ``system_metrics:`` block."""
         if not isinstance(data, dict):
             return data
-
         mlflow = data.get("mlflow")
         if isinstance(mlflow, dict):
-            legacy = sorted(set(mlflow.keys()) & _LEGACY_MLFLOW_KEYS)
-            if legacy:
-                raise ValueError(
-                    "experiment_tracking.mlflow no longer accepts "
-                    f"{legacy!r}. These fields moved to Settings → Integrations → "
-                    f"MLflow. {_MIGRATION_HINT}"
-                )
-
-            # Targeted check for fields removed from the nested
-            # ``system_metrics`` block in the second refactor pass.
             sm_block = mlflow.get("system_metrics")
             if isinstance(sm_block, dict):
                 removed = sorted(set(sm_block.keys()) & _REMOVED_SYSTEM_METRICS_KEYS)
@@ -129,25 +79,18 @@ class ExperimentTrackingConfig(StrictBaseModel):
                         "experiment_tracking.mlflow.system_metrics no longer "
                         f"accepts {removed!r}. {_SYSTEM_METRICS_REMOVED_HINT}"
                     )
-
-        hf = data.get("huggingface")
-        if isinstance(hf, dict):
-            legacy = sorted(set(hf.keys()) & _LEGACY_HF_KEYS)
-            if legacy:
-                raise ValueError(
-                    "experiment_tracking.huggingface no longer accepts "
-                    f"{legacy!r}. The enable/disable state is now derived "
-                    f"from the ``integration`` field. {_MIGRATION_HINT}"
-                )
-
         return data
 
     def get_report_to(self) -> list[str]:
         """Get list of trackers for HuggingFace Trainer.
 
-        ``mlflow`` is considered active iff an integration id is set.
+        ``mlflow`` is considered active iff a tracking URI is set (we
+        don't bother distinguishing "user wrote inline" from "resolver
+        inlined" — both end up the same).
         """
-        if self.mlflow is None or not self.mlflow.integration:
+        if self.mlflow is None:
+            return ["none"]
+        if not (self.mlflow.tracking_uri or self.mlflow.local_tracking_uri):
             return ["none"]
         return ["mlflow"]
 

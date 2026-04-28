@@ -87,7 +87,7 @@ class TestPositive:
         cfg = _stub_config()
 
         with patch(
-            "src.workspace.projects.adapter.load_config", return_value=cfg
+            "src.workspace.projects.adapter.load_pipeline_config", return_value=cfg
         ):
             inputs = load_project_inputs("p1", registry=registry)
 
@@ -102,7 +102,7 @@ class TestPositive:
         registry = _make_project(tmp_path, env=None)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -117,7 +117,7 @@ class TestPositive:
         monkeypatch.setenv("USER", "human")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs(
@@ -132,7 +132,7 @@ class TestPositive:
         registry = _make_project(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs(
@@ -155,7 +155,7 @@ class TestPositive:
 
         cfg = _stub_config()
         with patch(
-            "src.workspace.projects.adapter.load_config", return_value=cfg,
+            "src.workspace.projects.adapter.load_pipeline_config", return_value=cfg,
         ) as load_mock:
             inputs = load_project_inputs(
                 "p1", config_override=override, registry=registry,
@@ -232,7 +232,7 @@ class TestNegative:
         store.env_path.write_text("{not: valid json", encoding="utf-8")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ), pytest.raises(ProjectStoreError):
             load_project_inputs("p1", registry=registry)
@@ -250,7 +250,7 @@ class TestBoundary:
         store.env_path.write_text("{}", encoding="utf-8")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -261,7 +261,7 @@ class TestBoundary:
         registry = _make_project(tmp_path, env={"GREETING": "héllo wörld"})
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -277,7 +277,7 @@ class TestBoundary:
         monkeypatch.delenv("USERNAME", raising=False)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -295,7 +295,7 @@ class TestBoundary:
         monkeypatch.chdir(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ) as load_mock:
             inputs = load_project_inputs(
@@ -326,7 +326,7 @@ class TestInvariants:
         registry = _make_project(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -343,7 +343,7 @@ class TestInvariants:
         registry = _make_project(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs(
@@ -368,7 +368,7 @@ class TestInvariants:
         registry = _make_project(tmp_path, config_yaml="model:\n  name: stable\n")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs1 = load_project_inputs("p1", registry=registry)
@@ -387,7 +387,7 @@ class TestInvariants:
         registry = _make_project(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -404,7 +404,7 @@ class TestInvariants:
         registry = _make_project(tmp_path, env={"KEY": "v"})
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -434,7 +434,7 @@ class TestLogicSpecific:
         override.write_text("# experimental\n", encoding="utf-8")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs(
@@ -457,7 +457,7 @@ class TestLogicSpecific:
         monkeypatch.setenv("USER", "user-os")
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             # Explicit wins.
@@ -477,12 +477,12 @@ class TestLogicSpecific:
         """When ``load_config`` raises (integration not registered), the
         adapter doesn't swallow it — the CLI's top-level handler
         renders a clean ``die``."""
-        from src.config.integrations.exceptions import IntegrationNotFoundError
+        from src.workspace.integrations.exceptions import IntegrationNotFoundError
 
         registry = _make_project(tmp_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             side_effect=IntegrationNotFoundError(
                 integration_id="missing-mlflow",
                 integration_type="mlflow",
@@ -513,7 +513,7 @@ class TestRegression:
         registry.register(project_id="p1", name="P1", path=project_path)
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             # No ``registry=`` kwarg → adapter constructs default.
@@ -537,7 +537,7 @@ class TestRegression:
         )
 
         with patch(
-            "src.workspace.projects.adapter.load_config",
+            "src.workspace.projects.adapter.load_pipeline_config",
             return_value=_stub_config(),
         ):
             inputs = load_project_inputs("p1", registry=registry)
@@ -585,7 +585,7 @@ def test_combinatorial_load_paths(
         override.write_text("# ov\n", encoding="utf-8")
 
     with patch(
-        "src.workspace.projects.adapter.load_config",
+        "src.workspace.projects.adapter.load_pipeline_config",
         return_value=_stub_config(),
     ):
         if expects_inputs:

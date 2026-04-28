@@ -93,10 +93,10 @@ def _exec_orchestrator(
     integration that's not registered or has an empty/invalid
     ``current.yaml``) and project-not-found surface as clean CLI errors
     rather than raw Python tracebacks — see
-    :mod:`src.config.integrations.exceptions` and
+    :mod:`src.workspace.integrations.exceptions` and
     :mod:`src.workspace.projects.adapter`.
     """
-    from src.config.integrations.exceptions import (
+    from src.workspace.integrations.exceptions import (
         IntegrationNotFoundError,
         IntegrationUnresolvedError,
     )
@@ -140,10 +140,10 @@ def _exec_orchestrator(
         # Legacy ad-hoc path — resolve_config above guarantees config
         # is set on this branch.
         assert config is not None
-        from src.utils.config import load_config
+        from src.workspace.integrations.loader import load_pipeline_config
 
         try:
-            load_config(config)
+            load_pipeline_config(config)
         except IntegrationNotFoundError as exc:
             raise die(
                 str(exc),
@@ -186,10 +186,21 @@ def _exec_orchestrator(
                 settings=project_settings,
             )
         else:
-            # Anonymous / ad-hoc path: legacy back-compat shim. The
-            # constructor loads the YAML itself.
+            # Anonymous / ad-hoc path. We load the YAML in the CLI
+            # layer (running the integration resolver pass via
+            # ``load_pipeline_config``), then hand a fully-resolved
+            # ``PipelineConfig`` to the orchestrator via the keyword
+            # shape. The legacy positional ``config_path`` shim still
+            # works for callers that haven't migrated, but bypasses
+            # integration resolution — so always prefer the keyword
+            # path when integrations might be referenced.
             assert config is not None
-            orchestrator = PipelineOrchestrator(config, run_directory=run_dir)
+            from src.workspace.integrations.loader import load_pipeline_config
+
+            cfg_obj = load_pipeline_config(config)
+            orchestrator = PipelineOrchestrator(
+                config=cfg_obj, run_directory=run_dir,
+            )
     except IntegrationNotFoundError as exc:
         raise die(
             str(exc),

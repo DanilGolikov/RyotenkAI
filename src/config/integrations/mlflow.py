@@ -1,28 +1,23 @@
-"""Project-scoped MLflow reference + resolved runtime view.
+"""Core MLflow runtime config.
 
-Starting with PR3, ``experiment_tracking.mlflow`` in the project YAML is
-a *reference* to a reusable integration managed in Settings → Integrations.
-Only fields that are truly project-local stay inline:
+This module is **core schema only** — no knowledge of integrations
+(the registry that lives at ``~/.ryotenkai/integrations/``), no
+resolver, no UX-layer types.
 
-- ``integration``: id of the integration that carries tracking URI,
-  token, system-metrics knobs.
-- ``experiment_name``: project's experiment name inside that tracker.
-- ``run_description_file``: optional path to a run description .md file.
+Project YAMLs may use the convenience shorthand
+``experiment_tracking.mlflow.integration: <id>`` to pull values from a
+saved Settings integration. That substitution happens **before**
+core validation, in
+:func:`src.workspace.integrations.resolver.resolve_yaml_integrations`
+— by the time a ``MLflowConfig`` instance is constructed, the
+``integration`` reference has been expanded into the corresponding
+``tracking_uri`` / ``local_tracking_uri`` / ``ca_bundle_path`` fields.
 
-All other MLflow knobs live on the integration side
-(``MLflowIntegrationConfig`` in ``mlflow_integration.py``) so multiple
-projects can share a single tracker account.
-
-``MLflowConfig`` remains as the **resolved runtime type** (project ref +
-integration config merged) for backend code that reads
-``config.experiment_tracking.mlflow``. The resolver in
-``src/config/integrations/resolver.py`` produces it at config-load time;
-pipeline stages keep reading ``cfg.experiment_tracking.mlflow.tracking_uri``
-as they did before.
-
-Legacy YAML — `tracking_uri` etc. declared directly under
-`experiment_tracking.mlflow` — is rejected with a user-friendly error;
-see ``ExperimentTrackingConfig._reject_legacy_keys``.
+The ``integration`` field on this model is deliberately retained as
+an optional **secrets-tag**: pipeline stages call
+``secrets.get_hf_token(cfg.integration)`` etc. to look up encrypted
+tokens stored under the integration's workspace. That's runtime
+semantics, not a UX-registry pointer.
 """
 
 from __future__ import annotations
@@ -33,50 +28,13 @@ from ..base import StrictBaseModel
 from .system_metrics import SystemMetricsConfig
 
 
-class MLflowTrackingRef(StrictBaseModel):
-    """Project-scoped reference to a Settings MLflow integration."""
-
-    integration: str | None = Field(
-        None,
-        description=(
-            "Id of the MLflow integration in Settings → Integrations. "
-            "When empty, MLflow tracking is disabled for this project."
-        ),
-    )
-    experiment_name: str | None = Field(
-        None,
-        description="MLflow experiment name inside the selected tracker.",
-    )
-    run_description_file: str | None = Field(
-        None,
-        description="Optional path to a run description .md file.",
-    )
-
-    @field_validator("integration", "experiment_name", "run_description_file", mode="before")
-    @classmethod
-    def _normalize(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        normalized = str(value).strip()
-        return normalized or None
-
-    @model_validator(mode="after")
-    def _require_experiment_when_integration_set(self) -> MLflowTrackingRef:
-        if self.integration and not self.experiment_name:
-            raise ValueError(
-                "experiment_tracking.mlflow.experiment_name is required when "
-                "experiment_tracking.mlflow.integration is set."
-            )
-        return self
-
-
 class MLflowConfig(StrictBaseModel):
-    """Resolved MLflow runtime view (project ref + integration).
+    """Runtime view of an MLflow tracker for a single project.
 
-    Produced by the resolver at config-load time. Runtime code reads this
-    object unchanged — ``tracking_uri`` / ``ca_bundle_path`` / system-metrics
-    knobs come from the integration; ``experiment_name`` /
-    ``run_description_file`` stay from the project.
+    Either ``tracking_uri`` or ``local_tracking_uri`` must be set;
+    project YAMLs typically inherit them via the
+    ``integration: <id>`` shorthand which the UX-layer resolver
+    expands inline before this class is validated.
     """
 
     tracking_uri: str | None = Field(None)
@@ -85,9 +43,23 @@ class MLflowConfig(StrictBaseModel):
     experiment_name: str = Field(..., description="MLflow experiment name")
     run_description_file: str | None = Field(None)
 
-    # Phase 14 follow-up — was four flat ``system_metrics_*`` fields,
-    # collapsed into a single nested block with hardcoded defaults
-    # (see :class:`SystemMetricsConfig` for the per-knob defaults).
+    # Optional secrets-tag — set by the UX-layer resolver when the
+    # YAML used the ``integration:`` shorthand. Runtime code reads
+    # this to look up the integration's encrypted token. Not the same
+    # thing as a UX entity reference; by the time core sees this, the
+    # tracking_uri / local_tracking_uri / ca_bundle_path have already
+    # been inlined.
+    integration: str | None = Field(
+        None,
+        description=(
+            "Identifier under ``~/.ryotenkai/integrations/<id>/`` for "
+            "secrets lookup (read by ``secrets.get_provider_token``). "
+            "Set automatically by the UX resolver when a project YAML "
+            "uses the ``integration: <id>`` shorthand; users do not "
+            "typically write this field directly."
+        ),
+    )
+
     system_metrics: SystemMetricsConfig = Field(
         default_factory=SystemMetricsConfig,
         description=(
@@ -100,25 +72,29 @@ class MLflowConfig(StrictBaseModel):
         "tracking_uri",
         "local_tracking_uri",
         "ca_bundle_path",
+        "integration",
+        "run_description_file",
         mode="before",
     )
     @classmethod
     def _normalize_optional_strings(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        normalized = value.strip()
+        normalized = str(value).strip()
         return normalized or None
 
     @model_validator(mode="after")
     def _run_model_validators(self) -> MLflowConfig:
         if not (self.tracking_uri or self.local_tracking_uri):
             raise ValueError(
-                "At least one of 'tracking_uri' or 'local_tracking_uri' must be set for MLflow"
+                "experiment_tracking.mlflow needs either ``tracking_uri`` "
+                "or ``local_tracking_uri``. Tip: use the ``integration: "
+                "<id>`` shorthand to inherit them from a saved Settings "
+                "integration."
             )
         return self
 
 
 __all__ = [
     "MLflowConfig",
-    "MLflowTrackingRef",
 ]

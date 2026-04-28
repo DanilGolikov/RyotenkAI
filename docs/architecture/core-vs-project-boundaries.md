@@ -132,7 +132,54 @@ The orchestrator forwards every key in ``metadata`` to MLflow as a
 tag under the ``meta.`` prefix (e.g. ``meta.project_id``,
 ``meta.actor``). Truncation kicks in at MLflow's 5000-char limit.
 
-### 2.4. Secrets layer — `load_secrets(env=...)`
+### 2.4. Integration resolver — `resolve_yaml_integrations(raw)`
+
+```python
+# src/workspace/integrations/resolver.py
+def resolve_yaml_integrations(
+    raw: dict,
+    *,
+    registry: IntegrationRegistry | None = None,
+) -> dict: ...
+
+# src/workspace/integrations/loader.py
+def load_pipeline_config(path: Path) -> PipelineConfig: ...
+```
+
+Project YAMLs use the convenience shorthand
+``experiment_tracking.mlflow.integration: <id>`` to pull the
+tracking URI / TLS bundle / system-metrics knobs from a saved
+Settings integration. That substitution is a **UX-layer concern** —
+it happens BEFORE the YAML reaches core's
+:class:`PipelineConfig` validation. Core schema knows nothing about
+``~/.ryotenkai/integrations/``.
+
+Workflow:
+
+```
+yaml.safe_load(path)              ← raw dict
+  └→ resolve_yaml_integrations    ← UX layer: inline integration values
+       └→ PipelineConfig(**dict)  ← core: pure validation
+```
+
+Merge policy: integration provides defaults, project-side keys win
+on conflict. The ``integration:`` field is preserved as a
+**secrets-tag** in the resulting dict so runtime code can call
+``secrets.get_provider_token(cfg.integration)``.
+
+The two errors raised here are caught by the CLI top-level handler
+and rendered as clean ``die()`` messages:
+- ``IntegrationNotFoundError`` — id not in registry
+- ``IntegrationUnresolvedError`` — found but unfit (empty
+  ``current.yaml``, schema mismatch, type mismatch)
+
+Use ``load_pipeline_config(path)`` (UX-layer convenience) to do
+``yaml.safe_load → resolve → validate`` in one call. CLI's
+anonymous and project paths both go through it; legacy core
+``load_config(path)`` stays as a pure parse-and-validate helper for
+callers that don't use integration shortcuts.
+
+### 2.5. Secrets layer — `load_secrets(env=...)`
 
 ```python
 def load_secrets(

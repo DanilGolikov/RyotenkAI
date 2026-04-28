@@ -17,7 +17,7 @@ Filesystem layout consumed::
 
     ~/.ryotenkai/projects/<id>/
       project.json          # registry-backed; NOT read here
-      configs/current.yaml  # → loaded via load_config (incl. resolver)
+      configs/current.yaml  # → loaded via load_pipeline_config (resolves integrations)
       env.json              # → ProjectStore.read_env() → adapter env
 
 The adapter is pure: no env mutation, no orchestrator construction, no
@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.utils.config import load_config
+from src.workspace.integrations.loader import load_pipeline_config
 from src.workspace.projects.registry import (
     ProjectRegistry,
     ProjectRegistryError,
@@ -134,8 +134,8 @@ def load_project_inputs(
             its directory is missing on disk.
         ProjectStoreError: ``env.json`` malformed (bubbled unchanged).
         IntegrationNotFoundError / IntegrationUnresolvedError: from
-            :func:`load_config` when the project's YAML references an
-            unregistered integration.
+            :func:`load_pipeline_config` when the project's YAML
+            references an unregistered integration.
     """
     reg = registry if registry is not None else ProjectRegistry()
     try:
@@ -170,12 +170,13 @@ def load_project_inputs(
             ),
         )
 
-    # ``load_config`` runs the integration resolver internally (Step 1),
-    # so the returned ``PipelineConfig`` has every ref already resolved.
+    # ``load_pipeline_config`` runs the UX-layer integration resolver
+    # before Pydantic validation, so the returned ``PipelineConfig``
+    # has every ``integration: <id>`` shorthand inlined.
     # ``IntegrationNotFoundError`` / ``IntegrationUnresolvedError``
     # surface to the caller — the CLI layer's top-level handler
     # renders them as clean ``die()`` errors.
-    config = load_config(config_path)
+    config = load_pipeline_config(config_path)
 
     # ProjectStore.read_env raises ProjectStoreError when env.json is
     # malformed; let that surface — caller renders it cleanly.
