@@ -18,8 +18,14 @@ import os
 from typing import Final
 
 # Bumped in lock-step with the docker image published by
-# ``docker/training/build_and_push.sh``.
-_DEFAULT_RUNTIME_IMAGE: Final[str] = "ryotenkai/training-runtime:v0.1.0-runner"
+# ``docker/training/build_and_push.sh``. The publisher names the
+# repo ``${DOCKER_USERNAME}/ryotenkai-training-runtime``; with our
+# Docker Hub user ``ryotenkai`` that resolves to the doubled-prefix
+# path below — kept as-is to match the publish script and avoid a
+# rename round-trip on Docker Hub.
+_DEFAULT_RUNTIME_IMAGE: Final[str] = (
+    "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+)
 
 
 def _resolve_runtime_image() -> str:
