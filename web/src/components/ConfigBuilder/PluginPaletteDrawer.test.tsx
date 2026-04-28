@@ -37,6 +37,7 @@ function manifest(
     description: '',
     category: '',
     stability: 'stable',
+    author: '',
     kind,
     supported_strategies: [],
     params_schema: {},

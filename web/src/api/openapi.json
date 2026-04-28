@@ -1395,6 +1395,60 @@
         }
       }
     },
+    "/api/v1/runs/{run_id}/resume-pod": {
+      "post": {
+        "tags": [
+          "launch"
+        ],
+        "summary": "Resume Pod",
+        "description": "Phase 11.C-2 — wake a sleeping pod for the given run.\n\nWeb UI's \"Resume\" button calls this BEFORE re-launching the\npipeline. Idempotent — pod already RUNNING returns success\nwithout any GraphQL round-trip on the wake side.\n\nResponse shape:\n\n* ``availability`` — final :class:`PodAvailability` enum value.\n* ``ok`` — true iff the pod is in ``RUNNING`` state after this\n  call (either was already running, or wake succeeded).\n* ``message`` — human-readable detail for UI display.\n\nStatus codes:\n\n* ``200`` — service ran cleanly. Inspect ``ok`` field for the\n  verdict; failure modes (capacity exhausted, GONE pod) come\n  back with ``200 ok=false`` so the UI can render a meaningful\n  error rather than a generic 5xx.",
+        "operationId": "launch-resume_pod",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      }
+                    ]
+                  },
+                  "title": "Response Launch-Resume Pod"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/reports/defaults": {
       "get": {
         "tags": [
@@ -2149,6 +2203,81 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/runs": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List Runs",
+        "description": "List runs the project has launched, newest-first.\n\nReads ``<project>/runs/index.json`` (the append-only ledger\npopulated by ``register_run``) and surfaces it for the frontend's\nRuns tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an\nempty list when no runs have been launched yet — that's the\nexpected steady-state for a brand new project, not an error.",
+        "operationId": "projects-list_runs",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectRunsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/providers/types": {
       "get": {
         "tags": [
@@ -2753,6 +2882,335 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/job/status": {
+      "get": {
+        "tags": [
+          "job"
+        ],
+        "summary": "Get Status",
+        "description": "Return submission metadata + current FSM snapshot.",
+        "operationId": "job-get_status",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "attempt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attempt"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Job-Get Status"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/job/events": {
+      "get": {
+        "tags": [
+          "job"
+        ],
+        "summary": "Get Events",
+        "description": "Return up to ``limit`` events with ``offset >= since``.\n\nBounded — the UI polls every couple of seconds and only needs\nthe slice since its last cursor; capping at 2000 prevents a\npathological ``since=0`` request from saturating the WS replay\nwhen the buffer is full.",
+        "operationId": "job-get_events",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "attempt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attempt"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Since"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Job-Get Events"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/job/logs": {
+      "get": {
+        "tags": [
+          "job"
+        ],
+        "summary": "Get Logs",
+        "description": "Return up to ``limit`` ``trainer_log`` events with ``offset >= since``.\n\nThe trainer subprocess pipes its stdout / stderr through the\nrunner's :class:`Supervisor`, which emits each line as a\n``trainer_log`` event with ``payload={\"kind\": \"stdout\"|\"stderr\",\n\"line\": \"...\"}``. This endpoint surfaces those events as the\nfile-tail fallback for cases when the structured event callback\n(``RunnerEventCallback``) self-disabled — the supervisor pump\nhas no opt-out, so every line of trainer output is observable.\n\nSame partial-failure shape as ``/events``: a transient WebSocket\nfailure mid-stream returns whatever was captured plus a\nstructured ``error`` so the polling UI keeps the cursor and\nretries on the next tick.",
+        "operationId": "job-get_logs",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "attempt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attempt"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Since"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "stream",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter to ``stdout`` and/or ``stderr``.",
+              "default": [
+                "stdout",
+                "stderr"
+              ],
+              "title": "Stream"
+            },
+            "description": "Filter to ``stdout`` and/or ``stderr``."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Job-Get Logs"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/runs/{run_id}/job/stop": {
+      "post": {
+        "tags": [
+          "job"
+        ],
+        "summary": "Stop Job",
+        "description": "Forward a graceful-stop request to the runner.",
+        "operationId": "job-stop_job",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "attempt",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Attempt"
+            }
+          },
+          {
+            "name": "grace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grace"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Job-Stop Job"
                 }
               }
             }
@@ -4179,6 +4637,26 @@
         ],
         "title": "LaunchResponse"
       },
+      "LibRequirement": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "LibRequirement",
+        "description": "A plugin's declared dependency on a community/libs/<name>/ package.\n\nSymmetric with :class:`RequiredEnvSpec` (top-level\n``[[lib_requirements]]`` blocks in the plugin's ``manifest.toml``).\nEach entry pins a *name* (which must match a real lib folder under\n``community/libs/``) and an optional PEP 440 specifier:\n\n.. code-block:: toml\n\n    [[lib_requirements]]\n    name = \"helixql\"\n    version = \">=1.0.0,<2.0.0\"\n\nAn empty ``version`` means \"any version\" — the loader still checks\nthat the lib *exists*, just doesn't constrain its version."
+      },
       "LineageRefSchema": {
         "properties": {
           "attempt_id": {
@@ -4471,7 +4949,7 @@
           "schema_version": {
             "type": "integer",
             "title": "Schema Version",
-            "default": 4
+            "default": 5
           },
           "id": {
             "type": "string",
@@ -4518,6 +4996,11 @@
             "type": "array",
             "title": "Supported Strategies"
           },
+          "author": {
+            "type": "string",
+            "title": "Author",
+            "default": ""
+          },
           "params_schema": {
             "additionalProperties": true,
             "type": "object",
@@ -4544,6 +5027,13 @@
             },
             "type": "array",
             "title": "Required Env"
+          },
+          "lib_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/LibRequirement"
+            },
+            "type": "array",
+            "title": "Lib Requirements"
           }
         },
         "type": "object",
@@ -4991,6 +5481,99 @@
         "type": "object",
         "title": "ProjectEnvResponse",
         "description": "Project-scoped environment overrides (``HF_TOKEN`` & friends)."
+      },
+      "ProjectRunEntry": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "mlflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mlflow Run Id"
+          },
+          "config_version_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Version Hash"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "run_directory": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Directory"
+          }
+        },
+        "type": "object",
+        "required": [
+          "run_id",
+          "started_at",
+          "status"
+        ],
+        "title": "ProjectRunEntry",
+        "description": "One row in a project's launched-run ledger.\n\nMirrors the JSON shape written to\n``<project>/runs/index.json`` by\n:meth:`src.workspace.projects.store.ProjectStore.register_run`. Only\n``run_id`` / ``started_at`` / ``status`` are required — the rest\nare optional breadcrumbs used by the UI when present."
+      },
+      "ProjectRunsResponse": {
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectRunEntry"
+            },
+            "type": "array",
+            "title": "Runs",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "ProjectRunsResponse"
       },
       "ProjectSummary": {
         "properties": {
@@ -5597,6 +6180,17 @@
               }
             ],
             "title": "Lock Pid"
+          },
+          "pod_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pod Status"
           }
         },
         "type": "object",
@@ -5721,6 +6315,17 @@
             "type": "string",
             "title": "Group",
             "default": "(root)"
+          },
+          "pod_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pod Status"
           }
         },
         "type": "object",

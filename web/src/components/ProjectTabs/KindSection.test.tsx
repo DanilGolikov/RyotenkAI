@@ -30,6 +30,7 @@ function manifest(id: string, overrides: Partial<PluginManifest> = {}): PluginMa
     description: '',
     category: '',
     stability: 'stable',
+    author: '',
     kind: 'validation',
     supported_strategies: [],
     params_schema: {},

@@ -8,6 +8,7 @@ import type {
   ConfigValidationResult,
   CreateProjectRequest,
   ProjectDetail,
+  ProjectRunsResponse,
   ProjectSummary,
   SaveConfigResponse,
 } from '../types'
@@ -167,6 +168,38 @@ export function useDeleteProject() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.projects() }),
   })
 }
+
+/**
+ * Fetch the project's launched-run ledger from
+ * ``GET /projects/{id}/runs`` (Step 6 of Variant 1). The endpoint
+ * surfaces ``<project>/runs/index.json`` newest-first.
+ *
+ * Pass ``status`` to filter (e.g. ``"running"`` / ``"completed"``) and
+ * ``limit`` to cap the number of returned rows. The hook polls every
+ * 5 s by default so the Runs tab reflects new launches without manual
+ * refresh — adjust via the React Query devtools when debugging.
+ */
+export function useProjectRuns(
+  projectId: string | undefined,
+  options: { status?: string; limit?: number } = {},
+) {
+  const params = new URLSearchParams()
+  if (options.status) params.set('status', options.status)
+  if (options.limit !== undefined) params.set('limit', String(options.limit))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return useQuery({
+    queryKey: projectId
+      ? qk.projectRuns(projectId, options)
+      : ['projects', 'runs', 'disabled'],
+    queryFn: () =>
+      api.get<ProjectRunsResponse>(
+        `/projects/${encodeURIComponent(projectId!)}/runs${suffix}`,
+      ),
+    enabled: !!projectId,
+    refetchInterval: 5_000,
+  })
+}
+
 
 export function useToggleFavoriteVersion(projectId: string) {
   const qc = useQueryClient()

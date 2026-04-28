@@ -106,6 +106,11 @@ export type CreateProjectRequest = S['CreateProjectRequest']
 export type SaveConfigRequest = S['SaveConfigRequest']
 export type SaveConfigResponse = S['SaveConfigResponse']
 
+/** One row in the project's launched-run ledger (Step 6 of Variant 1).
+ *  Mirrors the JSON shape written to ``<project>/runs/index.json``. */
+export type ProjectRunEntry = S['ProjectRunEntry']
+export type ProjectRunsResponse = S['ProjectRunsResponse']
+
 /** One plugin reference in the saved config that no longer matches a
  *  registered community plugin. The Datasets / Plugins tabs use this
  *  to render a "Remove from config" button per stale row instead of

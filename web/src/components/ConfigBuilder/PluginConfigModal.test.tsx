@@ -38,6 +38,7 @@ function manifest(
     description: 'Does demo things.',
     category: '',
     stability: 'stable',
+    author: '',
     kind: 'evaluation',
     supported_strategies: [],
     params_schema: {},

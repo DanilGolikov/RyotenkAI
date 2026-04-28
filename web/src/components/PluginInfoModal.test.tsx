@@ -28,6 +28,7 @@ function manifest(overrides: Partial<PluginManifest> = {}): PluginManifest {
     description: 'Does demo things.',
     category: 'basic',
     stability: 'stable',
+    author: '',
     kind: 'evaluation',
     supported_strategies: [],
     params_schema: {},

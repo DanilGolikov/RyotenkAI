@@ -490,6 +490,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runs/{run_id}/resume-pod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Pod
+         * @description Phase 11.C-2 — wake a sleeping pod for the given run.
+         *
+         *     Web UI's "Resume" button calls this BEFORE re-launching the
+         *     pipeline. Idempotent — pod already RUNNING returns success
+         *     without any GraphQL round-trip on the wake side.
+         *
+         *     Response shape:
+         *
+         *     * ``availability`` — final :class:`PodAvailability` enum value.
+         *     * ``ok`` — true iff the pod is in ``RUNNING`` state after this
+         *       call (either was already running, or wake succeeded).
+         *     * ``message`` — human-readable detail for UI display.
+         *
+         *     Status codes:
+         *
+         *     * ``200`` — service ran cleanly. Inspect ``ok`` field for the
+         *       verdict; failure modes (capacity exhausted, GONE pod) come
+         *       back with ``200 ok=false`` so the UI can render a meaningful
+         *       error rather than a generic 5xx.
+         */
+        post: operations["launch-resume_pod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plugins/reports/defaults": {
         parameters: {
             query?: never;
@@ -734,6 +772,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description List runs the project has launched, newest-first.
+         *
+         *     Reads ``<project>/runs/index.json`` (the append-only ledger
+         *     populated by ``register_run``) and surfaces it for the frontend's
+         *     Runs tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an
+         *     empty list when no runs have been launched yet — that's the
+         *     expected steady-state for a brand new project, not an error.
+         */
+        get: operations["projects-list_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/providers/types": {
         parameters: {
             query?: never;
@@ -922,6 +986,104 @@ export interface paths {
         get: operations["reports-get_report"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/job/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Return submission metadata + current FSM snapshot.
+         */
+        get: operations["job-get_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/job/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Events
+         * @description Return up to ``limit`` events with ``offset >= since``.
+         *
+         *     Bounded — the UI polls every couple of seconds and only needs
+         *     the slice since its last cursor; capping at 2000 prevents a
+         *     pathological ``since=0`` request from saturating the WS replay
+         *     when the buffer is full.
+         */
+        get: operations["job-get_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/job/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Logs
+         * @description Return up to ``limit`` ``trainer_log`` events with ``offset >= since``.
+         *
+         *     The trainer subprocess pipes its stdout / stderr through the
+         *     runner's :class:`Supervisor`, which emits each line as a
+         *     ``trainer_log`` event with ``payload={"kind": "stdout"|"stderr",
+         *     "line": "..."}``. This endpoint surfaces those events as the
+         *     file-tail fallback for cases when the structured event callback
+         *     (``RunnerEventCallback``) self-disabled — the supervisor pump
+         *     has no opt-out, so every line of trainer output is observable.
+         *
+         *     Same partial-failure shape as ``/events``: a transient WebSocket
+         *     failure mid-stream returns whatever was captured plus a
+         *     structured ``error`` so the polling UI keeps the cursor and
+         *     retries on the next tick.
+         */
+        get: operations["job-get_logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runs/{run_id}/job/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop Job
+         * @description Forward a graceful-stop request to the runner.
+         */
+        post: operations["job-stop_job"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1492,6 +1654,33 @@ export interface components {
             /** Run Dir */
             run_dir: string;
         };
+        /**
+         * LibRequirement
+         * @description A plugin's declared dependency on a community/libs/<name>/ package.
+         *
+         *     Symmetric with :class:`RequiredEnvSpec` (top-level
+         *     ``[[lib_requirements]]`` blocks in the plugin's ``manifest.toml``).
+         *     Each entry pins a *name* (which must match a real lib folder under
+         *     ``community/libs/``) and an optional PEP 440 specifier:
+         *
+         *     .. code-block:: toml
+         *
+         *         [[lib_requirements]]
+         *         name = "helixql"
+         *         version = ">=1.0.0,<2.0.0"
+         *
+         *     An empty ``version`` means "any version" — the loader still checks
+         *     that the lib *exists*, just doesn't constrain its version.
+         */
+        LibRequirement: {
+            /** Name */
+            name: string;
+            /**
+             * Version
+             * @default
+             */
+            version: string;
+        };
         /** LineageRefSchema */
         LineageRefSchema: {
             /** Attempt Id */
@@ -1634,7 +1823,7 @@ export interface components {
         PluginManifest: {
             /**
              * Schema Version
-             * @default 4
+             * @default 5
              */
             schema_version: number;
             /** Id */
@@ -1668,6 +1857,11 @@ export interface components {
             kind: "reward" | "validation" | "evaluation" | "reports";
             /** Supported Strategies */
             supported_strategies?: string[];
+            /**
+             * Author
+             * @default
+             */
+            author: string;
             /** Params Schema */
             params_schema?: {
                 [key: string]: unknown;
@@ -1686,6 +1880,8 @@ export interface components {
             };
             /** Required Env */
             required_env?: components["schemas"]["RequiredEnvSpec"][];
+            /** Lib Requirements */
+            lib_requirements?: components["schemas"]["LibRequirement"][];
         };
         /** PluginRunPayload */
         PluginRunPayload: {
@@ -1895,6 +2091,42 @@ export interface components {
             env: {
                 [key: string]: string;
             };
+        };
+        /**
+         * ProjectRunEntry
+         * @description One row in a project's launched-run ledger.
+         *
+         *     Mirrors the JSON shape written to
+         *     ``<project>/runs/index.json`` by
+         *     :meth:`src.workspace.projects.store.ProjectStore.register_run`. Only
+         *     ``run_id`` / ``started_at`` / ``status`` are required — the rest
+         *     are optional breadcrumbs used by the UI when present.
+         */
+        ProjectRunEntry: {
+            /** Run Id */
+            run_id: string;
+            /** Started At */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Mlflow Run Id */
+            mlflow_run_id?: string | null;
+            /** Config Version Hash */
+            config_version_hash?: string | null;
+            /** Actor */
+            actor?: string | null;
+            /** Run Directory */
+            run_directory?: string | null;
+        };
+        /** ProjectRunsResponse */
+        ProjectRunsResponse: {
+            /**
+             * Runs
+             * @default []
+             */
+            runs: components["schemas"]["ProjectRunEntry"][];
         };
         /** ProjectSummary */
         ProjectSummary: {
@@ -3323,6 +3555,39 @@ export interface operations {
             };
         };
     };
+    "launch-resume_pod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "plugins-get_report_defaults": {
         parameters: {
             query?: never;
@@ -3855,6 +4120,40 @@ export interface operations {
             };
         };
     };
+    "projects-list_runs": {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRunsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "providers-list_types": {
         parameters: {
             query?: never;
@@ -4297,6 +4596,153 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "job-get_status": {
+        parameters: {
+            query?: {
+                attempt?: number | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "job-get_events": {
+        parameters: {
+            query?: {
+                attempt?: number | null;
+                since?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "job-get_logs": {
+        parameters: {
+            query?: {
+                attempt?: number | null;
+                since?: number;
+                limit?: number;
+                /** @description Filter to ``stdout`` and/or ``stderr``. */
+                stream?: string[];
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "job-stop_job": {
+        parameters: {
+            query?: {
+                attempt?: number | null;
+                grace?: number | null;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
