@@ -72,7 +72,9 @@ if [[ -z "$DOCKER_USERNAME" ]]; then
     exit 1
 fi
 
-cd "$(dirname "$0")" || exit 1
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
 
 FULL_IMAGE="${DOCKER_USERNAME}/${IMAGE_NAME}"
 
@@ -150,7 +152,7 @@ docker build \
     --platform linux/amd64 \
     --build-arg "IMAGE_VERSION=${VERSION}" \
     --build-arg "VLLM_BASE_VERSION=${VLLM_BASE_VERSION}" \
-    -f Dockerfile \
+    -f docker/inference/Dockerfile \
     -t "${FULL_IMAGE}:${VERSION}" \
     -t "${FULL_IMAGE}:latest" \
     .

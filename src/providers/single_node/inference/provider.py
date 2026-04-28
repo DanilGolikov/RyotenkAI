@@ -819,14 +819,14 @@ PY
         local_merge_script: Path | None = None
         here = Path(__file__).resolve()
         for p in (here, *here.parents):
-            candidate = p / "docker" / "inference" / "scripts" / "merge_lora.py"
+            candidate = p / "docker" / "inference" / "merge_lora.py"
             if candidate.exists():
                 local_merge_script = candidate
                 break
 
         if local_merge_script is None:
             # Best-effort fallback path for error message.
-            local_merge_script = here.parent / "docker" / "inference" / "scripts" / "merge_lora.py"
+            local_merge_script = here.parent / "docker" / "inference" / "merge_lora.py"
         remote_merge_script_host = f"{Path(output_path).parent}/merge_lora.py"
         merge_script_in_container = _to_container_path(remote_merge_script_host)
 

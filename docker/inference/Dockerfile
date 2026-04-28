@@ -70,7 +70,7 @@ RUN python3 -m pip install --upgrade pip "setuptools<70.0.0" wheel \
 
 # Copy merge script (optional convenience; control plane may still upload its own copy per run)
 RUN mkdir -p /opt/helix
-COPY scripts/merge_lora.py /opt/helix/merge_lora.py
+COPY docker/inference/merge_lora.py /opt/helix/merge_lora.py
 RUN chmod +x /opt/helix/merge_lora.py
 
 # Workspace contract
@@ -83,7 +83,7 @@ ENV HF_HOME=/workspace/hf_cache \
     TRANSFORMERS_CACHE=/workspace/hf_cache
 
 # Entrypoint: start sshd, then exec passed command
-COPY entrypoint.sh /entrypoint.sh
+COPY docker/inference/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Self-describing version manifest (mirrors training image).
