@@ -20,14 +20,23 @@ from src.pipeline.launch import (
     spawn_launch_detached,
     validate_resume_run,
 )
-from src.workspace.projects.store import ProjectStore, ProjectStoreError
 from src.pipeline.state import PipelineStateStore, remove_stale_lock
+from src.workspace.projects.store import ProjectStore, ProjectStoreError
 
 
 def _project_env_for_run_dir(run_dir: Path) -> dict[str, str]:
     """Walk up from ``run_dir`` until we find a ``project.json`` sibling and
     return that workspace's env.json overrides. Returns {} if the run isn't
     inside a project workspace (legacy runs, ad-hoc dirs).
+
+    Variant 1 note: this function is the *subprocess-spawn* path's view
+    of project env (env-vars merged onto ``os.environ`` before
+    ``subprocess.Popen``). The Variant 1 in-process path
+    (CLI ``run start --project``) goes through
+    :func:`src.workspace.projects.adapter.load_project_inputs` instead,
+    which produces the same mapping but threads it through
+    ``orchestrator.env`` rather than mutating the spawned-process env.
+    Both paths read the same ``env.json`` so semantics stay aligned.
     """
     for candidate in (run_dir, *run_dir.parents):
         if (candidate / "project.json").is_file():
@@ -123,7 +132,7 @@ class ResumePodResponse:
     other responses.
     """
 
-    __slots__ = ("availability", "ok", "message")
+    __slots__ = ("availability", "message", "ok")
 
     def __init__(
         self, *, availability: str, ok: bool, message: str,

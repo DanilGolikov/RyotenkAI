@@ -73,26 +73,73 @@ def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
 
 
 def _exec_orchestrator(
-    config: Path,
+    config: Path | None,
     *,
     run_dir: Path | None,
     resume: bool,
     restart_from_stage: str | None,
     dry_run: bool,
+    project_id: str | None = None,
 ) -> None:
     """Common path for ``run start / resume / restart``.
 
+    When ``project_id`` is given, the adapter
+    (:func:`src.workspace.projects.adapter.load_project_inputs`)
+    supplies the orchestrator with ``(config, env, metadata)`` derived
+    from the project's filesystem; ``config`` is treated as a config
+    override rather than the source of truth.
+
     Integration-resolver failures (project YAML references an
     integration that's not registered or has an empty/invalid
-    ``current.yaml``) surface as clean CLI errors rather than raw
-    Python tracebacks — see :mod:`src.config.integrations.exceptions`.
+    ``current.yaml``) and project-not-found surface as clean CLI errors
+    rather than raw Python tracebacks — see
+    :mod:`src.config.integrations.exceptions` and
+    :mod:`src.workspace.projects.adapter`.
     """
     from src.config.integrations.exceptions import (
         IntegrationNotFoundError,
         IntegrationUnresolvedError,
     )
+    from src.workspace.projects.adapter import (
+        ProjectNotFoundError,
+        load_project_inputs,
+    )
+
+    project_inputs = None
+    if project_id is not None:
+        try:
+            # Bare ``run start --project X`` → use project's
+            # ``configs/current.yaml``. ``run start -c Y --project X``
+            # → use ``Y`` as override but keep project's env+metadata.
+            project_inputs = load_project_inputs(
+                project_id,
+                config_override=config if config is not None else None,
+            )
+        except ProjectNotFoundError as exc:
+            raise die(str(exc))
+        except IntegrationNotFoundError as exc:
+            raise die(
+                str(exc),
+                hint=(
+                    "create the integration via the Web UI "
+                    "(http://localhost:5173/settings/integrations) or CLI"
+                ),
+            )
+        except IntegrationUnresolvedError as exc:
+            raise die(str(exc))
 
     if dry_run:
+        if project_inputs is not None:
+            typer.echo(
+                f"dry-run: project={project_id} config OK; would start "
+                f"(run_dir={run_dir}, resume={resume}, "
+                f"restart_from_stage={restart_from_stage}, "
+                f"actor={project_inputs.metadata.get('actor')})",
+            )
+            return
+        # Legacy ad-hoc path — resolve_config above guarantees config
+        # is set on this branch.
+        assert config is not None
         from src.utils.config import load_config
 
         try:
@@ -117,7 +164,21 @@ def _exec_orchestrator(
     from src.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
 
     try:
-        orchestrator = PipelineOrchestrator(config, run_directory=run_dir)
+        if project_inputs is not None:
+            # Variant 1 path: orchestrator gets a pre-resolved config +
+            # explicit env mapping + audit metadata. Adapter has already
+            # called ``load_config`` under the hood.
+            orchestrator = PipelineOrchestrator(
+                config=project_inputs.config,
+                env=project_inputs.env,
+                metadata=project_inputs.metadata,
+                run_directory=run_dir,
+            )
+        else:
+            # Anonymous / ad-hoc path: legacy back-compat shim. The
+            # constructor loads the YAML itself.
+            assert config is not None
+            orchestrator = PipelineOrchestrator(config, run_directory=run_dir)
     except IntegrationNotFoundError as exc:
         raise die(
             str(exc),
@@ -158,10 +219,41 @@ def start_cmd(
         ),
     ] = None,
     run_dir: OptionalRunDirOpt = None,
-    project: ProjectOpt = None,  # noqa: ARG001 — TODO Phase 2 wiring
+    project: ProjectOpt = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Start a fresh pipeline run (or resume one when --run-dir is given)."""
+    """Start a fresh pipeline run (or resume one when --run-dir is given).
+
+    --project / RYOTENKAI_PROJECT semantics
+        - bare ``--project X`` → use project's ``configs/current.yaml``.
+        - ``--config Y --project X`` → use ``Y`` as override, env +
+          metadata still come from project ``X``.
+        - bare ``--config Y`` (no --project) → anonymous run.
+        - bare command (neither flag) → falls back to ``project use``
+          via ``cli_state.context_store.get_current_project()``.
+    """
+    # Resolve project from explicit --project > RYOTENKAI_PROJECT (handled
+    # by typer's envvar) > persisted ``project use`` context.
+    resolved_project = project
+    if resolved_project is None and config is None and run_dir is None:
+        # Only consult the persisted context when the user gave us
+        # nothing else to anchor on — keeps "ad-hoc -c X.yaml" paths
+        # untouched.
+        from src.cli_state import context_store
+
+        resolved_project = context_store.get_current_project()
+
+    if resolved_project is not None:
+        # Project mode: --config is treated as override, not source of
+        # truth. ``_resolve_config`` would error on missing config for
+        # bare ``--project X`` runs, so we skip it.
+        _exec_orchestrator(
+            config, run_dir=run_dir, resume=False,
+            restart_from_stage=None, dry_run=dry_run,
+            project_id=resolved_project,
+        )
+        return
+
     resolved = _resolve_config(config, run_dir)
     _exec_orchestrator(
         resolved, run_dir=run_dir, resume=False,
@@ -245,10 +337,11 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
       always-on providers).
     * RUNPOD_API_KEY missing.
     """
-    from src.pipeline.launch.resume_service import (
-        LaunchResumeService, ResumeProgress,
-    )
     from src.pipeline.launch.pod_availability import PodAvailability
+    from src.pipeline.launch.resume_service import (
+        LaunchResumeService,
+        ResumeProgress,
+    )
 
     def _echo(evt: ResumeProgress) -> None:
         # Probing line has no leading indent (matches pre-14.C UX);

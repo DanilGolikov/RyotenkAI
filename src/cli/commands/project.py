@@ -255,8 +255,14 @@ def run_cmd(
     ] = None,
     dry_run: DryRunOpt = False,
 ) -> None:
-    """Launch the project's current config as a fresh pipeline run."""
-    from src.api.services import project_service
+    """Launch the project's current config as a fresh pipeline run.
+
+    Thin convenience wrapper over ``ryotenkai run start --project <id>``
+    — both paths funnel through
+    :func:`src.workspace.projects.adapter.load_project_inputs`, so env
+    merge, metadata stamping, and integration resolution are identical
+    in both surfaces.
+    """
     from src.cli_state import context_store
 
     resolved_id = project_id or context_store.get_current_project()
@@ -266,30 +272,18 @@ def run_cmd(
             hint="pass <project_id> or run `ryotenkai project use <id>` first",
         )
 
-    registry = _registry()
-    try:
-        detail = project_service.get_detail(registry, resolved_id)
-    except project_service.ProjectServiceError as exc:
-        raise die(str(exc))
-
-    config_path = Path(detail.path) / "config.yaml"
-    if not config_path.exists():
-        raise die(
-            f"project {resolved_id!r} has no config.yaml at {config_path}",
-            hint="add a config via the Web UI or save one with the API",
-        )
-
-    if dry_run:
-        typer.echo(f"dry-run: would launch project {resolved_id} with {config_path}")
-        return
-
-    # Reuse the same code path as `ryotenkai run start` — keeps signal
-    # handling, lazy imports, and dry-run wiring identical.
+    # Delegate to the same code path as ``run start --project`` — the
+    # adapter resolves the project's filesystem, integration refs, and
+    # env mapping in one place. Keeps both CLI surfaces in lock-step.
     from src.cli.commands.run import _exec_orchestrator
 
     _exec_orchestrator(
-        config_path, run_dir=None, resume=False,
-        restart_from_stage=None, dry_run=False,
+        config=None,  # adapter pulls configs/current.yaml
+        run_dir=None,
+        resume=False,
+        restart_from_stage=None,
+        dry_run=dry_run,
+        project_id=resolved_id,
     )
 
 
