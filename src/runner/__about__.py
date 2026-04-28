@@ -24,7 +24,7 @@ from typing import Final
 # path below — kept as-is to match the publish script and avoid a
 # rename round-trip on Docker Hub.
 _DEFAULT_RUNTIME_IMAGE: Final[str] = (
-    "ryotenkai/ryotenkai-training-runtime:v1.0.1-cu124-py312"
+    "ryotenkai/ryotenkai-training-runtime:v1.0.2"
 )
 
 
