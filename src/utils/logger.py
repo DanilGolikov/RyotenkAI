@@ -206,6 +206,56 @@ _log_level = getattr(logging, _log_level_str, logging.INFO)
 # Start with console-only logging; file handler is attached later (init_run_logging).
 logger = setup_logger("ryotenkai", level=_log_level, log_file=None, use_color=False)
 
+
+def _strip_third_party_console_handlers() -> None:
+    """Detach any console-bound StreamHandler the third-party world
+    attached to root.
+
+    Several deps call ``logging.basicConfig(...)`` at import time —
+    ``runpod.serverless.utils.rp_upload`` is the canonical offender,
+    installing a root StreamHandler with the format
+    ``%(filename)-20s:%(lineno)-4d %(asctime)s %(message)s`` — which
+    cause every ``ryotenkai.*`` console emission to be re-rendered
+    through that formatter and printed twice. Our ``ryotenkai``
+    logger propagates to root on purpose (so the aggregated
+    ``pipeline.log`` FileHandler catches third-party records too),
+    so the only safe defence is removing root's stdout/stderr
+    StreamHandlers entirely. FileHandler / NullHandler / memory
+    handlers stay — they don't render to the terminal.
+    """
+    root = logging.getLogger()
+    targets = (sys.__stdout__, sys.__stderr__, sys.stdout, sys.stderr)
+    for h in list(root.handlers):
+        if not isinstance(h, logging.StreamHandler):
+            continue
+        # FileHandler is a subclass of StreamHandler — keep those.
+        if isinstance(h, logging.FileHandler):
+            continue
+        if getattr(h, "stream", None) in targets:
+            root.removeHandler(h)
+
+
+def _seal_root_logger() -> None:
+    """Make ``logging.basicConfig`` a no-op for any caller after us.
+
+    Per the stdlib docs, ``basicConfig`` "does nothing if the root
+    logger already has handlers configured". Attaching a
+    :class:`NullHandler` to root claims the slot — so when
+    ``runpod`` (or any other future basicConfig-caller) is imported
+    later, its call no-ops instead of slapping on its own
+    StreamHandler.
+
+    The NullHandler doesn't emit anything; root's job remains file
+    aggregation through ``_attach_pipeline_file_handler``.
+    """
+    root = logging.getLogger()
+    if not any(isinstance(h, logging.NullHandler) for h in root.handlers):
+        root.addHandler(logging.NullHandler())
+
+
+_strip_third_party_console_handlers()
+_seal_root_logger()
+
 console = Console()  # Rich console for UI
 
 _run_name: str | None = None
