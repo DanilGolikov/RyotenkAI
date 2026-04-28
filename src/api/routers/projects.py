@@ -12,6 +12,8 @@ from src.api.schemas.project import (
     ProjectDetail,
     ProjectEnvRequest,
     ProjectEnvResponse,
+    ProjectRunEntry,
+    ProjectRunsResponse,
     ProjectSummary,
     SaveConfigRequest,
     SaveConfigResponse,
@@ -208,3 +210,42 @@ def toggle_favorite(
     except ProjectServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ToggleFavoriteResponse(favorite_versions=favorites)
+
+
+# ---------------------------------------------------------------------------
+# Runs index (Step 6 of Variant 1)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/{project_id}/runs", response_model=ProjectRunsResponse)
+def list_runs(
+    project_id: str,
+    status: str | None = None,
+    limit: int | None = None,
+    registry: ProjectRegistry = Depends(get_project_registry),
+) -> ProjectRunsResponse:
+    """List runs the project has launched, newest-first.
+
+    Reads ``<project>/runs/index.json`` (the append-only ledger
+    populated by ``register_run``) and surfaces it for the frontend's
+    Runs tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an
+    empty list when no runs have been launched yet — that's the
+    expected steady-state for a brand new project, not an error.
+    """
+    try:
+        rows = project_service.list_project_runs(
+            registry, project_id, status=status, limit=limit,
+        )
+    except ProjectServiceError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Defensive: drop entries that don't have the three required keys
+    # rather than 500'ing the response — index integrity is best-
+    # effort by design (atomic-write only, no flock).
+    entries: list[ProjectRunEntry] = []
+    for row in rows:
+        try:
+            entries.append(ProjectRunEntry(**row))
+        except Exception:
+            continue
+    return ProjectRunsResponse(runs=entries)

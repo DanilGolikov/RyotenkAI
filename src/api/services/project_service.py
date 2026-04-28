@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -343,20 +344,41 @@ def get_runs_dir(registry: ProjectRegistry, project_id: str) -> Path:
     return store.runs_dir
 
 
+def list_project_runs(
+    registry: ProjectRegistry,
+    project_id: str,
+    *,
+    status: str | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Return entries from the project's ``runs/index.json``, newest first.
+
+    Thin wrapper around :meth:`ProjectStore.list_runs` — exists so the
+    router stays a one-liner and the service module is the single
+    place where ``ProjectServiceError`` translation happens.
+
+    ``status`` / ``limit`` are forwarded straight to the store; an
+    out-of-range ``limit`` (negative) is normalised by the store.
+    """
+    _, store, _ = _load_project(registry, project_id)
+    return store.list_runs(status=status, limit=limit)
+
+
 __all__ = [
     "ProjectServiceError",
     "create_project",
     "get_config",
     "get_detail",
     "get_runs_dir",
+    "list_project_runs",
     "list_summaries",
     "list_versions",
     "read_version",
-    "update_description",
     "restore_version",
     "save_config",
     "set_favorite",
     "slugify",
     "unregister",
+    "update_description",
     "validate_yaml",
 ]

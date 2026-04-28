@@ -117,6 +117,35 @@ class ProjectEnvRequest(BaseModel):
     env: dict[str, str]
 
 
+# ---------------------------------------------------------------------------
+# Runs index (Step 6)
+# ---------------------------------------------------------------------------
+
+
+class ProjectRunEntry(BaseModel):
+    """One row in a project's launched-run ledger.
+
+    Mirrors the JSON shape written to
+    ``<project>/runs/index.json`` by
+    :meth:`src.workspace.projects.store.ProjectStore.register_run`. Only
+    ``run_id`` / ``started_at`` / ``status`` are required — the rest
+    are optional breadcrumbs used by the UI when present.
+    """
+
+    run_id: str
+    started_at: str
+    status: str
+    finished_at: str | None = None
+    mlflow_run_id: str | None = None
+    config_version_hash: str | None = None
+    actor: str | None = None
+    run_directory: str | None = None
+
+
+class ProjectRunsResponse(BaseModel):
+    runs: list[ProjectRunEntry] = []
+
+
 __all__ = [
     "ConfigResponse",
     "ConfigValidateResponse",
@@ -127,6 +156,8 @@ __all__ = [
     "ProjectDetail",
     "ProjectEnvRequest",
     "ProjectEnvResponse",
+    "ProjectRunEntry",
+    "ProjectRunsResponse",
     "ProjectSummary",
     "SaveConfigRequest",
     "SaveConfigResponse",
