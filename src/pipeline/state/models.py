@@ -179,6 +179,12 @@ class PipelineAttemptState:
     #: ``None`` when the attempt was created before Phase 11.C or
     #: the provider doesn't expose a pod_id (e.g. mock provider).
     pod_metadata: PodMetadata | None = None
+    #: Variant 1 — caller-provided tags propagated as MLflow ``meta.*``
+    #: tags by the orchestrator. Conventional keys: ``project_id``,
+    #: ``actor``, ``config_version_hash``, ``session_id``. ``{}`` for
+    #: anonymous runs (e.g. ``ryotenkai run start -c X.yaml`` without
+    #: ``--project``).
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +210,9 @@ class PipelineAttemptState:
             # so legacy diff'ing tools don't see spurious null fields.
             **({"pod_metadata": self.pod_metadata.to_dict()}
                if self.pod_metadata is not None else {}),
+            # Variant 1 — empty dict ⇒ omit ``metadata`` from the JSON
+            # to keep legacy state files diff-clean.
+            **({"metadata": dict(self.metadata)} if self.metadata else {}),
         }
 
     @classmethod
@@ -220,6 +229,13 @@ class PipelineAttemptState:
         pod_metadata: PodMetadata | None = None
         if isinstance(pod_meta_raw, dict):
             pod_metadata = PodMetadata.from_dict(pod_meta_raw)
+
+        # Variant 1 — additive ``metadata`` field. Old state files are
+        # missing it; default to ``{}``.
+        metadata_raw = data.get("metadata")
+        metadata: dict[str, Any] = (
+            dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        )
 
         return cls(
             attempt_id=str(data.get("attempt_id", "")),
@@ -241,6 +257,7 @@ class PipelineAttemptState:
             enabled_stage_names=[str(x) for x in data.get("enabled_stage_names", []) if isinstance(x, str)],
             stage_runs=stage_runs,
             pod_metadata=pod_metadata,
+            metadata=metadata,
         )
 
 
@@ -260,6 +277,10 @@ class PipelineState:
     mlflow_ca_bundle_path: str | None = None
     attempts: list[PipelineAttemptState] = field(default_factory=list)
     current_output_lineage: dict[str, StageLineageRef] = field(default_factory=dict)
+    #: Variant 1 — caller-provided tags (``project_id``, ``actor``,
+    #: ``config_version_hash``, …). Mirrored to MLflow as ``meta.*``
+    #: tags by the orchestrator. Empty dict for anonymous runs.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -279,6 +300,9 @@ class PipelineState:
             "current_output_lineage": {
                 stage_name: lineage.to_dict() for stage_name, lineage in self.current_output_lineage.items()
             },
+            # Variant 1 — empty dict ⇒ omit from JSON so legacy diff
+            # tools don't see spurious null fields.
+            **({"metadata": dict(self.metadata)} if self.metadata else {}),
         }
 
     @classmethod
@@ -290,6 +314,13 @@ class PipelineState:
             for stage_name, value in lineage_raw.items():
                 if isinstance(value, dict):
                     current_output_lineage[str(stage_name)] = StageLineageRef.from_dict(value)
+        # Variant 1 — additive ``metadata`` field. Old state files are
+        # missing it; default to ``{}``.
+        metadata_raw = data.get("metadata")
+        metadata: dict[str, Any] = (
+            dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+        )
+
         return cls(
             schema_version=int(data.get("schema_version", 0) or 0),
             logical_run_id=str(data.get("logical_run_id", "")),
@@ -305,4 +336,5 @@ class PipelineState:
             mlflow_ca_bundle_path=data.get("mlflow_ca_bundle_path"),
             attempts=attempts,
             current_output_lineage=current_output_lineage,
+            metadata=metadata,
         )

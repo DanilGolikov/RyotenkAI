@@ -149,6 +149,7 @@ class MLflowAttemptManager:
                 total_stages=total_stages,
                 start_stage_idx=start_stage_idx,
                 run_directory=run_directory,
+                metadata=state.metadata,
             )
         except Exception:
             # Close anything we may have opened so teardown does not double-close.
@@ -197,6 +198,7 @@ class MLflowAttemptManager:
         total_stages: int,
         start_stage_idx: int,
         run_directory: Path | None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         manager = self._require_manager()
         context[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = self.get_run_id()
@@ -215,6 +217,18 @@ class MLflowAttemptManager:
                 "pipeline.run_directory": str(run_directory),
             }
         )
+
+        # Variant 1 — caller-provided metadata (project_id, actor,
+        # config_version_hash, session_id, …) propagated as MLflow
+        # tags under the ``meta.`` prefix. This is the canonical way
+        # to find "all runs from project X" or "all runs by agent Y"
+        # via MLflow search.
+        if metadata:
+            tags = {
+                f"meta.{key}": _stringify_tag_value(value)
+                for key, value in metadata.items()
+            }
+            manager.set_tags(tags)
 
     def _cleanup_partial_runs(self) -> None:
         """Best-effort close of runs already opened during a failed setup."""
@@ -365,6 +379,32 @@ class MLflowManagerNotInitializedError(RuntimeError):
     Prefer this over ``assert`` — asserts are disabled under ``python -O`` and
     would silently degrade to opaque AttributeError in production.
     """
+
+
+# MLflow tag values are constrained to a fixed length on the server side
+# (see https://mlflow.org/docs/latest/python_api/mlflow.entities.html). The
+# limit is 5000 chars in current versions; we truncate slightly earlier
+# to leave room for the ``…`` continuation marker. Anything that would
+# overflow is replaced with a head-only excerpt rather than being
+# silently rejected by the backend mid-run.
+_MLFLOW_TAG_VALUE_MAX_CHARS = 4990
+
+
+def _stringify_tag_value(value: object) -> str:
+    """Coerce an arbitrary ``metadata`` value to an MLflow-safe tag string.
+
+    MLflow tags are ``str → str``. Caller-provided metadata may carry
+    ints, lists, dicts, etc. We:
+
+    1. ``str()``-coerce. ``None`` becomes ``"None"`` (visible in UI; better
+       than silent drop).
+    2. Truncate to :data:`_MLFLOW_TAG_VALUE_MAX_CHARS` with ``"…"`` marker
+       to stay under the backend's hard limit.
+    """
+    s = str(value)
+    if len(s) > _MLFLOW_TAG_VALUE_MAX_CHARS:
+        return s[:_MLFLOW_TAG_VALUE_MAX_CHARS] + "…"
+    return s
 
 
 __all__ = [
