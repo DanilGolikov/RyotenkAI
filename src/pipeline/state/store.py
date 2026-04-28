@@ -155,6 +155,7 @@ class PipelineStateStore:
         root_mlflow_run_id: str | None = None,
         mlflow_runtime_tracking_uri: str | None = None,
         mlflow_ca_bundle_path: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> PipelineState:
         state = PipelineState(
             schema_version=SCHEMA_VERSION,
@@ -171,6 +172,7 @@ class PipelineStateStore:
             mlflow_ca_bundle_path=mlflow_ca_bundle_path,
             attempts=[],
             current_output_lineage={},
+            metadata=dict(metadata) if metadata else {},
         )
         self.save(state)
         return state

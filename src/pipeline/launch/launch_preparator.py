@@ -48,7 +48,7 @@ without actually starting a run.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.pipeline.artifacts.base import utc_now_iso
 from src.pipeline.state import (
@@ -154,6 +154,7 @@ class LaunchPreparator:
         "_last_logical_run_id",
         "_last_run_directory",
         "_last_state_store",
+        "_metadata",
         "_run_ctx",
         "_settings",
         "_stage_planner",
@@ -172,6 +173,7 @@ class LaunchPreparator:
         config_drift: ConfigDriftValidator,
         attempt_controller: AttemptController,
         state_store_factory: Callable[[Path], PipelineStateStore] = PipelineStateStore,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._config_path = config_path
         self._run_ctx = run_ctx
@@ -181,6 +183,9 @@ class LaunchPreparator:
         self._config_drift = config_drift
         self._attempt_controller = attempt_controller
         self._state_store_factory = state_store_factory
+        # Variant 1 — caller-provided metadata stamped onto PipelineState
+        # at fresh-run init. Empty dict for anonymous runs.
+        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
 
         # Populated during prepare() and read by record_launch_rejection()
         # if prepare() raised. Intentionally mutable: exception recovery
@@ -441,6 +446,7 @@ class LaunchPreparator:
             training_critical_config_hash=config_hashes["training_critical"],
             late_stage_config_hash=config_hashes["late_stage"],
             model_dataset_config_hash=config_hashes["model_dataset"],
+            metadata=self._metadata,
         )
         self._attempt_controller.adopt_state(state)
         self._last_logical_run_id = logical_run_id

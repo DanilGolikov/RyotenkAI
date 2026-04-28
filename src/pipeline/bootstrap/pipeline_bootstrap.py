@@ -23,7 +23,7 @@ ownership.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from src.pipeline.bootstrap.startup_validator import StartupValidator
 from src.pipeline.config_drift import ConfigDriftValidator
@@ -99,7 +99,10 @@ class PipelineBootstrap:
     def build(
         cls,
         *,
-        config_path: Path,
+        config_path: Path | None = None,
+        config: PipelineConfig | None = None,
+        secrets: Secrets | None = None,
+        metadata: dict[str, Any] | None = None,
         run_ctx: RunContext,
         settings: RuntimeSettings,
         attempt_controller: AttemptController,
@@ -108,18 +111,56 @@ class PipelineBootstrap:
     ) -> BootstrapResult:
         """Load + validate config, then wire every collaborator.
 
+        Accepts either ``config_path`` (legacy: bootstrap loads YAML
+        itself) OR a pre-loaded ``config: PipelineConfig`` (Variant 1
+        boundary: caller has already invoked :func:`load_config` to
+        produce a fully-resolved config).
+
+        Exactly one of ``{config, config_path}`` must be supplied.
+        Optionally ``secrets`` and ``metadata`` can also be passed in
+        pre-built — both have safe defaults (``load_secrets()`` and
+        ``{}`` respectively).
+
         ``attempt_controller`` is passed in rather than constructed here
         because its ``save_fn`` must close over orchestrator-owned per-run
         state (``_state_store`` reference). The two hooks
         (``on_stage_completed``, ``on_shutdown_signal``) have the same
         requirement — they read/write orchestrator-owned state.
         """
+        if (config is None) == (config_path is None):
+            raise ValueError(
+                "PipelineBootstrap.build: exactly one of {config, config_path} "
+                "must be supplied (got "
+                f"config={config is not None!r}, "
+                f"config_path={config_path is not None!r})"
+            )
+
         logger.info("Initializing Pipeline Orchestrator")
 
         # Step 1: Load config + secrets, fail-fast validation.
         try:
-            config = load_config(config_path)
-            secrets = load_secrets()
+            if config is None:
+                # Legacy path: bootstrap owns YAML loading + resolution.
+                assert config_path is not None  # narrowed by mutual-exclusion above
+                config = load_config(config_path)
+            else:
+                # Variant 1 path: caller already loaded + resolved. Derive
+                # ``config_path`` from the config's source attribute set
+                # by ``load_config`` so downstream consumers (state_store,
+                # config_drift, etc.) keep working unchanged.
+                source_path = getattr(config, "_source_path", None)
+                if source_path is None:
+                    raise ValueError(
+                        "PipelineBootstrap.build: pre-loaded config has no "
+                        "_source_path; call load_config() instead of "
+                        "constructing PipelineConfig directly, or pass "
+                        "config_path explicitly"
+                    )
+                config_path = source_path
+
+            if secrets is None:
+                secrets = load_secrets()
+
             StartupValidator.validate(config=config, secrets=secrets)
             logger.info("Configuration loaded successfully")
         except Exception as e:
@@ -201,6 +242,10 @@ class PipelineBootstrap:
         stage_planner = StagePlanner(registry.stages, config)
 
         # Step 7: Per-run orchestration components (stateless between runs).
+        # ``metadata`` is forwarded so :class:`LaunchPreparator` can stamp
+        # it onto :class:`PipelineState` at fresh-run init time. Empty
+        # dict for anonymous runs (legacy/CI path); populated for runs
+        # launched from a project context (project_id, actor, …).
         launch_preparator = LaunchPreparator(
             config_path=config_path,
             run_ctx=run_ctx,
@@ -209,6 +254,7 @@ class PipelineBootstrap:
             stage_planner=stage_planner,
             config_drift=config_drift,
             attempt_controller=attempt_controller,
+            metadata=metadata or {},
         )
         restart_inspector = RestartPointsInspector(
             stages=registry.stages, config_drift=config_drift

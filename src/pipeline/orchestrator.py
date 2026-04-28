@@ -38,6 +38,7 @@ from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
+    from src.config.pipeline.schema import PipelineConfig
     from src.pipeline.stages.base import PipelineStage
     from src.training.managers.mlflow_manager import MLflowManager
     from src.utils.logs_layout import LogLayout
@@ -60,11 +61,41 @@ class PipelineOrchestrator:
 
     def __init__(
         self,
-        config_path: Path,
+        config_path: Path | None = None,
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
+        *,
+        config: PipelineConfig | None = None,
+        env: dict[str, str] | None = None,  # noqa: ARG002 — Step 4 will pipe to load_secrets
+        metadata: dict[str, Any] | None = None,
     ):
         """Initialize the orchestrator.
+
+        Two construction shapes are accepted:
+
+        1. **Legacy (positional path)**::
+
+               PipelineOrchestrator(config_path, run_directory=...)
+
+           Bootstrap loads the YAML and resolves integrations.
+
+        2. **Variant 1 (keyword, pre-loaded)**::
+
+               PipelineOrchestrator(
+                   config=already_loaded_pipeline_config,
+                   metadata={"project_id": "X", "actor": "agent:claude"},
+                   env={...},  # Step 4 — explicit env mapping
+               )
+
+           Caller (CLI / API / project adapter) has already invoked
+           :func:`src.utils.config.load_config` to produce a fully-resolved
+           ``PipelineConfig``. ``metadata`` is stamped onto
+           :class:`PipelineState` at fresh-run init and mirrored to MLflow
+           as ``meta.*`` tags by the orchestrator.
+
+        Exactly one of ``{config, config_path}`` must be supplied. Both
+        forms produce identical pipelines — the difference is only WHO
+        loads the config (Variant 1: caller; Legacy: bootstrap).
 
         Construction is two-phase:
 
@@ -76,6 +107,14 @@ class PipelineOrchestrator:
            onto ``self.*`` fields to keep backward compatibility with callers
            that read ``orch.config`` / ``orch.stages`` / etc.
         """
+        if (config is None) == (config_path is None):
+            raise ValueError(
+                "PipelineOrchestrator: exactly one of {config, config_path} "
+                "must be supplied (got "
+                f"config={config is not None!r}, "
+                f"config_path={config_path is not None!r})"
+            )
+
         # ----- Phase 1: per-run mutable state + single-writer controller -----
         self.settings: RuntimeSettings = settings or load_runtime_settings()
         # Do not name this attribute `run` — it would shadow
@@ -98,6 +137,8 @@ class PipelineOrchestrator:
         # ----- Phase 2: delegate wiring to PipelineBootstrap -----
         bootstrap = PipelineBootstrap.build(
             config_path=config_path,
+            config=config,
+            metadata=metadata,
             run_ctx=self.run_ctx,
             settings=self.settings,
             attempt_controller=self._attempt_controller,
