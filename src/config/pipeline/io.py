@@ -6,24 +6,49 @@ from typing import Any, cast
 import yaml
 
 
-def load_config(config_path: str | Path):
+def load_config(config_path: str | Path, *, resolve_integrations: bool = True):
     """
     Load configuration from YAML file.
 
+    Pipeline order:
+
+    1. Read YAML and validate against :class:`PipelineConfig` schema.
+    2. (default) Resolve integration refs against the workspace registry
+       — the project ref ``experiment_tracking.mlflow.integration: <id>``
+       is replaced with a fully-resolved :class:`MLflowConfig` carrying
+       ``tracking_uri`` etc.
+
     Args:
-        config_path: Path to configuration YAML file
+        config_path: Path to configuration YAML file.
+        resolve_integrations: When ``True`` (default), call the resolver
+            after schema validation. Set ``False`` for tests that build
+            pipeline configs without an integrations registry on disk.
 
     Returns:
-        PipelineConfig: Validated configuration object
+        PipelineConfig: validated and (optionally) resolved configuration.
 
     Raises:
-        FileNotFoundError: If config file doesn't exist
-        ValidationError: If config validation fails
+        FileNotFoundError: config file doesn't exist.
+        ValidationError: config fails Pydantic validation.
+        IntegrationNotFoundError: a referenced integration id is not
+            registered in ``~/.ryotenkai/integrations.json``.
+        IntegrationUnresolvedError: a referenced integration exists but
+            its ``current.yaml`` is empty / fails schema validation.
     """
-    # Local import to avoid import-time cycles.
+    # Local imports to avoid import-time cycles.
     from .schema import PipelineConfig
 
-    return PipelineConfig.from_yaml(config_path)
+    cfg = PipelineConfig.from_yaml(config_path)
+
+    if resolve_integrations:
+        # Imported lazily because the resolver pulls the workspace
+        # registry, which the lightweight schema layer should not
+        # depend on at import time.
+        from src.config.integrations.resolver import resolve_pipeline_config
+
+        cfg = resolve_pipeline_config(cfg)
+
+    return cfg
 
 
 class PipelineIOMixin:

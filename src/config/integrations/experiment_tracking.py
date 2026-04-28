@@ -77,12 +77,29 @@ _SYSTEM_METRICS_REMOVED_HINT = (
 class ExperimentTrackingConfig(StrictBaseModel):
     """Project-level references to reusable tracking integrations.
 
-    ``mlflow`` now holds an integration id + project-local fields only;
-    every runtime knob (URI / CA bundle / system metrics) comes from the
-    integration. Same for ``huggingface``.
+    ``mlflow`` field accepts two shapes:
+
+    1. :class:`MLflowTrackingRef` — the *project YAML input shape*: an
+       ``integration`` id + project-local fields (``experiment_name``,
+       ``run_description_file``). This is what users write.
+    2. :class:`MLflowConfig` — the *resolved runtime shape*, produced by
+       :func:`src.config.integrations.resolver.resolve_pipeline_config`
+       at config-load time. The resolver merges the project ref with
+       the integration's ``current.yaml`` from
+       ``~/.ryotenkai/integrations/<id>/`` and replaces the ref slot
+       with a fully-populated ``MLflowConfig``.
+
+    Pydantic discriminates by structure: project YAML always parses as
+    ``MLflowTrackingRef`` (legacy inline keys are rejected up-front by
+    :meth:`_reject_legacy_keys`). The ``MLflowConfig`` branch only
+    matters for the runtime mutation done by the resolver.
+
+    Same partition for ``huggingface``; resolver only verifies the
+    referenced integration exists in the registry (no body merge —
+    project ref already carries every project-local field).
     """
 
-    mlflow: MLflowTrackingRef | None = Field(None)
+    mlflow: MLflowTrackingRef | MLflowConfig | None = Field(None)
     huggingface: HuggingFaceHubConfig | None = Field(None)
 
     @model_validator(mode="before")

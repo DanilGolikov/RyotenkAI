@@ -80,12 +80,33 @@ def _exec_orchestrator(
     restart_from_stage: str | None,
     dry_run: bool,
 ) -> None:
-    """Common path for ``run start / resume / restart``."""
+    """Common path for ``run start / resume / restart``.
+
+    Integration-resolver failures (project YAML references an
+    integration that's not registered or has an empty/invalid
+    ``current.yaml``) surface as clean CLI errors rather than raw
+    Python tracebacks — see :mod:`src.config.integrations.exceptions`.
+    """
+    from src.config.integrations.exceptions import (
+        IntegrationNotFoundError,
+        IntegrationUnresolvedError,
+    )
+
     if dry_run:
-        # Validate config + stage selection without spawning the run.
         from src.utils.config import load_config
 
-        load_config(config)
+        try:
+            load_config(config)
+        except IntegrationNotFoundError as exc:
+            raise die(
+                str(exc),
+                hint=(
+                    "create the integration via the Web UI "
+                    "(http://localhost:5173/settings/integrations) or CLI"
+                ),
+            )
+        except IntegrationUnresolvedError as exc:
+            raise die(str(exc))
         typer.echo(
             f"dry-run: config {config} OK; would start "
             f"(run_dir={run_dir}, resume={resume}, "
@@ -95,7 +116,19 @@ def _exec_orchestrator(
 
     from src.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
 
-    orchestrator = PipelineOrchestrator(config, run_directory=run_dir)
+    try:
+        orchestrator = PipelineOrchestrator(config, run_directory=run_dir)
+    except IntegrationNotFoundError as exc:
+        raise die(
+            str(exc),
+            hint=(
+                "create the integration via the Web UI "
+                "(http://localhost:5173/settings/integrations) or CLI"
+            ),
+        )
+    except IntegrationUnresolvedError as exc:
+        raise die(str(exc))
+
     _signals.set_active_orchestrator(orchestrator)
     try:
         result = orchestrator.run(
