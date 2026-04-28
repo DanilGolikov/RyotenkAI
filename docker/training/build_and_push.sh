@@ -345,6 +345,39 @@ if [[ "$PUSH_IMAGES" == "true" ]]; then
     else
       echo -e "${YELLOW}⚠️  Could not remove local image (may be in use)${NC}"
     fi
+
+    # Reclaim host disk space.
+    #
+    # Why this isn't redundant with ``docker rmi``: on Docker Desktop for
+    # macOS the daemon runs inside a Linux VM whose root filesystem lives
+    # in ~/Library/Containers/com.docker.docker/.../Docker.raw. ``rmi``
+    # only marks layer blobs as unused INSIDE that VM — overlay2 frees
+    # the inode, but the APFS-sparse host file does not auto-shrink.
+    # Without this step a single torch+CUDA build (~10 GB) leaves the
+    # raw file permanently bloated; over a few iterations Docker.raw
+    # crawls toward 30+ GB while ``docker system df`` says it's empty.
+    #
+    # Two-step reclaim:
+    #   1. ``docker builder prune`` drops the build-cache layers (they
+    #      survive ``rmi`` because builder treats them separately).
+    #   2. ``fstrim`` inside a privileged container running in the host's
+    #      mount namespace tells the VM's ext4 to discard freed blocks,
+    #      which propagates through the virtio layer into APFS and lets
+    #      the sparse file actually shrink.
+    #
+    # Both are no-ops on a clean Docker, so safe to always run after a
+    # successful push. Errors are non-fatal — we already have the digest.
+    echo ""
+    echo "Reclaiming host disk space (prune + fstrim)..."
+    docker builder prune -f >/dev/null 2>&1 || true
+    docker run --rm --privileged --pid=host alpine:latest \
+      nsenter -t 1 -m -u -n -i sh -c 'fstrim -v /var/lib/docker' 2>&1 \
+      | grep -E "trimmed|error" || true
+    DOCKER_RAW="${HOME}/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw"
+    if [[ -f "$DOCKER_RAW" ]]; then
+      RAW_SIZE=$(du -h "$DOCKER_RAW" 2>/dev/null | awk '{print $1}')
+      echo -e "${GREEN}✓ Docker.raw is now ${RAW_SIZE}${NC}"
+    fi
   else
     echo -e "${RED}❌ Push failed (exit code: ${PUSH_EXIT_CODE}) - keeping local image${NC}"
     if [[ -f "/tmp/docker_push_${VERSION}.log" ]]; then
