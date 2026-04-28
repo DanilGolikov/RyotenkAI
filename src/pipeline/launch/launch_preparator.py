@@ -450,55 +450,13 @@ class LaunchPreparator:
         )
         self._attempt_controller.adopt_state(state)
         self._last_logical_run_id = logical_run_id
-        # Step 6 — append this fresh run to its project's runs/index.json
-        # ledger when ``metadata.project_id`` is set. Best-effort: a
-        # missing project or filesystem hiccup must NOT crash the
-        # launch — authoritative state still lives in
-        # ``pipeline_state.json``.
-        self._register_in_project_index(
-            logical_run_id=logical_run_id,
-            run_directory=resolved_run_dir,
-        )
+        # The run lives inside ``<project>/runs/<run_id>/`` when launched
+        # from a project (caller injected the project's runs_dir as
+        # ``RuntimeSettings.runs_base_dir``). Project ownership is
+        # discoverable two ways: from the directory location AND from
+        # ``metadata.project_id`` stamped on the state. No separate
+        # ledger file to keep in sync.
         return state, "fresh", "fresh", self._stages[0].stage_name
-
-    def _register_in_project_index(
-        self, *, logical_run_id: str, run_directory: Path,
-    ) -> None:
-        """Append the fresh run to its project's ``runs/index.json``.
-
-        Silent no-op when:
-        - metadata carries no ``project_id`` (anonymous CLI run);
-        - the project_id doesn't resolve in the registry (registry
-          drifted vs metadata — record-keeping nicety, not a hard
-          dependency);
-        - any filesystem error occurs while writing the ledger.
-        """
-        project_id = self._metadata.get("project_id") if self._metadata else None
-        if not project_id:
-            return
-        try:
-            from src.workspace.projects.registry import (
-                ProjectRegistry,
-                ProjectRegistryError,
-            )
-            from src.workspace.projects.store import ProjectStore
-
-            try:
-                entry = ProjectRegistry().resolve(str(project_id))
-            except ProjectRegistryError:
-                return
-            store = ProjectStore(Path(entry.path))
-            if not store.exists():
-                return
-            store.register_run(
-                run_id=logical_run_id,
-                status="running",
-                config_version_hash=self._metadata.get("config_version_hash"),
-                actor=self._metadata.get("actor"),
-                run_directory=str(run_directory),
-            )
-        except Exception:
-            return
 
     def _require_state_store(self) -> PipelineStateStore:
         if self._last_state_store is None:

@@ -213,7 +213,7 @@ def toggle_favorite(
 
 
 # ---------------------------------------------------------------------------
-# Runs index (Step 6 of Variant 1)
+# Project runs listing
 # ---------------------------------------------------------------------------
 
 
@@ -224,13 +224,13 @@ def list_runs(
     limit: int | None = None,
     registry: ProjectRegistry = Depends(get_project_registry),
 ) -> ProjectRunsResponse:
-    """List runs the project has launched, newest-first.
+    """List runs launched from this project, newest-first.
 
-    Reads ``<project>/runs/index.json`` (the append-only ledger
-    populated by ``register_run``) and surfaces it for the frontend's
-    Runs tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an
-    empty list when no runs have been launched yet — that's the
-    expected steady-state for a brand new project, not an error.
+    Walks ``<project>/runs/`` directly — every sub-directory containing
+    ``pipeline_state.json`` is a run. ``status=running`` / ``?limit=20``
+    filter the result. Returns an empty list when no runs have been
+    launched yet — that's the expected steady-state for a fresh
+    project, not an error.
     """
     try:
         rows = project_service.list_project_runs(
@@ -239,9 +239,9 @@ def list_runs(
     except ProjectServiceError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # Defensive: drop entries that don't have the three required keys
-    # rather than 500'ing the response — index integrity is best-
-    # effort by design (atomic-write only, no flock).
+    # Defensive: malformed rows (e.g., corrupt pipeline_state.json that
+    # the scanner managed to surface anyway) are dropped rather than
+    # 5XX'ing the whole response.
     entries: list[ProjectRunEntry] = []
     for row in rows:
         try:

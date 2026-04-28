@@ -37,11 +37,14 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def stub_inputs() -> ProjectInputs:
+def stub_inputs(tmp_path: Path) -> ProjectInputs:
     """Minimal :class:`ProjectInputs` the orchestrator can swallow."""
     cfg = MagicMock(name="PipelineConfig")
+    runs_dir = tmp_path / "project_runs"
+    runs_dir.mkdir()
     return ProjectInputs(
         config=cfg,
+        runs_base_dir=runs_dir,
         env={"PROJECT_KEY": "v"},
         metadata={"project_id": "proj-a", "actor": "tester"},
     )

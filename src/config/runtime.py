@@ -23,7 +23,6 @@ class RuntimeSettings:
 
     runs_base_dir: Path = field(default_factory=lambda: Path("runs"))
     log_level: str = "INFO"
-    file_logs_enabled: bool = True
 
 
 def load_runtime_settings() -> RuntimeSettings:
@@ -31,5 +30,4 @@ def load_runtime_settings() -> RuntimeSettings:
     return RuntimeSettings(
         runs_base_dir=Path(os.environ.get("RYOTENKAI_RUNS_DIR", "runs")),
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        file_logs_enabled=os.environ.get("HELIX_NO_FILE_LOGS") != "1",
     )

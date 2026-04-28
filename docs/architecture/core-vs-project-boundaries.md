@@ -201,22 +201,29 @@ future remote-runner contract (out of scope here).
 │   │   └── history/<iso>.yaml
 │   ├── env.json                      # → ProjectInputs.env
 │   └── runs/
-│       └── index.json                # append-only ledger (Step 6)
-├── integrations/<id>/
-│   ├── integration.json
-│   ├── current.yaml                  # resolved into core config
-│   └── token.enc
-└── runs/<run_id>/                    # authoritative state
-    ├── pipeline_state.json           # metadata.project_id stamped
-    ├── run.lock
-    └── attempts/
+│       └── <run_id>/                 # full pipeline run dir
+│           ├── pipeline_state.json   # state.metadata.project_id stamped
+│           ├── run.lock
+│           └── attempts/attempt_N/
+└── integrations/<id>/
+    ├── integration.json
+    ├── current.yaml                  # resolved into core config
+    └── token.enc
+
+# Anonymous (no --project) runs land at:
+$RYOTENKAI_RUNS_DIR/<run_id>/         # default: ./runs/<run_id>/
 ```
 
-The runs directory is **global**, not nested under projects: a run
-"owned by" a project is identifiable by ``metadata.project_id`` in
-its ``pipeline_state.json``, AND is referenced from the project's
-``runs/index.json`` ledger. The ledger is a UX nicety — authoritative
-state always lives at ``runs/<run_id>/pipeline_state.json``.
+Project runs live **inside the project's own workspace**. There is no
+separate ledger file: the project's run list is just `os.listdir(<project>/runs/)`.
+``metadata.project_id`` in each run's ``pipeline_state.json`` is the
+audit-trail tag (also propagated to MLflow as ``meta.project_id``).
+``project rm`` naturally drops the runs alongside the rest of the
+workspace.
+
+Anonymous CLI runs (``ryotenkai run start -c X.yaml`` without
+``--project``) still land in ``$RYOTENKAI_RUNS_DIR`` (default
+``./runs/``) — they have no project to live inside.
 
 ---
 

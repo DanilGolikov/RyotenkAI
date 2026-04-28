@@ -50,7 +50,6 @@ def _fresh_run_logging(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(logger_module, "_run_name", None)
     monkeypatch.setattr(logger_module, "_run_log_dir", None)
     monkeypatch.setattr(logger_module, "_run_log_layout", None)
-    monkeypatch.setattr(logger_module, "_enable_file_logs", True)
     monkeypatch.setattr(logger_module, "_active_stage", None)
     base = logging.getLogger("ryotenkai")
     saved_handlers = list(base.handlers)
@@ -103,19 +102,6 @@ def test_get_run_log_dir_before_init_raises(_fresh_run_logging) -> None:
 def test_init_run_logging_rejects_empty_name(_fresh_run_logging) -> None:
     with pytest.raises(ValueError, match="run_name must be a non-empty string"):
         init_run_logging("")
-
-
-def test_init_run_logging_disabled_skips_file_handler(
-    tmp_path: Path, _fresh_run_logging, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """HELIX_NO_FILE_LOGS=1 must skip FileHandler but still expose layout."""
-    monkeypatch.setattr(logger_module, "_enable_file_logs", False)
-    init_run_logging("run_c", log_dir=tmp_path / "attempt_1")
-    base = logging.getLogger("ryotenkai")
-    file_handlers = [h for h in base.handlers if isinstance(h, logging.FileHandler)]
-    assert file_handlers == []
-    # Layout is still available for downstream consumers (log_manager).
-    assert get_run_log_layout().attempt_dir == tmp_path / "attempt_1"
 
 
 # ---------------------------------------------------------------------------
@@ -195,19 +181,6 @@ def test_stage_logging_context_empty_stage_name_raises(
     with pytest.raises(ValueError, match="stage_name must be non-empty"):
         with stage_logging_context("", get_run_log_layout()):
             pass
-
-
-def test_stage_logging_context_respects_file_logs_disabled(
-    tmp_path: Path, _fresh_run_logging, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """With file logs disabled, no per-stage FileHandler is attached."""
-    monkeypatch.setattr(logger_module, "_enable_file_logs", False)
-    init_run_logging("run_i", log_dir=tmp_path / "attempt_1")
-    base = logging.getLogger("ryotenkai")
-    before = list(base.handlers)
-
-    with stage_logging_context("x", get_run_log_layout()):
-        assert list(base.handlers) == before
 
 
 # ---------------------------------------------------------------------------

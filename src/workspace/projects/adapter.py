@@ -64,7 +64,7 @@ class ProjectNotFoundError(LookupError):
 class ProjectInputs:
     """Frozen orchestrator inputs derived from a project's filesystem.
 
-    All three fields are populated in :func:`load_project_inputs`:
+    Fields populated in :func:`load_project_inputs`:
 
     * ``config`` — fully-loaded :class:`PipelineConfig` with integration
       refs already resolved (``load_config`` runs the resolver as its
@@ -76,9 +76,17 @@ class ProjectInputs:
     * ``metadata`` — invariants: ``project_id``, ``actor``,
       ``config_version_hash``. Optional caller-supplied keys flow
       through unchanged.
+    * ``runs_base_dir`` — ``<project>/runs/``. Caller hands this to
+      ``RuntimeSettings.runs_base_dir`` so launches from this project
+      land **inside** the project workspace
+      (``<project>/runs/<run_id>/``) instead of a global runs dir.
+      Authoritative state for the run still lives in
+      ``<run_dir>/pipeline_state.json``; project ownership is inferred
+      from the directory location AND ``metadata.project_id``.
     """
 
     config: PipelineConfig
+    runs_base_dir: Path
     env: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -186,7 +194,18 @@ def load_project_inputs(
         # is reconstructible after the fact.
         metadata["config_override_path"] = str(config_path)
 
-    return ProjectInputs(config=config, env=env, metadata=metadata)
+    # Project's runs go inside its own workspace directory. Caller threads
+    # this through ``RuntimeSettings.runs_base_dir`` so the orchestrator
+    # creates ``<project>/runs/<run_id>/`` rather than a global location.
+    runs_base_dir = store.runs_dir
+    runs_base_dir.mkdir(parents=True, exist_ok=True)
+
+    return ProjectInputs(
+        config=config,
+        runs_base_dir=runs_base_dir,
+        env=env,
+        metadata=metadata,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -781,13 +781,13 @@ export interface paths {
         };
         /**
          * List Runs
-         * @description List runs the project has launched, newest-first.
+         * @description List runs launched from this project, newest-first.
          *
-         *     Reads ``<project>/runs/index.json`` (the append-only ledger
-         *     populated by ``register_run``) and surfaces it for the frontend's
-         *     Runs tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an
-         *     empty list when no runs have been launched yet — that's the
-         *     expected steady-state for a brand new project, not an error.
+         *     Walks ``<project>/runs/`` directly — every sub-directory containing
+         *     ``pipeline_state.json`` is a run. ``status=running`` / ``?limit=20``
+         *     filter the result. Returns an empty list when no runs have been
+         *     launched yet — that's the expected steady-state for a fresh
+         *     project, not an error.
          */
         get: operations["projects-list_runs"];
         put?: never;
@@ -2094,13 +2094,12 @@ export interface components {
         };
         /**
          * ProjectRunEntry
-         * @description One row in a project's launched-run ledger.
+         * @description Summary of one run that lives inside a project's ``runs/`` dir.
          *
-         *     Mirrors the JSON shape written to
-         *     ``<project>/runs/index.json`` by
-         *     :meth:`src.workspace.projects.store.ProjectStore.register_run`. Only
-         *     ``run_id`` / ``started_at`` / ``status`` are required — the rest
-         *     are optional breadcrumbs used by the UI when present.
+         *     Built by walking ``<project>/runs/`` and reading each subdir's
+         *     ``pipeline_state.json``. ``run_id`` / ``started_at`` / ``status``
+         *     are required; the rest are optional audit breadcrumbs surfaced to
+         *     the UI when present in ``state.metadata``.
          */
         ProjectRunEntry: {
             /** Run Id */

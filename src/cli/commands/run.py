@@ -167,12 +167,23 @@ def _exec_orchestrator(
         if project_inputs is not None:
             # Variant 1 path: orchestrator gets a pre-resolved config +
             # explicit env mapping + audit metadata. Adapter has already
-            # called ``load_config`` under the hood.
+            # called ``load_config`` under the hood. The project's own
+            # ``runs/`` directory becomes the runs-base so a fresh
+            # launch lands at ``<project>/runs/<run_id>/`` instead of
+            # the global location.
+            from src.config.runtime import RuntimeSettings, load_runtime_settings
+
+            base = load_runtime_settings()
+            project_settings = RuntimeSettings(
+                runs_base_dir=project_inputs.runs_base_dir,
+                log_level=base.log_level,
+            )
             orchestrator = PipelineOrchestrator(
                 config=project_inputs.config,
                 env=project_inputs.env,
                 metadata=project_inputs.metadata,
                 run_directory=run_dir,
+                settings=project_settings,
             )
         else:
             # Anonymous / ad-hoc path: legacy back-compat shim. The

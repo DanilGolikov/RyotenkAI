@@ -2209,7 +2209,7 @@
           "projects"
         ],
         "summary": "List Runs",
-        "description": "List runs the project has launched, newest-first.\n\nReads ``<project>/runs/index.json`` (the append-only ledger\npopulated by ``register_run``) and surfaces it for the frontend's\nRuns tab. ``status=running`` / ``?limit=20`` filter+cap. Returns an\nempty list when no runs have been launched yet — that's the\nexpected steady-state for a brand new project, not an error.",
+        "description": "List runs launched from this project, newest-first.\n\nWalks ``<project>/runs/`` directly — every sub-directory containing\n``pipeline_state.json`` is a run. ``status=running`` / ``?limit=20``\nfilter the result. Returns an empty list when no runs have been\nlaunched yet — that's the expected steady-state for a fresh\nproject, not an error.",
         "operationId": "projects-list_runs",
         "parameters": [
           {
@@ -5559,7 +5559,7 @@
           "status"
         ],
         "title": "ProjectRunEntry",
-        "description": "One row in a project's launched-run ledger.\n\nMirrors the JSON shape written to\n``<project>/runs/index.json`` by\n:meth:`src.workspace.projects.store.ProjectStore.register_run`. Only\n``run_id`` / ``started_at`` / ``status`` are required — the rest\nare optional breadcrumbs used by the UI when present."
+        "description": "Summary of one run that lives inside a project's ``runs/`` dir.\n\nBuilt by walking ``<project>/runs/`` and reading each subdir's\n``pipeline_state.json``. ``run_id`` / ``started_at`` / ``status``\nare required; the rest are optional audit breadcrumbs surfaced to\nthe UI when present in ``state.metadata``."
       },
       "ProjectRunsResponse": {
         "properties": {

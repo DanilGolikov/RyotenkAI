@@ -10,17 +10,26 @@ Layout::
           2026-04-19T10-30-45Z.yaml
       env.json                 # optional env-var overrides
       runs/
-        index.json             # append-only ledger of launches (Step 6)
+        <run_id>/              # full pipeline run dir (state, lock, attempts)
+          pipeline_state.json
+          run.lock
+          attempts/
 
 Project layout is richer than Provider/Integration: configs live in a
 ``configs/`` sub-directory, projects own ``runs/`` + ``env.json``, and
 :meth:`save_config` seeds a ``v1`` snapshot on the very first save so
 the Versions tab is never empty after a user's first Save click.
 
+Runs launched from a project land **inside** the project's ``runs/``
+directory (not a global location). The ``GET /projects/{id}/runs``
+endpoint and CLI ``project runs`` listing both walk this directory
+directly — there is no separate index file. ``metadata.project_id``
+in each run's ``pipeline_state.json`` doubles as the audit trail.
+
 The shared :class:`WorkspaceStore` base handles atomic writes,
 metadata I/O, version listing and restore. ProjectStore overrides
 ``current_config_path`` / ``history_dir`` to point at the ``configs/``
-sub-directory and adds env-vars + favorite-versions + runs-index APIs.
+sub-directory and adds env-vars + favorite-versions APIs.
 """
 
 from __future__ import annotations
@@ -41,8 +50,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 PROJECT_SCHEMA_VERSION = 1
-RUNS_INDEX_SCHEMA_VERSION = 1
-RUNS_INDEX_FILENAME = "index.json"
 
 
 class ProjectStoreError(WorkspaceStoreError):
@@ -227,160 +234,8 @@ class ProjectStore(WorkspaceStore[ProjectMetadata, ProjectConfigVersion]):
         atomic_write_json(self.metadata_path, metadata.to_dict())
         return favs
 
-    # ---------- Runs index (Step 6) ----------------------------------------
-
-    @property
-    def runs_index_path(self) -> Path:
-        return self.runs_dir / RUNS_INDEX_FILENAME
-
-    def list_runs(
-        self,
-        *,
-        status: str | None = None,
-        limit: int | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return the project's launched-run entries, newest first.
-
-        ``runs/index.json`` is an append-only ledger written by
-        :meth:`register_run`. Entries are filtered by ``status`` if given
-        (e.g. ``"running"`` / ``"completed"`` / ``"failed"`` — values
-        match what ``register_run`` was called with) and capped by
-        ``limit`` after the sort.
-
-        Returns ``[]`` when the index doesn't exist yet (project has
-        never been launched). Malformed entries are dropped, never
-        raised — surface stays usable even when one entry is corrupt.
-        """
-        payload = self._read_runs_index()
-        entries = list(payload.get("runs", []))
-
-        # Filter on status before sort + limit so ``limit`` is the
-        # number of *matching* entries the caller wants, not "look at
-        # last N then filter".
-        if status is not None:
-            entries = [e for e in entries if e.get("status") == status]
-        # Newest first by ``started_at`` ISO string (sorts lexico-
-        # graphically when both are UTC ISO with leading zeros, which
-        # ``utc_now_iso`` guarantees).
-        entries.sort(key=lambda e: str(e.get("started_at", "")), reverse=True)
-        if limit is not None and limit >= 0:
-            entries = entries[:limit]
-        return entries
-
-    def register_run(
-        self,
-        *,
-        run_id: str,
-        started_at: str | None = None,
-        status: str = "running",
-        mlflow_run_id: str | None = None,
-        config_version_hash: str | None = None,
-        actor: str | None = None,
-        run_directory: str | None = None,
-        extra: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Append a run entry to ``runs/index.json``.
-
-        Append-only by design (R16 from the plan): the index is a
-        ledger, not a state store. Status updates after the fact go
-        through :meth:`update_run_status` which writes a new revision
-        of the same ``run_id`` entry rather than mutating the original
-        in place — keeping the audit trail intact.
-
-        Atomic write semantics — the file is read, mutated in memory,
-        then written through ``atomic_write_json`` (tmp + rename). On
-        the rare interleaved write (two processes register at the
-        exact same instant) the loser's entry can be lost; callers
-        for whom that matters should add ``fcntl.flock`` outside this
-        method. For the typical "one process per run launch" pattern
-        the atomic rename is sufficient.
-
-        Returns the entry as written (with all fields populated).
-        """
-        entry: dict[str, Any] = {
-            "run_id": run_id,
-            "started_at": started_at or utc_now_iso(),
-            "status": status,
-        }
-        if mlflow_run_id is not None:
-            entry["mlflow_run_id"] = mlflow_run_id
-        if config_version_hash is not None:
-            entry["config_version_hash"] = config_version_hash
-        if actor is not None:
-            entry["actor"] = actor
-        if run_directory is not None:
-            entry["run_directory"] = run_directory
-        if extra:
-            # Caller-supplied extras flow through unchanged but never
-            # override the canonical keys above (which the UI relies on).
-            for k, v in extra.items():
-                entry.setdefault(k, v)
-
-        payload = self._read_runs_index()
-        runs = list(payload.get("runs", []))
-        runs.append(entry)
-        payload["schema_version"] = RUNS_INDEX_SCHEMA_VERSION
-        payload["runs"] = runs
-
-        self.runs_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self.runs_index_path, payload)
-        return entry
-
-    def update_run_status(
-        self,
-        run_id: str,
-        *,
-        status: str,
-        finished_at: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Mark a previously-registered run with a terminal status.
-
-        Updates the *most recent* entry whose ``run_id`` matches —
-        callers append once at launch time then update once at
-        completion. Returns the updated entry, or ``None`` when no
-        matching entry exists (silent no-op for resilience: a run
-        finishing whose register-call was lost shouldn't crash the
-        finisher).
-        """
-        payload = self._read_runs_index()
-        runs = list(payload.get("runs", []))
-        for entry in reversed(runs):
-            if entry.get("run_id") != run_id:
-                continue
-            entry["status"] = status
-            if finished_at is not None:
-                entry["finished_at"] = finished_at
-            payload["runs"] = runs
-            payload["schema_version"] = RUNS_INDEX_SCHEMA_VERSION
-            self.runs_dir.mkdir(parents=True, exist_ok=True)
-            atomic_write_json(self.runs_index_path, payload)
-            return entry
-        return None
-
-    def _read_runs_index(self) -> dict[str, Any]:
-        """Read ``runs/index.json``; return ``{}`` when missing.
-
-        Defensive: schema-version mismatch and malformed JSON both
-        return ``{}`` rather than raising — the index is a UX nicety,
-        not authoritative state. Authoritative run state still lives
-        under ``~/.ryotenkai/runs/<run_id>/pipeline_state.json``.
-        """
-        if not self.runs_index_path.is_file():
-            return {}
-        try:
-            with self.runs_index_path.open("r", encoding="utf-8") as fh:
-                raw = json.load(fh)
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(raw, dict):
-            return {}
-        return raw
-
-
 __all__ = [
     "PROJECT_SCHEMA_VERSION",
-    "RUNS_INDEX_FILENAME",
-    "RUNS_INDEX_SCHEMA_VERSION",
     "ProjectStore",
     "ProjectStoreError",
 ]

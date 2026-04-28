@@ -351,17 +351,57 @@ def list_project_runs(
     status: str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Return entries from the project's ``runs/index.json``, newest first.
+    """List the project's run directories, newest-first.
 
-    Thin wrapper around :meth:`ProjectStore.list_runs` — exists so the
-    router stays a one-liner and the service module is the single
-    place where ``ProjectServiceError`` translation happens.
+    Walks ``<project>/runs/`` directly — every sub-directory containing
+    ``pipeline_state.json`` is treated as a run. Reuses
+    :func:`scan_runs_dir` for the heavy lift (status / mlflow_run_id /
+    timestamps) and pulls a couple of audit breadcrumbs
+    (``actor`` / ``config_version_hash``) from each state file's
+    ``metadata`` for the Runs tab.
 
-    ``status`` / ``limit`` are forwarded straight to the store; an
-    out-of-range ``limit`` (negative) is normalised by the store.
+    Filesystem listing replaces the earlier ``runs/index.json`` ledger
+    — there is no separate file to keep in sync, and ``project rm``
+    naturally drops the runs alongside the rest of the workspace.
     """
+    from src.pipeline.run_queries import scan_runs_dir
+    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+
     _, store, _ = _load_project(registry, project_id)
-    return store.list_runs(status=status, limit=limit)
+
+    rows = scan_runs_dir(store.runs_dir)
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if status is not None and row.status != status:
+            continue
+        # Best-effort metadata read. ``scan_runs_dir`` already opens
+        # ``pipeline_state.json`` once; doing it again here is the
+        # straightforward path until ``RunSummaryRow`` grows a
+        # ``metadata`` field. Failures fall back to ``None``.
+        actor: str | None = None
+        config_version_hash: str | None = None
+        try:
+            state = PipelineStateStore(row.run_dir).load()
+            md = state.metadata or {}
+            actor = md.get("actor")
+            config_version_hash = md.get("config_version_hash")
+        except (PipelineStateLoadError, OSError, ValueError):
+            pass
+
+        out.append({
+            "run_id": row.run_id,
+            "started_at": row.started_at or row.created_at,
+            "status": row.status,
+            "finished_at": row.completed_at,
+            "mlflow_run_id": row.mlflow_run_id,
+            "run_directory": str(row.run_dir),
+            "actor": actor,
+            "config_version_hash": config_version_hash,
+        })
+        if limit is not None and limit >= 0 and len(out) >= limit:
+            break
+    return out
 
 
 __all__ = [

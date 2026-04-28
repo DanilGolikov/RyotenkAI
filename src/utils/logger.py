@@ -199,9 +199,6 @@ def get_logger(name: str) -> logging.Logger:
 # - File logging must be initialized explicitly via init_run_logging(run_name).
 _base_log_dir = Path("runs")
 
-# Enable file logging by default, can be disabled with HELIX_NO_FILE_LOGS=1
-_enable_file_logs = os.getenv("HELIX_NO_FILE_LOGS") != "1"
-
 # Environment-based log level (dev: DEBUG, prod: INFO/WARNING)
 _log_level_str = os.getenv("LOG_LEVEL", "INFO").upper()
 _log_level = getattr(logging, _log_level_str, logging.INFO)
@@ -297,7 +294,7 @@ def set_log_level(level_name: str) -> logging.Logger:
     logger = setup_logger("ryotenkai", level=_log_level, log_file=None, use_color=False)
 
     # Re-attach the pipeline.log handler to root at the new level.
-    if _enable_file_logs and _run_log_layout is not None:
+    if _run_log_layout is not None:
         _attach_pipeline_file_handler(_run_log_layout.pipeline_log)
 
     return logger
@@ -337,13 +334,10 @@ def init_run_logging(run_name: str, log_dir: str | Path | None = None) -> Path:
     # Console handler stays on ``ryotenkai`` — third-party libs won't spam it.
     logger = setup_logger("ryotenkai", level=_log_level, log_file=None, use_color=False)
 
-    if _enable_file_logs:
-        _attach_pipeline_file_handler(layout.pipeline_log)
-        _quiet_noisy_libraries()
-        _force_propagation_for_third_party()
-        logger.info(f"📝 File logging: {layout.pipeline_log} (level: {_log_level_str})")
-    else:
-        logger.info("📝 File logging disabled (HELIX_NO_FILE_LOGS=1)")
+    _attach_pipeline_file_handler(layout.pipeline_log)
+    _quiet_noisy_libraries()
+    _force_propagation_for_third_party()
+    logger.info(f"📝 File logging: {layout.pipeline_log} (level: {_log_level_str})")
 
     return attempt_dir
 
@@ -407,27 +401,26 @@ def stage_logging_context(stage_name: str, layout: LogLayout) -> Iterator[Path]:
     token = _current_stage.set(stage_name)
 
     try:
-        if _enable_file_logs:
-            stage_filter = _StageContextFilter(stage_name)
+        stage_filter = _StageContextFilter(stage_name)
 
-            # Handler A: ryotenkai logger (our own code).
-            ryotenkai_handler = logging.FileHandler(stage_log_path)
-            ryotenkai_handler.setLevel(_log_level)
-            ryotenkai_handler.setFormatter(_build_file_formatter())
-            ryotenkai_handler.addFilter(stage_filter)
-            ryotenkai_logger = logging.getLogger("ryotenkai")
-            ryotenkai_logger.addHandler(ryotenkai_handler)
-            installed.append((ryotenkai_logger, ryotenkai_handler))
+        # Handler A: ryotenkai logger (our own code).
+        ryotenkai_handler = logging.FileHandler(stage_log_path)
+        ryotenkai_handler.setLevel(_log_level)
+        ryotenkai_handler.setFormatter(_build_file_formatter())
+        ryotenkai_handler.addFilter(stage_filter)
+        ryotenkai_logger = logging.getLogger("ryotenkai")
+        ryotenkai_logger.addHandler(ryotenkai_handler)
+        installed.append((ryotenkai_logger, ryotenkai_handler))
 
-            # Handler B: root logger (third-party libs).
-            root_handler = logging.FileHandler(stage_log_path)
-            root_handler.setLevel(_log_level)
-            root_handler.setFormatter(_build_file_formatter())
-            root_handler.addFilter(stage_filter)
-            root_handler.addFilter(_ExcludeRyotenkaiFilter())
-            root_logger = logging.getLogger()
-            root_logger.addHandler(root_handler)
-            installed.append((root_logger, root_handler))
+        # Handler B: root logger (third-party libs).
+        root_handler = logging.FileHandler(stage_log_path)
+        root_handler.setLevel(_log_level)
+        root_handler.setFormatter(_build_file_formatter())
+        root_handler.addFilter(stage_filter)
+        root_handler.addFilter(_ExcludeRyotenkaiFilter())
+        root_logger = logging.getLogger()
+        root_logger.addHandler(root_handler)
+        installed.append((root_logger, root_handler))
 
         yield stage_log_path
     finally:

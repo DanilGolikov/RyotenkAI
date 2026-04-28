@@ -118,18 +118,17 @@ class ProjectEnvRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Runs index (Step 6)
+# Project runs
 # ---------------------------------------------------------------------------
 
 
 class ProjectRunEntry(BaseModel):
-    """One row in a project's launched-run ledger.
+    """Summary of one run that lives inside a project's ``runs/`` dir.
 
-    Mirrors the JSON shape written to
-    ``<project>/runs/index.json`` by
-    :meth:`src.workspace.projects.store.ProjectStore.register_run`. Only
-    ``run_id`` / ``started_at`` / ``status`` are required — the rest
-    are optional breadcrumbs used by the UI when present.
+    Built by walking ``<project>/runs/`` and reading each subdir's
+    ``pipeline_state.json``. ``run_id`` / ``started_at`` / ``status``
+    are required; the rest are optional audit breadcrumbs surfaced to
+    the UI when present in ``state.metadata``.
     """
 
     run_id: str
