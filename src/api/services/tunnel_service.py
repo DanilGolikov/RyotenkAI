@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import shutil
 import socket
@@ -82,8 +83,23 @@ _TUNNEL_PROBE_INTERVAL_SECONDS = 0.1
 # Where we stash the dedicated ControlMaster socket. Separate dir
 # from :class:`SSHClient`'s ``~/.ssh/sockets/`` so a stray
 # ``close_master()`` from rsync code can't kill our tunnel.
-_DEFAULT_SOCKET_DIR = Path.home() / ".ssh" / "control_sockets" / "ryotenkai_runner"
+#
+# The path is intentionally short. macOS caps Unix domain socket paths
+# at ~104 bytes (sun_path in struct sockaddr_un), and OpenSSH appends
+# a ``.<random-17>`` suffix when the master atomically creates the
+# socket. With the previous ``~/.ssh/control_sockets/ryotenkai_runner/``
+# (38 chars) plus a 40-hex ``%C`` hash and the suffix, the full path
+# blew past 110 chars and ssh rejected it with ``unix_listener: path
+# ... too long for Unix domain socket``. Keep this leaf short.
+_DEFAULT_SOCKET_DIR = Path.home() / ".ssh" / "rk"
 _SSH_SOCKET_DIR_MODE = 0o700
+
+# Length of the per-endpoint hash we use in the ControlPath filename.
+# 16 hex chars = 64 bits of identity — collision-free in practice for
+# a single user's pod set, and 24 chars shorter than OpenSSH's ``%C``
+# token (a full SHA1 = 40 hex). Helps stay under macOS' 104-byte
+# sockaddr_un limit.
+_CONTROL_PATH_HASH_LEN = 16
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +258,16 @@ class SSHTunnelManager:
                 f"failed to prepare control socket dir {self._socket_dir}: {exc}",
             ) from exc
 
-        # ``%C`` expands to a hash of (host, port, user) — uniquely
-        # tying the socket to its connection so two pods can have
-        # tunnels open simultaneously without colliding on a path.
-        self._control_path = str(self._socket_dir / "tunnel_%C")
+        # We pre-compute a short blake2b digest of (user, host, port)
+        # ourselves rather than letting OpenSSH expand ``%C`` (a full
+        # 40-char SHA1) — the shorter name keeps the final
+        # ``<dir>/t-<hash>.<ssh-random-suffix>`` path comfortably under
+        # macOS' 104-byte Unix domain socket limit. Two managers
+        # pointing at the same endpoint deterministically produce the
+        # same hash, preserving uniqueness per pod.
+        self._control_path = str(
+            self._socket_dir / f"t-{_endpoint_hash(self._endpoint)}",
+        )
 
         if self._requested_local_port is not None:
             # Caller pinned a port — use it as-is, but verify it's
@@ -414,6 +436,22 @@ _SSH_CLOSE_TIMEOUT = 5.0
 # want forever because the tunnel is the only forwarding session
 # and the lifecycle is owned by ``close()``.
 _SSH_CONTROL_PERSIST_SECONDS = "yes"
+
+
+def _endpoint_hash(endpoint: SSHTunnelEndpoint) -> str:
+    """Short, deterministic identifier for a tunnel endpoint.
+
+    Used as the leaf of the ControlMaster socket path. Same endpoint
+    -> same hash, so two ``SSHTunnelManager`` instances pointing at
+    the same pod deterministically share a name (and thus collide
+    instead of double-booking, which is what we want — one tunnel
+    per endpoint).
+
+    Returns ``_CONTROL_PATH_HASH_LEN`` hex chars (=64 bits of
+    identity). blake2b is FIPS-friendly and built into the stdlib.
+    """
+    key = f"{endpoint.username}@{endpoint.host}:{endpoint.port}".encode()
+    return hashlib.blake2b(key, digest_size=_CONTROL_PATH_HASH_LEN // 2).hexdigest()
 
 
 # Test seam protocols. Production wires :func:`_default_runner` /
