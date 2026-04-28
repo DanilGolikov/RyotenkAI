@@ -117,7 +117,7 @@ docker/training/
 ├── build_and_push.sh        # Build & push to Docker Hub
 ├── entrypoint.sh            # Container entrypoint (SSH + exec)
 ├── requirements.runtime.txt # Python dependencies
-├── ../../scripts/runtime_check.py  # Dependency validation script (copied into image at build)
+├── runtime_check.py         # Dependency validation script (copied into image at build)
 └── README.md
 ```
 

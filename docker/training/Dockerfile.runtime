@@ -82,9 +82,14 @@ RUN if [ -x /opt/conda/bin/python3 ]; then ln -sf /opt/conda/bin/python3 /usr/lo
     && if [ -x /opt/conda/bin/pip ]; then ln -sf /opt/conda/bin/pip /usr/local/bin/pip; fi \
     && if [ -x /opt/conda/bin/huggingface-cli ]; then ln -sf /opt/conda/bin/huggingface-cli /usr/local/bin/huggingface-cli; fi
 
-# Runtime contract check (used by control plane)
+# Runtime contract check (used by control plane).
+# Lives next to this Dockerfile rather than at repo-root ``scripts/``
+# because it's specific to the training image — it asserts the package
+# set installed via ``requirements.runtime.txt`` and has no consumers
+# outside the image. The control plane reads it via
+# ``/opt/helix/runtime_check.py`` after pull.
 RUN mkdir -p /opt/helix
-COPY scripts/runtime_check.py /opt/helix/runtime_check.py
+COPY docker/training/runtime_check.py /opt/helix/runtime_check.py
 RUN chmod +x /opt/helix/runtime_check.py
 
 # In-pod job server (Phase 0 baseline — minimal package, expanded in
