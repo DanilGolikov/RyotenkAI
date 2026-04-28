@@ -4,14 +4,33 @@ Log Manager - downloads and manages logs from remote training.
 Provider-agnostic log management for any GPU provider (RunPod, SingleNode, etc.)
 
 Responsibilities:
-- Download training log from remote server (incremental delta updates)
-- Save to run-specific directory (runs/{timestamp}/)
+- Download a remote log file via SSH with incremental delta updates
+- Persist into run-scoped attempt directory through LogLayout
 - Called periodically during monitoring and on errors
 
+Two distinct logs, same downloader:
+
+* ``training.log`` — trainer subprocess stdout. Source of truth for
+  trainer events. Default behavior of LogManager (kept for backward
+  compatibility with all existing call-sites).
+* ``runner.log`` — uvicorn / runner stdout. Captures pre-import
+  failures and runner lifecycle events. Pass explicit
+  ``remote_path=/workspace/runner.log`` and
+  ``local_path=layout.remote_runner_log`` to instantiate.
+
 Usage:
-    log_manager = LogManager(ssh_client, remote_path="/workspace/training.log")
-    log_manager.download()  # Downloads to runs/{timestamp}/training.log
-    last_lines = log_manager.get_last_lines(30)  # For display
+    # Default — trainer log:
+    lm = LogManager(ssh_client)
+    lm.download()  # → <attempt>/logs/training.log
+
+    # Runner log (NEW path):
+    layout = get_run_log_layout()
+    lm = LogManager(
+        ssh_client,
+        remote_path="/workspace/runner.log",
+        local_path=layout.remote_runner_log,
+    )
+    lm.download()  # → <attempt>/logs/runner.log
 """
 
 from __future__ import annotations
@@ -27,7 +46,7 @@ if TYPE_CHECKING:
 
 # LogManager-local constants (PR-B): not shared with other stages.
 ENCODING_UTF8 = "utf-8"
-LOG_REMOTE_NOT_FOUND_MSG = "⚠️ Remote training.log not found yet"
+LOG_REMOTE_NOT_FOUND_MSG = "⚠️ Remote log not found yet"
 
 logger = get_logger(__name__)
 
@@ -37,28 +56,43 @@ class LogManager:
     Manages downloading logs from remote training.
 
     Provider-agnostic: works with any SSH-accessible server.
-    The remote training log is persisted at ``<attempt_dir>/logs/training.log``
-    via LogLayout — the single source of truth for FS layout.
+    The default remote log (training.log) is persisted at
+    ``<attempt_dir>/logs/training.log`` via LogLayout — the single
+    source of truth for FS layout. A different remote/local pair can
+    be supplied for non-training logs (e.g. runner.log).
     """
 
     DEFAULT_REMOTE_PATH = "/workspace/training.log"
-    # File name of the remote training log inside the local logs/ directory.
-    # Preserved for backward-compat with consumers that build paths by hand.
+    # File name of the default remote training log inside the local
+    # logs/ directory. Preserved for backward-compat with consumers
+    # that build paths by hand.
     LOCAL_LOG_NAME = "training.log"
 
-    def __init__(self, ssh_client: SSHClient, remote_path: str | None = None):
+    def __init__(
+        self,
+        ssh_client: SSHClient,
+        remote_path: str | None = None,
+        *,
+        local_path: Path | None = None,
+    ):
         """
         Initialize log manager.
 
         Args:
-            ssh_client: SSH client connected to remote host
-            remote_path: Path to training log on remote (default: /workspace/training.log)
+            ssh_client: SSH client connected to remote host.
+            remote_path: Path to log file on remote host. Defaults to
+                ``/workspace/training.log``. Pass
+                ``/workspace/runner.log`` for the runner log.
+            local_path: Local destination Path. Keyword-only.
+                Defaults to ``LogLayout.remote_training_log``
+                (preserves existing behavior). Pass
+                ``LogLayout.remote_runner_log`` for the runner log.
         """
         self.ssh = ssh_client
         self._remote_path = remote_path or self.DEFAULT_REMOTE_PATH
         layout = get_run_log_layout()
         layout.ensure_logs_dir()
-        self._local_path = layout.remote_training_log
+        self._local_path = local_path if local_path is not None else layout.remote_training_log
         # Track last downloaded size in BYTES (not characters).
         # Used to incrementally append only new bytes on subsequent downloads.
         self._last_size = self._get_local_size_bytes()
@@ -135,9 +169,9 @@ class LogManager:
             self._local_path.write_text(content, encoding=ENCODING_UTF8)
             current_size = self._get_local_size_bytes()
             if not silent:
-                logger.info(f"📥 Downloaded training log: {self._local_path} ({current_size:,} bytes)")
+                logger.info(f"📥 Downloaded {self._local_path.name}: {self._local_path} ({current_size:,} bytes)")
             elif current_size != prev_size:
-                logger.debug(f"📥 Training log updated: {current_size:,} bytes")
+                logger.debug(f"📥 {self._local_path.name} updated: {current_size:,} bytes")
             self._last_size = current_size
             return True
 
@@ -156,9 +190,9 @@ class LogManager:
             self._local_path.write_text(content, encoding=ENCODING_UTF8)
             current_size = self._get_local_size_bytes()
             if not silent:
-                logger.info(f"📥 Downloaded training log: {self._local_path} ({current_size:,} bytes)")
+                logger.info(f"📥 Downloaded {self._local_path.name}: {self._local_path} ({current_size:,} bytes)")
             elif current_size != prev_size:
-                logger.debug(f"📥 Training log updated: {current_size:,} bytes")
+                logger.debug(f"📥 {self._local_path.name} updated: {current_size:,} bytes")
             self._last_size = current_size
             return True
 
@@ -189,10 +223,10 @@ class LogManager:
         current_size = self._get_local_size_bytes()
 
         if not silent:
-            logger.info(f"📥 Downloaded training log: {self._local_path} ({current_size:,} bytes)")
+            logger.info(f"📥 Downloaded {self._local_path.name}: {self._local_path} ({current_size:,} bytes)")
         elif current_size != self._last_size:
             # Log only when size changes (new content)
-            logger.debug(f"📥 Training log updated: {current_size:,} bytes")
+            logger.debug(f"📥 {self._local_path.name} updated: {current_size:,} bytes")
 
         self._last_size = current_size
         return True
@@ -227,7 +261,7 @@ class LogManager:
             error_context: Description of the error for logging
         """
         if error_context:
-            logger.info(f"📋 Downloading training log due to: {error_context}")
+            logger.info(f"📋 Downloading {self._local_path.name} due to: {error_context}")
 
         self.download(silent=False)
 

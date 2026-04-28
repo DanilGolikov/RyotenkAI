@@ -11,18 +11,17 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from src.constants import PROVIDER_RUNPOD
-from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.pipeline.stages.managers import LogManager, TrainingDeploymentManager
+from src.pipeline.state import RunContext
+from src.providers.training.factory import GPUProviderFactory
+from src.utils.logger import get_run_log_layout, logger
+from src.utils.result import AppError, Err, Ok, ProviderError, Result
+from src.utils.ssh_client import SSHClient
 
 # Truncation length for the docker image SHA shown in pipeline logs.
 GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
-from src.providers.training.factory import GPUProviderFactory
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
-from src.utils.ssh_client import SSHClient
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -390,21 +389,41 @@ class GPUDeployer(PipelineStage):
 
     def _download_remote_logs(self, reason: str) -> None:
         """
-        Download training logs from remote server.
+        Download remote pod logs from training workspace.
 
-        Logs may be in:
-        - {workspace}/training.log (docker-only training writes directly into run dir mount)
-        - {workspace}/logs/{timestamp}/pipeline.log (optional, if training writes structured logs dir)
-        - {workspace}/logs/training.log (legacy/simple path)
+        Two independent files are pulled in this order:
+
+        1. ``{workspace}/runner.log`` — uvicorn / runner stdout
+           captured by entrypoint.sh's redirect from the very first
+           byte of Python boot. **Survives uvicorn pre-import crashes**
+           (ImportError, SyntaxError) that would otherwise leave us
+           with no diagnostic. Downloaded best-effort: failure here
+           does not break trainer-log download below.
+        2. ``{workspace}/training.log`` (or ``{workspace}/logs/.../
+           pipeline.log`` fallback) — trainer subprocess stdout. Only
+           exists after the trainer has actually started.
+
+        Why two channels: when the runner crashes at boot, ``training
+        .log`` does not exist yet — only ``runner.log`` has the trace.
+        When the trainer crashes during a real run, ``training.log``
+        has the full output — ``runner.log`` shows only lifecycle
+        events. Either file alone leaves a blind spot. Both together
+        cover before / during / after the training run.
 
         Args:
-            reason: Error context for logging
+            reason: Error context for logging.
         """
         if not self._ssh_client:
             return
 
+        workspace = self.deployment.workspace
+
+        # Channel 1 — runner.log (NEW). Best-effort, isolated try/except
+        # so failures here do not skip the trainer log below.
+        self._download_runner_log(reason=reason)
+
+        # Channel 2 — training.log + fallbacks (existing behaviour).
         try:
-            workspace = self.deployment.workspace
             # 1) Primary path: docker-only training log in run dir
             primary_log_path = f"{workspace}/training.log"
             log_manager = LogManager(self._ssh_client, remote_path=primary_log_path)
@@ -446,6 +465,52 @@ class GPUDeployer(PipelineStage):
 
         except Exception as e:
             logger.debug(f"[DEPLOYER] Failed to download logs on error: {e}")
+
+    def _download_runner_log(self, *, reason: str) -> None:
+        """
+        Pull pod-side ``runner.log`` to the attempt's logs/ dir.
+
+        This file holds uvicorn stdout/stderr captured from PID 1 of
+        the runner Python process — including pre-import errors that
+        kill the runner before trainer.log even gets created. It is
+        the primary diagnostic for ``/healthz did not return 200``
+        timeouts.
+
+        Failure modes are non-fatal: missing file (trainer-only legacy
+        images without entrypoint redirect), unreachable SSH, or any
+        exception are swallowed at debug level so they do not mask
+        the bigger error context that triggered this download.
+
+        Args:
+            reason: error context propagated to the log message.
+        """
+        if not self._ssh_client:
+            return
+
+        try:
+            # Prefer /workspace/runner.log (entrypoint.sh writes there
+            # by default). Note: entrypoint resolves the full path via
+            # RYOTENKAI_RUNNER_LOG env var, but we hardcode the
+            # canonical default here — overrides are debugging-only.
+            remote_path = "/workspace/runner.log"
+            layout = get_run_log_layout()
+            log_manager = LogManager(
+                self._ssh_client,
+                remote_path=remote_path,
+                local_path=layout.remote_runner_log,
+            )
+            if log_manager.download(silent=False):
+                return
+            logger.debug(
+                "[DEPLOYER] runner.log not present on pod (likely legacy image)"
+                " — context: %s",
+                reason,
+            )
+        except Exception as e:
+            # Not warning: runner.log is best-effort. The training.log
+            # channel below is what carries the primary error trace
+            # when the trainer DID run. Logging at debug avoids noise.
+            logger.debug(f"[DEPLOYER] Failed to download runner.log: {e}")
 
     def notify_pipeline_failure(self) -> None:
         """Inform the deployer that the pipeline ended with an error.
