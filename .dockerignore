@@ -1,0 +1,75 @@
+# Build-context exclusions for ``docker build .`` from repo root.
+#
+# Why this file exists: without it, Docker streams the entire working
+# tree (~hundreds of MB of node_modules, .venv, .git, runs/, web/dist,
+# JetBrains caches, etc.) into the daemon for EVERY rebuild, even when
+# the Dockerfile doesn't reference those paths. With ``COPY src``
+# becoming a routine line in our images, that cost gets paid on every
+# layer cache miss. Keep this list tight and aligned with what the
+# training / inference Dockerfiles actually need.
+
+# --- VCS / IDE / editors ---
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.cursor
+.claude
+.helix
+
+# --- Python tooling state ---
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.coverage
+**/.tox
+**/.nox
+.venv
+venv
+*.egg-info
+
+# --- Frontend build artifacts ---
+web/node_modules
+web/dist
+web/.vite
+web/coverage
+**/node_modules
+
+# --- Runtime artifacts that the image must not bake in ---
+# These are produced BY the pipeline at runtime and would leak host
+# state into the image (and bloat it). The pipeline rsyncs fresh
+# code into /workspace at deploy time anyway.
+runs
+mlruns
+.mlflow
+
+# --- Tests: not part of the runtime contract ---
+# Rationale: the image ships the trainer, not its test suite. Tests
+# also pull in dev-only deps (pytest, hypothesis) that aren't in
+# requirements.runtime.txt — including them wouldn't even import.
+src/tests
+tests
+
+# --- Docs / plans / scratch ---
+docs/plans
+docs/audits
+docs/architecture
+
+# --- Local OS / env ---
+.DS_Store
+.env
+.env.*
+!.env.example
+*.swp
+*.swo
+
+# --- Build outputs / logs ---
+build
+dist
+*.egg
+*.log
+docker/training/build_and_push.log
+docker/inference/build_and_push.log

@@ -92,19 +92,29 @@ RUN mkdir -p /opt/helix
 COPY docker/training/runtime_check.py /opt/helix/runtime_check.py
 RUN chmod +x /opt/helix/runtime_check.py
 
-# In-pod job server (Phase 0 baseline — minimal package, expanded in
-# Phase 1+ as src/runner gains dependencies on src/utils, etc.).
+# In-pod job server baseline.
 #
-# Layout: /opt/ryotenkai/src/runner/...
+# Layout: /opt/ryotenkai/src/...
 # We add ``/opt/ryotenkai`` to PYTHONPATH so ``from src.runner import
-# create_app`` resolves both at build time (uvicorn smoke import in
-# entrypoint.sh) and at runtime. The /workspace path the pipeline
-# rsyncs into stays first on PYTHONPATH (set per-run via ``.env``),
-# so a freshly-deployed src/utils overrides the image baseline if
-# the pipeline adds one — by design.
-RUN mkdir -p /opt/ryotenkai/src
-COPY src/__init__.py /opt/ryotenkai/src/__init__.py
-COPY src/runner /opt/ryotenkai/src/runner
+# create_app`` resolves at uvicorn-launch time (used by entrypoint.sh).
+#
+# Why we copy the WHOLE ``src/`` and not just ``src/runner``: the
+# runner has organically grown imports of ``src.utils.logger``,
+# ``src.constants``, and ``src.providers.{runpod,single_node}.runtime.
+# lifecycle_client``. Copying just ``src/runner`` left the image
+# unable to import its own entrypoint (``ModuleNotFoundError: No
+# module named 'src.utils'``) and uvicorn died at startup. Copying
+# all of ``src`` is a few-MB layer cost on top of the multi-GB
+# torch/CUDA layers below it — irrelevant — and means the image is
+# self-sufficient for any future runner dependency without another
+# Dockerfile bump. The .dockerignore at repo root excludes tests,
+# caches, runs/, etc. so we don't bake in dev cruft.
+#
+# The /workspace path the pipeline rsyncs into stays FIRST on
+# PYTHONPATH (set per-run via ``.env``), so freshly-deployed code
+# always overrides this image baseline — by design.
+RUN mkdir -p /opt/ryotenkai
+COPY src /opt/ryotenkai/src
 ENV PYTHONPATH="/opt/ryotenkai:${PYTHONPATH:-}"
 
 # Workspace contract

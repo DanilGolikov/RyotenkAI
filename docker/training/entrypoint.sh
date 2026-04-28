@@ -71,11 +71,51 @@ else
   exit 127
 fi
 
+# Pod-side log file. Captures uvicorn stdout/stderr from PID 1 of the
+# Python process — including ImportError / SyntaxError that fire BEFORE
+# any application logging is configured. Mac control plane rsyncs this
+# file via existing LogManager.download() chain.
+#
+# Why direct redirect (and NOT `tee` or uvicorn's --log-config):
+#   * `tee` via process-substitution (`> >(tee -a) 2>&1`) would put a
+#     bash subshell between dumb-init and uvicorn — uvicorn becomes a
+#     grandchild, SIGTERM stops propagating, and `docker stop`
+#     escalates to SIGKILL after 10 s. Graceful shutdown lost,
+#     in-flight checkpoints lost.
+#   * `--log-config` only kicks in AFTER Python's logging dictConfig is
+#     applied. Pre-import errors (the ones we just had with
+#     ``ModuleNotFoundError: src.utils``) fire BEFORE that point and
+#     never reach the file.
+#   * Direct ``>>`` keeps the dumb-init → uvicorn parent-child link
+#     intact and captures everything from the first byte of stderr.
+#
+# `stdbuf -oL -eL` forces line-buffered stdout/stderr so the file is
+# useful for live `tail -f` (without it Python's default 4 KB block
+# buffering makes the file appear empty for the first ~seconds).
+#
+# Trade-off accepted: `docker logs <ctr>` will be EMPTY for this
+# container after the redirect. We don't use `docker logs` from the
+# control plane anyway — the Mac pulls /workspace/runner.log over SSH
+# via LogManager.
+RUNNER_LOG="${RYOTENKAI_RUNNER_LOG:-/workspace/runner.log}"
+mkdir -p "$(dirname "$RUNNER_LOG")" || true
+
+# Probe writability — if /workspace is read-only or missing, fall back
+# to /tmp (non-persistent across container restarts but at least the
+# pod boots and we capture the bootstrap window). The fallback is
+# logged to docker stderr so it shows up in provider logs even though
+# /workspace mount is broken.
+if ! : >> "$RUNNER_LOG" 2>/dev/null; then
+  echo "WARNING: $RUNNER_LOG not writable, falling back to /tmp/runner.log" >&2
+  RUNNER_LOG="/tmp/runner.log"
+fi
+
 # `exec` so dumb-init's child becomes uvicorn directly — bash doesn't
 # stay around to swallow signals. SIGTERM from `docker stop` flows
 # through dumb-init → uvicorn → graceful shutdown of the asyncio loop
 # → the supervisor's SIGTERM-on-trainer code path (Phase 2).
-exec "$PY_BIN" -m uvicorn src.runner.main:app \
+exec stdbuf -oL -eL "$PY_BIN" -m uvicorn src.runner.main:app \
   --host "$RYOTENKAI_RUNNER_HOST" \
   --port "$RYOTENKAI_RUNNER_PORT" \
-  --no-access-log
+  --no-access-log \
+  >> "$RUNNER_LOG" 2>&1
