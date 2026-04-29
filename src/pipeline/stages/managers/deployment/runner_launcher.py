@@ -113,9 +113,25 @@ def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
         # branch and we get "file not found" diagnostics with no
         # trace of WHY the redirect didn't take.
         "mkdir -p /workspace; "
-        # Idempotency: skip launching if uvicorn is already running.
-        "if pgrep -f 'uvicorn src.runner' >/dev/null 2>&1; then "
+        # Probe writability EAGERLY so a read-only /workspace fails
+        # here with a clear ``cannot create`` error instead of in the
+        # async ``> runner.log`` redirect (where the failure would
+        # be silenced and surface as "file not found" 30 s later).
+        f"touch {RUNNER_LOG_PATH}; "
+        # Idempotency: skip launching if a runner is ALREADY answering
+        # /healthz on the loopback port.
+        #
+        # Why curl-probe and NOT ``pgrep -f 'uvicorn src.runner'``:
+        # ``pgrep -f`` matches on the full command line of every
+        # process — including the very bash subshell that's evaluating
+        # THIS string, which trivially contains the pattern as an
+        # argument. The pgrep version always returned "match" and
+        # short-circuited the launch. Curl can't false-positive: if
+        # nothing's bound to 8080 it returns non-zero.
+        f"if curl -sf http://{RUNNER_HOST}:{RUNNER_PORT}/healthz "
+        "  >/dev/null 2>&1; then "
         "  echo 'runner already running'; "
+        "  exit 0; "
         "else "
         # Launch detached. nohup + disown survives SSH disconnect.
         # stdbuf -oL forces line-buffering so the log file gets
@@ -201,7 +217,7 @@ def launch_runner(
     out_clean = (stdout or "").strip()
     err_clean = (stderr or "").strip()
 
-    if success and "runner ready" in out_clean:
+    if success and ("runner ready" in out_clean or "already running" in out_clean):
         logger.info("[RUNNER_LAUNCHER] ✅ Runner ready on %s:%d", RUNNER_HOST, RUNNER_PORT)
         if "already running" in out_clean:
             logger.debug("[RUNNER_LAUNCHER] (idempotent — was already running)")

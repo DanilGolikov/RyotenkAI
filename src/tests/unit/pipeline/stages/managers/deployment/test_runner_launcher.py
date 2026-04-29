@@ -60,11 +60,12 @@ def test_launch_runner_success_returns_ok() -> None:
 
 
 def test_launch_runner_idempotent_when_already_running() -> None:
-    """If pgrep shows uvicorn already running, the script reports it
-    AND still confirms /healthz; we still get Ok."""
+    """If the curl-probe finds the runner already healthy on its
+    port, the script exits 0 with stdout=='runner already running'
+    and we treat that as Ok — no duplicate launch."""
     ssh = _SSHStub(
         success=True,
-        stdout="runner already running\nrunner ready",
+        stdout="runner already running",
         stderr="",
     )
     result = launch_runner(ssh)  # type: ignore[arg-type]
@@ -168,12 +169,28 @@ def test_launch_runner_does_not_swallow_exec_exceptions_silently() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_command_includes_idempotency_pgrep() -> None:
-    """The launch script must short-circuit if uvicorn is already
-    running on the pod — protects against a stage retry that
-    double-launches uvicorn and races on port 8080."""
+def test_command_idempotency_uses_healthz_not_pgrep() -> None:
+    """Idempotency check must be a curl probe of /healthz — NOT
+    ``pgrep -f``.
+
+    Why: ``pgrep -f PATTERN`` matches on the full command line of
+    every process. The very bash subshell that's evaluating this
+    launch script has the pattern as one of its arguments, so
+    pgrep self-matches, the ``if`` branch fires "runner already
+    running", uvicorn never gets launched, and the readiness
+    probe times out 30 s later with a confusing "file does not
+    exist" diagnostic.
+
+    A curl probe to /healthz can't false-positive: if no process
+    is bound to port 8080, the probe returns non-zero and we
+    proceed to launch.
+    """
     cmd = _build_launch_command()
-    assert "pgrep -f 'uvicorn src.runner'" in cmd
+    # Active assertion: idempotency check is a curl probe.
+    assert f"curl -sf http://127.0.0.1:{RUNNER_PORT}/healthz" in cmd
+    # Negative regression: pgrep was the bug.
+    assert "pgrep" not in cmd, \
+        "pgrep idempotency check is forbidden — it self-matches the launch script"
 
 
 def test_command_redirects_to_runner_log() -> None:
