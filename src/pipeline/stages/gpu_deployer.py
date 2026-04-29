@@ -277,7 +277,18 @@ class GPUDeployer(PipelineStage):
         if self._callbacks.on_deps_installed:
             self._callbacks.on_deps_installed(deps_duration)
 
-        # Step 7: Start training
+        # Step 7: Start training.
+        #
+        # Stamp ``resource_id`` into the context BEFORE delegating —
+        # the launcher needs it to assemble runner-side env vars
+        # (RunPod's ``required_runtime_env_vars`` keys ``RUNPOD_POD_ID``
+        # off this value, and the runner's lifespan refuses to boot
+        # without it). Previously only ``upload_context`` (a copy)
+        # carried the id; the main ``context`` was missing it through
+        # ``start_training`` and the runner died with
+        # ``BootstrapConfigError: ... requires RUNPOD_POD_ID``.
+        if ssh_info.resource_id:
+            context["resource_id"] = ssh_info.resource_id
         logger.info("Starting training...")
         training_result = self.deployment.start_training(ssh_client, context, provider=self._provider)
 

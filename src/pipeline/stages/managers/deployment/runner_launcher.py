@@ -24,12 +24,15 @@ initialized). That file is rsync'd to the Mac via the existing
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING
 
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.utils.ssh_client import SSHClient
 
 
@@ -52,21 +55,31 @@ RUNNER_LOG_PATH: str = "/workspace/runner.log"
 IMAGE_BASELINE_PYTHONPATH: str = "/opt/ryotenkai"
 
 
-def _build_launch_command() -> str:
+def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
     """Return the shell command that ssh-execs uvicorn in the pod.
 
-    Three concerns the script handles:
+    Four concerns the script handles:
 
     1. **Idempotency.** ``pgrep -f 'uvicorn src.runner'`` short-circuits
        if uvicorn is already running on the pod (e.g. a retry of
        this stage after a transient SSH glitch). Re-execing would
        race for port 8080.
-    2. **Detachment.** ``nohup ... < /dev/null & disown`` so the
+    2. **Runtime env vars.** The runner needs at least
+       ``RYOTENKAI_RUNTIME_PROVIDER`` at startup (the lifespan
+       hook ``resolve_lifecycle_client_from_env`` rejects an unset
+       value with ``BootstrapConfigError`` and uvicorn dies). The
+       caller passes the full set the provider declares via
+       :meth:`IGPUProvider.required_runtime_env_vars` (provider,
+       API keys, pod_id when known) and we forward it through
+       ``env KEY=VALUE ...`` between ``nohup`` and ``stdbuf``.
+       Values are shell-escaped to survive secrets containing
+       quotes / spaces / ``$``.
+    3. **Detachment.** ``nohup ... < /dev/null & disown`` so the
        process survives the SSH session closing and won't get a
        SIGHUP.
-    3. **Readiness probe.** ``curl /healthz`` polled in a 30 s loop.
-       On failure we ``tail -50 /workspace/runner.log`` to stderr so
-       the Mac sees the cause without a separate fetch.
+    4. **Readiness probe.** ``curl /healthz`` polled in a 30 s loop.
+       On failure we dump ``ls -la`` and ``tail`` of runner.log to
+       stderr so the Mac sees the cause without a separate fetch.
 
     Returns the full command as a single string suitable for
     ``ssh_client.exec_command(command=..., timeout=N)``.
@@ -76,7 +89,22 @@ def _build_launch_command() -> str:
     deployed runner-launch.sh on the pod to drift out of sync with
     the Mac's expectations. The image already has everything
     (Python, uvicorn, ``src.runner``) baked in.
+
+    Args:
+        env: provider-supplied env vars to inject into the runner
+            process. ``None`` is equivalent to ``{}``: only PYTHONPATH
+            is set, and the runner will fail at startup if it requires
+            anything else (e.g. RYOTENKAI_RUNTIME_PROVIDER on a real
+            provider).
     """
+    env_assignments = ""
+    if env:
+        # ``shlex.quote`` makes the value safe for any POSIX shell —
+        # tokens with quotes, spaces, ``$`` or backticks can't break
+        # out of the env arg.
+        parts = [f"{key}={shlex.quote(str(value))}" for key, value in env.items()]
+        env_assignments = " ".join(parts) + " "
+
     return (
         "set -e; "
         # Make sure the workspace directory exists before redirect.
@@ -98,6 +126,7 @@ def _build_launch_command() -> str:
         # forensics.
         "  nohup env "
         f"PYTHONPATH={IMAGE_BASELINE_PYTHONPATH}:${{PYTHONPATH:-}} "
+        f"    {env_assignments}"
         "    stdbuf -oL -eL "
         "    /usr/local/bin/python3 -m uvicorn src.runner.main:app "
         f"      --host {RUNNER_HOST} --port {RUNNER_PORT} --no-access-log "
@@ -129,7 +158,11 @@ def _build_launch_command() -> str:
     )
 
 
-def launch_runner(ssh_client: SSHClient) -> Result[None, ProviderError]:
+def launch_runner(
+    ssh_client: SSHClient,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> Result[None, ProviderError]:
     """Start the uvicorn runner inside the pod and wait for /healthz.
 
     On success, the pod has a uvicorn listening on
@@ -144,13 +177,19 @@ def launch_runner(ssh_client: SSHClient) -> Result[None, ProviderError]:
 
     Args:
         ssh_client: alive SSH connection to the pod.
+        env: provider-supplied env vars to inject into the runner
+            process. Should at minimum include
+            ``RYOTENKAI_RUNTIME_PROVIDER``; missing it makes the
+            runner's lifespan hook raise ``BootstrapConfigError`` and
+            uvicorn dies before binding the port. Typically obtained
+            from ``provider.required_runtime_env_vars(resource_id)``.
 
     Returns:
         ``Ok(None)`` if uvicorn is running and /healthz returns 200
         within :data:`RUNNER_READY_TIMEOUT_SECONDS`. ``Err`` with code
         ``RUNNER_LAUNCH_FAILED`` otherwise.
     """
-    cmd = _build_launch_command()
+    cmd = _build_launch_command(env=env)
     # Allow the SSH command a bit longer than the readiness loop so
     # tail-of-log can run even if uvicorn never started.
     timeout_s = RUNNER_READY_TIMEOUT_SECONDS + 15

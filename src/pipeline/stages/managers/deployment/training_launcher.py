@@ -181,10 +181,28 @@ class TrainingLauncher:
         # below — without uvicorn listening on 127.0.0.1:8080, the
         # tunnel would open but /healthz would forever timeout.
         #
+        # The runner needs at least ``RYOTENKAI_RUNTIME_PROVIDER`` at
+        # startup (its lifespan hook ``resolve_lifecycle_client_from_env``
+        # bails with BootstrapConfigError otherwise), plus any
+        # provider-specific vars (RUNPOD_API_KEY, RUNPOD_POD_ID, …).
+        # The provider's :meth:`required_runtime_env_vars` is the
+        # single source of truth for that set — same call we already
+        # make below for the trainer's env.
+        #
         # ``launch_runner`` is idempotent: a retry of this stage that
         # finds uvicorn already running short-circuits and returns
         # Ok immediately.
-        runner_ready = launch_runner(ssh_client)
+        runner_env: dict[str, str] = {}
+        if provider is not None:
+            resource_id = (
+                context.get("resource_id") or context.get("pod_id")
+            )
+            runner_env = dict(
+                provider.required_runtime_env_vars(
+                    resource_id=resource_id if resource_id else None,
+                ),
+            )
+        runner_ready = launch_runner(ssh_client, env=runner_env)
         if runner_ready.is_err():
             err = runner_ready.unwrap_err()  # type: ignore[union-attr]
             logger.error("[LAUNCHER] Runner failed to launch: %s", err.message)

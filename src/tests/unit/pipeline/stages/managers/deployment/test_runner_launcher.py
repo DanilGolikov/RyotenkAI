@@ -228,3 +228,57 @@ def test_command_uses_pythonpath_with_image_baseline() -> None:
     cmd = _build_launch_command()
     assert "PYTHONPATH=/opt/ryotenkai" in cmd
     assert "src.runner.main:app" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Env-var injection (provider's required_runtime_env_vars)
+# ---------------------------------------------------------------------------
+
+
+def test_command_injects_provider_env_vars() -> None:
+    """env=dict is forwarded as ``env KEY=VALUE ...`` between nohup
+    and stdbuf — that's what makes RYOTENKAI_RUNTIME_PROVIDER
+    reach the runner's lifespan hook."""
+    cmd = _build_launch_command(
+        env={"RYOTENKAI_RUNTIME_PROVIDER": "runpod", "RUNPOD_POD_ID": "abc123"},
+    )
+    assert "RYOTENKAI_RUNTIME_PROVIDER=runpod" in cmd
+    assert "RUNPOD_POD_ID=abc123" in cmd
+
+
+def test_command_shell_escapes_special_chars_in_env() -> None:
+    """API keys / secrets may contain spaces, quotes, ``$``, backticks.
+    ``shlex.quote`` must wrap them so the shell doesn't reinterpret —
+    otherwise the launch command syntax-errors and uvicorn never starts.
+    """
+    import shlex as _shlex
+    payload = "key with spaces and 'quotes' and $(evil)"
+    cmd = _build_launch_command(env={"RUNPOD_API_KEY": payload})
+    # Authoritative check: the substring matches shlex.quote's output
+    # exactly. If shlex.quote ever stops being used, this trips first.
+    expected_token = f"RUNPOD_API_KEY={_shlex.quote(payload)}"
+    assert expected_token in cmd, (
+        f"expected shlex-quoted env token {expected_token!r} in command"
+    )
+
+
+def test_command_with_no_env_omits_assignments() -> None:
+    """When env is None or empty, there should be no spurious
+    KEY=VALUE between nohup and stdbuf — keeps the command minimal
+    for the test/dev case where no provider env is needed."""
+    cmd_none = _build_launch_command(env=None)
+    cmd_empty = _build_launch_command(env={})
+    # Both must still launch uvicorn; just no extra env tokens.
+    for cmd in (cmd_none, cmd_empty):
+        assert "src.runner.main:app" in cmd
+        # Sanity: no leftover empty-value patterns from a buggy join.
+        assert "= " not in cmd
+        assert "=  " not in cmd
+
+
+def test_launch_runner_passes_env_through_to_command() -> None:
+    """The public API must wire env into the exec_command call,
+    not silently drop it."""
+    ssh = _SSHStub(success=True, stdout="runner ready")
+    launch_runner(ssh, env={"RYOTENKAI_RUNTIME_PROVIDER": "single_node"})  # type: ignore[arg-type]
+    assert "RYOTENKAI_RUNTIME_PROVIDER=single_node" in ssh.last_command
