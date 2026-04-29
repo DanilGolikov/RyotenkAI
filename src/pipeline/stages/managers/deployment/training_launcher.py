@@ -230,6 +230,19 @@ class TrainingLauncher:
             )
 
         job_id = self._resolve_job_id(context)
+        # Resolve config to ABSOLUTE path on the pod.
+        #
+        # Why: the trainer subprocess is spawned by the in-pod
+        # supervisor without a ``cwd=`` arg, so it inherits uvicorn's
+        # cwd (``/root``). A relative ``config/pipeline_config.yaml``
+        # then misresolves to ``/root/config/pipeline_config.yaml``
+        # and the trainer dies with FileNotFoundError before reading
+        # a single line. The right fix is to set the trainer's
+        # working directory to the run's workspace (architectural,
+        # tracked separately — requires a JobSpec field + image
+        # rebuild). For now the quick fix is to send an absolute
+        # path so the cwd doesn't matter.
+        config_abs_path = f"{self.workspace.rstrip('/')}/{DEPLOYMENT_CONFIG_PATH}"
         # Phase 14.D+F — provider supplies its own runtime env via
         # ``required_runtime_env_vars``. The hooks dataclass'
         # ``env_vars`` is preserved for back-compat (any provider
@@ -242,7 +255,7 @@ class TrainingLauncher:
                 "-m",
                 "src.training.run_training",
                 "--config",
-                DEPLOYMENT_CONFIG_PATH,
+                config_abs_path,
             ],
             "env": self._build_job_env(
                 context, provider, hooks.env_vars,
