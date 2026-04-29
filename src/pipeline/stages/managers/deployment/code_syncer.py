@@ -64,6 +64,17 @@ class CodeSyncer:
         "src/config",  # Pydantic config schema (used by src/utils/config facade)
         "src/data",  # Data loaders
         "src/community",  # Plugin framework (registry / catalog / manifest)
+        # ``src/workspace`` carries the UX-layer config loader the trainer
+        # uses (``src.workspace.integrations.loader.load_pipeline_config``
+        # at ``src/training/run_training.py:55``). Stays small (~228 KB)
+        # because the heavy parts of workspace — projects, providers
+        # registries — are referenced only at top-level for type
+        # purposes; trainer doesn't pull them at runtime.
+        "src/workspace",
+        # ``src/inference`` exports ``SUPPORTED_INFERENCE_ENGINES``
+        # consumed by ``src/config/validators/inference.py``, which the
+        # trainer's config-validator chain pulls at startup. ~16 KB.
+        "src/inference",
         "src/constants.py",  # Shared constants (imported by config schemas, validators, etc.)
         "src/__init__.py",  # Package init
     ]
