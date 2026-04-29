@@ -54,7 +54,7 @@ def bus() -> EventBus:
 @pytest_asyncio.fixture
 async def supervisor(
     fsm: JobLifecycleFSM, bus: EventBus,
-) -> "AsyncIterator[Supervisor]":
+) -> AsyncIterator[Supervisor]:
     """Real :class:`Supervisor` with cleanup on test exit.
 
     ``shutdown()`` is idempotent and safe even if the test never
@@ -115,6 +115,48 @@ class TestNaturalExit:
         snap = fsm.current()
         assert snap is not None
         assert "exit_code=7" in snap.message
+
+    async def test_workdir_sets_subprocess_cwd(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM,
+        bus: EventBus, tmp_path: Path,
+    ) -> None:
+        """``submit_and_spawn(..., workdir=PATH)`` must set the
+        subprocess's cwd so relative paths resolve from there.
+
+        Regression guard for the trainer-cwd bug: previously the
+        workdir argument was accepted but never propagated to the
+        subprocess (see ``src/runner/api/jobs.py`` — old code
+        dropped it). The trainer then inherited uvicorn's ``/root``
+        and FileNotFoundError'd on its config arg.
+
+        We verify by spawning a Python that prints its CWD; the
+        line lands as a ``trainer_log`` event the supervisor emits.
+        """
+        run_dir = tmp_path / "run-cwd-check"
+        run_dir.mkdir()
+
+        # Spawn a child that just prints its cwd — fast enough that
+        # the FSM races to COMPLETED before the test wraps up.
+        await supervisor.submit_and_spawn(
+            "j-cwd", _py("import os; print(os.getcwd())"),
+            workdir=run_dir,
+        )
+        await _wait_for_state(fsm, JobState.COMPLETED)
+
+        # Drain the bus and look for the trainer_log line carrying
+        # the cwd that the child printed. (Mirrors the buffer-walk
+        # in ``test_stdout_lines_emitted_as_events``.)
+        cwd_lines = [
+            e.payload["line"]
+            for e in list(bus._buffer)
+            if e.kind == "trainer_log"
+            and isinstance(e.payload, dict)
+            and e.payload.get("kind") == "stdout"
+        ]
+        assert any(str(run_dir) in line for line in cwd_lines), (
+            f"expected child cwd to be {run_dir!s} but trainer_log lines "
+            f"didn't contain it; got: {cwd_lines!r}"
+        )
 
     async def test_stdout_lines_emitted_as_events(
         self, supervisor: Supervisor, bus: EventBus, fsm: JobLifecycleFSM,

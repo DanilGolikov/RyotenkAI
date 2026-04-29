@@ -14,12 +14,12 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
-    "JobSpec",
-    "JobSubmittedResponse",
-    "JobSnapshotResponse",
-    "JobStopAcceptedResponse",
     "EventResponse",
     "InternalEventRequest",
+    "JobSnapshotResponse",
+    "JobSpec",
+    "JobStopAcceptedResponse",
+    "JobSubmittedResponse",
 ]
 
 
@@ -68,6 +68,21 @@ class JobSpec(_StrictModel):
             "Extra environment variables to merge over the runner's "
             "own ``os.environ`` for the trainer subprocess. Use "
             "this for HF_TOKEN, MLFLOW_*, RYOTENKAI_RUNNER_URL, etc."
+        ),
+    )
+    workdir: str | None = Field(
+        default=None,
+        description=(
+            "Absolute pod-side directory to spawn the trainer in. "
+            "Forwarded to ``asyncio.create_subprocess_exec(cwd=...)`` "
+            "so the trainer's relative-path resolution lines up with "
+            "the run's workspace (config/, data/, src/ are all "
+            "rsync'd under this directory). When ``None`` the trainer "
+            "inherits uvicorn's cwd — usually ``/root`` post-SSH "
+            "launch, which would misresolve ``--config "
+            "config/pipeline_config.yaml`` to ``/root/config/...`` "
+            "and crash with FileNotFoundError. Mac clients should "
+            "always set this to ``ssh_info.workspace_path``."
         ),
     )
 

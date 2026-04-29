@@ -90,6 +90,52 @@ class TestSubmit:
         assert r.status_code == 202
         assert r.json()["job_id"] == "j-2"
 
+    def test_workdir_forwarded_to_supervisor(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        """When the JobSpec carries an absolute ``workdir``, the
+        endpoint must forward it to ``supervisor.submit_and_spawn``
+        so the trainer subprocess gets ``cwd=<workdir>``.
+
+        Regression guard for the trainer-cwd bug: previously the
+        endpoint dropped the field and the trainer inherited
+        uvicorn's ``/root`` cwd, breaking any relative path in the
+        argv (e.g. ``--config config/pipeline_config.yaml``).
+        """
+        from pathlib import Path
+        kw = _multipart({
+            "job_id": "j-wd",
+            "command": ["python", "-c", "pass"],
+            "workdir": "/workspace/runs/test-run",
+        })
+        r = runner_client.post(JOBS, **kw)
+        assert r.status_code == 202, r.text
+        sup = runner_client.app.state.supervisor
+        assert sup.last_workdir == Path("/workspace/runs/test-run")
+
+    def test_workdir_omitted_falls_back_to_inherited_cwd(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        """When the JobSpec does NOT carry ``workdir`` (legacy clients),
+        the endpoint passes ``None`` to the supervisor — which means
+        the trainer will inherit uvicorn's cwd. Acceptable for back-
+        compat, but Mac-side launcher should always set the field."""
+        kw = _multipart({"job_id": "j-no-wd", "command": ["python", "-c", "pass"]})
+        r = runner_client.post(JOBS, **kw)
+        assert r.status_code == 202, r.text
+        sup = runner_client.app.state.supervisor
+        assert sup.last_workdir is None
+
+    def test_workdir_empty_string_treated_as_none(self, runner_client) -> None:  # type: ignore[no-untyped-def]
+        """Empty string ``workdir`` is the same as omitting the field.
+        Defensive: protects against a Mac client that sets it to
+        ``""`` from a build-failure path instead of leaving it unset."""
+        kw = _multipart({
+            "job_id": "j-empty-wd",
+            "command": ["python", "-c", "pass"],
+            "workdir": "",
+        })
+        r = runner_client.post(JOBS, **kw)
+        assert r.status_code == 202, r.text
+        sup = runner_client.app.state.supervisor
+        assert sup.last_workdir is None
+
 
 # ---------------------------------------------------------------------------
 # GET /jobs/{id}

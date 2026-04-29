@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,6 +33,7 @@ from src.runner.supervisor import SupervisorBusy, TerminalHook
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from src.runner.event_bus import EventBus
     from src.runner.state import JobLifecycleFSM
@@ -64,8 +64,8 @@ class MockSupervisor:
 
     def __init__(
         self,
-        fsm: "JobLifecycleFSM",
-        bus: "EventBus",
+        fsm: JobLifecycleFSM,
+        bus: EventBus,
         *,
         terminal_hook: TerminalHook | None = None,
     ) -> None:
@@ -75,6 +75,7 @@ class MockSupervisor:
         self._running = False
         self.last_command: list[str] | None = None
         self.last_env: dict[str, str] | None = None
+        self.last_workdir: Path | None = None
         self.stop_requests: int = 0
         # Track terminal-hook firings so tests can assert auto-stop
         # plumbing actually wires through MockSupervisor → main.py.
@@ -117,6 +118,7 @@ class MockSupervisor:
 
         self.last_command = list(command)
         self.last_env = dict(env) if env is not None else None
+        self.last_workdir = workdir
         self._running = True
 
     async def request_stop(self, *, grace_seconds: float = 30.0) -> None:
@@ -220,7 +222,7 @@ def _set_default_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def runner_client(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> "Iterator[TestClient]":
+) -> Iterator[TestClient]:
     """TestClient with a :class:`MockSupervisor` bound to ``app.state``.
 
     Construction injects ``MockSupervisor`` as the supervisor factory
@@ -238,7 +240,7 @@ def runner_client(
 @pytest.fixture
 def runner_client_real(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> "Iterator[TestClient]":
+) -> Iterator[TestClient]:
     """TestClient with the real :class:`Supervisor` bound to ``app.state``.
 
     Use only for tests in :mod:`test_supervisor` that need actual

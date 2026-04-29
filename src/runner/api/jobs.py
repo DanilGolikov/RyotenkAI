@@ -27,6 +27,7 @@ Failure modes:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -46,7 +47,6 @@ from src.runner.api.schemas import (
 )
 from src.runner.plugin_unpacker import PluginUnpackError
 from src.runner.state import (
-    InvalidTransitionError,
     JobState,
 )
 from src.runner.supervisor import SupervisorBusy
@@ -67,7 +67,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 def _snapshot_to_response(
-    fsm: "JobLifecycleFSM", bus: "EventBus",
+    fsm: JobLifecycleFSM, bus: EventBus,
 ) -> JobSnapshotResponse:
     """Render the FSM's current snapshot + the bus' next-offset cursor."""
     snap = fsm.current()
@@ -90,7 +90,7 @@ def _snapshot_to_response(
     )
 
 
-def _get_active_or_404(fsm: "JobLifecycleFSM", job_id: str) -> None:
+def _get_active_or_404(fsm: JobLifecycleFSM, job_id: str) -> None:
     """Raise 404 if the FSM is empty or holds a different job."""
     snap = fsm.current()
     if snap is None or snap.job_id != job_id:
@@ -116,17 +116,17 @@ async def submit_job(
         ...,
         description="JSON-encoded :class:`JobSpec` payload.",
     ),
-    plugins_payload: UploadFile = File(  # noqa: B008 — FastAPI dependency
+    plugins_payload: UploadFile = File(
         ...,
         description=(
             "ZIP archive bundling the community/ reward plugins the "
             "trainer needs. Phase 1 reads + discards the body."
         ),
     ),
-    fsm: "JobLifecycleFSM" = Depends(get_fsm),
-    bus: "EventBus" = Depends(get_bus),
-    supervisor: "Supervisor" = Depends(get_supervisor),
-    plugin_unpacker: "PluginUnpacker" = Depends(get_plugin_unpacker),
+    fsm: JobLifecycleFSM = Depends(get_fsm),
+    bus: EventBus = Depends(get_bus),
+    supervisor: Supervisor = Depends(get_supervisor),
+    plugin_unpacker: PluginUnpacker = Depends(get_plugin_unpacker),
 ) -> JobSubmittedResponse:
     # Validate the JSON part — extra="forbid" surfaces typos at 422
     # rather than silently dropping them.
@@ -167,8 +167,17 @@ async def submit_job(
     # On spawn failure the FSM is rolled forward to ``failed`` so a
     # future restart never sees a stuck ``preparing``.
     try:
+        # ``spec.workdir`` is the absolute pod-side directory to spawn
+        # the trainer in — typically ``/workspace/runs/<run_id>``.
+        # When None we fall through to inheriting uvicorn's cwd (legacy
+        # behaviour pre-Phase 6.7); Mac clients always set this since
+        # the inherited ``/root`` makes relative paths in the trainer's
+        # config / argv misresolve.
+        workdir = Path(spec.workdir) if spec.workdir else None
         await supervisor.submit_and_spawn(
-            spec.job_id, spec.command, env=spec.env or None,
+            spec.job_id, spec.command,
+            env=spec.env or None,
+            workdir=workdir,
         )
     except SupervisorBusy as exc:
         # Either a trainer is still running, or the FSM holds an
@@ -220,8 +229,8 @@ async def submit_job(
 def get_job(
     job_id: str,
     request: Request,
-    fsm: "JobLifecycleFSM" = Depends(get_fsm),
-    bus: "EventBus" = Depends(get_bus),
+    fsm: JobLifecycleFSM = Depends(get_fsm),
+    bus: EventBus = Depends(get_bus),
 ) -> JobSnapshotResponse:
     _get_active_or_404(fsm, job_id)
     # Phase 14.E (V3) — heartbeat marking via centralized helper
@@ -248,8 +257,8 @@ def get_job(
 )
 async def stop_job(
     job_id: str,
-    fsm: "JobLifecycleFSM" = Depends(get_fsm),
-    supervisor: "Supervisor" = Depends(get_supervisor),
+    fsm: JobLifecycleFSM = Depends(get_fsm),
+    supervisor: Supervisor = Depends(get_supervisor),
 ) -> JobStopAcceptedResponse:
     _get_active_or_404(fsm, job_id)
 
