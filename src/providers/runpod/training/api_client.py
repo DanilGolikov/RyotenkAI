@@ -22,24 +22,27 @@ if TYPE_CHECKING:
     from src.providers.runpod.training.config import RunPodProviderConfig
 
 
-def build_ssh_bootstrap_cmd() -> str:
-    """Shell command that ensures sshd is running inside a RunPod container."""
-    return (
-        "bash -c '"
-        "set -e; "
-        "if ! command -v sshd >/dev/null 2>&1; then "
-        "apt update; "
-        "DEBIAN_FRONTEND=noninteractive apt-get install openssh-server -y; "
-        "fi; "
-        "mkdir -p ~/.ssh; "
-        "chmod 700 ~/.ssh; "
-        "echo $PUBLIC_KEY >> ~/.ssh/authorized_keys; "
-        "chmod 600 ~/.ssh/authorized_keys; "
-        "mkdir -p /run/sshd || true; "
-        "/usr/sbin/sshd || service ssh start || true; "
-        "sleep infinity"
-        "'"
-    )
+# Empty docker_args = use the image's CMD.
+#
+# Why this is empty (was: a long bash bootstrap that ended in
+# ``sleep infinity``):
+#
+#   When RunPod is given a non-empty ``docker_args``, the SDK passes
+#   it as Docker's CMD and our image's
+#   ``ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint.sh"]``
+#   forwards those args to entrypoint.sh, which has a "custom command
+#   path" that ``exec``s the args verbatim (used by integration tests
+#   and `docker run image bash`). The previous bootstrap ended in
+#   ``sleep infinity`` — pod stayed alive indefinitely, sshd was
+#   running, but uvicorn was NEVER launched. /healthz never answered.
+#   Every "runner /healthz did not return 200 within 30s" timeout
+#   we hit traced back to this.
+#
+#   The only thing the old bootstrap did that we still need is
+#   ``echo $PUBLIC_KEY >> ~/.ssh/authorized_keys``. That now happens
+#   inside entrypoint.sh itself (see the PUBLIC_KEY block) — fewer
+#   moving parts and provider-agnostic.
+RUNPOD_DOCKER_ARGS: str = ""
 
 
 def build_pod_launch_kwargs(
@@ -69,7 +72,7 @@ def build_pod_launch_kwargs(
         "gpu_count": 1,
         "volume_in_gb": train_cfg.volume_disk_gb,
         "container_disk_in_gb": train_cfg.container_disk_gb,
-        "docker_args": build_ssh_bootstrap_cmd(),
+        "docker_args": RUNPOD_DOCKER_ARGS,
         "ports": train_cfg.ports,
         "volume_mount_path": _VOLUME_MOUNT,
         "env": env or None,
@@ -286,4 +289,4 @@ class RunPodAPIClient:
         )
 
 
-__all__ = ["RunPodAPIClient", "build_pod_launch_kwargs", "build_ssh_bootstrap_cmd"]
+__all__ = ["RUNPOD_DOCKER_ARGS", "RunPodAPIClient", "build_pod_launch_kwargs"]

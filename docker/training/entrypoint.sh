@@ -5,27 +5,24 @@
 #
 # Boot order:
 #   1. Generate SSH host keys (idempotent).
-#   2. Start /usr/sbin/sshd in the background — Mac control plane
-#      reaches this container via `ssh root@<pod>` for rsync, exec,
-#      and the local-port-forward `ssh -L 18080:127.0.0.1:8080`
-#      that connects to the job server below.
-#   3. If a custom command was passed (`docker run image bash …`),
-#      exec it — preserves the legacy "shell into the runtime" path.
-#   4. Otherwise exec uvicorn so the in-pod job server takes over PID
-#      from this script. dumb-init (already PID 1) forwards SIGTERM
-#      directly to uvicorn.
+#   2. Inject PUBLIC_KEY env var into /root/.ssh/authorized_keys so the
+#      Mac control plane can SSH in.
+#   3. Start /usr/sbin/sshd in the background — Mac uses it for rsync,
+#      exec, and the runner SSH tunnel.
+#   4. If a custom command was passed (e.g. `docker run image bash`),
+#      exec it. Used for integration tests and ad-hoc shells.
+#   5. Otherwise: ``sleep infinity`` and wait for the Mac to launch
+#      uvicorn via SSH-exec (see runner_launcher.py).
 #
-# The job server binds 127.0.0.1:8080 only — never publicly exposed.
-# All traffic from Mac arrives over the SSH tunnel.
-#
-# Override via env:
-#   RYOTENKAI_RUNNER_PORT     default 8080
-#   RYOTENKAI_RUNNER_HOST     default 127.0.0.1 (DO NOT change to 0.0.0.0
-#                             without setting up authentication)
+# The pod is INTENTIONALLY INERT at boot — the Mac orchestrates the
+# in-pod uvicorn runner the same way it orchestrates the trainer
+# subprocess. Symmetry, restartability, and provider-agnostic
+# bootstrap (RunPod / single_node / future providers all use the
+# same pattern).
 #
 # Usage:
-#   docker run <image>                     # sshd + job server
-#   docker run <image> bash                # interactive shell (no job server)
+#   docker run <image>                     # sshd + idle (Mac drives)
+#   docker run <image> bash                # interactive shell
 #   docker run <image> --help              # show this help
 #
 # ==============================================================================
@@ -42,80 +39,64 @@ if command -v ssh-keygen >/dev/null 2>&1; then
   ssh-keygen -A >/dev/null 2>&1 || true
 fi
 
-# 2. Background sshd. Best-effort — failure here doesn't block training.
-if command -v /usr/sbin/sshd >/dev/null 2>&1; then
-  mkdir -p /var/run/sshd
-  /usr/sbin/sshd || true
+# 2. Inject PUBLIC_KEY into authorized_keys.
+#
+# Provider control planes (RunPod, single_node bootstrap) inject the
+# Mac's SSH public key as the ``PUBLIC_KEY`` env var so the pod
+# accepts our SSH connections for rsync, exec, and the in-pod runner
+# tunnel. Doing this here — inside our entrypoint — instead of in a
+# provider-specific ``docker_args`` shell command means the same
+# bootstrap works for every provider: nobody has to remember to
+# duplicate the logic in each provider's pod-creation kwargs.
+#
+# Idempotent: appending a duplicate key on a restarted pod is
+# harmless — sshd deduplicates lines on auth.
+if [[ -n "${PUBLIC_KEY:-}" ]]; then
+  mkdir -p /root/.ssh
+  chmod 700 /root/.ssh
+  printf '%s\n' "$PUBLIC_KEY" >> /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
 fi
 
-# 3. Custom command path (interactive debugging, integration tests).
+# 3. Background sshd. Best-effort — failure here doesn't block training.
+if command -v /usr/sbin/sshd >/dev/null 2>&1; then
+  mkdir -p /var/run/sshd
+  /usr/sbin/sshd || service ssh start || true
+fi
+
+# 4. Custom command path (interactive debugging, integration tests).
+#
+# Used by ``docker run image bash`` and the integration-test
+# fixtures. Production providers leave CMD empty and fall through to
+# the inert ``sleep infinity`` below.
 if [[ $# -gt 0 ]]; then
   exec "$@"
 fi
 
-# 4. Default: launch the in-pod job server.
-RYOTENKAI_RUNNER_HOST="${RYOTENKAI_RUNNER_HOST:-127.0.0.1}"
-RYOTENKAI_RUNNER_PORT="${RYOTENKAI_RUNNER_PORT:-8080}"
-
-PY_BIN=""
-if command -v python3 >/dev/null 2>&1; then
-  PY_BIN=python3
-elif command -v python >/dev/null 2>&1; then
-  PY_BIN=python
-elif [ -x /opt/conda/bin/python3 ]; then
-  PY_BIN=/opt/conda/bin/python3
-elif [ -x /opt/conda/bin/python ]; then
-  PY_BIN=/opt/conda/bin/python
-else
-  echo "PYTHON_NOT_FOUND" >&2
-  exit 127
-fi
-
-# Pod-side log file. Captures uvicorn stdout/stderr from PID 1 of the
-# Python process — including ImportError / SyntaxError that fire BEFORE
-# any application logging is configured. Mac control plane rsyncs this
-# file via existing LogManager.download() chain.
+# Default path: keep the pod alive and wait for an SSH-launched
+# runner.
 #
-# Why direct redirect (and NOT `tee` or uvicorn's --log-config):
-#   * `tee` via process-substitution (`> >(tee -a) 2>&1`) would put a
-#     bash subshell between dumb-init and uvicorn — uvicorn becomes a
-#     grandchild, SIGTERM stops propagating, and `docker stop`
-#     escalates to SIGKILL after 10 s. Graceful shutdown lost,
-#     in-flight checkpoints lost.
-#   * `--log-config` only kicks in AFTER Python's logging dictConfig is
-#     applied. Pre-import errors (the ones we just had with
-#     ``ModuleNotFoundError: src.utils``) fire BEFORE that point and
-#     never reach the file.
-#   * Direct ``>>`` keeps the dumb-init → uvicorn parent-child link
-#     intact and captures everything from the first byte of stderr.
+# Architecture: pod is an INERT compute fabric. The Mac control plane
+# (gpu_deployer → runner_launcher) SSH-execs the in-pod uvicorn after
+# files are uploaded and dependencies are verified, redirecting its
+# stdout/stderr to ``/workspace/runner.log`` from the Mac side. We
+# DON'T launch uvicorn here for three reasons:
 #
-# `stdbuf -oL -eL` forces line-buffered stdout/stderr so the file is
-# useful for live `tail -f` (without it Python's default 4 KB block
-# buffering makes the file appear empty for the first ~seconds).
+#   1. Symmetry with the trainer subprocess — the Mac orchestrates
+#      both runner and trainer via SSH-exec. One pattern, one mental
+#      model.
+#   2. Restartability — a runner crash can be recovered by re-execing
+#      uvicorn over the same pod, without redeploying or recreating
+#      the pod. With auto-launch, a crash forces a full pod cycle.
+#   3. Provider compatibility — RunPod historically passes a
+#      ``docker_args`` CMD that ends in ``sleep infinity``, which
+#      RunPod's CMD-override silently shadowed any auto-launch we
+#      tried to do here. Making the pod intentionally inert removes
+#      this ambiguity for any provider.
 #
-# Trade-off accepted: `docker logs <ctr>` will be EMPTY for this
-# container after the redirect. We don't use `docker logs` from the
-# control plane anyway — the Mac pulls /workspace/runner.log over SSH
-# via LogManager.
-RUNNER_LOG="${RYOTENKAI_RUNNER_LOG:-/workspace/runner.log}"
-mkdir -p "$(dirname "$RUNNER_LOG")" || true
-
-# Probe writability — if /workspace is read-only or missing, fall back
-# to /tmp (non-persistent across container restarts but at least the
-# pod boots and we capture the bootstrap window). The fallback is
-# logged to docker stderr so it shows up in provider logs even though
-# /workspace mount is broken.
-if ! : >> "$RUNNER_LOG" 2>/dev/null; then
-  echo "WARNING: $RUNNER_LOG not writable, falling back to /tmp/runner.log" >&2
-  RUNNER_LOG="/tmp/runner.log"
-fi
-
-# `exec` so dumb-init's child becomes uvicorn directly — bash doesn't
-# stay around to swallow signals. SIGTERM from `docker stop` flows
-# through dumb-init → uvicorn → graceful shutdown of the asyncio loop
-# → the supervisor's SIGTERM-on-trainer code path (Phase 2).
-exec stdbuf -oL -eL "$PY_BIN" -m uvicorn src.runner.main:app \
-  --host "$RYOTENKAI_RUNNER_HOST" \
-  --port "$RYOTENKAI_RUNNER_PORT" \
-  --no-access-log \
-  >> "$RUNNER_LOG" 2>&1
+# The Mac always launches uvicorn with stdbuf+redirect to /workspace/
+# runner.log, so capture semantics are identical to the
+# previously-considered in-entrypoint redirect. See
+# ``src/pipeline/stages/managers/deployment/runner_launcher.py``.
+echo "[entrypoint] pod ready — sleeping until SSH commands arrive"
+exec sleep infinity

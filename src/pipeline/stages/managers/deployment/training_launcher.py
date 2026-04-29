@@ -59,6 +59,7 @@ from src.pipeline.stages.managers.deployment.plugin_packer import (
 from src.pipeline.stages.managers.deployment.provider_config import (
     is_single_node_provider,
 )
+from src.pipeline.stages.managers.deployment.runner_launcher import launch_runner
 from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
 )
@@ -170,6 +171,25 @@ class TrainingLauncher:
         """
         logger.info("[LAUNCHER] Submitting training job to in-pod runner...")
 
+        # Step 0 — start the in-pod uvicorn runner.
+        #
+        # The pod boot-time entrypoint is intentionally inert (sleep
+        # infinity); we SSH-exec uvicorn here so the runner's stdout/
+        # stderr are captured to /workspace/runner.log from the very
+        # first byte (LogManager picks that file up via the existing
+        # rsync chain). This is a precondition for the SSH tunnel
+        # below — without uvicorn listening on 127.0.0.1:8080, the
+        # tunnel would open but /healthz would forever timeout.
+        #
+        # ``launch_runner`` is idempotent: a retry of this stage that
+        # finds uvicorn already running short-circuits and returns
+        # Ok immediately.
+        runner_ready = launch_runner(ssh_client)
+        if runner_ready.is_err():
+            err = runner_ready.unwrap_err()  # type: ignore[union-attr]
+            logger.error("[LAUNCHER] Runner failed to launch: %s", err.message)
+            return Err(err)
+
         hooks = self._collect_provider_hooks(ssh_client, context, provider)
         if hooks is None:
             return Err(
@@ -258,7 +278,7 @@ class TrainingLauncher:
                 "[LAUNCHER] Control-plane heartbeat started "
                 "(ping every 30 s, TTL 120 s)"
             )
-        except Exception as exc:  # noqa: BLE001 — defensive
+        except Exception as exc:
             # Heartbeat startup failure is NOT fatal: the implicit
             # WS / REST heartbeat still works for the duration of
             # TrainingMonitor's WS subscription. ModelRetriever may

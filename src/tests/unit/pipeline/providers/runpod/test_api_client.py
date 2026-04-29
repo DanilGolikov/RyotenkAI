@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-import pytest
+from typing import TYPE_CHECKING, Any
 
 from src.config.providers.runpod import RunPodProviderConfig
 from src.providers.runpod.training.api_client import (
+    RUNPOD_DOCKER_ARGS,
     RunPodAPIClient,
     build_pod_launch_kwargs,
-    build_ssh_bootstrap_cmd,
 )
 from src.utils.result import Err, Ok, ProviderError
+
+if TYPE_CHECKING:
+    import pytest
 
 
 @dataclass
@@ -258,12 +259,17 @@ def test_extract_exposed_ssh_info_returns_runtime_not_available_for_missing_runt
 # ---------------------------------------------------------------------------
 
 
-def test_build_ssh_bootstrap_cmd_contains_sshd_setup() -> None:
-    cmd = build_ssh_bootstrap_cmd()
-    assert "sshd" in cmd
-    assert "authorized_keys" in cmd
-    assert "PUBLIC_KEY" in cmd
-    assert cmd.startswith("bash -c")
+def test_runpod_docker_args_is_empty_string() -> None:
+    """Pod is intentionally INERT at boot — entrypoint.sh handles
+    PUBLIC_KEY and sshd, then sleeps. The Mac launches uvicorn via
+    SSH-exec from runner_launcher, NOT through ``docker_args``.
+
+    Regression guard: setting ``docker_args`` to anything non-empty
+    used to silently shadow the image's CMD and prevent uvicorn from
+    being launched at all (RunPod CMD-override semantics). Keep it
+    empty.
+    """
+    assert RUNPOD_DOCKER_ARGS == ""
 
 
 def test_build_pod_launch_kwargs_contains_config_values() -> None:
