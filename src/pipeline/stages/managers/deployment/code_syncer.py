@@ -42,12 +42,28 @@ class CodeSyncer:
     """
 
     # Modules required for training (relative to project root)
+    #
+    # NOTE on ``src/community`` vs ``community/``:
+    #   * ``src/community`` is the plugin FRAMEWORK (catalog, registry,
+    #     manifest, etc.) — ~560 KB of Python that the trainer imports
+    #     unconditionally at module-load time
+    #     (e.g. ``src/training/reward_plugins/factory.py`` and
+    #     ``src/training/reward_plugins/registry.py`` both have
+    #     top-level ``from src.community.* import …`` lines). Without
+    #     it the trainer crashes with ``ModuleNotFoundError`` before
+    #     reading the run config. So it travels with every run.
+    #   * ``community/`` (the SIBLING dir at repo root) holds the
+    #     actual plugin CONTENT (reward / evaluation / validation
+    #     plugin packages, ~1.4 MB). That stays delivered through
+    #     ``PluginPacker`` so we ship only the plugins a given run
+    #     declares, not the whole catalog.
     REQUIRED_MODULES: ClassVar[list[str]] = [
         "src/training",  # Training logic (includes src/training/models)
         "src/infrastructure",  # Infrastructure layer (MLflow gateway, etc.)
         "src/utils",  # Utilities
         "src/config",  # Pydantic config schema (used by src/utils/config facade)
         "src/data",  # Data loaders
+        "src/community",  # Plugin framework (registry / catalog / manifest)
         "src/constants.py",  # Shared constants (imported by config schemas, validators, etc.)
         "src/__init__.py",  # Package init
     ]
