@@ -41,8 +41,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # (RunPod SSH sessions may use a restricted PATH).
     PATH="/opt/conda/bin:${PATH}"
 
-# Upgrade to Python 3.12 (base image has 3.11)
-RUN conda install -y python=3.12 && conda clean -afy
+# Upgrade to Python 3.12 (base image has 3.11).
+# remote_max_retries / remote_connect_timeout_secs harden conda
+# against the same transient HTTP failures that bit pip below —
+# conda-forge.repodata.json downloads time out under load otherwise.
+RUN conda config --set remote_max_retries 10 \
+    && conda config --set remote_connect_timeout_secs 60 \
+    && conda install -y python=3.12 \
+    && conda clean -afy
 
 # System deps:
 # - openssh-server: RunPod SSH access
@@ -71,8 +77,39 @@ RUN mkdir -p /var/run/sshd /root/.ssh && chmod 700 /root/.ssh \
 
 # Python deps (runtime-only)
 COPY docker/training/requirements.runtime.txt /tmp/requirements.runtime.txt
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r /tmp/requirements.runtime.txt
+# Network-resilience details:
+#   --mount=type=cache,target=/root/.cache/pip — BuildKit pip-cache mount.
+#     Wheels (torch ≈ 906 MB, CUDA libs ≈ 1.5 GB total) survive across
+#     failed build attempts so flaky networks don't force a full
+#     re-download — the bottleneck on PyPI/HF mirrors during peak hours.
+#   --retries=10 --timeout=60 — bump pip's transient-error tolerance.
+#     Default is 5 retries / 15 s timeout. NOTE this only covers
+#     connection-establishment retries; an IncompleteRead mid-stream
+#     on a multi-GB wheel is NOT retried by pip itself — the whole
+#     command exits with ProtocolError. That's why we wrap the entire
+#     install in an outer 5-attempt shell loop below.
+#   Outer retry-loop — restarts ``pip install`` from scratch on
+#     ProtocolError / connection-broken / incomplete-read failures.
+#     The pip cache mount means previously-downloaded wheels are
+#     re-used, so each retry only tries to fetch what was missing.
+#     30 s between retries to ride out short DNS / mirror glitches.
+#   PIP_NO_CACHE_DIR=0 — let pip USE the cache mount (the env var was
+#     set globally above with PIP_NO_CACHE_DIR=1 for image-size
+#     reasons; we override here so the BuildKit cache mount has effect,
+#     and the cache lives outside the image layer anyway).
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    PIP_NO_CACHE_DIR=0 python -m pip install --upgrade pip setuptools wheel \
+    && for i in 1 2 3 4 5; do \
+         echo "[pip install] attempt $i/5"; \
+         PIP_NO_CACHE_DIR=0 pip install --retries=10 --timeout=60 \
+             -r /tmp/requirements.runtime.txt && break; \
+         if [ "$i" -eq 5 ]; then \
+           echo "[pip install] giving up after 5 attempts"; \
+           exit 1; \
+         fi; \
+         echo "[pip install] failed, sleeping 30s before retry"; \
+         sleep 30; \
+       done
 
 # Make Python available in secure PATH locations.
 # Some SSH setups (sshd/PAM) sanitize PATH and may not include /opt/conda/bin.
