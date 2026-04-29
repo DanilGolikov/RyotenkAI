@@ -68,6 +68,25 @@ httpx>=0.28.0,<1.0.0
 aiohttp>=3.11.0,<4.0.0
 
 # ============================================
+# In-pod runner (FastAPI server)
+# ============================================
+# These are runtime deps for ``src/runner`` (uvicorn + FastAPI).
+# Today fastapi + uvicorn arrive transitively via ``mlflow-skinny``,
+# but that's incidental — pinning them explicitly removes the
+# "works only because of mlflow's deps" coincidence and means the
+# runner won't silently break when mlflow drops the FastAPI dep.
+#
+# python-multipart is REQUIRED by ``src/runner/api/jobs.py`` for
+# the multipart ``POST /jobs`` endpoint (plugins ZIP upload).
+# FastAPI doesn't pull it in by default and will RuntimeError at
+# decorator-time if missing — that's the failure that killed
+# every recent training run before this pin was added.
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+python-multipart>=0.0.20,<1.0.0
+websockets>=13.0,<16.0
+
+# ============================================
 # CLI & Utilities
 # ============================================
 click>=8.1.0,<9.0.0

@@ -177,11 +177,14 @@ def test_command_includes_idempotency_pgrep() -> None:
 
 
 def test_command_redirects_to_runner_log() -> None:
-    """uvicorn stdout/stderr must be appended to the canonical
-    /workspace/runner.log so LogManager can rsync it on Mac."""
+    """uvicorn stdout/stderr must be APPENDED (``>>``, not ``>``) to
+    the canonical /workspace/runner.log so a runner-crash retry
+    doesn't truncate the previous log — accumulating successive
+    boots is forensically useful and also flushes the last line of
+    a fast crash by the time the readiness probe times out."""
     cmd = _build_launch_command()
     assert RUNNER_LOG_PATH in cmd
-    assert f"> {RUNNER_LOG_PATH} 2>&1" in cmd
+    assert f">> {RUNNER_LOG_PATH} 2>&1" in cmd
 
 
 def test_command_uses_nohup_disown_for_detachment() -> None:
@@ -205,12 +208,17 @@ def test_command_polls_healthz_until_ready() -> None:
 
 
 def test_command_dumps_log_tail_on_failure() -> None:
-    """On readiness timeout, the script must tail runner.log to
-    stderr so the Mac sees WHY uvicorn didn't bind. Without this,
-    we'd return ProviderError with no diagnostic info."""
+    """On readiness timeout, the script must dump diagnostics:
+    ``ls -la`` of the log file (so we can tell a missing redirect
+    from an empty traceback) AND a ``tail -100`` of the contents.
+    stderr from those commands must NOT be silenced — masking
+    "file not found" was a real bug we just fixed."""
     cmd = _build_launch_command()
-    assert "tail -50" in cmd
-    assert RUNNER_LOG_PATH in cmd
+    assert "ls -la " + RUNNER_LOG_PATH in cmd
+    assert "tail -100 " + RUNNER_LOG_PATH in cmd
+    # Critical: tail's stderr must not be swallowed.
+    assert f"tail -100 {RUNNER_LOG_PATH} >&2 2>/dev/null" not in cmd, \
+        "tail's stderr must be visible — masking it hides 'file not found'"
 
 
 def test_command_uses_pythonpath_with_image_baseline() -> None:

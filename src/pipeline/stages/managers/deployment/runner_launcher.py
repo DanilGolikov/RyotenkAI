@@ -79,19 +79,29 @@ def _build_launch_command() -> str:
     """
     return (
         "set -e; "
-        # Idempotency.
+        # Make sure the workspace directory exists before redirect.
+        # Without this, if /workspace happens to be unmounted the
+        # ``> runner.log`` redirect fails silently in the async &
+        # branch and we get "file not found" diagnostics with no
+        # trace of WHY the redirect didn't take.
+        "mkdir -p /workspace; "
+        # Idempotency: skip launching if uvicorn is already running.
         "if pgrep -f 'uvicorn src.runner' >/dev/null 2>&1; then "
         "  echo 'runner already running'; "
         "else "
-        # Launch detached. nohup + disown survives SSH disconnect;
-        # stdbuf -oL forces line-buffering so the log file is useful
-        # in real time even if the runner dies fast.
+        # Launch detached. nohup + disown survives SSH disconnect.
+        # stdbuf -oL forces line-buffering so the log file gets
+        # populated in real time and a fast crash still flushes its
+        # last line. Use ``>>`` (append) so a runner-crash retry
+        # doesn't truncate the previous log — successive boots
+        # accumulate in the file with their own timestamps for
+        # forensics.
         "  nohup env "
         f"PYTHONPATH={IMAGE_BASELINE_PYTHONPATH}:${{PYTHONPATH:-}} "
         "    stdbuf -oL -eL "
         "    /usr/local/bin/python3 -m uvicorn src.runner.main:app "
         f"      --host {RUNNER_HOST} --port {RUNNER_PORT} --no-access-log "
-        f"    > {RUNNER_LOG_PATH} 2>&1 < /dev/null & "
+        f"    >> {RUNNER_LOG_PATH} 2>&1 < /dev/null & "
         "  disown; "
         "fi; "
         # Readiness probe — poll /healthz until uvicorn is bound.
@@ -102,10 +112,19 @@ def _build_launch_command() -> str:
         "  fi; "
         "  sleep 1; "
         "done; "
-        # Failure path — dump the tail of runner.log so Mac sees why.
+        # Failure path — diagnostic dump.
+        # NOTE: we deliberately do NOT do ``tail ... 2>/dev/null`` —
+        # masking tail's stderr means a missing/empty runner.log
+        # looks identical to a real traceback and the user can't
+        # tell whether the redirect broke or uvicorn just didn't
+        # write. Echoing ``ls -la`` of the file makes the existence
+        # / size visible regardless of content.
         f"echo 'runner did not become ready within {RUNNER_READY_TIMEOUT_SECONDS}s' >&2; "
+        f"echo '--- ls -la {RUNNER_LOG_PATH} ---' >&2; "
+        f"ls -la {RUNNER_LOG_PATH} >&2 || echo '(file does not exist)' >&2; "
         f"echo '--- tail of {RUNNER_LOG_PATH} ---' >&2; "
-        f"tail -50 {RUNNER_LOG_PATH} >&2 2>/dev/null || true; "
+        f"tail -100 {RUNNER_LOG_PATH} >&2 || true; "
+        "echo '--- end of diagnostic dump ---' >&2; "
         "exit 1"
     )
 
