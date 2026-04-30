@@ -29,6 +29,8 @@ import {
   useJobStatus,
   useStopJob,
 } from '../api/hooks/useJob'
+import { useRun } from '../api/hooks/useRun'
+import { TrainerLiveLog } from '../components/TrainerLiveLog'
 import { Card, EmptyState, SectionHeader, Spinner } from '../components/ui'
 
 // --------------------------------------------------------------------
@@ -76,6 +78,22 @@ export function JobLivePage() {
   const snapshot: JobSnapshot | undefined = status.data?.snapshot
   const submission = status.data?.submission
   const isTerminal = snapshot ? TERMINAL_STATES.has(snapshot.state) : false
+
+  // Resolve attempt_no for the live trainer-log panel. Same heuristic
+  // RunDetailPanel uses: prefer the running attempt, fall back to the
+  // newest known attempt. The TrainerLiveLog component wires this
+  // straight into the WebSocket relay, so a stale attempt_no would
+  // just open against an old run's mirror — fine, but undesired.
+  const runQuery = useRun(decodedRunId)
+  const trainerAttemptNo = useMemo(() => {
+    const run = runQuery.data
+    if (!run) return null
+    if (run.running_attempt_no) return run.running_attempt_no
+    if (run.attempts.length > 0) {
+      return run.attempts[run.attempts.length - 1].attempt_no
+    }
+    return null
+  }, [runQuery.data])
 
   // Cursor + accumulator for events.
   const [since, setSince] = useState(0)
@@ -211,6 +229,16 @@ export function JobLivePage() {
           </div>
         )}
       </Card>
+
+      {/*
+        Trainer live-tail. Streams ``trainer_log`` events from the
+        Mac event-mirror via WebSocket. Independent of the polling
+        Events card above — it gets its own connection, its own
+        cursor, and its own buffer.
+      */}
+      {decodedRunId && trainerAttemptNo !== null && (
+        <TrainerLiveLog runId={decodedRunId} attemptNo={trainerAttemptNo} />
+      )}
     </div>
   )
 }
