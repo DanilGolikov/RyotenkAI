@@ -365,9 +365,16 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             },
             "llm": self._resolve_llm_manifest_block(),
             "vllm": self._engine_cfg.model_dump(mode="python", exclude_none=True),  # noqa: WPS226
+            # The manifest powers ``chat_inference.py``, which itself opens
+            # the SSH tunnel — so the right URL here is the *future* local
+            # tunnel address, not whatever EndpointInfo currently holds.
+            # EndpointInfo.endpoint_url is None until ``activate_for_eval``
+            # opens a tunnel; the chat script is always 127.0.0.1:<serve_port>.
             "endpoint": {
-                "client_base_url": ctx.endpoint.endpoint_url,
-                "health_url": ctx.endpoint.health_url,
+                "client_base_url": ctx.endpoint.endpoint_url
+                or f"http://127.0.0.1:{serve_port}/v1",
+                "health_url": ctx.endpoint.health_url
+                or f"http://127.0.0.1:{serve_port}/v1/models",
             },
             "config_hash": _sha12(
                 json.dumps(
@@ -392,7 +399,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
                 chat_script=_CHAT_SCRIPT,
                 readme=_render_readme(
                     manifest_filename=INFERENCE_MANIFEST_FILENAME,
-                    endpoint_url=ctx.endpoint.endpoint_url,
+                    endpoint_url=ctx.endpoint.endpoint_url
+                    or f"http://127.0.0.1:{serve_port}/v1",
                 ),
             )
         )
