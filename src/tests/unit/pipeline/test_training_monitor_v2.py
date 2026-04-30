@@ -26,6 +26,7 @@ as :file:`test_plugin_packer.py` / :file:`test_training_launcher_v2.py`).
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -482,3 +483,209 @@ class TestStatusReporting:
 
         rendered = captured[0][0] % captured[0][1]
         assert "1:23:45" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Periodic log download — log_manager.download(silent=True) every 30 s
+# plus a final ``silent=False`` flush on cleanup
+# ---------------------------------------------------------------------------
+
+
+class TestPeriodicLogDownload:
+    def test_loop_invokes_download_each_tick_until_cancelled(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        monitor = _make_monitor()
+        log_manager = MagicMock()
+        log_manager.download = MagicMock(return_value=True)
+
+        # Drive the loop fast — tick interval ~1 ms — so the test
+        # exercises ≥1 real iteration without a real 30-s sleep.
+        monkeypatch.setattr(
+            _monitor_mod, "TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL", 0.001,
+        )
+
+        async def _drive() -> None:
+            task = _asyncio.create_task(
+                monitor._log_downloader_loop(log_manager),
+            )
+            # Yield enough times for the loop to tick a couple of
+            # times. Each iteration: sleep(0.001) → asyncio.to_thread.
+            await _asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(_asyncio.CancelledError):
+                await task
+
+        _asyncio.run(_drive())
+        assert log_manager.download.call_count >= 1
+        # Periodic ticks request silent=True so transient failures
+        # don't spam the operator's terminal.
+        for call in log_manager.download.call_args_list:
+            assert call.kwargs.get("silent") is True or call.args == (True,)
+
+    def test_loop_swallows_download_exception(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        monitor = _make_monitor()
+        log_manager = MagicMock()
+        log_manager.download = MagicMock(side_effect=RuntimeError("scp boom"))
+
+        monkeypatch.setattr(
+            _monitor_mod, "TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL", 0.001,
+        )
+
+        async def _drive() -> None:
+            task = _asyncio.create_task(
+                monitor._log_downloader_loop(log_manager),
+            )
+            await _asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(_asyncio.CancelledError):
+                await task
+
+        # Should NOT raise even though every download() raises.
+        _asyncio.run(_drive())
+        assert log_manager.download.call_count >= 1
+
+    def test_watch_and_download_runs_final_flush_on_finally(self) -> None:
+        import asyncio as _asyncio
+
+        monitor = _make_monitor()
+        log_manager = MagicMock()
+        # First call (final flush) succeeds.
+        log_manager.download = MagicMock(return_value=True)
+
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+
+        result = _asyncio.run(
+            monitor._watch_and_download(client, "j-1", log_manager),
+        )
+        assert result.is_ok()
+        # The downloader loop may not have fired (sleep elapsed before
+        # cancel), but the FINAL flush is mandatory.
+        final_calls = [
+            c for c in log_manager.download.call_args_list
+            if c.kwargs.get("silent") is False
+            or (c.args and c.args[0] is False)
+        ]
+        assert final_calls, "final silent=False flush must fire on cleanup"
+
+    def test_watch_and_download_skips_loop_when_no_log_manager(self) -> None:
+        # Single-node / mock flows: no LogManager, so we should fall
+        # straight through to ``_watch`` with no extra task.
+        import asyncio as _asyncio
+
+        monitor = _make_monitor()
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+
+        result = _asyncio.run(
+            monitor._watch_and_download(client, "j-1", None),
+        )
+        assert result.is_ok()
+
+
+# ---------------------------------------------------------------------------
+# LogManager construction from gpu_deployer context
+# ---------------------------------------------------------------------------
+
+
+class TestLogManagerFromContext:
+    def test_returns_none_on_local_provider(self) -> None:
+        monitor = _make_monitor()
+        log_manager, ssh = monitor._build_log_manager_from_context({
+            "provider_type": "local",
+            "ssh_host": "127.0.0.1",
+        })
+        assert log_manager is None
+        assert ssh is None
+
+    def test_returns_none_when_ssh_host_missing(self) -> None:
+        monitor = _make_monitor()
+        log_manager, ssh = monitor._build_log_manager_from_context({
+            "provider_type": "cloud",
+        })
+        assert log_manager is None
+        assert ssh is None
+
+    def test_constructs_for_cloud_provider(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Stub SSHClient so the test doesn't actually open a control
+        # socket. We only care that the helper plumbs the deployer
+        # context through to ``LogManager``.
+        constructed: dict[str, Any] = {}
+
+        class _FakeSSH:
+            def __init__(self, **kwargs):
+                constructed.update(kwargs)
+            def close_master(self) -> None:
+                pass
+
+        class _FakeLM:
+            def __init__(self, ssh, remote_path=None):
+                constructed["remote_path"] = remote_path
+                constructed["ssh"] = ssh
+
+        monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
+        monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+
+        monitor = _make_monitor()
+        lm, ssh = monitor._build_log_manager_from_context({
+            "provider_type": "cloud",
+            "ssh_host": "pod.example.com",
+            "ssh_port": 2222,
+            "ssh_user": "root",
+            "ssh_key_path": "/tmp/key",
+            "is_alias_mode": False,
+            "workspace_path": "/workspace",
+        })
+        assert lm is not None
+        assert ssh is not None
+        assert constructed["host"] == "pod.example.com"
+        assert constructed["port"] == 2222
+        assert constructed["username"] == "root"
+        assert constructed["key_path"] == "/tmp/key"
+        assert constructed["remote_path"] == "/workspace/training.log"
+
+    def test_alias_mode_forces_username_and_key_to_none(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        constructed: dict[str, Any] = {}
+
+        class _FakeSSH:
+            def __init__(self, **kwargs):
+                constructed.update(kwargs)
+            def close_master(self) -> None:
+                pass
+
+        class _FakeLM:
+            def __init__(self, *args, **kwargs):
+                pass
+
+        monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
+        monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+
+        monitor = _make_monitor()
+        monitor._build_log_manager_from_context({
+            "provider_type": "cloud",
+            "ssh_host": "my-pod-alias",
+            "ssh_user": "root",
+            "ssh_key_path": "/should-be-ignored",
+            "is_alias_mode": True,
+        })
+        # Alias mode tells SSHClient to read ~/.ssh/config — username
+        # and key_path must NOT be passed through.
+        assert constructed["username"] is None
+        assert constructed["key_path"] is None

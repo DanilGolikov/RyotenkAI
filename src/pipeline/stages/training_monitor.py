@@ -25,6 +25,7 @@ Async strategy: same as the launcher — sync facade wrapping a
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -35,11 +36,21 @@ from src.api.clients.job_client import (
     JobNotFoundError,
     ReplayTruncatedError,
 )
-from src.constants import CONSOLE_LINE_WIDTH, LOG_DOWNLOAD_INTERVAL_DEFAULT, SSH_PORT_DEFAULT
+from src.constants import (
+    CONSOLE_LINE_WIDTH,
+    LOG_DOWNLOAD_INTERVAL_DEFAULT,
+    SSH_PORT_DEFAULT,
+)
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import StageNames
+from src.pipeline.stages.managers.log_manager import LogManager
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, Result, TrainingError
+from src.utils.ssh_client import SSHClient
+
+# Final-flush deadline. Pod-side training.log can be hundreds of KB
+# even for short runs; 60 s mirrors LogManager's per-command timeout.
+_FINAL_LOG_FLUSH_TIMEOUT = 60.0
 
 # Constants kept on the module so existing callers / tests that import
 # them by name don't break (TRAINING_MONITOR_LINE_WIDTH is referenced
@@ -164,6 +175,11 @@ class TrainingMonitor(PipelineStage):
         self._tunnel: SSHTunnelManager | None = None
         self._client: JobClient | None = None
         self._heartbeat_service: Any | None = None
+        # Periodic log download — captured here so :meth:`cleanup`
+        # can close the raw pod-SSH connection alongside the tunnel.
+        # Single-node / mock flows keep both as ``None``.
+        self._ssh_client: SSHClient | None = None
+        self._log_manager: LogManager | None = None
 
     # --- public entry point ---------------------------------------------
 
@@ -213,13 +229,24 @@ class TrainingMonitor(PipelineStage):
         if self._callbacks.on_training_started:
             self._callbacks.on_training_started()
 
+        # Build pod-side log puller. Cloud providers expose
+        # ``/workspace/training.log`` over SCP; single_node / mock
+        # flows skip — the file is already on the host filesystem.
+        # Captured on ``self`` so :meth:`cleanup` closes the SSH
+        # ControlMaster after downstream stages finish.
+        self._log_manager, self._ssh_client = self._build_log_manager_from_context(
+            deployer_context,
+        )
+
         # Phase 11.E — no try/finally for tunnel teardown anymore.
         # Resources captured on ``self`` are torn down in :meth:`cleanup`
         # at orchestrator finalize-time, AFTER ModelRetriever has run.
         # An exception escaping ``_watch`` propagates up the stack
         # cleanly — orchestrator's reverse-order cleanup() will still
         # tear down the captured handles.
-        watch_result = asyncio.run(self._watch(client, job_id))
+        watch_result = asyncio.run(
+            self._watch_and_download(client, job_id, self._log_manager),
+        )
 
         # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
         # terminal markers:
@@ -287,6 +314,16 @@ class TrainingMonitor(PipelineStage):
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug(f"[MONITOR] tunnel.close failed: {exc}")
             self._tunnel = None
+
+        # 4. Raw pod-SSH ControlMaster (held for log downloads + the
+        # post-mortem diagnostics block in :meth:`_handle_trainer_exited`).
+        if self._ssh_client is not None:
+            try:
+                self._ssh_client.close_master()
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug(f"[MONITOR] ssh_client.close_master failed: {exc}")
+            self._ssh_client = None
+        self._log_manager = None
 
     # --- Phase 9.C / Phase 11.A reconciliation --------------------------
 
@@ -435,6 +472,113 @@ class TrainingMonitor(PipelineStage):
                 "status",
                 marker_name, run_id, exc,
             )
+
+    # --- pod-side log puller (sync; spun off into a thread) -------------
+
+    def _build_log_manager_from_context(
+        self, deployer_context: dict[str, Any],
+    ) -> tuple[LogManager | None, SSHClient | None]:
+        """Construct an SSH-backed :class:`LogManager` from gpu_deployer
+        context, or ``(None, None)`` when the active flow doesn't need
+        one (single_node / mock / missing handles).
+
+        The legacy SSH-polling monitor did the periodic
+        ``log_manager.download(silent=True)`` itself; restoring that
+        keeps ``runs/<id>/attempts/<n>/logs/training.log`` populated
+        on the operator's machine as the run progresses, which the
+        web UI's :class:`LogDock` already tails.
+        """
+        provider_type = deployer_context.get("provider_type")
+        ssh_host = deployer_context.get("ssh_host")
+        # Cloud-only: local providers ship the trainer on the same
+        # host so the log file is already available; nothing to scp.
+        if provider_type != "cloud" or not ssh_host:
+            return None, None
+        try:
+            ssh_port = int(deployer_context.get("ssh_port") or SSH_PORT_DEFAULT)
+        except (TypeError, ValueError):
+            ssh_port = SSH_PORT_DEFAULT
+
+        is_alias_mode = bool(deployer_context.get("is_alias_mode"))
+        ssh_user = deployer_context.get("ssh_user")
+        ssh_key_path = deployer_context.get("ssh_key_path")
+        try:
+            ssh_client = SSHClient(
+                host=ssh_host,
+                port=ssh_port,
+                username=None if is_alias_mode else ssh_user,
+                key_path=None if is_alias_mode else ssh_key_path,
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.debug(f"[MONITOR] SSH client construction failed: {exc}")
+            return None, None
+
+        workspace = deployer_context.get("workspace_path") or "/workspace"
+        remote_log = f"{str(workspace).rstrip('/')}/training.log"
+        try:
+            log_manager = LogManager(ssh_client, remote_path=remote_log)
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.debug(f"[MONITOR] LogManager init failed: {exc}")
+            with contextlib.suppress(Exception):
+                ssh_client.close_master()
+            return None, None
+        return log_manager, ssh_client
+
+    async def _log_downloader_loop(self, log_manager: LogManager) -> None:
+        """Pull ``training.log`` deltas every
+        :data:`TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL` seconds.
+
+        Runs concurrently with :meth:`_watch`; ``asyncio.to_thread``
+        keeps the blocking SSH call off the event loop. Any per-tick
+        failure is swallowed at debug level — a transient SCP error
+        must not abort the run.
+        """
+        while True:
+            try:
+                await asyncio.sleep(TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL)
+            except asyncio.CancelledError:
+                return
+            try:
+                await asyncio.to_thread(log_manager.download, silent=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug(f"[MONITOR] periodic log download failed: {exc}")
+
+    async def _watch_and_download(
+        self,
+        client: JobClient,
+        job_id: str,
+        log_manager: LogManager | None,
+    ) -> Result[dict[str, Any], AppError]:
+        """Run :meth:`_watch` with a parallel periodic-download task.
+
+        The downloader is spawned only when a :class:`LogManager` is
+        wired (cloud providers); for local / mock flows we still want
+        the unchanged WS-watcher behaviour. The final ``silent=False``
+        flush guarantees the on-disk log artefact is complete even
+        when the watcher exits between tick boundaries.
+        """
+        if log_manager is None:
+            return await self._watch(client, job_id)
+
+        download_task = asyncio.create_task(
+            self._log_downloader_loop(log_manager),
+            name="monitor.log_downloader",
+        )
+        try:
+            return await self._watch(client, job_id)
+        finally:
+            download_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await download_task
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(log_manager.download, silent=False),
+                    timeout=_FINAL_LOG_FLUSH_TIMEOUT,
+                )
+            except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+                logger.debug(f"[MONITOR] final log download failed: {exc}")
 
     # --- async core -----------------------------------------------------
 
