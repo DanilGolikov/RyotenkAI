@@ -21,7 +21,6 @@ from src.api.routers import (
     projects,
     providers,
     reports,
-    run_events,
     runs,
 )
 from src.api.routers import (
@@ -29,7 +28,6 @@ from src.api.routers import (
 )
 from src.api.routers.health import router as health_router
 from src.api.ws.log_stream import router as ws_router
-from src.api.ws.run_events import router as run_events_ws_router
 
 API_V1_PREFIX = "/api/v1"
 
@@ -74,17 +72,11 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         # registered BEFORE ``runs.router`` (whose ``/{run_id:path}`` route
         # would otherwise swallow ``/runs/<id>/job/...``).
         jobs.router,
-        # ``run_events`` carries prefix ``/runs/{run_id:path}`` and
-        # serves ``/runs/<id>/attempts/<n>/events`` from the Mac-side
-        # event mirror. Same ordering rule as ``jobs`` — must precede
-        # ``runs.router``.
-        run_events.router,
         runs.router,
     ]
     for router in api_routers:
         app.include_router(router, prefix=API_V1_PREFIX)
     app.include_router(ws_router, prefix=API_V1_PREFIX)
-    app.include_router(run_events_ws_router, prefix=API_V1_PREFIX)
 
     if settings.serve_spa:
         dist_dir = _resolve_dist_dir(settings.web_dist_dir)

@@ -39,7 +39,6 @@ from src.api.clients.job_client import (
 from src.constants import CONSOLE_LINE_WIDTH, LOG_DOWNLOAD_INTERVAL_DEFAULT, SSH_PORT_DEFAULT
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
-from src.pipeline.stages.managers.event_mirror import EventMirrorWriter
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, Result, TrainingError
 
@@ -209,38 +208,13 @@ class TrainingMonitor(PipelineStage):
         if self._callbacks.on_training_started:
             self._callbacks.on_training_started()
 
-        # PR2 (event mirror) — open the Mac-side mirror writer for the
-        # lifetime of this stage so every event the runner publishes
-        # lands in ``<attempt>/events/events_mirror.jsonl`` for cold
-        # replay (REST + WS endpoints serve from this file). Best-effort
-        # only: a missing attempt_dir or a write failure must not stop
-        # the monitor.
-        attempt_dir_str = context.get(PipelineContextKeys.ATTEMPT_DIRECTORY)
-        mirror: EventMirrorWriter | None = None
-        if isinstance(attempt_dir_str, str) and attempt_dir_str:
-            try:
-                from pathlib import Path
-
-                mirror = EventMirrorWriter(Path(attempt_dir_str))
-            except Exception as exc:
-                logger.debug(
-                    f"[MONITOR] EventMirrorWriter init failed: {exc}; "
-                    "events will not be mirrored to disk",
-                )
-                mirror = None
-
         # Phase 11.E — no try/finally for tunnel teardown anymore.
         # Resources captured on ``self`` are torn down in :meth:`cleanup`
         # at orchestrator finalize-time, AFTER ModelRetriever has run.
         # An exception escaping ``_watch`` propagates up the stack
         # cleanly — orchestrator's reverse-order cleanup() will still
         # tear down the captured handles.
-        try:
-            watch_result = asyncio.run(self._watch(client, job_id, mirror))
-        finally:
-            if mirror is not None:
-                with contextlib.suppress(Exception):
-                    mirror.close()
+        watch_result = asyncio.run(self._watch(client, job_id))
 
         # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
         # terminal markers:
@@ -461,7 +435,6 @@ class TrainingMonitor(PipelineStage):
         self,
         client: JobClient,
         job_id: str,
-        mirror: EventMirrorWriter | None = None,
     ) -> Result[dict[str, Any], AppError]:
         """Iterate over WS events; dispatch callbacks; return on terminal.
 
@@ -469,12 +442,6 @@ class TrainingMonitor(PipelineStage):
         :meth:`JobClient.subscribe_events` itself; we only catch the
         exit conditions and translate them to the monitor's
         ``Result`` shape.
-
-        ``mirror`` (PR2): every received event is appended to the
-        mirror file before dispatch, so the on-disk artefact is
-        complete even if a callback raises. Mirror-write failures
-        are swallowed at debug level — observability infrastructure
-        must never break training.
         """
         try:
             async for event in client.subscribe_events(
@@ -485,14 +452,6 @@ class TrainingMonitor(PipelineStage):
                 offset = event.get("offset")
                 if isinstance(offset, int):
                     self._last_offset = offset + 1
-
-                # Mirror BEFORE dispatch — if a callback explodes the
-                # event is still on disk for cold replay.
-                if mirror is not None:
-                    try:
-                        mirror.write(event)
-                    except Exception as exc:
-                        logger.debug(f"[MONITOR] mirror.write failed: {exc}")
 
                 terminal = self._dispatch_event(event)
                 if terminal is not None:
@@ -550,20 +509,6 @@ class TrainingMonitor(PipelineStage):
                 self._callbacks.on_resource_check(dict(payload))
             except Exception as exc:
                 logger.debug(f"[MONITOR] on_resource_check raised: {exc}")
-            return None
-
-        if kind == "trainer_log":
-            # PR2: surface trainer stdout/stderr in the monitor's
-            # logger so it lands in ``training_monitor.log`` and
-            # ``pipeline.log``. Without this the trainer's metrics
-            # are visible only via the events_mirror.jsonl artefact
-            # (or the on-pod ``training.log`` once Mac scp's it).
-            line = payload.get("line", "") if isinstance(payload, dict) else ""
-            stream_kind = (
-                payload.get("kind", "stdout") if isinstance(payload, dict) else "stdout"
-            )
-            if line:
-                logger.info(f"[TRAINER:{stream_kind}] {line}")
             return None
 
         if kind == "trainer_exited":
