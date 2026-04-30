@@ -192,19 +192,53 @@ class InferenceDeployer(PipelineStage):
                 )
 
         # Activate for evaluation if needed (BEFORE writing artifacts, so endpoint_url is real).
-        # If evaluation is enabled but provider doesn't support activation → log warning, skip eval.
+        # Fail-fast policy: if the provider declares support but activation
+        # fails, the stage returns Err. Letting the pipeline continue with
+        # a phantom endpoint_url is what produced "successful" eval runs
+        # full of empty answers.
         eval_endpoint_url: str | None = None
         if eval_enabled and not pod_provisioning_failed:
+            capabilities = provider.get_capabilities()
+            if not capabilities.supports_activate_for_eval:
+                return Err(InferenceError(
+                    message=(
+                        f"evaluation enabled but provider {inf_cfg.provider!r} does not "
+                        "support activate_for_eval — set evaluation.enabled=false or "
+                        "pick a provider with supports_activate_for_eval=True"
+                    ),
+                    code="INFERENCE_EVAL_NOT_SUPPORTED",
+                ))
             activate_res = provider.activate_for_eval()
-            if activate_res.is_success():
-                eval_endpoint_url = activate_res.unwrap()
-                logger.info(f"✅ Inference endpoint ready for evaluation: {eval_endpoint_url}")
-            else:
+            if activate_res.is_failure():
+                # Release the partially-provisioned pod inline; relying on
+                # stage cleanup() alone is fragile — a downstream stage
+                # could still abort the cleanup chain.
+                deactivate_res = provider.deactivate_after_eval()
+                if deactivate_res.is_failure():
+                    logger.warning(
+                        "[INFERENCE] post-failure deactivate also errored "
+                        f"(non-fatal): {deactivate_res.unwrap_err()}"  # type: ignore[union-attr]
+                    )
                 activate_err = activate_res.unwrap_err()  # type: ignore[union-attr]
-                logger.warning(
-                    f"⚠️ Evaluation skipped: provider '{inf_cfg.provider}' does not support "
-                    f"activate_for_eval: {activate_err}"
-                )
+                return Err(InferenceError(
+                    message=(
+                        f"failed to activate inference endpoint for evaluation: {activate_err}"
+                    ),
+                    code="INFERENCE_ACTIVATION_FAILED",
+                ))
+            eval_endpoint_url = activate_res.unwrap()
+            logger.info(f"✅ Inference endpoint ready for evaluation: {eval_endpoint_url}")
+        elif eval_enabled and pod_provisioning_failed:
+            # Eval was requested but the pod could not be provisioned
+            # (NO_GPU_CAPACITY). Refuse rather than emit a manifest that
+            # the user thinks is eval-ready.
+            return Err(InferenceError(
+                message=(
+                    "evaluation enabled but inference pod could not be provisioned "
+                    "(no GPU capacity). Disable evaluation or retry later."
+                ),
+                code="INFERENCE_NO_CAPACITY_BLOCKS_EVAL",
+            ))
 
         # Generate manifest + scripts locally (provider supplies content)
         log_dir = get_run_log_dir()
@@ -230,8 +264,10 @@ class InferenceDeployer(PipelineStage):
                     "inference_endpoint_url": endpoint.endpoint_url,
                     "inference_model_name": endpoint.model_id,
                     # Single source of truth for endpoint URL.
-                    # activate_for_eval() overwrites with live URL when evaluation is enabled.
-                    "endpoint_url": eval_endpoint_url if eval_endpoint_url is not None else endpoint.endpoint_url,
+                    # When eval is enabled, activate_for_eval guarantees
+                    # ``eval_endpoint_url`` is populated (or the stage has
+                    # already returned Err above).
+                    "endpoint_url": eval_endpoint_url if eval_enabled else endpoint.endpoint_url,
                     "endpoint_info": endpoint.__dict__,
                     "inference_manifest_path": str(manifest_path),
                     "inference_scripts": {k: str(v) for k, v in script_paths.items()},
