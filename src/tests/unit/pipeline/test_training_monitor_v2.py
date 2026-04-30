@@ -1144,7 +1144,13 @@ class TestMilestoneSurfacing:
 
 
 class TestMetricLineSurfacing:
-    def test_metric_line_surfaces_at_info_level(
+    """Strict surfacing: only HF Trainer's pure dict-literal output is
+    forwarded to monitor output. Internal DEBUG/INFO chatter from other
+    modules — even if it mentions ``loss=`` / ``epoch=`` — stays in
+    ``training.log`` on disk only.
+    """
+
+    def test_hf_trainer_per_step_dict_is_surfaced(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monitor = _make_monitor()
@@ -1152,50 +1158,72 @@ class TestMetricLineSurfacing:
 
         monitor._dispatch_event({
             "kind": "trainer_log",
-            "payload": {"line": "{'loss': 2.34, 'step': 10, 'epoch': 0.05}"},
+            "payload": {"line": (
+                "{'loss': 2.271, 'grad_norm': 2.6, 'learning_rate': 3.4e-05, "
+                "'epoch': 2.62}"
+            )},
         })
 
         rendered = _render(captured)
-        assert any("[MONITOR:METRIC]" in line and "loss" in line for line in rendered)
+        assert any("[MONITOR:METRIC]" in line and "'loss'" in line for line in rendered)
 
-    @pytest.mark.parametrize("line_text", [
-        "loss=2.34",
-        "step: 100",
-        "epoch=1.5",
-        "learning_rate=0.0001",
-        "lr: 5e-5",
-        "grad_norm=0.45",
-        "eval_loss: 1.8",
-    ])
-    def test_various_metric_patterns_match(
-        self, monkeypatch: pytest.MonkeyPatch, line_text: str,
+    def test_hf_trainer_final_summary_dict_is_surfaced(
+        self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monitor = _make_monitor()
         captured = _capture_logger(monkeypatch)
 
         monitor._dispatch_event({
             "kind": "trainer_log",
-            "payload": {"line": line_text},
+            "payload": {"line": (
+                "{'train_runtime': 30.86, 'train_samples_per_second': 9.72, "
+                "'train_loss': 2.10, 'epoch': 3.0}"
+            )},
         })
 
         rendered = _render(captured)
-        assert any("[MONITOR:METRIC]" in line for line in rendered), (
-            f"pattern should match {line_text!r}"
+        assert any(
+            "[MONITOR:METRIC]" in line and "'train_runtime'" in line
+            for line in rendered
         )
 
-    def test_non_metric_line_is_not_surfaced(
-        self, monkeypatch: pytest.MonkeyPatch,
+    @pytest.mark.parametrize("noise_line", [
+        # Plain prose with metric tokens — internal chatter
+        "Epochs: default, LR: default",
+        # Dataclass / config-creation log
+        "[TF:CONFIG_CREATED] config=SFTConfig, lr=0.0002, epochs=3",
+        # Raw key=value collectors
+        "[MC:EXTRACTED] loss=2.10, steps=12, epoch=3.0, peak_mem=3.75",
+        # Phase-completion structured-but-not-dict log
+        "[DB:PHASE_COMPLETED] phase=0, strategy=sft, ... epoch=3.0",
+        # MLflow event line
+        "[MLFLOW:EVENT] [COMPLETE] Phase 0 (SFT) completed, loss=2.10",
+        # Logger-formatted line that *contains* a dict but isn't pure dict
+        "2026-04-30 15:19:00  logging_core:61  DEBUG - [MLFLOW:METRICS] "
+        "{'train_loss': 2.10, 'epoch': 3.0}",
+        # Logger-formatted plain line
+        "2026-04-30 15:18:19  chain_runner:193  INFO - Epochs: default, LR: default",
+        # HF progress bar
+        "Loading checkpoint shards: 100%|##########| 4/4",
+        # Looks like dict but missing the 'epoch' anchor — likely some
+        # other dict (config dump, etc.) — too risky to forward
+        "{'foo': 1, 'bar': 2}",
+    ])
+    def test_internal_chatter_is_not_surfaced(
+        self, monkeypatch: pytest.MonkeyPatch, noise_line: str,
     ) -> None:
         monitor = _make_monitor()
         captured = _capture_logger(monkeypatch)
 
         monitor._dispatch_event({
             "kind": "trainer_log",
-            "payload": {"line": "Loading checkpoint shards: 100%|##########| 4/4"},
+            "payload": {"line": noise_line},
         })
 
         rendered = _render(captured)
-        assert not any("[MONITOR:METRIC]" in line for line in rendered)
+        assert not any("[MONITOR:METRIC]" in line for line in rendered), (
+            f"line should NOT be surfaced: {noise_line!r}"
+        )
 
     def test_empty_or_missing_line_is_silently_dropped(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1216,13 +1244,14 @@ class TestMetricLineSurfacing:
         # Different supervisor backends might serialise stdout under
         # ``text`` or ``message`` instead of ``line``. All three should work.
         monitor = _make_monitor()
+        metric_dict = "{'loss': 1.0, 'epoch': 1.0}"
 
         for field in ("line", "text", "message"):
             captured = _capture_logger(monkeypatch)
             monitor._first_event_logged = False  # reset milestone for each
             monitor._dispatch_event({
                 "kind": "trainer_log",
-                "payload": {field: "loss=1.0"},
+                "payload": {field: metric_dict},
             })
             rendered = _render(captured)
             assert any("[MONITOR:METRIC]" in line for line in rendered), (
@@ -1238,6 +1267,23 @@ class TestMetricLineSurfacing:
         _capture_logger(monkeypatch)
 
         result = monitor._dispatch_event({
-            "kind": "trainer_log", "payload": {"line": "loss=1.0"},
+            "kind": "trainer_log",
+            "payload": {"line": "{'loss': 1.0, 'epoch': 1.0}"},
         })
         assert result is None
+
+    def test_carriage_return_prefix_is_stripped_before_match(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # HF Trainer's progress-bar callback occasionally prefixes the
+        # final dict with a stray ``\r``. The regex anchors on ``^{``
+        # so we must strip it before matching.
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({
+            "kind": "trainer_log",
+            "payload": {"line": "\r{'loss': 1.0, 'epoch': 1.0}"},
+        })
+        rendered = _render(captured)
+        assert any("[MONITOR:METRIC]" in line for line in rendered)

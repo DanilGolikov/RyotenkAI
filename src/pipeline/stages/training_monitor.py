@@ -32,17 +32,22 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-#: Trainer-stdout lines that contain training metrics. We surface them
-#: from ``trainer_log`` events at INFO level so the operator sees at
-#: least one progress signal in monitor output without flooding it with
-#: every line of trainer chatter (see plan §1 — operator's request was
-#: "хотя бы 1 метрику", not full forwarding).
-_METRIC_LINE_PATTERN = re.compile(
-    # Word boundary, then key, optional close-quote (dict-style logging
-    # prints ``'loss': 2.34``), optional whitespace, then ``=`` or ``:``.
-    r"\b(loss|epoch|step|lr|learning_rate|grad_norm|eval_loss|eval_accuracy)"
-    r"\b['\"]?\s*[=:]",
-    re.IGNORECASE,
+#: HF Trainer's per-step / final / eval log callback prints a Python
+#: dict literal via ``print(dict)``. That is the ONLY trainer-stdout
+#: shape we want to surface in monitor output — anything else
+#: (``[MLFLOW:METRICS] {...}`` debug lines, ``[MC:EXTRACTED] loss=``
+#: from internal collectors, formatted timestamps with module prefix)
+#: is internal chatter that belongs in ``training.log`` on disk, not
+#: in the operator-facing monitor stream.
+#:
+#: Recognising the real lines: they are a single ``{ ... }`` dict
+#: containing the ``'epoch'`` key — present in every HF Trainer log
+#: callback emission (per-step, eval, final summary). The strict
+#: anchor on the ``{`` / ``}`` boundaries excludes lines that merely
+#: *contain* a dict inside a longer debug message.
+_TRAINER_METRIC_DICT = re.compile(
+    r"^\{[^{}]*['\"]epoch['\"]\s*:.+\}\s*$",
+    re.DOTALL,
 )
 
 from src.api.clients.job_client import (
@@ -929,24 +934,21 @@ class TrainingMonitor(PipelineStage):
         return None
 
     def _maybe_log_metric(self, payload: dict[str, Any]) -> None:
-        """Surface trainer-stdout lines that look like metrics.
+        """Surface HF Trainer's per-step metric dicts; drop everything else.
 
-        Selective forwarding — we deliberately don't echo every line
-        (the operator can read the full ``training.log`` via the web
-        UI). Pattern catches ``loss=…``, ``step=…``, ``epoch=…``,
-        ``lr=…``, ``grad_norm=…``, ``eval_loss=…`` etc. so even a
-        60-second smoke run shows at least one training-progress
-        signal.
+        Strict by design — operator complaint was that the previous
+        loose ``loss=|epoch=`` keyword match also picked up internal
+        DEBUG chatter from ``MLFLOW:METRICS``, ``MC:EXTRACTED``,
+        ``DB:PHASE_COMPLETED`` etc. The full chatter still lives in
+        ``training.log`` on disk; the monitor stream is reserved for
+        the canonical trainer dict ``{'loss': …, 'epoch': …}``.
         """
         text = payload.get("line") or payload.get("text") or payload.get("message")
         if not isinstance(text, str):
             return
-        text = text.strip()
-        if not text or not _METRIC_LINE_PATTERN.search(text):
+        text = text.strip().lstrip("\r")
+        if not text or not _TRAINER_METRIC_DICT.match(text):
             return
-        # Drop the noisy progress-bar prefix that HF Trainer prints.
-        if text.startswith("\r"):
-            text = text.lstrip("\r")
         logger.info("[MONITOR:METRIC] %s", text)
 
     def _maybe_log_status(self, payload: dict[str, Any]) -> None:
