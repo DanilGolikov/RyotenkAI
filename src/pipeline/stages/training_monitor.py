@@ -26,29 +26,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-
-#: HF Trainer's per-step / final / eval log callback prints a Python
-#: dict literal via ``print(dict)``. That is the ONLY trainer-stdout
-#: shape we want to surface in monitor output — anything else
-#: (``[MLFLOW:METRICS] {...}`` debug lines, ``[MC:EXTRACTED] loss=``
-#: from internal collectors, formatted timestamps with module prefix)
-#: is internal chatter that belongs in ``training.log`` on disk, not
-#: in the operator-facing monitor stream.
-#:
-#: Recognising the real lines: they are a single ``{ ... }`` dict
-#: containing the ``'epoch'`` key — present in every HF Trainer log
-#: callback emission (per-step, eval, final summary). The strict
-#: anchor on the ``{`` / ``}`` boundaries excludes lines that merely
-#: *contain* a dict inside a longer debug message.
-_TRAINER_METRIC_DICT = re.compile(
-    r"^\{[^{}]*['\"]epoch['\"]\s*:.+\}\s*$",
-    re.DOTALL,
-)
 
 from src.api.clients.job_client import (
     JobClientError,
@@ -882,9 +863,11 @@ class TrainingMonitor(PipelineStage):
         - first event (any kind) → "[MONITOR] WS stream open"
         - ``trainer_spawned`` → "[MONITOR] Trainer process started"
         - ``health_snapshot`` → ``on_resource_check`` + rate-limited ALIVE
-        - ``trainer_log`` payload matching ``_METRIC_LINE_PATTERN`` →
-          one-line ``[MONITOR:METRIC]`` echo so the operator sees
-          training progress without tailing the full log
+        - ``trainer_log`` → debug only — full trainer stdout lives in
+          ``training.log`` on disk and is reachable from the web UI's
+          LogDock + the ``GET .../logs?file=training.log&offset=N``
+          delta endpoint. The monitor stream is reserved for
+          control-plane signals, not training metric chatter.
         - ``trainer_exited`` → ``on_training_completed`` /
           ``on_training_failed`` / ``on_process_died`` based on
           payload, then return terminal Result
@@ -906,7 +889,7 @@ class TrainingMonitor(PipelineStage):
             )
 
         if kind == "trainer_log":
-            self._maybe_log_metric(payload)
+            # Intentionally silent. See docstring above.
             return None
 
         if kind == "health_snapshot":
@@ -932,24 +915,6 @@ class TrainingMonitor(PipelineStage):
 
         logger.debug(f"[MONITOR] event kind={kind!r} (no callback)")
         return None
-
-    def _maybe_log_metric(self, payload: dict[str, Any]) -> None:
-        """Surface HF Trainer's per-step metric dicts; drop everything else.
-
-        Strict by design — operator complaint was that the previous
-        loose ``loss=|epoch=`` keyword match also picked up internal
-        DEBUG chatter from ``MLFLOW:METRICS``, ``MC:EXTRACTED``,
-        ``DB:PHASE_COMPLETED`` etc. The full chatter still lives in
-        ``training.log`` on disk; the monitor stream is reserved for
-        the canonical trainer dict ``{'loss': …, 'epoch': …}``.
-        """
-        text = payload.get("line") or payload.get("text") or payload.get("message")
-        if not isinstance(text, str):
-            return
-        text = text.strip().lstrip("\r")
-        if not text or not _TRAINER_METRIC_DICT.match(text):
-            return
-        logger.info("[MONITOR:METRIC] %s", text)
 
     def _maybe_log_status(self, payload: dict[str, Any]) -> None:
         """Emit a rate-limited ``[MONITOR] ALIVE`` line for the operator.
