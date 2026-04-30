@@ -91,6 +91,9 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._last_status_log_time = 0.0
     monitor._ssh_client = None
     monitor._log_manager = None
+    monitor._provider_name = None
+    monitor._resource_id = None
+    monitor._recovery_attempts = 0
     return monitor
 
 
@@ -840,3 +843,219 @@ class TestPostMortemDiagnostics:
         assert any(
             "[MONITOR:POSTMORTEM] exit_code: 137" in line for line in rendered
         )
+
+
+# ---------------------------------------------------------------------------
+# Pod resilience — RunPod SDK wake-up on JobClientError
+# ---------------------------------------------------------------------------
+
+
+class _FakeOk:
+    def __init__(self, value):
+        self._value = value
+
+    def is_err(self):
+        return False
+
+    def is_ok(self):
+        return True
+
+    def unwrap(self):
+        return self._value
+
+    def unwrap_err(self):
+        raise AssertionError("called unwrap_err on Ok")
+
+
+class _FakeErr:
+    def __init__(self, error):
+        self._error = error
+
+    def is_err(self):
+        return True
+
+    def is_ok(self):
+        return False
+
+    def unwrap(self):
+        raise AssertionError("called unwrap on Err")
+
+    def unwrap_err(self):
+        return self._error
+
+
+class TestPodResilience:
+    def test_no_op_for_local_provider(self) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "single_node"
+        monitor._resource_id = "ignored"
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is None
+
+    def test_no_op_when_runpod_but_no_resource_id(self) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = None
+        assert monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        ) is None
+
+    def test_no_op_when_no_api_key(self) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key=None)
+        assert monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        ) is None
+
+    def test_terminal_pod_returns_terminated_err(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+
+        terminal_pod = {
+            "id": "pod-1",
+            "desiredStatus": "TERMINATED",
+            "runtime": {"uptimeInSeconds": 0, "ports": []},
+        }
+
+        sdk = MagicMock()
+        sdk.get_pod = MagicMock(return_value=_FakeOk(terminal_pod))
+        sdk.start_pod = MagicMock()
+
+        monkeypatch.setattr(
+            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            lambda *, api_key: sdk,
+        )
+
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is not None
+        assert result.is_err()
+        assert result.unwrap_err().code == "MONITOR_POD_TERMINATED"
+        sdk.start_pod.assert_not_called()
+
+    def test_running_pod_returns_none_for_caller_to_propagate(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+
+        running_pod = {
+            "id": "pod-1",
+            "desiredStatus": "RUNNING",
+            "runtime": {
+                "uptimeInSeconds": 120,
+                "ports": [
+                    {"isIpPublic": True, "privatePort": 22,
+                     "ip": "1.2.3.4", "publicPort": 2222, "type": "tcp"},
+                ],
+            },
+        }
+
+        sdk = MagicMock()
+        sdk.get_pod = MagicMock(return_value=_FakeOk(running_pod))
+        monkeypatch.setattr(
+            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            lambda *, api_key: sdk,
+        )
+
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is None
+
+    def test_stopped_pod_triggers_wake_up(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+
+        stopped_pod = {
+            "id": "pod-1",
+            "desiredStatus": "EXITED" if False else "STOPPED",
+            "runtime": {"uptimeInSeconds": 0, "ports": []},
+        }
+        # Use a status that is non-terminal AND non-ready (not in
+        # FAILED/TERMINATED/EXITED; not RUNNING).
+        stopped_pod["desiredStatus"] = "STOPPED"
+
+        sdk = MagicMock()
+        sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
+        sdk.start_pod = MagicMock(return_value=_FakeOk(None))
+        monkeypatch.setattr(
+            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            lambda *, api_key: sdk,
+        )
+
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is not None
+        assert result.is_err()
+        assert result.unwrap_err().code == "MONITOR_POD_RECOVERED"
+        sdk.start_pod.assert_called_once_with(pod_id="pod-1")
+
+    def test_wake_up_failure_surfaces_specific_code(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+
+        stopped_pod = {
+            "id": "pod-1",
+            "desiredStatus": "STOPPED",
+            "runtime": {"uptimeInSeconds": 0, "ports": []},
+        }
+
+        sdk = MagicMock()
+        sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
+        sdk.start_pod = MagicMock(return_value=_FakeErr("rate limit"))
+        monkeypatch.setattr(
+            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            lambda *, api_key: sdk,
+        )
+
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is not None
+        assert result.is_err()
+        assert result.unwrap_err().code == "MONITOR_POD_WAKE_FAILED"
+
+    def test_attempt_cap_returns_exhausted_err(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._provider_name = "runpod"
+        monitor._resource_id = "pod-1"
+        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+        monitor._recovery_attempts = monitor._RECOVERY_ATTEMPT_CAP
+
+        # SDK should never be touched once the cap is hit.
+        sdk = MagicMock()
+        monkeypatch.setattr(
+            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            lambda *, api_key: sdk,
+        )
+
+        result = monitor._recover_pod_if_needed(
+            _monitor_mod.JobClientError("boom"),
+        )
+        assert result is not None
+        assert result.is_err()
+        assert result.unwrap_err().code == "MONITOR_RECOVERY_EXHAUSTED"
+        sdk.get_pod.assert_not_called()

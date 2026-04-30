@@ -180,6 +180,14 @@ class TrainingMonitor(PipelineStage):
         # Single-node / mock flows keep both as ``None``.
         self._ssh_client: SSHClient | None = None
         self._log_manager: LogManager | None = None
+        # Pod recovery (laptop-sleep): captured from deployer context
+        # so :meth:`_recover_pod_if_needed` can probe the RunPod SDK
+        # without re-reading the orchestrator state.
+        self._provider_name: str | None = None
+        self._resource_id: str | None = None
+        # Bound recovery attempts so a flapping pod can't trap the
+        # monitor in an infinite reconnect loop.
+        self._recovery_attempts: int = 0
 
     # --- public entry point ---------------------------------------------
 
@@ -237,6 +245,12 @@ class TrainingMonitor(PipelineStage):
         self._log_manager, self._ssh_client = self._build_log_manager_from_context(
             deployer_context,
         )
+        # Pod-recovery preconditions (Phase 11.E follow-up): record
+        # provider + resource so a transient WS error can trigger an
+        # SDK wake-up without losing terminal-state semantics.
+        self._provider_name = deployer_context.get("provider_name")
+        self._resource_id = deployer_context.get("resource_id")
+        self._recovery_attempts = 0
 
         # Phase 11.E — no try/finally for tunnel teardown anymore.
         # Resources captured on ``self`` are torn down in :meth:`cleanup`
@@ -545,6 +559,128 @@ class TrainingMonitor(PipelineStage):
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug(f"[MONITOR] periodic log download failed: {exc}")
 
+    # --- pod resilience (laptop-sleep recovery) ------------------------
+
+    _RECOVERY_ATTEMPT_CAP = 3
+
+    def _recover_pod_if_needed(
+        self, exc: JobClientError,
+    ) -> Result[dict[str, Any], AppError] | None:
+        """Best-effort RunPod SDK wake-up for a stopped pod.
+
+        When the WS subscription dies with :class:`JobClientError`,
+        the most likely cause on a Mac control plane is a laptop
+        going to sleep — RunPod's idle terminator stops the pod a
+        few minutes later. We probe the SDK to find out which case
+        we're in and, when the pod is merely stopped, request a
+        wake-up so the operator's restart attempt has a live pod
+        to talk to.
+
+        Returns:
+            ``None`` — recovery did not apply (non-runpod / no
+              resource id / no SDK key), caller should fall through
+              to the original ``Err``.
+            ``Err`` — pod is in a terminal state or wake-up failed;
+              the caller should propagate this.
+            ``Err(MONITOR_POD_RECOVERED)`` — wake-up succeeded; the
+              monitor cannot itself rebuild the upstream tunnel +
+              JobClient (those belong to TrainingLauncher), so we
+              surface a clear actionable error instead of looping.
+
+        Capped at :data:`_RECOVERY_ATTEMPT_CAP` per stage execution to
+        prevent a flapping pod from trapping us in a tight loop.
+        """
+        if self._provider_name != "runpod" or not self._resource_id:
+            return None
+        api_key = getattr(self._secrets, "runpod_api_key", None)
+        if not api_key:
+            return None
+        if self._recovery_attempts >= self._RECOVERY_ATTEMPT_CAP:
+            return Err(
+                TrainingError(
+                    message=(
+                        f"runner connection lost ({exc}); "
+                        "pod recovery exhausted after "
+                        f"{self._RECOVERY_ATTEMPT_CAP} attempts"
+                    ),
+                    code="MONITOR_RECOVERY_EXHAUSTED",
+                ),
+            )
+        self._recovery_attempts += 1
+
+        try:
+            from src.providers.runpod.models import PodSnapshot
+            from src.providers.runpod.sdk_adapter import RunPodSDKClient
+        except ImportError as imp_exc:  # noqa: BLE001 — defensive
+            logger.debug(f"[MONITOR] RunPod SDK not importable: {imp_exc}")
+            return None
+
+        logger.warning(
+            "[MONITOR] runner connection lost (%s) — probing pod %s via RunPod SDK",
+            exc, self._resource_id,
+        )
+        sdk = RunPodSDKClient(api_key=api_key)
+        snap_result = sdk.get_pod(pod_id=self._resource_id)
+        if snap_result.is_err():
+            return Err(
+                TrainingError(
+                    message=(
+                        f"runner connection lost and pod probe failed: "
+                        f"{snap_result.unwrap_err()}"
+                    ),
+                    code="MONITOR_POD_PROBE_FAILED",
+                ),
+            )
+        snapshot = PodSnapshot.from_graphql(snap_result.unwrap())
+        if snapshot.is_terminal:
+            return Err(
+                TrainingError(
+                    message=(
+                        f"pod {self._resource_id} reached terminal state "
+                        f"({snapshot.status}); cannot resume"
+                    ),
+                    code="MONITOR_POD_TERMINATED",
+                ),
+            )
+        if snapshot.is_ready:
+            # Pod is up, the WS error was something else (network
+            # blip, transient SSH failure). Caller surfaces the
+            # original error so the operator can investigate.
+            logger.info(
+                "[MONITOR] pod %s is RUNNING — WS failure was not "
+                "caused by pod sleep", self._resource_id,
+            )
+            return None
+
+        # Stopped / starting — request a wake-up. This makes the
+        # operator's next attempt usable instead of failing on a
+        # cold pod.
+        logger.warning(
+            "[MONITOR] pod %s is %s — requesting SDK wake-up",
+            self._resource_id, snapshot.status or "unknown",
+        )
+        start_result = sdk.start_pod(pod_id=self._resource_id)
+        if start_result.is_err():
+            return Err(
+                TrainingError(
+                    message=(
+                        f"pod {self._resource_id} was stopped and "
+                        f"wake-up failed: {start_result.unwrap_err()}"
+                    ),
+                    code="MONITOR_POD_WAKE_FAILED",
+                ),
+            )
+        return Err(
+            TrainingError(
+                message=(
+                    f"pod {self._resource_id} was stopped (likely "
+                    "laptop sleep); woke it back up — restart the "
+                    "pipeline to resume training"
+                ),
+                code="MONITOR_POD_RECOVERED",
+            ),
+        )
+
     # --- post-mortem diagnostics ---------------------------------------
 
     def _collect_death_diagnostics(self) -> None:
@@ -695,6 +831,15 @@ class TrainingMonitor(PipelineStage):
             # the missed events — they're already gone.
             return await self._fallback_to_status(client, job_id)
         except JobClientError as exc:
+            recovery = self._recover_pod_if_needed(exc)
+            if recovery is not None:
+                # Recovery attempted — return a structured Result the
+                # caller (orchestrator) can use to decide whether to
+                # restart the stage. We deliberately do NOT loop and
+                # rebuild handles inline: that requires re-running the
+                # launcher (tunnel+client+job_id), which is the
+                # orchestrator's job.
+                return recovery
             return Err(
                 TrainingError(
                     message=f"runner client error: {exc}",
