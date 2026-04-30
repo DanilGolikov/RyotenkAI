@@ -323,3 +323,62 @@ def test_resolve_by_slug_filename_when_state_key_has_spaces(tmp_path: Path) -> N
 
     resolved = resolve_log_path(run_dir, 1, "gpu_deployer.log")
     assert resolved == (attempt_dir / "logs" / "gpu_deployer.log").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Delta-fetch contract — clients tail training.log by polling with
+# offset=last next_offset. This is the primary "give me logs as they
+# stream in" use case backed by the read_chunk endpoint.
+# ---------------------------------------------------------------------------
+
+
+from src.api.services.log_service import read_chunk  # noqa: E402
+
+
+def test_training_log_delta_polling_returns_only_new_bytes(
+    new_layout_run: Path,
+) -> None:
+    # First poll: full file from offset 0.
+    first = read_chunk(new_layout_run, 1, "training.log", offset=0)
+    assert first.content == "remote-tm\n"
+    assert first.eof is True
+    initial_offset = first.next_offset
+
+    # Append more lines (simulates log_manager.download writing a delta).
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    with log_path.open("a", encoding="utf-8") as fh:
+        fh.write("step=10 loss=2.34\n")
+        fh.write("step=20 loss=1.95\n")
+
+    # Second poll using the previous next_offset → only the new bytes.
+    second = read_chunk(new_layout_run, 1, "training.log", offset=initial_offset)
+    assert "step=10 loss=2.34" in second.content
+    assert "step=20 loss=1.95" in second.content
+    assert "remote-tm" not in second.content  # no duplicates
+    assert second.eof is True
+    assert second.next_offset > initial_offset
+
+
+def test_training_log_offset_past_eof_returns_empty_eof(
+    new_layout_run: Path,
+) -> None:
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    size = log_path.stat().st_size
+
+    chunk = read_chunk(new_layout_run, 1, "training.log", offset=size)
+    assert chunk.content == ""
+    assert chunk.eof is True
+
+
+def test_training_log_offset_beyond_size_resets_to_zero(
+    new_layout_run: Path,
+) -> None:
+    """File-rotation simulation: caller passes a stale offset that is
+    bigger than the current file size → resolver resets to 0 so the
+    client re-syncs from the start instead of getting stuck."""
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    real_size = log_path.stat().st_size
+
+    chunk = read_chunk(new_layout_run, 1, "training.log", offset=real_size + 9999)
+    assert chunk.offset == 0
+    assert chunk.content == "remote-tm\n"
