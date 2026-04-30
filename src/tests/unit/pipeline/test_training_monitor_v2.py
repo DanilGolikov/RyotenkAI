@@ -33,6 +33,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 
 def _load_monitor():
     """Load the monitor module directly so we don't drag the whole
@@ -85,6 +87,7 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._callbacks = callbacks or TrainingMonitorEventCallbacks()
     monitor._training_start_time = 0.0
     monitor._last_offset = 0
+    monitor._last_status_log_time = 0.0
     return monitor
 
 
@@ -355,3 +358,127 @@ class TestTunnelTeardown:
         # masked by tunnel-close noise.
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_JOB_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Status reporting — `[MONITOR] ALIVE | …` lines from health_snapshot
+# ---------------------------------------------------------------------------
+
+
+class TestStatusReporting:
+    def _capture_log(self, monkeypatch, monitor):
+        """Patch the monitor's logger.info and return the captured calls."""
+        captured: list[tuple[str, tuple[Any, ...]]] = []
+
+        def _info(msg, *args, **_kwargs):
+            captured.append((msg, args))
+
+        monkeypatch.setattr(_monitor_mod.logger, "info", _info)
+        return captured
+
+    def test_status_line_format_includes_all_fields(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = self._capture_log(monkeypatch, monitor)
+
+        monitor._maybe_log_status({
+            "gpu_util_percent": 87.5,
+            "gpu_memory_percent": 62.0,
+            "cpu_percent": 41.0,
+            "ram_used_gb": 12.4,
+            "ram_total_gb": 64.0,
+        })
+
+        assert len(captured) == 1
+        msg, args = captured[0]
+        assert "ALIVE" in msg
+        assert "GPU" in msg and "VRAM" in msg and "CPU" in msg and "RAM" in msg
+        # Format strings substituted; verify rendered values
+        rendered = msg % args
+        assert "GPU: 88%" in rendered or "GPU: 87%" in rendered
+        assert "VRAM: 62%" in rendered
+        assert "CPU: 41%" in rendered
+        assert "12.4/64 GB" in rendered
+
+    def test_status_line_renders_dash_for_missing_fields(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = self._capture_log(monkeypatch, monitor)
+
+        monitor._maybe_log_status({
+            "gpu_util_percent": None,
+            "gpu_memory_percent": None,
+            "cpu_percent": None,
+            "ram_used_gb": None,
+            "ram_total_gb": None,
+        })
+
+        assert len(captured) == 1
+        msg, args = captured[0]
+        rendered = msg % args
+        # Three em-dashes for GPU/VRAM/CPU; one for RAM.
+        assert rendered.count("—") >= 4
+
+    def test_rate_limit_suppresses_second_call_within_window(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = self._capture_log(monkeypatch, monitor)
+
+        # Pin time so the rate-limit window is deterministic.
+        fake_now = [1000.0]
+        monkeypatch.setattr(_monitor_mod.time, "time", lambda: fake_now[0])
+
+        payload = {"gpu_util_percent": 50.0}
+        monitor._maybe_log_status(payload)
+        # Same instant → suppressed.
+        monitor._maybe_log_status(payload)
+        # Five seconds later — still inside the 15-s window.
+        fake_now[0] += 5
+        monitor._maybe_log_status(payload)
+
+        assert len(captured) == 1, "rate-limit window should suppress repeats"
+
+        # Past the window → fires again.
+        fake_now[0] += _monitor_mod.TRAINING_MONITOR_LOG_STATUS_INTERVAL + 1
+        monitor._maybe_log_status(payload)
+        assert len(captured) == 2
+
+    def test_health_snapshot_calls_both_status_log_and_callback(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Status reporting must NOT replace ``on_resource_check`` —
+        # MLflow integrations rely on the callback for system metrics.
+        seen: list[dict] = []
+        cb = TrainingMonitorEventCallbacks(
+            on_resource_check=lambda d: seen.append(d),
+        )
+        monitor = _make_monitor(cb)
+        captured = self._capture_log(monkeypatch, monitor)
+
+        monitor._dispatch_event({
+            "kind": "health_snapshot",
+            "payload": {"gpu_util_percent": 50.0},
+        })
+
+        assert seen == [{"gpu_util_percent": 50.0}]
+        # Status line emitted at least once.
+        assert any("ALIVE" in msg for msg, _ in captured)
+
+    def test_status_line_duration_renders_from_training_start(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = self._capture_log(monkeypatch, monitor)
+
+        # Training started 1h 23m 45s ago.
+        fake_now = 5000.0
+        monitor._training_start_time = fake_now - (3600 + 23 * 60 + 45)
+        monkeypatch.setattr(_monitor_mod.time, "time", lambda: fake_now)
+
+        monitor._maybe_log_status({})
+
+        rendered = captured[0][0] % captured[0][1]
+        assert "1:23:45" in rendered

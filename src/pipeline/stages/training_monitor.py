@@ -142,6 +142,12 @@ class TrainingMonitor(PipelineStage):
         self._secrets = secrets
         self._callbacks = callbacks or TrainingMonitorEventCallbacks()
         self._training_start_time: float = 0.0
+        # Rate-limit cursor for ``[MONITOR] ALIVE`` status lines. The
+        # runner publishes ``health_snapshot`` every 30 s, but the
+        # 15-second cadence is preserved as a maximum-rate guard so
+        # any future tightening of the runner interval doesn't spam
+        # the log.
+        self._last_status_log_time: float = 0.0
         # Track the latest event offset we've consumed so reconnects
         # via :meth:`JobClient.subscribe_events` resume from the
         # right place.
@@ -503,11 +509,13 @@ class TrainingMonitor(PipelineStage):
         kind = event.get("kind") or ""
         payload = event.get("payload") or {}
 
-        if kind == "health_snapshot" and self._callbacks.on_resource_check:
-            try:
-                self._callbacks.on_resource_check(dict(payload))
-            except Exception as exc:
-                logger.debug(f"[MONITOR] on_resource_check raised: {exc}")
+        if kind == "health_snapshot":
+            self._maybe_log_status(payload)
+            if self._callbacks.on_resource_check:
+                try:
+                    self._callbacks.on_resource_check(dict(payload))
+                except Exception as exc:
+                    logger.debug(f"[MONITOR] on_resource_check raised: {exc}")
             return None
 
         if kind == "trainer_exited":
@@ -524,6 +532,49 @@ class TrainingMonitor(PipelineStage):
 
         logger.debug(f"[MONITOR] event kind={kind!r} (no callback)")
         return None
+
+    def _maybe_log_status(self, payload: dict[str, Any]) -> None:
+        """Emit a rate-limited ``[MONITOR] ALIVE`` line for the operator.
+
+        The legacy SSH-polling monitor printed a one-line status every
+        15 s so the user could tell at a glance that training was
+        progressing without tailing trainer stdout. We restore the
+        same surface against the WS event stream — driven by the
+        runner's ``health_snapshot`` events instead of an SSH probe.
+
+        Missing fields render as ``—`` rather than ``0`` so the user
+        can distinguish "GPU is genuinely idle" from "psutil/nvidia-smi
+        couldn't read the value".
+        """
+        now = time.time()
+        if now - self._last_status_log_time < TRAINING_MONITOR_LOG_STATUS_INTERVAL:
+            return
+        self._last_status_log_time = now
+
+        elapsed = max(0.0, now - self._training_start_time)
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+
+        gpu_util = payload.get("gpu_util_percent")
+        vram = payload.get("gpu_memory_percent")
+        cpu = payload.get("cpu_percent")
+        ram_used = payload.get("ram_used_gb")
+        ram_total = payload.get("ram_total_gb")
+
+        ram_str = (
+            f"{ram_used:.1f}/{ram_total:.0f} GB"
+            if isinstance(ram_used, (int, float))
+            and isinstance(ram_total, (int, float))
+            else "—"
+        )
+
+        logger.info(
+            "[MONITOR] ALIVE | %s | GPU: %s | VRAM: %s | CPU: %s | RAM: %s",
+            elapsed_str,
+            f"{gpu_util:.0f}%" if isinstance(gpu_util, (int, float)) else "—",
+            f"{vram:.0f}%" if isinstance(vram, (int, float)) else "—",
+            f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "—",
+            ram_str,
+        )
 
     def _handle_trainer_exited(
         self, payload: dict[str, Any],
