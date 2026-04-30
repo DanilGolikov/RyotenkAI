@@ -267,3 +267,61 @@ def test_set_workspace_propagates():
     assert syncer.workspace == "/workspace"
     syncer.set_workspace("/tmp/run_42")
     assert syncer.workspace == "/tmp/run_42"
+
+
+# ---------------------------------------------------------------------------
+# Thin-image migration: src/runner is now an rsync target
+# ---------------------------------------------------------------------------
+
+
+def test_required_modules_includes_src_runner() -> None:
+    """``src/runner`` must be in REQUIRED_MODULES.
+
+    Why this matters: the thin image (v2.0.0+) does NOT bake ``src/``
+    into the image. ``src.runner.main:app`` resolves only via
+    PYTHONPATH pointing at the rsync target. Drop this entry and
+    every uvicorn launch on a fresh pod fails with
+    ``ModuleNotFoundError: No module named 'src.runner'``.
+    """
+    assert "src/runner" in CodeSyncer.REQUIRED_MODULES
+
+
+def test_required_modules_keeps_runner_dep_closure() -> None:
+    """Regression: yesterday's closure-walk added community/workspace/
+    inference because the trainer imports them transitively. The
+    runner shares the same dep closure (it imports src.utils,
+    src.providers via the lifecycle client, etc.). If any drops we
+    can re-trip the cascade of ModuleNotFoundError fixes we've
+    already paid for.
+    """
+    expected = {
+        "src/training",
+        "src/infrastructure",
+        "src/utils",
+        "src/config",
+        "src/data",
+        "src/community",
+        "src/workspace",
+        "src/inference",
+        "src/runner",
+        # Runner imports lifecycle clients via
+        # ``src.runner.runtime.provider_registry`` which itself
+        # imports ``src.providers.{runpod,single_node}.runtime``.
+        # Reproduced ModuleNotFoundError in
+        # run_20260429_171726_49j32 when this entry was missing.
+        "src/providers",
+        "src/constants.py",
+        "src/__init__.py",
+    }
+    assert expected.issubset(set(CodeSyncer.REQUIRED_MODULES))
+
+
+def test_required_modules_no_duplicates() -> None:
+    """Belt-and-braces: a duplicate entry in REQUIRED_MODULES would
+    pass the rsync (idempotent) but yields a confusing diff in the
+    sync log and breaks the count-based assertion in test_sync_success.
+    """
+    modules = CodeSyncer.REQUIRED_MODULES
+    assert len(modules) == len(set(modules)), (
+        f"REQUIRED_MODULES contains duplicates: {modules}"
+    )

@@ -20,6 +20,14 @@ The launched uvicorn writes its stdout/stderr to
 ImportError / SyntaxError that fire before Python's logging is
 initialized). That file is rsync'd to the Mac via the existing
 ``LogManager`` chain — see ``docs/architecture/log-collection.md``.
+
+PYTHONPATH points at the run-scoped workspace (the rsync target,
+typically ``/workspace/runs/<run_id>``) — that is now the SOLE
+source of ``src/runner``. The thin-image migration removed the
+baked-in ``/opt/ryotenkai/src`` baseline; if the rsync didn't run,
+uvicorn fails with ``ModuleNotFoundError: No module named
+'src.runner'`` and the diagnostic dump surfaces it. See
+``docs/architecture/thin-image.md``.
 """
 
 from __future__ import annotations
@@ -46,16 +54,11 @@ RUNNER_HOST: str = "127.0.0.1"
 RUNNER_PORT: int = 8080
 RUNNER_LOG_PATH: str = "/workspace/runner.log"
 
-# Path where the image bakes its baseline ``src/`` (Dockerfile.runtime
-# does ``COPY src /opt/ryotenkai/src`` and sets PYTHONPATH). Mac's
-# pipeline rsyncs run-scoped code into ``/workspace/runs/<run>/...``
-# which gets prepended to PYTHONPATH per-run; this baseline ensures
-# the runner can import even on a fresh pod with no rsync done yet
-# (or for crash-recovery before the next rsync).
-IMAGE_BASELINE_PYTHONPATH: str = "/opt/ryotenkai"
-
-
-def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
+def _build_launch_command(
+    *,
+    workspace_path: str,
+    env: Mapping[str, str] | None = None,
+) -> str:
     """Return the shell command that ssh-execs uvicorn in the pod.
 
     Four concerns the script handles:
@@ -87,16 +90,29 @@ def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
     Why a string of ``;``-separated commands instead of a heredoc /
     script-file: keeps the deployment side stateless — no pre-
     deployed runner-launch.sh on the pod to drift out of sync with
-    the Mac's expectations. The image already has everything
-    (Python, uvicorn, ``src.runner``) baked in.
+    the Mac's expectations. The image carries Python + uvicorn; the
+    application code (``src.runner`` and its deps) arrives via
+    ``CodeSyncer.rsync`` into ``workspace_path``.
 
     Args:
+        workspace_path: absolute pod-side directory where
+            ``CodeSyncer`` rsync'd ``src/...`` for this run (e.g.
+            ``/workspace/runs/<run_id>``). Used as the PYTHONPATH
+            entry that resolves ``src.runner.main:app`` and every
+            transitive ``from src.* import ...`` the runner does at
+            import time. Must be non-empty — passing ``""`` would
+            collapse PYTHONPATH to a leading ``:`` (CWD entry) which
+            silently masks missing modules in unrelated ways.
         env: provider-supplied env vars to inject into the runner
             process. ``None`` is equivalent to ``{}``: only PYTHONPATH
             is set, and the runner will fail at startup if it requires
             anything else (e.g. RYOTENKAI_RUNTIME_PROVIDER on a real
             provider).
     """
+    if not workspace_path or not workspace_path.strip():
+        msg = "workspace_path must be a non-empty absolute pod path"
+        raise ValueError(msg)
+
     env_assignments = ""
     if env:
         # ``shlex.quote`` makes the value safe for any POSIX shell —
@@ -141,7 +157,7 @@ def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
         # accumulate in the file with their own timestamps for
         # forensics.
         "  nohup env "
-        f"PYTHONPATH={IMAGE_BASELINE_PYTHONPATH}:${{PYTHONPATH:-}} "
+        f"PYTHONPATH={shlex.quote(workspace_path)}:${{PYTHONPATH:-}} "
         f"    {env_assignments}"
         "    stdbuf -oL -eL "
         "    /usr/local/bin/python3 -m uvicorn src.runner.main:app "
@@ -177,6 +193,7 @@ def _build_launch_command(env: Mapping[str, str] | None = None) -> str:
 def launch_runner(
     ssh_client: SSHClient,
     *,
+    workspace_path: str,
     env: Mapping[str, str] | None = None,
 ) -> Result[None, ProviderError]:
     """Start the uvicorn runner inside the pod and wait for /healthz.
@@ -193,6 +210,11 @@ def launch_runner(
 
     Args:
         ssh_client: alive SSH connection to the pod.
+        workspace_path: absolute pod-side directory the caller's
+            ``CodeSyncer`` already rsync'd ``src/...`` into for this
+            run (typically ``/workspace/runs/<run_id>``). Used as the
+            PYTHONPATH entry the runner resolves ``src.runner`` from.
+            Must be non-empty.
         env: provider-supplied env vars to inject into the runner
             process. Should at minimum include
             ``RYOTENKAI_RUNTIME_PROVIDER``; missing it makes the
@@ -205,7 +227,7 @@ def launch_runner(
         within :data:`RUNNER_READY_TIMEOUT_SECONDS`. ``Err`` with code
         ``RUNNER_LAUNCH_FAILED`` otherwise.
     """
-    cmd = _build_launch_command(env=env)
+    cmd = _build_launch_command(workspace_path=workspace_path, env=env)
     # Allow the SSH command a bit longer than the readiness loop so
     # tail-of-log can run even if uvicorn never started.
     timeout_s = RUNNER_READY_TIMEOUT_SECONDS + 15

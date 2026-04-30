@@ -129,30 +129,25 @@ RUN mkdir -p /opt/helix
 COPY docker/training/runtime_check.py /opt/helix/runtime_check.py
 RUN chmod +x /opt/helix/runtime_check.py
 
-# In-pod job server baseline.
+# Thin image — image = environment, code = run-scoped.
 #
-# Layout: /opt/ryotenkai/src/...
-# We add ``/opt/ryotenkai`` to PYTHONPATH so ``from src.runner import
-# create_app`` resolves at uvicorn-launch time (used by entrypoint.sh).
+# This image deliberately does NOT bake in any of ``src/...``. The
+# Mac control plane rsyncs the required Python modules (including
+# ``src/runner``) into ``/workspace/runs/<run_id>`` per run via
+# :class:`CodeSyncer`, and SSH-execs uvicorn with
+# ``PYTHONPATH=/workspace/runs/<run_id>:${PYTHONPATH}`` so imports
+# resolve from the rsync target. Removing the baked-in baseline:
 #
-# Why we copy the WHOLE ``src/`` and not just ``src/runner``: the
-# runner has organically grown imports of ``src.utils.logger``,
-# ``src.constants``, and ``src.providers.{runpod,single_node}.runtime.
-# lifecycle_client``. Copying just ``src/runner`` left the image
-# unable to import its own entrypoint (``ModuleNotFoundError: No
-# module named 'src.utils'``) and uvicorn died at startup. Copying
-# all of ``src`` is a few-MB layer cost on top of the multi-GB
-# torch/CUDA layers below it — irrelevant — and means the image is
-# self-sufficient for any future runner dependency without another
-# Dockerfile bump. The .dockerignore at repo root excludes tests,
-# caches, runs/, etc. so we don't bake in dev cruft.
+#   * decouples image rebuilds from runner-code changes — a bump
+#     here is now justified ONLY by changes to
+#     ``requirements.runtime.txt`` / base CUDA / Python (image v2.0.0+);
+#   * keeps the model "image = environment, code = ephemeral",
+#     mirroring how the trainer code already travels.
 #
-# The /workspace path the pipeline rsyncs into stays FIRST on
-# PYTHONPATH (set per-run via ``.env``), so freshly-deployed code
-# always overrides this image baseline — by design.
-RUN mkdir -p /opt/ryotenkai
-COPY src /opt/ryotenkai/src
-ENV PYTHONPATH="/opt/ryotenkai:${PYTHONPATH:-}"
+# A ``docker run image`` standalone debug session no longer has
+# ``src.runner`` available — mount your local checkout (``-v
+# $(pwd):/workspace/runs/dbg``) and set ``PYTHONPATH`` if you need
+# that. See ``docs/architecture/thin-image.md``.
 
 # Workspace contract
 RUN mkdir -p /workspace
@@ -163,29 +158,35 @@ ENV HF_HOME=/workspace/hf_cache \
     HUGGINGFACE_HUB_CACHE=/workspace/hf_cache \
     TRANSFORMERS_CACHE=/workspace/hf_cache
 
-# Entry point — starts sshd, then execs uvicorn (the in-pod job server).
+# Entry point — starts sshd, installs the Mac's PUBLIC_KEY into
+# ``authorized_keys``, and ``sleep infinity``s. Pod is intentionally
+# inert: the Mac SSH-execs uvicorn (after rsync of ``src/``) via
+# :func:`runner_launcher.launch_runner`, see Mac-side pipeline.
 # Wrapped in dumb-init so SIGTERM from `docker stop` / RunPod podStop
-# reaches uvicorn (and through it, the trainer subprocess) cleanly.
+# reaches the uvicorn subprocess cleanly.
 COPY docker/training/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 # Self-describing version manifest — lets operators inspect what's
 # inside without consulting the tag. ``docker run --rm <image> cat
 # /opt/ryotenkai/version.txt`` works against any pulled image.
-RUN printf 'ryotenkai-training-runtime %s\ncuda: %s\npython: %s\ntorch: %s\n' \
+RUN mkdir -p /opt/ryotenkai \
+    && printf 'ryotenkai-training-runtime %s\ncuda: %s\npython: %s\ntorch: %s\n' \
     "${IMAGE_VERSION}" "${CUDA_VERSION}" "${PYTHON_VERSION}" "${TORCH_VERSION}" \
     > /opt/ryotenkai/version.txt
 
 EXPOSE 22
 
 # dumb-init becomes PID 1 inside the container. It forwards SIGTERM /
-# SIGINT to its child (entrypoint.sh, which execs uvicorn), reaps
-# zombies, and exits with the child's status. Without it, uvicorn-as-
-# PID1 swallows signals and `docker stop` would always escalate to
-# the 10-second SIGKILL — losing in-flight checkpoints.
+# SIGINT to its child (entrypoint.sh, which sleeps; uvicorn is started
+# later as a child of sshd), reaps zombies, and exits with the
+# child's status. Without it, signal forwarding through the bash
+# entrypoint is unreliable and `docker stop` would always escalate
+# to the 10-second SIGKILL — losing in-flight checkpoints.
 ENTRYPOINT ["/usr/bin/dumb-init", "--", "/entrypoint.sh"]
-# CMD intentionally empty: entrypoint.sh starts sshd + uvicorn in the
-# default path. Pass a custom command (e.g. `bash`) to override.
+# CMD intentionally empty: entrypoint.sh sets up sshd then sleeps; the
+# Mac drives the actual workload via SSH exec. Pass a custom command
+# (e.g. `bash`) to override.
 CMD []
 
 # OCI image-spec labels (https://github.com/opencontainers/image-spec).

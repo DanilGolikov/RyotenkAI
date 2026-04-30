@@ -75,6 +75,23 @@ class CodeSyncer:
         # consumed by ``src/config/validators/inference.py``, which the
         # trainer's config-validator chain pulls at startup. ~16 KB.
         "src/inference",
+        # ``src/runner`` is the in-pod uvicorn job server. Until the
+        # thin-image migration it was baked into the docker image at
+        # ``/opt/ryotenkai/src/runner``; we now ship it like every other
+        # backend module so a pure runner-code change no longer forces
+        # an image rebuild. Mac SSH-execs ``python -m uvicorn
+        # src.runner.main:app`` from this rsync target after the sync
+        # lands. See ``docs/architecture/thin-image.md``.
+        "src/runner",
+        # ``src/providers`` carries the per-provider lifecycle clients
+        # the runner imports at startup
+        # (``src.providers.{runpod,single_node}.runtime.lifecycle_client``
+        # via ``src.runner.runtime.provider_registry``). Without it the
+        # runner's lifespan hook bails with ``ModuleNotFoundError: No
+        # module named 'src.providers'`` and uvicorn dies before
+        # binding 8080 — exactly the failure mode caught in
+        # run_20260429_171726_49j32. ~1.1 MB.
+        "src/providers",
         "src/constants.py",  # Shared constants (imported by config schemas, validators, etc.)
         "src/__init__.py",  # Package init
     ]

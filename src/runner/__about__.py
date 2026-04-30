@@ -10,6 +10,16 @@ config-vs-code drift problem.
 Override is supported only via ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
 environment variable, intended for CI smoke tests and dev iteration —
 *not* a user-facing config.
+
+Image semver:
+    * v1.x — baked-in ``src/`` baseline at ``/opt/ryotenkai``;
+      retired but kept on Docker Hub for emergency rollback via
+      ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``.
+    * v2.x — thin image (env-only): no ``src/`` in the image; the
+      Mac control plane rsyncs ``src/runner`` and its deps into the
+      run-scoped workspace, then SSH-execs uvicorn from there.
+      Wire-incompatible with v1.x clients (no baked baseline → no
+      fallback). See ``docs/architecture/thin-image.md``.
 """
 
 from __future__ import annotations
@@ -24,7 +34,7 @@ from typing import Final
 # path below — kept as-is to match the publish script and avoid a
 # rename round-trip on Docker Hub.
 _DEFAULT_RUNTIME_IMAGE: Final[str] = (
-    "ryotenkai/ryotenkai-training-runtime:v1.0.7"
+    "ryotenkai/ryotenkai-training-runtime:v0.1.1"
 )
 
 

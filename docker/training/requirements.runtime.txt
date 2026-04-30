@@ -86,6 +86,16 @@ uvicorn>=0.30.0,<1.0.0
 python-multipart>=0.0.20,<1.0.0
 websockets>=13.0,<16.0
 
+# ``runpod`` SDK — required even on the training pod because
+# ``src/providers/runpod/training/__init__.py`` eagerly imports
+# the api_client → sdk_adapter → ``import runpod`` chain at
+# auto-register time. Without it the trainer's PipelineConfig
+# validator rejects ``provider: runpod`` with
+# CONFIG_PROVIDER_NOT_REGISTERED. A lazy-import refactor would
+# avoid the dep, but the SDK is small enough (~150 KB pure Python)
+# that pinning it here is the pragmatic minimum.
+runpod>=1.7.0,<2.0.0
+
 # ============================================
 # CLI & Utilities
 # ============================================
