@@ -644,6 +644,8 @@ class TestLogManagerFromContext:
             def __init__(self, ssh, remote_path=None):
                 constructed["remote_path"] = remote_path
                 constructed["ssh"] = ssh
+                self.local_path = Path("/tmp/fake-local-training.log")
+                self.remote_path = remote_path or "/workspace/training.log"
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
@@ -679,7 +681,8 @@ class TestLogManagerFromContext:
 
         class _FakeLM:
             def __init__(self, *args, **kwargs):
-                pass
+                self.local_path = Path("/tmp/fake-local-training.log")
+                self.remote_path = "/workspace/training.log"
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
@@ -1188,3 +1191,245 @@ class TestTrainerLogIsSilent:
             "payload": {"line": "{'loss': 1.0, 'epoch': 1.0}"},
         })
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Log-puller diagnostics: probe + failure visibility (operator's #1 pain
+# point — silent download failures left training.log empty on Mac)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLogManager:
+    """Configurable fake matching ``LogManager``'s public surface."""
+
+    def __init__(self, *, download_results=None, remote_path="/workspace/training.log",
+                 local_path=None, raises=None):
+        # Each ``download()`` call pops the next result; sticks on the last.
+        self._download_results = download_results or [True]
+        self._idx = 0
+        self.remote_path = remote_path
+        self.local_path = local_path or Path("/tmp/fake/training.log")
+        self.download_calls = 0
+        self._raises = raises  # exception to raise instead of returning
+
+    def download(self, silent: bool = True) -> bool:
+        self.download_calls += 1
+        if self._raises is not None:
+            raise self._raises
+        if self._idx < len(self._download_results):
+            result = self._download_results[self._idx]
+            self._idx += 1
+            return result
+        return self._download_results[-1]
+
+
+class TestLogPullerDiagnostics:
+    def test_probe_reports_existing_file(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured = _capture_logger(monkeypatch)
+        monitor = _make_monitor()
+        ssh = MagicMock()
+        ssh.exec_command = MagicMock(return_value=(
+            True,
+            "EXISTS\n-rw-r--r-- 1 root root 1234 ... training.log\n---\n42 /workspace/training.log\n",
+            "",
+        ))
+        monitor._ssh_client = ssh
+        lm = _FakeLogManager()
+
+        monitor._probe_remote_training_log(lm)
+
+        rendered = _render(captured)
+        assert any("[MONITOR:LOG_PROBE]" in line and "EXISTS" in line for line in rendered)
+
+    def test_probe_reports_missing_file_at_warning(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: list[tuple[str, tuple[Any, ...]]] = []
+        def _warn(msg, *args, **_kwargs):
+            captured.append((msg, args))
+        monkeypatch.setattr(_monitor_mod.logger, "warning", _warn)
+        # info goes to a sink so probe's "MISSING" branch can still call it
+        monkeypatch.setattr(_monitor_mod.logger, "info", lambda *a, **k: None)
+
+        monitor = _make_monitor()
+        ssh = MagicMock()
+        ssh.exec_command = MagicMock(return_value=(
+            True, "MISSING\ntotal 0\ndrwx... .\n", "",
+        ))
+        monitor._ssh_client = ssh
+        lm = _FakeLogManager(remote_path="/workspace/training.log")
+
+        monitor._probe_remote_training_log(lm)
+
+        rendered = _render(captured)
+        assert any(
+            "[MONITOR:LOG_PROBE]" in line and "training.log" in line
+            and ("does not exist" in line or "Workspace listing" in line)
+            for line in rendered
+        )
+
+    def test_probe_handles_ssh_exception(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: list[tuple[str, tuple[Any, ...]]] = []
+        def _warn(msg, *args, **_kwargs):
+            captured.append((msg, args))
+        monkeypatch.setattr(_monitor_mod.logger, "warning", _warn)
+
+        monitor = _make_monitor()
+        ssh = MagicMock()
+        ssh.exec_command = MagicMock(side_effect=RuntimeError("ssh exploded"))
+        monitor._ssh_client = ssh
+
+        # Must not raise.
+        monitor._probe_remote_training_log(_FakeLogManager())
+
+        rendered = _render(captured)
+        assert any("SSH probe failed" in line for line in rendered)
+
+    def test_probe_no_op_when_ssh_client_missing(self) -> None:
+        # Single-node / mock flows have no _ssh_client.
+        monitor = _make_monitor()
+        # Should not raise even though _ssh_client is None.
+        monitor._probe_remote_training_log(_FakeLogManager())
+
+
+class TestLogDownloaderLoopVisibility:
+    def test_consecutive_failures_logged_once_at_warning(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        warnings: list[str] = []
+        def _warn(msg, *args, **_kwargs):
+            warnings.append(msg % args if args else msg)
+        monkeypatch.setattr(_monitor_mod.logger, "warning", _warn)
+        monkeypatch.setattr(_monitor_mod.logger, "info", lambda *a, **k: None)
+        monkeypatch.setattr(
+            _monitor_mod, "TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL", 0.001,
+        )
+
+        monitor = _make_monitor()
+        # Probe is a no-op since _ssh_client is None.
+        lm = _FakeLogManager(download_results=[False, False, False])
+
+        async def _drive() -> None:
+            task = _asyncio.create_task(monitor._log_downloader_loop(lm))
+            await _asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(_asyncio.CancelledError):
+                await task
+
+        _asyncio.run(_drive())
+
+        # Multiple ticks ran but only ONE warning surfaced (rate-limited).
+        no_data_warnings = [w for w in warnings if "training.log download returned no data" in w]
+        assert len(no_data_warnings) == 1, no_data_warnings
+        assert lm.download_calls >= 2
+
+    def test_recovery_after_failure_logs_at_info(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        infos: list[str] = []
+        def _info(msg, *args, **_kwargs):
+            infos.append(msg % args if args else msg)
+        monkeypatch.setattr(_monitor_mod.logger, "info", _info)
+        monkeypatch.setattr(_monitor_mod.logger, "warning", lambda *a, **k: None)
+        monkeypatch.setattr(
+            _monitor_mod, "TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL", 0.001,
+        )
+
+        monitor = _make_monitor()
+        # First two ticks fail, then succeed forever.
+        lm = _FakeLogManager(download_results=[False, False, True])
+
+        async def _drive() -> None:
+            task = _asyncio.create_task(monitor._log_downloader_loop(lm))
+            await _asyncio.sleep(0.05)
+            task.cancel()
+            with contextlib.suppress(_asyncio.CancelledError):
+                await task
+
+        _asyncio.run(_drive())
+
+        recovery = [m for m in infos if "download recovered" in m]
+        assert len(recovery) == 1
+
+
+class TestFinalFlushVisibility:
+    def test_final_flush_success_logs_at_info(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        captured = _capture_logger(monkeypatch)
+        monitor = _make_monitor()
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+        lm = _FakeLogManager(download_results=[True])
+
+        result = _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
+        assert result.is_ok()
+        rendered = _render(captured)
+        assert any(
+            "training.log flushed" in line and "/tmp/fake/training.log" in line
+            for line in rendered
+        )
+
+    def test_final_flush_returns_no_data_logs_at_warning(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        warnings: list[str] = []
+        def _warn(msg, *args, **_kwargs):
+            warnings.append(msg % args if args else msg)
+        monkeypatch.setattr(_monitor_mod.logger, "warning", _warn)
+        monkeypatch.setattr(_monitor_mod.logger, "info", lambda *a, **k: None)
+
+        monitor = _make_monitor()
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+        lm = _FakeLogManager(download_results=[False])
+
+        _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
+
+        no_data = [w for w in warnings if "final training.log flush returned no data" in w]
+        assert len(no_data) == 1
+        # Failure message points the operator at the most likely cause.
+        assert "FileHandler" in no_data[0] or "RYOTENKAI_TRAINING_LOG_PATH" in no_data[0]
+
+    def test_final_flush_exception_logs_at_warning(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import asyncio as _asyncio
+
+        warnings: list[str] = []
+        def _warn(msg, *args, **_kwargs):
+            warnings.append(msg % args if args else msg)
+        monkeypatch.setattr(_monitor_mod.logger, "warning", _warn)
+        monkeypatch.setattr(_monitor_mod.logger, "info", lambda *a, **k: None)
+
+        monitor = _make_monitor()
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+        lm = _FakeLogManager(raises=RuntimeError("scp exploded"))
+
+        _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
+
+        flush_warnings = [w for w in warnings if "final training.log flush failed" in w]
+        assert len(flush_warnings) == 1
+        assert "scp exploded" in flush_warnings[0]

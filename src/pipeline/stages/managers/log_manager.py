@@ -102,6 +102,11 @@ class LogManager:
         """Path to local training log file (run-scoped)."""
         return self._local_path
 
+    @property
+    def remote_path(self) -> str:
+        """Pod-side absolute path the trainer is expected to write."""
+        return self._remote_path
+
     def _get_local_size_bytes(self) -> int:
         try:
             return int(self._local_path.stat().st_size)

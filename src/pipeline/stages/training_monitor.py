@@ -535,32 +535,120 @@ class TrainingMonitor(PipelineStage):
         try:
             log_manager = LogManager(ssh_client, remote_path=remote_log)
         except Exception as exc:  # noqa: BLE001 — defensive
-            logger.debug(f"[MONITOR] LogManager init failed: {exc}")
+            logger.warning(f"[MONITOR] LogManager init failed: {exc}")
             with contextlib.suppress(Exception):
                 ssh_client.close_master()
             return None, None
+        # Surface the wiring at INFO so operators can see whether the
+        # download path is active without grepping through DEBUG logs —
+        # silent failures here are the #1 reason ``training.log`` ends
+        # up missing in the run dir.
+        logger.info(
+            "[MONITOR] Log puller wired: pod=%s → mac=%s",
+            remote_log, log_manager.local_path,
+        )
         return log_manager, ssh_client
+
+    def _probe_remote_training_log(self, log_manager: LogManager) -> None:
+        """One-shot diagnostic: does the file actually exist on the pod?
+
+        We've been bitten by silent download failures where the loop
+        kept polling but ``training.log`` never materialised on Mac.
+        Run an SSH probe up-front so the monitor log shows whether the
+        trainer is writing the file (and where) before the periodic
+        loop kicks in. The probe runs over the same SSH connection the
+        downloader uses, so it also validates connectivity.
+        """
+        if self._ssh_client is None:
+            return
+        remote_path = log_manager.remote_path
+        cmd = (
+            f"if [ -f {remote_path} ]; then "
+            f"  echo EXISTS; "
+            f"  ls -la {remote_path}; "
+            f"  echo ---; "
+            f"  wc -l {remote_path}; "
+            f"else "
+            f"  echo MISSING; "
+            f"  ls -la {remote_path.rsplit('/', 1)[0]} 2>/dev/null | head -20; "
+            f"fi"
+        )
+        try:
+            ok, out, err = self._ssh_client.exec_command(
+                command=cmd, silent=True, timeout=10,
+            )
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.warning("[MONITOR:LOG_PROBE] SSH probe failed: %s", exc)
+            return
+        if not ok:
+            logger.warning(
+                "[MONITOR:LOG_PROBE] SSH probe non-zero (stderr=%s)",
+                (err or "").strip()[:200],
+            )
+            return
+        text = (out or "").strip()
+        if text.startswith("EXISTS"):
+            for line in text.splitlines():
+                logger.info("[MONITOR:LOG_PROBE] %s", line)
+        else:
+            logger.warning(
+                "[MONITOR:LOG_PROBE] %s does not exist on the pod yet — "
+                "trainer may not have attached the FileHandler. "
+                "Workspace listing follows:", remote_path,
+            )
+            for line in text.splitlines():
+                logger.warning("[MONITOR:LOG_PROBE] %s", line)
 
     async def _log_downloader_loop(self, log_manager: LogManager) -> None:
         """Pull ``training.log`` deltas every
         :data:`TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL` seconds.
 
         Runs concurrently with :meth:`_watch`; ``asyncio.to_thread``
-        keeps the blocking SSH call off the event loop. Any per-tick
-        failure is swallowed at debug level — a transient SCP error
-        must not abort the run.
+        keeps the blocking SSH call off the event loop. Failures are
+        surfaced at WARNING level (once per consecutive failure run,
+        not every tick) so silent SCP problems don't go unnoticed.
         """
+        # Diagnostic probe BEFORE the first sleep so the monitor log
+        # shows the file's existence within seconds of the stage
+        # starting — much faster than waiting 30 s for the first
+        # download tick to maybe-fail-silently.
+        await asyncio.to_thread(self._probe_remote_training_log, log_manager)
+
+        consecutive_failures = 0
         while True:
             try:
                 await asyncio.sleep(TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL)
             except asyncio.CancelledError:
                 return
             try:
-                await asyncio.to_thread(log_manager.download, silent=True)
+                ok = await asyncio.to_thread(log_manager.download, silent=True)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — defensive
-                logger.debug(f"[MONITOR] periodic log download failed: {exc}")
+                consecutive_failures += 1
+                if consecutive_failures == 1:
+                    logger.warning(
+                        "[MONITOR] training.log download failed (%s); will keep retrying",
+                        exc,
+                    )
+                continue
+            if ok:
+                if consecutive_failures > 0:
+                    logger.info(
+                        "[MONITOR] training.log download recovered after %d failure(s)",
+                        consecutive_failures,
+                    )
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures == 1:
+                    # Most common cause: file doesn't exist on the pod.
+                    logger.warning(
+                        "[MONITOR] training.log download returned no data "
+                        "(remote=%s) — file may be missing or empty. "
+                        "Will keep retrying.",
+                        log_manager.remote_path,
+                    )
 
     # --- pod resilience (laptop-sleep recovery) ------------------------
 
@@ -777,13 +865,40 @@ class TrainingMonitor(PipelineStage):
             download_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await download_task
+            # Final flush — operator must know whether the on-disk
+            # artefact is complete. Surface result at INFO regardless
+            # of outcome.
             try:
-                await asyncio.wait_for(
+                ok = await asyncio.wait_for(
                     asyncio.to_thread(log_manager.download, silent=False),
                     timeout=_FINAL_LOG_FLUSH_TIMEOUT,
                 )
-            except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
-                logger.debug(f"[MONITOR] final log download failed: {exc}")
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[MONITOR] final training.log flush timed out after %.0fs "
+                    "(remote=%s) — local file may be truncated",
+                    _FINAL_LOG_FLUSH_TIMEOUT, log_manager.remote_path,
+                )
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "[MONITOR] final training.log flush failed: %s "
+                    "(remote=%s) — local file may be truncated",
+                    exc, log_manager.remote_path,
+                )
+            else:
+                if ok:
+                    logger.info(
+                        "[MONITOR] training.log flushed → %s",
+                        log_manager.local_path,
+                    )
+                else:
+                    logger.warning(
+                        "[MONITOR] final training.log flush returned no data "
+                        "(remote=%s) — file is missing on the pod. The trainer "
+                        "may have crashed before installing its FileHandler, or "
+                        "RYOTENKAI_TRAINING_LOG_PATH was not propagated.",
+                        log_manager.remote_path,
+                    )
 
     # --- async core -----------------------------------------------------
 
