@@ -545,6 +545,72 @@ class TrainingMonitor(PipelineStage):
             except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug(f"[MONITOR] periodic log download failed: {exc}")
 
+    # --- post-mortem diagnostics ---------------------------------------
+
+    def _collect_death_diagnostics(self) -> None:
+        """Pull a fixed set of probes from the pod when the trainer
+        dies non-zero. Each probe's output is logged at INFO under
+        ``[MONITOR:POSTMORTEM] <label>:`` so the run-level
+        ``training_monitor.log`` carries a self-contained autopsy
+        without the operator needing to ssh in.
+
+        The probes are deliberately conservative:
+        - workspace markers and the trainer's own faulthandler dump
+          for the application-level cause,
+        - last 30 lines of the trainer log (filtered to drop the
+          progress-bar spam) for a recent context window,
+        - kernel ``dmesg`` slices for OOM / NVRM / Xid hardware
+          signals,
+        - ``nvidia-smi`` snapshot for current GPU state.
+
+        Skipped silently if no SSH client is wired (single_node /
+        mock); per-probe failures are also swallowed so one broken
+        command doesn't suppress the rest.
+        """
+        if self._ssh_client is None:
+            return
+        workspace = "/workspace"
+        # Mirror the legacy probe set; ordering matters for log
+        # readability — most decisive signals first.
+        probes: list[tuple[str, str, int]] = [
+            ("exit_code",
+             f"cat {workspace}/TRAINING_EXIT_CODE 2>/dev/null", 5),
+            ("workspace_markers",
+             f"ls {workspace}/TRAINING_* 2>/dev/null", 5),
+            ("faulthandler",
+             f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
+            ("training_log_tail",
+             f"tail -n 500 {workspace}/training.log 2>/dev/null"
+             " | grep -v -E '^\\s*$|^\\s*[0-9]+%\\|' | tail -n 30", 10),
+            ("dmesg_tail", "dmesg 2>/dev/null | tail -n 80", 10),
+            ("dmesg_oom",
+             "dmesg 2>/dev/null | grep -iE 'oom|kill|memory' | tail -n 30", 10),
+            ("dmesg_nvidia",
+             "dmesg 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -n 30", 10),
+            ("nvidia_smi",
+             "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total"
+             " --format=csv,noheader", 10),
+        ]
+        logger.info(
+            "[MONITOR:POSTMORTEM] non-zero exit detected — collecting pod-side diagnostics",
+        )
+        for label, command, timeout in probes:
+            try:
+                ok, stdout, stderr = self._ssh_client.exec_command(
+                    command=command, silent=True, timeout=timeout,
+                )
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug(f"[MONITOR:POSTMORTEM] {label} raised: {exc}")
+                continue
+            text = (stdout or "").strip()
+            if ok and text:
+                for line in text.splitlines():
+                    logger.info(f"[MONITOR:POSTMORTEM] {label}: {line}")
+            elif stderr:
+                logger.debug(
+                    f"[MONITOR:POSTMORTEM] {label} stderr: {stderr.strip()}"
+                )
+
     async def _watch_and_download(
         self,
         client: JobClient,
@@ -733,6 +799,19 @@ class TrainingMonitor(PipelineStage):
         exit_code = payload.get("exit_code")
         signal_name = payload.get("signal")
         cancelled = bool(payload.get("cancellation_requested"))
+
+        # Pull post-mortem context from the pod BEFORE returning Err.
+        # Cancellation is operator-initiated (``stop`` from CLI/web UI)
+        # so there's no crash to investigate; we only run the probes
+        # on a genuine non-zero / signal-killed exit. The pod is still
+        # reachable here because :class:`PodTerminator` runs from the
+        # runner's terminal hook, which fires AFTER the
+        # ``trainer_exited`` event; deployer-side teardown happens
+        # later via :meth:`cleanup`.
+        if not cancelled and (
+            (isinstance(exit_code, int) and exit_code != 0) or signal_name
+        ):
+            self._collect_death_diagnostics()
 
         if exit_code == 0 and not cancelled:
             if self._callbacks.on_training_completed:

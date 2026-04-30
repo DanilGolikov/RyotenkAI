@@ -89,6 +89,8 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._training_start_time = 0.0
     monitor._last_offset = 0
     monitor._last_status_log_time = 0.0
+    monitor._ssh_client = None
+    monitor._log_manager = None
     return monitor
 
 
@@ -689,3 +691,152 @@ class TestLogManagerFromContext:
         # and key_path must NOT be passed through.
         assert constructed["username"] is None
         assert constructed["key_path"] is None
+
+
+# ---------------------------------------------------------------------------
+# Post-mortem diagnostics — pod-side probes on non-zero exit
+# ---------------------------------------------------------------------------
+
+
+class TestPostMortemDiagnostics:
+    def _fake_ssh(self, *, output_per_label: dict | None = None):
+        outputs = output_per_label or {}
+        executed: list[tuple[str, str]] = []
+
+        def _exec(*, command, silent=False, timeout=30):
+            # Match by substring — the probes embed the label-specific
+            # path in the command, so we can pick up which probe fired.
+            label = "unknown"
+            for marker, lbl in [
+                ("TRAINING_EXIT_CODE", "exit_code"),
+                ("TRAINING_*", "workspace_markers"),
+                ("training.faulthandler.log", "faulthandler"),
+                ("training.log", "training_log_tail"),
+                ("oom|kill|memory", "dmesg_oom"),
+                ("nvrm|xid|nvidia", "dmesg_nvidia"),
+                ("dmesg", "dmesg_tail"),
+                ("nvidia-smi", "nvidia_smi"),
+            ]:
+                if marker in command:
+                    label = lbl
+                    break
+            executed.append((label, command))
+            stdout = outputs.get(label, "")
+            return True, stdout, ""
+
+        ssh = MagicMock()
+        ssh.exec_command = MagicMock(side_effect=_exec)
+        ssh.executed = executed
+        return ssh
+
+    def test_zero_exit_skips_postmortem(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        monitor._ssh_client = self._fake_ssh()
+        monitor._handle_trainer_exited({
+            "exit_code": 0, "signal": None, "cancellation_requested": False,
+        })
+        assert monitor._ssh_client.exec_command.call_count == 0
+
+    def test_cancellation_skips_postmortem_even_with_nonzero_code(self) -> None:
+        # Operator pressed stop — no crash to investigate.
+        monitor = _make_monitor()
+        monitor._ssh_client = self._fake_ssh()
+        monitor._handle_trainer_exited({
+            "exit_code": 137, "signal": "SIGKILL",
+            "cancellation_requested": True,
+        })
+        assert monitor._ssh_client.exec_command.call_count == 0
+
+    def test_nonzero_exit_runs_full_probe_set(self) -> None:
+        monitor = _make_monitor()
+        monitor._ssh_client = self._fake_ssh()
+        monitor._handle_trainer_exited({
+            "exit_code": 1, "signal": None, "cancellation_requested": False,
+        })
+        labels = [lbl for lbl, _ in monitor._ssh_client.executed]
+        for required in [
+            "exit_code", "workspace_markers", "faulthandler",
+            "training_log_tail", "dmesg_tail", "dmesg_oom",
+            "dmesg_nvidia", "nvidia_smi",
+        ]:
+            assert required in labels, (
+                f"missing probe {required!r} in {labels!r}"
+            )
+
+    def test_signal_kill_with_zero_exit_still_triggers_postmortem(self) -> None:
+        # SIGTERM-killed trainer that returns 0 (process raced before
+        # exit) is still a crash from the operator's POV.
+        monitor = _make_monitor()
+        monitor._ssh_client = self._fake_ssh()
+        monitor._handle_trainer_exited({
+            "exit_code": 0, "signal": "SIGTERM",
+            "cancellation_requested": False,
+        })
+        assert monitor._ssh_client.exec_command.called
+
+    def test_probe_failure_does_not_abort_remaining_probes(self) -> None:
+        monitor = _make_monitor()
+        ssh = MagicMock()
+        # First two probes raise, the rest succeed — the loop must
+        # keep going so the operator gets the dmesg signals.
+        call_count = {"n": 0}
+        def _exec(**kwargs):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise RuntimeError("ssh boom")
+            return True, "ok-output", ""
+        ssh.exec_command = MagicMock(side_effect=_exec)
+        monitor._ssh_client = ssh
+        monitor._handle_trainer_exited({
+            "exit_code": 1, "signal": None, "cancellation_requested": False,
+        })
+        # All 8 probes attempted.
+        assert ssh.exec_command.call_count == 8
+
+    def test_no_ssh_client_makes_postmortem_a_noop(self) -> None:
+        # Single-node / mock flow — _ssh_client is None.
+        monitor = _make_monitor()
+        # Should not raise.
+        monitor._handle_trainer_exited({
+            "exit_code": 1, "signal": None, "cancellation_requested": False,
+        })
+
+    def test_log_lines_carry_postmortem_prefix(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        captured: list[tuple[str, tuple[Any, ...]]] = []
+
+        def _info(msg, *args, **_kwargs):
+            captured.append((msg, args))
+
+        monkeypatch.setattr(_monitor_mod.logger, "info", _info)
+
+        monitor = _make_monitor()
+        monitor._ssh_client = self._fake_ssh(output_per_label={
+            "exit_code": "137",
+            "nvidia_smi": "RTX 5090, 99 %, 24000 MiB, 32000 MiB",
+        })
+        monitor._handle_trainer_exited({
+            "exit_code": 137, "signal": None,
+            "cancellation_requested": False,
+        })
+        # logger.info is called both with an already-formatted f-string
+        # (no args) AND with %-format strings; render conditionally.
+        def _render(msg, args):
+            if not args:
+                return msg
+            try:
+                return msg % args
+            except TypeError:
+                return msg
+        rendered = [_render(m, a) for m, a in captured]
+        # Banner + at least one probe with rendered content.
+        assert any(
+            "[MONITOR:POSTMORTEM] non-zero exit detected" in line
+            for line in rendered
+        )
+        assert any(
+            "[MONITOR:POSTMORTEM] exit_code: 137" in line for line in rendered
+        )
