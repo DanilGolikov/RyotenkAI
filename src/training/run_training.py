@@ -633,6 +633,45 @@ def _install_crash_observability() -> None:
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning(f"[RUN_TRAINING:OBSERVABILITY] faulthandler.enable failed: {exc}")
 
+    # Attach a FileHandler to the trainer's ``ryotenkai`` logger so
+    # ``logger.info(...)`` writes directly into a human-readable
+    # ``training.log`` file on disk. This is the post-mortem artefact
+    # the Mac-side ``log_manager`` scp's into ``runs/<id>/attempts/<n>/
+    # logs/training.log``. The file is the source of truth for
+    # debugging an ended run; the parallel runner event-bus stream
+    # (Supervisor PIPE → ``trainer_log`` events) is the realtime
+    # channel for live-monitoring and survives independently — see
+    # ``docs/architecture/log-collection.md``.
+    #
+    # Path comes from ``RYOTENKAI_TRAINING_LOG_PATH`` env var which
+    # the Mac launcher sets to ``LogManager.DEFAULT_REMOTE_PATH``
+    # (``/workspace/training.log``). When the var is absent (e.g.
+    # standalone / unit-test usage) we silently skip — trainer remains
+    # functional without the file artefact.
+    training_log_path = os.environ.get("RYOTENKAI_TRAINING_LOG_PATH")
+    if training_log_path:
+        try:
+            from src.utils.logger import setup_logger as _setup_logger
+
+            _setup_logger(
+                "ryotenkai",
+                level=logger.getEffectiveLevel(),
+                log_file=Path(training_log_path),
+                use_color=False,
+            )
+            logger.debug(
+                f"[RUN_TRAINING:OBSERVABILITY] training.log → {training_log_path}",
+            )
+        except OSError as exc:
+            logger.warning(
+                f"[RUN_TRAINING:OBSERVABILITY] could not open {training_log_path} "
+                f"({exc}); training.log will not be written",
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                f"[RUN_TRAINING:OBSERVABILITY] FileHandler attach failed: {exc}",
+            )
+
     def _flush_logging_handlers() -> None:
         """Flush every handler attached to the training logger on exit."""
         with contextlib.suppress(Exception):

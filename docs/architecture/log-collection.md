@@ -25,7 +25,7 @@ Different parts of the Python stack run in different lifecycles:
 | Container boot | `entrypoint.sh` (bash) | journald via PID-1 | Bash itself is trivial; nothing to log durably |
 | Runner import | `python -m uvicorn` (the process that becomes PID 1's child) | `/workspace/runner.log` (NEW) | This is where ImportError / SyntaxError fire. They happen BEFORE Python's logging config is set up, so app-level logging cannot capture them. |
 | Runner runtime | uvicorn + FastAPI + Supervisor | `/workspace/runner.log` (continued) | Lifecycle events: `/jobs/start`, `/healthz`, supervisor decisions |
-| Trainer | `python -m src.training.run_training` (subprocess) | `/workspace/training.log` via Supervisor + EventJournal | Real training output: epochs, losses, MLflow events |
+| Trainer | `python -m src.training.run_training` (subprocess) | `/workspace/training.log` via `logging.FileHandler` attached in `_install_crash_observability` | Real training output: epochs, losses, MLflow events |
 
 If the trainer never starts (uvicorn died at boot), only `runner.log`
 has anything. If uvicorn boots fine and the trainer crashes at epoch 3,
@@ -34,22 +34,23 @@ events around the crash.
 
 ## How `runner.log` actually gets written
 
-`docker/training/entrypoint.sh` (the last lines of the script):
+The pod's `entrypoint.sh` is intentionally inert (`sleep infinity`).
+The Mac SSH-execs uvicorn after `CodeSyncer` rsync via
+[`runner_launcher.launch_runner`](../../src/pipeline/stages/managers/deployment/runner_launcher.py),
+with `PYTHONPATH=/workspace/runs/<run_id>:${PYTHONPATH}` (the
+rsync target — thin image v2.0.0+ does not bake `src/` in; see
+[thin-image.md](thin-image.md)). The launch command appends to
+`/workspace/runner.log` with `stdbuf -oL -eL` so a fast crash
+still flushes its last line:
 
 ```bash
-RUNNER_LOG="${RYOTENKAI_RUNNER_LOG:-/workspace/runner.log}"
-mkdir -p "$(dirname "$RUNNER_LOG")" || true
-
-if ! : >> "$RUNNER_LOG" 2>/dev/null; then
-  echo "WARNING: $RUNNER_LOG not writable, falling back to /tmp/runner.log" >&2
-  RUNNER_LOG="/tmp/runner.log"
-fi
-
-exec stdbuf -oL -eL "$PY_BIN" -m uvicorn src.runner.main:app \
-  --host "$RYOTENKAI_RUNNER_HOST" \
-  --port "$RYOTENKAI_RUNNER_PORT" \
-  --no-access-log \
-  >> "$RUNNER_LOG" 2>&1
+nohup env PYTHONPATH=/workspace/runs/<run_id>:${PYTHONPATH:-} \
+    RYOTENKAI_RUNTIME_PROVIDER=... \
+    stdbuf -oL -eL /usr/local/bin/python3 \
+    -m uvicorn src.runner.main:app \
+      --host 127.0.0.1 --port 8080 --no-access-log \
+    >> /workspace/runner.log 2>&1 < /dev/null &
+disown
 ```
 
 Three load-bearing details:
@@ -68,6 +69,46 @@ Three load-bearing details:
    traceback has actually been flushed to the file and is visible to
    the Mac via rsync. Without it, Python's default 4 KB block buffer
    means the file is empty when the process dies fast.
+
+## How `training.log` actually gets written
+
+The trainer subprocess's stdout/stderr are captured by the
+`Supervisor` PIPE-pumps and turned into `trainer_log` events on the
+runner's event-bus — that's the **realtime channel** for live
+monitoring. It does NOT produce a file on disk by itself.
+
+For the **file artefact**, the trainer attaches its own
+`logging.FileHandler` to the `ryotenkai` logger inside
+`_install_crash_observability`
+([run_training.py](../../src/training/run_training.py)). Path comes
+from the `RYOTENKAI_TRAINING_LOG_PATH` env var, which the Mac
+launcher sets to `LogManager.DEFAULT_REMOTE_PATH`
+(`/workspace/training.log`):
+
+```python
+training_log_path = os.environ.get("RYOTENKAI_TRAINING_LOG_PATH")
+if training_log_path:
+    setup_logger(
+        "ryotenkai",
+        level=logger.getEffectiveLevel(),
+        log_file=Path(training_log_path),
+        use_color=False,
+    )
+```
+
+`setup_logger` creates the parent directory and attaches a
+`logging.FileHandler` with the standard `AlignedFormatter` (no
+ANSI colour). All `logger.info(...)` calls in the trainer thereafter
+are written to the file in addition to stdout — which means:
+
+* the file gets human-readable training output (epochs, losses,
+  decisions);
+* the same lines also flow through stdout → Supervisor PIPE →
+  realtime events for the monitor / live-tail.
+
+The two channels are independent: a crashed Supervisor or a torn-down
+WebSocket cannot interrupt file writes; a corrupt log file does not
+stop event streaming.
 
 ## How it lands on Mac
 

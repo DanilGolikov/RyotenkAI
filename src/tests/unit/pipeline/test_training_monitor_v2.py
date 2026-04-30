@@ -355,3 +355,165 @@ class TestTunnelTeardown:
         # masked by tunnel-close noise.
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_JOB_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# PR2 — Event mirror integration
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with_attempt_dir(
+    client, attempt_dir: Path, *, tunnel=None, job_id="j-1",
+) -> dict[str, Any]:
+    return {
+        "job_client": client,
+        "ssh_tunnel": tunnel,
+        "job_id": job_id,
+        # Key the monitor reads to spin up the mirror writer. Must
+        # match PipelineContextKeys.ATTEMPT_DIRECTORY.
+        "attempt_directory": str(attempt_dir),
+    }
+
+
+class TestEventMirrorIntegration:
+    """PR2: monitor writes every received event to
+    ``<attempt>/events/events_mirror.jsonl`` for cold-replay."""
+
+    def test_mirror_writes_each_event_to_jsonl(self, tmp_path: Path) -> None:
+        import json as _json
+
+        attempt_dir = tmp_path / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+
+        events = [
+            {"v": 1, "offset": 0, "ts": "t0", "kind": "trainer_log",
+             "payload": {"kind": "stdout", "line": "hello"}},
+            {"v": 1, "offset": 1, "ts": "t1", "kind": "health_snapshot",
+             "payload": {"gpu_util_percent": 50.0}},
+            {"v": 1, "offset": 2, "ts": "t2", "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ]
+        monitor = _make_monitor()
+        client = _make_client(events=events)
+
+        result = monitor.execute(_ctx_with_attempt_dir(client, attempt_dir))
+        assert result.is_ok()
+
+        mirror_path = attempt_dir / "events" / "events_mirror.jsonl"
+        assert mirror_path.exists()
+        lines = mirror_path.read_text(encoding="utf-8").splitlines()
+        # All three events should be in the mirror.
+        assert len(lines) == 3
+        offsets = [_json.loads(line)["offset"] for line in lines]
+        assert offsets == [0, 1, 2]
+
+    def test_mirror_failure_does_not_break_monitor(
+        self, tmp_path: Path, monkeypatch,
+    ) -> None:
+        """A broken mirror writer must NOT bring down the monitor —
+        observability never blocks training."""
+        attempt_dir = tmp_path / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+
+        # Patch EventMirrorWriter on the monitor module to a mock
+        # whose write() raises.
+        bad_mirror = MagicMock()
+        bad_mirror.write = MagicMock(side_effect=RuntimeError("disk full"))
+        bad_mirror.close = MagicMock()
+
+        monkeypatch.setattr(
+            _monitor_mod, "EventMirrorWriter", lambda *_a, **_k: bad_mirror,
+        )
+
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+        monitor = _make_monitor()
+        result = monitor.execute(_ctx_with_attempt_dir(client, attempt_dir))
+        # mirror.write raises, but the monitor swallows it at debug
+        # level — the run still ends Ok via trainer_exited dispatch.
+        assert result.is_ok(), result
+
+    def test_no_attempt_dir_skips_mirror(self, tmp_path: Path) -> None:
+        """Without ``attempt_directory`` in context (e.g. in older
+        callers / unit tests) the monitor must still work — no mirror
+        is written, and that's OK."""
+        monitor = _make_monitor()
+        client = _make_client(events=[
+            {"offset": 0, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ])
+        # _ctx_with_handles deliberately omits attempt_directory.
+        result = monitor.execute(_ctx_with_handles(client))
+        assert result.is_ok()
+
+
+# ---------------------------------------------------------------------------
+# PR2 — trainer_log → logger.info routing
+# ---------------------------------------------------------------------------
+
+
+class TestTrainerLogRouting:
+    """PR2: trainer-stdout/stderr events surface as INFO-level log
+    entries so they land in ``training_monitor.log`` and
+    ``pipeline.log``."""
+
+    def test_trainer_log_events_emit_logger_info(
+        self, tmp_path: Path, caplog,
+    ) -> None:
+        import logging
+
+        attempt_dir = tmp_path / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+
+        events = [
+            {"v": 1, "offset": 0, "kind": "trainer_log",
+             "payload": {"kind": "stdout", "line": "epoch 1 loss=0.5"}},
+            {"v": 1, "offset": 1, "kind": "trainer_log",
+             "payload": {"kind": "stderr", "line": "warning: deprecated"}},
+            {"v": 1, "offset": 2, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ]
+        monitor = _make_monitor()
+        client = _make_client(events=events)
+
+        with caplog.at_level(logging.INFO, logger="ryotenkai"):
+            result = monitor.execute(_ctx_with_attempt_dir(client, attempt_dir))
+
+        assert result.is_ok()
+        info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any("[TRAINER:stdout] epoch 1 loss=0.5" in m for m in info_messages)
+        assert any("[TRAINER:stderr] warning: deprecated" in m for m in info_messages)
+
+    def test_trainer_log_with_empty_line_is_skipped(
+        self, tmp_path: Path, caplog,
+    ) -> None:
+        """An empty ``line`` shouldn't produce ``[TRAINER:stdout] `` —
+        empty banner lines from trainer would just spam the log."""
+        import logging
+
+        attempt_dir = tmp_path / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+
+        events = [
+            {"v": 1, "offset": 0, "kind": "trainer_log",
+             "payload": {"kind": "stdout", "line": ""}},
+            {"v": 1, "offset": 1, "kind": "trainer_exited",
+             "payload": {"exit_code": 0, "signal": None,
+                         "cancellation_requested": False}},
+        ]
+        monitor = _make_monitor()
+        client = _make_client(events=events)
+
+        with caplog.at_level(logging.INFO, logger="ryotenkai"):
+            monitor.execute(_ctx_with_attempt_dir(client, attempt_dir))
+
+        # No "[TRAINER:..." line should appear with empty content.
+        for record in caplog.records:
+            if "[TRAINER:" in record.getMessage():
+                assert record.getMessage().split("] ", 1)[1] != ""

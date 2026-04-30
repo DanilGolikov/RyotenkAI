@@ -202,7 +202,16 @@ class TrainingLauncher:
                     resource_id=resource_id if resource_id else None,
                 ),
             )
-        runner_ready = launch_runner(ssh_client, env=runner_env)
+        # ``workspace_path`` is the rsync target the CodeSyncer dropped
+        # ``src/...`` into for this run; the thin image (v2.0.0+) ships
+        # only Python + libs, so this directory is the SOLE source of
+        # ``src.runner`` on the pod. Without it, uvicorn fails with
+        # ``ModuleNotFoundError: No module named 'src.runner'``.
+        runner_ready = launch_runner(
+            ssh_client,
+            workspace_path=self.workspace,
+            env=runner_env,
+        )
         if runner_ready.is_err():
             err = runner_ready.unwrap_err()  # type: ignore[union-attr]
             logger.error("[LAUNCHER] Runner failed to launch: %s", err.message)
@@ -503,6 +512,19 @@ class TrainingLauncher:
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONFAULTHANDLER"] = "1"
         env["PYTHONFAULTHANDLER_PATH"] = f"{workspace_env}/training.faulthandler.log"
+        # Trainer's ``_install_crash_observability`` reads this and
+        # attaches a FileHandler to its ``ryotenkai`` logger so
+        # ``logger.info(...)`` flows directly into a human-readable
+        # ``training.log`` file. Mac-side ``LogManager`` scp's this
+        # exact path into ``runs/<id>/attempts/<n>/logs/training.log``.
+        # Value MUST stay in sync with ``LogManager.DEFAULT_REMOTE_PATH``
+        # (the regression-guard test verifies this). See
+        # ``docs/architecture/log-collection.md``.
+        # Imported lazily to avoid a top-of-module circular import
+        # (log_manager → ssh_helpers → managers package init).
+        from src.pipeline.stages.managers.log_manager import LogManager
+
+        env["RYOTENKAI_TRAINING_LOG_PATH"] = LogManager.DEFAULT_REMOTE_PATH
 
         # Tell the trainer where the runner is so RunnerEventCallback
         # (Phase 3) starts pushing events. Loopback URL — the runner

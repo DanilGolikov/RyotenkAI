@@ -146,6 +146,25 @@ class TestBuildJobEnv:
         assert env["LOG_LEVEL"] == "WARNING"  # overridden
         assert env["RUNPOD_API_KEY"] == "k"   # added
 
+    def test_build_job_env_includes_training_log_path(self) -> None:
+        """PR1: trainer attaches a FileHandler at this path so
+        ``log_manager`` can scp the resulting file as a post-mortem
+        artefact. Absent → no training.log written → broken pipeline."""
+        launcher = _make_launcher()
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert "RYOTENKAI_TRAINING_LOG_PATH" in env
+        assert env["RYOTENKAI_TRAINING_LOG_PATH"].endswith("training.log")
+
+    def test_training_log_path_matches_log_manager_default(self) -> None:
+        """Drift guard: trainer writes here, log_manager reads here.
+        Two values mismatching = silent broken artefact path. They
+        MUST come from the same source — we use ``LogManager.DEFAULT_REMOTE_PATH``."""
+        from src.pipeline.stages.managers.log_manager import LogManager
+
+        launcher = _make_launcher()
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert env["RYOTENKAI_TRAINING_LOG_PATH"] == LogManager.DEFAULT_REMOTE_PATH
+
 
 # ---------------------------------------------------------------------------
 # _resolve_job_id
