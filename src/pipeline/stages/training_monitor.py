@@ -26,10 +26,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
+
+#: Trainer-stdout lines that contain training metrics. We surface them
+#: from ``trainer_log`` events at INFO level so the operator sees at
+#: least one progress signal in monitor output without flooding it with
+#: every line of trainer chatter (see plan §1 — operator's request was
+#: "хотя бы 1 метрику", not full forwarding).
+_METRIC_LINE_PATTERN = re.compile(
+    # Word boundary, then key, optional close-quote (dict-style logging
+    # prints ``'loss': 2.34``), optional whitespace, then ``=`` or ``:``.
+    r"\b(loss|epoch|step|lr|learning_rate|grad_norm|eval_loss|eval_accuracy)"
+    r"\b['\"]?\s*[=:]",
+    re.IGNORECASE,
+)
 
 from src.api.clients.job_client import (
     JobClientError,
@@ -188,6 +202,11 @@ class TrainingMonitor(PipelineStage):
         # Bound recovery attempts so a flapping pod can't trap the
         # monitor in an infinite reconnect loop.
         self._recovery_attempts: int = 0
+        # Milestone flags — keep INFO-level logs to one line per
+        # interesting transition, so a 60-second run still shows
+        # "trainer started", a metric, and "trainer exited" at minimum.
+        self._first_event_logged: bool = False
+        self._trainer_started_logged: bool = False
 
     # --- public entry point ---------------------------------------------
 
@@ -855,14 +874,35 @@ class TrainingMonitor(PipelineStage):
 
         Recognised event kinds (everything else is logged at debug
         and ignored):
-        - ``health_snapshot`` → ``on_resource_check``
+        - first event (any kind) → "[MONITOR] WS stream open"
+        - ``trainer_spawned`` → "[MONITOR] Trainer process started"
+        - ``health_snapshot`` → ``on_resource_check`` + rate-limited ALIVE
+        - ``trainer_log`` payload matching ``_METRIC_LINE_PATTERN`` →
+          one-line ``[MONITOR:METRIC]`` echo so the operator sees
+          training progress without tailing the full log
         - ``trainer_exited`` → ``on_training_completed`` /
           ``on_training_failed`` / ``on_process_died`` based on
           payload, then return terminal Result
-        - ``stop_requested``, ``pod_stop_attempt`` etc. → log only
+        - other kinds → log only at debug
         """
         kind = event.get("kind") or ""
         payload = event.get("payload") or {}
+
+        if not self._first_event_logged:
+            self._first_event_logged = True
+            logger.info("[MONITOR] WS event stream open — runner is reachable")
+
+        if kind == "trainer_spawned" and not self._trainer_started_logged:
+            self._trainer_started_logged = True
+            pid = payload.get("pid")
+            logger.info(
+                "[MONITOR] Trainer process started%s",
+                f" (pid={pid})" if pid else "",
+            )
+
+        if kind == "trainer_log":
+            self._maybe_log_metric(payload)
+            return None
 
         if kind == "health_snapshot":
             self._maybe_log_status(payload)
@@ -887,6 +927,27 @@ class TrainingMonitor(PipelineStage):
 
         logger.debug(f"[MONITOR] event kind={kind!r} (no callback)")
         return None
+
+    def _maybe_log_metric(self, payload: dict[str, Any]) -> None:
+        """Surface trainer-stdout lines that look like metrics.
+
+        Selective forwarding — we deliberately don't echo every line
+        (the operator can read the full ``training.log`` via the web
+        UI). Pattern catches ``loss=…``, ``step=…``, ``epoch=…``,
+        ``lr=…``, ``grad_norm=…``, ``eval_loss=…`` etc. so even a
+        60-second smoke run shows at least one training-progress
+        signal.
+        """
+        text = payload.get("line") or payload.get("text") or payload.get("message")
+        if not isinstance(text, str):
+            return
+        text = text.strip()
+        if not text or not _METRIC_LINE_PATTERN.search(text):
+            return
+        # Drop the noisy progress-bar prefix that HF Trainer prints.
+        if text.startswith("\r"):
+            text = text.lstrip("\r")
+        logger.info("[MONITOR:METRIC] %s", text)
 
     def _maybe_log_status(self, payload: dict[str, Any]) -> None:
         """Emit a rate-limited ``[MONITOR] ALIVE`` line for the operator.

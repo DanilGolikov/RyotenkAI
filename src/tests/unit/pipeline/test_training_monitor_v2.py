@@ -94,6 +94,8 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._provider_name = None
     monitor._resource_id = None
     monitor._recovery_attempts = 0
+    monitor._first_event_logged = False
+    monitor._trainer_started_logged = False
     return monitor
 
 
@@ -1059,3 +1061,183 @@ class TestPodResilience:
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_RECOVERY_EXHAUSTED"
         sdk.get_pod.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Milestone & metric surfacing — give the operator visible signals on a
+# short run without flooding monitor.log with full trainer stdout
+# ---------------------------------------------------------------------------
+
+
+def _capture_logger(monkeypatch) -> list[tuple[str, tuple[Any, ...]]]:
+    captured: list[tuple[str, tuple[Any, ...]]] = []
+
+    def _info(msg, *args, **_kwargs):
+        captured.append((msg, args))
+
+    monkeypatch.setattr(_monitor_mod.logger, "info", _info)
+    return captured
+
+
+def _render(captured: list[tuple[str, tuple[Any, ...]]]) -> list[str]:
+    out = []
+    for msg, args in captured:
+        if not args:
+            out.append(msg)
+            continue
+        try:
+            out.append(msg % args)
+        except TypeError:
+            out.append(msg)
+    return out
+
+
+class TestMilestoneSurfacing:
+    def test_first_event_logs_ws_stream_open(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({"kind": "anything", "payload": {}})
+
+        rendered = _render(captured)
+        assert any("WS event stream open" in line for line in rendered)
+
+    def test_first_event_logs_only_once(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({"kind": "x", "payload": {}})
+        monitor._dispatch_event({"kind": "y", "payload": {}})
+        monitor._dispatch_event({"kind": "z", "payload": {}})
+
+        rendered = _render(captured)
+        ws_open_count = sum(1 for line in rendered if "WS event stream open" in line)
+        assert ws_open_count == 1
+
+    def test_trainer_spawned_event_logs_pid(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({"kind": "trainer_spawned", "payload": {"pid": 4242}})
+
+        rendered = _render(captured)
+        assert any("Trainer process started" in line and "4242" in line for line in rendered)
+
+    def test_trainer_spawned_logged_only_once(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({"kind": "trainer_spawned", "payload": {"pid": 1}})
+        monitor._dispatch_event({"kind": "trainer_spawned", "payload": {"pid": 2}})
+
+        rendered = _render(captured)
+        spawn_count = sum(1 for line in rendered if "Trainer process started" in line)
+        assert spawn_count == 1
+
+
+class TestMetricLineSurfacing:
+    def test_metric_line_surfaces_at_info_level(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({
+            "kind": "trainer_log",
+            "payload": {"line": "{'loss': 2.34, 'step': 10, 'epoch': 0.05}"},
+        })
+
+        rendered = _render(captured)
+        assert any("[MONITOR:METRIC]" in line and "loss" in line for line in rendered)
+
+    @pytest.mark.parametrize("line_text", [
+        "loss=2.34",
+        "step: 100",
+        "epoch=1.5",
+        "learning_rate=0.0001",
+        "lr: 5e-5",
+        "grad_norm=0.45",
+        "eval_loss: 1.8",
+    ])
+    def test_various_metric_patterns_match(
+        self, monkeypatch: pytest.MonkeyPatch, line_text: str,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({
+            "kind": "trainer_log",
+            "payload": {"line": line_text},
+        })
+
+        rendered = _render(captured)
+        assert any("[MONITOR:METRIC]" in line for line in rendered), (
+            f"pattern should match {line_text!r}"
+        )
+
+    def test_non_metric_line_is_not_surfaced(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({
+            "kind": "trainer_log",
+            "payload": {"line": "Loading checkpoint shards: 100%|##########| 4/4"},
+        })
+
+        rendered = _render(captured)
+        assert not any("[MONITOR:METRIC]" in line for line in rendered)
+
+    def test_empty_or_missing_line_is_silently_dropped(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monitor = _make_monitor()
+        captured = _capture_logger(monkeypatch)
+
+        monitor._dispatch_event({"kind": "trainer_log", "payload": {}})
+        monitor._dispatch_event({"kind": "trainer_log", "payload": {"line": ""}})
+        monitor._dispatch_event({"kind": "trainer_log", "payload": {"line": "   "}})
+
+        rendered = _render(captured)
+        assert not any("[MONITOR:METRIC]" in line for line in rendered)
+
+    def test_alternative_payload_field_names(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Different supervisor backends might serialise stdout under
+        # ``text`` or ``message`` instead of ``line``. All three should work.
+        monitor = _make_monitor()
+
+        for field in ("line", "text", "message"):
+            captured = _capture_logger(monkeypatch)
+            monitor._first_event_logged = False  # reset milestone for each
+            monitor._dispatch_event({
+                "kind": "trainer_log",
+                "payload": {field: "loss=1.0"},
+            })
+            rendered = _render(captured)
+            assert any("[MONITOR:METRIC]" in line for line in rendered), (
+                f"field {field!r} should be picked up"
+            )
+
+    def test_trainer_log_does_not_block_terminal_event(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Ensure trainer_log dispatch returns None (keeps listening),
+        # so we don't accidentally short-circuit the loop on a metric.
+        monitor = _make_monitor()
+        _capture_logger(monkeypatch)
+
+        result = monitor._dispatch_event({
+            "kind": "trainer_log", "payload": {"line": "loss=1.0"},
+        })
+        assert result is None
