@@ -719,8 +719,6 @@ class TestPostMortemDiagnostics:
             # path in the command, so we can pick up which probe fired.
             label = "unknown"
             for marker, lbl in [
-                ("TRAINING_EXIT_CODE", "exit_code"),
-                ("TRAINING_*", "workspace_markers"),
                 ("training.faulthandler.log", "faulthandler"),
                 ("training.log", "training_log_tail"),
                 ("oom|kill|memory", "dmesg_oom"),
@@ -768,13 +766,18 @@ class TestPostMortemDiagnostics:
         })
         labels = [lbl for lbl, _ in monitor._ssh_client.executed]
         for required in [
-            "exit_code", "workspace_markers", "faulthandler",
-            "training_log_tail", "dmesg_tail", "dmesg_oom",
-            "dmesg_nvidia", "nvidia_smi",
+            "faulthandler", "training_log_tail", "dmesg_tail",
+            "dmesg_oom", "dmesg_nvidia", "nvidia_smi",
         ]:
             assert required in labels, (
                 f"missing probe {required!r} in {labels!r}"
             )
+        # Legacy markers (TRAINING_EXIT_CODE, TRAINING_COMPLETE, …) are
+        # never written by current code paths — no probe should mention them.
+        commands = [cmd for _, cmd in monitor._ssh_client.executed]
+        assert not any("TRAINING_" in cmd for cmd in commands), (
+            f"dead legacy-marker probes still firing: {commands!r}"
+        )
 
     def test_signal_kill_with_zero_exit_still_triggers_postmortem(self) -> None:
         # SIGTERM-killed trainer that returns 0 (process raced before
@@ -803,8 +806,8 @@ class TestPostMortemDiagnostics:
         monitor._handle_trainer_exited({
             "exit_code": 1, "signal": None, "cancellation_requested": False,
         })
-        # All 8 probes attempted.
-        assert ssh.exec_command.call_count == 8
+        # All 6 probes attempted (legacy TRAINING_* markers dropped).
+        assert ssh.exec_command.call_count == 6
 
     def test_no_ssh_client_makes_postmortem_a_noop(self) -> None:
         # Single-node / mock flow — _ssh_client is None.
@@ -826,7 +829,6 @@ class TestPostMortemDiagnostics:
 
         monitor = _make_monitor()
         monitor._ssh_client = self._fake_ssh(output_per_label={
-            "exit_code": "137",
             "nvidia_smi": "RTX 5090, 99 %, 24000 MiB, 32000 MiB",
         })
         monitor._handle_trainer_exited({
@@ -849,7 +851,8 @@ class TestPostMortemDiagnostics:
             for line in rendered
         )
         assert any(
-            "[MONITOR:POSTMORTEM] exit_code: 137" in line for line in rendered
+            "[MONITOR:POSTMORTEM] nvidia_smi:" in line and "RTX 5090" in line
+            for line in rendered
         )
 
 

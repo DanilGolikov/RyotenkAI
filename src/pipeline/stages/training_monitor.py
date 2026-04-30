@@ -716,13 +716,15 @@ class TrainingMonitor(PipelineStage):
         if self._ssh_client is None:
             return
         workspace = "/workspace"
-        # Mirror the legacy probe set; ordering matters for log
-        # readability — most decisive signals first.
+        # Probe order = decisiveness. Application-level cause first
+        # (faulthandler, trainer log tail), then kernel-level signals
+        # (dmesg slices), then GPU state. The legacy ``TRAINING_*``
+        # marker files (``TRAINING_EXIT_CODE``, ``TRAINING_COMPLETE``,
+        # …) are no longer written by any current code path
+        # (Phase 6.3b dropped marker IPC entirely — see
+        # ``docs/plans/harmonic-rolling-crayon.md``), so we don't
+        # probe for them.
         probes: list[tuple[str, str, int]] = [
-            ("exit_code",
-             f"cat {workspace}/TRAINING_EXIT_CODE 2>/dev/null", 5),
-            ("workspace_markers",
-             f"ls {workspace}/TRAINING_* 2>/dev/null", 5),
             ("faulthandler",
              f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
             ("training_log_tail",
