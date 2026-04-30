@@ -238,18 +238,18 @@ class RunPodPodInferenceProvider(IInferenceProvider):
                 network_volume_id or "none (pod volume)",
             )
 
-        # Local access via SSH tunnel (scripts)
-        port = int(self._serve_cfg.port)
-        endpoint_url = f"http://127.0.0.1:{port}/v1"
-        health_url = f"http://127.0.0.1:{port}/v1/models"
-
+        # The endpoint URL is intentionally None until ``activate_for_eval``
+        # opens the SSH tunnel. A hardcoded ``http://127.0.0.1:port/v1``
+        # would look valid but route to a port no one is listening on,
+        # which is exactly how silent eval-garbage runs were happening
+        # before — see docs/plans/...-majestic-stream.md §1.
         self._endpoint_info = EndpointInfo(
-            endpoint_url=endpoint_url,
+            endpoint_url=None,
             api_type="openai_compatible",
             provider_type=self.provider_type,
             engine="vllm",
             model_id=base_model_id,
-            health_url=health_url,
+            health_url=None,
             resource_id=pod_id,
         )
         return Ok(self._endpoint_info)
@@ -429,6 +429,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             supported_engines=["vllm"],
             supports_lora=True,
             supports_streaming=True,
+            supports_activate_for_eval=True,
         )
 
     def get_endpoint_info(self) -> EndpointInfo | None:

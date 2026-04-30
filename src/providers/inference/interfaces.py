@@ -46,9 +46,17 @@ class InferenceEventLogger(Protocol):
 
 @dataclass(frozen=True)
 class EndpointInfo:
-    """Information about a deployed inference endpoint."""
+    """Information about a deployed inference endpoint.
 
-    endpoint_url: str  # Client base URL (MVP: via SSH tunnel) e.g. http://127.0.0.1:8000/v1
+    ``endpoint_url`` is ``None`` for tunneled providers (RunPod-pods)
+    until ``activate_for_eval`` opens the SSH tunnel. Returning a
+    hardcoded ``http://127.0.0.1:port/v1`` pre-tunnel previously caused
+    silent eval-garbage runs: the URL looked valid but nothing was
+    listening. Consumers must check for ``None`` and refuse to send
+    requests until the URL is populated.
+    """
+
+    endpoint_url: str | None  # None for tunneled providers until activated
     api_type: str  # openai_compatible | custom
     provider_type: str  # single_node | runpod
     engine: str  # vllm
@@ -72,6 +80,11 @@ class InferenceCapabilities:
     supported_engines: list[str]
     supports_lora: bool = False
     supports_streaming: bool = True
+    #: Whether the provider can spin up a live OpenAI-compatible endpoint
+    #: on demand for the evaluation stage. ``False`` means evaluation
+    #: cannot run with this provider — the pipeline fails fast at the
+    #: InferenceDeployer instead of stumbling into a phantom endpoint.
+    supports_activate_for_eval: bool = False
 
 
 @dataclass(frozen=True)
@@ -143,12 +156,16 @@ class IInferenceProvider(Protocol):
         """
         Bring up a live inference endpoint specifically for the evaluation stage.
 
-        Called by InferenceDeployer when evaluation.enabled=true, AFTER deploy().
+        Called by InferenceDeployer when evaluation.enabled=true, AFTER deploy(),
+        only if ``get_capabilities().supports_activate_for_eval`` is ``True``.
 
         Returns:
             Ok(endpoint_url) — active OpenAI-compatible base URL ready to receive requests.
-            Err(InferenceError) — provider does not support eval activation or startup failed;
-                                  InferenceDeployer will log a warning and skip evaluation.
+            Err(InferenceError) — startup failed (transient or permanent).
+                InferenceDeployer **fails the stage** with code
+                ``INFERENCE_ACTIVATION_FAILED`` and explicitly calls
+                ``deactivate_after_eval`` to release the resource. The
+                pipeline does NOT continue with a phantom endpoint.
 
         Contract:
         - Provider is responsible for all startup details (SSH tunnel, vLLM launch, etc.).
@@ -162,13 +179,15 @@ class IInferenceProvider(Protocol):
         """
         Shut down and clean up the inference endpoint after evaluation completes.
 
-        Called by InferenceDeployer.cleanup() when evaluation.enabled=true.
+        Called by InferenceDeployer:
+        - On stage cleanup() when evaluation.enabled=true (success path).
+        - Inline in execute() when activate_for_eval fails, to avoid leaking
+          a partially-provisioned pod.
 
         Policy (per provider):
         - single_node: no-op (endpoint lifecycle is managed externally).
         - runpod_pods: delete the Pod (preserves Network Volume); cost-critical.
 
-        For providers that do not support this, return Err(InferenceError) — InferenceDeployer
-        will log a warning but will not fail the pipeline.
+        Best-effort: failures are logged but never mask an upstream error.
         """
         ...
