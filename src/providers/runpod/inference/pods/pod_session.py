@@ -43,6 +43,13 @@ if TYPE_CHECKING:
 
 # How long to wait for the pod to become RUNNING + SSH port mapped + TCP ready
 _POD_SSH_READY_TIMEOUT_SEC = 600
+#: Early bailout for the "RunPod-says-RUNNING-but-never-allocates-SSH-port"
+#: failure mode. We saw a pod (judh6w930jj6wi) sit in this state for the
+#: full 600-s timeout in production; once it's been RUNNING for 3 minutes
+#: without ports the platform is unlikely to cough one up later, so fail
+#: fast instead of spending the operator's time. The full 600-s window
+#: is preserved for ``status=PROVISIONING/STARTING`` (slow capacity).
+_RUNNING_NO_PORTS_BAILOUT_SEC = 180
 
 # How long to wait for vLLM /v1/models health endpoint
 _VLLM_READY_TIMEOUT_SEC = 600
@@ -364,6 +371,10 @@ def _wait_for_ssh(
     last_preview = ""
     _INFO_INTERVAL_SEC = 30
     last_info_ts = 0.0
+    # Tracks the start of a contiguous "RUNNING + no ports" stretch.
+    # ``None`` whenever status is something else (PROVISIONING, EXITED…)
+    # or ports were briefly populated. See ``_RUNNING_NO_PORTS_BAILOUT_SEC``.
+    running_no_ports_since: float | None = None
 
     while time.time() < deadline:
         get_res = api.get_pod(pod_id=pod_id)
@@ -388,14 +399,35 @@ def _wait_for_ssh(
             if tcp_ok:
                 return Ok((public_ip, ssh_port))
 
-        remaining = int(max(0, deadline - time.time()))
+        # Early-bailout: pod is RUNNING but RunPod never allocated an
+        # SSH-port mapping. After ``_RUNNING_NO_PORTS_BAILOUT_SEC`` we
+        # stop waiting — empirically the platform doesn't recover from
+        # this stuck state. Outside this specific symptom we keep the
+        # full ``timeout_sec`` window for genuine slow startups.
+        now = time.time()
+        if status == "RUNNING" and not ssh_ep:
+            if running_no_ports_since is None:
+                running_no_ports_since = now
+            elif now - running_no_ports_since >= _RUNNING_NO_PORTS_BAILOUT_SEC:
+                return Err(ProviderError(
+                    message=(
+                        f"runpod: pod {pod_id} stuck in RUNNING with no SSH "
+                        f"port for {_RUNNING_NO_PORTS_BAILOUT_SEC}s "
+                        "(likely a RunPod platform issue: the SSH port "
+                        "mapping was not allocated). Try recreating the pod."
+                    ),
+                    code="POD_SSH_PORTS_NOT_ALLOCATED",
+                ))
+        else:
+            running_no_ports_since = None
+
+        remaining = int(max(0, deadline - now))
         elapsed = int(timeout_sec - remaining)
         preview = (
             f"status={status or '∅'} ip={public_ip or '∅'} "
             f"ssh_port={ssh_port or '∅'} tcp={'OK' if tcp_ok else 'NO' if tcp_ok is False else '∅'}"
         )
 
-        now = time.time()
         if preview != last_preview:
             logger.info("[EVAL] SSH wait: %s (elapsed %ds/%ds)", preview, elapsed, timeout_sec)
             last_preview = preview

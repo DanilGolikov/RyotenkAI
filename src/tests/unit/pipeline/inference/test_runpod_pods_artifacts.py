@@ -49,3 +49,16 @@ def test_chat_script_is_valid_python() -> None:
 
     assert isinstance(module, ast.Module)
     assert module.body
+
+
+def test_render_readme_handles_none_endpoint_url() -> None:
+    """RunPod-pods deploy() now returns endpoint_url=None until activate_for_eval
+    opens the tunnel. The README must render a hint instead of "None"."""
+    readme = render_readme(
+        manifest_filename="m.json",
+        endpoint_url=None,
+    )
+    assert "None" not in readme
+    # The placeholder hints at the chat-script which is what eventually
+    # opens the tunnel.
+    assert "chat_inference.py" in readme.lower() or "ssh tunnel" in readme.lower()

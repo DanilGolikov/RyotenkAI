@@ -46,6 +46,10 @@ from src.runner.event_journal import (
     EVENTS_DIR_REL,
     EventJournal,
 )
+from src.runner.health_reporter import (
+    DEFAULT_HEALTH_INTERVAL,
+    HealthReporter,
+)
 from src.runner.mlflow_relay import (
     MLflowRelay,
     make_mlflow_forward_fn,
@@ -209,6 +213,18 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         mlflow_relay = _build_mlflow_relay()
         await mlflow_relay.start()
 
+        # Periodic resource snapshot publisher — emits ``health_snapshot``
+        # every :data:`DEFAULT_HEALTH_INTERVAL` seconds so the Mac
+        # control plane can render `[MONITOR] ALIVE | …` status lines
+        # and feed the live load chart. Without this the bus has no
+        # GPU/CPU/RAM source, and the Training Monitor stage logs no
+        # status updates between trainer events.
+        health_reporter = HealthReporter(
+            bus=bus,
+            interval=DEFAULT_HEALTH_INTERVAL,
+        )
+        health_reporter.start()
+
         app.state.fsm = fsm
         app.state.bus = bus
         app.state.journal = journal  # Phase 12.B (None if init failed)
@@ -217,6 +233,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         app.state.plugin_unpacker = plugin_unpacker
         app.state.supervisor = supervisor
         app.state.mlflow_relay = mlflow_relay
+        app.state.health_reporter = health_reporter
 
         # Phase 12.C — periodic journal health check. Emits
         # ``events_disk_pressure`` when the journal footprint passes
@@ -239,6 +256,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
                     await health_task
                 except (asyncio.CancelledError, Exception):  # noqa: BLE001
                     pass
+            await health_reporter.stop()
             await mlflow_relay.stop()
             await supervisor.shutdown()
             bus.close()

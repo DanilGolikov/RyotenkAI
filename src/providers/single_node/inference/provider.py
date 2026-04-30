@@ -443,6 +443,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
             provider_type=self.provider_type,
             supported_engines=["vllm"],
             supports_lora=True,  # via merge_before_deploy
+            supports_activate_for_eval=True,  # endpoint live after deploy(); activate is a no-op
         )
 
     def get_endpoint_info(self) -> EndpointInfo | None:

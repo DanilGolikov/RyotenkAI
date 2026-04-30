@@ -375,3 +375,97 @@ class TestRunTrainingFlow:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+# ---------------------------------------------------------------------------
+# training.log FileHandler installation
+# ---------------------------------------------------------------------------
+
+
+class TestTrainingFileHandler:
+    """``_install_training_file_handler`` attaches a FileHandler so the
+    pipeline-pulled ``runs/<id>/attempts/<n>/logs/training.log`` is non-empty.
+    """
+
+    def _detach_training_handlers(self) -> None:
+        """Test isolation: drop any FileHandlers we attached so a re-run
+        starts from a clean root logger."""
+        import logging
+        root = logging.getLogger("ryotenkai")
+        for h in list(root.handlers):
+            if isinstance(h, logging.FileHandler):
+                root.removeHandler(h)
+                h.close()
+
+    def teardown_method(self) -> None:
+        self._detach_training_handlers()
+
+    def test_attaches_filehandler_at_default_path(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from src.training.run_training import _install_training_file_handler
+        import logging
+
+        log_path = tmp_path / "workspace" / "training.log"
+        monkeypatch.setenv("RYOTENKAI_TRAINING_LOG_PATH", str(log_path))
+
+        _install_training_file_handler()
+
+        # Emit something via the trainer logger; it must end up in the file.
+        from src.utils.logger import logger
+        logger.info("hello from trainer")
+
+        # Force flush and read.
+        for h in logging.getLogger("ryotenkai").handlers:
+            h.flush()
+
+        assert log_path.exists()
+        content = log_path.read_text(encoding="utf-8")
+        assert "hello from trainer" in content
+
+    def test_idempotent_double_install(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from src.training.run_training import _install_training_file_handler
+        import logging
+
+        log_path = tmp_path / "training.log"
+        monkeypatch.setenv("RYOTENKAI_TRAINING_LOG_PATH", str(log_path))
+
+        _install_training_file_handler()
+        _install_training_file_handler()
+
+        # Only one matching FileHandler; a second install is a no-op.
+        root = logging.getLogger("ryotenkai")
+        matching = [
+            h for h in root.handlers
+            if isinstance(h, logging.FileHandler)
+            and getattr(h, "baseFilename", "") == str(log_path.resolve())
+        ]
+        assert len(matching) == 1
+
+    def test_unwritable_path_does_not_raise(
+        self, tmp_path, monkeypatch,
+    ) -> None:
+        from src.training.run_training import _install_training_file_handler
+
+        # /dev/null/foo always fails on POSIX since /dev/null is a char device.
+        monkeypatch.setenv("RYOTENKAI_TRAINING_LOG_PATH", "/dev/null/cannot-mkdir")
+        # Must not raise — observability is best-effort.
+        _install_training_file_handler()
+
+    def test_default_path_when_env_missing(
+        self, monkeypatch,
+    ) -> None:
+        # ``src.training.run_training`` is shadowed by a same-named function
+        # re-exported from the package's ``__init__``; reach the module
+        # via importlib so we can introspect its constants.
+        import importlib
+        run_training_module = importlib.import_module("src.training.run_training")
+
+        # Env var unset → falls back to /workspace/training.log default.
+        monkeypatch.delenv("RYOTENKAI_TRAINING_LOG_PATH", raising=False)
+        # On a non-pod machine /workspace might not be writable; we only
+        # assert the function does not raise.
+        run_training_module._install_training_file_handler()
+        assert run_training_module._DEFAULT_TRAINING_LOG_PATH == "/workspace/training.log"

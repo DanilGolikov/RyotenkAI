@@ -25,10 +25,19 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import httpx
+
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.utils.logger import logger
-from src.utils.result import AppError, Ok, Result
+from src.utils.result import AppError, Err, InferenceError, Ok, Result
+
+# Pre-flight probe parameters. Strict by design: a healthy endpoint
+# answers within ~1 s; two attempts are enough to absorb a single
+# packet loss without spending real time on a long-poll.
+_PREFLIGHT_TIMEOUT_S = 5.0
+_PREFLIGHT_RETRIES = 1
+_PREFLIGHT_RETRY_BACKOFF_S = 1.0
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,19 +116,25 @@ class ModelEvaluator(PipelineStage):
         inference_ctx = context.get(StageNames.INFERENCE_DEPLOYER, {})
         endpoint_url: str | None = inference_ctx.get("endpoint_url") or context.get("endpoint_url")
         if not endpoint_url:
-            logger.warning(
-                "[EVAL] No endpoint_url in context — evaluation skipped. "
-                "InferenceDeployer may have failed to activate the endpoint."
-            )
-            return Ok(
-                self.update_context(
-                    context,
-                    {
-                        "evaluation_skipped": True,
-                        "reason": "endpoint_url not available (provider does not support activate_for_eval)",
-                    },
-                )
-            )
+            return Err(InferenceError(
+                message=(
+                    "evaluation requires a live inference endpoint, but "
+                    "context['endpoint_url'] is missing — InferenceDeployer "
+                    "either did not run or did not activate the endpoint"
+                ),
+                code="EVAL_ENDPOINT_MISSING",
+            ))
+
+        # Pre-flight: prove the endpoint is actually reachable before
+        # firing N samples at it. activate_for_eval should have left it
+        # healthy; this catches the gap between stages — pod auto-stop,
+        # SSH tunnel torn down, network glitch. Without this, an
+        # unreachable endpoint produces 31× Connection refused that the
+        # eval code handles per-sample (empty answer), surfacing as
+        # "successful" eval with garbage results.
+        preflight = _preflight_check_endpoint(endpoint_url)
+        if preflight.is_err():
+            return preflight
 
         # Model name for API requests.
         # vLLM serves the merged model under its directory path by default,
@@ -275,3 +290,50 @@ class ModelEvaluator(PipelineStage):
         if result:
             return result.text
         return None
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight helpers
+# ---------------------------------------------------------------------------
+
+
+def _preflight_check_endpoint(
+    endpoint_url: str,
+    *,
+    timeout_s: float = _PREFLIGHT_TIMEOUT_S,
+    retries: int = _PREFLIGHT_RETRIES,
+) -> Result[None, AppError]:
+    """One-shot reachability probe: ``GET {endpoint_url}/models``.
+
+    Two attempts (``1 + retries``) cover a single packet loss without
+    dragging the wait into long-poll territory — providers must deliver
+    a live endpoint by the time ``activate_for_eval`` returns Ok.
+    """
+    base = endpoint_url.rstrip("/")
+    url = f"{base}/models"
+    last_err: str = "unknown"
+    for attempt in range(retries + 1):
+        try:
+            response = httpx.get(url, timeout=timeout_s)
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            last_err = type(exc).__name__
+        except httpx.HTTPError as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+        else:
+            if response.status_code < 500:
+                logger.info(
+                    "[EVAL] pre-flight OK (%s → HTTP %d)",
+                    url, response.status_code,
+                )
+                return Ok(None)
+            last_err = f"HTTP {response.status_code}"
+        if attempt < retries:
+            time.sleep(_PREFLIGHT_RETRY_BACKOFF_S)
+    return Err(InferenceError(
+        message=(
+            f"inference endpoint pre-flight failed: GET {url} → {last_err} "
+            f"(after {retries + 1} attempts). Endpoint is unreachable; "
+            "evaluation aborted to avoid garbage results."
+        ),
+        code="EVAL_ENDPOINT_UNREACHABLE",
+    ))

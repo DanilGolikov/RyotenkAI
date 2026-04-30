@@ -3,11 +3,19 @@ from __future__ import annotations
 from src.constants import INFERENCE_DIRNAME
 
 
-def render_readme(*, manifest_filename: str, endpoint_url: str) -> str:
+_ENDPOINT_PENDING_PLACEHOLDER = "<set when chat_inference.py opens the SSH tunnel>"
+
+
+def render_readme(*, manifest_filename: str, endpoint_url: str | None) -> str:
+    # RunPod pods deliberately leave ``endpoint_url`` as None after deploy:
+    # the URL is only meaningful once chat_inference.py opens the SSH
+    # tunnel. Render a hint instead of an empty string so the operator
+    # is not confused by a blank URL field.
+    rendered_url = endpoint_url or _ENDPOINT_PENDING_PLACEHOLDER
     return f"""## Inference endpoint (RunPod Pod + Network Volume)
 
 - **Manifest**: `{manifest_filename}`
-- **Endpoint (via SSH tunnel)**: `{endpoint_url}`
+- **Endpoint (via SSH tunnel)**: `{rendered_url}`
 
 ### Requirements
 

@@ -572,6 +572,56 @@ def run_training(
 train_v2 = run_training
 
 
+_DEFAULT_TRAINING_LOG_PATH = "/workspace/training.log"
+
+
+def _install_training_file_handler() -> None:
+    """Attach a FileHandler so the trainer's logger output lands on disk.
+
+    Without this, every ``logger.info(...)`` from the training pipeline
+    only goes to stdout (captured by the runner's supervisor) — leaving
+    ``runs/<id>/attempts/<n>/logs/training.log`` empty after the pipeline
+    pulls it via SCP. Operators read that file from the web UI's LogDock
+    and from the REST endpoint at
+    ``GET /api/v1/runs/<id>/attempts/<n>/logs?file=training.log``.
+
+    Path comes from ``RYOTENKAI_TRAINING_LOG_PATH`` (set by the deployer
+    when known), falling back to ``/workspace/training.log`` — the same
+    default ``LogManager.DEFAULT_REMOTE_PATH`` looks for on the pod.
+    Best-effort: a failure here must NEVER block training startup.
+    """
+    import logging
+
+    log_path = os.environ.get(
+        "RYOTENKAI_TRAINING_LOG_PATH", _DEFAULT_TRAINING_LOG_PATH,
+    )
+    try:
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s  %(name)-30s %(levelname)-7s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        # Attach to the ``ryotenkai`` root so child loggers (training.*,
+        # workspace.*, runner.*) propagate into the same file.
+        root = logging.getLogger("ryotenkai")
+        # Idempotent: don't double-attach if launched twice in-process (tests).
+        for existing in root.handlers:
+            if isinstance(existing, logging.FileHandler) and \
+               getattr(existing, "baseFilename", "") == str(Path(log_path).resolve()):
+                return
+        root.addHandler(handler)
+        logger.debug(f"[RUN_TRAINING:OBSERVABILITY] training.log FileHandler attached → {log_path}")
+    except OSError as exc:
+        logger.warning(
+            f"[RUN_TRAINING:OBSERVABILITY] could not attach training.log FileHandler "
+            f"({log_path}): {exc} — operator will only see stdout-captured logs",
+        )
+    except Exception as exc:  # noqa: BLE001 — defensive
+        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] FileHandler install failed: {exc}")
+
+
 def _install_crash_observability() -> None:
     """
     Install faulthandler + atexit logging flush so silent deaths leave a trace.
@@ -687,6 +737,9 @@ def _install_crash_observability() -> None:
 
 def main() -> int:
     """CLI entry point."""
+    # File-based logging FIRST so any subsequent log line (including from
+    # _install_crash_observability and heavy imports) lands in training.log.
+    _install_training_file_handler()
     # Crash observability MUST be installed before argparse / any heavy import
     # that may itself segfault (bitsandbytes, flash-attn). See
     # _install_crash_observability() docstring.

@@ -213,6 +213,23 @@ class TestInvariants:
             assert hasattr(client.app.state, "pod_terminator")
             assert hasattr(client.app.state, "heartbeat")
 
+    def test_health_reporter_started_in_lifespan(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The Mac-side Training Monitor stage relies on
+        # ``health_snapshot`` events to render its [MONITOR] ALIVE
+        # status line; if the reporter never starts, the bus has no
+        # source and the monitor stays silent between trainer events.
+        monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+        monkeypatch.setenv(RUNTIME_PROVIDER_ENV_VAR, "single_node")
+
+        with TestClient(create_app(supervisor_factory=MockSupervisor)) as client:
+            reporter = client.app.state.health_reporter
+            assert reporter is not None
+            assert reporter.is_running
+        # After lifespan shutdown the task should be torn down.
+        assert not reporter.is_running
+
     def test_terminator_no_longer_reads_env_directly(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:

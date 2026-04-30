@@ -91,10 +91,21 @@ class _FakeProvider:
         return Ok(True)
 
     def get_capabilities(self):
-        return None
+        from src.providers.inference.interfaces import InferenceCapabilities
+        return InferenceCapabilities(
+            provider_type="fake",
+            supported_engines=["vllm"],
+            supports_activate_for_eval=True,
+        )
 
     def get_endpoint_info(self):
         return None
+
+    def activate_for_eval(self):
+        return Ok("http://127.0.0.1:8000/v1")
+
+    def deactivate_after_eval(self):
+        return Ok(None)
 
 
 def _load_test_config() -> PipelineConfig:
@@ -273,10 +284,21 @@ def test_inference_deployer_writes_runpod_manifest_and_scripts(tmp_path: Path, m
             return Ok(True)
 
         def get_capabilities(self):
-            return None
+            from src.providers.inference.interfaces import InferenceCapabilities
+            return InferenceCapabilities(
+                provider_type="runpod",
+                supported_engines=["vllm"],
+                supports_activate_for_eval=True,
+            )
 
         def get_endpoint_info(self):
             return None
+
+        def activate_for_eval(self):
+            return Ok("http://127.0.0.1:8000/v1")
+
+        def deactivate_after_eval(self):
+            return Ok(None)
 
     fake = _FakePodProvider()
 
@@ -1290,29 +1312,47 @@ def test_no_capacity_deploy_error_uses_serve_cfg_port(
     assert "127.0.0.1:9001" in out["inference_endpoint_url"]
 
 
-def test_activate_for_eval_failure_logs_warning_pipeline_continues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Lines 196-202: activate_for_eval fails → warning; pipeline continues (eval_endpoint_url=None)."""
-    from src.utils.result import Failure, InferenceError
+# ---------------------------------------------------------------------------
+# activate_for_eval — fail-fast contract (replaces former silent-skip behaviour)
+#
+# History: this file used to have ``test_activate_for_eval_failure_logs_warning_pipeline_continues``
+# which encoded the bug as expected behaviour: activate failing was logged at
+# WARNING and the stage returned Ok with a phantom endpoint URL. That URL fed
+# 31× Connection refused into ModelEvaluator, producing "successful" eval runs
+# with empty answers. The test was removed deliberately along with the silent
+# path. See docs/plans/...-majestic-stream.md §1.
+#
+# These new tests bypass the YAML fixture loader (which is currently broken
+# upstream by an unrelated config-integration drift) and build the config
+# inline via MagicMock — same pattern as test_stages_model_evaluator.py.
+# ---------------------------------------------------------------------------
 
-    class EvalActivationFailingProvider(_FakeProvider):
-        def activate_for_eval(self):
-            return Failure(InferenceError(message="provider does not support activate_for_eval", code="NOT_SUPPORTED"))
 
-    cfg = _load_test_config()
+def _mk_inference_cfg(
+    *, eval_enabled: bool = True, provider: str = "fake",
+) -> MagicMock:
+    """Minimal PipelineConfig stub that satisfies InferenceDeployer.execute."""
+    cfg = MagicMock()
     cfg.inference.enabled = True
-    cfg.evaluation.enabled = True  # enable eval
+    cfg.inference.provider = provider
+    cfg.inference.engine = "vllm"
+    cfg.inference.common.health_check.enabled = False
+    cfg.inference.common.health_check.timeout_seconds = 60
+    cfg.inference.common.health_check.interval_seconds = 5
+    cfg.inference.common.lora.adapter_path = "auto"
+    cfg.inference.common.keep_inference_after_eval = False
+    cfg.inference.common.model_source = "auto"
+    cfg.inference.engines.vllm.quantization = None
+    cfg.evaluation = MagicMock()
+    cfg.evaluation.enabled = eval_enabled
+    cfg.model.name = "test-model"
+    cfg.model.trust_remote_code = False
+    cfg.experiment_tracking.mlflow = None
+    return cfg
 
-    fake = EvalActivationFailingProvider()
-    import src.pipeline.stages.inference_deployer as mod
 
-    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
-    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
-    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
-
-    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
-    context = {
+def _build_activate_test_context() -> dict:
+    return {
         StageNames.MODEL_RETRIEVER: {"hf_repo_id": "test/repo"},
         "mlflow_parent_run_id": None,
         "run": RunContext(
@@ -1321,13 +1361,163 @@ def test_activate_for_eval_failure_logs_warning_pipeline_continues(
         ),
     }
 
-    res = stage.execute(context)
-    # Pipeline continues despite eval activation failure
+
+def test_activate_for_eval_failure_aborts_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """activate_for_eval fails → stage Err(INFERENCE_ACTIVATION_FAILED)."""
+    from src.utils.result import Failure, InferenceError
+
+    deactivate_called: list[bool] = []
+
+    class _ActivateFailing(_FakeProvider):
+        def activate_for_eval(self):
+            return Failure(InferenceError(
+                message="POD_SSH_READY_TIMEOUT", code="RUNPOD_EVAL_ACTIVATE_FAILED"
+            ))
+
+        def deactivate_after_eval(self):
+            deactivate_called.append(True)
+            return Ok(None)
+
+    cfg = _mk_inference_cfg(eval_enabled=True)
+    fake = _ActivateFailing()
+    import src.pipeline.stages.inference_deployer as mod
+
+    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
+    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+    res = stage.execute(_build_activate_test_context())
+
+    assert res.is_failure()
+    err = res.unwrap_err()
+    assert err.code == "INFERENCE_ACTIVATION_FAILED"
+    assert deactivate_called, "deactivate_after_eval must be called inline on activation failure"
+
+
+def test_provider_without_activate_capability_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """eval_enabled + supports_activate_for_eval=False → Err without calling activate_for_eval."""
+    from src.providers.inference.interfaces import InferenceCapabilities
+
+    activate_called: list[bool] = []
+
+    class _NoActivateSupport(_FakeProvider):
+        def get_capabilities(self):
+            return InferenceCapabilities(
+                provider_type="hosted_only",
+                supported_engines=["vllm"],
+                supports_activate_for_eval=False,
+            )
+
+        def activate_for_eval(self):
+            activate_called.append(True)
+            return Ok("never-called")
+
+    cfg = _mk_inference_cfg(eval_enabled=True)
+    fake = _NoActivateSupport()
+    import src.pipeline.stages.inference_deployer as mod
+
+    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
+    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+    res = stage.execute(_build_activate_test_context())
+
+    assert res.is_failure()
+    assert res.unwrap_err().code == "INFERENCE_EVAL_NOT_SUPPORTED"
+    assert not activate_called
+
+
+def test_activate_failure_masks_deactivate_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """deactivate_after_eval errors during cleanup → original ACTIVATION_FAILED still propagates."""
+    from src.utils.result import Failure, InferenceError
+
+    class _BothFail(_FakeProvider):
+        def activate_for_eval(self):
+            return Failure(InferenceError(message="boom", code="X"))
+
+        def deactivate_after_eval(self):
+            return Failure(InferenceError(message="cleanup boom", code="Y"))
+
+    cfg = _mk_inference_cfg(eval_enabled=True)
+    fake = _BothFail()
+    import src.pipeline.stages.inference_deployer as mod
+
+    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
+    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+    res = stage.execute(_build_activate_test_context())
+
+    assert res.is_failure()
+    # Original error wins; cleanup noise is logged but not surfaced
+    assert res.unwrap_err().code == "INFERENCE_ACTIVATION_FAILED"
+
+
+def test_eval_enabled_with_no_capacity_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """eval_enabled + NO_GPU_CAPACITY → Err(INFERENCE_NO_CAPACITY_BLOCKS_EVAL)."""
+    from src.utils.result import Failure, InferenceError
+
+    class _NoCapacityProvider(_FakeProvider):
+        def deploy(self, model_source: str, **kwargs):
+            return Failure(InferenceError(
+                # Match a phrase recognised by ``_is_no_capacity_error``
+                # so the deployer routes through the deferred-endpoint branch.
+                message="There are no instances currently available",
+                code="RUNPOD_NO_GPU_CAPACITY",
+            ))
+
+    cfg = _mk_inference_cfg(eval_enabled=True)
+    fake = _NoCapacityProvider()
+    import src.pipeline.stages.inference_deployer as mod
+
+    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
+    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    # _serve_cfg is needed by the deferred-endpoint branch (NO_CAPACITY path)
+    monkeypatch.setattr(fake, "_serve_cfg", type("_S", (), {"port": 8000})(), raising=False)
+
+    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+    res = stage.execute(_build_activate_test_context())
+
+    assert res.is_failure()
+    assert res.unwrap_err().code == "INFERENCE_NO_CAPACITY_BLOCKS_EVAL"
+
+
+def test_eval_disabled_does_not_call_activate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """eval_enabled=False → activate_for_eval is never invoked, stage Ok."""
+    activate_calls: list[bool] = []
+
+    class _TrackActivate(_FakeProvider):
+        def activate_for_eval(self):
+            activate_calls.append(True)
+            return Ok("never-called")
+
+    cfg = _mk_inference_cfg(eval_enabled=False)
+    fake = _TrackActivate()
+    import src.pipeline.stages.inference_deployer as mod
+
+    monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
+    monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+    res = stage.execute(_build_activate_test_context())
+
     assert res.is_success()
-    out = res.unwrap()[StageNames.INFERENCE_DEPLOYER]
-    # endpoint_url falls back to deployment endpoint (not eval)
-    assert "endpoint_url" in out
-    assert out["inference_deployed"] is True
+    assert not activate_calls
 
 
 def test_cleanup_noop_when_provider_none() -> None:
