@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from src.pipeline.cancellation import sleep_cancellable
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.utils.logger import logger
@@ -328,7 +329,7 @@ def _preflight_check_endpoint(
                 return Ok(None)
             last_err = f"HTTP {response.status_code}"
         if attempt < retries:
-            time.sleep(_PREFLIGHT_RETRY_BACKOFF_S)
+            sleep_cancellable(_PREFLIGHT_RETRY_BACKOFF_S)
     return Err(InferenceError(
         message=(
             f"inference endpoint pre-flight failed: GET {url} → {last_err} "

@@ -686,17 +686,26 @@ def _start_vllm(
 
 
 def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> Result[None, ProviderError]:
-    """Poll url until HTTP 200. Returns Err on timeout."""
-    deadline = time.time() + timeout_sec
+    """Poll url until HTTP 200. Returns Err on timeout.
+
+    Uses ``sleep_cancellable`` between probes so Ctrl+C during a vLLM
+    cold-start (which can take 5+ minutes for big models) wakes the
+    waiter immediately instead of blocking out the full interval.
+    The exception propagates up to ``activate()``'s caller, where the
+    inference-provider's cleanup hook synchronously tears down the pod.
+    """
+    from src.pipeline.cancellation import sleep_cancellable
+
+    deadline = time.monotonic() + timeout_sec
     last_err = ""
-    while time.time() < deadline:
+    while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(url, timeout=5) as resp:
                 if resp.status == _HTTP_OK_STATUS:
                     return Ok(None)
         except Exception as e:
             last_err = str(e)
-        time.sleep(interval_sec)
+        sleep_cancellable(interval_sec)
     return Err(
         ProviderError(
             message=f"Timed out waiting for {url} to become healthy (timeout={timeout_sec}s, last_err={last_err!r})",

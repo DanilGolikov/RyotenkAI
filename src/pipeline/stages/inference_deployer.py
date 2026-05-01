@@ -17,6 +17,7 @@ from src.constants import (
     INFERENCE_MANIFEST_FILENAME,
     INFERENCE_README_FILENAME,
 )
+from src.pipeline.cancellation import sleep_cancellable
 from src.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
 from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
@@ -384,7 +385,10 @@ class InferenceDeployer(PipelineStage):
             else:
                 last_state = f"error:{res.unwrap_err()}"  # type: ignore[union-attr]
 
-            time.sleep(cfg.interval_seconds)
+            # Cancel-aware sleep so Ctrl+C during a long health-check
+            # window (can be minutes for cold-starting vLLM) wakes the
+            # poller immediately instead of waiting out the interval.
+            sleep_cancellable(cfg.interval_seconds)
 
         # Final log collection on timeout (for diagnostics)
         provider.collect_startup_logs(local_path=startup_log_path)
