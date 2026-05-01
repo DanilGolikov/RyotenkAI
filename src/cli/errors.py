@@ -2,18 +2,27 @@
 
 ``die(msg, hint=...)`` replaces the per-command ``typer.echo(err=True) +
 raise typer.Exit(1)`` pattern; ``suggest()`` powers did-you-mean hints on
-typos. All output goes through ``err_console`` so it stays out of the
-data stream of ``-o json`` commands.
+typos. ``load_config_or_die()`` wraps :func:`load_pipeline_config` and
+renders YAML / pydantic errors as clean ``die`` output. All output goes
+through ``err_console`` so it stays out of the data stream of ``-o json``
+commands.
 """
 
 from __future__ import annotations
 
 import difflib
 from collections.abc import Iterable
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+import yaml
+from pydantic import ValidationError
 
 from src.cli.style import COLOR_DIM, COLOR_ERR, err_console
+
+if TYPE_CHECKING:
+    from src.config.pipeline.schema import PipelineConfig
 
 
 def die(message: str, *, hint: str | None = None, code: int = 1) -> typer.Exit:
@@ -48,4 +57,53 @@ def suggest_hint(user_input: str, valid: Iterable[str]) -> str | None:
     return f"did you mean one of: {quoted}?"
 
 
-__all__ = ["die", "suggest", "suggest_hint"]
+def load_config_or_die(path: Path | str) -> PipelineConfig:
+    """Load a pipeline YAML, rendering loader errors as clean ``die``.
+
+    Raw ``ValidationError`` / ``YAMLError`` tracebacks are useless to
+    end-users — they want to see "this field is wrong in this file".
+    Wraps :func:`load_pipeline_config` and converts the three expected
+    failure modes (missing file, malformed YAML, schema mismatch) into
+    one-line ``die()`` errors with field-level detail.
+    """
+    from src.workspace.integrations.loader import load_pipeline_config
+
+    path_str = str(path)
+    try:
+        return load_pipeline_config(path)
+    except FileNotFoundError:
+        raise die(f"config file not found: {path_str}")
+    except yaml.YAMLError as exc:
+        raise die(f"invalid YAML in {path_str}: {exc}")
+    except ValidationError as exc:
+        # Embed field-level errors directly in the message so each
+        # appears on its own line — die's `hint:` prefix would clobber
+        # the alignment if we passed them through there.
+        rendered = _format_validation_errors(exc)
+        raise die(f"invalid pipeline config: {path_str}\n{rendered}")
+    except ValueError as exc:
+        # Loader's own "must be a mapping at the top level" check, plus
+        # any pydantic-adjacent value errors that escape ValidationError.
+        raise die(f"invalid pipeline config: {path_str} — {exc}")
+
+
+def _format_validation_errors(exc: ValidationError, *, max_errors: int = 6) -> str:
+    """Render a Pydantic ValidationError as compact multi-line text.
+
+    Each line: ``  - <dotted.path>: <message>``. Truncates after
+    ``max_errors`` so a totally broken file doesn't flood the terminal.
+    """
+    errors = exc.errors()
+    if not errors:
+        return "validation failed"
+    lines: list[str] = []
+    for err in errors[:max_errors]:
+        loc = ".".join(str(p) for p in err.get("loc", ())) or "<root>"
+        msg = err.get("msg", "validation error")
+        lines.append(f"  - {loc}: {msg}")
+    if len(errors) > max_errors:
+        lines.append(f"  … and {len(errors) - max_errors} more")
+    return "\n".join(lines)
+
+
+__all__ = ["die", "load_config_or_die", "suggest", "suggest_hint"]

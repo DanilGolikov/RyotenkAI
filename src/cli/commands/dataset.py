@@ -40,12 +40,12 @@ def validate_cmd(
     validation plugins — the orchestrator no longer treats this as
     "everything's fine, nothing to check".
     """
-    from src.workspace.integrations.loader import load_pipeline_config
+    from src.cli.errors import load_config_or_die
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
 
-    cfg = load_pipeline_config(config)
+    cfg = load_config_or_die(config)
     declared = _datasets_with_validation(cfg)
     if not declared:
         raise die(

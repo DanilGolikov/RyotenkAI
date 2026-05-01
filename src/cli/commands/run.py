@@ -23,7 +23,7 @@ from src.cli.common_options import (
     RunDirArg,
 )
 from src.cli.context import CLIContext
-from src.cli.errors import die
+from src.cli.errors import die, load_config_or_die
 from src.cli.renderer import get_renderer
 
 run_app = typer.Typer(
@@ -119,9 +119,7 @@ def _exec_orchestrator(
         # Legacy ad-hoc path — resolve_config above guarantees config
         # is set on this branch.
         assert config is not None
-        from src.workspace.integrations.loader import load_pipeline_config
-
-        load_pipeline_config(config)
+        load_config_or_die(config)
         typer.echo(
             f"dry-run: config {config} OK; would start "
             f"(run_dir={run_dir}, resume={resume}, "
@@ -157,9 +155,7 @@ def _exec_orchestrator(
         # fully-validated ``PipelineConfig`` to the orchestrator. There
         # is no legacy positional path-based constructor anymore.
         assert config is not None
-        from src.workspace.integrations.loader import load_pipeline_config
-
-        cfg_obj = load_pipeline_config(config)
+        cfg_obj = load_config_or_die(config)
         orchestrator = PipelineOrchestrator(
             config=cfg_obj, run_directory=run_dir,
         )
