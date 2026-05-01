@@ -121,11 +121,28 @@ def main(argv: list[str] | None = None) -> int:
         run_directory=run_dir,
         settings=settings,
     )
-    result = orchestrator.run(
-        run_dir=run_dir,
-        resume=args.resume,
-        restart_from_stage=args.restart_from_stage,
+
+    # Hook SIGINT/SIGTERM AFTER constructing the orchestrator (so it
+    # exists when the handler tries to ``notify_signal``) but BEFORE
+    # ``run()`` so a Ctrl+C during early stages already cooperates.
+    # Pollers (PodSshWaiter, etc.) check the cancel event via
+    # ``sleep_cancellable`` and raise PipelineCancelled at their own
+    # boundaries — see ``src/pipeline/cancellation.py``.
+    from src.pipeline.cancellation import (
+        install_handler,
+        set_active_orchestrator,
     )
+
+    install_handler()
+    set_active_orchestrator(orchestrator)
+    try:
+        result = orchestrator.run(
+            run_dir=run_dir,
+            resume=args.resume,
+            restart_from_stage=args.restart_from_stage,
+        )
+    finally:
+        set_active_orchestrator(None)
     return 0 if result.is_success() else 1
 
 
