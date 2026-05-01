@@ -474,20 +474,16 @@ class TestLogicSpecific:
     def test_dependency_error_on_load_config_propagates(
         self, tmp_path: Path
     ) -> None:
-        """When ``load_config`` raises (integration not registered), the
-        adapter doesn't swallow it — the CLI's top-level handler
+        """When ``load_pipeline_config`` raises (e.g. malformed YAML),
+        the adapter doesn't swallow it — the CLI's top-level handler
         renders a clean ``die``."""
-        from src.workspace.integrations.exceptions import IntegrationNotFoundError
-
         registry = _make_project(tmp_path)
 
+        sentinel = ValueError("malformed YAML")
         with patch(
             "src.workspace.projects.adapter.load_pipeline_config",
-            side_effect=IntegrationNotFoundError(
-                integration_id="missing-mlflow",
-                integration_type="mlflow",
-            ),
-        ), pytest.raises(IntegrationNotFoundError):
+            side_effect=sentinel,
+        ), pytest.raises(ValueError, match="malformed YAML"):
             load_project_inputs("p1", registry=registry)
 
 

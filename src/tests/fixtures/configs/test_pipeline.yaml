@@ -82,9 +82,8 @@ inference:
 
 integrations:
   mlflow:
-    integration: mlflow-test
+    tracking_uri: http://localhost:5002
     experiment_name: test
   huggingface:
-    integration: hf-test
     repo_id: test/test-model
     private: true

@@ -235,11 +235,9 @@ def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
     from src.utils.config import PipelineConfig
 
     # ``find_stale_plugins`` walks plugin lists; it does NOT touch
-    # ``integrations``. Project YAMLs commonly use the
-    # ``integration: <id>`` shorthand for mlflow/huggingface, which
-    # this code path can't resolve (no registry context here). Drop
-    # the ``integrations`` block before validation so a missing
-    # integration id doesn't shadow the plugin-staleness check.
+    # ``integrations``. Drop the ``integrations`` block before
+    # validation so its own validation errors don't shadow the
+    # plugin-staleness check.
     plugin_only = {k: v for k, v in parsed.items() if k != "integrations"}
 
     try:

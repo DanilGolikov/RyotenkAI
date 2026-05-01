@@ -1,11 +1,8 @@
 """Project-level experiment-tracking block.
 
-Core schema. No UX/registry concepts: by the time a
-``IntegrationsConfig`` is being validated, the
-``integration: <id>`` shorthand has already been expanded inline by
-:func:`src.workspace.integrations.resolver.resolve_yaml_integrations`
-(if it was used). That's why ``mlflow`` is just ``MLflowConfig | None``
-and not the old ``MLflowTrackingRef | MLflowConfig`` Union.
+Core schema. Project YAMLs carry the ``mlflow`` and ``huggingface``
+config inline — ``tracking_uri``, ``repo_id`` etc. live in the YAML
+itself, no Settings registry indirection.
 
 Legacy guard kept: catastrophic mis-edits to the nested
 ``system_metrics:`` block surface as a migration hint instead of the
@@ -52,11 +49,8 @@ _SYSTEM_METRICS_REMOVED_HINT = (
 class IntegrationsConfig(StrictBaseModel):
     """Project-level experiment-tracking block.
 
-    Both ``mlflow`` and ``huggingface`` are core runtime types — by
-    the time validation runs, the UX-layer resolver has already
-    inlined any ``integration: <id>`` shorthand into the corresponding
-    fields. Pipeline stages read
-    ``cfg.integrations.mlflow.tracking_uri`` etc. directly.
+    Both ``mlflow`` and ``huggingface`` are core runtime types — pipeline
+    stages read ``cfg.integrations.mlflow.tracking_uri`` etc. directly.
     """
 
     mlflow: MLflowConfig | None = Field(None)
@@ -84,9 +78,7 @@ class IntegrationsConfig(StrictBaseModel):
     def get_report_to(self) -> list[str]:
         """Get list of trackers for HuggingFace Trainer.
 
-        ``mlflow`` is considered active iff a tracking URI is set (we
-        don't bother distinguishing "user wrote inline" from "resolver
-        inlined" — both end up the same).
+        ``mlflow`` is considered active iff a tracking URI is set.
         """
         if self.mlflow is None:
             return ["none"]

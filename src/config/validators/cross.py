@@ -319,7 +319,7 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
 
     Rules:
     - If any phase has adapter_cache.enabled=true:
-      → integrations.huggingface must be configured and enabled
+      → integrations.huggingface must be configured (repo_id set)
       → adapter_cache.repo_id must differ from integrations.huggingface.repo_id
         (to prevent mixing intermediate adapters with the final merged model)
     """
@@ -333,11 +333,11 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
         return Ok(None)
 
     hf_cfg = getattr(cfg.integrations, "huggingface", None)
-    if hf_cfg is None or not hf_cfg.integration:
+    if hf_cfg is None or not hf_cfg.repo_id:
         return _config_error(
             (
-                "adapter_cache.enabled=true requires integrations.huggingface to be configured with an integration. "
-                "Add integrations.huggingface section with integration (pointing at a Settings → Integrations entry), repo_id, and private fields."
+                "adapter_cache.enabled=true requires integrations.huggingface.repo_id to be set. "
+                "Add the integrations.huggingface section with repo_id (and optionally private)."
             ),
             "CONFIG_ADAPTER_CACHE_HF_REQUIRED",
         )

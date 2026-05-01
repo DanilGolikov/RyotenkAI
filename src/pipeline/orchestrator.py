@@ -71,12 +71,9 @@ class PipelineOrchestrator:
         """Initialize the orchestrator from a pre-loaded config.
 
         Caller (CLI / API / project adapter) loads the YAML via
-        :func:`src.workspace.integrations.loader.load_pipeline_config`
-        — that runs the UX-layer integration resolver and returns a
-        fully-resolved :class:`PipelineConfig` with ``_source_path``
-        set. The orchestrator only consumes the resolved object; it
-        knows nothing about ``integration: <id>`` shorthand or the
-        registry behind it.
+        :func:`src.workspace.integrations.loader.load_pipeline_config`,
+        which returns a validated :class:`PipelineConfig` with
+        ``_source_path`` set.
 
         Args:
             config: Fully-loaded :class:`PipelineConfig` (must have

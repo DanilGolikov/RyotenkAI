@@ -1,20 +1,14 @@
-"""UX-side YAML loader: resolve integrations + validate.
+"""YAML loader for pipeline configs.
 
-This is the **single entry point** every caller (CLI, project adapter,
-Web-API subprocess) uses to turn a YAML file into a validated
-:class:`PipelineConfig`. Core's ``PipelineConfig.from_yaml`` stays
-pure — it doesn't know about integrations. The resolver pass that
-inlines ``integration: <id>`` shortcuts lives here, in the UX layer,
-because *integration* is a Settings/registry concept.
+Single entry point for turning a project YAML into a validated
+:class:`PipelineConfig`. Direct ``yaml.safe_load → PipelineConfig`` —
+no resolver, no Settings-registry indirection. Project YAMLs carry
+their own values inline (tracking_uri, repo_id, etc.).
 
-Workflow:
-
-    cfg = load_pipeline_config(path)
-    PipelineOrchestrator(config=cfg).run()
-
-If the YAML uses ``integration: <id>`` and that id isn't registered,
-``IntegrationNotFoundError`` is raised — the CLI top-level handler
-turns it into a clean ``die()`` message (no Pydantic traceback).
+History: an earlier iteration ran an ``integration: <id>`` resolver
+pass here that inlined values from a Settings-managed registry. That
+indirection layer is gone — projects own their integration config
+directly.
 """
 
 from __future__ import annotations
@@ -24,40 +18,24 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from src.workspace.integrations.resolver import resolve_yaml_integrations
-
 if TYPE_CHECKING:
     from src.config.pipeline.schema import PipelineConfig
-    from src.workspace.integrations.registry import IntegrationRegistry
 
 
-def load_pipeline_config(
-    path: str | Path,
-    *,
-    registry: IntegrationRegistry | None = None,
-) -> PipelineConfig:
-    """Load YAML, inline integrations, validate.
+def load_pipeline_config(path: str | Path) -> PipelineConfig:
+    """Load + validate YAML.
 
     Args:
         path: Path to the project's pipeline YAML.
-        registry: Optional :class:`IntegrationRegistry`. Mostly for
-            tests — production callers omit and the default
-            workspace registry (``~/.ryotenkai``) is used.
 
     Returns:
-        Validated :class:`PipelineConfig` with
-        ``_source_path`` / ``_source_root`` set just like
-        ``PipelineConfig.from_yaml`` does for the legacy
-        non-integration path.
+        Validated :class:`PipelineConfig` with ``_source_path`` /
+        ``_source_root`` set so downstream code can resolve relative
+        dataset paths.
 
     Raises:
         FileNotFoundError: ``path`` doesn't exist.
-        IntegrationNotFoundError: ``integration: <id>`` references an
-            unregistered integration.
-        IntegrationUnresolvedError: integration exists but its
-            ``current.yaml`` is unusable.
-        ValidationError: YAML doesn't match :class:`PipelineConfig`
-            schema even after integration inline.
+        ValidationError: YAML doesn't match :class:`PipelineConfig` schema.
     """
     # Lazy import: keep this loader light; PipelineConfig pulls a fair
     # amount of pydantic schema machinery.
@@ -72,8 +50,7 @@ def load_pipeline_config(
             f"{type(raw).__name__}: {path_obj}"
         )
 
-    resolved = resolve_yaml_integrations(raw, registry=registry)
-    cfg = PipelineConfig(**resolved)
+    cfg = PipelineConfig(**raw)
 
     # Mirror what PipelineConfig.from_yaml sets — downstream code reads
     # _source_path for the run-state ``config_path`` field, and

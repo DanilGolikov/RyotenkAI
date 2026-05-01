@@ -76,22 +76,17 @@ class Secrets(BaseSettings):
         return self
 
     # ------------------------------------------------------------------
-    # Per-resource token resolution (PR4)
+    # Token resolution
     # ------------------------------------------------------------------
 
-    def get_hf_token(self, integration_id: str | None = None) -> str | None:
-        """Resolve the HF token for the given integration.
+    def get_hf_token(self) -> str | None:
+        """Return the HF token from ``HF_TOKEN`` env (or ``None``).
 
-        Lookup order:
-
-        1. ``token.enc`` in the integration's workspace
-           (``~/.ryotenkai/integrations/<id>/token.enc``), decrypted on
-           the fly.
-        2. ``self.hf_token`` (populated from ``HF_TOKEN`` env/dotenv).
-        3. ``None`` when neither is available — callers decide whether
-           that's fatal (HF Hub upload) or fine (anonymous read).
+        Loaded by the Pydantic ``Secrets`` model from the process env
+        and ``secrets.env``. Callers decide whether ``None`` is fatal
+        (HF Hub upload) or fine (anonymous read).
         """
-        return _resolve_token("integrations", integration_id, fallback=self.hf_token)
+        return self.hf_token
 
     def get_provider_token(self, provider_id: str | None = None) -> str | None:
         """Resolve the token stored under a provider workspace.

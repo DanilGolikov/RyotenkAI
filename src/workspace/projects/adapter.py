@@ -17,7 +17,7 @@ Filesystem layout consumed::
 
     ~/.ryotenkai/projects/<id>/
       project.json          # registry-backed; NOT read here
-      configs/current.yaml  # → loaded via load_pipeline_config (resolves integrations)
+      configs/current.yaml  # → loaded via load_pipeline_config
       env.json              # → ProjectStore.read_env() → adapter env
 
 The adapter is pure: no env mutation, no orchestrator construction, no
@@ -48,8 +48,7 @@ if TYPE_CHECKING:
 class ProjectNotFoundError(LookupError):
     """Raised when a ``project_id`` doesn't resolve to a registered project.
 
-    Surfaces as a clean ``die()`` in the CLI top-level handler — same
-    pattern as ``IntegrationNotFoundError`` from Step 1.
+    Surfaces as a clean ``die()`` in the CLI top-level handler.
     """
 
     def __init__(self, project_id: str, *, hint: str | None = None) -> None:
@@ -66,9 +65,7 @@ class ProjectInputs:
 
     Fields populated in :func:`load_project_inputs`:
 
-    * ``config`` — fully-loaded :class:`PipelineConfig` with integration
-      refs already resolved (``load_config`` runs the resolver as its
-      final step).
+    * ``config`` — fully-loaded :class:`PipelineConfig`.
     * ``env`` — project-specific env-var overrides (the JSON object the
       user typed in Settings → Env). Empty dict for projects without
       ``env.json``. Never includes process env — callers are expected
@@ -133,9 +130,7 @@ def load_project_inputs(
         ProjectNotFoundError: ``project_id`` not in the registry, or
             its directory is missing on disk.
         ProjectStoreError: ``env.json`` malformed (bubbled unchanged).
-        IntegrationNotFoundError / IntegrationUnresolvedError: from
-            :func:`load_pipeline_config` when the project's YAML
-            references an unregistered integration.
+        ValidationError: project YAML doesn't match the schema.
     """
     reg = registry if registry is not None else ProjectRegistry()
     try:
@@ -170,12 +165,6 @@ def load_project_inputs(
             ),
         )
 
-    # ``load_pipeline_config`` runs the UX-layer integration resolver
-    # before Pydantic validation, so the returned ``PipelineConfig``
-    # has every ``integration: <id>`` shorthand inlined.
-    # ``IntegrationNotFoundError`` / ``IntegrationUnresolvedError``
-    # surface to the caller — the CLI layer's top-level handler
-    # renders them as clean ``die()`` errors.
     config = load_pipeline_config(config_path)
 
     # ProjectStore.read_env raises ProjectStoreError when env.json is

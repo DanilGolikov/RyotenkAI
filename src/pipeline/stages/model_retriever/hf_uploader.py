@@ -75,9 +75,8 @@ class HFModelUploader:
         self.hf_repo_id: str | None = hf_cfg.repo_id if hf_cfg else None
         self.hf_private: bool | None = hf_cfg.private if hf_cfg else None
 
-        # PR4: prefer per-integration token; fall back to HF_TOKEN env.
-        integration_id = hf_cfg.integration if hf_cfg else None
-        token = secrets.get_hf_token(integration_id)
+        # Auth token comes from HF_TOKEN env (resolved by Secrets model).
+        token = secrets.get_hf_token()
         self.hf_api: HfApi = hf_api or HfApi(token=token)
 
         # Set by caller after SSH connection is established
@@ -102,7 +101,7 @@ class HFModelUploader:
         - To enforce `private: true/false`, we must call `update_repo_settings(private=...)`.
         """
         hf_cfg = self.config.integrations.huggingface
-        if not hf_cfg or not hf_cfg.integration:
+        if not hf_cfg or not hf_cfg.repo_id:
             return Err(ModelError(message="HuggingFace upload disabled", code="HF_UPLOAD_DISABLED"))
         if not self.hf_repo_id:
             return Err(ModelError(message="HF repo_id not configured", code="HF_REPO_ID_MISSING"))

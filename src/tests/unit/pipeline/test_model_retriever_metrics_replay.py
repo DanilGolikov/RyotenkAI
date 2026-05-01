@@ -152,7 +152,7 @@ def mock_config() -> MagicMock:
     cfg.get_active_provider_name.return_value = "single_node"
     cfg.get_provider_config.return_value = {"mock_mode": False}
     cfg.integrations.huggingface = HuggingFaceHubConfig(
-        integration=None, repo_id=None, private=False,
+        repo_id=None, private=False,
     )
     return cfg
 

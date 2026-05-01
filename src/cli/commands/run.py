@@ -88,18 +88,7 @@ def _exec_orchestrator(
     supplies the orchestrator with ``(config, env, metadata)`` derived
     from the project's filesystem; ``config`` is treated as a config
     override rather than the source of truth.
-
-    Integration-resolver failures (project YAML references an
-    integration that's not registered or has an empty/invalid
-    ``current.yaml``) and project-not-found surface as clean CLI errors
-    rather than raw Python tracebacks — see
-    :mod:`src.workspace.integrations.exceptions` and
-    :mod:`src.workspace.projects.adapter`.
     """
-    from src.workspace.integrations.exceptions import (
-        IntegrationNotFoundError,
-        IntegrationUnresolvedError,
-    )
     from src.workspace.projects.adapter import (
         ProjectNotFoundError,
         load_project_inputs,
@@ -117,16 +106,6 @@ def _exec_orchestrator(
             )
         except ProjectNotFoundError as exc:
             raise die(str(exc))
-        except IntegrationNotFoundError as exc:
-            raise die(
-                str(exc),
-                hint=(
-                    "create the integration via the Web UI "
-                    "(http://localhost:5173/settings/integrations) or CLI"
-                ),
-            )
-        except IntegrationUnresolvedError as exc:
-            raise die(str(exc))
 
     if dry_run:
         if project_inputs is not None:
@@ -142,18 +121,7 @@ def _exec_orchestrator(
         assert config is not None
         from src.workspace.integrations.loader import load_pipeline_config
 
-        try:
-            load_pipeline_config(config)
-        except IntegrationNotFoundError as exc:
-            raise die(
-                str(exc),
-                hint=(
-                    "create the integration via the Web UI "
-                    "(http://localhost:5173/settings/integrations) or CLI"
-                ),
-            )
-        except IntegrationUnresolvedError as exc:
-            raise die(str(exc))
+        load_pipeline_config(config)
         typer.echo(
             f"dry-run: config {config} OK; would start "
             f"(run_dir={run_dir}, resume={resume}, "
@@ -163,50 +131,38 @@ def _exec_orchestrator(
 
     from src.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
 
-    try:
-        if project_inputs is not None:
-            # Variant 1 path: orchestrator gets a pre-resolved config +
-            # explicit env mapping + audit metadata. Adapter has already
-            # called ``load_config`` under the hood. The project's own
-            # ``runs/`` directory becomes the runs-base so a fresh
-            # launch lands at ``<project>/runs/<run_id>/`` instead of
-            # the global location.
-            from src.config.runtime import RuntimeSettings, load_runtime_settings
+    if project_inputs is not None:
+        # Variant 1 path: orchestrator gets a pre-resolved config +
+        # explicit env mapping + audit metadata. Adapter has already
+        # called ``load_config`` under the hood. The project's own
+        # ``runs/`` directory becomes the runs-base so a fresh
+        # launch lands at ``<project>/runs/<run_id>/`` instead of
+        # the global location.
+        from src.config.runtime import RuntimeSettings, load_runtime_settings
 
-            base = load_runtime_settings()
-            project_settings = RuntimeSettings(
-                runs_base_dir=project_inputs.runs_base_dir,
-                log_level=base.log_level,
-            )
-            orchestrator = PipelineOrchestrator(
-                config=project_inputs.config,
-                env=project_inputs.env,
-                metadata=project_inputs.metadata,
-                run_directory=run_dir,
-                settings=project_settings,
-            )
-        else:
-            # Anonymous / ad-hoc path. CLI loads the YAML (which runs
-            # the UX-layer integration resolver) and hands a fully-
-            # resolved ``PipelineConfig`` to the orchestrator. There
-            # is no legacy positional path-based constructor anymore.
-            assert config is not None
-            from src.workspace.integrations.loader import load_pipeline_config
-
-            cfg_obj = load_pipeline_config(config)
-            orchestrator = PipelineOrchestrator(
-                config=cfg_obj, run_directory=run_dir,
-            )
-    except IntegrationNotFoundError as exc:
-        raise die(
-            str(exc),
-            hint=(
-                "create the integration via the Web UI "
-                "(http://localhost:5173/settings/integrations) or CLI"
-            ),
+        base = load_runtime_settings()
+        project_settings = RuntimeSettings(
+            runs_base_dir=project_inputs.runs_base_dir,
+            log_level=base.log_level,
         )
-    except IntegrationUnresolvedError as exc:
-        raise die(str(exc))
+        orchestrator = PipelineOrchestrator(
+            config=project_inputs.config,
+            env=project_inputs.env,
+            metadata=project_inputs.metadata,
+            run_directory=run_dir,
+            settings=project_settings,
+        )
+    else:
+        # Anonymous / ad-hoc path. CLI loads the YAML and hands a
+        # fully-validated ``PipelineConfig`` to the orchestrator. There
+        # is no legacy positional path-based constructor anymore.
+        assert config is not None
+        from src.workspace.integrations.loader import load_pipeline_config
+
+        cfg_obj = load_pipeline_config(config)
+        orchestrator = PipelineOrchestrator(
+            config=cfg_obj, run_directory=run_dir,
+        )
 
     _signals.set_active_orchestrator(orchestrator)
     try:

@@ -79,7 +79,7 @@ class ModelRetriever(PipelineStage):
         # Expose HF properties for backward compat
         hf_config = config.integrations.huggingface
         self._hf_api = self._uploader.hf_api
-        self.hf_enabled = bool(hf_config and hf_config.integration)
+        self.hf_enabled = bool(hf_config and hf_config.repo_id)
         self._hf_repo_id: str | None = hf_config.repo_id if hf_config else None
         self._hf_private: bool | None = hf_config.private if hf_config else None
 
@@ -234,7 +234,7 @@ class ModelRetriever(PipelineStage):
                 if self._callbacks.on_hf_upload_failed:
                     self._callbacks.on_hf_upload_failed(hf_repo_id_str, err_msg)
         elif not self.hf_enabled:
-            logger.info("HF Hub upload disabled (huggingface.integration not set)")
+            logger.info("HF Hub upload disabled (integrations.huggingface.repo_id not set)")
         else:
             logger.warning("HF repo_id not configured, skipping HF upload")
 
