@@ -17,34 +17,44 @@ from src.pipeline.launch import (
     load_restart_point_options,
     pick_default_launch_mode,
     read_lock_pid,
-    spawn_launch_detached,
+    spawn_launch,
     validate_resume_run,
 )
 from src.pipeline.state import PipelineStateStore, remove_stale_lock
-from src.workspace.projects.store import ProjectStore, ProjectStoreError
+from src.workspace.projects.adapter import (
+    ResolvedProject,
+    resolve_project_launch_inputs_from_run_dir,
+)
 
 
-def _project_env_for_run_dir(run_dir: Path) -> dict[str, str]:
-    """Walk up from ``run_dir`` until we find a ``project.json`` sibling and
-    return that workspace's env.json overrides. Returns {} if the run isn't
-    inside a project workspace (legacy runs, ad-hoc dirs).
+# Default actor for Web-launched runs. When auth lands, replace with
+# ``agent:web-ui:user-<id>``. TODO: thread through authenticated
+# user identity.
+_WEB_ACTOR_DEFAULT = "agent:web-ui"
 
-    Variant 1 note: this function is the *subprocess-spawn* path's view
-    of project env (env-vars merged onto ``os.environ`` before
-    ``subprocess.Popen``). The Variant 1 in-process path
-    (CLI ``run start --project``) goes through
-    :func:`src.workspace.projects.adapter.load_project_inputs` instead,
-    which produces the same mapping but threads it through
-    ``orchestrator.env`` rather than mutating the spawned-process env.
-    Both paths read the same ``env.json`` so semantics stay aligned.
+
+def _build_extra_env(resolved: ResolvedProject | None) -> dict[str, str]:
+    """Build the ``extra_env`` map for the spawned worker.
+
+    Combines the project's ``env.json`` overrides with the
+    ``RYOTENKAI_*`` metadata env vars that the worker's bootstrap
+    reads to stamp ``PipelineState.metadata`` and MLflow tags.
+
+    Returns ``{}`` for ad-hoc runs (no enclosing project) — the
+    spawned worker treats absence as "anonymous run".
     """
-    for candidate in (run_dir, *run_dir.parents):
-        if (candidate / "project.json").is_file():
-            try:
-                return ProjectStore(candidate).read_env()
-            except ProjectStoreError:
-                return {}
-    return {}
+    if resolved is None:
+        return {}
+    extra: dict[str, str] = dict(resolved.env)
+    extra["RYOTENKAI_PROJECT_ID"] = resolved.metadata["project_id"]
+    extra["RYOTENKAI_ACTOR"] = resolved.metadata.get("actor") or _WEB_ACTOR_DEFAULT
+    extra["RYOTENKAI_CONFIG_VERSION_HASH"] = resolved.metadata.get(
+        "config_version_hash", ""
+    )
+    extra["RYOTENKAI_RUNS_BASE_DIR"] = str(resolved.runs_base_dir)
+    if "config_override_path" in resolved.metadata:
+        extra["RYOTENKAI_CONFIG_OVERRIDE_PATH"] = resolved.metadata["config_override_path"]
+    return extra
 
 
 def list_restart_points(run_dir: Path, config_path: Path | None = None) -> RestartPointsResponse:
@@ -82,10 +92,16 @@ def launch(run_dir: Path, request: LaunchRequestSchema) -> LaunchResponse:
     )
     # Surface validation errors (missing config, illegal restart stage, etc.) as 422.
     launch_request = launch_request.validate()
-    project_env = _project_env_for_run_dir(run_dir)
-    pid, command, launcher_log = spawn_launch_detached(
-        launch_request, extra_env=project_env
+    resolved = resolve_project_launch_inputs_from_run_dir(run_dir)
+    extra_env = _build_extra_env(resolved)
+    pid, command, launcher_log = spawn_launch(
+        launch_request,
+        extra_env=extra_env,
+        attach_stdio=False,
     )
+    # Detached launch always writes a launcher log — assertion narrows
+    # the ``Path | None`` from ``spawn_launch`` for the response model.
+    assert launcher_log is not None
     return LaunchResponse(
         pid=pid,
         launched_at=datetime.now(UTC).isoformat(),
