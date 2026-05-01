@@ -381,16 +381,23 @@ _CHATSCRIPT_NO_PORTS_BAILOUT_SEC = 180
 
 
 def _wait_for_pod_ssh_ready(*, rest_api_base_url: str, api_key: str, pod_id: str, timeout_seconds: int) -> tuple[str, int]:
-    """Block until the pod is SSH-ready or fails the early-bailout / total-timeout check.
-
-    Manual mirror of ``src.providers.runpod.lifecycle.PodSshWaiter`` —
-    chat-script context, no Result/cancel imports available. Keep behaviour
-    aligned: the early-bailout for "RUNNING with zero ports allocated"
-    fires fast (180 s by default) so the user doesn't sit through the
-    full timeout when RunPod's port mapping is stuck. Raises
-    ``RuntimeError`` instead of returning ``Result`` because callers in
-    this file are simple top-level scripts.
-    """
+    # Block until the pod is SSH-ready or fails the early-bailout
+    # check / total-timeout.
+    #
+    # IMPORTANT: this function lives inside the CHAT_SCRIPT r-string of
+    # the parent artifacts.py module. The r-string is delimited with
+    # triple double-quotes, so any triple-double-quote sequence here
+    # would close the r-string prematurely and corrupt the chat-script
+    # source. Use # comments only; for docstrings use triple SINGLE
+    # quotes (which the chat-script's own top-level docstring already
+    # does at line 61).
+    #
+    # Manual mirror of src.providers.runpod.lifecycle.PodSshWaiter
+    # (chat-script context cannot import the production lifecycle
+    # package). Keeps the early-bailout for the "RUNNING with zero
+    # ports allocated" platform-stuck state aligned with the
+    # production waiter; constant agreement is pinned by
+    # tests/.../lifecycle/test_chatscript_parity.py.
     deadline = time.time() + timeout_seconds
     public_ip = ""
     status = ""
