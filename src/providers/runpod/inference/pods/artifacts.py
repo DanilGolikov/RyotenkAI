@@ -370,12 +370,36 @@ def _runpod_delete_pod(*, rest_api_base_url: str, api_key: str, pod_id: str) -> 
     _runpod_sdk_call(api_key, "terminate_pod", pod_id)
 
 
+#: Bailout window for the "RunPod marks pod RUNNING but never allocates
+#: SSH ports" failure mode. Mirrors
+#: ``src.providers.runpod.lifecycle.policy.INFERENCE_PROFILE.running_no_ports_bailout_s``
+#: — kept manually in sync because this script is shipped to user
+#: machines and cannot import the production ``lifecycle`` package.
+#: If you tune one, tune the other; the production ``PodSshWaiter`` and
+#: this chat-script wait MUST agree on platform-stuck semantics.
+_CHATSCRIPT_NO_PORTS_BAILOUT_SEC = 180
+
+
 def _wait_for_pod_ssh_ready(*, rest_api_base_url: str, api_key: str, pod_id: str, timeout_seconds: int) -> tuple[str, int]:
+    """Block until the pod is SSH-ready or fails the early-bailout / total-timeout check.
+
+    Manual mirror of ``src.providers.runpod.lifecycle.PodSshWaiter`` —
+    chat-script context, no Result/cancel imports available. Keep behaviour
+    aligned: the early-bailout for "RUNNING with zero ports allocated"
+    fires fast (180 s by default) so the user doesn't sit through the
+    full timeout when RunPod's port mapping is stuck. Raises
+    ``RuntimeError`` instead of returning ``Result`` because callers in
+    this file are simple top-level scripts.
+    """
     deadline = time.time() + timeout_seconds
     public_ip = ""
     status = ""
     last_print = 0.0
     last_preview = ""
+    # Mirrors ``PodSshWaiter.running_no_ports_since`` — start of the
+    # contiguous "RUNNING + port_count==0" stretch, ``None`` whenever
+    # status is something else or ports were briefly populated.
+    running_no_ports_since: float | None = None
 
     while time.time() < deadline:
         pod = _runpod_get_pod(rest_api_base_url=rest_api_base_url, api_key=api_key, pod_id=pod_id)
@@ -435,6 +459,25 @@ def _wait_for_pod_ssh_ready(*, rest_api_base_url: str, api_key: str, pod_id: str
                 return public_ip, int(ssh_port)
 
         now = time.time()
+
+        # Early-bailout: pod RUNNING with zero ports allocated for longer
+        # than the platform-stuck window. Aligned with PodSshWaiter's
+        # ``running_no_ports_bailout_s`` policy on the production side.
+        port_count = (
+            len(mappings) if isinstance(mappings, dict | list) else 0
+        )
+        if status == "RUNNING" and port_count == 0:
+            if running_no_ports_since is None:
+                running_no_ports_since = now
+            elif now - running_no_ports_since >= _CHATSCRIPT_NO_PORTS_BAILOUT_SEC:
+                raise RuntimeError(
+                    f"Pod {pod_id} stuck in RUNNING with no allocated ports for "
+                    f"{_CHATSCRIPT_NO_PORTS_BAILOUT_SEC}s — likely a RunPod platform "
+                    "issue. Recreate the pod."
+                )
+        else:
+            running_no_ports_since = None
+
         if status or public_ip or ssh_port:
             tcp_s = "" if tcp_ok is None else f" tcp={'OK' if tcp_ok else 'NO'}"
             preview = f"status={status or '∅'} ip={public_ip or '∅'} ssh_port={ssh_port if ssh_port is not None else '∅'}{tcp_s}"
