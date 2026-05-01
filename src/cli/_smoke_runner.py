@@ -243,7 +243,7 @@ def _run_single(
     result = RunResult(config_path=config, config_rel=rel)
 
     cmd = [
-        sys.executable, "-m", "src.main", "train",
+        sys.executable, "-m", "src.pipeline.worker",
         "--config", str(config),
     ]
 

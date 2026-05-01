@@ -164,9 +164,22 @@ def read_lock_pid(run_dir: Path) -> int | None:
     return _read_lock_pid(run_dir.expanduser().resolve() / "run.lock")
 
 
-def build_train_command(request: LaunchRequest, *, python_executable: str | None = None) -> list[str]:
+def build_worker_command(request: LaunchRequest, *, python_executable: str | None = None) -> list[str]:
+    """Build the argv for the local-launch worker subprocess.
+
+    Targets :mod:`src.pipeline.worker` — a dedicated module entry point
+    (NOT a CLI subcommand) symmetric to ``src.training.run_training``
+    that runs on remote pods. Both CLI ``run start/resume/restart`` and
+    the Web API spawn this command.
+    """
     normalized = request.validate()
-    command = [python_executable or sys.executable, "-m", "src.main", "train", "--run-dir", str(normalized.run_dir)]
+    command = [
+        python_executable or sys.executable,
+        "-m",
+        "src.pipeline.worker",
+        "--run-dir",
+        str(normalized.run_dir),
+    ]
     if normalized.config_path is not None:
         command.extend(["--config", str(normalized.config_path)])
     if normalized.mode == MODE_RESUME:
@@ -183,7 +196,7 @@ def execute_launch_subprocess(
     on_started: Callable[[int | None], None] | None = None,
 ) -> LaunchResult:
     normalized = request.validate()
-    command = tuple(build_train_command(normalized, python_executable=python_executable))
+    command = tuple(build_worker_command(normalized, python_executable=python_executable))
     process_env = os.environ.copy()
     process_env["LOG_LEVEL"] = normalized.log_level
     output_tail: collections.deque[str] = collections.deque(maxlen=_OUTPUT_TAIL_MAX_LINES)
@@ -251,7 +264,7 @@ def spawn_launch_detached(
     users can override ambient creds per-experiment.
     """
     normalized = request.validate()
-    command = tuple(build_train_command(normalized, python_executable=python_executable))
+    command = tuple(build_worker_command(normalized, python_executable=python_executable))
     process_env = os.environ.copy()
     process_env["LOG_LEVEL"] = normalized.log_level
     if extra_env:
@@ -297,7 +310,7 @@ __all__ = [
     "LaunchRequest",
     "LaunchResult",
     "LaunchStatus",
-    "build_train_command",
+    "build_worker_command",
     "execute_launch_subprocess",
     "interrupt_launch_process",
     "is_process_alive",
