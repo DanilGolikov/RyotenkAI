@@ -214,9 +214,7 @@ class StageRegistry:
                 )
                 logger.debug("[ARTIFACT] flush_interrupted for %s", stage_name)
             except Exception as exc:
-                logger.warning(
-                    "[ARTIFACT] flush_interrupted failed for %s: %s", stage_name, exc
-                )
+                logger.warning("[ARTIFACT] flush_interrupted failed for %s: %s", stage_name, exc)
 
     def cleanup_in_reverse(
         self,
@@ -248,37 +246,26 @@ class StageRegistry:
                     try:
                         stage.notify_pipeline_failure()
                     except Exception as e:
-                        logger.debug(
-                            f"Error notifying pipeline failure to {stage.stage_name}: {e}"
-                        )
+                        logger.debug(f"Error notifying pipeline failure to {stage.stage_name}: {e}")
 
-        skip_gpu_deployer_cleanup = self._should_skip_gpu_cleanup_on_sigint(
-            shutdown_signal_name
-        )
+        skip_gpu_deployer_cleanup = self._should_skip_gpu_cleanup_on_sigint(shutdown_signal_name)
 
         for stage in reversed(self._stages):
             try:
                 if hasattr(stage, "cleanup"):
-                    if (
-                        skip_gpu_deployer_cleanup
-                        and getattr(stage, "stage_name", None) == StageNames.GPU_DEPLOYER
-                    ):
+                    if skip_gpu_deployer_cleanup and getattr(stage, "stage_name", None) == StageNames.GPU_DEPLOYER:
                         continue
                     stage.cleanup()
                     logger.debug(f"Cleanup complete: {stage.stage_name}")
             except KeyboardInterrupt:
-                logger.warning(
-                    f"[CLEANUP] Interrupted during cleanup of {stage.stage_name}, continuing..."
-                )
+                logger.warning(f"[CLEANUP] Interrupted during cleanup of {stage.stage_name}, continuing...")
             except PipelineCancelled:
                 # Cancel signal arrived mid-cleanup. Don't abort the
                 # cleanup chain — keep tearing down later stages so the
                 # user doesn't end up with leaked pods. The deadline
                 # timer in the cancel handler is the hard fallback if
                 # cleanup itself wedges.
-                logger.warning(
-                    f"[CLEANUP] cancellation received during cleanup of {stage.stage_name}, continuing..."
-                )
+                logger.warning(f"[CLEANUP] cancellation received during cleanup of {stage.stage_name}, continuing...")
             except Exception as e:
                 logger.warning(f"Error during cleanup of {stage.stage_name}: {e}")
 
@@ -295,22 +282,15 @@ class StageRegistry:
         """
         try:
             provider_cfg = self._config.get_provider_config()
-            cleanup_cfg = (
-                provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-            )
-            if not (
-                isinstance(cleanup_cfg, dict)
-                and cleanup_cfg.get("terminate_after_retrieval") is True
-            ):
+            cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
+            if not (isinstance(cleanup_cfg, dict) and cleanup_cfg.get("terminate_after_retrieval") is True):
                 return
         except Exception:
             return
 
         for stage in self._stages:
             if isinstance(stage, IEarlyReleasable):
-                logger.info(
-                    "[ORCHESTRATOR] terminate_after_retrieval=true: releasing training pod early."
-                )
+                logger.info("[ORCHESTRATOR] terminate_after_retrieval=true: releasing training pod early.")
                 stage.release()
                 return
 
@@ -318,9 +298,7 @@ class StageRegistry:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _should_skip_gpu_cleanup_on_sigint(
-        self, shutdown_signal_name: str | None
-    ) -> bool:
+    def _should_skip_gpu_cleanup_on_sigint(self, shutdown_signal_name: str | None) -> bool:
         """Read provider config to decide whether SIGINT skips GPU cleanup.
 
         Best-effort: any config-inspection failure yields ``False`` so cleanup
@@ -333,9 +311,7 @@ class StageRegistry:
             provider_cfg = self._config.get_provider_config()
         except Exception:
             return False
-        cleanup_cfg = (
-            provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-        )
+        cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
         if isinstance(cleanup_cfg, dict) and cleanup_cfg.get("on_interrupt") is False:
             logger.warning(
                 f"[CLEANUP] Skipping GPU provider disconnect on SIGINT "

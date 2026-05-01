@@ -50,15 +50,9 @@ class PodLifecycleManager:
         No internal retries — the caller (provider) decides whether to
         recreate the pod on failure.
         """
-        policy = (
-            TRAINING_PROFILE
-            if timeout is None
-            else replace(TRAINING_PROFILE, total_timeout_s=int(timeout))
-        )
+        policy = TRAINING_PROFILE if timeout is None else replace(TRAINING_PROFILE, total_timeout_s=int(timeout))
         waiter = PodSshWaiter(query=self._query, policy=policy)
-        logger.info(
-            f"⏳ Waiting for pod {pod_id} to be ready (timeout: {policy.total_timeout_s}s)..."
-        )
+        logger.info(f"⏳ Waiting for pod {pod_id} to be ready (timeout: {policy.total_timeout_s}s)...")
         return waiter.wait(pod_id)
 
     def check_health(self, pod_id: str) -> Result[bool, ProviderError]:

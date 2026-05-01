@@ -52,9 +52,11 @@ from src.utils.result import Err, Ok, ProviderError, Result
 #: Codes from the underlying ``query_pod_snapshot`` that the waiter
 #: treats as terminal (no point retrying — abort fast). Anything else
 #: is treated as transient and the loop continues.
-_TERMINAL_QUERY_CODES: frozenset[str] = frozenset({
-    "RUNPOD_POD_DATA_MISSING",
-})
+_TERMINAL_QUERY_CODES: frozenset[str] = frozenset(
+    {
+        "RUNPOD_POD_DATA_MISSING",
+    }
+)
 
 
 class PodQuery(Protocol):
@@ -65,9 +67,7 @@ class PodQuery(Protocol):
     previous commit for symmetry).
     """
 
-    def query_pod_snapshot(
-        self, pod_id: str
-    ) -> Result[PodSnapshot, ProviderError]: ...
+    def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]: ...
 
 
 #: Log callback signature: ``(level, message)``.
@@ -210,9 +210,7 @@ class PodSshWaiter:
             )
         )
 
-    def _no_exposed_tcp_err(
-        self, pod_id: str, snapshot: PodSnapshot
-    ) -> Result[PodSnapshot, ProviderError]:
+    def _no_exposed_tcp_err(self, pod_id: str, snapshot: PodSnapshot) -> Result[PodSnapshot, ProviderError]:
         return Err(
             ProviderError(
                 message=(
@@ -246,8 +244,7 @@ class PodSshWaiter:
         port = ssh.port if ssh else "∅"
         tcp_label = "OK" if tcp_ok is True else ("NO" if tcp_ok is False else "∅")
         return (
-            f"status={snapshot.status or '∅'} ip={host} ssh_port={port} "
-            f"tcp={tcp_label} ports={snapshot.port_count}"
+            f"status={snapshot.status or '∅'} ip={host} ssh_port={port} " f"tcp={tcp_label} ports={snapshot.port_count}"
         )
 
 

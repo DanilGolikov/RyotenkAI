@@ -175,7 +175,7 @@ def _handler(signum: int, _frame: Any) -> None:
         if callable(notify):
             try:
                 notify(signal_name=("SIGINT" if signum == signal.SIGINT else "SIGTERM"))
-            except Exception:  # noqa: BLE001 — handler must never propagate
+            except Exception:
                 pass
 
     if _signal_count >= 2:
@@ -211,7 +211,7 @@ def _unregister_mlflow_atexit() -> None:
         import mlflow.tracking.fluent as _fluent
 
         atexit.unregister(_fluent._safe_end_run)
-    except Exception:  # noqa: BLE001 — mlflow not imported / API moved
+    except Exception:
         pass
 
 

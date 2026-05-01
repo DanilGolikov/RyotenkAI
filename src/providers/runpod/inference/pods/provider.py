@@ -371,10 +371,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             # EndpointInfo.endpoint_url is None until ``activate_for_eval``
             # opens a tunnel; the chat script is always 127.0.0.1:<serve_port>.
             "endpoint": {
-                "client_base_url": ctx.endpoint.endpoint_url
-                or f"http://127.0.0.1:{serve_port}/v1",
-                "health_url": ctx.endpoint.health_url
-                or f"http://127.0.0.1:{serve_port}/v1/models",
+                "client_base_url": ctx.endpoint.endpoint_url or f"http://127.0.0.1:{serve_port}/v1",
+                "health_url": ctx.endpoint.health_url or f"http://127.0.0.1:{serve_port}/v1/models",
             },
             "config_hash": _sha12(
                 json.dumps(
@@ -399,8 +397,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
                 chat_script=_CHAT_SCRIPT,
                 readme=_render_readme(
                     manifest_filename=INFERENCE_MANIFEST_FILENAME,
-                    endpoint_url=ctx.endpoint.endpoint_url
-                    or f"http://127.0.0.1:{serve_port}/v1",
+                    endpoint_url=ctx.endpoint.endpoint_url or f"http://127.0.0.1:{serve_port}/v1",
                 ),
             )
         )
@@ -545,13 +542,12 @@ class RunPodPodInferenceProvider(IInferenceProvider):
             # down before re-raising so cleanup-in-reverse doesn't have
             # to chase it later.
             logger.info(
-                "[EVAL] cancellation received during activate_for_eval — "
-                "tearing down pod %s synchronously",
+                "[EVAL] cancellation received during activate_for_eval — " "tearing down pod %s synchronously",
                 pod_id,
             )
             try:
                 pod_control.delete_pod(pod_id=pod_id)
-            except Exception as cleanup_exc:  # noqa: BLE001 — never block the unwind
+            except Exception as cleanup_exc:
                 logger.warning(
                     "[EVAL] best-effort delete_pod after cancel failed: %s",
                     cleanup_exc,

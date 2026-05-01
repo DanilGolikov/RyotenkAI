@@ -35,9 +35,9 @@ from src.providers.runpod.lifecycle.tcp_probe import default_tcp_probe
 
 __all__ = [
     "INFERENCE_PROFILE",
+    "TRAINING_PROFILE",
     "PodQuery",
     "PodSshWaiter",
-    "TRAINING_PROFILE",
     "WaitPolicy",
     "default_tcp_probe",
 ]

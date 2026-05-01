@@ -148,6 +148,8 @@ def _extract_ssh_port_from_mappings(mappings: Any) -> int | None:
                 continue
             cport = entry.get("containerPort") or entry.get("internalPort") or entry.get("port")
             hport = entry.get("hostPort") or entry.get("externalPort") or entry.get("publicPort")
+            if cport is None or hport is None:
+                continue
             try:
                 if int(cport) != _SSH_PORT_CONTAINER:
                     continue

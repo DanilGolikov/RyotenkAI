@@ -21,7 +21,6 @@ Design:
 from __future__ import annotations
 
 import shlex
-import socket
 import subprocess
 import time
 import urllib.request

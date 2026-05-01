@@ -34,23 +34,16 @@ def _config_from_run_dir(run_dir: Path) -> Path:
 
     store = PipelineStateStore(run_dir)
     if not store.exists():
-        raise SystemExit(
-            f"error: pipeline_state.json not found in run directory: {run_dir}"
-        )
+        raise SystemExit(f"error: pipeline_state.json not found in run directory: {run_dir}")
     try:
         state = store.load()
     except PipelineStateLoadError as exc:
         raise SystemExit(f"error: cannot load pipeline state for {run_dir}: {exc}")
     if not state.config_path:
-        raise SystemExit(
-            f"error: run {run_dir.name!r} has no recorded config_path; "
-            "pass --config explicitly"
-        )
+        raise SystemExit(f"error: run {run_dir.name!r} has no recorded config_path; " "pass --config explicitly")
     resolved = Path(state.config_path)
     if not resolved.exists():
-        raise SystemExit(
-            f"error: config recorded in state no longer exists: {resolved}"
-        )
+        raise SystemExit(f"error: config recorded in state no longer exists: {resolved}")
     return resolved
 
 
@@ -103,8 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         config_path = _config_from_run_dir(run_dir)
     else:
         raise SystemExit(
-            "error: either --config or --run-dir (with a recorded "
-            "config_path in pipeline_state.json) is required"
+            "error: either --config or --run-dir (with a recorded " "config_path in pipeline_state.json) is required"
         )
 
     cfg = load_pipeline_config(config_path)

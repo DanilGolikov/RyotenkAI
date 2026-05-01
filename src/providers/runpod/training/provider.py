@@ -55,7 +55,6 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
-    from src.pipeline.launch.pod_availability import PodAvailability
     from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodSnapshot
     from src.utils.config import Secrets
@@ -131,7 +130,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         )
 
     @classmethod
-    def from_resume_metadata(cls, *, api_key: str) -> "RunPodProvider":
+    def from_resume_metadata(cls, *, api_key: str) -> RunPodProvider:
         """Phase 14.C — minimal-construction factory for resume flow.
 
         Bypasses the heavy Pydantic config validator (which requires
@@ -329,9 +328,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
                 )
             )
 
-    def _create_and_wait_for_pod(
-        self, pod_name: str
-    ) -> Result[tuple[PodSnapshot, PodResourceInfo], ProviderError]:
+    def _create_and_wait_for_pod(self, pod_name: str) -> Result[tuple[PodSnapshot, PodResourceInfo], ProviderError]:
         """Create a pod and wait for it to become ready.
 
         If the pod fails to get SSH exposed TCP (community cloud limitation),
@@ -570,8 +567,8 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
             has_pause_resume=True,  # podStop + podResume both supported
             runner_workspace_root="/workspace",  # RunPod pod mount path
             # Phase 14.D+F capability fields:
-            is_local=False,                # cloud provider
-            supports_log_download=True,    # SCP-based log fetch via RunPodAPIClient
+            is_local=False,  # cloud provider
+            supports_log_download=True,  # SCP-based log fetch via RunPodAPIClient
         )
 
     def required_secrets(self) -> tuple[str, ...]:
@@ -588,7 +585,9 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
     # ------------------------------------------------------------------
 
     def required_runtime_env_vars(
-        self, *, resource_id: str | None,
+        self,
+        *,
+        resource_id: str | None,
     ) -> dict[str, str]:
         """Env vars the in-pod runner needs.
 
@@ -607,9 +606,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         env: dict[str, str] = {
             RUNTIME_PROVIDER_ENV_VAR: PROVIDER_RUNPOD,
             "RUNPOD_API_KEY": self._api_key,
-            "RUNPOD_KEEP_ON_ERROR": (
-                "true" if self._config.cleanup.keep_pod_on_error else "false"
-            ),
+            "RUNPOD_KEEP_ON_ERROR": ("true" if self._config.cleanup.keep_pod_on_error else "false"),
             "RUNPOD_VOLUME_KIND": VolumeKind.PERSISTENT.value,
         }
         if resource_id:
@@ -617,7 +614,8 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         return env
 
     def probe_availability(
-        self, resource_id: str,
+        self,
+        resource_id: str,
     ) -> AvailabilityVerdict:
         """Query RunPod for pod state and map to provider-agnostic verdict.
 
@@ -642,7 +640,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
 
         try:
             result = self._graphql_api_client.query_pod(resource_id)
-        except Exception as exc:  # noqa: BLE001 — best-effort probe
+        except Exception as exc:
             return AvailabilityVerdict(
                 state="probe_failed",
                 resource_id=resource_id,
@@ -703,9 +701,12 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         # Map the legacy enum to our new state literal.
         bucket: AvailabilityVerdict = AvailabilityVerdict(
             state=(
-                "running" if mapped == PodAvailability.RUNNING
-                else "sleeping_resumable" if mapped == PodAvailability.SLEEPING_RESUMABLE
-                else "gone" if mapped == PodAvailability.GONE
+                "running"
+                if mapped == PodAvailability.RUNNING
+                else "sleeping_resumable"
+                if mapped == PodAvailability.SLEEPING_RESUMABLE
+                else "gone"
+                if mapped == PodAvailability.GONE
                 else "probe_failed"
             ),
             resource_id=resource_id,
@@ -718,7 +719,10 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
     # ------------------------------------------------------------------
 
     def terminate(
-        self, *, resource_id: str, reason: str,
+        self,
+        *,
+        resource_id: str,
+        reason: str,
     ) -> Result[None, ProviderError]:
         """Permanently delete the pod via ``podTerminate``.
 
@@ -731,12 +735,16 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         14.B's :class:`PodTerminator` will pipe it into telemetry.
         """
         logger.info(
-            "[PROVIDER:TERMINATE] pod=%s reason=%s", resource_id, reason,
+            "[PROVIDER:TERMINATE] pod=%s reason=%s",
+            resource_id,
+            reason,
         )
         return self._api_client.terminate_pod(resource_id)
 
     def pause(
-        self, *, resource_id: str,
+        self,
+        *,
+        resource_id: str,
     ) -> Result[None, ProviderError]:
         """Stop the pod via ``podStop`` (preserves /workspace).
 
@@ -748,7 +756,9 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         return self._api_client.stop_pod(pod_id=resource_id)
 
     def resume(
-        self, *, resource_id: str,
+        self,
+        *,
+        resource_id: str,
     ) -> Result[None, ProviderError]:
         """Wake a stopped pod via ``podResume``.
 

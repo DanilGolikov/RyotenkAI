@@ -19,9 +19,9 @@ from src.constants import (
 )
 from src.pipeline.cancellation import sleep_cancellable
 from src.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
-from src.pipeline.state import RunContext
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
+from src.pipeline.state import RunContext
 from src.providers.inference.factory import InferenceProviderFactory
 from src.providers.inference.interfaces import (
     EndpointInfo,
@@ -201,14 +201,16 @@ class InferenceDeployer(PipelineStage):
         if eval_enabled and not pod_provisioning_failed:
             capabilities = provider.get_capabilities()
             if not capabilities.supports_activate_for_eval:
-                return Err(InferenceError(
-                    message=(
-                        f"evaluation enabled but provider {inf_cfg.provider!r} does not "
-                        "support activate_for_eval — set evaluation.enabled=false or "
-                        "pick a provider with supports_activate_for_eval=True"
-                    ),
-                    code="INFERENCE_EVAL_NOT_SUPPORTED",
-                ))
+                return Err(
+                    InferenceError(
+                        message=(
+                            f"evaluation enabled but provider {inf_cfg.provider!r} does not "
+                            "support activate_for_eval — set evaluation.enabled=false or "
+                            "pick a provider with supports_activate_for_eval=True"
+                        ),
+                        code="INFERENCE_EVAL_NOT_SUPPORTED",
+                    )
+                )
             activate_res = provider.activate_for_eval()
             if activate_res.is_failure():
                 # Release the partially-provisioned pod inline; relying on
@@ -221,25 +223,27 @@ class InferenceDeployer(PipelineStage):
                         f"(non-fatal): {deactivate_res.unwrap_err()}"  # type: ignore[union-attr]
                     )
                 activate_err = activate_res.unwrap_err()  # type: ignore[union-attr]
-                return Err(InferenceError(
-                    message=(
-                        f"failed to activate inference endpoint for evaluation: {activate_err}"
-                    ),
-                    code="INFERENCE_ACTIVATION_FAILED",
-                ))
+                return Err(
+                    InferenceError(
+                        message=(f"failed to activate inference endpoint for evaluation: {activate_err}"),
+                        code="INFERENCE_ACTIVATION_FAILED",
+                    )
+                )
             eval_endpoint_url = activate_res.unwrap()
             logger.info(f"✅ Inference endpoint ready for evaluation: {eval_endpoint_url}")
         elif eval_enabled and pod_provisioning_failed:
             # Eval was requested but the pod could not be provisioned
             # (NO_GPU_CAPACITY). Refuse rather than emit a manifest that
             # the user thinks is eval-ready.
-            return Err(InferenceError(
-                message=(
-                    "evaluation enabled but inference pod could not be provisioned "
-                    "(no GPU capacity). Disable evaluation or retry later."
-                ),
-                code="INFERENCE_NO_CAPACITY_BLOCKS_EVAL",
-            ))
+            return Err(
+                InferenceError(
+                    message=(
+                        "evaluation enabled but inference pod could not be provisioned "
+                        "(no GPU capacity). Disable evaluation or retry later."
+                    ),
+                    code="INFERENCE_NO_CAPACITY_BLOCKS_EVAL",
+                )
+            )
 
         # Generate manifest + scripts locally (provider supplies content)
         log_dir = get_run_log_dir()

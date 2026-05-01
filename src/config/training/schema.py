@@ -12,7 +12,7 @@ from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
 # NOTE: Runtime import is required for Pydantic field type.
 from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
 from .lora import AdaLoraConfig, LoraConfig, QloraConfig  # noqa: TC001
-from .metrics_buffer import MetricsBufferConfig  # noqa: TC001
+from .metrics_buffer import MetricsBufferConfig
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
 
 if TYPE_CHECKING:
@@ -63,9 +63,11 @@ class TrainingOnlyConfig(StrictBaseModel):
     # =========================================================================
     # ADAPTER CONFIGURATIONS
     # Each training type has its own named block:
-    #   type: lora    → lora: ...
-    #   type: qlora   → qlora: ...
-    #   type: adalora → adalora: ...
+    #   - "lora"    -> lora: ...
+    #   - "qlora"   -> qlora: ...
+    #   - "adalora" -> adalora: ...
+    # (kept off the leading "type:" pattern so mypy's type-comment parser
+    # doesn't try to interpret the line.)
     # =========================================================================
     lora: LoraConfig | None = Field(
         None,

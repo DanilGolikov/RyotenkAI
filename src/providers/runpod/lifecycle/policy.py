@@ -55,13 +55,13 @@ class WaitPolicy:
 
 #: Training-side profile. Tighter total timeout because training pods
 #: are GPU-pre-warmed and start within seconds.
-TRAINING_PROFILE: WaitPolicy = WaitPolicy(total_timeout_s=300)
+TRAINING_PROFILE: WaitPolicy = WaitPolicy(total_timeout_s=300)  # noqa: WPS432
 
 #: Inference / eval profile. Wider window for cold-start of the
 #: vLLM-style eval container.
 INFERENCE_PROFILE: WaitPolicy = WaitPolicy(
-    total_timeout_s=600,
-    no_exposed_tcp_grace_s=60,
+    total_timeout_s=600,  # noqa: WPS432 — eval cold-start budget; documented above
+    no_exposed_tcp_grace_s=60,  # noqa: WPS432 — RunPod platform-stuck grace
 )
 
 

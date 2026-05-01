@@ -117,14 +117,16 @@ class ModelEvaluator(PipelineStage):
         inference_ctx = context.get(StageNames.INFERENCE_DEPLOYER, {})
         endpoint_url: str | None = inference_ctx.get("endpoint_url") or context.get("endpoint_url")
         if not endpoint_url:
-            return Err(InferenceError(
-                message=(
-                    "evaluation requires a live inference endpoint, but "
-                    "context['endpoint_url'] is missing — InferenceDeployer "
-                    "either did not run or did not activate the endpoint"
-                ),
-                code="EVAL_ENDPOINT_MISSING",
-            ))
+            return Err(
+                InferenceError(
+                    message=(
+                        "evaluation requires a live inference endpoint, but "
+                        "context['endpoint_url'] is missing — InferenceDeployer "
+                        "either did not run or did not activate the endpoint"
+                    ),
+                    code="EVAL_ENDPOINT_MISSING",
+                )
+            )
 
         # Pre-flight: prove the endpoint is actually reachable before
         # firing N samples at it. activate_for_eval should have left it
@@ -324,17 +326,20 @@ def _preflight_check_endpoint(
             if response.status_code < 500:
                 logger.info(
                     "[EVAL] pre-flight OK (%s → HTTP %d)",
-                    url, response.status_code,
+                    url,
+                    response.status_code,
                 )
                 return Ok(None)
             last_err = f"HTTP {response.status_code}"
         if attempt < retries:
             sleep_cancellable(_PREFLIGHT_RETRY_BACKOFF_S)
-    return Err(InferenceError(
-        message=(
-            f"inference endpoint pre-flight failed: GET {url} → {last_err} "
-            f"(after {retries + 1} attempts). Endpoint is unreachable; "
-            "evaluation aborted to avoid garbage results."
-        ),
-        code="EVAL_ENDPOINT_UNREACHABLE",
-    ))
+    return Err(
+        InferenceError(
+            message=(
+                f"inference endpoint pre-flight failed: GET {url} → {last_err} "
+                f"(after {retries + 1} attempts). Endpoint is unreachable; "
+                "evaluation aborted to avoid garbage results."
+            ),
+            code="EVAL_ENDPOINT_UNREACHABLE",
+        )
+    )
