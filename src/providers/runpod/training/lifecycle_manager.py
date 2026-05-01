@@ -61,7 +61,10 @@ class PodLifecycleManager:
             if query_result.is_failure():
                 err = query_result.unwrap_err()
                 logger.warning(f"Error querying pod: {err} (elapsed: {elapsed_s}s/{timeout}s)")
-                if "No pod data received" in err.message:
+                # Pod literally doesn't exist on RunPod side — recreate, don't retry.
+                # API client raises this with a typed code; matching on `.code`
+                # rather than message text so wording can change without breaking us.
+                if err.code == "RUNPOD_POD_DATA_MISSING":
                     return Err(err)
                 time.sleep(10)
                 continue

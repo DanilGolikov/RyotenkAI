@@ -119,6 +119,50 @@ def test_wait_single_attempt_stuck_detection(monkeypatch: pytest.MonkeyPatch) ->
     assert "timeout" in str(res.unwrap_err()).lower()
 
 
+def test_wait_single_attempt_aborts_on_pod_data_missing_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pod doesn't exist on RunPod side → abort immediately, do not retry.
+
+    Pinning behavior on the typed error code (``RUNPOD_POD_DATA_MISSING``)
+    rather than message text so that future wording changes in the API
+    client don't silently turn this into an infinite retry loop.
+    """
+    pod_missing_err = ProviderError(
+        message="anything — wording is not the contract",
+        code="RUNPOD_POD_DATA_MISSING",
+    )
+    api = StubAPI(responses=[Err(pod_missing_err)])
+    mgr = PodLifecycleManager(api_client=api)
+
+    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(lm.time, "time", _fake_time())
+
+    res = mgr._wait_single_attempt("pod-1", timeout=300)
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_POD_DATA_MISSING"
+    # Single query — no retry on this terminal-class error.
+    assert api.calls == 1
+
+
+def test_wait_single_attempt_retries_on_other_query_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient query errors (non-``RUNPOD_POD_DATA_MISSING`` codes) keep
+    polling until success or timeout — they must NOT cause an early bailout."""
+    transient = Err(ProviderError(message="network glitch", code="RUNPOD_TRANSIENT"))
+    ready = Ok(_snap(status="RUNNING", uptime=5, ssh=_SSH_OK))
+    api = StubAPI(responses=[transient, transient, ready])
+    mgr = PodLifecycleManager(api_client=api)
+
+    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(lm.time, "time", _fake_time())
+
+    res = mgr._wait_single_attempt("pod-1", timeout=600)
+    assert res.is_success()
+    assert api.calls == 3
+
+
 def test_wait_single_attempt_no_exposed_tcp_fails_after_grace(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pod with ports but no SSH exposed TCP should fail after 30s grace period."""
     snap_no_ssh = _snap(status="RUNNING", uptime=30, port_count=2, ssh=None)
