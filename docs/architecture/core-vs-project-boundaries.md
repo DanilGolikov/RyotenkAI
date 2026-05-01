@@ -49,7 +49,7 @@ this file is the steady-state contract (the **what**).
    │  )                                           │
    │                                              │
    │  Knows: config schema, stages, MLflow,       │
-   │         integration resolver, run state.     │
+   │         run state.                            │
    │  Does NOT know: projects, env.json, history. │
    └────────────────────────────────────────────┘
                         │
@@ -62,8 +62,8 @@ this file is the steady-state contract (the **what**).
 
 | Layer            | Knows                                                            | Does **not** know                                       |
 |------------------|------------------------------------------------------------------|---------------------------------------------------------|
-| **Core**         | PipelineConfig schema, stages, integration resolver, run state, MLflow lifecycle | Projects, ``env.json``, history snapshots, Web UI       |
-| **Project**      | ``~/.ryotenkai/projects/<id>/`` filesystem, ``env.json``, history, datasets manifest, integrations linking | Stages, MLflow runtime, secrets resolution              |
+| **Core**         | PipelineConfig schema, stages, run state, MLflow lifecycle       | Projects, ``env.json``, history snapshots, Web UI       |
+| **Project**      | ``~/.ryotenkai/projects/<id>/`` filesystem, ``env.json``, history, datasets manifest | Stages, MLflow runtime, secrets resolution              |
 | **Caller**       | How to assemble (or skip) the adapter and feed the core          | Internals of either                                     |
 
 ---

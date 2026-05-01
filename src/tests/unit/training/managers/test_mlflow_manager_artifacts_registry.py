@@ -28,14 +28,8 @@ from src.utils.config import (
 )
 
 
-pytestmark = pytest.mark.skip(
-    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
-        "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
-        "system_metrics_*) that per PR3 live on the integration side. Project "
-        "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
-        "assuming the resolver has already merged it. Unskip when the resolver "
-        "lands.")
-)
+# Previously skipped pending an integrations resolver pass — schema now
+# produces ``MLflowConfig`` directly.
 
 def _mk_cfg(
     *,

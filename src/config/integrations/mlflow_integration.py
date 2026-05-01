@@ -1,10 +1,11 @@
-"""Settings-level MLflow integration schema (PR1).
+"""Settings-level MLflow integration schema.
 
-This is the schema a reusable MLflow integration is validated against in
-Settings → Integrations → MLflow. It carries only fields that are
+This is the schema a reusable MLflow integration is validated against
+in Settings → Integrations → MLflow. It carries only fields that are
 shared across projects — tracking URIs, TLS bundle, system-metrics
-cadence. Project-scoped fields (``experiment_name``, ``run_description_file``)
-live on the project-side ``MLflowTrackingRef`` introduced in PR3.
+cadence. Project-scoped fields (``experiment_name``,
+``run_description_file``) live on the project's own ``MLflowConfig``
+inside the pipeline YAML.
 
 Security note: this schema deliberately declares no ``token`` /
 ``tracking_token`` field. The MLflow bearer token is stored encrypted

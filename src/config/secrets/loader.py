@@ -2,9 +2,9 @@
 
 Precedence (highest → lowest):
 
-1. **Per-resource encrypted token** — ``~/.ryotenkai/{providers,integrations}/<id>/token.enc``.
-   Not resolved here; callers use ``secrets.get_hf_token(integration_id)`` or
-   ``secrets.get_provider_token(provider_id)``.
+1. **Per-provider encrypted token** — ``~/.ryotenkai/providers/<id>/token.enc``.
+   Not resolved here; callers use ``secrets.get_provider_token(provider_id)``.
+   The HF token is sourced exclusively from ``HF_TOKEN`` env / ``secrets.env``.
 2. **Subprocess os.environ** — at runtime the Web-API launcher merges the
    project's ``env.json`` on top of the parent process env BEFORE spawning
    the training subprocess (see ``spawn_launch_detached``); so everything

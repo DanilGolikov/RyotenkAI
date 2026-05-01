@@ -154,10 +154,9 @@ def _fallback_with_warning(
 
             logger.warning(
                 "[SECRETS] No token.enc for %s/%s — using env fallback. "
-                "Configure it in Settings → %s to avoid this warning.",
+                "Configure it in Settings → Providers to avoid this warning.",
                 workspace_kind,
                 resource_id,
-                "Integrations" if workspace_kind == "integrations" else "Providers",
             )
         except Exception:  # noqa: BLE001 — warnings are best-effort
             pass

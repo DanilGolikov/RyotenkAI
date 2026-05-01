@@ -30,12 +30,13 @@ from src.utils.config import (
 
 
 pytestmark = pytest.mark.skip(
-    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
-        "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
-        "system_metrics_*) that per PR3 live on the integration side. Project "
-        "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
-        "assuming the resolver has already merged it. Unskip when the resolver "
-        "lands.")
+    reason=(
+        "Stale fixtures: PipelineConfig stub uses provider/training "
+        "fields removed from the schema (``training.image_name`` etc.). "
+        "Originally skipped pending an integrations resolver — that "
+        "precondition is met now, but the test scaffolding rotted "
+        "independently. Rewrite when revisiting MLflowManager coverage."
+    )
 )
 
 def _model_cfg() -> ModelConfig:

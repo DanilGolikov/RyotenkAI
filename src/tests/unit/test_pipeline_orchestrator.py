@@ -148,9 +148,7 @@ class TestPipelineOrchestratorInitialization:
     # ``test_init_invalid_config_path_raises_exception`` removed: the
     # legacy positional ``PipelineOrchestrator(config_path)`` constructor
     # no longer exists. Path-resolution / FileNotFound errors are now
-    # the responsibility of the upstream ``load_pipeline_config`` helper
-    # (see ``src/tests/unit/workspace/integrations/test_resolver.py`` for
-    # the YAML-loading edges).
+    # the responsibility of the upstream ``load_pipeline_config`` helper.
 
     def test_init_validates_strategy_chain(
         self,

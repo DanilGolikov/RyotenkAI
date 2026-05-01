@@ -29,16 +29,15 @@ from src.utils.config import (
     TrainingOnlyConfig,
 )
 
-pytestmark = pytest.mark.unit
-
-
 pytestmark = pytest.mark.skip(
-    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
-        "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
-        "system_metrics_*) that per PR3 live on the integration side. Project "
-        "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
-        "assuming the resolver has already merged it. Unskip when the resolver "
-        "lands.")
+    reason=(
+        "Stale fixtures: tests poke private MLflowManager wiring that "
+        "has since been refactored (resilient transport, URI "
+        "resolution, log_dataset_input). Originally skipped pending an "
+        "integrations resolver — that precondition is met now, but the "
+        "test scaffolding rotted independently. Rewrite when revisiting "
+        "MLflowManager coverage."
+    )
 )
 
 def _mk_cfg(
