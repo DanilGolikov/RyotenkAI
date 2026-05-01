@@ -153,6 +153,32 @@ class RunPodInferencePodControl:
     def get_pod(self, *, pod_id: str) -> Result[dict[str, Any], ProviderError]:
         return self._api.get_pod(pod_id=pod_id)
 
+    def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+        """Inference-side analogue of ``RunPodTrainingPodControl.query_pod_snapshot``.
+
+        Both control surfaces now expose the same one-method readiness
+        contract, so the canonical ``PodSshWaiter`` (introduced in a
+        follow-up commit) can poll either one through a single
+        ``PodQuery`` Protocol — no per-side branches.
+
+        Returns ``Err(RUNPOD_POD_DATA_MISSING)`` if the SDK reports the
+        pod doesn't exist (matches training's behavior so the waiter's
+        terminal-class check is symmetric).
+        """
+        result = self._api.get_pod(pod_id=pod_id)
+        if result.is_failure():
+            return Err(result.unwrap_err())  # type: ignore[union-attr]
+        pod_data = result.unwrap()
+        if not pod_data:
+            return Err(
+                ProviderError(
+                    message="No pod data received",
+                    code="RUNPOD_POD_DATA_MISSING",
+                    details={"pod_id": pod_id},
+                )
+            )
+        return Ok(PodSnapshot.from_graphql(pod_data))
+
     def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
         return self._api.stop_pod(pod_id=pod_id)
 

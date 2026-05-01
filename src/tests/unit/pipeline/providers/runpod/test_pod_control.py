@@ -300,3 +300,48 @@ def test_inference_control_propagates_api_errors() -> None:
     assert control.stop_pod(pod_id="pod-1").unwrap_err().message == "stop failed"
     assert control.delete_pod(pod_id="pod-1").unwrap_err().message == "delete failed"
     assert control.get_pod(pod_id="pod-1").unwrap_err().message == "get failed"
+
+
+def test_inference_control_query_pod_snapshot_returns_typed_snapshot() -> None:
+    """Inference control mirrors training's ``query_pod_snapshot`` so a
+    single ``PodQuery`` Protocol can drive both surfaces."""
+    api = FakeInferenceApi(
+        get_result=Ok(  # type: ignore[call-arg]
+            {
+                "id": "pod-inf",
+                "desiredStatus": "RUNNING",
+                "runtime": {
+                    "uptimeInSeconds": 12,
+                    "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345, "isIpPublic": True}],
+                },
+            }
+        )
+    )
+    control = RunPodInferencePodControl(api=api)
+    res = control.query_pod_snapshot("pod-inf")
+    assert res.is_success()
+    snap = res.unwrap()
+    assert isinstance(snap, PodSnapshot)
+    assert snap.is_ready
+    assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=12345)
+
+
+def test_inference_control_query_pod_snapshot_propagates_api_error() -> None:
+    api = FakeInferenceApi(
+        get_result=Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED")),
+    )
+    control = RunPodInferencePodControl(api=api)
+    res = control.query_pod_snapshot("pod-1")
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+
+
+def test_inference_control_query_pod_snapshot_empty_dict_returns_data_missing() -> None:
+    """Empty SDK response => typed terminal-class error code, matching
+    training's behavior so the waiter's abort-vs-retry classification
+    is identical for both surfaces."""
+    api = FakeInferenceApi(get_result=Ok({}))  # type: ignore[call-arg]
+    control = RunPodInferencePodControl(api=api)
+    res = control.query_pod_snapshot("pod-1")
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_POD_DATA_MISSING"
