@@ -245,23 +245,35 @@ def execute_launch_subprocess(
     )
 
 
-def spawn_launch_detached(
+def spawn_launch(
     request: LaunchRequest,
     *,
     python_executable: str | None = None,
     extra_env: dict[str, str] | None = None,
-) -> tuple[int, tuple[str, ...], Path]:
-    """Spawn the training subprocess without waiting.
+    attach_stdio: bool = False,
+) -> tuple[int, tuple[str, ...], Path | None]:
+    """Spawn the training subprocess without waiting on it.
 
-    Returns (pid, command, launcher_log_path). Unlike execute_launch_subprocess,
-    this never blocks — use it from HTTP handlers that just want to kick off a
-    pipeline and return immediately. The subprocess remains attached to the
-    detached session it was started in, so the caller process can die without
-    orphaning it in a bad way (the orchestrator owns run.lock).
+    Returns ``(pid, command, launcher_log_path)``. The third tuple slot is
+    ``None`` in foreground mode (``attach_stdio=True``) — there is no
+    side-channel log when the user is watching the terminal directly.
 
-    ``extra_env`` (e.g. project-scoped env.json overrides) is merged on top of
-    the parent process env — project values win over server-wide defaults so
-    users can override ambient creds per-experiment.
+    ``attach_stdio=False`` (default — Web API path):
+        Detached mode. Child runs in its own session
+        (``start_new_session=True``) so the launcher process can die
+        without orphaning the run. Stdin closed, stdout/stderr captured
+        into ``<run_dir>/tui_launch.log``.
+
+    ``attach_stdio=True`` (CLI ``run start/resume/restart`` path):
+        Foreground mode. Child shares the parent's stdio and process
+        group — SIGINT typed in the terminal reaches it natively
+        through the kernel, no forwarder required. No launcher log is
+        written (the user already sees the output live).
+
+    ``extra_env`` (project-scoped env.json overrides + ``RYOTENKAI_*``
+    metadata vars set by the launcher) is merged on top of the parent
+    process env. Project values win over server-wide defaults so users
+    can override ambient creds per-experiment.
     """
     normalized = request.validate()
     command = tuple(build_worker_command(normalized, python_executable=python_executable))
@@ -272,6 +284,23 @@ def spawn_launch_detached(
             if v != "":
                 process_env[k] = v
     normalized.run_dir.mkdir(parents=True, exist_ok=True)
+
+    if attach_stdio:
+        # Foreground: inherit terminal, share PG with parent (no
+        # start_new_session). The kernel routes Ctrl-C to the whole PG
+        # so the child naturally sees it; the parent CLI can still
+        # ``os.waitpid`` and propagate the exit code.
+        process = subprocess.Popen(
+            command,
+            cwd=str(_PROJECT_ROOT),
+            env=process_env,
+            # stdin/stdout/stderr=None ⇒ inherit
+            start_new_session=False,
+        )
+        return process.pid, command, None
+
+    # Detached: redirect stdio into a launcher log file the API can
+    # tail. Child runs in its own session so it survives uvicorn restarts.
     launcher_log_path = _launcher_log_path(normalized.run_dir)
     launcher_log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -299,6 +328,27 @@ def spawn_launch_detached(
     return process.pid, command, launcher_log_path
 
 
+# Back-compat alias kept for one commit so the API service can migrate
+# to ``spawn_launch`` in a separate change. Deleted in the cleanup pass.
+def spawn_launch_detached(
+    request: LaunchRequest,
+    *,
+    python_executable: str | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> tuple[int, tuple[str, ...], Path]:
+    """Deprecated: use ``spawn_launch(..., attach_stdio=False)`` instead."""
+    pid, command, log_path = spawn_launch(
+        request,
+        python_executable=python_executable,
+        extra_env=extra_env,
+        attach_stdio=False,
+    )
+    # In detached mode log_path is always non-None — assert for the
+    # type-checker; the API service relies on it for tail reads.
+    assert log_path is not None
+    return pid, command, log_path
+
+
 __all__ = [
     "MODE_FRESH",
     "MODE_NEW_RUN",
@@ -315,5 +365,6 @@ __all__ = [
     "interrupt_launch_process",
     "is_process_alive",
     "read_lock_pid",
+    "spawn_launch",
     "spawn_launch_detached",
 ]

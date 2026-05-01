@@ -34,6 +34,7 @@ from src.pipeline.launch.runtime import (
     interrupt_launch_process,
     is_process_alive,
     read_lock_pid,
+    spawn_launch,
     spawn_launch_detached,
 )
 
@@ -71,6 +72,7 @@ __all__ = [
     "pick_default_launch_mode",
     "read_lock_pid",
     "resolve_config_path_for_run",
+    "spawn_launch",
     "spawn_launch_detached",
     "validate_resume_run",
 ]
