@@ -530,13 +530,34 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
         params = self._build_eval_session_params()
 
+        from src.pipeline.cancellation import PipelineCancelled
         from src.providers.runpod.inference.pods import pod_session
 
-        session_res = pod_session.activate(
-            api=pod_control,
-            pod_id=pod_id,
-            **params,
-        )
+        try:
+            session_res = pod_session.activate(
+                api=pod_control,
+                pod_id=pod_id,
+                **params,
+            )
+        except PipelineCancelled:
+            # Ctrl+C arrived during pod-wait / merge / vLLM startup. The
+            # pod is already running and billing — synchronously tear it
+            # down before re-raising so cleanup-in-reverse doesn't have
+            # to chase it later.
+            logger.info(
+                "[EVAL] cancellation received during activate_for_eval — "
+                "tearing down pod %s synchronously",
+                pod_id,
+            )
+            try:
+                pod_control.delete_pod(pod_id=pod_id)
+            except Exception as cleanup_exc:  # noqa: BLE001 — never block the unwind
+                logger.warning(
+                    "[EVAL] best-effort delete_pod after cancel failed: %s",
+                    cleanup_exc,
+                )
+            self._pod_id = None
+            raise
         if session_res.is_failure():
             return Err(
                 InferenceError(

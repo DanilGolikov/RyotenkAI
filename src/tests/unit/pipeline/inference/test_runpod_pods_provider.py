@@ -129,12 +129,16 @@ def _mk_provider(
     if with_volume:
         volume_cfg_raw = {"id": "vol-123", "name": "my-vol", "size_gb": 50, "data_center_id": "US-KS-2"}
 
+    # NB: ``image_name`` was removed from RunPodTraining/PodConfig in
+    # Phase 6.6 (image is pinned in code, not YAML). The fixture originally
+    # passed it and silently broke when the schema tightened — repaired
+    # here so the activate_for_eval cancellation tests below can run.
     prov_cfg = RunPodProviderConfig(
         connect={"ssh": {"key_path": key_path}},
         cleanup={},
-        training={"image_name": "img", "gpu_type": "A40"},
+        training={"gpu_type": "A40"},
         inference={
-            "pod": {"image_name": "inference-img", "gpu_type_ids": ["NVIDIA A40"]},
+            "pod": {"gpu_type_ids": ["NVIDIA A40"]},
             **({"volume": volume_cfg_raw} if volume_cfg_raw else {}),
         },
     )
@@ -535,6 +539,61 @@ def test_activate_for_eval_session_failure_returns_inference_err(monkeypatch: py
     err = res.unwrap_err()
     assert isinstance(err, InferenceError)
     assert err.code == "RUNPOD_EVAL_ACTIVATE_FAILED"
+
+
+def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+C during pod-wait / merge / vLLM-startup → catch
+    PipelineCancelled, delete the running pod synchronously, re-raise.
+
+    Without this hook the in-flight pod would leak until the orchestrator's
+    deferred cleanup-in-reverse caught up — bad UX (user sees a billing
+    pod still running after Ctrl+C).
+    """
+    from src.pipeline.cancellation import PipelineCancelled
+
+    api = StubApi(delete_pod_results=[Ok(None)])
+    p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
+
+    def raise_cancelled(**_kw: object) -> None:
+        raise PipelineCancelled()
+
+    monkeypatch.setattr(
+        "src.providers.runpod.inference.pods.pod_session.activate",
+        raise_cancelled,
+    )
+
+    with pytest.raises(PipelineCancelled):
+        p.activate_for_eval()
+
+    # Pod was synchronously deleted before re-raise.
+    assert api.delete_pod_results == []  # consumed
+    assert p._pod_id is None
+
+
+def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Best-effort delete on cancel — if delete itself fails, we still
+    re-raise PipelineCancelled (don't mask the user's intent)."""
+    from src.pipeline.cancellation import PipelineCancelled
+
+    api = StubApi(
+        delete_pod_results=[Err(ProviderError(message="boom", code="DELETE_FAIL"))],
+    )
+    p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
+
+    def raise_cancelled(**_kw: object) -> None:
+        raise PipelineCancelled()
+
+    monkeypatch.setattr(
+        "src.providers.runpod.inference.pods.pod_session.activate",
+        raise_cancelled,
+    )
+
+    with pytest.raises(PipelineCancelled):
+        p.activate_for_eval()
 
 
 def test_activate_for_eval_session_inference_error_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
