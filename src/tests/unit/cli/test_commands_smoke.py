@@ -235,7 +235,9 @@ def test_run_start_dry_run_succeeds(
         app, ["run", "start", "--config", str(config_path), "--dry-run"],
     )
     assert result.exit_code == 0
-    assert "dry-run" in result.stdout
+    # Dry-run prints a JSON plan rather than a "dry-run: ..." line.
+    assert '"mode": "start"' in result.stdout
+    assert '"config_path"' in result.stdout
 
 
 # ---------------------------------------------------------------------------

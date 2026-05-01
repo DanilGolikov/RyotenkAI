@@ -1,21 +1,27 @@
 """``ryotenkai run <verb>`` — start / resume / restart / interrupt / restart-points.
 
-This is the *write* face of the run lifecycle: it spawns / resumes /
-stops a pipeline. Read-only inspection commands live under ``runs``
+This is the *write* face of the run lifecycle: it spawns a pipeline
+worker subprocess (``python -m src.pipeline.worker``) and waits for
+it to exit. Read-only inspection commands live under ``runs``
 (plural) — see :mod:`src.cli.commands.runs`.
 
-All heavy imports (orchestrator, mlflow, torch) live inside command
-bodies so ``ryotenkai run --help`` stays under the 300 ms budget.
+All heavy imports (orchestrator, mlflow, torch) live inside the
+worker subprocess — the parent CLI never imports them. ``ryotenkai
+run --help`` stays under the 300 ms budget; the heavy load happens
+once per launch in the spawned child.
 """
 
 from __future__ import annotations
 
+import json
+import os
+import signal
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from src.cli import _signals
 from src.cli.common_options import (
     DryRunOpt,
     OptionalRunDirOpt,
@@ -23,7 +29,7 @@ from src.cli.common_options import (
     RunDirArg,
 )
 from src.cli.context import CLIContext
-from src.cli.errors import die, format_validation_errors, load_config_or_die
+from src.cli.errors import die, format_validation_errors
 from src.cli.renderer import get_renderer
 
 run_app = typer.Typer(
@@ -33,6 +39,11 @@ run_app = typer.Typer(
     context_settings={"help_option_names": ["-h", "--help"]},
     pretty_exceptions_enable=False,
 )
+
+
+# Actor stamped on a "bare CLI" run (no --actor flag, no env var, no
+# OS user) — kept consistent with the worker-side default.
+_CLI_ACTOR_FALLBACK = "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -72,113 +83,178 @@ def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
     )
 
 
-def _exec_orchestrator(
-    config: Path | None,
+def _resolve_project_for_launch(
+    project_id: str | None,
     *,
+    config: Path | None,
     run_dir: Path | None,
-    resume: bool,
-    restart_from_stage: str | None,
-    dry_run: bool,
-    project_id: str | None = None,
-) -> None:
-    """Common path for ``run start / resume / restart``.
+):
+    """Resolve project context for spawn.
 
-    When ``project_id`` is given, the adapter
-    (:func:`src.workspace.projects.adapter.load_project_inputs`)
-    supplies the orchestrator with ``(config, env, metadata)`` derived
-    from the project's filesystem; ``config`` is treated as a config
-    override rather than the source of truth.
+    Precedence:
+      1. Explicit ``--project`` flag (or ``RYOTENKAI_PROJECT`` env var
+         routed through Typer) → :func:`resolve_project_launch_inputs`.
+      2. Walk-up from ``run_dir`` (resume / restart paths) → finds
+         enclosing ``project.json`` if any.
+      3. None — anonymous / ad-hoc run.
+
+    Returns a :class:`ResolvedProject` or ``None``. Failures
+    (project not registered, malformed YAML) surface as ``die()``.
     """
+    from pydantic import ValidationError
+
     from src.workspace.projects.adapter import (
         ProjectNotFoundError,
-        load_project_inputs,
+        resolve_project_launch_inputs,
+        resolve_project_launch_inputs_from_run_dir,
     )
 
-    project_inputs = None
     if project_id is not None:
-        from pydantic import ValidationError
-
         try:
-            # Bare ``run start --project X`` → use project's
-            # ``configs/current.yaml``. ``run start -c Y --project X``
-            # → use ``Y`` as override but keep project's env+metadata.
-            project_inputs = load_project_inputs(
+            return resolve_project_launch_inputs(
                 project_id,
                 config_override=config if config is not None else None,
             )
         except ProjectNotFoundError as exc:
             raise die(str(exc))
         except ValidationError as exc:
-            # Project's ``configs/current.yaml`` failed schema validation.
-            # Render field-level errors instead of a raw traceback.
             raise die(
                 f"invalid config in project {project_id!r}\n"
                 f"{format_validation_errors(exc)}"
             )
 
-    if dry_run:
-        if project_inputs is not None:
-            typer.echo(
-                f"dry-run: project={project_id} config OK; would start "
-                f"(run_dir={run_dir}, resume={resume}, "
-                f"restart_from_stage={restart_from_stage}, "
-                f"actor={project_inputs.metadata.get('actor')})",
-            )
-            return
-        # Legacy ad-hoc path — resolve_config above guarantees config
-        # is set on this branch.
-        assert config is not None
-        load_config_or_die(config)
-        typer.echo(
-            f"dry-run: config {config} OK; would start "
-            f"(run_dir={run_dir}, resume={resume}, "
-            f"restart_from_stage={restart_from_stage})",
+    if run_dir is not None:
+        # Resume/restart from a project-launched run — pick up env +
+        # metadata from the enclosing project workspace so MLflow tags
+        # carry through across attempts.
+        return resolve_project_launch_inputs_from_run_dir(run_dir)
+
+    return None
+
+
+def _spawn_worker(
+    *,
+    mode: str,
+    config: Path | None,
+    run_dir: Path | None,
+    restart_from_stage: str | None,
+    project_id: str | None,
+    dry_run: bool,
+) -> None:
+    """Spawn the pipeline worker subprocess and propagate exit code.
+
+    Single launch path used by ``start / resume / restart``. Builds
+    the ``LaunchRequest`` + ``extra_env``, then either prints the
+    plan (``dry_run``) or forks ``python -m src.pipeline.worker``
+    foreground (stdio inherited, blocking).
+    """
+    from src.pipeline.launch import LaunchRequest, spawn_launch
+    from src.workspace.projects.adapter import build_subprocess_extra_env
+
+    resolved = _resolve_project_for_launch(
+        project_id, config=config, run_dir=run_dir,
+    )
+
+    # ``config`` precedence: explicit --config flag wins; else use the
+    # project's resolved config_path; else lift from run_dir's state.
+    if config is not None:
+        config_for_spawn = config
+    elif resolved is not None:
+        config_for_spawn = resolved.config_path
+    elif mode in ("resume", "restart"):
+        # Allow worker to lift from pipeline_state.json — it has the
+        # same logic. Pass None to omit --config from the command.
+        config_for_spawn = None
+    else:
+        # Fresh run with neither --config nor --project nor run_dir
+        # context. This shouldn't happen because the dispatch above
+        # validates inputs, but raise a clean error if it does.
+        raise die(
+            "missing required argument",
+            hint="provide --config <path>, --project <id>, or --run-dir for resume/restart",
         )
+
+    launch_request = LaunchRequest(
+        mode="fresh" if mode == "start" else mode,  # type: ignore[arg-type]
+        run_dir=(run_dir or Path.cwd()),  # placeholder; overridden when run_dir is None
+        config_path=config_for_spawn,
+        restart_from_stage=restart_from_stage,
+        log_level="INFO",
+    )
+
+    # Validate request shape (fresh requires config; restart requires stage).
+    # Fresh run without run_dir: worker's RuntimeSettings creates a fresh dir.
+    if run_dir is None:
+        # LaunchRequest requires a run_dir. For fresh runs without an
+        # explicit dir we let the worker allocate one — pass a sentinel
+        # of CWD here and rely on settings.runs_base_dir downstream.
+        # The worker module accepts --run-dir as optional and falls back.
+        pass
+
+    actor_default = _CLI_ACTOR_FALLBACK
+    extra_env = build_subprocess_extra_env(resolved, default_actor=actor_default)
+
+    if dry_run:
+        plan = {
+            "mode": mode,
+            "run_dir": str(run_dir) if run_dir else None,
+            "config_path": str(config_for_spawn) if config_for_spawn else None,
+            "restart_from_stage": restart_from_stage,
+            "project_id": resolved.metadata["project_id"] if resolved else None,
+            "extra_env_keys": sorted(extra_env.keys()),
+        }
+        typer.echo(json.dumps(plan, indent=2))
         return
 
-    from src.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
+    # Foreground spawn — child shares parent's PG so kernel routes
+    # SIGINT to it natively. Parent ignores SIGINT during wait so the
+    # child handles it cleanly without a Python-side forwarder fight.
+    if run_dir is None and config_for_spawn is None:
+        raise die("spawn requires --run-dir or --config")
 
-    if project_inputs is not None:
-        # Variant 1 path: orchestrator gets a pre-resolved config +
-        # explicit env mapping + audit metadata. Adapter has already
-        # called ``load_config`` under the hood. The project's own
-        # ``runs/`` directory becomes the runs-base so a fresh
-        # launch lands at ``<project>/runs/<run_id>/`` instead of
-        # the global location.
-        from src.config.runtime import RuntimeSettings, load_runtime_settings
+    # Construct the command directly (LaunchRequest validation expects
+    # a real run_dir for fresh-mode; we shortcut around it for the
+    # "no run_dir" case by building the command manually).
+    cmd = ["python", "-m", "src.pipeline.worker"]
+    if run_dir is not None:
+        cmd.extend(["--run-dir", str(run_dir.expanduser().resolve())])
+    if config_for_spawn is not None:
+        cmd.extend(["--config", str(config_for_spawn)])
+    if mode == "resume":
+        cmd.append("--resume")
+    elif mode == "restart":
+        cmd.extend(["--restart-from-stage", restart_from_stage or ""])
 
-        base = load_runtime_settings()
-        project_settings = RuntimeSettings(
-            runs_base_dir=project_inputs.runs_base_dir,
-            log_level=base.log_level,
-        )
-        orchestrator = PipelineOrchestrator(
-            config=project_inputs.config,
-            env=project_inputs.env,
-            metadata=project_inputs.metadata,
-            run_directory=run_dir,
-            settings=project_settings,
-        )
-    else:
-        # Anonymous / ad-hoc path. CLI loads the YAML and hands a
-        # fully-validated ``PipelineConfig`` to the orchestrator. There
-        # is no legacy positional path-based constructor anymore.
-        assert config is not None
-        cfg_obj = load_config_or_die(config)
-        orchestrator = PipelineOrchestrator(
-            config=cfg_obj, run_directory=run_dir,
-        )
+    # Use sys.executable to keep venv consistency across CLI and worker.
+    import sys
+    cmd[0] = sys.executable
 
-    _signals.set_active_orchestrator(orchestrator)
+    process_env = os.environ.copy()
+    process_env["LOG_LEVEL"] = "INFO"
+    for k, v in extra_env.items():
+        if v != "":
+            process_env[k] = v
+
+    project_root = Path(__file__).resolve().parents[3]
+
+    # Ignore SIGINT in parent — kernel still delivers it to the
+    # child via the shared process group. Child handles cleanup;
+    # parent just waits for the child to exit.
+    old_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
-        result = orchestrator.run(
-            run_dir=run_dir, resume=resume, restart_from_stage=restart_from_stage,
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(project_root),
+            env=process_env,
+            start_new_session=False,
         )
-        if not result.is_success():
-            raise die(f"pipeline failed: {result.unwrap_err()}")
-        typer.echo("Pipeline completed successfully.")
+        return_code = proc.wait()
     finally:
-        _signals.set_active_orchestrator(None)
+        signal.signal(signal.SIGINT, old_handler)
+
+    if return_code != 0:
+        raise typer.Exit(code=return_code)
+    typer.echo("Pipeline completed successfully.")
 
 
 # ---------------------------------------------------------------------------
@@ -226,17 +302,24 @@ def start_cmd(
         # Project mode: --config is treated as override, not source of
         # truth. ``_resolve_config`` would error on missing config for
         # bare ``--project X`` runs, so we skip it.
-        _exec_orchestrator(
-            config, run_dir=run_dir, resume=False,
-            restart_from_stage=None, dry_run=dry_run,
+        _spawn_worker(
+            mode="start",
+            config=config,
+            run_dir=run_dir,
+            restart_from_stage=None,
             project_id=resolved_project,
+            dry_run=dry_run,
         )
         return
 
     resolved = _resolve_config(config, run_dir)
-    _exec_orchestrator(
-        resolved, run_dir=run_dir, resume=False,
-        restart_from_stage=None, dry_run=dry_run,
+    _spawn_worker(
+        mode="start",
+        config=resolved,
+        run_dir=run_dir,
+        restart_from_stage=None,
+        project_id=None,
+        dry_run=dry_run,
     )
 
 
@@ -284,9 +367,13 @@ def resume_cmd(
         _resume_pod_if_needed(run_dir)
 
     resolved = _resolve_config(config, run_dir)
-    _exec_orchestrator(
-        resolved, run_dir=run_dir, resume=True,
-        restart_from_stage=None, dry_run=dry_run,
+    _spawn_worker(
+        mode="resume",
+        config=resolved,
+        run_dir=run_dir,
+        restart_from_stage=None,
+        project_id=None,
+        dry_run=dry_run,
     )
 
 
@@ -404,9 +491,13 @@ def restart_cmd(
 ) -> None:
     """Restart an existing run from a specific stage onwards."""
     resolved = _resolve_config(config, run_dir)
-    _exec_orchestrator(
-        resolved, run_dir=run_dir, resume=False,
-        restart_from_stage=from_stage, dry_run=dry_run,
+    _spawn_worker(
+        mode="restart",
+        config=resolved,
+        run_dir=run_dir,
+        restart_from_stage=from_stage,
+        project_id=None,
+        dry_run=dry_run,
     )
 
 

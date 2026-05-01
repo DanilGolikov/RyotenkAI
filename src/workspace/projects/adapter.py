@@ -365,6 +365,38 @@ def resolve_project_launch_inputs_from_run_dir(
     return None
 
 
+def build_subprocess_extra_env(
+    resolved: ResolvedProject | None,
+    *,
+    default_actor: str | None = None,
+) -> dict[str, str]:
+    """Convert a :class:`ResolvedProject` into the ``extra_env`` map for spawn.
+
+    Combines project ``env.json`` overrides with the ``RYOTENKAI_*``
+    metadata env vars that the spawned worker's bootstrap reads to
+    populate :class:`PipelineState.metadata` and MLflow ``meta.*`` tags.
+
+    Returns ``{}`` for ad-hoc runs (``resolved is None``) — the worker
+    treats absence of ``RYOTENKAI_PROJECT_ID`` as "anonymous run".
+
+    ``default_actor`` is used when ``resolved.metadata`` carries no
+    actor (e.g. Web API path with no auth — pass ``"agent:web-ui"``).
+    """
+    if resolved is None:
+        return {}
+    extra: dict[str, str] = dict(resolved.env)
+    extra["RYOTENKAI_PROJECT_ID"] = resolved.metadata["project_id"]
+    actor = resolved.metadata.get("actor") or (default_actor or "")
+    if actor:
+        extra["RYOTENKAI_ACTOR"] = actor
+    if resolved.metadata.get("config_version_hash"):
+        extra["RYOTENKAI_CONFIG_VERSION_HASH"] = resolved.metadata["config_version_hash"]
+    extra["RYOTENKAI_RUNS_BASE_DIR"] = str(resolved.runs_base_dir)
+    if "config_override_path" in resolved.metadata:
+        extra["RYOTENKAI_CONFIG_OVERRIDE_PATH"] = resolved.metadata["config_override_path"]
+    return extra
+
+
 def _resolved_from_store(store: ProjectStore, project_id: str) -> ResolvedProject:
     """Build a ResolvedProject directly from a ProjectStore.
 
@@ -435,6 +467,7 @@ __all__ = [
     "ProjectInputs",
     "ProjectNotFoundError",
     "ResolvedProject",
+    "build_subprocess_extra_env",
     "load_project_inputs",
     "resolve_project_launch_inputs",
     "resolve_project_launch_inputs_from_run_dir",

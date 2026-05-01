@@ -22,7 +22,7 @@ from src.pipeline.launch import (
 )
 from src.pipeline.state import PipelineStateStore, remove_stale_lock
 from src.workspace.projects.adapter import (
-    ResolvedProject,
+    build_subprocess_extra_env,
     resolve_project_launch_inputs_from_run_dir,
 )
 
@@ -31,30 +31,6 @@ from src.workspace.projects.adapter import (
 # ``agent:web-ui:user-<id>``. TODO: thread through authenticated
 # user identity.
 _WEB_ACTOR_DEFAULT = "agent:web-ui"
-
-
-def _build_extra_env(resolved: ResolvedProject | None) -> dict[str, str]:
-    """Build the ``extra_env`` map for the spawned worker.
-
-    Combines the project's ``env.json`` overrides with the
-    ``RYOTENKAI_*`` metadata env vars that the worker's bootstrap
-    reads to stamp ``PipelineState.metadata`` and MLflow tags.
-
-    Returns ``{}`` for ad-hoc runs (no enclosing project) — the
-    spawned worker treats absence as "anonymous run".
-    """
-    if resolved is None:
-        return {}
-    extra: dict[str, str] = dict(resolved.env)
-    extra["RYOTENKAI_PROJECT_ID"] = resolved.metadata["project_id"]
-    extra["RYOTENKAI_ACTOR"] = resolved.metadata.get("actor") or _WEB_ACTOR_DEFAULT
-    extra["RYOTENKAI_CONFIG_VERSION_HASH"] = resolved.metadata.get(
-        "config_version_hash", ""
-    )
-    extra["RYOTENKAI_RUNS_BASE_DIR"] = str(resolved.runs_base_dir)
-    if "config_override_path" in resolved.metadata:
-        extra["RYOTENKAI_CONFIG_OVERRIDE_PATH"] = resolved.metadata["config_override_path"]
-    return extra
 
 
 def list_restart_points(run_dir: Path, config_path: Path | None = None) -> RestartPointsResponse:
@@ -93,7 +69,9 @@ def launch(run_dir: Path, request: LaunchRequestSchema) -> LaunchResponse:
     # Surface validation errors (missing config, illegal restart stage, etc.) as 422.
     launch_request = launch_request.validate()
     resolved = resolve_project_launch_inputs_from_run_dir(run_dir)
-    extra_env = _build_extra_env(resolved)
+    extra_env = build_subprocess_extra_env(
+        resolved, default_actor=_WEB_ACTOR_DEFAULT,
+    )
     pid, command, launcher_log = spawn_launch(
         launch_request,
         extra_env=extra_env,
