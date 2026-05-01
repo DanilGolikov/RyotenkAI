@@ -72,10 +72,17 @@ class TestPositive:
             assert orch.config is config
             assert orch.config_path == config_path
 
-    def test_metadata_propagates_to_launch_preparator(self, tmp_path: Path) -> None:
-        # Pin: ``metadata`` reaches LaunchPreparator so fresh-run init
-        # stamps it onto PipelineState (then mirrored to MLflow as
-        # ``meta.*``).
+    def test_metadata_from_env_propagates_to_launch_preparator(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Pin: ``RYOTENKAI_*`` env vars reach LaunchPreparator so
+        # fresh-run init stamps them onto PipelineState (then mirrored
+        # to MLflow as ``meta.*``). The launcher (CLI / API) is the
+        # single source of truth for these values.
+        monkeypatch.setenv("RYOTENKAI_PROJECT_ID", "helixql-v7")
+        monkeypatch.setenv("RYOTENKAI_ACTOR", "human")
+        monkeypatch.delenv("RYOTENKAI_CONFIG_VERSION_HASH", raising=False)
+        monkeypatch.delenv("RYOTENKAI_CONFIG_OVERRIDE_PATH", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
@@ -87,10 +94,7 @@ class TestPositive:
             patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
-            orch = PipelineOrchestrator(
-                config=config,
-                metadata={"project_id": "helixql-v7", "actor": "human"},
-            )
+            orch = PipelineOrchestrator(config=config)
             assert orch._launch_preparator._metadata == {
                 "project_id": "helixql-v7",
                 "actor": "human",
@@ -122,12 +126,20 @@ class TestNegative:
 
 
 # ---------------------------------------------------------------------------
-# 3. Boundary — empty / None metadata
+# 3. Boundary — metadata sourced from RYOTENKAI_* env vars
 # ---------------------------------------------------------------------------
 
 
 class TestBoundary:
-    def test_no_metadata_yields_empty_dict_in_preparator(self, tmp_path: Path) -> None:
+    def test_no_env_vars_yields_empty_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Anonymous run (launcher set no project context) → metadata is ``{}``."""
+        for var in (
+            "RYOTENKAI_PROJECT_ID", "RYOTENKAI_ACTOR",
+            "RYOTENKAI_CONFIG_VERSION_HASH", "RYOTENKAI_CONFIG_OVERRIDE_PATH",
+        ):
+            monkeypatch.delenv(var, raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
@@ -142,7 +154,13 @@ class TestBoundary:
             orch = PipelineOrchestrator(config=config)
             assert orch._launch_preparator._metadata == {}
 
-    def test_explicit_empty_metadata_dict_yields_empty(self, tmp_path: Path) -> None:
+    def test_env_vars_populate_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Launcher sets RYOTENKAI_* → bootstrap stamps them onto preparator."""
+        monkeypatch.setenv("RYOTENKAI_PROJECT_ID", "my-proj")
+        monkeypatch.setenv("RYOTENKAI_ACTOR", "agent:web-ui")
+        monkeypatch.setenv("RYOTENKAI_CONFIG_VERSION_HASH", "deadbeef")
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
@@ -154,8 +172,11 @@ class TestBoundary:
             patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
-            orch = PipelineOrchestrator(config=config, metadata={})
-            assert orch._launch_preparator._metadata == {}
+            orch = PipelineOrchestrator(config=config)
+            md = orch._launch_preparator._metadata
+            assert md["project_id"] == "my-proj"
+            assert md["actor"] == "agent:web-ui"
+            assert md["config_version_hash"] == "deadbeef"
 
 
 # ---------------------------------------------------------------------------
@@ -164,26 +185,28 @@ class TestBoundary:
 
 
 class TestInvariants:
-    def test_metadata_dict_is_copied_not_referenced(self, tmp_path: Path) -> None:
-        # Pin: caller-side mutations of the metadata dict after
-        # construction must NOT affect the orchestrator's state.
+    def test_empty_string_env_vars_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Whitespace-only env vars are treated as unset — no spurious keys
+        like ``actor: ""`` leaking into metadata."""
+        monkeypatch.setenv("RYOTENKAI_PROJECT_ID", "p1")
+        monkeypatch.setenv("RYOTENKAI_ACTOR", "   ")
+        monkeypatch.delenv("RYOTENKAI_CONFIG_VERSION_HASH", raising=False)
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
         secrets = MagicMock()
 
-        caller_dict: dict = {"k": "v"}
         with (
             patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
             patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
-            orch = PipelineOrchestrator(config=config, metadata=caller_dict)
-
-        caller_dict["k"] = "MUTATED"
-        caller_dict["new_key"] = "x"
-        assert orch._launch_preparator._metadata == {"k": "v"}
+            orch = PipelineOrchestrator(config=config)
+            md = orch._launch_preparator._metadata
+            assert md == {"project_id": "p1"}
 
 
 # ---------------------------------------------------------------------------

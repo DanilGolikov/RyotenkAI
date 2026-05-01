@@ -63,8 +63,8 @@ class PipelineOrchestrator:
         self,
         *,
         config: PipelineConfig,
-        env: dict[str, str] | None = None,  # noqa: ARG002 — Step 4 will pipe to load_secrets
-        metadata: dict[str, Any] | None = None,
+        env: dict[str, str] | None = None,  # noqa: ARG002 — deprecated; step 6 removes
+        metadata: dict[str, Any] | None = None,  # noqa: ARG002 — deprecated; bootstrap reads from env now
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
     ):
@@ -78,22 +78,23 @@ class PipelineOrchestrator:
         Args:
             config: Fully-loaded :class:`PipelineConfig` (must have
                 ``_source_path`` set — the loader handles this).
-            env: Explicit env mapping (e.g. ``process_env ∪
-                project_env.json`` from the project adapter). When
-                ``None``, ``load_secrets()`` reads ``os.environ``
-                directly.
-            metadata: Caller-supplied audit / lineage tags. Stamped
-                onto :class:`PipelineState` at fresh-run init and
-                mirrored to MLflow as ``meta.*`` tags. Adapter
-                provides ``project_id`` / ``actor`` /
-                ``config_version_hash`` invariants.
+            env: **Deprecated** (step 6 removes). Was supposed to feed
+                ``load_secrets`` but the wiring never landed; now
+                ``os.environ`` is the single source — the launcher
+                merges project env.json before fork.
+            metadata: **Deprecated** (step 6 removes). Run-level tags
+                (``project_id`` / ``actor`` / ``config_version_hash``)
+                now come from ``RYOTENKAI_*`` env vars set by the
+                launcher; bootstrap reads them via
+                :func:`read_metadata_from_env`.
             run_directory: Optional explicit run dir (resume / restart
                 paths). When ``None`` a fresh dir under
                 ``settings.runs_base_dir`` is created.
             settings: Optional :class:`RuntimeSettings`. When ``None``,
                 read from env via :func:`load_runtime_settings`. The
-                project adapter overrides this to relocate
-                ``runs_base_dir`` inside ``<project>/runs/``.
+                launcher sets ``RYOTENKAI_RUNS_BASE_DIR`` to relocate
+                ``runs_base_dir`` inside ``<project>/runs/`` for
+                project launches.
 
         Construction is two-phase:
 
@@ -126,9 +127,11 @@ class PipelineOrchestrator:
         )
 
         # ----- Phase 2: delegate wiring to PipelineBootstrap -----
+        # ``metadata`` constructor param is deprecated — bootstrap reads
+        # it from ``RYOTENKAI_*`` env vars now (the launcher sets them).
+        # Step 6 removes the param entirely.
         bootstrap = PipelineBootstrap.build(
             config=config,
-            metadata=metadata,
             run_ctx=self.run_ctx,
             settings=self.settings,
             attempt_controller=self._attempt_controller,

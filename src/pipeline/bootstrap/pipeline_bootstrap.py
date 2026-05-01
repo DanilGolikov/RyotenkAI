@@ -22,6 +22,7 @@ ownership.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +52,37 @@ if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
     from src.pipeline.state import AttemptController, RunContext
     from src.utils.config import PipelineConfig, Secrets
+
+
+# Env-var contract: launcher (CLI / API) sets these before spawning the
+# worker; bootstrap reads them and stamps onto ``PipelineState.metadata``,
+# which downstream MLflow tags ``meta.*`` mirror. See
+# ``docs/plans/task-notification-task-id-b6y40vnmp-tas-majestic-stream.md``.
+_METADATA_ENV_KEYS: tuple[tuple[str, str], ...] = (
+    ("project_id", "RYOTENKAI_PROJECT_ID"),
+    ("actor", "RYOTENKAI_ACTOR"),
+    ("config_version_hash", "RYOTENKAI_CONFIG_VERSION_HASH"),
+    ("config_override_path", "RYOTENKAI_CONFIG_OVERRIDE_PATH"),
+)
+
+
+def read_metadata_from_env() -> dict[str, str]:
+    """Read run-level metadata that the launcher injected via env vars.
+
+    Returns a dict suitable for :class:`PipelineState`'s ``metadata``
+    slot — only keys whose env var is set and non-empty are included.
+    Anonymous runs (no enclosing project) return ``{}``.
+
+    Single source of truth for "where does ``meta.project_id`` come
+    from" — both CLI and Web API pass it through the same env-var
+    mechanism.
+    """
+    out: dict[str, str] = {}
+    for key, env_var in _METADATA_ENV_KEYS:
+        value = os.environ.get(env_var)
+        if value and value.strip():
+            out[key] = value.strip()
+    return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +133,6 @@ class PipelineBootstrap:
         *,
         config: PipelineConfig,
         secrets: Secrets | None = None,
-        metadata: dict[str, Any] | None = None,
         run_ctx: RunContext,
         settings: RuntimeSettings,
         attempt_controller: AttemptController,
@@ -110,15 +141,20 @@ class PipelineBootstrap:
     ) -> BootstrapResult:
         """Wire every collaborator from a pre-loaded config.
 
-        Caller responsibility: load + resolve the YAML via
+        Caller responsibility: load the YAML via
         :func:`src.workspace.integrations.loader.load_pipeline_config`
-        (UX layer) before constructing the orchestrator. By the time
-        bootstrap runs, ``config`` is a fully-resolved ``PipelineConfig``
-        with ``_source_path`` set.
+        before constructing the orchestrator. By the time bootstrap
+        runs, ``config`` is a validated ``PipelineConfig`` with
+        ``_source_path`` set.
 
-        Optionally ``secrets`` and ``metadata`` can be passed in
-        pre-built — both have safe defaults (``load_secrets()`` and
-        ``{}`` respectively).
+        ``secrets`` is optional — defaults to ``load_secrets()`` (which
+        reads ``os.environ`` plus ``secrets.env``).
+
+        Run-level metadata (``project_id``, ``actor``,
+        ``config_version_hash``) is read from ``RYOTENKAI_*`` env vars
+        via :func:`read_metadata_from_env` — set by the launcher (CLI
+        ``run start --project X`` or Web API). Anonymous runs (no
+        enclosing project) get an empty metadata dict.
 
         ``attempt_controller`` is passed in rather than constructed here
         because its ``save_fn`` must close over orchestrator-owned per-run
@@ -226,10 +262,11 @@ class PipelineBootstrap:
         stage_planner = StagePlanner(registry.stages, config)
 
         # Step 7: Per-run orchestration components (stateless between runs).
-        # ``metadata`` is forwarded so :class:`LaunchPreparator` can stamp
-        # it onto :class:`PipelineState` at fresh-run init time. Empty
-        # dict for anonymous runs (legacy/CI path); populated for runs
-        # launched from a project context (project_id, actor, …).
+        # Run-level metadata is sourced exclusively from RYOTENKAI_* env
+        # vars set by the launcher. ``LaunchPreparator`` stamps it onto
+        # :class:`PipelineState` at fresh-run init time; downstream
+        # MLflow tags ``meta.*`` mirror it. Empty dict for anonymous
+        # runs (no enclosing project).
         launch_preparator = LaunchPreparator(
             config_path=config_path,
             run_ctx=run_ctx,
@@ -238,7 +275,7 @@ class PipelineBootstrap:
             stage_planner=stage_planner,
             config_drift=config_drift,
             attempt_controller=attempt_controller,
-            metadata=metadata or {},
+            metadata=read_metadata_from_env(),
         )
         restart_inspector = RestartPointsInspector(
             stages=registry.stages, config_drift=config_drift
