@@ -450,8 +450,22 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
 
         if should_terminate:
             logger.info(f"[PROVIDER:DISCONNECT] Terminating pod {self._pod_id}...")
-            self._cleanup_manager.cleanup_pod(self._pod_id)
-            logger.info("✅ Pod terminated")
+            # Previously the Result was discarded and "✅ Pod terminated" was
+            # printed unconditionally. That masked real cleanup failures
+            # (pod already gone after platform-side eviction, network blip,
+            # auth expiry) — the operator saw a clean shutdown message even
+            # when the API returned an error. Surface failures explicitly
+            # so we don't leak orphan pods quietly.
+            cleanup_result = self._cleanup_manager.cleanup_pod(self._pod_id)
+            if cleanup_result.is_ok():
+                logger.info("✅ Pod terminated")
+            else:
+                logger.warning(
+                    f"[PROVIDER:DISCONNECT] Pod {self._pod_id} terminate call "
+                    f"returned an error: {cleanup_result.unwrap_err()}. The pod "
+                    f"may already be gone (platform-side eviction) or may need "
+                    f"manual cleanup — verify in the RunPod console."
+                )
         else:
             logger.info(
                 f"[PROVIDER:DISCONNECT] Keeping pod {self._pod_id} running "

@@ -362,10 +362,7 @@ class GPUDeployer(PipelineStage):
         # ``self._provider_name == PROVIDER_RUNPOD`` string check).
         # Cloud providers expose log-download via SCP/HTTP; local
         # providers have logs already on the host filesystem.
-        if (
-            self._provider.get_capabilities().supports_log_download
-            and self._ssh_client
-        ):
+        if self._provider.get_capabilities().supports_log_download and self._ssh_client:
             try:
                 self._download_remote_logs("early_release")
             except Exception as e:
@@ -429,14 +426,20 @@ class GPUDeployer(PipelineStage):
 
         workspace = self.deployment.workspace
 
-        # Channel 1 — runner.log (NEW). Best-effort, isolated try/except
-        # so failures here do not skip the trainer log below.
+        # Channel 1 — runner.log. Best-effort, isolated try/except so
+        # failures here do not skip the trainer log below.
         self._download_runner_log(reason=reason)
 
-        # Channel 2 — training.log + fallbacks (existing behaviour).
+        # Channel 2 — training.log + fallbacks. Track which fallback
+        # paths we tried so the operator can see in the run log *what
+        # we looked for* when nothing landed locally. Previously every
+        # path failed silently and the run-level log only showed
+        # "Pod terminated" with no clue training was lost.
+        attempted: list[str] = []
         try:
             # 1) Primary path: docker-only training log in run dir
             primary_log_path = f"{workspace}/training.log"
+            attempted.append(primary_log_path)
             log_manager = LogManager(self._ssh_client, remote_path=primary_log_path)
             if log_manager.download(silent=False):
                 return
@@ -453,6 +456,7 @@ class GPUDeployer(PipelineStage):
                 log_subdir = output.strip()
                 # Check if it's a directory with pipeline.log
                 remote_log_path = f"{logs_base}/{log_subdir}/pipeline.log"
+                attempted.append(remote_log_path)
 
                 success, content, _ = self._ssh_client.exec_command(
                     f"cat {remote_log_path} 2>/dev/null || echo 'LOG_NOT_FOUND'",
@@ -471,11 +475,28 @@ class GPUDeployer(PipelineStage):
 
             # Fallback: try simple path
             remote_log_path = f"{logs_base}/training.log"
+            attempted.append(remote_log_path)
             log_manager = LogManager(self._ssh_client, remote_path=remote_log_path)
-            log_manager.download_on_error(error_context=reason)
+            if log_manager.download(silent=False):
+                return
+
+            # All fallbacks empty — surface this loudly so it doesn't
+            # masquerade as a clean shutdown. Previously every path
+            # logged at DEBUG and the operator only saw "Pod terminated".
+            paths_str = ", ".join(attempted)
+            logger.warning(
+                f"[DEPLOYER] No training log found on remote (reason='{reason}'); "
+                f"tried: {paths_str}. The trainer may have crashed before "
+                f"flushing /workspace/training.log, or the pod was evicted "
+                f"by the platform before download — check the postmortem "
+                f"section above and the RunPod console."
+            )
 
         except Exception as e:
-            logger.debug(f"[DEPLOYER] Failed to download logs on error: {e}")
+            logger.warning(
+                f"[DEPLOYER] Training log download failed (reason='{reason}'): "
+                f"{type(e).__name__}: {e}; tried: {', '.join(attempted) or '(none)'}"
+            )
 
     def _download_runner_log(self, *, reason: str) -> None:
         """
@@ -544,10 +565,7 @@ class GPUDeployer(PipelineStage):
 
             # Phase 14.D+F — capability-driven dispatch (was
             # ``self._provider_name == PROVIDER_RUNPOD`` string check).
-            if (
-                self._provider.get_capabilities().supports_log_download
-                and self._ssh_client
-            ):
+            if self._provider.get_capabilities().supports_log_download and self._ssh_client:
                 try:
                     self._download_remote_logs("cleanup")
                 except Exception as e:

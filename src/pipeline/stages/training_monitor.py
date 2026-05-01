@@ -339,7 +339,7 @@ class TrainingMonitor(PipelineStage):
         if self._ssh_client is not None:
             try:
                 self._ssh_client.close_master()
-            except Exception as exc:  # noqa: BLE001 — defensive
+            except Exception as exc:
                 logger.debug(f"[MONITOR] ssh_client.close_master failed: {exc}")
             self._ssh_client = None
         self._log_manager = None
@@ -356,7 +356,8 @@ class TrainingMonitor(PipelineStage):
     )
 
     def _reconcile_terminal_marker_if_present(
-        self, context: dict[str, Any],
+        self,
+        context: dict[str, Any],
     ) -> None:
         """Reconcile MLflow run status against terminal-marker files.
 
@@ -403,9 +404,10 @@ class TrainingMonitor(PipelineStage):
                 payload = json.loads(marker_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 logger.warning(
-                    "[MONITOR] %s exists at %s but is unreadable (%s); "
-                    "skipping reconciliation",
-                    marker_name, marker_path, exc,
+                    "[MONITOR] %s exists at %s but is unreadable (%s); " "skipping reconciliation",
+                    marker_name,
+                    marker_path,
+                    exc,
                 )
                 # Don't try the next marker — disk read failure
                 # likely means the whole attempt dir is in a bad
@@ -415,9 +417,9 @@ class TrainingMonitor(PipelineStage):
             run_id = payload.get("run_id")
             if not run_id:
                 logger.info(
-                    "[MONITOR] %s at %s has no run_id; MLflow "
-                    "reconciliation skipped (no run to address)",
-                    marker_name, marker_path,
+                    "[MONITOR] %s at %s has no run_id; MLflow " "reconciliation skipped (no run to address)",
+                    marker_name,
+                    marker_path,
                 )
                 return
 
@@ -448,16 +450,19 @@ class TrainingMonitor(PipelineStage):
             client = MlflowClient()
             run = client.get_run(run_id)
             current_status = getattr(
-                getattr(run, "info", None), "status", None,
+                getattr(run, "info", None),
+                "status",
+                None,
             )
 
             if current_status != "RUNNING":
                 # Already terminal (KILLED / FAILED / FINISHED) —
                 # something else closed the run. No-op.
                 logger.debug(
-                    "[MONITOR] MLflow run %s already terminal "
-                    "(status=%s); %s reconciliation no-op",
-                    run_id, current_status, reason,
+                    "[MONITOR] MLflow run %s already terminal " "(status=%s); %s reconciliation no-op",
+                    run_id,
+                    current_status,
+                    reason,
                 )
                 return
 
@@ -465,35 +470,35 @@ class TrainingMonitor(PipelineStage):
             # Use warning level for cancellation (operator should
             # know SIGKILL fallback fired) and info for natural
             # completion (expected post-sleep recovery).
-            log_fn = (
-                logger.warning if marker_name == "cancelled.marker"
-                else logger.info
-            )
+            log_fn = logger.warning if marker_name == "cancelled.marker" else logger.info
             extra_note = ""
             if marker_name == "completion.marker" and payload.get(
                 "flush_timed_out",
             ):
-                extra_note = (
-                    " — flush_timed_out=true; some metrics may be "
-                    "missing"
-                )
+                extra_note = " — flush_timed_out=true; some metrics may be " "missing"
             log_fn(
-                "[MONITOR] reconciled MLflow run %s: RUNNING → %s "
-                "(%s indicated %s)%s",
-                run_id, target_status, marker_name, reason, extra_note,
+                "[MONITOR] reconciled MLflow run %s: RUNNING → %s " "(%s indicated %s)%s",
+                run_id,
+                target_status,
+                marker_name,
+                reason,
+                extra_note,
             )
         except Exception as exc:
             logger.warning(
                 "[MONITOR] %s reconciliation for run_id=%s failed: %s "
                 "— operator may need to manually set the MLflow run "
                 "status",
-                marker_name, run_id, exc,
+                marker_name,
+                run_id,
+                exc,
             )
 
     # --- pod-side log puller (sync; spun off into a thread) -------------
 
     def _build_log_manager_from_context(
-        self, deployer_context: dict[str, Any],
+        self,
+        deployer_context: dict[str, Any],
     ) -> tuple[LogManager | None, SSHClient | None]:
         """Construct an SSH-backed :class:`LogManager` from gpu_deployer
         context, or ``(None, None)`` when the active flow doesn't need
@@ -526,7 +531,7 @@ class TrainingMonitor(PipelineStage):
                 username=None if is_alias_mode else ssh_user,
                 key_path=None if is_alias_mode else ssh_key_path,
             )
-        except Exception as exc:  # noqa: BLE001 — defensive
+        except Exception as exc:
             logger.debug(f"[MONITOR] SSH client construction failed: {exc}")
             return None, None
 
@@ -540,7 +545,7 @@ class TrainingMonitor(PipelineStage):
         # constant keeps both sides in lock-step.
         try:
             log_manager = LogManager(ssh_client)
-        except Exception as exc:  # noqa: BLE001 — defensive
+        except Exception as exc:
             logger.debug(f"[MONITOR] LogManager init failed: {exc}")
             with contextlib.suppress(Exception):
                 ssh_client.close_master()
@@ -562,7 +567,7 @@ class TrainingMonitor(PipelineStage):
                 ok = await asyncio.to_thread(log_manager.download, silent=True)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 — defensive
+            except Exception as exc:
                 logger.debug(f"[MONITOR] training.log download error: {exc}")
                 continue
             logger.debug(
@@ -574,7 +579,8 @@ class TrainingMonitor(PipelineStage):
     _RECOVERY_ATTEMPT_CAP = 3
 
     def _recover_pod_if_needed(
-        self, exc: JobClientError,
+        self,
+        exc: JobClientError,
     ) -> Result[dict[str, Any], AppError] | None:
         """Best-effort RunPod SDK wake-up for a stopped pod.
 
@@ -621,23 +627,21 @@ class TrainingMonitor(PipelineStage):
         try:
             from src.providers.runpod.models import PodSnapshot
             from src.providers.runpod.sdk_adapter import RunPodSDKClient
-        except ImportError as imp_exc:  # noqa: BLE001 — defensive
+        except ImportError as imp_exc:
             logger.debug(f"[MONITOR] RunPod SDK not importable: {imp_exc}")
             return None
 
         logger.warning(
             "[MONITOR] runner connection lost (%s) — probing pod %s via RunPod SDK",
-            exc, self._resource_id,
+            exc,
+            self._resource_id,
         )
         sdk = RunPodSDKClient(api_key=api_key)
         snap_result = sdk.get_pod(pod_id=self._resource_id)
         if snap_result.is_err():
             return Err(
                 TrainingError(
-                    message=(
-                        f"runner connection lost and pod probe failed: "
-                        f"{snap_result.unwrap_err()}"
-                    ),
+                    message=(f"runner connection lost and pod probe failed: " f"{snap_result.unwrap_err()}"),
                     code="MONITOR_POD_PROBE_FAILED",
                 ),
             )
@@ -645,10 +649,7 @@ class TrainingMonitor(PipelineStage):
         if snapshot.is_terminal:
             return Err(
                 TrainingError(
-                    message=(
-                        f"pod {self._resource_id} reached terminal state "
-                        f"({snapshot.status}); cannot resume"
-                    ),
+                    message=(f"pod {self._resource_id} reached terminal state " f"({snapshot.status}); cannot resume"),
                     code="MONITOR_POD_TERMINATED",
                 ),
             )
@@ -657,8 +658,8 @@ class TrainingMonitor(PipelineStage):
             # blip, transient SSH failure). Caller surfaces the
             # original error so the operator can investigate.
             logger.info(
-                "[MONITOR] pod %s is RUNNING — WS failure was not "
-                "caused by pod sleep", self._resource_id,
+                "[MONITOR] pod %s is RUNNING — WS failure was not " "caused by pod sleep",
+                self._resource_id,
             )
             return None
 
@@ -667,15 +668,15 @@ class TrainingMonitor(PipelineStage):
         # cold pod.
         logger.warning(
             "[MONITOR] pod %s is %s — requesting SDK wake-up",
-            self._resource_id, snapshot.status or "unknown",
+            self._resource_id,
+            snapshot.status or "unknown",
         )
         start_result = sdk.start_pod(pod_id=self._resource_id)
         if start_result.is_err():
             return Err(
                 TrainingError(
                     message=(
-                        f"pod {self._resource_id} was stopped and "
-                        f"wake-up failed: {start_result.unwrap_err()}"
+                        f"pod {self._resource_id} was stopped and " f"wake-up failed: {start_result.unwrap_err()}"
                     ),
                     code="MONITOR_POD_WAKE_FAILED",
                 ),
@@ -725,39 +726,56 @@ class TrainingMonitor(PipelineStage):
         # ``docs/plans/harmonic-rolling-crayon.md``), so we don't
         # probe for them.
         probes: list[tuple[str, str, int]] = [
-            ("faulthandler",
-             f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
-            ("training_log_tail",
-             f"tail -n 500 {workspace}/training.log 2>/dev/null"
-             " | grep -v -E '^\\s*$|^\\s*[0-9]+%\\|' | tail -n 30", 10),
+            ("faulthandler", f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
+            (
+                "training_log_tail",
+                f"tail -n 500 {workspace}/training.log 2>/dev/null"
+                " | grep -v -E '^\\s*$|^\\s*[0-9]+%\\|' | tail -n 30",
+                10,
+            ),
             ("dmesg_tail", "dmesg 2>/dev/null | tail -n 80", 10),
-            ("dmesg_oom",
-             "dmesg 2>/dev/null | grep -iE 'oom|kill|memory' | tail -n 30", 10),
-            ("dmesg_nvidia",
-             "dmesg 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -n 30", 10),
-            ("nvidia_smi",
-             "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total"
-             " --format=csv,noheader", 10),
+            ("dmesg_oom", "dmesg 2>/dev/null | grep -iE 'oom|kill|memory' | tail -n 30", 10),
+            ("dmesg_nvidia", "dmesg 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -n 30", 10),
+            (
+                "nvidia_smi",
+                "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total" " --format=csv,noheader",
+                10,
+            ),
         ]
         logger.info(
             "[MONITOR:POSTMORTEM] non-zero exit detected — collecting pod-side diagnostics",
         )
+        probes_with_data = 0
         for label, command, timeout in probes:
             try:
                 ok, stdout, stderr = self._ssh_client.exec_command(
-                    command=command, silent=True, timeout=timeout,
+                    command=command,
+                    silent=True,
+                    timeout=timeout,
                 )
-            except Exception as exc:  # noqa: BLE001 — defensive
+            except Exception as exc:
                 logger.debug(f"[MONITOR:POSTMORTEM] {label} raised: {exc}")
                 continue
             text = (stdout or "").strip()
             if ok and text:
+                probes_with_data += 1
                 for line in text.splitlines():
                     logger.info(f"[MONITOR:POSTMORTEM] {label}: {line}")
             elif stderr:
-                logger.debug(
-                    f"[MONITOR:POSTMORTEM] {label} stderr: {stderr.strip()}"
-                )
+                logger.debug(f"[MONITOR:POSTMORTEM] {label} stderr: {stderr.strip()}")
+        # Summary: silence here previously masked the case where the
+        # pod was already gone (RunPod auto-removes after crash) — every
+        # probe returned empty and we logged nothing, leaving the
+        # operator with "trainer crashed" and zero context.
+        logger.info(
+            f"[MONITOR:POSTMORTEM] {probes_with_data}/{len(probes)} probes returned data",
+        )
+        if probes_with_data == 0:
+            logger.warning(
+                "[MONITOR:POSTMORTEM] all probes empty — pod may have been "
+                "terminated by the platform after the crash; no further "
+                "context is available beyond the runner-side terminal event"
+            )
 
     async def _watch_and_download(
         self,
@@ -791,7 +809,7 @@ class TrainingMonitor(PipelineStage):
                     asyncio.to_thread(log_manager.download, silent=False),
                     timeout=_FINAL_LOG_FLUSH_TIMEOUT,
                 )
-            except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+            except (TimeoutError, Exception) as exc:
                 logger.debug(f"[MONITOR] final training.log flush error: {exc}")
             else:
                 logger.debug(
@@ -814,7 +832,8 @@ class TrainingMonitor(PipelineStage):
         """
         try:
             async for event in client.subscribe_events(
-                job_id, since=self._last_offset,
+                job_id,
+                since=self._last_offset,
             ):
                 # Track offset so a manual restart of subscribe (e.g.
                 # after ReplayTruncatedError) resumes correctly.
@@ -837,8 +856,7 @@ class TrainingMonitor(PipelineStage):
         except JobNotFoundError:
             return Err(
                 TrainingError(
-                    message=f"runner reports unknown job {job_id!r} "
-                    "(pod restart wiped state?)",
+                    message=f"runner reports unknown job {job_id!r} " "(pod restart wiped state?)",
                     code="MONITOR_JOB_NOT_FOUND",
                 ),
             )
@@ -866,7 +884,8 @@ class TrainingMonitor(PipelineStage):
             )
 
     def _dispatch_event(
-        self, event: dict[str, Any],
+        self,
+        event: dict[str, Any],
     ) -> Result[dict[str, Any], AppError] | None:
         """Fire callbacks; return a terminal Result or ``None`` to keep
         listening.
@@ -902,7 +921,11 @@ class TrainingMonitor(PipelineStage):
             )
 
         if kind == "trainer_log":
-            # Intentionally silent. See docstring above.
+            # Intentionally silent on the orchestrator log (see
+            # docstring above). Full trainer stdout lives on disk in
+            # /workspace/training.log and is pulled either whole or via
+            # offset-delta by the LogManager — control-plane stream is
+            # not the channel for log content.
             return None
 
         if kind == "health_snapshot":
@@ -958,8 +981,7 @@ class TrainingMonitor(PipelineStage):
 
         ram_str = (
             f"{ram_used:.1f}/{ram_total:.0f} GB"
-            if isinstance(ram_used, (int, float))
-            and isinstance(ram_total, (int, float))
+            if isinstance(ram_used, (int, float)) and isinstance(ram_total, (int, float))
             else "—"
         )
 
@@ -973,7 +995,8 @@ class TrainingMonitor(PipelineStage):
         )
 
     def _handle_trainer_exited(
-        self, payload: dict[str, Any],
+        self,
+        payload: dict[str, Any],
     ) -> Result[dict[str, Any], AppError]:
         """Translate a ``trainer_exited`` event to a terminal Result.
 
@@ -994,27 +1017,27 @@ class TrainingMonitor(PipelineStage):
         # runner's terminal hook, which fires AFTER the
         # ``trainer_exited`` event; deployer-side teardown happens
         # later via :meth:`cleanup`.
-        if not cancelled and (
-            (isinstance(exit_code, int) and exit_code != 0) or signal_name
-        ):
+        if not cancelled and ((isinstance(exit_code, int) and exit_code != 0) or signal_name):
             self._collect_death_diagnostics()
 
         if exit_code == 0 and not cancelled:
             if self._callbacks.on_training_completed:
                 self._callbacks.on_training_completed(duration)
-            return Ok({
-                "status": "completed",
-                "duration_seconds": duration,
-                "duration_human": str(timedelta(seconds=int(duration))),
-                # Phase 11.C-2 — hint for stage_execution_loop's
-                # _capture_pod_status_if_present. Maps to PodTerminator's
-                # default Phase 11.B outcome on natural completion:
-                # podStop ⇒ ``"stopped"``. ``PodAvailabilityProbe`` is
-                # the live source of truth; this just speeds up CLI /
-                # Web UI hints by avoiding a RunPod GraphQL query for
-                # the common case.
-                "pod_terminal_state": "stopped",
-            })
+            return Ok(
+                {
+                    "status": "completed",
+                    "duration_seconds": duration,
+                    "duration_human": str(timedelta(seconds=int(duration))),
+                    # Phase 11.C-2 — hint for stage_execution_loop's
+                    # _capture_pod_status_if_present. Maps to PodTerminator's
+                    # default Phase 11.B outcome on natural completion:
+                    # podStop ⇒ ``"stopped"``. ``PodAvailabilityProbe`` is
+                    # the live source of truth; this just speeds up CLI /
+                    # Web UI hints by avoiding a RunPod GraphQL query for
+                    # the common case.
+                    "pod_terminal_state": "stopped",
+                }
+            )
 
         if cancelled:
             return self._fail(
@@ -1036,7 +1059,9 @@ class TrainingMonitor(PipelineStage):
         )
 
     def _terminal_from_state(
-        self, state: str, payload: dict[str, Any],
+        self,
+        state: str,
+        payload: dict[str, Any],
     ) -> Result[dict[str, Any], AppError]:
         """Backstop: derive terminal Result from a bare FSM state event."""
         duration = max(0.0, time.time() - self._training_start_time)
@@ -1075,7 +1100,9 @@ class TrainingMonitor(PipelineStage):
         return Err(TrainingError(message=message, code=code))
 
     async def _fallback_to_status(
-        self, client: JobClient, job_id: str,
+        self,
+        client: JobClient,
+        job_id: str,
     ) -> Result[dict[str, Any], AppError]:
         """Buffer rolled past us — refetch :meth:`JobClient.get_status`
         and translate the snapshot to a terminal Result.
@@ -1091,10 +1118,7 @@ class TrainingMonitor(PipelineStage):
         except JobClientError as exc:
             return Err(
                 TrainingError(
-                    message=(
-                        "WebSocket replay buffer rolled over and "
-                        f"GET /jobs/{job_id} failed: {exc}"
-                    ),
+                    message=("WebSocket replay buffer rolled over and " f"GET /jobs/{job_id} failed: {exc}"),
                     code="MONITOR_STATUS_FETCH_FAILED",
                 ),
             )
