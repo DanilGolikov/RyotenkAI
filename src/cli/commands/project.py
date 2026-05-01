@@ -259,9 +259,8 @@ def run_cmd(
 
     Thin convenience wrapper over ``ryotenkai run start --project <id>``
     — both paths funnel through
-    :func:`src.workspace.projects.adapter.load_project_inputs`, so env
-    merge, metadata stamping, and integration resolution are identical
-    in both surfaces.
+    :func:`src.workspace.projects.adapter.resolve_project_launch_inputs`,
+    so env merge and metadata stamping are identical in both surfaces.
     """
     from src.cli_state import context_store
 

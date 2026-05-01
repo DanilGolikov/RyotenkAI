@@ -93,8 +93,8 @@ def format_validation_errors(exc: ValidationError, *, max_errors: int = 6) -> st
     Each line: ``  - <dotted.path>: <message>``. Truncates after
     ``max_errors`` so a totally broken file doesn't flood the terminal.
     Public so callers that wrap their own load path (e.g. ``run start
-    --project``, where ``load_project_inputs`` raises ValidationError
-    from inside the adapter) can format the same way without
+    --project``, where the project resolver bubbles a ValidationError
+    from the worker subprocess) can format the same way without
     duplicating logic.
     """
     errors = exc.errors()
