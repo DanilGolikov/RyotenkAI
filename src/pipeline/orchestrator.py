@@ -63,30 +63,25 @@ class PipelineOrchestrator:
         self,
         *,
         config: PipelineConfig,
-        env: dict[str, str] | None = None,  # noqa: ARG002 — deprecated; step 6 removes
-        metadata: dict[str, Any] | None = None,  # noqa: ARG002 — deprecated; bootstrap reads from env now
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
     ):
         """Initialize the orchestrator from a pre-loaded config.
 
-        Caller (CLI / API / project adapter) loads the YAML via
+        Caller (worker subprocess) loads the YAML via
         :func:`src.workspace.integrations.loader.load_pipeline_config`,
         which returns a validated :class:`PipelineConfig` with
-        ``_source_path`` set.
+        ``_source_path`` set. Run-level metadata
+        (``project_id`` / ``actor`` / ``config_version_hash``) and
+        per-project secrets reach the orchestrator through
+        ``os.environ`` — the launcher (CLI / Web API) merges
+        ``env.json`` and sets ``RYOTENKAI_*`` env vars before
+        forking the worker. Bootstrap reads them via
+        :func:`read_metadata_from_env` and ``load_secrets()``.
 
         Args:
             config: Fully-loaded :class:`PipelineConfig` (must have
                 ``_source_path`` set — the loader handles this).
-            env: **Deprecated** (step 6 removes). Was supposed to feed
-                ``load_secrets`` but the wiring never landed; now
-                ``os.environ`` is the single source — the launcher
-                merges project env.json before fork.
-            metadata: **Deprecated** (step 6 removes). Run-level tags
-                (``project_id`` / ``actor`` / ``config_version_hash``)
-                now come from ``RYOTENKAI_*`` env vars set by the
-                launcher; bootstrap reads them via
-                :func:`read_metadata_from_env`.
             run_directory: Optional explicit run dir (resume / restart
                 paths). When ``None`` a fresh dir under
                 ``settings.runs_base_dir`` is created.
@@ -127,9 +122,6 @@ class PipelineOrchestrator:
         )
 
         # ----- Phase 2: delegate wiring to PipelineBootstrap -----
-        # ``metadata`` constructor param is deprecated — bootstrap reads
-        # it from ``RYOTENKAI_*`` env vars now (the launcher sets them).
-        # Step 6 removes the param entirely.
         bootstrap = PipelineBootstrap.build(
             config=config,
             run_ctx=self.run_ctx,

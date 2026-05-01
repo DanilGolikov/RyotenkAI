@@ -63,10 +63,7 @@ class TestPositive:
             patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
-            orch = PipelineOrchestrator(
-                config=config,
-                metadata={"project_id": "x", "actor": "agent:claude"},
-            )
+            orch = PipelineOrchestrator(config=config)
             # config object passes through; ``config_path`` derived
             # from ``config._source_path`` (set by the loader).
             assert orch.config is config
@@ -107,6 +104,26 @@ class TestPositive:
 
 
 class TestNegative:
+    def test_legacy_env_kwarg_rejected(self, tmp_path: Path) -> None:
+        """Architectural guardrail: ``env=`` was deprecated in step 4 and
+        removed in step 6. Passing it must surface a clean ``TypeError``
+        so callers updating to subprocess-launch hit a hard signal."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("model:\n  name: gpt2\n")
+        config = _build_mock_config(source_path=config_path)
+        with pytest.raises(TypeError, match="unexpected keyword argument 'env'"):
+            PipelineOrchestrator(config=config, env={"FOO": "bar"})  # type: ignore[call-arg]
+
+    def test_legacy_metadata_kwarg_rejected(self, tmp_path: Path) -> None:
+        """Architectural guardrail: ``metadata=`` source moved to
+        ``RYOTENKAI_*`` env vars in step 4 and the param was removed in
+        step 6. Bootstrap reads from env via :func:`read_metadata_from_env`."""
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text("model:\n  name: gpt2\n")
+        config = _build_mock_config(source_path=config_path)
+        with pytest.raises(TypeError, match="unexpected keyword argument 'metadata'"):
+            PipelineOrchestrator(config=config, metadata={"project_id": "x"})  # type: ignore[call-arg]
+
     def test_pre_loaded_config_without_source_path_raises(self) -> None:
         # Pin: callers MUST go through ``load_pipeline_config()`` so
         # ``_source_path`` is set. Constructing a bare PipelineConfig
