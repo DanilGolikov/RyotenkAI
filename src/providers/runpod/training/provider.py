@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
+from src.pipeline.cancellation import PipelineCancelled
 from src.providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
@@ -297,17 +298,23 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
 
             return Ok(self._ssh_connection_info)
 
-        except KeyboardInterrupt:
-            # SIGINT arrived mid-connect (most likely during create_pod HTTP request
-            # or wait_for_ready polling). If a pod was already created, terminate it
-            # immediately before re-raising so the pod is not left orphaned.
+        except PipelineCancelled:
+            # Cancel signal arrived mid-connect (most likely during
+            # create_pod HTTP request or PodSshWaiter polling). If a pod
+            # was already created, terminate it immediately before
+            # re-raising so it isn't left orphaned and billing.
+            #
+            # Was ``except KeyboardInterrupt:`` until the worker
+            # subprocess gained an explicit cancel handler — Python's
+            # default SIGINT path no longer fires here, so we catch the
+            # canonical ``PipelineCancelled`` instead.
             self._status = ProviderStatus.ERROR
             if self._pod_id:
-                logger.warning(f"[PROVIDER:CONNECT] SIGINT during connect — terminating pod {self._pod_id}")
+                logger.warning(f"[PROVIDER:CONNECT] cancelled during connect — terminating pod {self._pod_id}")
                 self._cleanup_manager.cleanup_pod(self._pod_id)
                 self._pod_id = None
             else:
-                logger.warning("[PROVIDER:CONNECT] SIGINT during connect — no pod to clean up")
+                logger.warning("[PROVIDER:CONNECT] cancelled during connect — no pod to clean up")
             raise
 
         except Exception as e:
