@@ -900,7 +900,7 @@ The client for collecting model answers is selected by `inference.engine`:
 
 ## 7. Experiment Tracking - MLflow + HuggingFace Hub
 
-All integrations live in one place: `experiment_tracking:`.
+All integrations live in one place: `integrations:`.
 
 Rules:
 - if the block is **omitted** → integration is off
@@ -908,7 +908,7 @@ Rules:
 - both `mlflow` and `huggingface` sub-blocks are **optional** — you can enable only one of them
 
 ```yaml
-experiment_tracking:
+integrations:
   mlflow:                         # Optional — omit to disable MLflow entirely
     tracking_uri: "https://your-mlflow.example.com"   # Remote/LAN/runtime access
     local_tracking_uri: "http://localhost:5002"       # Optional local control-plane override
@@ -925,7 +925,7 @@ experiment_tracking:
     private: true
 ```
 
-### 7.1 MLflow (`experiment_tracking.mlflow`)
+### 7.1 MLflow (`integrations.mlflow`)
 
 | Parameter | Type | Default | Description |
 |----------|-----|--------------|----------|
@@ -952,7 +952,7 @@ Common patterns:
 - LAN: `tracking_uri: "http://<mac-lan-ip>:5002"` and `local_tracking_uri: "http://localhost:5002"`
 - Tailscale/Internet: `tracking_uri: "https://<host>.ts.net"` and `local_tracking_uri: "http://localhost:5002"`
 
-### 7.2 HuggingFace Hub (`experiment_tracking.huggingface`)
+### 7.2 HuggingFace Hub (`integrations.huggingface`)
 
 Env:
 - `HF_TOKEN` — **required** (write access)
@@ -1071,12 +1071,12 @@ inference:
 ### Changes in v8.1:
 
 - **`hyperparams.generation_batch_size`** → documented as an optional `GRPO` / `SAPO` throughput-tuning parameter
-- **`experiment_tracking.mlflow` examples** → removed stale `enabled: true`; MLflow is enabled by presence of the `mlflow:` block
+- **`integrations.mlflow` examples** → removed stale `enabled: true`; MLflow is enabled by presence of the `mlflow:` block
 ### Changes in v8.0 (v0.2.0):
 
 - **`training.qlora:` / `training.lora:` / `training.adalora:`** → clarified that each `type` value requires its own named block (`qlora:` for `type: qlora`, `lora:` for `type: lora`, `adalora:` for `type: adalora`); all YAML examples and Quick Reference updated accordingly
 - **`strategies[].adapter_cache`** → new field per phase; full `AdapterCacheConfig` section added (§2.6)
-- **`experiment_tracking.mlflow`** → now **optional** sub-block; configs without MLflow are valid
+- **`integrations.mlflow`** → now **optional** sub-block; configs without MLflow are valid
 - **`adalora.total_step`** → documented as **REQUIRED** (was missing)
 - **`hyperparams.neftune_noise_alpha`** → documented optional field (NEFTune embedding regularization)
 - **`adalora.delta_t`** → YAML alias `deltaT` documented

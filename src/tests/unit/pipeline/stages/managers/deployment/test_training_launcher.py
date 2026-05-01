@@ -27,7 +27,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -517,8 +517,8 @@ def test_sanitize_docker_name_truncates_long_names():
 
 
 @pytest.mark.skip(reason=(
-    "Requires experiment_tracking resolver: _create_env_file assumes "
-    "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
+    "Requires integrations resolver: _create_env_file assumes "
+    "integrations.mlflow is a resolved MLflowConfig, but per PR3 "
     "the project YAML only carries a MLflowTrackingRef. Unskip once "
     "src/config/integrations/resolver.py lands and load_config merges "
     "the integration payload into MLflowConfig."
@@ -547,8 +547,8 @@ def test_create_env_file_docker_mode_sets_workspace_to_container_path(
 
 
 @pytest.mark.skip(reason=(
-    "Requires experiment_tracking resolver: _create_env_file assumes "
-    "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
+    "Requires integrations resolver: _create_env_file assumes "
+    "integrations.mlflow is a resolved MLflowConfig, but per PR3 "
     "the project YAML only carries a MLflowTrackingRef. Unskip once "
     "src/config/integrations/resolver.py lands and load_config merges "
     "the integration payload into MLflowConfig."
@@ -599,7 +599,7 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
                 )
             ),
         ),
-        experiment_tracking=ExperimentTrackingConfig(mlflow=mlflow_cfg),
+        integrations=IntegrationsConfig(mlflow=mlflow_cfg),
     )
     deployment = TrainingDeploymentManager(config=config, secrets=secrets)
     deployment.set_workspace(workspace_path="/workspace")
@@ -628,8 +628,8 @@ def test_create_env_file_includes_hf_token_and_mlflow_vars(secrets: DummySecrets
 
 
 @pytest.mark.skip(reason=(
-    "Requires experiment_tracking resolver: _create_env_file assumes "
-    "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
+    "Requires integrations resolver: _create_env_file assumes "
+    "integrations.mlflow is a resolved MLflowConfig, but per PR3 "
     "the project YAML only carries a MLflowTrackingRef. Unskip once "
     "src/config/integrations/resolver.py lands and load_config merges "
     "the integration payload into MLflowConfig."
@@ -679,7 +679,7 @@ def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets:
                 )
             ),
         ),
-        experiment_tracking=ExperimentTrackingConfig(mlflow=mlflow_cfg),
+        integrations=IntegrationsConfig(mlflow=mlflow_cfg),
     )
     deployment = TrainingDeploymentManager(config=config, secrets=secrets)
     deployment.set_workspace(workspace_path="/workspace")
@@ -699,8 +699,8 @@ def test_create_env_file_mlflow_remote_falls_back_to_local_tracking_uri(secrets:
 
 
 @pytest.mark.skip(reason=(
-    "Requires experiment_tracking resolver: _create_env_file assumes "
-    "experiment_tracking.mlflow is a resolved MLflowConfig, but per PR3 "
+    "Requires integrations resolver: _create_env_file assumes "
+    "integrations.mlflow is a resolved MLflowConfig, but per PR3 "
     "the project YAML only carries a MLflowTrackingRef. Unskip once "
     "src/config/integrations/resolver.py lands and load_config merges "
     "the integration payload into MLflowConfig."

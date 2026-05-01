@@ -68,7 +68,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
 
     def __init__(self, config: PipelineConfig, *, runtime_role: MLflowRuntimeRole = "control_plane") -> None:
         self.config = config
-        self._mlflow_config = config.experiment_tracking.mlflow
+        self._mlflow_config = config.integrations.mlflow
         self._runtime_role: MLflowRuntimeRole = runtime_role
         self._resolved_uris: ResolvedMLflowUris | None = None
         self._environment: MLflowEnvironment | None = None

@@ -16,12 +16,12 @@ codebase no longer enables the native MLflow background sampler at all
 windows), and the trainer-side callback now logs every step (the throttle
 was over-engineering for our typical 1-3 s/step training).
 
-Schema example (``experiment_tracking.mlflow.system_metrics`` block, or
+Schema example (``integrations.mlflow.system_metrics`` block, or
 the same path on the integration side):
 
 .. code-block:: yaml
 
-    experiment_tracking:
+    integrations:
       mlflow:
         integration: my_mlflow
         experiment_name: my_run
@@ -31,7 +31,7 @@ the same path on the integration side):
 Old configs with the flat fields, or with the now-removed nested fields
 (``sampling_interval``, ``samples_before_logging``, ``callback_interval``),
 fail with a clear migration hint — see
-:data:`~src.config.integrations.experiment_tracking._LEGACY_MLFLOW_KEYS`.
+:data:`~src.config.integrations.root._LEGACY_MLFLOW_KEYS`.
 
 Mechanism
 ---------

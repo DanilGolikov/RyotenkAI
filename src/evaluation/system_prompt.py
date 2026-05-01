@@ -108,8 +108,8 @@ class SystemPromptLoader:
         if mlflow_cfg is None:
             raise ValueError(
                 "inference.llm.system_prompt_mlflow_name is configured but "
-                "experiment_tracking.mlflow is not. "
-                "Add an mlflow block under experiment_tracking in pipeline_config.yaml."
+                "integrations.mlflow is not. "
+                "Add an mlflow block under integrations in pipeline_config.yaml."
             )
 
         # Build a gateway from config (used by unit tests or callers without a pre-built gateway)

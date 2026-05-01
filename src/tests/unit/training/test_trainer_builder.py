@@ -102,7 +102,7 @@ def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.Monke
 
     cfg = MagicMock()
     cfg.training.get_effective_optimizer.return_value = "adamw_torch"
-    cfg.experiment_tracking.get_report_to.return_value = ["mlflow"]
+    cfg.integrations.get_report_to.return_value = ["mlflow"]
     cfg.training.hyperparams = SimpleNamespace(epochs=3, learning_rate=2e-4)
 
     strategy = MagicMock()
@@ -129,7 +129,7 @@ def test_create_trainer_uses_reward_plugin_for_sapo(monkeypatch: pytest.MonkeyPa
 
     cfg = MagicMock()
     cfg.training.get_effective_optimizer.return_value = "adamw_torch"
-    cfg.experiment_tracking.get_report_to.return_value = []
+    cfg.integrations.get_report_to.return_value = []
     cfg.training.hyperparams = SimpleNamespace(epochs=1, learning_rate=1e-4)
 
     strategy = MagicMock()

@@ -77,7 +77,7 @@ def _config_obj(*, single_node: bool = False, mlflow=None):
             provider="single_node" if single_node else "runpod",
             get_strategy_chain=lambda: [],
         ),
-        experiment_tracking=SimpleNamespace(mlflow=mlflow),
+        integrations=SimpleNamespace(mlflow=mlflow),
     )
     return cfg
 

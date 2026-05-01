@@ -490,7 +490,7 @@ class TrainingLauncher:
         if self.secrets.hf_token:
             env["HF_TOKEN"] = self.secrets.hf_token
 
-        mlflow_config = self.config.experiment_tracking.mlflow
+        mlflow_config = self.config.integrations.mlflow
         if mlflow_config:
             uris = resolve_mlflow_uris(mlflow_config, runtime_role="training")
             if uris.effective_remote_tracking_uri:

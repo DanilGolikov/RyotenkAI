@@ -1,7 +1,7 @@
 """Project-level experiment-tracking block.
 
 Core schema. No UX/registry concepts: by the time a
-``ExperimentTrackingConfig`` is being validated, the
+``IntegrationsConfig`` is being validated, the
 ``integration: <id>`` shorthand has already been expanded inline by
 :func:`src.workspace.integrations.resolver.resolve_yaml_integrations`
 (if it was used). That's why ``mlflow`` is just ``MLflowConfig | None``
@@ -23,7 +23,7 @@ from .huggingface import HuggingFaceHubConfig  # noqa: TC001  — required at ru
 from .mlflow import MLflowConfig  # noqa: TC001  — required at runtime for Pydantic
 
 # Fields that used to live INSIDE the nested
-# ``experiment_tracking.mlflow.system_metrics:`` block but were removed
+# ``integrations.mlflow.system_metrics:`` block but were removed
 # in the second refactor pass:
 #  - ``sampling_interval`` / ``samples_before_logging`` configured the
 #    native MLflow background sampler, which the codebase no longer
@@ -49,14 +49,14 @@ _SYSTEM_METRICS_REMOVED_HINT = (
 )
 
 
-class ExperimentTrackingConfig(StrictBaseModel):
+class IntegrationsConfig(StrictBaseModel):
     """Project-level experiment-tracking block.
 
     Both ``mlflow`` and ``huggingface`` are core runtime types — by
     the time validation runs, the UX-layer resolver has already
     inlined any ``integration: <id>`` shorthand into the corresponding
     fields. Pipeline stages read
-    ``cfg.experiment_tracking.mlflow.tracking_uri`` etc. directly.
+    ``cfg.integrations.mlflow.tracking_uri`` etc. directly.
     """
 
     mlflow: MLflowConfig | None = Field(None)
@@ -76,7 +76,7 @@ class ExperimentTrackingConfig(StrictBaseModel):
                 removed = sorted(set(sm_block.keys()) & _REMOVED_SYSTEM_METRICS_KEYS)
                 if removed:
                     raise ValueError(
-                        "experiment_tracking.mlflow.system_metrics no longer "
+                        "integrations.mlflow.system_metrics no longer "
                         f"accepts {removed!r}. {_SYSTEM_METRICS_REMOVED_HINT}"
                     )
         return data
@@ -96,5 +96,5 @@ class ExperimentTrackingConfig(StrictBaseModel):
 
 
 __all__ = [
-    "ExperimentTrackingConfig",
+    "IntegrationsConfig",
 ]

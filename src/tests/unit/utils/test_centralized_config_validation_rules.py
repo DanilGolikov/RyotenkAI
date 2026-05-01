@@ -7,7 +7,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -76,8 +76,8 @@ def _inference_cfg_disabled() -> InferenceConfig:
     )
 
 
-def _experiment_tracking_cfg() -> ExperimentTrackingConfig:
-    return ExperimentTrackingConfig(
+def _integrations_cfg() -> IntegrationsConfig:
+    return IntegrationsConfig(
         mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test-exp")
     )
 
@@ -89,7 +89,7 @@ def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: di
         providers=providers,
         datasets=datasets,
         inference=_inference_cfg_disabled(),
-        experiment_tracking=_experiment_tracking_cfg(),
+        integrations=_integrations_cfg(),
     )
 
 

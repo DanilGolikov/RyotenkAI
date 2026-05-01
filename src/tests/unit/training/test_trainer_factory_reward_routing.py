@@ -130,8 +130,8 @@ def _make_pipeline_config(*, training_type: str = "full") -> MagicMock:
         max_completion_length=None,
         beta=None,
     )
-    cfg.experiment_tracking.get_report_to.return_value = []
-    cfg.experiment_tracking.mlflow = None
+    cfg.integrations.get_report_to.return_value = []
+    cfg.integrations.mlflow = None
     return cfg
 
 

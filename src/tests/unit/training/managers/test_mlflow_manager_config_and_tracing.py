@@ -14,7 +14,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -30,7 +30,7 @@ from src.utils.config import (
 
 
 pytestmark = pytest.mark.skip(
-    reason=("Requires experiment_tracking resolver (src/config/integrations/resolver.py). "
+    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
         "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
         "system_metrics_*) that per PR3 live on the integration side. Project "
         "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
@@ -122,7 +122,7 @@ def _mk_cfg() -> PipelineConfig:
             "pref_data": _ds_local("data/pref.jsonl"),
         },
         inference=_inference_cfg_disabled(),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri="http://127.0.0.1:5002",
                 experiment_name="test",

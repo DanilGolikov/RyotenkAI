@@ -87,7 +87,7 @@ const TOP_LEVEL_ORDER = [
   'training',
   'inference',
   'evaluation',
-  'experiment_tracking',
+  'integrations',
 ]
 
 /**
@@ -99,7 +99,7 @@ const TOP_LEVEL_LABELS: Record<string, string> = {
   training: 'Training',
   inference: 'Inference',
   evaluation: 'Evaluation',
-  experiment_tracking: 'Experiment tracking',
+  integrations: 'Experiment tracking',
   // Provider-scoped sections — reuse the same label path so the
   // ConfigBuilder section header reads "Connect" / "Cleanup" instead
   // of the bare YAML key.
@@ -285,14 +285,14 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
   // Experiment tracking: both backends are optional in the schema, but
   // the whole tab is empty otherwise. Pin them as always-visible so the
   // user sees the available backends immediately on tab entry.
-  experiment_tracking: {
+  integrations: {
     alwaysVisible: ['mlflow', 'huggingface'],
     fieldOrder: ['mlflow', 'huggingface'],
   },
   // MLflow block — PR3: only ``integration`` is visible until a value
   // is picked; ``experiment_name`` (+ optional ``run_description_file``)
   // are revealed once an integration is chosen.
-  'experiment_tracking.mlflow': (v) => {
+  'integrations.mlflow': (v) => {
     const active = typeof v.integration === 'string' && v.integration.length > 0
     if (active) {
       return {
@@ -312,7 +312,7 @@ const REQUIRED_OVERRIDES: Record<string, RequiredOverride | RequiredOverrideFn> 
   // HuggingFace block — PR3: no more ``enabled`` flag. Only the
   // ``integration`` picker is visible until a value is selected; then
   // ``repo_id`` + ``private`` appear.
-  'experiment_tracking.huggingface': (v) => {
+  'integrations.huggingface': (v) => {
     const active = typeof v.integration === 'string' && v.integration.length > 0
     if (active) {
       return {

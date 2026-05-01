@@ -184,7 +184,7 @@ def test_config_schema_endpoint(client: TestClient) -> None:
         "providers",
         "inference",
         "evaluation",
-        "experiment_tracking",
+        "integrations",
     ):
         assert key in props, f"missing {key} from config schema"
 

@@ -77,7 +77,7 @@ class ModelRetriever(PipelineStage):
         self._card_generator = ModelCardGenerator()
 
         # Expose HF properties for backward compat
-        hf_config = config.experiment_tracking.huggingface
+        hf_config = config.integrations.huggingface
         self._hf_api = self._uploader.hf_api
         self.hf_enabled = bool(hf_config and hf_config.integration)
         self._hf_repo_id: str | None = hf_config.repo_id if hf_config else None

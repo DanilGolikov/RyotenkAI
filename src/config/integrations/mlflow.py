@@ -5,7 +5,7 @@ This module is **core schema only** — no knowledge of integrations
 resolver, no UX-layer types.
 
 Project YAMLs may use the convenience shorthand
-``experiment_tracking.mlflow.integration: <id>`` to pull values from a
+``integrations.mlflow.integration: <id>`` to pull values from a
 saved Settings integration. That substitution happens **before**
 core validation, in
 :func:`src.workspace.integrations.resolver.resolve_yaml_integrations`
@@ -87,7 +87,7 @@ class MLflowConfig(StrictBaseModel):
     def _run_model_validators(self) -> MLflowConfig:
         if not (self.tracking_uri or self.local_tracking_uri):
             raise ValueError(
-                "experiment_tracking.mlflow needs either ``tracking_uri`` "
+                "integrations.mlflow needs either ``tracking_uri`` "
                 "or ``local_tracking_uri``. Tip: use the ``integration: "
                 "<id>`` shorthand to inherit them from a saved Settings "
                 "integration."

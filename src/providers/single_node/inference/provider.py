@@ -497,7 +497,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
         from src.evaluation.system_prompt import SystemPromptLoader
 
         llm_cfg = self._provider_cfg.inference.llm
-        mlflow_cfg = getattr(getattr(self._cfg, "experiment_tracking", None), "mlflow", None)
+        mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)
         gateway = getattr(self._mlflow_manager, "_gateway", None) if self._mlflow_manager is not None else None
 
         try:

@@ -70,7 +70,7 @@ def _stub_config() -> Any:
     test that touches ``inputs.config`` checks identity, not internals.
     """
     sentinel = MagicMock(name="PipelineConfig")
-    sentinel.experiment_tracking = MagicMock()
+    sentinel.integrations = MagicMock()
     return sentinel
 
 

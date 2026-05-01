@@ -9,7 +9,7 @@ interface Props {
   onBlur?: () => void
 }
 
-/** Dropdown for ``experiment_tracking.mlflow.integration``.
+/** Dropdown for ``integrations.mlflow.integration``.
  *  Lists integrations of type ``mlflow`` from Settings + a
  *  deep-link to create a new one. Shows an inline "Test connection"
  *  button next to the selected integration to validate tracking-URI

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.experiment_tracking import ExperimentTrackingConfig
+from src.config.integrations.root import IntegrationsConfig
 from src.config.integrations.mlflow import MLflowConfig
 from src.config.integrations.mlflow_integration import MLflowIntegrationConfig
 from src.config.integrations.system_metrics import SystemMetricsConfig
@@ -111,11 +111,11 @@ class TestInvariants:
 
 
 class TestLegacyMigrationHint:
-    def test_old_flat_field_in_experiment_tracking_mlflow_rejected(self) -> None:
+    def test_old_flat_field_in_integrations_mlflow_rejected(self) -> None:
         # Pre-nested-block flat field at the project level still raises
         # a clear migration error (kept for users on very old configs).
         with pytest.raises(ValidationError) as exc_info:
-            ExperimentTrackingConfig.model_validate({
+            IntegrationsConfig.model_validate({
                 "mlflow": {
                     "integration": "my_int",
                     "experiment_name": "exp",
@@ -128,7 +128,7 @@ class TestLegacyMigrationHint:
         "removed_field",
         ["sampling_interval", "samples_before_logging", "callback_interval"],
     )
-    def test_removed_nested_field_in_experiment_tracking_mlflow_rejected(
+    def test_removed_nested_field_in_integrations_mlflow_rejected(
         self, removed_field: str
     ) -> None:
         # Pin: YAMLs that already moved to the nested
@@ -136,7 +136,7 @@ class TestLegacyMigrationHint:
         # knobs surface a targeted migration hint, not a generic
         # ``extra_forbidden`` Pydantic error.
         with pytest.raises(ValidationError) as exc_info:
-            ExperimentTrackingConfig.model_validate({
+            IntegrationsConfig.model_validate({
                 "mlflow": {
                     "integration": "my_int",
                     "experiment_name": "exp",

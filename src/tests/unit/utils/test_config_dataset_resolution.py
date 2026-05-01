@@ -18,7 +18,7 @@ from pydantic import ValidationError
 from src.config.integrations.mlflow import MLflowConfig
 from src.utils.config import (
     DatasetConfig,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -109,7 +109,7 @@ class TestGetDataset:
             datasets={"default": _local_ds("data/default.jsonl"), "alpaca": _local_ds("data/alpaca.jsonl")},
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -124,7 +124,7 @@ class TestGetDataset:
             datasets={"default": _local_ds("data/default.jsonl")},
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -139,7 +139,7 @@ class TestGetDataset:
             datasets={"default": _local_ds("data/default.jsonl")},
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -161,7 +161,7 @@ class TestPrimaryDataset:
             },
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -176,7 +176,7 @@ class TestPrimaryDataset:
             datasets={"first": _local_ds("data/first.jsonl"), "second": _local_ds("data/second.jsonl")},
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -202,7 +202,7 @@ class TestDatasetForStrategy:
                 ]
             ),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -224,7 +224,7 @@ class TestDatasetForStrategy:
             datasets={"default": _local_ds("data/default.jsonl")},
             training=_training_cfg([StrategyPhaseConfig(strategy_type="sft")]),
             inference=_inference_cfg_disabled(),
-            experiment_tracking=ExperimentTrackingConfig(
+            integrations=IntegrationsConfig(
                 mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
             ),
         )
@@ -246,7 +246,7 @@ class TestValidateDatasets:
                     ]
                 ),
                 inference=_inference_cfg_disabled(),
-                experiment_tracking=ExperimentTrackingConfig(
+                integrations=IntegrationsConfig(
                     mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
                 ),
             )

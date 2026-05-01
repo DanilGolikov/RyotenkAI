@@ -25,7 +25,7 @@ from .inference import (
     InferenceVLLMEngineConfig,
 )
 from .integrations import (
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     HuggingFaceConfig,
     HuggingFaceHubConfig,
     MLflowConfig,
@@ -61,7 +61,7 @@ __all__ = [
     "DatasetSourceLocal",
     "DatasetValidationPluginConfig",
     "DatasetValidationsConfig",
-    "ExperimentTrackingConfig",
+    "IntegrationsConfig",
     "GlobalHyperparametersConfig",
     "HuggingFaceConfig",
     "HuggingFaceHubConfig",

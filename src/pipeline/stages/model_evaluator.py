@@ -275,7 +275,7 @@ class ModelEvaluator(PipelineStage):
             return None
         llm_cfg = InferenceLLMConfig.model_validate(llm_raw)
 
-        mlflow_cfg = getattr(getattr(self.config, "experiment_tracking", None), "mlflow", None)
+        mlflow_cfg = getattr(getattr(self.config, "integrations", None), "mlflow", None)
 
         # Use gateway from mlflow_manager when available (provides timeout + URI normalization)
         mlflow_manager = context.get("mlflow_manager") if context else None

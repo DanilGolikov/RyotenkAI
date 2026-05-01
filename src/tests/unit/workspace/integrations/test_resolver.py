@@ -75,7 +75,7 @@ class TestPositive:
         registry = IntegrationRegistry(root=tmp_path)
 
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "prod-mlflow",
                     "experiment_name": "my-exp",
@@ -84,7 +84,7 @@ class TestPositive:
         }
 
         out = resolve_yaml_integrations(raw, registry=registry)
-        mlflow = out["experiment_tracking"]["mlflow"]
+        mlflow = out["integrations"]["mlflow"]
         assert mlflow["tracking_uri"] == "https://mlflow.example.com"
         assert mlflow["local_tracking_uri"] == "http://localhost:5002"
         assert mlflow["experiment_name"] == "my-exp"
@@ -104,7 +104,7 @@ class TestPositive:
         registry = IntegrationRegistry(root=tmp_path)
 
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "prod-mlflow",
                     "experiment_name": "my-exp",
@@ -116,12 +116,12 @@ class TestPositive:
         out = resolve_yaml_integrations(raw, registry=registry)
         # Project wins.
         assert (
-            out["experiment_tracking"]["mlflow"]["tracking_uri"]
+            out["integrations"]["mlflow"]["tracking_uri"]
             == "https://override.example.com"
         )
         # Integration default still fills in fields the project didn't override.
         assert (
-            out["experiment_tracking"]["mlflow"]["local_tracking_uri"]
+            out["integrations"]["mlflow"]["local_tracking_uri"]
             == "http://localhost:5002"
         )
 
@@ -137,7 +137,7 @@ class TestPositive:
         registry = IntegrationRegistry(root=tmp_path)
 
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "huggingface": {
                     "integration": "my-hf",
                     "repo_id": "user/repo",
@@ -149,7 +149,7 @@ class TestPositive:
         out = resolve_yaml_integrations(raw, registry=registry)
         # HF block left structurally unchanged — integration is the
         # secrets-tag, repo_id / private are project-side.
-        assert out["experiment_tracking"]["huggingface"] == {
+        assert out["integrations"]["huggingface"] == {
             "integration": "my-hf",
             "repo_id": "user/repo",
             "private": True,
@@ -167,7 +167,7 @@ class TestNegative:
     ) -> None:
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "ghost-mlflow",
                     "experiment_name": "x",
@@ -184,7 +184,7 @@ class TestNegative:
     ) -> None:
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "huggingface": {
                     "integration": "ghost-hf",
                     "repo_id": "user/repo",
@@ -205,7 +205,7 @@ class TestNegative:
         )
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "my-hf",
                     "experiment_name": "x",
@@ -228,7 +228,7 @@ class TestNegative:
         )
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "empty-mlflow",
                     "experiment_name": "x",
@@ -246,10 +246,10 @@ class TestNegative:
 
 
 class TestBoundary:
-    def test_no_experiment_tracking_block_passthrough(
+    def test_no_integrations_block_passthrough(
         self, tmp_path: Path
     ) -> None:
-        """Project YAML without ``experiment_tracking`` section at all
+        """Project YAML without ``integrations`` section at all
         — resolver no-ops."""
         registry = IntegrationRegistry(root=tmp_path)
         raw = {"model": {"name": "stub"}}
@@ -261,7 +261,7 @@ class TestBoundary:
         ``integration:`` shorthand) — resolver leaves it alone."""
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "tracking_uri": "https://inline.example.com",
                     "experiment_name": "x",
@@ -277,7 +277,7 @@ class TestBoundary:
         We don't lookup the registry."""
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "",
                     "experiment_name": "x",
@@ -288,8 +288,8 @@ class TestBoundary:
         # Empty integration → no registry lookup, no error. The block
         # is left structurally intact (downstream Pydantic will complain
         # about missing tracking_uri).
-        assert "integration" in out["experiment_tracking"]["mlflow"]
-        assert out["experiment_tracking"]["mlflow"]["integration"] == ""
+        assert "integration" in out["integrations"]["mlflow"]
+        assert out["integrations"]["mlflow"]["integration"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ class TestInvariants:
         )
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "prod-mlflow",
                     "experiment_name": "x",
@@ -331,7 +331,7 @@ class TestInvariants:
         )
         registry = IntegrationRegistry(root=tmp_path)
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "prod-mlflow",
                     "experiment_name": "x",
@@ -367,7 +367,7 @@ class TestLogicSpecific:
         registry = IntegrationRegistry(root=tmp_path)
 
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {
                     "integration": "prod-mlflow",
                     "experiment_name": "x",
@@ -380,11 +380,11 @@ class TestLogicSpecific:
         }
         out = resolve_yaml_integrations(raw, registry=registry)
         assert (
-            out["experiment_tracking"]["mlflow"]["tracking_uri"]
+            out["integrations"]["mlflow"]["tracking_uri"]
             == "https://mlflow.example.com"
         )
         assert (
-            out["experiment_tracking"]["huggingface"]["integration"]
+            out["integrations"]["huggingface"]["integration"]
             == "my-hf"
         )
 
@@ -403,7 +403,7 @@ class TestLogicSpecific:
         # ``experiment_name`` missing — Pydantic would reject
         # ``MLflowConfig`` later, but the resolver doesn't care.
         raw = {
-            "experiment_tracking": {
+            "integrations": {
                 "mlflow": {"integration": "prod-mlflow"},
             },
         }
@@ -411,6 +411,6 @@ class TestLogicSpecific:
         # Still returned a sensible inlined dict; Pydantic-level error
         # is the next layer's responsibility.
         assert (
-            out["experiment_tracking"]["mlflow"]["tracking_uri"]
+            out["integrations"]["mlflow"]["tracking_uri"]
             == "https://mlflow.example.com"
         )

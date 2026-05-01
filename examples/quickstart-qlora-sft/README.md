@@ -106,7 +106,7 @@ To track experiments with MLflow, start the local stack first:
 ./docker/mlflow/start.sh
 ```
 
-Then set `experiment_tracking.mlflow.enabled: true` in the config.
+Then set `integrations.mlflow.enabled: true` in the config.
 MLflow UI will be available at http://localhost:5002.
 
 ## Optional: LLM-as-a-judge evaluation

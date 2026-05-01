@@ -80,7 +80,7 @@ inference:
   common:
     model_source: auto
 
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test

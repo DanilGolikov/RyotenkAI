@@ -14,7 +14,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -29,7 +29,7 @@ from src.utils.config import (
 
 pytestmark = pytest.mark.skip(
     reason=(
-        "Requires experiment_tracking resolver: tests stage a resolved MLflowConfig "
+        "Requires integrations resolver: tests stage a resolved MLflowConfig "
         "with system_metrics_callback_* which per PR3 lives on the integration side. "
         "Unskip when src/config/integrations/resolver.py lands and load_config "
         "merges integration payload into MLflowConfig."
@@ -135,7 +135,7 @@ def _mk_cfg(*, callback_enabled: bool) -> PipelineConfig:
                 )
             ),
         ),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",

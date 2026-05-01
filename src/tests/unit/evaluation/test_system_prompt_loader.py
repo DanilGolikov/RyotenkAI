@@ -180,7 +180,7 @@ class TestNegatives:
         assert result is None
 
     def test_load_mlflow_cfg_none_raises(self) -> None:
-        with pytest.raises(ValueError, match="experiment_tracking.mlflow is not"):
+        with pytest.raises(ValueError, match="integrations.mlflow is not"):
             SystemPromptLoader.load(_llm_cfg(mlflow_name="my-prompt"), None)
 
     def test_load_mlflow_cfg_ignores_legacy_enabled_flag(self) -> None:

@@ -147,7 +147,7 @@ def load_pipeline_config(path: Path) -> PipelineConfig: ...
 ```
 
 Project YAMLs use the convenience shorthand
-``experiment_tracking.mlflow.integration: <id>`` to pull the
+``integrations.mlflow.integration: <id>`` to pull the
 tracking URI / TLS bundle / system-metrics knobs from a saved
 Settings integration. That substitution is a **UX-layer concern** —
 it happens BEFORE the YAML reaches core's

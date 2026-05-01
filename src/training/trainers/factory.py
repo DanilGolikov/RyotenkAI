@@ -128,7 +128,7 @@ class TrainerFactory:
         num_epochs = hp.epochs
 
         # Calculate report_to
-        report_to = config.experiment_tracking.get_report_to()
+        report_to = config.integrations.get_report_to()
         if "mlflow" in report_to and mlflow_manager and not mlflow_manager.is_active:
             report_to = [r for r in report_to if r != "mlflow"]
             if not report_to:
@@ -328,7 +328,7 @@ class TrainerFactory:
         trainer_kwargs.update(strategy_trainer_kwargs)
 
         # 5. Add Callbacks (Common Logic)
-        mlflow_config = config.experiment_tracking.mlflow if config.experiment_tracking else None
+        mlflow_config = config.integrations.mlflow if config.integrations else None
         callbacks = trainer_kwargs.get("callbacks", []) or []
 
         if mlflow_config:

@@ -71,7 +71,7 @@ datasets:
       local_paths:
         train: data/train.jsonl
         eval: null
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp
@@ -137,7 +137,7 @@ datasets:
       local_paths:
         train: data/train.jsonl
         eval: null
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp
@@ -208,7 +208,7 @@ datasets:
       local_paths:
         train: data/train.jsonl
         eval: null
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp

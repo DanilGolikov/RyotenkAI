@@ -10,7 +10,7 @@ from ..base import StrictBaseModel
 from ..datasets import DatasetConfig  # noqa: TC001
 from ..evaluation import EvaluationConfig
 from ..inference import InferenceConfig
-from ..integrations import ExperimentTrackingConfig, HuggingFaceHubConfig
+from ..integrations import IntegrationsConfig, HuggingFaceHubConfig
 from ..model import ModelConfig  # noqa: TC001
 from ..reports import ReportsConfig
 from ..training import AdaLoraConfig, LoraConfig, TrainingOnlyConfig
@@ -70,7 +70,7 @@ class PipelineConfig(
 
     # All integrations in one place: MLflow, HuggingFace (all fields required)
     # If not specified, integrations are disabled (all blocks optional)
-    experiment_tracking: ExperimentTrackingConfig = Field(default_factory=ExperimentTrackingConfig)  # type: ignore[arg-type]
+    integrations: IntegrationsConfig = Field(default_factory=IntegrationsConfig)  # type: ignore[arg-type]
 
     # Optional inference deployment stage config (NEW)
     inference: InferenceConfig = Field(
@@ -101,8 +101,8 @@ class PipelineConfig(
 
     @property
     def huggingface(self) -> HuggingFaceHubConfig | None:
-        """Shortcut to experiment_tracking.huggingface."""
-        return self.experiment_tracking.huggingface
+        """Shortcut to integrations.huggingface."""
+        return self.integrations.huggingface
 
     def get_adapter_config(self) -> LoraConfig | AdaLoraConfig:
         """

@@ -364,7 +364,7 @@ providers:
 # ============================================================================
 # INTEGRATIONS (all in one place)
 # ============================================================================
-experiment_tracking:
+integrations:
   # -------------------------------------------------------------------------
   # MLflow: Production-ready tracking with PostgreSQL + MinIO
   # Stack: ./scripts/mlflow-stack-start.sh → http://localhost:5002

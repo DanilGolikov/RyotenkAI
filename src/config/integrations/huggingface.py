@@ -1,6 +1,6 @@
 """Project-scoped HuggingFace reference.
 
-Starting with PR3, ``experiment_tracking.huggingface`` in the project YAML
+Starting with PR3, ``integrations.huggingface`` in the project YAML
 is a *reference* to a reusable HF integration managed in Settings →
 Integrations. The integration carries the token; the project keeps the
 project-local push target (``repo_id``, ``private``) alongside the
@@ -12,7 +12,7 @@ is not None and cfg.huggingface.integration`` instead of a separate flag.
 
 Legacy YAML — ``enabled``/``repo_id``/``private`` at the previous layout
 — is rejected with a user-friendly error from
-``ExperimentTrackingConfig._reject_legacy_keys``.
+``IntegrationsConfig._reject_legacy_keys``.
 """
 
 from __future__ import annotations
@@ -53,11 +53,25 @@ class HuggingFaceHubConfig(StrictBaseModel):
         return normalized or None
 
     @model_validator(mode="after")
-    def _require_repo_when_integration_set(self) -> HuggingFaceHubConfig:
+    def _require_both_or_neither(self) -> HuggingFaceHubConfig:
+        # The two fields are bound together: an integration without a
+        # repo_id has no push target; a repo_id without an integration
+        # has no auth token. Either both are set (HF active) or both
+        # are absent (HF disabled — drop the whole block to opt out).
+        # Half-configured blocks were the #1 source of silent
+        # "HF Hub upload disabled" surprises in production runs.
         if self.integration and not self.repo_id:
             raise ValueError(
-                "experiment_tracking.huggingface.repo_id is required when "
-                "experiment_tracking.huggingface.integration is set."
+                "integrations.huggingface.repo_id is required when "
+                "integrations.huggingface.integration is set."
+            )
+        if self.repo_id and not self.integration:
+            raise ValueError(
+                "integrations.huggingface.integration is required when "
+                "integrations.huggingface.repo_id is set. Add "
+                "``integration: <id>`` referencing a Settings → "
+                "Integrations entry, or remove the whole "
+                "integrations.huggingface block to disable HF Hub upload."
             )
         return self
 

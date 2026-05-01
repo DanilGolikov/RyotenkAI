@@ -217,7 +217,7 @@ def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
 
     Empty list when ``parsed`` is None (config didn't parse) or when
     :class:`PipelineConfig` validation fails even after dropping the
-    UX-only ``experiment_tracking`` block — config-level errors
+    UX-only ``integrations`` block — config-level errors
     surface through the dedicated validate endpoint, not here. We
     swallow the validation error so a get_config call never fails on
     config issues alone (the user can still open the editor and fix).
@@ -235,12 +235,12 @@ def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
     from src.utils.config import PipelineConfig
 
     # ``find_stale_plugins`` walks plugin lists; it does NOT touch
-    # ``experiment_tracking``. Project YAMLs commonly use the
+    # ``integrations``. Project YAMLs commonly use the
     # ``integration: <id>`` shorthand for mlflow/huggingface, which
     # this code path can't resolve (no registry context here). Drop
-    # the ``experiment_tracking`` block before validation so a missing
+    # the ``integrations`` block before validation so a missing
     # integration id doesn't shadow the plugin-staleness check.
-    plugin_only = {k: v for k, v in parsed.items() if k != "experiment_tracking"}
+    plugin_only = {k: v for k, v in parsed.items() if k != "integrations"}
 
     try:
         config = PipelineConfig.model_validate(plugin_only)

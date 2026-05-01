@@ -59,9 +59,9 @@ def resolve_yaml_integrations(
     """Expand ``integration: <id>`` shortcuts in a raw config dict.
 
     Walks known paths:
-    - ``experiment_tracking.mlflow``: full content merge from the
+    - ``integrations.mlflow``: full content merge from the
       integration's ``current.yaml`` (project keys win on conflict).
-    - ``experiment_tracking.huggingface``: existence check only;
+    - ``integrations.huggingface``: existence check only;
       ``integration_id`` left in place as a secrets-tag.
 
     Returns a NEW dict (deep-copied). The input is not mutated, so
@@ -80,7 +80,7 @@ def resolve_yaml_integrations(
         registry = IntegrationRegistry()
 
     out = copy.deepcopy(raw)
-    et = out.get("experiment_tracking")
+    et = out.get("integrations")
     if not isinstance(et, dict):
         return out
 

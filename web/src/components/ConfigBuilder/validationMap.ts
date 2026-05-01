@@ -16,7 +16,7 @@ export function groupForCheck(check: ConfigCheck): string | null {
   if (haystack.includes('dataset')) return 'datasets'
   if (haystack.includes('runpod') || haystack.includes('provider')) return 'providers'
   if (haystack.includes('hf_token') || haystack.includes('huggingface') || haystack.includes('mlflow')) {
-    return 'experiment_tracking'
+    return 'integrations'
   }
   if (haystack.includes('eval')) return 'evaluation'
   if (haystack.includes('inference')) return 'inference'

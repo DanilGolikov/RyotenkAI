@@ -85,7 +85,7 @@ class _FakeMlflowManager:
 def _make_logger() -> Any:
     """Build a logger with no-op config and an active manager."""
     config = SimpleNamespace(
-        experiment_tracking=SimpleNamespace(
+        integrations=SimpleNamespace(
             mlflow=SimpleNamespace(system_metrics_callback_enabled=False),
         ),
     )
@@ -156,7 +156,7 @@ class TestPositive:
 class TestNegative:
     def test_returns_none_when_manager_inactive(self) -> None:
         config = SimpleNamespace(
-            experiment_tracking=SimpleNamespace(mlflow=None),
+            integrations=SimpleNamespace(mlflow=None),
         )
         manager = SimpleNamespace(is_active=False)
         logger = MlflowPhaseLogger(manager, config)
@@ -164,7 +164,7 @@ class TestNegative:
 
     def test_returns_none_when_no_manager(self) -> None:
         config = SimpleNamespace(
-            experiment_tracking=SimpleNamespace(mlflow=None),
+            integrations=SimpleNamespace(mlflow=None),
         )
         logger = MlflowPhaseLogger(None, config)
         assert logger.start_nested_run(0, _phase()) is None

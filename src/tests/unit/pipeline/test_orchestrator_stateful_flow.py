@@ -31,7 +31,7 @@ def _build_mock_config(*, inference_enabled: bool, evaluation_enabled: bool) -> 
 
     config.get_active_provider_name.return_value = "single_node"
     config.get_provider_config.return_value = {"cleanup": {"on_interrupt": True}}
-    config.experiment_tracking.mlflow = MagicMock(
+    config.integrations.mlflow = MagicMock(
         tracking_uri="http://localhost:5002",
         system_metrics_callback_enabled=False,
     )

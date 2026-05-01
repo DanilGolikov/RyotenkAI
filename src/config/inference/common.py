@@ -80,7 +80,7 @@ class InferenceLLMConfig(StrictBaseModel):
             "'my-prompt' (latest version), "
             "'prompts:/my-prompt/3' (specific version, immutable), "
             "'prompts:/my-prompt@production' (alias, mutable). "
-            "Requires experiment_tracking.mlflow to be configured. "
+            "Requires integrations.mlflow to be configured. "
             "Mutually exclusive with system_prompt_path."
         ),
     )

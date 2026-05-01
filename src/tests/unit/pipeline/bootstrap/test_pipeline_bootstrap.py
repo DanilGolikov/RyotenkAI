@@ -39,7 +39,7 @@ def _mk_config() -> MagicMock:
     cfg.datasets = {"default": dataset_cfg}
     cfg.get_active_provider_name.return_value = "single_node"
     cfg.get_provider_config.return_value = {"cleanup": {"on_interrupt": True}}
-    cfg.experiment_tracking.mlflow = SimpleNamespace(
+    cfg.integrations.mlflow = SimpleNamespace(
         tracking_uri="http://localhost:5002",
         system_metrics_callback_enabled=False,
     )

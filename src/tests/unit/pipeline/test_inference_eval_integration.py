@@ -129,7 +129,7 @@ def _mk_inference_cfg(*, eval_enabled: bool = True) -> MagicMock:
     cfg.evaluation.enabled = eval_enabled
     cfg.model.name = "test-model"
     cfg.model.trust_remote_code = False
-    cfg.experiment_tracking.mlflow = None
+    cfg.integrations.mlflow = None
     return cfg
 
 
@@ -139,7 +139,7 @@ def _mk_eval_cfg() -> MagicMock:
     cfg.evaluation = MagicMock()
     cfg.evaluation.enabled = True
     cfg.inference.engine = "vllm"
-    cfg.experiment_tracking.mlflow = None
+    cfg.integrations.mlflow = None
     return cfg
 
 

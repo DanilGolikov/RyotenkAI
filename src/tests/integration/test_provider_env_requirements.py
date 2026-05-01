@@ -98,7 +98,7 @@ datasets:
         train: data/does_not_matter.jsonl
         eval: null
 
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp
@@ -182,7 +182,7 @@ datasets:
         train: data/does_not_matter.jsonl
         eval: null
 
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp
@@ -287,7 +287,7 @@ datasets:
         train: data/does_not_matter.jsonl
         eval: null
 
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: test-exp

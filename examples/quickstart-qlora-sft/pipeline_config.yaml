@@ -236,7 +236,7 @@ inference:
 # =============================================================================
 # EXPERIMENT TRACKING
 # =============================================================================
-experiment_tracking:
+integrations:
   mlflow:
     # TODO: Configure the primary MLflow URL for training/runtime.
     # Local control plane can optionally use local_tracking_uri when the main URI is public/LAN-only.

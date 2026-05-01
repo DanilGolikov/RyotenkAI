@@ -5,12 +5,12 @@
 Сегодня:
 - `/settings` показывает только **Providers** — переиспользуемые compute-конфиги (SingleNode / RunPod) с полным CRUD, историей версий, валидацией. Никаких токенов и «Test connection» у них нет.
 - Секреты (`HF_TOKEN`, `RUNPOD_API_KEY`, `MLFLOW_TRACKING_URI`, …) живут **per-project** в `env.json` и редактируются во вкладке проекта `Settings` ([web/src/components/ProjectTabs/SettingsTab.tsx](web/src/components/ProjectTabs/SettingsTab.tsx)). Это смешивает «конфиг проекта» и «мой аккаунт у провайдера».
-- MLflow / HuggingFace лежат инлайном в `experiment_tracking.*` ([src/config/integrations/mlflow.py](src/config/integrations/mlflow.py), [huggingface.py](src/config/integrations/huggingface.py)). Чтобы разделить токены между проектами, приходится копировать поля.
+- MLflow / HuggingFace лежат инлайном в `integrations.*` ([src/config/integrations/mlflow.py](src/config/integrations/mlflow.py), [huggingface.py](src/config/integrations/huggingface.py)). Чтобы разделить токены между проектами, приходится копировать поля.
 - `inference.enabled` — отдельный булев флаг, параллельный `inference.provider`. Два источника истины → грязные состояния (провайдер пустой, но enabled=true и наоборот).
 
 Чего хотим:
 1. **Settings → Integrations**: один экран со списками переиспользуемых интеграций — Providers, HuggingFace, MLflow. У каждой — конфиг, токен, кнопка **Test connection**.
-2. В проектном YAML: `inference.provider`, `experiment_tracking.mlflow.integration`, `experiment_tracking.huggingface.integration` — dropdown из Settings. Локально в проекте остаются только по-настоящему project-specific поля (`experiment_name`, `repo_id`, `private`).
+2. В проектном YAML: `inference.provider`, `integrations.mlflow.integration`, `integrations.huggingface.integration` — dropdown из Settings. Локально в проекте остаются только по-настоящему project-specific поля (`experiment_name`, `repo_id`, `private`).
 3. Схема `inference` теряет `enabled`: «провайдер выбран ⇒ этап включён».
 4. `HF_TOKEN` и `RUNPOD_API_KEY` уходят из `ProjectTabs/SettingsTab` — они часть глобальной интеграции/провайдера.
 
@@ -79,7 +79,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 
 **`src/config/integrations/huggingface.py`** — заменить `HuggingFaceHubConfig` на project-level `HuggingFaceRef(integration: str | None, repo_id: str | None, private: bool = True)`. Поле `enabled` убирается. Integration-level `HuggingFaceIntegrationConfig` (только token-носитель + будущие shared knobs) в новом `src/config/integrations/huggingface_integration.py`.
 
-**`src/config/integrations/experiment_tracking.py`** — `ExperimentTrackingConfig.mlflow: MLflowTrackingRef | None`, `.huggingface: HuggingFaceRef | None`. **Hard-break для старого YAML:** pydantic `StrictBaseModel` с `extra='forbid'` → старые ключи (`tracking_uri`, `enabled`, `repo_id` на неправильном уровне) дают понятную ошибку валидации с подсказкой «это поле переехало в Settings → Integrations». Никакой автомиграции и silent rewrite.
+**`src/config/integrations/integrations.py`** — `IntegrationsConfig.mlflow: MLflowTrackingRef | None`, `.huggingface: HuggingFaceRef | None`. **Hard-break для старого YAML:** pydantic `StrictBaseModel` с `extra='forbid'` → старые ключи (`tracking_uri`, `enabled`, `repo_id` на неправильном уровне) дают понятную ошибку валидации с подсказкой «это поле переехало в Settings → Integrations». Никакой автомиграции и silent rewrite.
 
 **Новый `src/config/integrations/resolver.py`** — функции `resolve_mlflow(ref)` и `resolve_huggingface(ref)` читают `IntegrationRegistry` + `IntegrationStore`, сливают уровни и возвращают «плоский» объект для runtime. Ошибка типа `IntegrationNotFound("Open Settings → Integrations…")`. Вызывается в [config_service.py](src/api/services/config_service.py) при validate и в [main.py](src/main.py) / executor на старте прогона.
 
@@ -114,13 +114,13 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 ### 6. Frontend — ConfigBuilder
 
 **[FieldRenderer.tsx:30-37](web/src/components/ConfigBuilder/FieldRenderer.tsx)** — регистрируем новые custom renderers:
-- `experiment_tracking.mlflow.integration` — dropdown `useIntegrations('mlflow')` + inline **Test connection** рядом, и `+ add integration in Settings` row в футере селекта (паттерн из [InferenceProviderField.tsx:57-69](web/src/components/ConfigBuilder/InferenceProviderField.tsx)).
-- `experiment_tracking.huggingface.integration` — то же самое без кнопки test-connection (или тоже с кнопкой, по симметрии).
+- `integrations.mlflow.integration` — dropdown `useIntegrations('mlflow')` + inline **Test connection** рядом, и `+ add integration in Settings` row в футере селекта (паттерн из [InferenceProviderField.tsx:57-69](web/src/components/ConfigBuilder/InferenceProviderField.tsx)).
+- `integrations.huggingface.integration` — то же самое без кнопки test-connection (или тоже с кнопкой, по симметрии).
 
 **[schemaUtils.ts REQUIRED_OVERRIDES:173](web/src/components/ConfigBuilder/schemaUtils.ts)**:
 - `inference` override: gating по truthiness `provider`. Поле `inference.enabled` прячется из формы (`hidden: ['enabled']`); FE пишет его значение автоматически при изменении `provider` (см. ниже), чтобы backend-валидатор `enabled⇒provider` не ругался.
-- `experiment_tracking.mlflow` → только `integration` видим; как выбран — открывается `experiment_name` (+ optional `run_description_file`).
-- `experiment_tracking.huggingface` → аналогично; при выбранной интеграции видны `repo_id`, `private`.
+- `integrations.mlflow` → только `integration` видим; как выбран — открывается `experiment_name` (+ optional `run_description_file`).
+- `integrations.huggingface` → аналогично; при выбранной интеграции видны `repo_id`, `private`.
 
 **Синхронизация `inference.enabled` с `inference.provider`.** В [InferenceProviderField.tsx](web/src/components/ConfigBuilder/InferenceProviderField.tsx) в `onChange` делаем не просто `onChange(provider)`, а обновляем два поля сразу через доступный родительский `rootValue`/`onRootChange` (паттерн уже использован в [ProviderPickerField.tsx:70-78](web/src/components/ConfigBuilder/ProviderPickerField.tsx)): `{...rootValue, inference: {...inf, provider, enabled: Boolean(provider)}}`. Это делает FE единственным источником истины для пары «provider ↔ enabled», YAML остаётся согласованным.
 
@@ -132,7 +132,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 
 ### 8. Миграция / back-compat
 
-- **ET YAML — hard break.** `ExperimentTrackingConfig` (StrictBase, `extra='forbid'`) не принимает старые ключи. Пользователи, у которых в project YAML лежит `experiment_tracking.mlflow.tracking_uri` или `experiment_tracking.huggingface.enabled`, получают понятную pydantic-ошибку:
+- **ET YAML — hard break.** `IntegrationsConfig` (StrictBase, `extra='forbid'`) не принимает старые ключи. Пользователи, у которых в project YAML лежит `integrations.mlflow.tracking_uri` или `integrations.huggingface.enabled`, получают понятную pydantic-ошибку:
   > Unknown field `tracking_uri`. It has moved to Settings → Integrations → MLflow. See `docs/migration/integrations.md`.
 - **Inference.enabled.** Остаётся в backend-схеме; FE автоматически синхронизирует поле с `inference.provider`. Старые YAML с `enabled: true/false` продолжают парситься без изменений.
 - **Secrets fallback.** Один релиз: если токен не найден в `token.enc` интеграции/провайдера, `load_secret_for` пытается прочитать legacy-`secrets.env` и пишет warning «Секреты из secrets.env устарели, добавьте их в Settings → Integrations → <id>». В следующем релизе убираем fallback.
@@ -144,7 +144,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 - `src/tests/unit/pipeline/settings/integrations/test_{store,registry}.py` — копии провайдерских.
 - `src/tests/unit/api/test_integrations_router.py` — CRUD, token PUT не эхо, config validate.
 - `src/tests/unit/api/test_connection_test.py` — httpx-stub на каждый handler + error paths.
-- `src/tests/unit/config/integrations/test_experiment_tracking_migration.py` — legacy → new + warning.
+- `src/tests/unit/config/integrations/test_integrations_migration.py` — legacy → new + warning.
 - `src/tests/unit/config/inference/test_enabled_removal.py` — old YAML со `enabled: true` парсится; `is_active` from `provider`.
 - Обновить существующие 27 `inference.enabled`-сайтов в тестах.
 
@@ -165,8 +165,8 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 | # | Вопрос / риск | Ответ (дипсинк) |
 |---|---|---|
 | 1.1 | Нужен ли `get_integration_registry` в dependencies, как у провайдера? | Да. Добавляется рядом с [get_provider_registry](src/api/dependencies.py) (dependencies.py:51-53) — одна строка, тот же `settings.projects_root_resolved` как корень. |
-| 1.2 | `StrictBaseModel` уже `extra='forbid'` ([src/config/base.py:18](src/config/base.py)) — зачем явно писать в плане? | Hard-break срабатывает «из коробки». Но стандартное сообщение pydantic (`Extra inputs are not permitted`) недостаточно дружелюбно. **Решение:** на новом `ExperimentTrackingConfig` — `model_validator(mode='before')`, который ловит известные legacy-ключи (`tracking_uri`, `local_tracking_uri`, `ca_bundle_path`, `system_metrics_*`, верхний `enabled/repo_id/private` у huggingface) и кидает `ValueError` с ссылкой на `docs/migration/integrations.md`. |
-| 1.3 | Ломает ли hard-break `configs/presets/*.yaml`? | Проверено grep'ом (`configs/presets/`: 01-small.yaml, 02-medium.yaml, 03-large.yaml — **нет** упоминаний mlflow/huggingface/experiment_tracking/HF_TOKEN). Пресеты не содержат ET/секрет-блоков → миграция пресетов не нужна. |
+| 1.2 | `StrictBaseModel` уже `extra='forbid'` ([src/config/base.py:18](src/config/base.py)) — зачем явно писать в плане? | Hard-break срабатывает «из коробки». Но стандартное сообщение pydantic (`Extra inputs are not permitted`) недостаточно дружелюбно. **Решение:** на новом `IntegrationsConfig` — `model_validator(mode='before')`, который ловит известные legacy-ключи (`tracking_uri`, `local_tracking_uri`, `ca_bundle_path`, `system_metrics_*`, верхний `enabled/repo_id/private` у huggingface) и кидает `ValueError` с ссылкой на `docs/migration/integrations.md`. |
+| 1.3 | Ломает ли hard-break `configs/presets/*.yaml`? | Проверено grep'ом (`configs/presets/`: 01-small.yaml, 02-medium.yaml, 03-large.yaml — **нет** упоминаний mlflow/huggingface/integrations/HF_TOKEN). Пресеты не содержат ET/секрет-блоков → миграция пресетов не нужна. |
 | 1.4 | Как сегодня устроен контракт Secrets → Provider factory ([providers/training/factory.py:103-153](src/providers/training/factory.py))? | Сигнатура `create(name, provider_config, secrets)`; внутри провайдеров читается `secrets.runpod_api_key`. **Решение:** расширяем `Secrets` двумя методами — `get_provider_token(provider_id) -> str \| None` и `get_hf_token(integration_id) -> str \| None`. Резолвер внутри читает `token.enc` и fall-back на env. Минимальные точечные правки в [providers/runpod/training/provider.py:82](src/providers/runpod/training/provider.py), [providers/runpod/inference/pods/provider.py:159](src/providers/runpod/inference/pods/provider.py), [stages/model_retriever/hf_uploader.py:78](src/pipeline/stages/model_retriever/hf_uploader.py). |
 | 1.5 | Конфликт `id` между провайдером и интеграцией? | Нет. Разные namespace (`providers/` vs `integrations/` на диске; разные роутеры). |
 
@@ -180,7 +180,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 | 2.4 | Как FE синхронизирует `inference.enabled` с `inference.provider`, если `CUSTOM_FIELD_RENDERERS` имеет сигнатуру только `{value, onChange, onFocus, onBlur}` ([FieldRenderer.tsx:21-29](web/src/components/ConfigBuilder/FieldRenderer.tsx))? | **Решение:** расширяем `CustomFieldProps` опциональными `rootValue?: Record<string, unknown>` и `onRootChange?: (next) => void`; `ObjectFields` уже владеет root-значением (его пробрасывает `ProviderPickerField` через `GroupRendererProps` [ProviderPickerField.tsx:12-22](web/src/components/ConfigBuilder/ProviderPickerField.tsx)). Только FieldRenderer.tsx:284 получает новые props. Существующие renderers игнорируют — zero-risk совместимости. |
 | 2.5 | Где прячем `inference.enabled` в UI? | Используем уже существующее `REQUIRED_OVERRIDES['inference'].hidden: ['enabled']` ([schemaUtils.ts:146-162](web/src/components/ConfigBuilder/schemaUtils.ts)). Механизм отработан на `evaluators` в `evaluation`. |
 | 2.6 | Пользователи, сохранившие `HF_TOKEN`/`RUNPOD_API_KEY` в `env.json`, — что с мёртвыми ключами после удаления из `SettingsTab CATALOG`? | Мёртвые ключи безвредны — env-слияние на запуске игнорирует неизвестные. Inline-плашка «Tokens moved to Settings → Integrations». Cleanup — задача следующего спринта. |
-| 2.7 | `get_report_to()` в `ExperimentTrackingConfig` ([integrations/experiment_tracking.py:23-27](src/config/integrations/experiment_tracking.py)): как решать `["mlflow"]` vs `["none"]` после refactor? | `mlflow is not None and mlflow.integration` (truthy). Не резолвим реестр на каждый вызов — это геттер, он синхронный и часто дёргается. |
+| 2.7 | `get_report_to()` в `IntegrationsConfig` ([integrations/integrations.py:23-27](src/config/integrations/integrations.py)): как решать `["mlflow"]` vs `["none"]` после refactor? | `mlflow is not None and mlflow.integration` (truthy). Не резолвим реестр на каждый вызов — это геттер, он синхронный и часто дёргается. |
 | 2.8 | `evaluation.enabled=true requires inference.enabled=true` ([validators/cross.py:286-301](src/config/validators/cross.py), [main.py:794](src/main.py)) — как это работает с новой FE-логикой? | Не трогаем. `inference.enabled` в backend остаётся; FE его синхронизирует. Все 27 сайтов `cfg.inference.enabled` работают как сегодня. |
 
 ### Итерация 3 — Security, тесты, roll-out
@@ -213,7 +213,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 - `pytest src/tests/unit/pipeline/settings/integrations/` — registry/store SRP.
 - `pytest src/tests/unit/api/test_integrations_router.py` — CRUD + 2 точки токенов.
 - `pytest src/tests/unit/api/test_connection_test.py` — все handlers.
-- `pytest src/tests/unit/config/integrations/test_experiment_tracking_migration.py` — legacy YAML поднимается.
+- `pytest src/tests/unit/config/integrations/test_integrations_migration.py` — legacy YAML поднимается.
 - `pytest src/tests/unit/config/inference/test_enabled_removal.py` — `enabled: true` не ломает парсинг; `is_active` выводится из `provider`.
 - `ruff check . && mypy .` — чисто.
 - `cd web && npm run build` — TS сборка.
@@ -225,7 +225,7 @@ Model-validator [src/config/inference/schema.py:44](src/config/inference/schema.
 
 **Backend**
 - Новые: `src/pipeline/settings/integrations/*`, `src/api/routers/integrations.py`, `src/api/services/integration_service.py`, `src/api/schemas/integration.py`, `src/config/integrations/{registry,resolver}.py`, `src/api/services/connection_test.py`
-- Правка: [src/config/inference/schema.py](src/config/inference/schema.py), [src/config/integrations/{mlflow,huggingface,experiment_tracking}.py](src/config/integrations/), [src/config/validators/{inference,cross,pipeline}.py](src/config/validators/), [src/config/secrets/{model,loader}.py](src/config/secrets/), [src/api/routers/providers.py](src/api/routers/providers.py), [src/api/services/provider_service.py](src/api/services/provider_service.py), [src/api/schemas/provider.py](src/api/schemas/provider.py), [src/main.py](src/main.py), [src/api/services/config_service.py](src/api/services/config_service.py), [src/pipeline/executor/stage_planner.py](src/pipeline/executor/stage_planner.py), [src/pipeline/stages/model_retriever/hf_uploader.py](src/pipeline/stages/model_retriever/hf_uploader.py), [src/providers/runpod/**/provider.py](src/providers/runpod/)
+- Правка: [src/config/inference/schema.py](src/config/inference/schema.py), [src/config/integrations/{mlflow,huggingface,integrations}.py](src/config/integrations/), [src/config/validators/{inference,cross,pipeline}.py](src/config/validators/), [src/config/secrets/{model,loader}.py](src/config/secrets/), [src/api/routers/providers.py](src/api/routers/providers.py), [src/api/services/provider_service.py](src/api/services/provider_service.py), [src/api/schemas/provider.py](src/api/schemas/provider.py), [src/main.py](src/main.py), [src/api/services/config_service.py](src/api/services/config_service.py), [src/pipeline/executor/stage_planner.py](src/pipeline/executor/stage_planner.py), [src/pipeline/stages/model_retriever/hf_uploader.py](src/pipeline/stages/model_retriever/hf_uploader.py), [src/providers/runpod/**/provider.py](src/providers/runpod/)
 
 **Frontend**
 - Новые: `web/src/pages/{IntegrationsIndex,IntegrationDetail}.tsx`, `web/src/components/{IntegrationCard,NewIntegrationModal}.tsx`, `web/src/components/IntegrationTabs/*`, `web/src/api/hooks/useIntegrations.ts`

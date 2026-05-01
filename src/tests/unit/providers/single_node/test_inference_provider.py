@@ -82,7 +82,7 @@ def _mk_pipeline_config(provider_cfg, engine_cfg, *, merge_before_deploy: bool =
     cfg.model = Mock()
     cfg.model.name = "meta-llama/Llama-2-7b-hf"
     cfg.model.trust_remote_code = False
-    cfg.experiment_tracking = None
+    cfg.integrations = None
     return cfg
 
 

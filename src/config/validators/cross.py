@@ -319,8 +319,8 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
 
     Rules:
     - If any phase has adapter_cache.enabled=true:
-      → experiment_tracking.huggingface must be configured and enabled
-      → adapter_cache.repo_id must differ from experiment_tracking.huggingface.repo_id
+      → integrations.huggingface must be configured and enabled
+      → adapter_cache.repo_id must differ from integrations.huggingface.repo_id
         (to prevent mixing intermediate adapters with the final merged model)
     """
     from src.utils.result import Ok
@@ -332,12 +332,12 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
     if not cache_phases:
         return Ok(None)
 
-    hf_cfg = getattr(cfg.experiment_tracking, "huggingface", None)
+    hf_cfg = getattr(cfg.integrations, "huggingface", None)
     if hf_cfg is None or not hf_cfg.integration:
         return _config_error(
             (
-                "adapter_cache.enabled=true requires experiment_tracking.huggingface to be configured with an integration. "
-                "Add experiment_tracking.huggingface section with integration (pointing at a Settings → Integrations entry), repo_id, and private fields."
+                "adapter_cache.enabled=true requires integrations.huggingface to be configured with an integration. "
+                "Add integrations.huggingface section with integration (pointing at a Settings → Integrations entry), repo_id, and private fields."
             ),
             "CONFIG_ADAPTER_CACHE_HF_REQUIRED",
         )
@@ -348,7 +348,7 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
             return _config_error(
                 (
                     f"Strategy {i} ({phase.strategy_type}): adapter_cache.repo_id='{phase.adapter_cache.repo_id}' "
-                    f"must differ from experiment_tracking.huggingface.repo_id='{final_repo_id}'. "
+                    f"must differ from integrations.huggingface.repo_id='{final_repo_id}'. "
                     "The adapter cache repository stores intermediate adapters; "
                     "the HF Hub repo_id is reserved for the final merged model."
                 ),

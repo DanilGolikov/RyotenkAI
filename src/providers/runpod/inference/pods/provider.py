@@ -995,7 +995,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         from src.evaluation.system_prompt import SystemPromptLoader
 
         llm_cfg = self._provider_cfg.inference.llm
-        mlflow_cfg = getattr(getattr(self._cfg, "experiment_tracking", None), "mlflow", None)
+        mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)
 
         try:
             result = SystemPromptLoader.load(llm_cfg, mlflow_cfg=mlflow_cfg)

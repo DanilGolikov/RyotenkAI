@@ -24,7 +24,7 @@ def _build_mock_config() -> MagicMock:
     config.datasets = {}
     config.get_active_provider_name.return_value = "single_node"
     config.get_provider_config.return_value = {}
-    config.experiment_tracking.mlflow = None
+    config.integrations.mlflow = None
     config.inference.enabled = False
     config.inference.model_dump.return_value = {"enabled": False}
     config.evaluation.enabled = False

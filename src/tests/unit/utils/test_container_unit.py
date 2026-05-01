@@ -16,7 +16,7 @@ def _mk_cfg() -> MagicMock:
     cfg.training.type = "qlora"
     cfg.training.get_effective_load_in_4bit.return_value = False
     cfg.datasets = {}
-    cfg.experiment_tracking.mlflow = SimpleNamespace(
+    cfg.integrations.mlflow = SimpleNamespace(
         tracking_uri="http://localhost:5002",
         system_metrics_callback_enabled=False,
     )

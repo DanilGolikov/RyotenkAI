@@ -25,7 +25,7 @@ def _mk_cfg(*, eval_enabled: bool = True) -> MagicMock:
 
     cfg.evaluation = eval_cfg
     cfg.inference.engine = "vllm"
-    cfg.experiment_tracking.mlflow = None  # MLflow disabled
+    cfg.integrations.mlflow = None  # MLflow disabled
 
     return cfg
 
@@ -68,7 +68,7 @@ class TestModelEvaluatorSkipCases:
         cfg = MagicMock()
         cfg.model.name = "test-model"
         cfg.evaluation = None
-        cfg.experiment_tracking.mlflow = None
+        cfg.integrations.mlflow = None
 
         stage = ModelEvaluator(cfg)
         res = cast("Any", stage.execute({}))

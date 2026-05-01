@@ -104,7 +104,7 @@ providers:
         host: 127.0.0.1
         port: 8000
 
-experiment_tracking:
+integrations:
   mlflow:
     tracking_uri: "http://localhost:5002"
     experiment_name: test

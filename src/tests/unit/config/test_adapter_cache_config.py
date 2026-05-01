@@ -89,7 +89,7 @@ class _Training:
 @dataclass
 class _Pipeline:
     training: _Training
-    experiment_tracking: _ETCfg
+    integrations: _ETCfg
 
 
 def _pipeline(
@@ -100,14 +100,14 @@ def _pipeline(
     integration = "hf-test" if hf_enabled else None
     return _Pipeline(
         training=_Training(strategies=strategies),
-        experiment_tracking=_ETCfg(huggingface=_HFCfg(integration=integration, repo_id=hf_repo)),
+        integrations=_ETCfg(huggingface=_HFCfg(integration=integration, repo_id=hf_repo)),
     )
 
 
 def _pipeline_no_hf(strategies: list[Any]) -> _Pipeline:
     return _Pipeline(
         training=_Training(strategies=strategies),
-        experiment_tracking=_ETCfg(huggingface=None),
+        integrations=_ETCfg(huggingface=None),
     )
 
 
@@ -294,7 +294,7 @@ class TestValidatePipelineAdapterCacheHFConfig:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline_no_hf(strategies=[s])
         err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
-        assert "experiment_tracking.huggingface" in err
+        assert "integrations.huggingface" in err
 
     def test_negative_cache_enabled_hf_not_enabled(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))

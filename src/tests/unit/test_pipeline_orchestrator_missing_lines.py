@@ -51,7 +51,7 @@ def _mk_config() -> MagicMock:
         source_local=SimpleNamespace(local_paths=SimpleNamespace(train="data/train.jsonl", eval=None)),
         adapter_type="chat",
     )
-    cfg.experiment_tracking.mlflow = SimpleNamespace(
+    cfg.integrations.mlflow = SimpleNamespace(
         tracking_uri="http://localhost:5002",
         system_metrics_callback_enabled=False,
     )
@@ -141,7 +141,7 @@ class TestMissingInitAndMlflowSetupLines:
 
     def test_ensure_mlflow_preflight_surfaces_effective_uri_and_gateway_error(self, tmp_path: Path) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(
+        cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="https://public.example.ts.net",
             local_tracking_uri="http://localhost:5002",
             system_metrics_callback_enabled=False,
@@ -164,7 +164,7 @@ class TestMissingInitAndMlflowSetupLines:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(
+        cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="http://localhost:5002",
             system_metrics_callback_enabled=True,
         )
@@ -190,7 +190,7 @@ class TestMissingInitAndMlflowSetupLines:
 
     def test_setup_mlflow_outer_exception_returns_none(self, tmp_path: Path) -> None:
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(
+        cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="http://localhost:5002",
             system_metrics_callback_enabled=False,
         )
@@ -206,7 +206,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
     ) -> None:
         """Invariant: finally always calls _flush_pending_collectors even if stage failed."""
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(
+        cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="http://localhost:5002",
             system_metrics_callback_enabled=False,
         )
@@ -279,7 +279,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
     ) -> None:
         """Regression: log_summary_artifact(pipeline_events.json) is no longer called."""
         cfg = _mk_config()
-        cfg.experiment_tracking.mlflow = SimpleNamespace(
+        cfg.integrations.mlflow = SimpleNamespace(
             tracking_uri="http://localhost:5002",
             system_metrics_callback_enabled=False,
         )

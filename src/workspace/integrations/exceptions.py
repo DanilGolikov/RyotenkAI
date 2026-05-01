@@ -26,7 +26,7 @@ class IntegrationNotFoundError(IntegrationResolverError):
     """The integration id referenced by a project YAML is not in the registry.
 
     Example trigger: project YAML declares
-    ``experiment_tracking.mlflow.integration: "helixql-mlflow"`` but the
+    ``integrations.mlflow.integration: "helixql-mlflow"`` but the
     user never registered ``helixql-mlflow`` in Settings → Integrations.
     """
 

@@ -25,10 +25,10 @@ from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunStat
 
 def _build_config() -> MagicMock:
     cfg = MagicMock()
-    cfg.experiment_tracking.mlflow.tracking_uri = "http://localhost:5002"
-    cfg.experiment_tracking.mlflow.local_tracking_uri = None
-    cfg.experiment_tracking.mlflow.ca_bundle_path = None
-    cfg.experiment_tracking.mlflow.system_metrics_callback_enabled = False
+    cfg.integrations.mlflow.tracking_uri = "http://localhost:5002"
+    cfg.integrations.mlflow.local_tracking_uri = None
+    cfg.integrations.mlflow.ca_bundle_path = None
+    cfg.integrations.mlflow.system_metrics_callback_enabled = False
     return cfg
 
 

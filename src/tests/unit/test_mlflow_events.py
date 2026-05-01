@@ -27,10 +27,10 @@ class TestMLflowManagerEvents:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -126,10 +126,10 @@ class TestMemoryEvents:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -225,10 +225,10 @@ class TestDataBufferEvents:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -293,10 +293,10 @@ class TestPipelineEvents:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -355,10 +355,10 @@ class TestSummaryGeneration:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -415,10 +415,10 @@ class TestEnvironmentLogging:
     def mock_config(self) -> MagicMock:
         """Create mock PipelineConfig."""
         config = MagicMock()
-        config.experiment_tracking.mlflow.enabled = True
-        config.experiment_tracking.mlflow.tracking_uri = "sqlite:///test.db"
-        config.experiment_tracking.mlflow.experiment_name = "test"
-        config.experiment_tracking.mlflow.enable_system_metrics = False
+        config.integrations.mlflow.enabled = True
+        config.integrations.mlflow.tracking_uri = "sqlite:///test.db"
+        config.integrations.mlflow.experiment_name = "test"
+        config.integrations.mlflow.enable_system_metrics = False
         config.model.name = "test/model"
         return config
 
@@ -467,7 +467,7 @@ class TestMLflowManagerSetup:
         # Nested block — single field. Flat ``system_metrics_*`` fields
         # were removed (sampler/throttle no longer used by the codebase).
         mlflow_config.system_metrics.callback_enabled = False
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -481,7 +481,7 @@ class TestMLflowManagerSetup:
         mlflow_config.ca_bundle_path = None
         mlflow_config.experiment_name = "test_experiment"
         mlflow_config.system_metrics_callback_enabled = False
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -568,7 +568,7 @@ class TestMLflowManagerSetup:
 
         from src.training.managers.mlflow_manager import MLflowManager
 
-        mock_config_enabled.experiment_tracking.mlflow.tracking_uri = "invalid://uri"
+        mock_config_enabled.integrations.mlflow.tracking_uri = "invalid://uri"
         manager = MLflowManager(mock_config_enabled)
 
         # Patch mlflow module via sys.modules
@@ -623,7 +623,7 @@ class TestMLflowManagerNestedRuns:
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
         mlflow_config.system_metrics_callback_enabled = False
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -775,7 +775,7 @@ class TestMLflowManagerEventLoggingExtension:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -902,7 +902,7 @@ class TestMLflowManagerAutologging:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -1010,7 +1010,7 @@ class TestMLflowManagerTracing:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -1100,7 +1100,7 @@ class TestMLflowManagerDatasetVersioning:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -1232,7 +1232,7 @@ class TestMLflowManagerModelRegistry:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -1335,7 +1335,7 @@ class TestMLflowManagerRunManagement:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "sqlite:///test.db"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 
@@ -1418,7 +1418,7 @@ class TestMLflowManagerBoundaryCases:
         mlflow_config.enabled = True
         mlflow_config.tracking_uri = "http://localhost:5002"
         mlflow_config.experiment_name = "test"
-        config.experiment_tracking.mlflow = mlflow_config
+        config.integrations.mlflow = mlflow_config
         config.model.name = "test/model"
         return config
 

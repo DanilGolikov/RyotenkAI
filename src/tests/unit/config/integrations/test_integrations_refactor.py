@@ -1,9 +1,9 @@
-"""Schema contract tests for ``experiment_tracking.*``.
+"""Schema contract tests for ``integrations.*``.
 
 After the boundary refactor (Variant 1 follow-up), core's
 ``MLflowConfig`` accepts inline values directly — there's no
 ``MLflowTrackingRef`` and no ``Union`` shape on
-``ExperimentTrackingConfig.mlflow``. Project YAMLs that use the
+``IntegrationsConfig.mlflow``. Project YAMLs that use the
 ``integration: <id>`` shorthand have it expanded by the UX-layer
 resolver (``src.workspace.integrations.resolver``) BEFORE this
 schema is validated.
@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.experiment_tracking import ExperimentTrackingConfig
+from src.config.integrations.root import IntegrationsConfig
 from src.config.integrations.huggingface import HuggingFaceHubConfig
 from src.config.integrations.mlflow import MLflowConfig
 from src.config.integrations.mlflow_integration import MLflowIntegrationConfig
@@ -81,6 +81,21 @@ class TestHuggingFaceConfig:
             HuggingFaceHubConfig(integration="hf-prod")
         assert "repo_id is required" in str(exc_info.value)
 
+    def test_integration_required_when_repo_id_set(self) -> None:
+        # Half-configured block — repo_id without integration. Schema
+        # used to silently accept this (→ "HF Hub upload disabled" at
+        # runtime); now it fails at config-load time so the operator
+        # sees the typo before the run starts.
+        with pytest.raises(ValidationError) as exc_info:
+            HuggingFaceHubConfig(repo_id="me/model")
+        assert "integration is required" in str(exc_info.value)
+
+    def test_empty_block_accepted(self) -> None:
+        # Empty block = HF disabled. No fields → no validation → fine.
+        cfg = HuggingFaceHubConfig()
+        assert cfg.integration is None
+        assert cfg.repo_id is None
+
     def test_enabled_derives_from_integration(self) -> None:
         empty = HuggingFaceHubConfig()
         assert empty.enabled is False
@@ -89,13 +104,13 @@ class TestHuggingFaceConfig:
 
 
 # ---------------------------------------------------------------------------
-# ExperimentTrackingConfig — assembled shape + legacy guards
+# IntegrationsConfig — assembled shape + legacy guards
 # ---------------------------------------------------------------------------
 
 
 class TestExperimentTracking:
     def test_full_shape_assembles(self) -> None:
-        cfg = ExperimentTrackingConfig(
+        cfg = IntegrationsConfig(
             mlflow={
                 "tracking_uri": "https://mlflow.example.com",
                 "experiment_name": "exp",
@@ -113,7 +128,7 @@ class TestExperimentTracking:
         assert cfg.huggingface.repo_id == "me/model"
 
     def test_get_report_to_active_when_uri_set(self) -> None:
-        cfg = ExperimentTrackingConfig(
+        cfg = IntegrationsConfig(
             mlflow={
                 "tracking_uri": "https://x",
                 "experiment_name": "exp",
@@ -122,7 +137,7 @@ class TestExperimentTracking:
         assert cfg.get_report_to() == ["mlflow"]
 
     def test_get_report_to_none_when_mlflow_absent(self) -> None:
-        cfg = ExperimentTrackingConfig(mlflow=None)
+        cfg = IntegrationsConfig(mlflow=None)
         assert cfg.get_report_to() == ["none"]
 
     def test_removed_system_metrics_field_rejected_with_hint(self) -> None:
@@ -130,7 +145,7 @@ class TestExperimentTracking:
         deleted from the nested ``system_metrics:`` block surface a
         targeted hint instead of the generic ``extra_forbidden``."""
         with pytest.raises(ValidationError) as exc_info:
-            ExperimentTrackingConfig(
+            IntegrationsConfig(
                 mlflow={
                     "tracking_uri": "https://x",
                     "experiment_name": "exp",

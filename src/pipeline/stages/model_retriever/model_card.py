@@ -45,7 +45,7 @@ class ModelCardGenerator:
         cfg = config
         repo_id = getattr(config, "hf_repo_id", None)
         try:
-            hf_cfg = cfg.experiment_tracking.huggingface
+            hf_cfg = cfg.integrations.huggingface
             repo_id = hf_cfg.repo_id if hf_cfg else "unknown"
         except Exception:
             pass

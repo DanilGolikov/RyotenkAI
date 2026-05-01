@@ -39,7 +39,7 @@ class AdapterCacheConfig(StrictBaseModel):
         description=(
             "HF Hub repository for intermediate adapters. "
             "Required when enabled=true. "
-            "Must differ from experiment_tracking.huggingface.repo_id (final model)."
+            "Must differ from integrations.huggingface.repo_id (final model)."
         ),
     )
     private: bool = Field(default=True, description="Create private HF repository")

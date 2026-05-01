@@ -16,7 +16,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.unit
 
 
 pytestmark = pytest.mark.skip(
-    reason=("Requires experiment_tracking resolver (src/config/integrations/resolver.py). "
+    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
         "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
         "system_metrics_*) that per PR3 live on the integration side. Project "
         "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
@@ -86,7 +86,7 @@ def _mk_cfg(
                 )
             ),
         ),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri=tracking_uri,
                 local_tracking_uri=local_tracking_uri,
@@ -202,7 +202,7 @@ class TestSmallBranchesAndSetup:
     def test_setup_sets_requests_ca_bundle_env_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_mlflow(monkeypatch)
         cfg = _mk_cfg()
-        cfg.experiment_tracking.mlflow.ca_bundle_path = "certs/mlflow-ca.pem"
+        cfg.integrations.mlflow.ca_bundle_path = "certs/mlflow-ca.pem"
         mgr = MLflowManager(cfg)
         monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
         monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
@@ -489,7 +489,7 @@ class TestDescriptionAndConnectivityAndRuns:
 
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         resolved = resolve_mlflow_uris(
-            _mk_cfg(tracking_uri="", local_tracking_uri="http://localhost:5002").experiment_tracking.mlflow,
+            _mk_cfg(tracking_uri="", local_tracking_uri="http://localhost:5002").integrations.mlflow,
             runtime_role="training",
         )
         assert resolved.effective_local_tracking_uri == "http://localhost:5002"

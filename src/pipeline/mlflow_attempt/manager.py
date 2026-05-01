@@ -93,7 +93,7 @@ class MLflowAttemptManager:
         """
         try:
             sm_block = getattr(
-                self._config.experiment_tracking.mlflow,
+                self._config.integrations.mlflow,
                 "system_metrics",
                 None,
             )
@@ -135,7 +135,7 @@ class MLflowAttemptManager:
             return
 
         runtime_tracking_uri = self._manager.get_runtime_tracking_uri()
-        ca_bundle_path = getattr(self._config.experiment_tracking.mlflow, "ca_bundle_path", None)
+        ca_bundle_path = getattr(self._config.integrations.mlflow, "ca_bundle_path", None)
         state.mlflow_runtime_tracking_uri = (
             runtime_tracking_uri if isinstance(runtime_tracking_uri, str) and runtime_tracking_uri else None
         )
@@ -250,7 +250,7 @@ class MLflowAttemptManager:
         Returns an AppError the orchestrator can wrap in a LaunchPreparationError,
         or None when everything is healthy.
         """
-        mlflow_cfg = self._config.experiment_tracking.mlflow
+        mlflow_cfg = self._config.integrations.mlflow
         raw_tracking_uri = getattr(mlflow_cfg, "tracking_uri", None)
         raw_local_tracking_uri = getattr(mlflow_cfg, "local_tracking_uri", None)
         tracking_uri = (

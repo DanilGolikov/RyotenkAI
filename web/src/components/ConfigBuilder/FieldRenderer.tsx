@@ -43,8 +43,8 @@ const CUSTOM_FIELD_RENDERERS: Record<
   'training.provider': TrainingProviderField,
   'inference.provider': InferenceProviderField,
   'model.name': HFModelField,
-  'experiment_tracking.mlflow.integration': MLflowIntegrationField,
-  'experiment_tracking.huggingface.integration': HuggingFaceIntegrationField,
+  'integrations.mlflow.integration': MLflowIntegrationField,
+  'integrations.huggingface.integration': HuggingFaceIntegrationField,
   // Every strategy phase gets a dataset picker instead of a free-text
   // input. Numeric array indices are normalised to `*` by the path
   // normaliser below, so the key matches every element in the chain.

@@ -23,7 +23,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -89,7 +89,7 @@ def full_config():
                 )
             ),
         ),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
         ),
     )
@@ -321,7 +321,7 @@ inference:
     vllm:
       merge_image: test/merge:latest
       serve_image: test/vllm:latest
-experiment_tracking:
+integrations:
   mlflow:
     integration: mlflow-test
     experiment_name: "test"

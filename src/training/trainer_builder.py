@@ -230,7 +230,7 @@ def create_training_args(
     optimizer = config.training.get_effective_optimizer()
 
     # Get experiment tracking reporters
-    report_to = config.experiment_tracking.get_report_to()
+    report_to = config.integrations.get_report_to()
 
     # Get effective hyperparameters (Phase Override > Global)
     def get_hp(name: str, default: Any = None) -> Any:

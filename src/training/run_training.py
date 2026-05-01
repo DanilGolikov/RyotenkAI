@@ -205,7 +205,7 @@ def run_training(
             sm_callback_enabled = bool(getattr(sm_block, "callback_enabled", False))
             if mlflow_config and not sm_callback_enabled:
                 logger.warning("⚠️ System metrics callback is disabled in config! GPU monitoring will be missing.")
-                logger.info("i To fix: set experiment_tracking.mlflow.system_metrics.callback_enabled = true")
+                logger.info("i To fix: set integrations.mlflow.system_metrics.callback_enabled = true")
             else:
                 logger.info("✅ GPU System Metrics monitoring enabled for this Provider process")
 

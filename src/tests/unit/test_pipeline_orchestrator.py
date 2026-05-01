@@ -57,7 +57,7 @@ def mock_config(mock_config_path: Path) -> MagicMock:
         train_path="data/train.jsonl",
         adapter_type="chat",
     )
-    config.experiment_tracking.mlflow = MagicMock(
+    config.integrations.mlflow = MagicMock(
         tracking_uri="http://localhost:5002",
         system_metrics_callback_enabled=False,
     )
@@ -2132,7 +2132,7 @@ class TestPipelineOrchestratorMLflowInternals:
     ):
         """Test that _setup_mlflow returns None when MLflow is disabled."""
         # Disable MLflow
-        mock_config.experiment_tracking.mlflow = None
+        mock_config.integrations.mlflow = None
 
         with (
             patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -2158,7 +2158,7 @@ class TestPipelineOrchestratorMLflowInternals:
         """Test that _setup_mlflow handles exceptions during setup."""
         mlflow_config = MagicMock()
         mlflow_config.enabled = True
-        mock_config.experiment_tracking.mlflow = mlflow_config
+        mock_config.integrations.mlflow = mlflow_config
 
         # Mock MLflowManager to raise exception
         mock_mlflow_manager_class = MagicMock()
@@ -2190,7 +2190,7 @@ class TestPipelineOrchestratorMLflowInternals:
         mlflow_config = MagicMock()
         mlflow_config.enabled = True
         mlflow_config.system_metrics_callback_enabled = False
-        mock_config.experiment_tracking.mlflow = mlflow_config
+        mock_config.integrations.mlflow = mlflow_config
 
         mock_mlflow_manager_class = MagicMock()
         mock_manager_instance = MagicMock()

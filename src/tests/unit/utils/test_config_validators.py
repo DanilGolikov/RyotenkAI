@@ -19,7 +19,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     LoraConfig,
     MLflowConfig,
@@ -118,7 +118,7 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
             )
         },
         providers={},
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test-exp")
         ),
     )

@@ -9,7 +9,7 @@ interface Props {
   onBlur?: () => void
 }
 
-/** Dropdown for ``experiment_tracking.huggingface.integration``.
+/** Dropdown for ``integrations.huggingface.integration``.
  *  Mirrors ``MLflowIntegrationField`` — HF-side test probes
  *  ``/api/whoami-v2`` using the stored token. */
 export function HuggingFaceIntegrationField({

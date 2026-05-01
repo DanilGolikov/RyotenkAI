@@ -14,7 +14,7 @@ from src.utils.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    ExperimentTrackingConfig,
+    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     InferenceEnginesConfig,
@@ -29,7 +29,7 @@ from src.utils.config import (
 
 
 pytestmark = pytest.mark.skip(
-    reason=("Requires experiment_tracking resolver (src/config/integrations/resolver.py). "
+    reason=("Requires integrations resolver (src/config/integrations/resolver.py). "
         "MLflowManager reads runtime fields (tracking_uri, ca_bundle_path, "
         "system_metrics_*) that per PR3 live on the integration side. Project "
         "YAML only carries MLflowTrackingRef; tests here stage a MLflowConfig "
@@ -101,7 +101,7 @@ def _mk_cfg(
             )
         },
         inference=_inference_cfg_disabled(),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri=tracking_uri,
                 local_tracking_uri=local_tracking_uri,
@@ -123,7 +123,7 @@ def test_resolve_runtime_tracking_uri_control_plane_prefers_local_tracking_uri()
     from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
     cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
-    resolved = resolve_mlflow_uris(cfg.experiment_tracking.mlflow, runtime_role="control_plane")
+    resolved = resolve_mlflow_uris(cfg.integrations.mlflow, runtime_role="control_plane")
     assert resolved.effective_local_tracking_uri == "http://localhost:5002"
     assert resolved.effective_remote_tracking_uri == "https://public.example"
     assert resolved.runtime_tracking_uri == "http://localhost:5002"
@@ -134,7 +134,7 @@ def test_resolve_runtime_tracking_uri_training_prefers_env_override(monkeypatch:
 
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "https://env.example")
     cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
-    resolved = resolve_mlflow_uris(cfg.experiment_tracking.mlflow, runtime_role="training")
+    resolved = resolve_mlflow_uris(cfg.integrations.mlflow, runtime_role="training")
     assert resolved.effective_local_tracking_uri == "http://localhost:5002"
     assert resolved.effective_remote_tracking_uri == "https://public.example"
     assert resolved.runtime_tracking_uri == "https://env.example"
@@ -432,7 +432,7 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
             )
         },
         inference=_inference_cfg_disabled(),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",
@@ -497,7 +497,7 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
             ),
         },
         inference=_inference_cfg_disabled(),
-        experiment_tracking=ExperimentTrackingConfig(
+        integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
                 tracking_uri="http://localhost:5002",
                 experiment_name="test",

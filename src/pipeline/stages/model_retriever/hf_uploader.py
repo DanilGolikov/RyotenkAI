@@ -71,7 +71,7 @@ class HFModelUploader:
         self.config = config
         self.secrets = secrets
 
-        hf_cfg = config.experiment_tracking.huggingface
+        hf_cfg = config.integrations.huggingface
         self.hf_repo_id: str | None = hf_cfg.repo_id if hf_cfg else None
         self.hf_private: bool | None = hf_cfg.private if hf_cfg else None
 
@@ -101,7 +101,7 @@ class HFModelUploader:
         - `create_repo(..., exist_ok=True)` does NOT change visibility of an existing repo.
         - To enforce `private: true/false`, we must call `update_repo_settings(private=...)`.
         """
-        hf_cfg = self.config.experiment_tracking.huggingface
+        hf_cfg = self.config.integrations.huggingface
         if not hf_cfg or not hf_cfg.integration:
             return Err(ModelError(message="HuggingFace upload disabled", code="HF_UPLOAD_DISABLED"))
         if not self.hf_repo_id:
