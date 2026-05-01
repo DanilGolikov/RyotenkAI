@@ -1,14 +1,28 @@
+"""Tests for the training-side lifecycle manager (thin shim over
+:class:`PodSshWaiter`).
+
+The heavy poll-loop matrix is tested in
+``tests/.../lifecycle/test_pod_ssh_waiter.py``. These tests pin only
+the shim's contract: that ``wait_for_ready`` builds the right policy
+and calls into the waiter, and that ``check_health`` is a pass-through
+to ``query_pod_snapshot``.
+"""
+
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pytest
 
-import src.providers.runpod.training.lifecycle_manager as lm
+from src.providers.runpod.lifecycle.policy import TRAINING_PROFILE
 from src.providers.runpod.models import PodSnapshot, SshEndpoint
 from src.providers.runpod.training.lifecycle_manager import PodLifecycleManager
 from src.utils.result import Err, Ok, ProviderError, Result
+
+pytestmark = pytest.mark.unit
+
+
+_SSH_OK = SshEndpoint(host="1.2.3.4", port=12345)
 
 
 def _snap(
@@ -18,16 +32,15 @@ def _snap(
     ssh: SshEndpoint | None = None,
     port_count: int | None = None,
 ) -> PodSnapshot:
-    """Build a PodSnapshot for testing."""
     pc = port_count if port_count is not None else (1 if ssh else 0)
-    return PodSnapshot(pod_id="pod-1", status=status, uptime_seconds=uptime, ssh_endpoint=ssh, port_count=pc)
-
-
-_SSH_OK = SshEndpoint(host="1.2.3.4", port=12345)
+    return PodSnapshot(
+        pod_id="pod-1", status=status, uptime_seconds=uptime,
+        ssh_endpoint=ssh, port_count=pc,
+    )
 
 
 @dataclass
-class StubAPI:
+class StubQuery:
     responses: list[Result[PodSnapshot, ProviderError]] = field(default_factory=list)
     calls: int = 0
 
@@ -35,191 +48,119 @@ class StubAPI:
         self.calls += 1
         if self.responses:
             return self.responses.pop(0)
-        return Err(ProviderError(message="no more responses", code="STUB_NO_RESPONSE"))
+        return Err(ProviderError(message="exhausted", code="STUB"))
 
 
-def _fake_time(start: float = 0.0, step: float = 1.0) -> Callable[[], float]:
-    t = {"v": start}
-
-    def now() -> float:
-        t["v"] += step
-        return t["v"]
-
-    return now
-
-
-def test_wait_single_attempt_success_when_running_and_ssh_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(responses=[Ok(_snap(status="RUNNING", uptime=1, ssh=_SSH_OK))])
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=10)
-    assert res.is_success()
-    assert res.unwrap().is_ready
-    assert api.calls == 1
+# ---------------------------------------------------------------------------
+# wait_for_ready — thin-shim contract
+# ---------------------------------------------------------------------------
+#
+# Behavior of the underlying poll loop is pinned in
+# ``tests/.../lifecycle/test_pod_ssh_waiter.py`` (18 cases). These tests
+# cover only what's specific to the shim: it delegates to the waiter
+# with the right policy and forwards the result.
 
 
-def test_wait_single_attempt_running_without_ssh_then_ssh_appears(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(
-        responses=[
-            Ok(_snap(status="RUNNING", uptime=1)),
-            Ok(_snap(status="RUNNING", uptime=2, ssh=_SSH_OK)),
-        ]
-    )
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=10)
-    assert res.is_success()
-    assert api.calls == 2
-
-
-def test_wait_single_attempt_running_with_non_ssh_ports_keeps_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(
-        responses=[
-            Ok(_snap(status="RUNNING", uptime=1, port_count=1)),
-            Ok(_snap(status="RUNNING", uptime=2, ssh=_SSH_OK)),
-        ]
-    )
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=10)
-    assert res.is_success()
-    assert api.calls == 2
-
-
-def test_wait_single_attempt_failed_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(responses=[Ok(_snap(status="FAILED"))])
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=10)
-    assert res.is_failure()
-    assert "FAILED" in str(res.unwrap_err())
-
-
-def test_wait_single_attempt_stuck_detection(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(responses=[Ok(_snap(status="STARTING"))] * 50)
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=300)
-    assert res.is_failure()
-    assert "timeout" in str(res.unwrap_err()).lower()
-
-
-def test_wait_single_attempt_aborts_on_pod_data_missing_code(
+def test_wait_for_ready_uses_training_profile_when_no_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pod doesn't exist on RunPod side → abort immediately, do not retry.
+    """No-timeout call → policy comes from TRAINING_PROFILE unchanged."""
+    captured: dict[str, object] = {}
 
-    Pinning behavior on the typed error code (``RUNPOD_POD_DATA_MISSING``)
-    rather than message text so that future wording changes in the API
-    client don't silently turn this into an infinite retry loop.
-    """
-    pod_missing_err = ProviderError(
-        message="anything — wording is not the contract",
-        code="RUNPOD_POD_DATA_MISSING",
+    class CapturingWaiter:
+        def __init__(self, *, query: object, policy: object, **_: object) -> None:
+            captured["policy"] = policy
+
+        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+            return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
+
+    monkeypatch.setattr(
+        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        CapturingWaiter,
     )
-    api = StubAPI(responses=[Err(pod_missing_err)])
+    api = StubQuery()
     mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr._wait_single_attempt("pod-1", timeout=300)
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_DATA_MISSING"
-    # Single query — no retry on this terminal-class error.
-    assert api.calls == 1
+    mgr.wait_for_ready("pod-1")
+    assert captured["policy"] is TRAINING_PROFILE
 
 
-def test_wait_single_attempt_retries_on_other_query_errors(
+def test_wait_for_ready_overrides_total_timeout_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Transient query errors (non-``RUNPOD_POD_DATA_MISSING`` codes) keep
-    polling until success or timeout — they must NOT cause an early bailout."""
-    transient = Err(ProviderError(message="network glitch", code="RUNPOD_TRANSIENT"))
-    ready = Ok(_snap(status="RUNNING", uptime=5, ssh=_SSH_OK))
-    api = StubAPI(responses=[transient, transient, ready])
+    """Custom timeout overrides ``total_timeout_s`` but keeps every other
+    training-profile threshold."""
+    captured: dict[str, object] = {}
+
+    class CapturingWaiter:
+        def __init__(self, *, query: object, policy: object, **_: object) -> None:
+            captured["policy"] = policy
+
+        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+            return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
+
+    monkeypatch.setattr(
+        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        CapturingWaiter,
+    )
+    api = StubQuery()
     mgr = PodLifecycleManager(api_client=api)
+    mgr.wait_for_ready("pod-1", timeout=42)
+    pol = captured["policy"]
+    assert pol.total_timeout_s == 42  # type: ignore[attr-defined]
+    assert pol.no_exposed_tcp_grace_s == TRAINING_PROFILE.no_exposed_tcp_grace_s  # type: ignore[attr-defined]
+    assert pol.poll_interval_s == TRAINING_PROFILE.poll_interval_s  # type: ignore[attr-defined]
+    assert pol.running_no_ports_bailout_s == TRAINING_PROFILE.running_no_ports_bailout_s  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
 
-    res = mgr._wait_single_attempt("pod-1", timeout=600)
-    assert res.is_success()
-    assert api.calls == 3
+def test_wait_for_ready_forwards_waiter_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whatever the waiter returns, the shim returns — no transformation."""
+    sentinel_err = Err(
+        ProviderError(message="boom", code="RUNPOD_NO_EXPOSED_TCP", details={"x": 1})
+    )
 
+    class StaticWaiter:
+        def __init__(self, **_: object) -> None:
+            pass
 
-def test_wait_single_attempt_no_exposed_tcp_fails_after_grace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pod with ports but no SSH exposed TCP should fail after 30s grace period."""
-    snap_no_ssh = _snap(status="RUNNING", uptime=30, port_count=2, ssh=None)
-    api = StubAPI(responses=[Ok(snap_no_ssh)] * 50)
+        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+            return sentinel_err
+
+    monkeypatch.setattr(
+        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        StaticWaiter,
+    )
+    api = StubQuery()
     mgr = PodLifecycleManager(api_client=api)
+    res = mgr.wait_for_ready("pod-1")
+    assert res is sentinel_err
 
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    clock = _fake_time(step=10)
-    monkeypatch.setattr(lm.time, "time", clock)
 
-    res = mgr._wait_single_attempt("pod-1", timeout=600)
+# ---------------------------------------------------------------------------
+# check_health — single-query pass-through
+# ---------------------------------------------------------------------------
+
+
+def test_check_health_running_returns_true() -> None:
+    api = StubQuery(responses=[Ok(_snap(status="RUNNING", ssh=_SSH_OK))])
+    mgr = PodLifecycleManager(api_client=api)
+    res = mgr.check_health("pod-1")
+    assert res.is_success() and res.unwrap() is True
+
+
+def test_check_health_non_running_returns_false() -> None:
+    api = StubQuery(responses=[Ok(_snap(status="STARTING"))])
+    mgr = PodLifecycleManager(api_client=api)
+    res = mgr.check_health("pod-1")
+    assert res.is_success() and res.unwrap() is False
+
+
+def test_check_health_propagates_query_error() -> None:
+    api = StubQuery(
+        responses=[Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED"))]
+    )
+    mgr = PodLifecycleManager(api_client=api)
+    res = mgr.check_health("pod-1")
     assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_NO_EXPOSED_TCP"
-
-
-def test_wait_for_ready_delegates_to_single_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
-    """wait_for_ready no longer retries; it delegates to _wait_single_attempt once."""
-    api = StubAPI()
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-
-    ready_snap = _snap(status="RUNNING", uptime=5, ssh=_SSH_OK)
-    monkeypatch.setattr(mgr, "_wait_single_attempt", lambda pod_id, timeout: Ok(ready_snap))
-
-    res = mgr.wait_for_ready("pod-1", timeout=1)
-    assert res.is_success()
-    assert res.unwrap() == ready_snap
-
-
-def test_wait_for_ready_returns_pod_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
-    expected = _snap(status="RUNNING", uptime=42, ssh=_SSH_OK)
-    api = StubAPI(responses=[Ok(expected)])
-    mgr = PodLifecycleManager(api_client=api)
-
-    monkeypatch.setattr(lm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(lm.time, "time", _fake_time())
-
-    res = mgr.wait_for_ready("pod-1", timeout=10)
-    assert res.is_success()
-    snap = res.unwrap()
-    assert isinstance(snap, PodSnapshot)
-    assert snap.ssh_endpoint == _SSH_OK
-
-
-def test_check_health_returns_true_for_running_pod(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(responses=[Ok(_snap(status="RUNNING", uptime=5))])
-    mgr = PodLifecycleManager(api_client=api)
-    res = mgr.check_health("pod-1")
-    assert res.is_success()
-    assert res.unwrap() is True
-
-
-def test_check_health_returns_false_for_starting_pod(monkeypatch: pytest.MonkeyPatch) -> None:
-    api = StubAPI(responses=[Ok(_snap(status="STARTING"))])
-    mgr = PodLifecycleManager(api_client=api)
-    res = mgr.check_health("pod-1")
-    assert res.is_success()
-    assert res.unwrap() is False
+    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
