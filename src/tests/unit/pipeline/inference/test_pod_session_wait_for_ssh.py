@@ -1,164 +1,140 @@
-"""Tests for ``pod_session._wait_for_ssh`` — including the early-bailout
-path for the RunPod "RUNNING-without-SSH-ports" failure mode (Layer-1
-mitigation, plan §2 D5).
+"""Tests for ``pod_session._wait_for_ssh`` — now a thin wrapper over
+:class:`PodSshWaiter`.
+
+The poll-loop matrix (positive / negative / boundary / invariants /
+cancellation) is pinned in
+``tests/.../runpod/lifecycle/test_pod_ssh_waiter.py``. These tests
+cover only what's specific to the wrapper: it constructs a waiter
+with :data:`INFERENCE_PROFILE` (or a profile whose only override is
+``total_timeout_s``) and reshapes the success result back to the
+historical ``(host, port)`` tuple that ``activate()`` consumes.
 """
+
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 from src.providers.runpod.inference.pods import pod_session as ps
-from src.utils.result import Failure, Success
+from src.providers.runpod.lifecycle.policy import INFERENCE_PROFILE
+from src.providers.runpod.models import PodSnapshot, SshEndpoint
+from src.utils.result import Err, Ok, ProviderError
+
+pytestmark = pytest.mark.unit
 
 
-def _pod_payload(*, status: str, with_ports: bool) -> dict[str, Any]:
-    """Build a GraphQL-shaped payload that ``PodSnapshot.from_graphql`` parses."""
-    ports: list[dict[str, Any]] = []
-    if with_ports:
-        ports.append({
-            "isIpPublic": True,
-            "privatePort": 22,
-            "ip": "1.2.3.4",
-            "publicPort": 2222,
-            "type": "tcp",
-        })
-    return {
-        "id": "pod-x",
-        "desiredStatus": status,
-        "runtime": {"uptimeInSeconds": 60, "ports": ports},
-    }
+_SSH_OK = SshEndpoint(host="1.2.3.4", port=2222)
 
 
-def _api_returning(payloads: list[dict[str, Any]]) -> MagicMock:
-    """Fake ``api.get_pod`` that returns ``payloads`` cyclically (last value
-    sticks once exhausted)."""
+def _ready_snapshot() -> PodSnapshot:
+    return PodSnapshot(
+        pod_id="pod-x", status="RUNNING", uptime_seconds=10,
+        ssh_endpoint=_SSH_OK, port_count=1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wrapper contract
+# ---------------------------------------------------------------------------
+
+
+def test_wait_for_ssh_returns_host_port_tuple_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class StaticWaiter:
+        def __init__(self, *, query: object, policy: object, **_: object) -> None:
+            captured["policy"] = policy
+            captured["query"] = query
+
+        def wait(self, pod_id: str) -> object:
+            captured["pod_id"] = pod_id
+            return Ok(_ready_snapshot())
+
+    monkeypatch.setattr(
+        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+    )
     api = MagicMock()
-    iterator = iter(payloads)
-    last_holder: list[dict[str, Any]] = [payloads[-1]] if payloads else [{}]
+    res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
 
-    def _get_pod(*, pod_id: str):
-        try:
-            payload = next(iterator)
-            last_holder[0] = payload
-        except StopIteration:
-            payload = last_holder[0]
-        return Success(payload)
-
-    api.get_pod = MagicMock(side_effect=_get_pod)
-    return api
+    assert res.is_success()
+    assert res.unwrap() == ("1.2.3.4", 2222)
+    assert captured["pod_id"] == "pod-x"
 
 
-def _stable_time_seq(values: list[float]) -> Any:
-    """Return a side_effect that yields ``values`` then sticks on the last."""
-    state = {"i": 0}
+def test_wait_for_ssh_uses_inference_profile_when_timeout_matches_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No transformation when caller passes the profile's own default —
+    avoids creating a redundant ``replace`` copy."""
+    captured: dict[str, object] = {}
 
-    def _next():
-        i = state["i"]
-        if i < len(values):
-            state["i"] = i + 1
-            return values[i]
-        return values[-1]
+    class StaticWaiter:
+        def __init__(self, *, query: object, policy: object, **_: object) -> None:
+            captured["policy"] = policy
 
-    return _next
+        def wait(self, pod_id: str) -> object:
+            return Ok(_ready_snapshot())
 
-
-class TestHappyPath:
-    def test_running_with_ssh_endpoint_and_tcp_open_returns_ok(self) -> None:
-        api = _api_returning([_pod_payload(status="RUNNING", with_ports=True)])
-        with patch.object(ps, "socket") as sock_mod, \
-             patch.object(ps.time, "sleep"):
-            sock_mod.create_connection.return_value.__enter__ = MagicMock(return_value=None)
-            sock_mod.create_connection.return_value.__exit__ = MagicMock(return_value=False)
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=10)
-        assert res.is_success()
-        host, port = res.unwrap()
-        assert host == "1.2.3.4"
-        assert port == 2222
+    monkeypatch.setattr(
+        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+    )
+    ps._wait_for_ssh(
+        api=MagicMock(),
+        pod_id="pod-x",
+        timeout_sec=INFERENCE_PROFILE.total_timeout_s,
+    )
+    assert captured["policy"] is INFERENCE_PROFILE
 
 
-class TestEarlyBailoutNoPorts:
-    def test_running_without_ports_for_threshold_returns_specific_err(self) -> None:
-        # All polls return RUNNING with no ports. Drive time forward
-        # past the 180-s bailout window deterministically.
-        api = _api_returning([_pod_payload(status="RUNNING", with_ports=False)])
-        # Iter 1: t=0 (deadline=600), t=10 (while), t=10 (set since), t=20 (elapsed log)
-        # Iter 2: t=200 (while), t=200 (delta=190 > 180 → bailout)
-        with patch.object(ps.time, "time",
-                          side_effect=_stable_time_seq([
-                              0.0, 10.0, 10.0, 20.0, 200.0, 200.0,
-                          ])), \
-             patch.object(ps.time, "sleep"), \
-             patch.object(ps, "socket"):
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
+def test_wait_for_ssh_overrides_only_total_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Custom timeout → only ``total_timeout_s`` differs from the profile."""
+    captured: dict[str, object] = {}
 
-        assert res.is_failure()
-        assert res.unwrap_err().code == "POD_SSH_PORTS_NOT_ALLOCATED"
+    class StaticWaiter:
+        def __init__(self, *, query: object, policy: object, **_: object) -> None:
+            captured["policy"] = policy
 
-    def test_status_change_resets_no_ports_counter(self) -> None:
-        # RUNNING-no-ports → STARTING (transient) → RUNNING-no-ports.
-        # The counter must reset on the transient state change so we
-        # don't trip the bailout prematurely.
-        payloads = [
-            _pod_payload(status="RUNNING", with_ports=False),
-            _pod_payload(status="STARTING", with_ports=False),
-            _pod_payload(status="RUNNING", with_ports=True),  # finally OK
-        ]
-        api = _api_returning(payloads)
+        def wait(self, pod_id: str) -> object:
+            return Ok(_ready_snapshot())
 
-        # Time ticks normally; bailout never triggers because RUNNING
-        # window resets in the middle.
-        with patch.object(ps.time, "sleep"), \
-             patch.object(ps, "socket") as sock_mod:
-            sock_mod.create_connection.return_value.__enter__ = MagicMock(return_value=None)
-            sock_mod.create_connection.return_value.__exit__ = MagicMock(return_value=False)
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
-
-        assert res.is_success()
+    monkeypatch.setattr(
+        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+    )
+    ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=42)
+    pol = captured["policy"]
+    assert pol.total_timeout_s == 42  # type: ignore[attr-defined]
+    assert pol.no_exposed_tcp_grace_s == INFERENCE_PROFILE.no_exposed_tcp_grace_s  # type: ignore[attr-defined]
+    assert pol.poll_interval_s == INFERENCE_PROFILE.poll_interval_s  # type: ignore[attr-defined]
 
 
-class TestProvisioningKeepsFullTimeout:
-    def test_provisioning_status_does_not_trigger_early_bailout(self) -> None:
-        # Pod is in PROVISIONING (capacity slow) — early bailout must NOT fire,
-        # we need the full 600-s window. Cap the test by exhausting the deadline.
-        api = _api_returning([_pod_payload(status="PROVISIONING", with_ports=False)])
-        # Tight deadline (1s); time jumps past it on the second iteration.
-        with patch.object(ps.time, "time", side_effect=_stable_time_seq([0.0, 0.5, 0.5, 1.5])), \
-             patch.object(ps.time, "sleep"):
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=1)
-        assert res.is_failure()
-        # Generic timeout, NOT the specific PORTS_NOT_ALLOCATED code.
-        assert res.unwrap_err().code == "POD_SSH_READY_TIMEOUT"
+def test_wait_for_ssh_propagates_waiter_error_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wrapper does not transform error shape — caller-side branches
+    on the canonical waiter error codes (``RUNPOD_*``)."""
+    err = Err(
+        ProviderError(
+            message="stuck", code="RUNPOD_NO_PORTS_ALLOCATED",
+            details={"pod_id": "pod-x"},
+        )
+    )
 
+    class StaticWaiter:
+        def __init__(self, **_: object) -> None:
+            pass
 
-class TestApiFailureDoesNotInterruptPolling:
-    def test_get_pod_failure_continues_polling(self) -> None:
-        api = MagicMock()
-        # First call fails, second returns RUNNING+ports.
-        api.get_pod = MagicMock(side_effect=[
-            Failure(MagicMock(message="api boom")),
-            Success(_pod_payload(status="RUNNING", with_ports=True)),
-        ])
-        with patch.object(ps.time, "sleep"), \
-             patch.object(ps, "socket") as sock_mod:
-            sock_mod.create_connection.return_value.__enter__ = MagicMock(return_value=None)
-            sock_mod.create_connection.return_value.__exit__ = MagicMock(return_value=False)
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
-        assert res.is_success()
+        def wait(self, pod_id: str) -> object:
+            return err
 
-
-class TestTcpProbeFailureDoesNotTriggerBailout:
-    def test_ssh_port_present_but_tcp_refused_does_not_count_as_no_ports(self) -> None:
-        # Ports are allocated but TCP probe fails — this is a different
-        # failure mode (sshd not yet listening). The bailout is for the
-        # specific RunPod-stuck-no-ports symptom only; here we should
-        # keep waiting for the full timeout.
-        api = _api_returning([_pod_payload(status="RUNNING", with_ports=True)])
-        with patch.object(ps.time, "time",
-                          side_effect=_stable_time_seq([0.0, 0.5, 0.5, 1.5])), \
-             patch.object(ps.time, "sleep"), \
-             patch.object(ps, "socket") as sock_mod:
-            sock_mod.create_connection.side_effect = OSError("refused")
-            res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=1)
-        # Generic timeout — neither bailout nor success.
-        assert res.is_failure()
-        assert res.unwrap_err().code == "POD_SSH_READY_TIMEOUT"
+    monkeypatch.setattr(
+        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+    )
+    res = ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=600)
+    assert res.is_failure()
+    assert res.unwrap_err().code == "RUNPOD_NO_PORTS_ALLOCATED"
