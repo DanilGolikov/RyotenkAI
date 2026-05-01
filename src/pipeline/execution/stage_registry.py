@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.pipeline.artifacts import StageArtifactCollector
+from src.pipeline.cancellation import PipelineCancelled
 from src.pipeline.stages import StageNames
 from src.pipeline.stages.dataset_validator import DatasetValidator
 from src.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
@@ -268,6 +269,15 @@ class StageRegistry:
             except KeyboardInterrupt:
                 logger.warning(
                     f"[CLEANUP] Interrupted during cleanup of {stage.stage_name}, continuing..."
+                )
+            except PipelineCancelled:
+                # Cancel signal arrived mid-cleanup. Don't abort the
+                # cleanup chain — keep tearing down later stages so the
+                # user doesn't end up with leaked pods. The deadline
+                # timer in the cancel handler is the hard fallback if
+                # cleanup itself wedges.
+                logger.warning(
+                    f"[CLEANUP] cancellation received during cleanup of {stage.stage_name}, continuing..."
                 )
             except Exception as e:
                 logger.warning(f"Error during cleanup of {stage.stage_name}: {e}")
