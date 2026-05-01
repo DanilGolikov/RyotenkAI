@@ -23,7 +23,7 @@ from src.cli.common_options import (
     RunDirArg,
 )
 from src.cli.context import CLIContext
-from src.cli.errors import die, load_config_or_die
+from src.cli.errors import die, format_validation_errors, load_config_or_die
 from src.cli.renderer import get_renderer
 
 run_app = typer.Typer(
@@ -96,6 +96,8 @@ def _exec_orchestrator(
 
     project_inputs = None
     if project_id is not None:
+        from pydantic import ValidationError
+
         try:
             # Bare ``run start --project X`` → use project's
             # ``configs/current.yaml``. ``run start -c Y --project X``
@@ -106,6 +108,13 @@ def _exec_orchestrator(
             )
         except ProjectNotFoundError as exc:
             raise die(str(exc))
+        except ValidationError as exc:
+            # Project's ``configs/current.yaml`` failed schema validation.
+            # Render field-level errors instead of a raw traceback.
+            raise die(
+                f"invalid config in project {project_id!r}\n"
+                f"{format_validation_errors(exc)}"
+            )
 
     if dry_run:
         if project_inputs is not None:

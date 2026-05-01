@@ -79,7 +79,7 @@ def load_config_or_die(path: Path | str) -> PipelineConfig:
         # Embed field-level errors directly in the message so each
         # appears on its own line — die's `hint:` prefix would clobber
         # the alignment if we passed them through there.
-        rendered = _format_validation_errors(exc)
+        rendered = format_validation_errors(exc)
         raise die(f"invalid pipeline config: {path_str}\n{rendered}")
     except ValueError as exc:
         # Loader's own "must be a mapping at the top level" check, plus
@@ -87,11 +87,15 @@ def load_config_or_die(path: Path | str) -> PipelineConfig:
         raise die(f"invalid pipeline config: {path_str} — {exc}")
 
 
-def _format_validation_errors(exc: ValidationError, *, max_errors: int = 6) -> str:
+def format_validation_errors(exc: ValidationError, *, max_errors: int = 6) -> str:
     """Render a Pydantic ValidationError as compact multi-line text.
 
     Each line: ``  - <dotted.path>: <message>``. Truncates after
     ``max_errors`` so a totally broken file doesn't flood the terminal.
+    Public so callers that wrap their own load path (e.g. ``run start
+    --project``, where ``load_project_inputs`` raises ValidationError
+    from inside the adapter) can format the same way without
+    duplicating logic.
     """
     errors = exc.errors()
     if not errors:
@@ -106,4 +110,10 @@ def _format_validation_errors(exc: ValidationError, *, max_errors: int = 6) -> s
     return "\n".join(lines)
 
 
-__all__ = ["die", "load_config_or_die", "suggest", "suggest_hint"]
+__all__ = [
+    "die",
+    "format_validation_errors",
+    "load_config_or_die",
+    "suggest",
+    "suggest_hint",
+]
