@@ -120,7 +120,7 @@ def test_wait_for_ssh_propagates_waiter_error_unchanged(
     on the canonical waiter error codes (``RUNPOD_*``)."""
     err = Err(
         ProviderError(
-            message="stuck", code="RUNPOD_NO_PORTS_ALLOCATED",
+            message="stuck", code="RUNPOD_NO_EXPOSED_TCP",
             details={"pod_id": "pod-x"},
         )
     )
@@ -137,4 +137,4 @@ def test_wait_for_ssh_propagates_waiter_error_unchanged(
     )
     res = ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=600)
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NO_PORTS_ALLOCATED"
+    assert res.unwrap_err().code == "RUNPOD_NO_EXPOSED_TCP"

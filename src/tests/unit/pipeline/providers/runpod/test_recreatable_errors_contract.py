@@ -1,14 +1,6 @@
 """Contract test: training provider's recreate-on-error filter MUST cover
 every error code the waiter can emit for transient platform issues.
 
-Caught a real regression: when the unified ``PodSshWaiter`` introduced
-``RUNPOD_NO_PORTS_ALLOCATED`` (early-bailout for the RunPod
-"RUNNING-but-no-ports" platform-stuck state), the training provider's
-``_RECREATABLE_ERRORS`` tuple was not updated. Net effect: pods that
-hit the new symptom failed the whole pipeline at 180s instead of
-recreating, where before they had timed out at 300s under
-``RUNPOD_POD_TIMEOUT`` and recreated automatically.
-
 This test pins the relationship so the next person who adds a new
 waiter error code sees a failing test pointing them at the provider
 filter — instead of finding out at 02:00 from a paged operator.
@@ -33,12 +25,17 @@ pytestmark = pytest.mark.unit
 #   RunPod's side (operator deleted it from the console, or registry
 #   pointed to a stale id). Recreating won't help; this needs operator
 #   intervention.
+# * ``RUNPOD_NO_PORTS_ALLOCATED`` — was a short-lived early-bailout
+#   that fired at 180s into a 300s window. Removed: RunPod sometimes
+#   takes the full window to allocate ports, and the early cutoff
+#   forced retries on what would otherwise have been successful boots.
+#   The "stuck with port_count==0" symptom now surfaces here as
+#   ``RUNPOD_POD_TIMEOUT`` after the full window.
 _TRANSIENT_WAITER_CODES: frozenset[str] = frozenset(
     {
         "RUNPOD_POD_TIMEOUT",
         "RUNPOD_POD_FAILED",
         "RUNPOD_NO_EXPOSED_TCP",
-        "RUNPOD_NO_PORTS_ALLOCATED",
     }
 )
 

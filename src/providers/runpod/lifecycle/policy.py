@@ -34,11 +34,6 @@ class WaitPolicy:
     #: limitation). Recreate the pod.
     no_exposed_tcp_grace_s: int = 30
 
-    #: Pod is RUNNING but ports==0 the whole time. Stuck. After this
-    #: window, abort with ``RUNPOD_NO_PORTS_ALLOCATED`` — RunPod
-    #: platform issue, recreate the pod.
-    running_no_ports_bailout_s: int = 180
-
     #: TCP probe timeout when checking whether sshd is actually
     #: listening on the announced port.
     tcp_probe_timeout_s: float = 3.0

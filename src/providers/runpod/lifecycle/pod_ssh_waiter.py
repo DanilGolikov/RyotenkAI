@@ -24,10 +24,13 @@ Error codes (frozen):
 
 * ``RUNPOD_POD_FAILED`` — snapshot reports a terminal status.
 * ``RUNPOD_NO_EXPOSED_TCP`` — RUNNING with ports allocated but no SSH
-  endpoint after ``no_exposed_tcp_grace_s``.
-* ``RUNPOD_NO_PORTS_ALLOCATED`` — RUNNING with ``port_count == 0`` for
-  longer than ``running_no_ports_bailout_s``.
-* ``RUNPOD_POD_TIMEOUT`` — total deadline exceeded.
+  endpoint after ``no_exposed_tcp_grace_s``. (Pre-existing — community
+  cloud machines that don't support exposed TCP. Specific symptom that
+  doesn't recover on the same pod, so we recreate immediately.)
+* ``RUNPOD_POD_TIMEOUT`` — total deadline exceeded. This is the catch-
+  all for "pod didn't come up in time" — including the legacy "RUNNING
+  with port_count == 0 for the whole window" case. The retry policy
+  on the provider side recreates the pod when this fires.
 * Pass-through query errors propagate unchanged (e.g.
   ``RUNPOD_POD_DATA_MISSING``).
 """
@@ -121,7 +124,6 @@ class PodSshWaiter:
         sleep on Ctrl+C — the provider catches it on its own boundary.
         """
         deadline = self.clock() + self.policy.total_timeout_s
-        running_no_ports_since: float | None = None
         ports_without_ssh_since: float | None = None
         last_preview = ""
         last_log_at = 0.0
@@ -156,21 +158,23 @@ class PodSshWaiter:
                     return Ok(snapshot)
                 tcp_ok = False
 
-            # Early-bailout state machine ----------------------------------
+            # Early-bailout for the one state we know doesn't self-heal:
+            # ports allocated but SSH endpoint never shows up. Empirically
+            # caused by community-cloud nodes that don't support exposed
+            # TCP — keeping this matches pre-refactor behaviour.
+            #
+            # Note: ``RUNNING with port_count == 0`` does NOT have an
+            # early bailout. The platform sometimes takes the full timeout
+            # window to allocate ports; cutting short here forced a retry
+            # half-way through what would otherwise have been a successful
+            # boot. Let ``RUNPOD_POD_TIMEOUT`` handle the genuinely-stuck
+            # case, and let the provider retry on that.
             if snapshot.status == "RUNNING" and snapshot.port_count > 0 and snapshot.ssh_endpoint is None:
                 if ports_without_ssh_since is None:
                     ports_without_ssh_since = now
                 elif now - ports_without_ssh_since >= self.policy.no_exposed_tcp_grace_s:
                     return self._no_exposed_tcp_err(pod_id, snapshot)
-                running_no_ports_since = None
-            elif snapshot.status == "RUNNING" and snapshot.port_count == 0:
-                if running_no_ports_since is None:
-                    running_no_ports_since = now
-                elif now - running_no_ports_since >= self.policy.running_no_ports_bailout_s:
-                    return self._no_ports_allocated_err(pod_id)
-                ports_without_ssh_since = None
             else:
-                running_no_ports_since = None
                 ports_without_ssh_since = None
 
             # Status logging ----------------------------------------------
@@ -221,19 +225,6 @@ class PodSshWaiter:
                 ),
                 code="RUNPOD_NO_EXPOSED_TCP",
                 details={"pod_id": pod_id, "port_count": snapshot.port_count},
-            )
-        )
-
-    def _no_ports_allocated_err(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
-        return Err(
-            ProviderError(
-                message=(
-                    f"Pod {pod_id} stuck in RUNNING with no allocated ports for "
-                    f"{self.policy.running_no_ports_bailout_s}s — likely a RunPod "
-                    "platform issue. Recreate the pod."
-                ),
-                code="RUNPOD_NO_PORTS_ALLOCATED",
-                details={"pod_id": pod_id},
             )
         )
 

@@ -99,7 +99,7 @@ def _make_waiter(
     query = FakeQuery(responses=list(responses))
     pol = policy or WaitPolicy(
         total_timeout_s=300, poll_interval_s=5.0,
-        no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+        no_exposed_tcp_grace_s=30,
     )
     cl = clock or FakeClock(step=1.0)
     waiter = PodSshWaiter(
@@ -174,28 +174,35 @@ class TestNegative:
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=600, poll_interval_s=5.0,
-                no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+                no_exposed_tcp_grace_s=30,
             ),
         )
         res = waiter.wait("pod-1")
         assert res.is_failure()
         assert res.unwrap_err().code == "RUNPOD_NO_EXPOSED_TCP"
 
-    def test_running_no_ports_bails_after_long_window(self) -> None:
-        """RUNNING + ports==0 for >running_no_ports_bailout_s → platform issue."""
+    def test_running_with_zero_ports_waits_full_timeout(self) -> None:
+        """RUNNING + ports==0 must NOT early-bail. The platform sometimes
+        takes the full window to allocate ports; a mid-window cutoff
+        forces retries on what would otherwise be a successful boot.
+
+        Pre-refactor behaviour kept the loop polling until the deadline
+        and then surfaced ``RUNPOD_POD_TIMEOUT`` — which the provider's
+        ``_RECREATABLE_ERRORS`` filter handles as "fresh pod retry".
+        """
         snap = _snap(status="RUNNING", ssh=None, port_count=0)
-        clock = FakeClock(step=20.0)
+        clock = FakeClock(step=120.0)  # second poll lands past deadline
         waiter, _ = _make_waiter(
-            responses=[Ok(snap)] * 50,
+            responses=[Ok(snap)] * 5,
             clock=clock,
             policy=WaitPolicy(
-                total_timeout_s=600, poll_interval_s=5.0,
-                no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+                total_timeout_s=60, poll_interval_s=5.0,
+                no_exposed_tcp_grace_s=30,
             ),
         )
         res = waiter.wait("pod-1")
         assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_NO_PORTS_ALLOCATED"
+        assert res.unwrap_err().code == "RUNPOD_POD_TIMEOUT"
 
     def test_total_timeout_exceeded(self) -> None:
         clock = FakeClock(step=120.0)  # huge step — second poll past deadline
@@ -204,7 +211,7 @@ class TestNegative:
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=60, poll_interval_s=5.0,
-                no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+                no_exposed_tcp_grace_s=30,
             ),
         )
         res = waiter.wait("pod-1")
@@ -250,7 +257,7 @@ class TestBoundary:
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=600, poll_interval_s=5.0,
-                no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+                no_exposed_tcp_grace_s=30,
             ),
         )
         res = waiter.wait("pod-1")
@@ -270,7 +277,7 @@ class TestBoundary:
             tcp_probe=tracking_probe,
             policy=WaitPolicy(
                 total_timeout_s=300, poll_interval_s=5.0,
-                no_exposed_tcp_grace_s=30, running_no_ports_bailout_s=180,
+                no_exposed_tcp_grace_s=30,
                 tcp_probe_enabled=False,
             ),
         )

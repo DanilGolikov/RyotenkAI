@@ -40,17 +40,18 @@ _SSH_RETRIES = 12
 _SSH_RETRY_DELAY = 10
 _GPU_CHECK_FAILED_CODE = "GPU_CHECK_FAILED"
 _POD_CREATE_MAX_RETRIES = 3
-# Error codes from PodSshWaiter that warrant a fresh-pod recreate rather
-# than aborting the connect path. ``RUNPOD_NO_PORTS_ALLOCATED`` was added
-# when the unified waiter introduced the early-bailout for the RunPod
-# "RUNNING-but-no-ports-allocated" platform-stuck symptom (previously the
-# training side just timed out at 300s and recreated under the
-# ``RUNPOD_POD_TIMEOUT`` code; the new bailout fires at 180s). If this
-# tuple goes out of sync with the waiter's error vocabulary, the provider
-# falls back to "report and abort" — bisect the missing code here first.
+# Error codes from PodSshWaiter that warrant a fresh-pod recreate
+# rather than aborting the connect path. If this tuple goes out of
+# sync with the waiter's error vocabulary, the provider falls back
+# to "report and abort" — bisect the missing code here first.
+#
+# Note: the RUNNING-with-port_count==0 stuck state is intentionally
+# NOT a separate code here. RunPod sometimes takes the full 300s
+# window to allocate ports; an early bailout half-way through cuts
+# off would-be successful boots. That state surfaces here as
+# ``RUNPOD_POD_TIMEOUT`` after the full window.
 _RECREATABLE_ERRORS = (
     "RUNPOD_NO_EXPOSED_TCP",
-    "RUNPOD_NO_PORTS_ALLOCATED",
     "RUNPOD_POD_TIMEOUT",
     "RUNPOD_POD_FAILED",
 )
