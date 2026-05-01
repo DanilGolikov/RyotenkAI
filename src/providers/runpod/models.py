@@ -37,26 +37,75 @@ class PodSnapshot:
 
     @classmethod
     def from_graphql(cls, pod_data: dict[str, Any]) -> PodSnapshot:
-        """Parse a GraphQL pod query response into a typed snapshot."""
+        """Parse a RunPod pod-query response into a typed snapshot.
+
+        Despite the historical name, this factory handles both shapes of
+        pod payload that the RunPod backend returns:
+
+        * ``runtime.ports`` — canonical list of port dicts emitted by the
+          Python SDK's GraphQL-backed ``runpod.get_pod()``.
+        * ``portMappings`` + ``publicIp`` — flat shortcut emitted by the
+          REST endpoint and (defensively) by some SDK versions where
+          ``runtime.ports`` is empty during early pod startup.
+
+        Both are read from the same input dict; ``runtime.ports`` takes
+        precedence when present and populated. See ``_normalize_ports``
+        for the per-shape parsing rules.
+        """
         pod_id = str(pod_data.get("id") or "")
         status = pod_data.get("desiredStatus")
         runtime = pod_data.get("runtime") or {}
         uptime = int(runtime.get("uptimeInSeconds") or 0)
-        ports = runtime.get("ports") or []
-        if not isinstance(ports, list):
-            ports = []
+
+        ssh_endpoint, port_count = _normalize_ports(pod_data)
 
         return cls(
             pod_id=pod_id,
             status=status,
             uptime_seconds=uptime,
-            ssh_endpoint=_extract_ssh_endpoint(ports),
-            port_count=len(ports),
+            ssh_endpoint=ssh_endpoint,
+            port_count=port_count,
         )
 
 
-def _extract_ssh_endpoint(ports: list[dict[str, Any]]) -> SshEndpoint | None:
-    """Find the first automation-grade SSH endpoint (exposed TCP on container port 22)."""
+def _normalize_ports(pod_data: dict[str, Any]) -> tuple[SshEndpoint | None, int]:
+    """Extract ``(ssh_endpoint, port_count)`` from any RunPod pod payload shape.
+
+    Order of precedence:
+
+    1. ``runtime.ports`` — list of ``{ip, privatePort, publicPort, isIpPublic}``.
+       Canonical for ``runpod.get_pod()`` responses.
+    2. ``portMappings`` + ``publicIp`` — REST/flat fallback. Multiple
+       observed sub-shapes for ``portMappings``:
+
+       * ``{"22": 23828}``
+       * ``{"22/tcp": "23828"}``
+       * ``{"22": {"hostPort": 23828}}``
+       * ``[{"containerPort": 22, "hostPort": 23828}, ...]``
+
+    Returns ``(None, port_count)`` if no automation-grade SSH endpoint can
+    be reconstructed; ``port_count`` is best-effort across shapes (length
+    of the underlying collection).
+    """
+    runtime = pod_data.get("runtime") or {}
+    ports = runtime.get("ports")
+    if isinstance(ports, list) and ports:
+        return _extract_ssh_from_runtime_ports(ports), len(ports)
+
+    mappings = pod_data.get("portMappings")
+    public_ip = str(pod_data.get("publicIp") or "").strip()
+    ssh_port = _extract_ssh_port_from_mappings(mappings)
+    port_count = _count_mappings(mappings)
+    if public_ip and ssh_port:
+        return SshEndpoint(host=public_ip, port=ssh_port), port_count
+    return None, port_count
+
+
+def _extract_ssh_from_runtime_ports(ports: list[Any]) -> SshEndpoint | None:
+    """Find the first automation-grade SSH endpoint in a ``runtime.ports`` list.
+
+    Automation-grade = exposed TCP on container port 22 with a public IP.
+    """
     for port in ports:
         if not isinstance(port, dict):
             continue
@@ -73,6 +122,70 @@ def _extract_ssh_endpoint(ports: list[dict[str, Any]]) -> SshEndpoint | None:
             return SshEndpoint(host=host, port=public_port)
 
     return None
+
+
+def _extract_ssh_port_from_mappings(mappings: Any) -> int | None:
+    """Find the SSH host-port in a ``portMappings`` payload.
+
+    ``portMappings`` can be a dict (key=container port, value=host port,
+    possibly nested in an object) or a list (entries with explicit
+    ``containerPort`` / ``hostPort`` keys). Both shapes are observed in
+    the wild — handle them defensively rather than asserting on one.
+    """
+    if isinstance(mappings, dict):
+        for key in ("22", 22, "22/tcp", "tcp/22"):
+            if key not in mappings:
+                continue
+            raw = mappings.get(key)
+            port = _coerce_port(raw)
+            if port is not None:
+                return port
+        return None
+
+    if isinstance(mappings, list):
+        for entry in mappings:
+            if not isinstance(entry, dict):
+                continue
+            cport = entry.get("containerPort") or entry.get("internalPort") or entry.get("port")
+            hport = entry.get("hostPort") or entry.get("externalPort") or entry.get("publicPort")
+            try:
+                if int(cport) != _SSH_PORT_CONTAINER:
+                    continue
+                port = int(hport)
+                if port > 0:
+                    return port
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    return None
+
+
+def _coerce_port(raw: Any) -> int | None:
+    """Coerce a port value from any of the observed shapes to a positive int.
+
+    Handles bare ints, numeric strings, and the nested
+    ``{"hostPort": N}`` / ``{"publicPort": N}`` / ``{"port": N}`` dict.
+    """
+    if isinstance(raw, dict):
+        raw = raw.get("hostPort") or raw.get("publicPort") or raw.get("port")
+    if isinstance(raw, bool):  # bool is subclass of int — exclude explicitly
+        return None
+    if isinstance(raw, int) and raw > 0:
+        return raw
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped.isdigit():
+            value = int(stripped)
+            return value if value > 0 else None
+    return None
+
+
+def _count_mappings(mappings: Any) -> int:
+    """Length of the underlying ``portMappings`` collection (0 if unknown)."""
+    if isinstance(mappings, dict | list):
+        return len(mappings)
+    return 0
 
 
 @dataclass(frozen=True, slots=True)

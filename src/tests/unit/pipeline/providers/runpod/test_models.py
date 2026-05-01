@@ -141,6 +141,139 @@ class TestPodSnapshotFromGraphql:
         assert snap.is_ready is False
 
 
+class TestPodSnapshotPortMappingsFallback:
+    """When ``runtime.ports`` is missing/empty the parser falls back to
+    ``portMappings`` + ``publicIp``. Pins the four observed sub-shapes."""
+
+    def test_dict_string_key_int_value(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-1",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": {"22": 23828, "8888": 41000},
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=23828)
+        assert snap.port_count == 2
+        assert snap.is_ready is True
+
+    def test_dict_protocol_key_string_value(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-2",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": {"22/tcp": "23828"},
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=23828)
+
+    def test_dict_nested_hostport_object(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-3",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": {"22": {"hostPort": 23828}},
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=23828)
+
+    def test_list_with_explicit_keys(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-4",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": [
+                    {"containerPort": 22, "hostPort": 23828},
+                    {"containerPort": 8888, "hostPort": 41000},
+                ],
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=23828)
+        assert snap.port_count == 2
+
+    def test_dict_int_key(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-5",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": {22: 23828},
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=23828)
+
+    def test_no_publicip_falls_through_even_with_mapping(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-6",
+                "desiredStatus": "RUNNING",
+                "portMappings": {"22": 23828},
+            }
+        )
+        # No publicIp → can't construct an endpoint, but port_count still
+        # reports the underlying collection size (caller may surface this).
+        assert snap.ssh_endpoint is None
+        assert snap.port_count == 1
+
+    def test_runtime_ports_takes_precedence_over_mappings(self) -> None:
+        """When both shapes are present (as some SDK versions emit),
+        the explicit ``runtime.ports`` list wins over the flat fallback."""
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-7",
+                "desiredStatus": "RUNNING",
+                "runtime": {
+                    "uptimeInSeconds": 5,
+                    "ports": [
+                        {"ip": "5.5.5.5", "privatePort": 22, "publicPort": 99999, "isIpPublic": True},
+                    ],
+                },
+                # Different/conflicting fallback values — must be ignored
+                "publicIp": "1.2.3.4",
+                "portMappings": {"22": 23828},
+            }
+        )
+        assert snap.ssh_endpoint == SshEndpoint(host="5.5.5.5", port=99999)
+
+    def test_unknown_mapping_shape_is_ignored(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-8",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": "this is not a port mapping",
+            }
+        )
+        assert snap.ssh_endpoint is None
+        assert snap.port_count == 0
+
+    def test_negative_or_zero_port_rejected(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-9",
+                "desiredStatus": "RUNNING",
+                "publicIp": "1.2.3.4",
+                "portMappings": {"22": 0},
+            }
+        )
+        assert snap.ssh_endpoint is None
+
+    def test_empty_publicip_treated_as_missing(self) -> None:
+        snap = PodSnapshot.from_graphql(
+            {
+                "id": "pod-fb-10",
+                "desiredStatus": "RUNNING",
+                "publicIp": "   ",
+                "portMappings": {"22": 23828},
+            }
+        )
+        assert snap.ssh_endpoint is None
+
+
 class TestReadSshPublicKey:
     def test_returns_none_for_nonexistent(self, tmp_path) -> None:
         assert read_ssh_public_key(str(tmp_path / "id_ed25519")) is None
