@@ -611,9 +611,9 @@ class TrainingContainer:
         """
         from pathlib import Path
 
-        from src.utils.config import load_config
+        from src.workspace.integrations.loader import load_pipeline_config
 
-        config = load_config(Path(config_path))
+        config = load_pipeline_config(Path(config_path))
         return cls(config=config)
 
     # =========================================================================

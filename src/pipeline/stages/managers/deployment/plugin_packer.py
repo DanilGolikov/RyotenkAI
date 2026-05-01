@@ -71,9 +71,14 @@ __all__ = [
 # our combined runner payload. Lifted instead of imported because
 # the originals are private and we'd rather copy three frozensets
 # than couple two modules over implementation detail.
-_EXCLUDED_DIRS = frozenset({
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-})
+_EXCLUDED_DIRS = frozenset(
+    {
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+    }
+)
 _EXCLUDED_SUFFIXES = (".pyc", ".pyo")
 _EXCLUDED_NAMES = frozenset({".DS_Store", "Thumbs.db"})
 
@@ -191,10 +196,7 @@ class PluginPacker:
         kind_root = self._community_root / kind_dir
 
         for phase in self._config.training.get_strategy_chain():
-            plugin_id = (
-                str(phase.params.get("reward_plugin") or "").strip()
-                if isinstance(phase.params, dict) else ""
-            )
+            plugin_id = str(phase.params.get("reward_plugin") or "").strip() if isinstance(phase.params, dict) else ""
             if not plugin_id:
                 continue
             key = ("reward", plugin_id)
@@ -218,7 +220,8 @@ class PluginPacker:
         return refs
 
     def determine_required_libs(
-        self, plugin_refs: list[PluginRef],
+        self,
+        plugin_refs: list[PluginRef],
     ) -> list[LibRef]:
         """Walk plugin manifests; collect unique :class:`LibRef`s.
 
@@ -321,8 +324,7 @@ class PluginPacker:
                 first = result.issues[0] if result.issues else None
                 detail = first.message if first is not None else "unknown error"
                 raise PluginPackError(
-                    f"manifest validation failed for {ref.plugin_id!r}: "
-                    f"{detail}",
+                    f"manifest validation failed for {ref.plugin_id!r}: " f"{detail}",
                 )
 
         buf = io.BytesIO()
@@ -450,10 +452,10 @@ def _write_lib(zf: zipfile.ZipFile, ref: LibRef) -> None:
         for info in sorted(src_zip.infolist(), key=lambda i: i.filename):
             if info.is_dir():
                 continue
-            rel = info.filename
+            rel_name = info.filename
             # Mirror _is_excluded() rules without going through Path so
             # the in-archive forward-slash convention stays intact.
-            parts = rel.split("/")
+            parts = rel_name.split("/")
             if any(p in _EXCLUDED_DIRS for p in parts):
                 continue
             name = parts[-1]
@@ -462,4 +464,4 @@ def _write_lib(zf: zipfile.ZipFile, ref: LibRef) -> None:
             if any(name.endswith(suf) for suf in _EXCLUDED_SUFFIXES):
                 continue
             with src_zip.open(info) as src:
-                zf.writestr(f"{base}/{rel}", src.read())
+                zf.writestr(f"{base}/{rel_name}", src.read())

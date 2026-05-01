@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -285,6 +285,7 @@ def spawn_launch(
                 process_env[k] = v
     normalized.run_dir.mkdir(parents=True, exist_ok=True)
 
+    process: subprocess.Popen[Any]
     if attach_stdio:
         # Foreground: inherit terminal, share PG with parent (no
         # start_new_session). The kernel routes Ctrl-C to the whole PG

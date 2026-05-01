@@ -45,17 +45,20 @@ pings fail.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from src.api.clients.job_client import JobClient
 
 
 __all__ = [
-    "ControlPlaneHeartbeat",
     "DEFAULT_PING_INTERVAL_SECONDS",
     "DEFAULT_TTL_SECONDS",
+    "ControlPlaneHeartbeat",
 ]
 
 
@@ -96,11 +99,11 @@ class ControlPlaneHeartbeat:
 
     def __init__(
         self,
-        client: "JobClient",
+        client: JobClient,
         *,
         ping_interval_seconds: float = DEFAULT_PING_INTERVAL_SECONDS,
         ttl_seconds: float | None = DEFAULT_TTL_SECONDS,
-        on_error: "callable | None" = None,  # type: ignore[name-defined]
+        on_error: Callable[..., object] | None = None,
     ) -> None:
         self._client = client
         self._interval = max(1.0, float(ping_interval_seconds))
@@ -157,10 +160,8 @@ class ControlPlaneHeartbeat:
             self._task = None
             return
         self._task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
             await self._task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001 — defensive
-            pass
         self._task = None
 
     async def _run(self) -> None:
@@ -180,7 +181,7 @@ class ControlPlaneHeartbeat:
                 )
                 # Stop event fired during the wait — exit cleanly.
                 return
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Normal path — interval elapsed without stop signal.
                 pass
             except asyncio.CancelledError:
@@ -197,17 +198,16 @@ class ControlPlaneHeartbeat:
         """
         try:
             ok = await self._client.send_heartbeat(ttl_seconds=self._ttl)
-        except Exception as exc:  # noqa: BLE001 — defensive; client may raise
+        except Exception as exc:
             self._ping_failure_count += 1
             logger.debug(
                 "[CP-HEARTBEAT] %s ping raised: %s",
-                "initial" if initial else "scheduled", exc,
+                "initial" if initial else "scheduled",
+                exc,
             )
             if self._on_error is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._on_error(exc)
-                except Exception:  # noqa: BLE001 — defensive
-                    pass
             return
 
         if ok:
@@ -223,7 +223,5 @@ class ControlPlaneHeartbeat:
                 "initial" if initial else "scheduled",
             )
             if self._on_error is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._on_error(None)
-                except Exception:  # noqa: BLE001 — defensive
-                    pass

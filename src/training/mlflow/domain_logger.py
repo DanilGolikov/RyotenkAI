@@ -77,11 +77,15 @@ class MLflowDomainLogger:
             "weight_decay": hp.weight_decay,
         }
 
-        lora = None
+        from src.config.training.lora import LoraConfig, QloraConfig
+
+        lora: LoraConfig | QloraConfig | None = None
         if config.training.type in ("lora", "qlora"):
             with contextlib.suppress(ValueError):
-                lora = config.training.get_adapter_config()
-        if lora is not None and config.training.type in ("lora", "qlora"):
+                cfg_obj = config.training.get_adapter_config()
+                if isinstance(cfg_obj, (LoraConfig, QloraConfig)):
+                    lora = cfg_obj
+        if lora is not None:
             params.update(
                 {
                     "lora_r": lora.r,
@@ -158,19 +162,23 @@ class MLflowDomainLogger:
             params[f"training.hyperparams.{field}"] = value
         params["training.hyperparams.load_in_4bit"] = config.training.get_effective_load_in_4bit()
 
-        lora = None
+        from src.config.training.lora import LoraConfig, QloraConfig
+
+        lora2: LoraConfig | QloraConfig | None = None
         if config.training.type in ("lora", "qlora"):
             with contextlib.suppress(ValueError):
-                lora = config.training.get_adapter_config()
-        if lora is not None and config.training.type in ("lora", "qlora"):
-            params["config.lora.r"] = lora.r
-            params["config.lora.alpha"] = lora.lora_alpha
-            params["config.lora.dropout"] = lora.lora_dropout
-            params["config.lora.target_modules"] = str(lora.target_modules)
-            if hasattr(lora, "use_dora"):
-                params["config.lora.use_dora"] = lora.use_dora
-            if hasattr(lora, "use_rslora"):
-                params["config.lora.use_rslora"] = lora.use_rslora
+                cfg_obj = config.training.get_adapter_config()
+                if isinstance(cfg_obj, (LoraConfig, QloraConfig)):
+                    lora2 = cfg_obj
+        if lora2 is not None:
+            params["config.lora.r"] = lora2.r
+            params["config.lora.alpha"] = lora2.lora_alpha
+            params["config.lora.dropout"] = lora2.lora_dropout
+            params["config.lora.target_modules"] = str(lora2.target_modules)
+            if hasattr(lora2, "use_dora"):
+                params["config.lora.use_dora"] = lora2.use_dora
+            if hasattr(lora2, "use_rslora"):
+                params["config.lora.use_rslora"] = lora2.use_rslora
 
         if strategies:
             for i, strategy in enumerate(strategies):

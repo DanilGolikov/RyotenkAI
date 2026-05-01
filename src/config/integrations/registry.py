@@ -19,6 +19,8 @@ from src.config.integrations.huggingface_integration import HuggingFaceIntegrati
 from src.config.integrations.mlflow_integration import MLflowIntegrationConfig
 
 if TYPE_CHECKING:
+    from pydantic import BaseModel
+
     from src.config.base import StrictBaseModel
 
 INTEGRATION_TYPE_MLFLOW = "mlflow"
@@ -31,7 +33,7 @@ class IntegrationType:
 
     id: str
     label: str
-    schema: type
+    schema: type[BaseModel]
     schema_name: str
     requires_token: bool
 

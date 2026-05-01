@@ -37,7 +37,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -89,7 +89,7 @@ def _clean_error_message(raw: str) -> str:
     msg = _LOG_PREFIX_RE.sub("", raw)
     for prefix in ("Pipeline failed: ", "pipeline failed: "):
         if msg.startswith(prefix):
-            msg = msg[len(prefix):]
+            msg = msg[len(prefix) :]
     msg = _STAGE_FAILED_RE.sub("", msg, count=1)
     msg = _ERROR_CODE_RE.sub("", msg)
     return msg.strip()
@@ -140,6 +140,7 @@ def _extract_error(stderr_text: str, stdout_text: str) -> str:
 
 # ── Run dir discovery ────────────────────────────────────────────────────────
 
+
 def _discover_run_dirs(smoke_dir: Path) -> dict[str, Path]:
     """Map config_path → run directory by reading pipeline_state.json files."""
     result: dict[str, Path] = {}
@@ -175,6 +176,7 @@ def _assign_run_dirs(results: list[RunResult], smoke_dir: Path) -> None:
 
 # ── Graceful shutdown ────────────────────────────────────────────────────────
 
+
 def _graceful_stop(proc: subprocess.Popen[str], config_rel: str) -> None:
     """SIGINT → 60 s → SIGINT → 60 s → SIGKILL."""
     try:
@@ -209,6 +211,7 @@ def _graceful_stop(proc: subprocess.Popen[str], config_rel: str) -> None:
 
 # ── Stream reader ────────────────────────────────────────────────────────────
 
+
 class _LivenessReader:
     """Reads a subprocess stream in a background thread and tracks last output time."""
 
@@ -232,6 +235,7 @@ class _LivenessReader:
 
 # ── Single run ───────────────────────────────────────────────────────────────
 
+
 def _run_single(
     config: Path,
     root: Path,
@@ -243,8 +247,11 @@ def _run_single(
     result = RunResult(config_path=config, config_rel=rel)
 
     cmd = [
-        sys.executable, "-m", "src.pipeline.worker",
-        "--config", str(config),
+        sys.executable,
+        "-m",
+        "src.pipeline.worker",
+        "--config",
+        str(config),
     ]
 
     t0 = time.monotonic()
@@ -295,6 +302,7 @@ def _run_single(
 
 
 # ── Report ───────────────────────────────────────────────────────────────────
+
 
 def _fmt_duration(seconds: float) -> str:
     m, s = divmod(int(seconds), 60)
@@ -358,12 +366,28 @@ def _build_report(
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Batch smoke-test runner for pipeline configs")
     parser.add_argument("config_dir", type=Path, help="Directory with *.yaml configs (searched recursively)")
-    parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS, help=f"Max parallel runs (default: {_DEFAULT_WORKERS}). Use -1 for unlimited (1 worker per config).")
-    parser.add_argument("--idle-timeout", type=int, default=_DEFAULT_IDLE_TIMEOUT_S, help=f"Seconds without output before graceful shutdown (default: {_DEFAULT_IDLE_TIMEOUT_S})")
-    parser.add_argument("--stagger", type=int, default=_DEFAULT_STAGGER_S, help=f"Seconds between launching successive runs (default: {_DEFAULT_STAGGER_S}). Use 0 to start all at once.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=_DEFAULT_WORKERS,
+        help=f"Max parallel runs (default: {_DEFAULT_WORKERS}). Use -1 for unlimited (1 worker per config).",
+    )
+    parser.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=_DEFAULT_IDLE_TIMEOUT_S,
+        help=f"Seconds without output before graceful shutdown (default: {_DEFAULT_IDLE_TIMEOUT_S})",
+    )
+    parser.add_argument(
+        "--stagger",
+        type=int,
+        default=_DEFAULT_STAGGER_S,
+        help=f"Seconds between launching successive runs (default: {_DEFAULT_STAGGER_S}). Use 0 to start all at once.",
+    )
     parser.add_argument("--report-dir", type=Path, default=None, help="Where to save the report (default: smoke dir)")
     parser.add_argument("--dry-run", action="store_true", help="List discovered configs without running them")
     args = parser.parse_args()
@@ -386,7 +410,9 @@ def main() -> None:
 
     print(f"Found {len(configs)} configs in {config_dir}")
     stagger_s: int = args.stagger
-    print(f"Workers: {workers}{' (unlimited)' if args.workers == -1 else ''}, idle timeout: {idle_timeout}s, stagger: {stagger_s}s")
+    print(
+        f"Workers: {workers}{' (unlimited)' if args.workers == -1 else ''}, idle timeout: {idle_timeout}s, stagger: {stagger_s}s"
+    )
     print(f"Smoke dir: {smoke_dir}")
     print()
 
@@ -404,7 +430,7 @@ def main() -> None:
     t_start = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures: dict[threading.Future, Path] = {}  # type: ignore[type-arg]
+        futures: dict[Future[RunResult], Path] = {}
         for i, cfg in enumerate(configs):
             futures[pool.submit(_run_single, cfg, config_dir, idle_timeout, project_root, child_env)] = cfg
             if stagger_s > 0 and i < len(configs) - 1:

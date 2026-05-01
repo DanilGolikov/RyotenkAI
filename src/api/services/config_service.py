@@ -20,9 +20,9 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
     field_errors: dict[str, list[str]] = {}
     cfg = None
     try:
-        from src.utils.config import load_config
+        from src.workspace.integrations.loader import load_pipeline_config
 
-        cfg = load_config(config_path)
+        cfg = load_pipeline_config(config_path)
         checks.append(ConfigCheck(label="YAML schema valid (Pydantic)", status="ok"))
     except ValidationError as exc:
         # Pydantic gives us structured per-field errors via ``.errors()``.
@@ -38,7 +38,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
             field_errors.setdefault(path, []).append(msg)
         summary = f"{len(exc.errors())} field error(s)" if exc.errors() else str(exc)
         checks.append(ConfigCheck(label="YAML schema", status="fail", detail=summary))
-    except Exception as exc:  # noqa: BLE001 — surface full exception to UI
+    except Exception as exc:
         checks.append(ConfigCheck(label="YAML schema", status="fail", detail=str(exc)))
 
     if cfg is not None:
@@ -48,14 +48,24 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
                 train_path = ds_cfg.source_local.local_paths.train
                 eval_path = getattr(ds_cfg.source_local.local_paths, "eval", None)
                 if Path(train_path).exists():
-                    checks.append(ConfigCheck(label=f"Dataset '{ds_name}' train path exists", status="ok", detail=train_path))
+                    checks.append(
+                        ConfigCheck(label=f"Dataset '{ds_name}' train path exists", status="ok", detail=train_path)
+                    )
                 else:
-                    checks.append(ConfigCheck(label=f"Dataset '{ds_name}' train path not found", status="fail", detail=train_path))
+                    checks.append(
+                        ConfigCheck(label=f"Dataset '{ds_name}' train path not found", status="fail", detail=train_path)
+                    )
                 if eval_path:
                     if Path(eval_path).exists():
-                        checks.append(ConfigCheck(label=f"Dataset '{ds_name}' eval path exists", status="ok", detail=eval_path))
+                        checks.append(
+                            ConfigCheck(label=f"Dataset '{ds_name}' eval path exists", status="ok", detail=eval_path)
+                        )
                     else:
-                        checks.append(ConfigCheck(label=f"Dataset '{ds_name}' eval path not found", status="fail", detail=eval_path))
+                        checks.append(
+                            ConfigCheck(
+                                label=f"Dataset '{ds_name}' eval path not found", status="fail", detail=eval_path
+                            )
+                        )
             else:
                 checks.append(ConfigCheck(label=f"Dataset '{ds_name}' (HuggingFace — path check skipped)", status="ok"))
 
@@ -73,11 +83,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         # want that to surface as a 500. Tolerate "not yet chosen" — the
         # dedicated provider-required check below still nags the user.
         try:
-            active_provider = (
-                cfg.get_active_provider_name()
-                if hasattr(cfg, "get_active_provider_name")
-                else None
-            )
+            active_provider = cfg.get_active_provider_name() if hasattr(cfg, "get_active_provider_name") else None
         except ValueError:
             active_provider = None
 
@@ -88,20 +94,19 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         from src.pipeline.bootstrap.startup_validator import (
             _resolve_required_secrets_for_provider,
         )
-        required_secrets = (
-            _resolve_required_secrets_for_provider(active_provider)
-            if active_provider
-            else ()
-        )
+
+        required_secrets = _resolve_required_secrets_for_provider(active_provider) if active_provider else ()
         runpod_key = os.environ.get("RUNPOD_API_KEY", "").strip()
         if "RUNPOD_API_KEY" in required_secrets:
             if runpod_key:
                 checks.append(ConfigCheck(label="RUNPOD_API_KEY found", status="ok"))
             else:
-                checks.append(ConfigCheck(
-                    label=f"RUNPOD_API_KEY not set (required for {active_provider} provider)",
-                    status="fail",
-                ))
+                checks.append(
+                    ConfigCheck(
+                        label=f"RUNPOD_API_KEY not set (required for {active_provider} provider)",
+                        status="fail",
+                    )
+                )
         elif runpod_key:
             checks.append(ConfigCheck(label="RUNPOD_API_KEY found (optional)", status="ok"))
         else:
@@ -118,7 +123,9 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
                         importlib.import_module(f"src.evaluation.plugins.builtins.{plugin_type}")
                         checks.append(ConfigCheck(label=f"Eval plugin '{plugin_type}' importable", status="ok"))
                     except ImportError:
-                        checks.append(ConfigCheck(label=f"Eval plugin '{plugin_type}' not found (custom?)", status="warn"))
+                        checks.append(
+                            ConfigCheck(label=f"Eval plugin '{plugin_type}' not found (custom?)", status="warn")
+                        )
         else:
             checks.append(ConfigCheck(label="Evaluation disabled — plugin check skipped", status="ok"))
 
@@ -232,7 +239,8 @@ def _check_reward_strategy_compat(
 
     if not any_issue and not any(
         (getattr(s, "params", None) or {}).get("reward_plugin")
-        if isinstance(getattr(s, "params", None), dict) else False
+        if isinstance(getattr(s, "params", None), dict)
+        else False
         for s in strategies
     ):
         # No reward plugins in use — not a failure, just a neutral note.

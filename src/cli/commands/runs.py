@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
@@ -57,21 +57,23 @@ def ls_cmd(
     rows = list(scan_runs_dir(runs_dir))
 
     if state.is_machine_readable:
-        renderer.emit([
-            {
-                "run_id": row.run_id,
-                "status": row.status,
-                "attempts": row.attempts,
-                "started_at": row.started_at,
-                "completed_at": row.completed_at,
-                "duration_s": duration_seconds(row.started_at, row.completed_at),
-                "config_name": row.config_name,
-                # Phase 11.C-2 — operator can grep on pod_status for
-                # "(stopped)" runs that need a Resume action.
-                "pod_status": row.pod_status,
-            }
-            for row in rows
-        ])
+        renderer.emit(
+            [
+                {
+                    "run_id": row.run_id,
+                    "status": row.status,
+                    "attempts": row.attempts,
+                    "started_at": row.started_at,
+                    "completed_at": row.completed_at,
+                    "duration_s": duration_seconds(row.started_at, row.completed_at),
+                    "config_name": row.config_name,
+                    # Phase 11.C-2 — operator can grep on pod_status for
+                    # "(stopped)" runs that need a Resume action.
+                    "pod_status": row.pod_status,
+                }
+                for row in rows
+            ]
+        )
     elif not rows:
         renderer.text(f"No runs found in {runs_dir}")
     else:
@@ -91,9 +93,13 @@ def ls_cmd(
         renderer.table(
             headers=["Run ID", "Status", "Att", "Duration", "Config"],
             rows=[
-                (row.run_id, _status_with_pod_hint(row), row.attempts,
-                 format_duration(row.started_at, row.completed_at) or "-",
-                 row.config_name)
+                (
+                    row.run_id,
+                    _status_with_pod_hint(row),
+                    row.attempts,
+                    format_duration(row.started_at, row.completed_at) or "-",
+                    row.config_name,
+                )
                 for row in rows
             ],
         )
@@ -118,12 +124,15 @@ def inspect_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
     show_outputs: Annotated[
-        bool, typer.Option(
-            "--outputs", help="Show stage outputs and lineage (text mode only).",
+        bool,
+        typer.Option(
+            "--outputs",
+            help="Show stage outputs and lineage (text mode only).",
         ),
     ] = False,
     logs: Annotated[
-        bool, typer.Option("--logs", help="Show tail of pipeline.log per attempt."),
+        bool,
+        typer.Option("--logs", help="Show tail of pipeline.log per attempt."),
     ] = False,
 ) -> None:
     """Inspect a run — show structured info about attempts and stages."""
@@ -140,38 +149,41 @@ def inspect_cmd(
 
     pipeline_state = data.state
     if state.is_machine_readable:
-        renderer.emit({
-            "run_id": data.run_dir.name,
-            "logical_run_id": pipeline_state.logical_run_id,
-            "status": effective_pipeline_status(pipeline_state),
-            "config_path": pipeline_state.config_path,
-            "mlflow_run_id": pipeline_state.root_mlflow_run_id,
-            "attempts": [
-                {
-                    "attempt_no": attempt.attempt_no,
-                    "status": attempt.status,
-                    "action": attempt.restart_from_stage or attempt.effective_action,
-                    "started_at": attempt.started_at,
-                    "completed_at": attempt.completed_at,
-                    "duration_s": duration_seconds(
-                        attempt.started_at, attempt.completed_at,
-                    ),
-                    "error": attempt.error,
-                    "stages": [
-                        _stage_payload(attempt, stage_name)
-                        for stage_name in (
-                            attempt.enabled_stage_names or list(attempt.stage_runs)
-                        )
-                    ],
-                }
-                for attempt in pipeline_state.attempts
-            ],
-        })
+        renderer.emit(
+            {
+                "run_id": data.run_dir.name,
+                "logical_run_id": pipeline_state.logical_run_id,
+                "status": effective_pipeline_status(pipeline_state),
+                "config_path": pipeline_state.config_path,
+                "mlflow_run_id": pipeline_state.root_mlflow_run_id,
+                "attempts": [
+                    {
+                        "attempt_no": attempt.attempt_no,
+                        "status": attempt.status,
+                        "action": attempt.restart_from_stage or attempt.effective_action,
+                        "started_at": attempt.started_at,
+                        "completed_at": attempt.completed_at,
+                        "duration_s": duration_seconds(
+                            attempt.started_at,
+                            attempt.completed_at,
+                        ),
+                        "error": attempt.error,
+                        "stages": [
+                            _stage_payload(attempt, stage_name)
+                            for stage_name in (attempt.enabled_stage_names or list(attempt.stage_runs))
+                        ],
+                    }
+                    for attempt in pipeline_state.attempts
+                ],
+            }
+        )
     else:
         from src.cli.run_rendering import render_run_inspection_lines
 
         for line in render_run_inspection_lines(
-            data, verbose=show_outputs, include_logs=logs,
+            data,
+            verbose=show_outputs,
+            include_logs=logs,
         ):
             renderer.text(line)
     renderer.flush()
@@ -190,7 +202,8 @@ def _stage_payload(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped
         "started_at": stage_run.started_at,
         "completed_at": stage_run.completed_at,
         "duration_s": duration_seconds(
-            stage_run.started_at, stage_run.completed_at,
+            stage_run.started_at,
+            stage_run.completed_at,
         ),
         "error": stage_run.error,
         "outputs": stage_run.outputs,
@@ -206,12 +219,15 @@ def _stage_payload(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped
 def logs_cmd(
     run_dir: RunDirArg,
     attempt: Annotated[
-        int, typer.Option(
-            "--attempt", help="Attempt number (default: last attempt).",
+        int,
+        typer.Option(
+            "--attempt",
+            help="Attempt number (default: last attempt).",
         ),
     ] = 0,
     follow: Annotated[
-        bool, typer.Option("--follow", "-f", help="Stream log (tail -F mode)."),
+        bool,
+        typer.Option("--follow", "-f", help="Stream log (tail -F mode)."),
     ] = False,
 ) -> None:
     """Show pipeline log for a run attempt."""
@@ -265,13 +281,16 @@ def status_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
     interval: Annotated[
-        float, typer.Option(
-            "--interval", "-i",
+        float,
+        typer.Option(
+            "--interval",
+            "-i",
             help="Polling interval in seconds (text mode live-poll only).",
         ),
     ] = 5.0,
     once: Annotated[
-        bool, typer.Option(
+        bool,
+        typer.Option(
             "--once",
             help="Print one snapshot and exit (implied by -o json/yaml).",
         ),
@@ -305,15 +324,24 @@ def status_cmd(
                     "name": stage_name,
                     "status": (
                         current.stage_runs.get(stage_name).status
-                        if current and current.stage_runs.get(stage_name) else "pending"
+                        if current and current.stage_runs.get(stage_name)
+                        else "pending"
                     ),
                     "duration_s": duration_seconds(
-                        current.stage_runs.get(stage_name).started_at if current and current.stage_runs.get(stage_name) else None,
-                        current.stage_runs.get(stage_name).completed_at if current and current.stage_runs.get(stage_name) else None,
-                    ) if current and current.stage_runs.get(stage_name) else None,
+                        current.stage_runs.get(stage_name).started_at
+                        if current and current.stage_runs.get(stage_name)
+                        else None,
+                        current.stage_runs.get(stage_name).completed_at
+                        if current and current.stage_runs.get(stage_name)
+                        else None,
+                    )
+                    if current and current.stage_runs.get(stage_name)
+                    else None,
                 }
                 for stage_name in (current.enabled_stage_names or list(current.stage_runs))
-            ] if current else [],
+            ]
+            if current
+            else [],
         }
 
     if state_ctx.is_machine_readable:
@@ -349,7 +377,8 @@ def diff_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
     attempt: Annotated[
-        list[int], typer.Option(
+        list[int],
+        typer.Option(
             "--attempt",
             help="Attempt numbers to compare (use twice). Default: first vs last.",
         ),
@@ -392,16 +421,18 @@ def diff_cmd(
         raise die(f"attempt {attempt_a} or {attempt_b} not found in state")
 
     if state_ctx.is_machine_readable:
-        renderer.emit({
-            "attempt_a": attempt_a,
-            "attempt_b": attempt_b,
-            "training_critical_changed": bool(diff["training_critical_changed"]),
-            "late_stage_changed": bool(diff["late_stage_changed"]),
-            "hash_a_critical": diff.get("hash_a_critical"),
-            "hash_b_critical": diff.get("hash_b_critical"),
-            "hash_a_late": diff.get("hash_a_late"),
-            "hash_b_late": diff.get("hash_b_late"),
-        })
+        renderer.emit(
+            {
+                "attempt_a": attempt_a,
+                "attempt_b": attempt_b,
+                "training_critical_changed": bool(diff["training_critical_changed"]),
+                "late_stage_changed": bool(diff["late_stage_changed"]),
+                "hash_a_critical": diff.get("hash_a_critical"),
+                "hash_b_critical": diff.get("hash_b_critical"),
+                "hash_a_late": diff.get("hash_a_late"),
+                "hash_b_late": diff.get("hash_b_late"),
+            }
+        )
     else:
         for line in render_run_diff_lines(diff, attempt_a, attempt_b):
             renderer.text(line)
@@ -417,8 +448,10 @@ def diff_cmd(
 def report_cmd(
     run_dir: RunDirArg,
     output: Annotated[
-        Path | None, typer.Option(
-            "--output", "-o",
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
             help="Save report to this path (default: <run-dir>/report.md).",
             dir_okay=False,
         ),
@@ -442,7 +475,8 @@ def report_cmd(
     try:
         generator = ExperimentReportGenerator()
         markdown = generator.generate(
-            state.root_mlflow_run_id, local_logs_dir=run_path,
+            state.root_mlflow_run_id,
+            local_logs_dir=run_path,
         )
         save_path.write_text(markdown, encoding="utf-8")
     except Exception as exc:
@@ -459,7 +493,8 @@ def report_cmd(
 def rm_cmd(
     run_dir: RunDirArg,
     mode: Annotated[
-        str, typer.Option(
+        str,
+        typer.Option(
             "--mode",
             help="Delete scope: local_and_mlflow | local_only | mlflow_only.",
         ),

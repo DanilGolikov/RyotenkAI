@@ -67,7 +67,16 @@ def load_model_and_tokenizer(
     # Create quantization config for QLoRA
     bnb_config = None
     if use_4bit:
+        # ``use_4bit`` is set iff training.type == "qlora", in which case
+        # ``get_adapter_config`` returns a ``QloraConfig`` (the only branch
+        # that carries the bnb_4bit_* fields). Narrow explicitly so mypy
+        # doesn't see the union over LoraConfig / AdaLoraConfig.
+        from src.config.training.lora import QloraConfig
+
         adapter_cfg = config.training.get_adapter_config()
+        assert isinstance(
+            adapter_cfg, QloraConfig
+        ), f"use_4bit=True implies type='qlora'; got {type(adapter_cfg).__name__}"
         quant_type = adapter_cfg.bnb_4bit_quant_type
         compute_dtype = _get_torch_dtype(adapter_cfg.bnb_4bit_compute_dtype)
         use_double_quant = adapter_cfg.bnb_4bit_use_double_quant
@@ -78,7 +87,9 @@ def load_model_and_tokenizer(
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=use_double_quant,
         )
-        logger.info(f"Using 4-bit quantization (QLoRA): quant={quant_type}, compute_dtype={compute_dtype}, double_quant={use_double_quant}")
+        logger.info(
+            f"Using 4-bit quantization (QLoRA): quant={quant_type}, compute_dtype={compute_dtype}, double_quant={use_double_quant}"
+        )
 
     # Determine torch dtype
     torch_dtype = _get_torch_dtype(config.model.torch_dtype)

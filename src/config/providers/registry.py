@@ -30,7 +30,7 @@ class ProviderType:
 
     id: str
     label: str
-    schema: type
+    schema: type[StrictBaseModel]
     schema_name: str
     training_error_code: str
     inference_error_code: str

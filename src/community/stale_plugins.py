@@ -76,39 +76,47 @@ def find_stale_plugins(config: PipelineConfig) -> list[StalePluginRef]:
     for ref in _enabled_validation_plugins(config):
         if not _is_registered(ref.kind, ref.plugin_name):
             ds_id, _, instance = ref.instance_id.partition(".")
-            stale.append(StalePluginRef(
-                plugin_kind=ref.kind,
-                plugin_name=ref.plugin_name,
-                instance_id=instance or ref.instance_id,
-                location=f"datasets.{ds_id}.validations.plugins[{instance}]",
-            ))
+            stale.append(
+                StalePluginRef(
+                    plugin_kind=ref.kind,
+                    plugin_name=ref.plugin_name,
+                    instance_id=instance or ref.instance_id,
+                    location=f"datasets.{ds_id}.validations.plugins[{instance}]",
+                )
+            )
 
     for ref in _enabled_evaluation_plugins(config):
         if not _is_registered(ref.kind, ref.plugin_name):
-            stale.append(StalePluginRef(
-                plugin_kind=ref.kind,
-                plugin_name=ref.plugin_name,
-                instance_id=ref.instance_id,
-                location=f"evaluation.evaluators.plugins[{ref.instance_id}]",
-            ))
+            stale.append(
+                StalePluginRef(
+                    plugin_kind=ref.kind,
+                    plugin_name=ref.plugin_name,
+                    instance_id=ref.instance_id,
+                    location=f"evaluation.evaluators.plugins[{ref.instance_id}]",
+                )
+            )
 
     for ref in _enabled_reward_plugins(config):
         if not _is_registered(ref.kind, ref.plugin_name):
-            stale.append(StalePluginRef(
-                plugin_kind=ref.kind,
-                plugin_name=ref.plugin_name,
-                instance_id=ref.instance_id,
-                location=f"training.strategies[{ref.instance_id}].params.reward_plugin",
-            ))
+            stale.append(
+                StalePluginRef(
+                    plugin_kind=ref.kind,
+                    plugin_name=ref.plugin_name,
+                    instance_id=ref.instance_id,
+                    location=f"training.strategies[{ref.instance_id}].params.reward_plugin",
+                )
+            )
 
     for ref in _enabled_report_plugins(config):
         if not _is_registered(ref.kind, ref.plugin_name):
-            stale.append(StalePluginRef(
-                plugin_kind=ref.kind,
-                plugin_name=ref.plugin_name,
-                instance_id=ref.instance_id,
-                location=f"reports.sections[{ref.plugin_name}]",
-            ))
+            stale.append(
+                StalePluginRef(
+                    plugin_kind=ref.kind,
+                    plugin_name=ref.plugin_name,
+                    instance_id=ref.instance_id,
+                    location=f"reports.sections[{ref.plugin_name}]",
+                )
+            )
 
     return stale
 
@@ -137,7 +145,7 @@ def _is_registered(kind: PluginKind, plugin_name: str) -> bool:
         from src.reports.plugins.registry import report_registry
 
         return report_registry.is_registered(plugin_name)
-    return False
+    return False  # type: ignore[unreachable]  # defensive: mypy sees the Literal union as exhaustive
 
 
 __all__ = ["StalePluginRef", "find_stale_plugins"]

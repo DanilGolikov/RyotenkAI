@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
 from src.api.schemas.integration import ConnectionTestResult
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Default timeouts in seconds. Each handler reads its own key from env
 # to let ops tune without code changes.
@@ -32,16 +34,12 @@ TIMEOUTS: dict[str, float] = {
     "mlflow": float(os.environ.get("RYOTENKAI_TEST_CONN_TIMEOUT_MLFLOW", "5")),
     "huggingface": float(os.environ.get("RYOTENKAI_TEST_CONN_TIMEOUT_HF", "5")),
     "provider:runpod": float(os.environ.get("RYOTENKAI_TEST_CONN_TIMEOUT_RUNPOD", "10")),
-    "provider:single_node": float(
-        os.environ.get("RYOTENKAI_TEST_CONN_TIMEOUT_SSH", "8")
-    ),
+    "provider:single_node": float(os.environ.get("RYOTENKAI_TEST_CONN_TIMEOUT_SSH", "8")),
 }
 
 
 def _ok(start: float, detail: str = "") -> ConnectionTestResult:
-    return ConnectionTestResult(
-        ok=True, latency_ms=int((time.monotonic() - start) * 1000), detail=detail
-    )
+    return ConnectionTestResult(ok=True, latency_ms=int((time.monotonic() - start) * 1000), detail=detail)
 
 
 def _fail(start: float, detail: str) -> ConnectionTestResult:
@@ -87,9 +85,7 @@ def _test_mlflow(config: dict[str, Any], token: str | None) -> ConnectionTestRes
     return _fail(start, f"HTTP {resp.status_code}: {resp.text[:200]}")
 
 
-def _test_huggingface(
-    config: dict[str, Any], token: str | None
-) -> ConnectionTestResult:
+def _test_huggingface(config: dict[str, Any], token: str | None) -> ConnectionTestResult:
     _ = config  # HF integration schema carries no knobs in v1
     start = time.monotonic()
     if not token:
@@ -114,9 +110,7 @@ def _test_huggingface(
     return _fail(start, f"HTTP {resp.status_code}: {resp.text[:200]}")
 
 
-INTEGRATION_HANDLERS: dict[
-    str, Callable[[dict[str, Any], str | None], ConnectionTestResult]
-] = {
+INTEGRATION_HANDLERS: dict[str, Callable[[dict[str, Any], str | None], ConnectionTestResult]] = {
     "mlflow": _test_mlflow,
     "huggingface": _test_huggingface,
 }
@@ -145,9 +139,7 @@ def _test_runpod(config: dict[str, Any], token: str | None) -> ConnectionTestRes
     return _fail(start, f"HTTP {resp.status_code}: {resp.text[:200]}")
 
 
-def _test_single_node(
-    config: dict[str, Any], token: str | None
-) -> ConnectionTestResult:
+def _test_single_node(config: dict[str, Any], token: str | None) -> ConnectionTestResult:
     """SSH-probe for a single-node provider.
 
     Reads ``connect.host`` / ``connect.user`` / ``connect.port`` /
@@ -158,7 +150,8 @@ def _test_single_node(
     _ = token  # single_node doesn't use a bearer token today
     start = time.monotonic()
 
-    connect = config.get("connect") if isinstance(config.get("connect"), dict) else {}
+    raw_connect = config.get("connect")
+    connect: dict[str, Any] = raw_connect if isinstance(raw_connect, dict) else {}
     host = str(connect.get("host", "")).strip()
     if not host:
         # Pure-local mode: nothing meaningful to probe over the network.
@@ -171,7 +164,7 @@ def _test_single_node(
 
     # Lazy import to keep ``paramiko`` (heavy dep) out of non-probe paths.
     try:
-        import paramiko
+        import paramiko  # type: ignore[import-untyped]  # types-paramiko not installed
     except ImportError as exc:  # pragma: no cover — paramiko is in base deps
         return _fail(start, f"paramiko not available: {exc}")
 
@@ -211,17 +204,13 @@ def _test_single_node(
     return _ok(start, f"SSH {user}@{host}:{port} reachable")
 
 
-PROVIDER_HANDLERS: dict[
-    str, Callable[[dict[str, Any], str | None], ConnectionTestResult]
-] = {
+PROVIDER_HANDLERS: dict[str, Callable[[dict[str, Any], str | None], ConnectionTestResult]] = {
     "runpod": _test_runpod,
     "single_node": _test_single_node,
 }
 
 
-def test_integration(
-    integration_type: str, config: dict[str, Any], token: str | None
-) -> ConnectionTestResult:
+def test_integration(integration_type: str, config: dict[str, Any], token: str | None) -> ConnectionTestResult:
     handler = INTEGRATION_HANDLERS.get(integration_type)
     if handler is None:
         return ConnectionTestResult(
@@ -231,9 +220,7 @@ def test_integration(
     return handler(config, token)
 
 
-def test_provider(
-    provider_type: str, config: dict[str, Any], token: str | None
-) -> ConnectionTestResult:
+def test_provider(provider_type: str, config: dict[str, Any], token: str | None) -> ConnectionTestResult:
     handler = PROVIDER_HANDLERS.get(provider_type)
     if handler is None:
         return ConnectionTestResult(

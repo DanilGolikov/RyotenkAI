@@ -457,7 +457,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
         during deploy(). Evaluation can immediately use the endpoint.
         """
         endpoint = self._endpoint_info
-        if endpoint is None:
+        if endpoint is None or endpoint.endpoint_url is None:
             return Err(
                 InferenceError(
                     message="single_node: activate_for_eval called but endpoint is not deployed. Call deploy() first.",

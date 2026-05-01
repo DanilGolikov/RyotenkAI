@@ -168,7 +168,7 @@ class InferenceDeployer(PipelineStage):
                     pass
                 endpoint = _make_deferred_endpoint(
                     port=port,
-                    provider_type=inf_cfg.provider,
+                    provider_type=inf_cfg.provider or "unknown",
                     engine=inf_cfg.engine,
                     model_id=base_model_id,
                 )

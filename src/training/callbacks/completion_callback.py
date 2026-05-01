@@ -92,13 +92,16 @@ enforced by :func:`src.training._concurrent_helpers.with_timeout`
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
 
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from transformers import TrainerControl, TrainerState, TrainingArguments
 
 
@@ -125,8 +128,8 @@ class CompletionCallback(TrainerCallback):
         shutdown_handler: object | None = None,
         mlflow_manager: object | None = None,
         flush_timeout_seconds: float | None = None,
-        event_publisher: object | None = None,
-        marker_writer: object | None = None,
+        event_publisher: Callable[..., Any] | None = None,
+        marker_writer: Callable[..., Any] | None = None,
         workspace_dir: object | None = None,
     ) -> None:
         """Build a callback.
@@ -161,11 +164,7 @@ class CompletionCallback(TrainerCallback):
         """
         self._handler = shutdown_handler
         self._mlflow_manager = mlflow_manager
-        self._flush_timeout = (
-            flush_timeout_seconds
-            if flush_timeout_seconds is not None
-            else self.FLUSH_TIMEOUT_SECONDS
-        )
+        self._flush_timeout = flush_timeout_seconds if flush_timeout_seconds is not None else self.FLUSH_TIMEOUT_SECONDS
         self._event_publisher = event_publisher
         self._marker_writer = marker_writer
         self._workspace_dir = workspace_dir
@@ -194,16 +193,14 @@ class CompletionCallback(TrainerCallback):
             # would either duplicate the work (best case) or stomp the
             # marker file (worst case).
             logger.debug(
-                "[COMPLETION] on_train_end: cancellation flag raised — "
-                "deferring to CancellationCallback",
+                "[COMPLETION] on_train_end: cancellation flag raised — " "deferring to CancellationCallback",
             )
             return
 
         manager = self._mlflow_manager
         if manager is None:
             logger.debug(
-                "[COMPLETION] on_train_end: no MLflow manager available; "
-                "skipping flush",
+                "[COMPLETION] on_train_end: no MLflow manager available; " "skipping flush",
             )
             return
 
@@ -221,8 +218,7 @@ class CompletionCallback(TrainerCallback):
 
         if not outcome.timed_out and not outcome.raised:
             logger.info(
-                "[COMPLETION] on_train_end: flushed %d buffered MLflow "
-                "records before HF closes the run",
+                "[COMPLETION] on_train_end: flushed %d buffered MLflow " "records before HF closes the run",
                 outcome.drained_count,
             )
 
@@ -263,6 +259,7 @@ class CompletionCallback(TrainerCallback):
                 from src.training.orchestrator.shutdown_handler import (
                     get_shutdown_handler,
                 )
+
                 handler = get_shutdown_handler()
                 self._handler = handler  # cache for symmetry
             except Exception as exc:
@@ -270,16 +267,16 @@ class CompletionCallback(TrainerCallback):
                 # we'd rather double-flush than skip the natural-completion
                 # marker.
                 logger.debug(
-                    "[COMPLETION] failed to resolve shutdown handler: %s "
-                    "— assuming not cancelled", exc,
+                    "[COMPLETION] failed to resolve shutdown handler: %s " "— assuming not cancelled",
+                    exc,
                 )
                 return False
         try:
             return bool(handler.should_stop())  # type: ignore[attr-defined]
         except Exception as exc:
             logger.debug(
-                "[COMPLETION] handler.should_stop() raised: %s — "
-                "assuming not cancelled", exc,
+                "[COMPLETION] handler.should_stop() raised: %s — " "assuming not cancelled",
+                exc,
             )
             return False
 
@@ -298,14 +295,14 @@ class CompletionCallback(TrainerCallback):
         publisher = self._event_publisher
         if publisher is None:
             logger.debug(
-                "[COMPLETION] no event_publisher injected — "
-                "skipping completion_finalized telemetry",
+                "[COMPLETION] no event_publisher injected — " "skipping completion_finalized telemetry",
             )
             return
         try:
             from src.runner.cancellation_telemetry import (
                 COMPLETION_FINALIZED,
             )
+
             publisher(
                 COMPLETION_FINALIZED,
                 {
@@ -317,8 +314,8 @@ class CompletionCallback(TrainerCallback):
             )
         except Exception as exc:
             logger.debug(
-                "[COMPLETION] failed to emit completion_finalized "
-                "event: %s", exc,
+                "[COMPLETION] failed to emit completion_finalized " "event: %s",
+                exc,
             )
 
     def _write_completion_marker(
@@ -344,12 +341,14 @@ class CompletionCallback(TrainerCallback):
         # Custom writer was injected — defer to it.
         if self._marker_writer is not None:
             try:
-                return self._marker_writer({  # type: ignore[operator]
-                    "run_id": run_id,
-                    "flushed_count": drained,
-                    "flush_timed_out": flush_timed_out,
-                    "ts_ms": __import__("time").time() * 1000,
-                })
+                return self._marker_writer(
+                    {  # type: ignore[operator]
+                        "run_id": run_id,
+                        "flushed_count": drained,
+                        "flush_timed_out": flush_timed_out,
+                        "ts_ms": __import__("time").time() * 1000,
+                    }
+                )
             except Exception as exc:
                 logger.debug(
                     "[COMPLETION] injected marker_writer failed: %s",
@@ -360,8 +359,7 @@ class CompletionCallback(TrainerCallback):
         workspace = self._resolve_workspace_dir()
         if workspace is None:
             logger.debug(
-                "[COMPLETION] no workspace dir resolved — "
-                "skipping completion.marker write",
+                "[COMPLETION] no workspace dir resolved — " "skipping completion.marker write",
             )
             return None
 
@@ -373,38 +371,40 @@ class CompletionCallback(TrainerCallback):
             from src.utils.atomic_fs import atomic_write_text
 
             target = Path(workspace) / "completion.marker"
-            reason = (
-                "flush_budget_exceeded" if flush_timed_out
-                else "natural_completion"
+            reason = "flush_budget_exceeded" if flush_timed_out else "natural_completion"
+            payload = json.dumps(
+                {
+                    "run_id": run_id,
+                    "flushed_count": int(drained),
+                    "flush_timed_out": bool(flush_timed_out),
+                    "ts_ms": int(time.time() * 1000),
+                    "reason": reason,
+                },
+                indent=2,
             )
-            payload = json.dumps({
-                "run_id": run_id,
-                "flushed_count": int(drained),
-                "flush_timed_out": bool(flush_timed_out),
-                "ts_ms": int(time.time() * 1000),
-                "reason": reason,
-            }, indent=2)
             atomic_write_text(target, payload)
             level_log = logger.info if not flush_timed_out else logger.warning
             level_log(
                 "[COMPLETION] wrote completion.marker to %s (reason=%s); "
                 "Mac-side reconciliation will pick this up to finalize "
                 "the upstream MLflow run if it's still RUNNING",
-                target, reason,
+                target,
+                reason,
             )
             return target
         except Exception as exc:
             logger.warning(
-                "[COMPLETION] failed to write completion.marker: %s — "
-                "Mac-side reconciliation will skip", exc,
+                "[COMPLETION] failed to write completion.marker: %s — " "Mac-side reconciliation will skip",
+                exc,
             )
             return None
 
-    def _resolve_workspace_dir(self) -> object | None:
+    def _resolve_workspace_dir(self) -> str | Path | None:
         """Resolve workspace path: explicit injection > env var > None."""
-        if self._workspace_dir is not None:
+        if isinstance(self._workspace_dir, (str, Path)):
             return self._workspace_dir
         import os
+
         env_value = os.environ.get("HELIX_WORKSPACE")
         if env_value:
             return env_value

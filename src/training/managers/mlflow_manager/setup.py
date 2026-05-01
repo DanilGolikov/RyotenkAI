@@ -54,14 +54,14 @@ class MLflowSetupMixin:
 
             self._mlflow = mlflow  # type: ignore[attr-defined]
 
-            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
-                self._mlflow_config,
+            self._resolved_uris = resolve_mlflow_uris(
+                self._mlflow_config,  # type: ignore[attr-defined]
                 runtime_role=self._runtime_role,  # type: ignore[attr-defined]
             )
             self._gateway = MLflowGateway(
                 self._resolved_uris.runtime_tracking_uri,
                 ca_bundle_path=self._mlflow_config.ca_bundle_path,  # type: ignore[attr-defined]
-            )  # type: ignore[attr-defined]
+            )
             tracking_uri = self._gateway.uri  # type: ignore[attr-defined]
             self._environment = MLflowEnvironment(  # type: ignore[attr-defined]
                 tracking_uri,
@@ -108,7 +108,7 @@ class MLflowSetupMixin:
                         severity="ERROR",
                     )
                     self._mlflow = None  # type: ignore[attr-defined]
-                    self._gateway = NullMLflowGateway()  # type: ignore[attr-defined]
+                    self._gateway = NullMLflowGateway()  # type: ignore[assignment]
                     return False
 
             self._restore_deleted_experiments()
@@ -156,25 +156,25 @@ class MLflowSetupMixin:
         return self._gateway.check_connectivity(timeout)  # type: ignore[attr-defined]
 
     def get_runtime_tracking_uri(self) -> str:
-        if self._resolved_uris is None:  # type: ignore[attr-defined]
-            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
-                self._mlflow_config,
+        if self._resolved_uris is None:  # type: ignore[attr-defined,unreachable]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[unreachable]
+                self._mlflow_config,  # type: ignore[attr-defined]
                 runtime_role=self._runtime_role,  # type: ignore[attr-defined]
             )
         return self._resolved_uris.runtime_tracking_uri  # type: ignore[attr-defined]
 
     def get_effective_local_tracking_uri(self) -> str:
-        if self._resolved_uris is None:  # type: ignore[attr-defined]
-            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
-                self._mlflow_config,
+        if self._resolved_uris is None:  # type: ignore[attr-defined,unreachable]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[unreachable]
+                self._mlflow_config,  # type: ignore[attr-defined]
                 runtime_role=self._runtime_role,  # type: ignore[attr-defined]
             )
         return self._resolved_uris.effective_local_tracking_uri  # type: ignore[attr-defined]
 
     def get_effective_remote_tracking_uri(self) -> str:
-        if self._resolved_uris is None:  # type: ignore[attr-defined]
-            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[attr-defined]
-                self._mlflow_config,
+        if self._resolved_uris is None:  # type: ignore[attr-defined,unreachable]
+            self._resolved_uris = resolve_mlflow_uris(  # type: ignore[unreachable]
+                self._mlflow_config,  # type: ignore[attr-defined]
                 runtime_role=self._runtime_role,  # type: ignore[attr-defined]
             )
         return self._resolved_uris.effective_remote_tracking_uri  # type: ignore[attr-defined]

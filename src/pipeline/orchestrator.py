@@ -12,7 +12,6 @@ Features:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config.runtime import RuntimeSettings, load_runtime_settings
@@ -38,6 +37,8 @@ from src.utils.logger import logger
 from src.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from src.config.pipeline.schema import PipelineConfig
     from src.pipeline.stages.base import PipelineStage
     from src.training.managers.mlflow_manager import MLflowManager
@@ -243,22 +244,21 @@ class PipelineOrchestrator:
             # Interrupt during prepare — loop never got to own the boundary.
             # Delegate to the loop's public helper so the record-interrupted
             # + MLflow-warning semantics stay in one place.
-            self._stage_execution_loop.handle_interrupt_outside_loop(
-                mlflow_manager=self._mlflow_manager
-            )
+            self._stage_execution_loop.handle_interrupt_outside_loop(mlflow_manager=self._mlflow_manager)
             if isinstance(exc, SystemExit):
                 raise
-            return Err(
-                AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED")
-            )
+            return Err(AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED"))
         except PipelineStateError as e:
             # Corrupted state file / persistence failure during bootstrap.
             # Distinct error code keeps observability clean.
             return Err(AppError(message=str(e), code="PIPELINE_STATE_ERROR"))
         except Exception as e:
             # Unexpected during prepare — same conversion as in-loop so the
-            # caller sees a consistent AppError shape.
-            return self._stage_execution_loop.handle_unexpected_error_outside_loop(
+            # caller sees a consistent AppError shape. PipelineContext is
+            # a dict subclass, so the success branch is structurally
+            # compatible with dict[str, Any] at runtime; ignore the
+            # invariance complaint from mypy.
+            return self._stage_execution_loop.handle_unexpected_error_outside_loop(  # type: ignore[return-value]
                 e, mlflow_manager=self._mlflow_manager
             )
         finally:
@@ -396,9 +396,7 @@ class PipelineOrchestrator:
         context it received, not ``self.context``) to match the generic
         ``lineage_manager.restore_reused`` callback contract.
         """
-        self._context_propagator.sync_root_from_stage(
-            context=ctx, stage_name=stage_name, outputs=outputs
-        )
+        self._context_propagator.sync_root_from_stage(context=ctx, stage_name=stage_name, outputs=outputs)
 
     def _persist_state(self, state: PipelineState) -> None:
         """Save callback injected into ``AttemptController``.

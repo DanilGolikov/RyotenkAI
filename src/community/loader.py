@@ -26,7 +26,7 @@ import traceback
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -50,7 +50,6 @@ from src.community.manifest import (
     PresetManifest,
 )
 from src.utils.logger import logger
-
 
 #: Truthy values for the ``COMMUNITY_STRICT`` env var. Anything else
 #: (unset, ``"0"``, ``""``, ``"false"``, etc.) keeps the default loose mode.
@@ -237,9 +236,7 @@ def _import_plugin_class(source_root: Path, module_name: str, class_name: str) -
     spec = importlib.util.spec_from_file_location(
         unique_name,
         spec_source,
-        submodule_search_locations=[str(source_root / module_name)]
-        if spec_source.name == "__init__.py"
-        else None,
+        submodule_search_locations=[str(source_root / module_name)] if spec_source.name == "__init__.py" else None,
     )
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot create import spec for {spec_source}")
@@ -251,15 +248,11 @@ def _import_plugin_class(source_root: Path, module_name: str, class_name: str) -
         sys.modules.pop(unique_name, None)
         raise
     if not hasattr(module, class_name):
-        raise AttributeError(
-            f"module {spec_source} does not define class {class_name!r}"
-        )
+        raise AttributeError(f"module {spec_source} does not define class {class_name!r}")
     return getattr(module, class_name)
 
 
-def _crosscheck_required_env(
-    plugin_cls: type, manifest: PluginManifest
-) -> None:
+def _crosscheck_required_env(plugin_cls: type, manifest: PluginManifest) -> None:
     """If the class declares ``REQUIRED_ENV``, verify it matches the manifest.
 
     Compares Python's tuple to the manifest's ``[[required_env]]`` list
@@ -299,26 +292,20 @@ def _crosscheck_required_env(
 
     diffs: list[str] = []
 
-    only_in_py = sorted(set(py_by_name) - set(toml_by_name))
-    only_in_toml = sorted(set(toml_by_name) - set(py_by_name))
+    only_in_py = sorted({str(k) for k in py_by_name} - {str(k) for k in toml_by_name})
+    only_in_toml = sorted({str(k) for k in toml_by_name} - {str(k) for k in py_by_name})
     if only_in_py:
-        diffs.append(
-            f"declared in REQUIRED_ENV but missing from manifest: {only_in_py}"
-        )
+        diffs.append(f"declared in REQUIRED_ENV but missing from manifest: {only_in_py}")
     if only_in_toml:
-        diffs.append(
-            f"declared in manifest but missing from REQUIRED_ENV: {only_in_toml}"
-        )
+        diffs.append(f"declared in manifest but missing from REQUIRED_ENV: {only_in_toml}")
 
-    for name in sorted(set(py_by_name) & set(toml_by_name)):
+    for name in sorted({str(k) for k in py_by_name} & {str(k) for k in toml_by_name}):
         py = py_by_name[name]
         toml = toml_by_name[name]
         per_key: list[str] = []
         for key in ("optional", "secret", "managed_by"):
             if py.get(key) != toml.get(key):
-                per_key.append(
-                    f"{key}: code={py.get(key)!r} vs toml={toml.get(key)!r}"
-                )
+                per_key.append(f"{key}: code={py.get(key)!r} vs toml={toml.get(key)!r}")
         if per_key:
             diffs.append(f"{name}: " + "; ".join(per_key))
 
@@ -332,9 +319,7 @@ def _crosscheck_required_env(
         )
 
 
-def _normalise_required_libs(
-    declared: object, *, plugin_cls_name: str
-) -> list[LibRequirement]:
+def _normalise_required_libs(declared: object, *, plugin_cls_name: str) -> list[LibRequirement]:
     """Convert a class's ``REQUIRED_LIBS`` to a canonical ``LibRequirement`` list.
 
     Three input forms are accepted (mirrors how authors actually want
@@ -349,10 +334,7 @@ def _normalise_required_libs(
     surface at load time, not at first runtime use.
     """
     if not isinstance(declared, tuple):
-        raise TypeError(
-            f"plugin {plugin_cls_name}.REQUIRED_LIBS must be a tuple; "
-            f"got {type(declared).__name__}"
-        )
+        raise TypeError(f"plugin {plugin_cls_name}.REQUIRED_LIBS must be a tuple; " f"got {type(declared).__name__}")
 
     out: list[LibRequirement] = []
     for entry in declared:
@@ -373,9 +355,7 @@ def _normalise_required_libs(
     return out
 
 
-def _crosscheck_required_libs(
-    plugin_cls: type, manifest: PluginManifest
-) -> None:
+def _crosscheck_required_libs(plugin_cls: type, manifest: PluginManifest) -> None:
     """If the class declares ``REQUIRED_LIBS``, verify it matches the manifest.
 
     Comparison treats lib_requirements as a *set keyed by name* —
@@ -398,23 +378,17 @@ def _crosscheck_required_libs(
     toml_by_name = {r.name: r.version for r in manifest.lib_requirements}
 
     diffs: list[str] = []
-    only_in_py = sorted(set(py_by_name) - set(toml_by_name))
-    only_in_toml = sorted(set(toml_by_name) - set(py_by_name))
+    only_in_py = sorted({str(k) for k in py_by_name} - {str(k) for k in toml_by_name})
+    only_in_toml = sorted({str(k) for k in toml_by_name} - {str(k) for k in py_by_name})
     if only_in_py:
-        diffs.append(
-            f"declared in REQUIRED_LIBS but missing from manifest: {only_in_py}"
-        )
+        diffs.append(f"declared in REQUIRED_LIBS but missing from manifest: {only_in_py}")
     if only_in_toml:
-        diffs.append(
-            f"declared in manifest but missing from REQUIRED_LIBS: {only_in_toml}"
-        )
-    for name in sorted(set(py_by_name) & set(toml_by_name)):
+        diffs.append(f"declared in manifest but missing from REQUIRED_LIBS: {only_in_toml}")
+    for name in sorted({str(k) for k in py_by_name} & {str(k) for k in toml_by_name}):
         py_ver = py_by_name[name]
         toml_ver = toml_by_name[name]
         if py_ver != toml_ver:
-            diffs.append(
-                f"{name}: version code={py_ver!r} vs toml={toml_ver!r}"
-            )
+            diffs.append(f"{name}: version code={py_ver!r} vs toml={toml_ver!r}")
 
     if not diffs:
         return
@@ -474,8 +448,7 @@ def _validate_lib_requirements_satisfied(
             installed = Version(actual)
         except Exception as exc:  # already validated on parse, but be defensive
             errors.append(
-                f"failed to parse lib {req.name!r} version {actual!r} "
-                f"vs requirement {req.version!r}: {exc}"
+                f"failed to parse lib {req.name!r} version {actual!r} " f"vs requirement {req.version!r}: {exc}"
             )
             continue
         if installed not in specifier:
@@ -487,8 +460,7 @@ def _validate_lib_requirements_satisfied(
 
     if errors:
         raise ValueError(
-            f"plugin {manifest.plugin.id!r} lib_requirements not satisfied:"
-            "\n  - " + "\n  - ".join(errors)
+            f"plugin {manifest.plugin.id!r} lib_requirements not satisfied:" "\n  - " + "\n  - ".join(errors)
         )
 
 
@@ -580,21 +552,20 @@ def load_plugins(
                 entry_name,
                 exc,
             )
-            failures.append(LoadFailure(
-                kind=kind,
-                entry_name=entry_name,
-                plugin_id=None,
-                error_type="manifest_parse",
-                message=str(exc),
-                traceback=traceback.format_exc(),
-            ))
+            failures.append(
+                LoadFailure(
+                    kind=kind,
+                    entry_name=entry_name,
+                    plugin_id=None,
+                    error_type="manifest_parse",
+                    message=str(exc),
+                    traceback=traceback.format_exc(),
+                )
+            )
             continue
 
         if manifest.plugin.kind != kind:
-            msg = (
-                f"manifest declares kind={manifest.plugin.kind!r} "
-                f"but lives under community/{kind}/"
-            )
+            msg = f"manifest declares kind={manifest.plugin.kind!r} " f"but lives under community/{kind}/"
             if is_strict:
                 raise ValueError(f"[{entry_name}] {msg}")
             logger.error(
@@ -602,22 +573,22 @@ def load_plugins(
                 entry_name,
                 manifest.plugin.kind,
             )
-            failures.append(LoadFailure(
-                kind=kind,
-                entry_name=entry_name,
-                plugin_id=manifest.plugin.id,
-                error_type="kind_mismatch",
-                message=msg,
-            ))
+            failures.append(
+                LoadFailure(
+                    kind=kind,
+                    entry_name=entry_name,
+                    plugin_id=manifest.plugin.id,
+                    error_type="kind_mismatch",
+                    message=msg,
+                )
+            )
             continue
 
         if manifest.plugin.id in seen_ids:
             # Duplicate ids are *always* fatal — they're a programming
             # mistake, not a transient runtime issue. Strict mode here
             # would be redundant.
-            raise ValueError(
-                f"duplicate plugin id {manifest.plugin.id!r} in kind={kind}"
-            )
+            raise ValueError(f"duplicate plugin id {manifest.plugin.id!r} in kind={kind}")
         seen_ids.add(manifest.plugin.id)
 
         try:
@@ -635,14 +606,16 @@ def load_plugins(
                 manifest.plugin.id,
                 exc,
             )
-            failures.append(LoadFailure(
-                kind=kind,
-                entry_name=entry_name,
-                plugin_id=manifest.plugin.id,
-                error_type="import_error",
-                message=str(exc),
-                traceback=traceback.format_exc(),
-            ))
+            failures.append(
+                LoadFailure(
+                    kind=kind,
+                    entry_name=entry_name,
+                    plugin_id=manifest.plugin.id,
+                    error_type="import_error",
+                    message=str(exc),
+                    traceback=traceback.format_exc(),
+                )
+            )
             continue
 
         # Metadata attachment runs the REQUIRED_ENV cross-check (A7)
@@ -666,21 +639,19 @@ def load_plugins(
                 manifest.plugin.id,
                 exc,
             )
-            failures.append(LoadFailure(
-                kind=kind,
-                entry_name=entry_name,
-                plugin_id=manifest.plugin.id,
-                error_type="metadata_error",
-                message=str(exc),
-                traceback=traceback.format_exc(),
-            ))
+            failures.append(
+                LoadFailure(
+                    kind=kind,
+                    entry_name=entry_name,
+                    plugin_id=manifest.plugin.id,
+                    error_type="metadata_error",
+                    message=str(exc),
+                    traceback=traceback.format_exc(),
+                )
+            )
             continue
 
-        plugins.append(
-            LoadedPlugin(
-                manifest=manifest, plugin_cls=plugin_cls, source_path=source_root
-            )
-        )
+        plugins.append(LoadedPlugin(manifest=manifest, plugin_cls=plugin_cls, source_path=source_root))
         logger.debug(
             "[COMMUNITY_LOADER] kind=%s id=%s loaded from %s",
             kind,
@@ -691,9 +662,7 @@ def load_plugins(
     return LoadResult(plugins=plugins, failures=failures)
 
 
-def load_presets(
-    *, root: Path = COMMUNITY_ROOT, strict: bool | None = None
-) -> PresetLoadResult:
+def load_presets(*, root: Path = COMMUNITY_ROOT, strict: bool | None = None) -> PresetLoadResult:
     """Load every preset under ``root/presets/``.
 
     Mirrors :func:`load_plugins` — returns a result object with both
@@ -718,14 +687,16 @@ def load_presets(
                 entry_name,
                 exc,
             )
-            failures.append(LoadFailure(
-                kind="presets",
-                entry_name=entry_name,
-                plugin_id=None,
-                error_type="manifest_parse",
-                message=str(exc),
-                traceback=traceback.format_exc(),
-            ))
+            failures.append(
+                LoadFailure(
+                    kind="presets",
+                    entry_name=entry_name,
+                    plugin_id=None,
+                    error_type="manifest_parse",
+                    message=str(exc),
+                    traceback=traceback.format_exc(),
+                )
+            )
             continue
 
         if manifest.preset.id in seen_ids:
@@ -742,13 +713,15 @@ def load_presets(
                 manifest.preset.id,
                 msg,
             )
-            failures.append(LoadFailure(
-                kind="presets",
-                entry_name=entry_name,
-                plugin_id=manifest.preset.id,
-                error_type="missing_yaml",
-                message=msg,
-            ))
+            failures.append(
+                LoadFailure(
+                    kind="presets",
+                    entry_name=entry_name,
+                    plugin_id=manifest.preset.id,
+                    error_type="missing_yaml",
+                    message=msg,
+                )
+            )
             continue
 
         presets.append(
@@ -774,7 +747,12 @@ def load_all_plugins(
     libs_by_id: dict[str, LibManifest] | None = None,
 ) -> dict[str, LoadResult]:
     return {
-        kind: load_plugins(kind, root=root, strict=strict, libs_by_id=libs_by_id)
+        kind: load_plugins(
+            cast("PluginKind", kind),
+            root=root,
+            strict=strict,
+            libs_by_id=libs_by_id,
+        )
         for kind in ALL_PLUGIN_KINDS
     }
 

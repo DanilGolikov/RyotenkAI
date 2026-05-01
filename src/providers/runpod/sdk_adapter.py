@@ -152,8 +152,10 @@ class RunPodSDKClient:
 
     @staticmethod
     def _pod_matches_filters(pod: dict[str, Any], params: dict[str, Any]) -> bool:
-        if not isinstance(pod, dict):
-            return False
+        # Defensive: the SDK's typing claims dict but real responses have
+        # been observed wrapping unexpected shapes during partial outages.
+        if not isinstance(pod, dict):  # type: ignore[unreachable]
+            return False  # type: ignore[unreachable]
         for key, expected in params.items():
             if expected is None:
                 continue

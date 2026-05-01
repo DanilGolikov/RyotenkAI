@@ -50,6 +50,10 @@ class _TrainingApiProtocol(Protocol):
 
     def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]: ...
 
+    def stop_pod(self, pod_id: str) -> Result[None, ProviderError]: ...
+
+    def resume_pod(self, pod_id: str) -> Result[None, ProviderError]: ...
+
     def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]: ...
 
     def extract_exposed_ssh_info(
@@ -139,6 +143,19 @@ class RunPodTrainingPodControl:
 
     def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]:
         return self._api.terminate_pod(pod_id)
+
+    def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
+        """Pause the pod (RunPod ``podStop``). Phase 14.A pause/resume path."""
+        return self._api.stop_pod(pod_id)
+
+    def start_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
+        """Resume a stopped pod (RunPod ``podResume``). Phase 14.A path.
+
+        Named ``start_pod`` for symmetry with the inference-side
+        ``RunPodInferencePodControl.start_pod`` so callers can treat
+        the two control surfaces uniformly.
+        """
+        return self._api.resume_pod(pod_id)
 
 
 class RunPodInferencePodControl:

@@ -17,8 +17,9 @@ Verb summary:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 
 import typer
 
@@ -72,15 +73,12 @@ def ls_cmd(
     else:
         renderer.table(
             headers=["ID", "Name", "Version", "Stability"],
-            rows=[
-                (p.id, p.name, p.version, p.stability)
-                for p in response.plugins
-            ],
+            rows=[(p.id, p.name, p.version, p.stability) for p in response.plugins],
         )
-        if response.failures:
+        if response.errors:
             renderer.text("")
-            renderer.text(f"warning: {len(response.failures)} plugin(s) failed to load:")
-            for fail in response.failures:
+            renderer.text(f"warning: {len(response.errors)} plugin(s) failed to load:")
+            for fail in response.errors:
                 renderer.text(f"  - {fail.entry_name}: {fail.error_type} — {fail.message}")
     renderer.flush()
 
@@ -125,8 +123,11 @@ def scaffold_cmd(
     root: Annotated[
         Path | None,
         typer.Option(
-            "--root", help="Override the community/ root (used in tests).",
-            file_okay=False, dir_okay=True, resolve_path=True,
+            "--root",
+            help="Override the community/ root (used in tests).",
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
         ),
     ] = None,
     force: ForceOpt = False,
@@ -164,21 +165,29 @@ def scaffold_cmd(
     target.mkdir(parents=True, exist_ok=True)
     class_name = class_name_from_id(plugin_id)
     (target / "manifest.toml").write_text(
-        render_manifest(plugin_id, scaffold_kind, class_name), encoding="utf-8",
+        render_manifest(plugin_id, scaffold_kind, class_name),
+        encoding="utf-8",
     )
     (target / "plugin.py").write_text(
-        render_plugin_py(scaffold_kind, plugin_id, class_name), encoding="utf-8",
+        render_plugin_py(scaffold_kind, plugin_id, class_name),
+        encoding="utf-8",
     )
     (target / "README.md").write_text(
-        render_readme(plugin_id, scaffold_kind, class_name), encoding="utf-8",
+        render_readme(plugin_id, scaffold_kind, class_name),
+        encoding="utf-8",
     )
     tests_dir = target / "tests"
     tests_dir.mkdir(exist_ok=True)
     (tests_dir / "__init__.py").write_text("", encoding="utf-8")
     (tests_dir / "test_plugin.py").write_text(
-        render_smoke_test(class_name), encoding="utf-8",
+        render_smoke_test(class_name),
+        encoding="utf-8",
     )
-    rel = target.relative_to(root_dir.parent) if root_dir.parent in target.parents or root_dir.parent == target.parent.parent else target
+    rel = (
+        target.relative_to(root_dir.parent)
+        if root_dir.parent in target.parents or root_dir.parent == target.parent.parent
+        else target
+    )
     typer.echo(f"scaffolded {rel}")
     typer.echo("  - manifest.toml")
     typer.echo("  - plugin.py")
@@ -192,11 +201,15 @@ def sync_cmd(
         Path,
         typer.Argument(
             help="Plugin, preset, or lib folder.",
-            exists=True, file_okay=False, dir_okay=True, resolve_path=True,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
         ),
     ],
     bump: Annotated[
-        str, typer.Option("--bump", "-b", help="Version increment: patch | minor | major."),
+        str,
+        typer.Option("--bump", "-b", help="Version increment: patch | minor | major."),
     ] = "patch",
     dry_run: DryRunOpt = False,
 ) -> None:
@@ -210,11 +223,11 @@ def sync_cmd(
 
     if bump not in ("patch", "minor", "major"):
         raise typer.BadParameter("--bump must be one of: patch, minor, major")
+    bump_literal = cast("Literal['patch', 'minor', 'major']", bump)
 
-    is_preset = (
-        path.parent.name == PRESET_DIR_NAME or (path / "preset.yaml").exists()
-    )
+    is_preset = path.parent.name == PRESET_DIR_NAME or (path / "preset.yaml").exists()
     is_lib = path.parent.name == LIBS_DIR_NAME and (path / "manifest.toml").exists()
+    runner: Callable[..., Any]
     if is_lib:
         runner = sync_lib_manifest
     elif is_preset:
@@ -222,7 +235,7 @@ def sync_cmd(
     else:
         runner = sync_plugin_manifest
     try:
-        result = runner(path, bump=bump)
+        result = runner(path, bump=bump_literal)
     except FileNotFoundError as exc:
         raise die(str(exc))
     if not result.changed:
@@ -242,8 +255,11 @@ def sync_envs_cmd(
         Path,
         typer.Argument(
             help="Plugin folder — manifest.toml [[required_env]] is rewritten "
-                 "from the plugin class's REQUIRED_ENV ClassVar.",
-            exists=True, file_okay=False, dir_okay=True, resolve_path=True,
+            "from the plugin class's REQUIRED_ENV ClassVar.",
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
         ),
     ],
     dry_run: DryRunOpt = False,
@@ -278,7 +294,10 @@ def pack_cmd(
         Path,
         typer.Argument(
             help="Plugin or preset folder to zip.",
-            exists=True, file_okay=False, dir_okay=True, resolve_path=True,
+            exists=True,
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
         ),
     ],
     force: ForceOpt = False,
@@ -309,11 +328,13 @@ def validate_cmd(
         Path,
         typer.Argument(
             help="Plugin / preset folder OR direct path to manifest.toml.",
-            exists=True, resolve_path=True,
+            exists=True,
+            resolve_path=True,
         ),
     ],
     strict: Annotated[
-        bool, typer.Option("--strict", help="Treat warnings as errors."),
+        bool,
+        typer.Option("--strict", help="Treat warnings as errors."),
     ] = False,
 ) -> None:
     """Validate a manifest.toml (TOML + Pydantic) without importing the plugin."""
@@ -324,24 +345,23 @@ def validate_cmd(
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
-    result = (
-        validate_manifest_dir(path) if path.is_dir() else validate_manifest_file(path)
-    )
+    result = validate_manifest_dir(path) if path.is_dir() else validate_manifest_file(path)
 
     if state.is_machine_readable:
-        renderer.emit({
-            "path": str(result.path),
-            "kind": result.kind,
-            "manifest_id": result.manifest_id,
-            "schema_version": result.schema_version,
-            "is_valid": result.is_valid,
-            "passes_strict": result.passes(strict=True),
-            "issues": [
-                {"severity": i.severity, "code": i.code,
-                 "location": i.location, "message": i.message}
-                for i in result.issues
-            ],
-        })
+        renderer.emit(
+            {
+                "path": str(result.path),
+                "kind": result.kind,
+                "manifest_id": result.manifest_id,
+                "schema_version": result.schema_version,
+                "is_valid": result.is_valid,
+                "passes_strict": result.passes(strict=True),
+                "issues": [
+                    {"severity": i.severity, "code": i.code, "location": i.location, "message": i.message}
+                    for i in result.issues
+                ],
+            }
+        )
     else:
         for issue in result.issues:
             prefix = "warning" if issue.severity == "warning" else "error  "
@@ -412,21 +432,25 @@ def install_cmd(
             if ref is None:
                 raise die("--git requires --ref <commit-sha>")
             result = install_git(
-                git, ref=ref, expected_kind=expected_kind,
-                allow_untrusted=allow_untrusted, force=force,
+                git,
+                ref=ref,
+                expected_kind=expected_kind,
+                allow_untrusted=allow_untrusted,
+                force=force,
             )
         else:
             assert source is not None  # mutual exclusivity above
             result = install_local(
-                Path(source), expected_kind=expected_kind, force=force,
+                Path(source),
+                expected_kind=expected_kind,
+                force=force,
             )
     except InstallError as exc:
         raise die(exc.message, hint=f"code={exc.code}")
 
     action = "overwrote" if result.overwritten else "installed"
     typer.echo(
-        f"{action}: {result.kind}/{result.plugin_id} → {result.target_path} "
-        f"(source={result.source_kind})",
+        f"{action}: {result.kind}/{result.plugin_id} → {result.target_path} " f"(source={result.source_kind})",
     )
 
 
@@ -448,12 +472,13 @@ def preflight_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,
     strict: Annotated[
-        bool, typer.Option("--strict", help="Treat any catalog load failure as fatal."),
+        bool,
+        typer.Option("--strict", help="Treat any catalog load failure as fatal."),
     ] = False,
 ) -> None:
     """Pre-launch gate: missing envs + instance-shape errors for a config."""
     from src.community.preflight import run_preflight
-    from src.utils.config import load_config
+    from src.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -471,16 +496,25 @@ def preflight_cmd(
     payload = {
         "ok": report.ok,
         "missing_envs": [
-            {"plugin_kind": e.plugin_kind, "plugin_name": e.plugin_name,
-             "plugin_instance_id": e.plugin_instance_id, "name": e.name,
-             "description": e.description, "secret": e.secret,
-             "managed_by": e.managed_by}
+            {
+                "plugin_kind": e.plugin_kind,
+                "plugin_name": e.plugin_name,
+                "plugin_instance_id": e.plugin_instance_id,
+                "name": e.name,
+                "description": e.description,
+                "secret": e.secret,
+                "managed_by": e.managed_by,
+            }
             for e in report.missing_envs
         ],
         "instance_errors": [
-            {"plugin_kind": e.plugin_kind, "plugin_name": e.plugin_name,
-             "plugin_instance_id": e.plugin_instance_id,
-             "location": e.location, "message": e.message}
+            {
+                "plugin_kind": e.plugin_kind,
+                "plugin_name": e.plugin_name,
+                "plugin_instance_id": e.plugin_instance_id,
+                "location": e.location,
+                "message": e.message,
+            }
             for e in report.instance_errors
         ],
     }
@@ -489,13 +523,13 @@ def preflight_cmd(
     else:
         if report.missing_envs:
             renderer.text(f"Missing envs ({len(report.missing_envs)}):")
-            for e in report.missing_envs:
-                renderer.text(f"  - {e.plugin_name} [{e.plugin_kind}]: {e.name}")
+            for env in report.missing_envs:
+                renderer.text(f"  - {env.plugin_name} [{env.plugin_kind}]: {env.name}")
         if report.instance_errors:
             renderer.text(f"Instance errors ({len(report.instance_errors)}):")
-            for e in report.instance_errors:
+            for inst_err in report.instance_errors:
                 renderer.text(
-                    f"  - {e.plugin_name} [{e.plugin_kind}].{e.location}: {e.message}",
+                    f"  - {inst_err.plugin_name} [{inst_err.plugin_kind}].{inst_err.location}: {inst_err.message}",
                 )
         if report.ok:
             renderer.text("preflight OK — ready to launch")
@@ -520,15 +554,19 @@ def stale_cmd(
 ) -> None:
     """List references to plugins absent from the catalog."""
     from src.community.stale_plugins import find_stale_plugins
-    from src.utils.config import load_config
+    from src.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
     cfg = load_config(config)
     stale = find_stale_plugins(cfg)
     payload = [
-        {"plugin_kind": s.plugin_kind, "plugin_name": s.plugin_name,
-         "instance_id": s.instance_id, "location": s.location}
+        {
+            "plugin_kind": s.plugin_kind,
+            "plugin_name": s.plugin_name,
+            "instance_id": s.instance_id,
+            "location": s.location,
+        }
         for s in stale
     ]
     if state.is_machine_readable:
@@ -538,10 +576,7 @@ def stale_cmd(
     else:
         renderer.table(
             headers=["Kind", "Plugin", "Instance", "Location"],
-            rows=[
-                (s.plugin_kind, s.plugin_name, s.instance_id, s.location)
-                for s in stale
-            ],
+            rows=[(s.plugin_kind, s.plugin_name, s.instance_id, s.location) for s in stale],
         )
     renderer.flush()
     if stale:

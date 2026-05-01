@@ -61,22 +61,23 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from src.pipeline.state.models import PodMetadata
 
 
 __all__ = [
+    "RESUME_BACKOFFS",
+    "RESUME_RETRY_BUDGET_SECONDS",
     "PodAvailability",
     "PodAvailabilityProbe",
     "ProbeResult",
-    "RESUME_RETRY_BUDGET_SECONDS",
-    "RESUME_BACKOFFS",
     "ResumeResult",
     "load_pod_metadata_for_run",
     "resume_pod_with_retry",
@@ -106,7 +107,7 @@ RESUME_BACKOFFS: tuple[float, ...] = (10.0, 30.0, 60.0, 120.0)
 # ---------------------------------------------------------------------------
 
 
-class PodAvailability(str, Enum):
+class PodAvailability(StrEnum):
     """Coarse availability states the probe maps RunPod statuses into.
 
     The values are stable strings — operator dashboards and Web UI
@@ -145,6 +146,7 @@ class ProbeResult:
     Always returned (never an exception) so callers can render a
     consistent UX. ``message`` is human-readable for CLI / UI surface.
     """
+
     availability: PodAvailability
     pod_id: str
     runpod_status: str | None = None
@@ -187,8 +189,8 @@ class PodAvailabilityProbe:
     def __init__(
         self,
         *,
-        query_pod: "Callable[[str], dict[str, Any]] | None" = None,
-        status_mapper: "Callable[[str], PodAvailability] | None" = None,
+        query_pod: Callable[[str], dict[str, Any]] | None = None,
+        status_mapper: Callable[[str], PodAvailability] | None = None,
     ) -> None:
         """Build a probe.
 
@@ -218,10 +220,11 @@ class PodAvailabilityProbe:
             from src.providers.runpod._status_mapper import (
                 map_runpod_desired_status_to_availability,
             )
+
             status_mapper = map_runpod_desired_status_to_availability
         self._status_mapper = status_mapper
 
-    def probe(self, pod_metadata: "PodMetadata | None") -> ProbeResult:
+    def probe(self, pod_metadata: PodMetadata | None) -> ProbeResult:
         """Probe pod availability.
 
         Args:
@@ -254,15 +257,15 @@ class PodAvailabilityProbe:
 
         try:
             pod_data = self._query_pod(pod_metadata.pod_id)
-        except Exception as exc:  # noqa: BLE001 — best-effort
+        except Exception as exc:
             return ProbeResult(
                 availability=PodAvailability.PROBE_FAILED,
                 pod_id=pod_metadata.pod_id,
                 message=f"Probe failed: {exc!r}",
             )
 
-        if not isinstance(pod_data, dict):
-            return ProbeResult(
+        if not isinstance(pod_data, dict):  # type: ignore[unreachable]
+            return ProbeResult(  # type: ignore[unreachable]
                 availability=PodAvailability.PROBE_FAILED,
                 pod_id=pod_metadata.pod_id,
                 message="Probe returned non-dict payload",
@@ -316,10 +319,16 @@ class PodAvailabilityProbe:
         errors = pod_data.get("errors")
         if isinstance(errors, list):
             joined = " ".join(str(e).lower() for e in errors)
-            if any(m in joined for m in (
-                "not found", "does not exist", "no such pod",
-                "terminated", "no pod with",
-            )):
+            if any(
+                m in joined
+                for m in (
+                    "not found",
+                    "does not exist",
+                    "no such pod",
+                    "terminated",
+                    "no pod with",
+                )
+            ):
                 return True
         return False
 
@@ -329,10 +338,7 @@ class PodAvailabilityProbe:
         if availability == PodAvailability.RUNNING:
             return f"Pod {pod_id} is running"
         if availability == PodAvailability.SLEEPING_RESUMABLE:
-            return (
-                f"Pod {pod_id} is sleeping (Phase 11.B podStop outcome); "
-                "call resume to wake it"
-            )
+            return f"Pod {pod_id} is sleeping (Phase 11.B podStop outcome); " "call resume to wake it"
         if availability == PodAvailability.GONE:
             return (
                 f"Pod {pod_id} has been terminated; resume in-place is "
@@ -358,6 +364,7 @@ class ResumeResult:
     fatal error (auth, pod gone). ``error_message`` and
     ``capacity_exhausted`` distinguish the two for CLI / UI.
     """
+
     ok: bool
     pod_id: str
     attempts: int
@@ -373,7 +380,7 @@ async def resume_pod_with_retry(
     is_capacity_error: Callable[[str], bool] | None = None,
     backoffs: tuple[float, ...] = RESUME_BACKOFFS,
     budget_seconds: float = RESUME_RETRY_BUDGET_SECONDS,
-    sleep: "Callable[[float], Awaitable[None]] | None" = None,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
     clock: Callable[[], float] | None = None,
 ) -> ResumeResult:
     """Call ``resume_call``; retry on capacity errors with exp backoff.
@@ -435,7 +442,7 @@ async def resume_pod_with_retry(
                 ok = await result
             else:
                 ok = bool(result)
-        except Exception as exc:  # noqa: BLE001 — categorise
+        except Exception as exc:
             msg = str(exc)
             last_error = msg
             if is_capacity_error and is_capacity_error(msg):
@@ -487,10 +494,7 @@ async def resume_pod_with_retry(
         attempts=len(backoffs) + 1,
         elapsed_seconds=clock_fn() - started,
         capacity_exhausted=True,
-        error_message=(
-            f"Resume capacity unavailable after {len(backoffs) + 1} "
-            f"attempts; last error: {last_error}"
-        ),
+        error_message=(f"Resume capacity unavailable after {len(backoffs) + 1} " f"attempts; last error: {last_error}"),
     )
 
 
@@ -499,7 +503,7 @@ async def resume_pod_with_retry(
 # ---------------------------------------------------------------------------
 
 
-def load_pod_metadata_for_run(run_dir: "Path | str") -> "PodMetadata | None":
+def load_pod_metadata_for_run(run_dir: Path | str) -> PodMetadata | None:
     """Read the latest attempt's ``pod_metadata`` from ``run_dir``.
 
     Convenience helper for CLI / Web UI / launch_service callers
@@ -522,7 +526,7 @@ def load_pod_metadata_for_run(run_dir: "Path | str") -> "PodMetadata | None":
     try:
         store = PipelineStateStore(Path(run_dir).expanduser().resolve())
         state = store.load()
-    except Exception:  # noqa: BLE001 — best-effort
+    except Exception:
         return None
 
     if not state.attempts:

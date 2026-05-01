@@ -46,12 +46,14 @@ def validate_cmd(
         raise die(str(exc))
 
     if state.is_machine_readable:
-        renderer.emit({
-            "ok": result.ok,
-            "config_path": result.config_path,
-            "checks": [c.model_dump() for c in result.checks],
-            "field_errors": result.field_errors,
-        })
+        renderer.emit(
+            {
+                "ok": result.ok,
+                "config_path": result.config_path,
+                "checks": [c.model_dump() for c in result.checks],
+                "field_errors": result.field_errors,
+            }
+        )
     else:
         marker = {"ok": "[OK]", "warn": "[WARN]", "fail": "[FAIL]"}
         for check in result.checks:
@@ -75,7 +77,7 @@ def show_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Print the parsed pipeline config (model_dump)."""
-    from src.utils.config import load_config
+    from src.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -91,7 +93,7 @@ def explain_cmd(
 ) -> None:
     """Show a short human-readable summary of model / dataset / training."""
     from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-    from src.utils.config import load_config
+    from src.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -119,8 +121,11 @@ def explain_cmd(
         renderer.emit(payload)
     else:
         renderer.kv(
-            {"Model": model_cfg.name, "Training": training_cfg.type,
-             "Strategies": " → ".join(s.upper() for s in strategies) if strategies else "-"},
+            {
+                "Model": model_cfg.name,
+                "Training": training_cfg.type,
+                "Strategies": " → ".join(s.upper() for s in strategies) if strategies else "-",
+            },
             title="Model",
         )
         renderer.text("")
@@ -131,9 +136,7 @@ def explain_cmd(
 @config_app.command("schema")
 def schema_cmd(
     ctx: typer.Context,
-    indent: Annotated[
-        int, typer.Option("--indent", help="JSON indent (text mode only).")
-    ] = 2,
+    indent: Annotated[int, typer.Option("--indent", help="JSON indent (text mode only).")] = 2,
 ) -> None:
     """Print the JSON Schema for ``PipelineConfig``."""
     from src.utils.config import PipelineConfig

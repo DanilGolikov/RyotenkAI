@@ -32,7 +32,7 @@ class InferenceProviderFactory:
             Ok(IInferenceProvider): Provider instance
             Err(ProviderError): If provider type is unsupported
         """
-        provider: str = config.inference.provider
+        provider: str = config.inference.provider or ""
 
         if provider == PROVIDER_SINGLE_NODE:
             from src.providers.single_node.inference.provider import SingleNodeInferenceProvider

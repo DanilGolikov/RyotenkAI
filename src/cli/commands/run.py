@@ -118,10 +118,7 @@ def _resolve_project_for_launch(
         except ProjectNotFoundError as exc:
             raise die(str(exc))
         except ValidationError as exc:
-            raise die(
-                f"invalid config in project {project_id!r}\n"
-                f"{format_validation_errors(exc)}"
-            )
+            raise die(f"invalid config in project {project_id!r}\n" f"{format_validation_errors(exc)}")
 
     if run_dir is not None:
         # Resume/restart from a project-launched run — pick up env +
@@ -148,11 +145,13 @@ def _spawn_worker(
     plan (``dry_run``) or forks ``python -m src.pipeline.worker``
     foreground (stdio inherited, blocking).
     """
-    from src.pipeline.launch import LaunchRequest, spawn_launch
+    from src.pipeline.launch import LaunchRequest
     from src.workspace.projects.adapter import build_subprocess_extra_env
 
     resolved = _resolve_project_for_launch(
-        project_id, config=config, run_dir=run_dir,
+        project_id,
+        config=config,
+        run_dir=run_dir,
     )
 
     # ``config`` precedence: explicit --config flag wins; else use the
@@ -174,7 +173,7 @@ def _spawn_worker(
             hint="provide --config <path>, --project <id>, or --run-dir for resume/restart",
         )
 
-    launch_request = LaunchRequest(
+    LaunchRequest(
         mode="fresh" if mode == "start" else mode,  # type: ignore[arg-type]
         run_dir=(run_dir or Path.cwd()),  # placeholder; overridden when run_dir is None
         config_path=config_for_spawn,
@@ -227,6 +226,7 @@ def _spawn_worker(
 
     # Use sys.executable to keep venv consistency across CLI and worker.
     import sys
+
     cmd[0] = sys.executable
 
     process_env = os.environ.copy()
@@ -268,9 +268,11 @@ def start_cmd(
     config: Annotated[
         Path | None,
         typer.Option(
-            "--config", "-c",
+            "--config",
+            "-c",
             help="Path to pipeline config YAML (required for fresh runs).",
-            dir_okay=False, resolve_path=True,
+            dir_okay=False,
+            resolve_path=True,
         ),
     ] = None,
     run_dir: OptionalRunDirOpt = None,
@@ -329,9 +331,11 @@ def resume_cmd(
     config: Annotated[
         Path | None,
         typer.Option(
-            "--config", "-c",
+            "--config",
+            "-c",
             help="Override config (default: read from pipeline_state.json).",
-            dir_okay=False, resolve_path=True,
+            dir_okay=False,
+            resolve_path=True,
         ),
     ] = None,
     skip_pod_probe: Annotated[
@@ -435,10 +439,7 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
     if outcome.availability == PodAvailability.GONE.value:
         raise die(
             "Pod has been terminated; cannot resume in-place.",
-            hint=(
-                f"use 'ryotenkai run restart {run_dir} --from-stage <stage>' "
-                "to recreate from a checkpoint"
-            ),
+            hint=(f"use 'ryotenkai run restart {run_dir} --from-stage <stage>' " "to recreate from a checkpoint"),
         )
 
     if outcome.capacity_exhausted:
@@ -474,17 +475,19 @@ def restart_cmd(
     from_stage: Annotated[
         str,
         typer.Option(
-            "--from-stage", "-s",
-            help="Stage name or 1-based stage number to restart from "
-                 "(see: ryotenkai run restart-points <run_dir>).",
+            "--from-stage",
+            "-s",
+            help="Stage name or 1-based stage number to restart from " "(see: ryotenkai run restart-points <run_dir>).",
         ),
     ],
     config: Annotated[
         Path | None,
         typer.Option(
-            "--config", "-c",
+            "--config",
+            "-c",
             help="Override config (default: read from pipeline_state.json).",
-            dir_okay=False, resolve_path=True,
+            dir_okay=False,
+            resolve_path=True,
         ),
     ] = None,
     dry_run: DryRunOpt = False,
@@ -512,8 +515,9 @@ def interrupt_cmd(
     if dry_run:
         typer.echo(f"dry-run: would interrupt run at {run_dir}")
         return
-    response = launch_service.interrupt_launch(run_dir)
-    typer.echo(f"interrupted: pid={response.pid}, status={response.status}")
+    response = launch_service.interrupt(run_dir)
+    status = "interrupted" if response.interrupted else (response.reason or "noop")
+    typer.echo(f"interrupted: pid={response.pid}, status={status}")
 
 
 @run_app.command("restart-points")
@@ -523,9 +527,11 @@ def restart_points_cmd(
     config: Annotated[
         Path | None,
         typer.Option(
-            "--config", "-c",
+            "--config",
+            "-c",
             help="Config YAML (optional; falls back to pipeline_state.json).",
-            dir_okay=False, resolve_path=True,
+            dir_okay=False,
+            resolve_path=True,
         ),
     ] = None,
 ) -> None:
@@ -543,22 +549,23 @@ def restart_points_cmd(
         raise die(str(exc))
 
     if state.is_machine_readable:
-        renderer.emit([
-            {
-                "index": idx,
-                "stage": item.stage,
-                "available": bool(item.available),
-                "mode": item.mode,
-                "reason": item.reason,
-            }
-            for idx, item in enumerate(points, start=1)
-        ])
+        renderer.emit(
+            [
+                {
+                    "index": idx,
+                    "stage": item.stage,
+                    "available": bool(item.available),
+                    "mode": item.mode,
+                    "reason": item.reason,
+                }
+                for idx, item in enumerate(points, start=1)
+            ]
+        )
     else:
         renderer.table(
             headers=["#", "Stage", "Available", "Mode", "Reason"],
             rows=[
-                (idx, item.stage, "yes" if item.available else "no",
-                 item.mode, item.reason)
+                (idx, item.stage, "yes" if item.available else "no", item.mode, item.reason)
                 for idx, item in enumerate(points, start=1)
             ],
         )

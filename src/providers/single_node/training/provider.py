@@ -326,7 +326,7 @@ class SingleNodeProvider(IGPUProvider):
         self,
         container_name: str,
         *,
-        ssh_command_timeout: float = 10.0,
+        ssh_command_timeout: int = 10,
     ) -> Result[None, ProviderError]:
         """Phase 9.B — terminate the training docker container, fail-soft.
 
@@ -370,10 +370,7 @@ class SingleNodeProvider(IGPUProvider):
         if self._ssh_client is None:
             return Err(
                 ProviderError(
-                    message=(
-                        "cleanup_after_run called before connect — "
-                        "no SSH client to drive docker rm"
-                    ),
+                    message=("cleanup_after_run called before connect — " "no SSH client to drive docker rm"),
                     code="SINGLENODE_CLEANUP_NO_SSH",
                 )
             )
@@ -384,9 +381,7 @@ class SingleNodeProvider(IGPUProvider):
         # We don't pass the value through a shell — exec_command
         # handles quoting — but explicit narrow allowlist is
         # cleaner and surfaces typos early.
-        if not container_name or any(
-            ch in container_name for ch in (" ", ";", "&", "|", "$", "`", "\n")
-        ):
+        if not container_name or any(ch in container_name for ch in (" ", ";", "&", "|", "$", "`", "\n")):
             return Err(
                 ProviderError(
                     message=(
@@ -403,14 +398,14 @@ class SingleNodeProvider(IGPUProvider):
         rm_cmd = f"docker rm -f {container_name} >/dev/null 2>&1 || true"
         try:
             ok, _stdout, stderr = self._ssh_client.exec_command(
-                command=rm_cmd, timeout=ssh_command_timeout, silent=False,
+                command=rm_cmd,
+                timeout=ssh_command_timeout,
+                silent=False,
             )
-        except Exception as exc:  # noqa: BLE001 — SSH may raise generic
+        except Exception as exc:
             return Err(
                 ProviderError(
-                    message=(
-                        f"cleanup_after_run: SSH transport failed: {exc}"
-                    ),
+                    message=(f"cleanup_after_run: SSH transport failed: {exc}"),
                     code="SINGLENODE_CLEANUP_SSH_TRANSPORT",
                 )
             )
@@ -418,10 +413,7 @@ class SingleNodeProvider(IGPUProvider):
         if not ok:
             return Err(
                 ProviderError(
-                    message=(
-                        f"docker rm -f {container_name} failed: "
-                        f"{(stderr or '')[:200]}"
-                    ),
+                    message=(f"docker rm -f {container_name} failed: " f"{(stderr or '')[:200]}"),
                     code="SINGLENODE_CLEANUP_DOCKER_RM_FAILED",
                 )
             )
@@ -431,15 +423,17 @@ class SingleNodeProvider(IGPUProvider):
         verify_cmd = f"docker ps -a -q -f name=^{container_name}$"
         try:
             ok_v, stdout_v, _ = self._ssh_client.exec_command(
-                command=verify_cmd, timeout=ssh_command_timeout, silent=True,
+                command=verify_cmd,
+                timeout=ssh_command_timeout,
+                silent=True,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Verification failed but rm succeeded — log and treat as
             # success; the rm output is the source of truth.
             logger.debug(
-                "[PROVIDER:CLEANUP] verify step failed for %s: %s — "
-                "treating as removed since docker rm succeeded",
-                container_name, exc,
+                "[PROVIDER:CLEANUP] verify step failed for %s: %s — " "treating as removed since docker rm succeeded",
+                container_name,
+                exc,
             )
             return Ok(None)
 
@@ -447,15 +441,15 @@ class SingleNodeProvider(IGPUProvider):
             return Err(
                 ProviderError(
                     message=(
-                        f"docker rm reported success but container "
-                        f"{container_name!r} still listed by docker ps"
+                        f"docker rm reported success but container " f"{container_name!r} still listed by docker ps"
                     ),
                     code="SINGLENODE_CLEANUP_VERIFY_FAILED",
                 )
             )
 
         logger.info(
-            "[PROVIDER:CLEANUP] training container %s removed", container_name,
+            "[PROVIDER:CLEANUP] training container %s removed",
+            container_name,
         )
         return Ok(None)
 
@@ -598,8 +592,8 @@ class SingleNodeProvider(IGPUProvider):
             has_pause_resume=False,
             runner_workspace_root="/workspace",
             # Phase 14.D+F capability fields:
-            is_local=True,                  # always-on host
-            supports_log_download=False,    # logs already on host filesystem
+            is_local=True,  # always-on host
+            supports_log_download=False,  # logs already on host filesystem
         )
 
     def required_secrets(self) -> tuple[str, ...]:
@@ -620,7 +614,9 @@ class SingleNodeProvider(IGPUProvider):
     # ------------------------------------------------------------------
 
     def required_runtime_env_vars(
-        self, *, resource_id: str | None,
+        self,
+        *,
+        resource_id: str | None,
     ) -> dict[str, str]:
         """Env vars the in-pod runner needs.
 
@@ -636,7 +632,8 @@ class SingleNodeProvider(IGPUProvider):
         return {RUNTIME_PROVIDER_ENV_VAR: PROVIDER_SINGLE_NODE}
 
     def probe_availability(
-        self, resource_id: str,
+        self,
+        resource_id: str,
     ) -> AvailabilityVerdict:
         """Single_node host is always-on — return ``running`` immediately.
 

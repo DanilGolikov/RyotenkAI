@@ -26,23 +26,22 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.infrastructure.mlflow.environment import MLflowEnvironment
 from src.infrastructure.mlflow.gateway import IMLflowGateway, NullMLflowGateway
-from src.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
+from src.training.managers.mlflow_manager.logging_core import MLflowLoggingMixin
+from src.training.managers.mlflow_manager.run_lifecycle import MLflowRunLifecycleMixin
+from src.training.managers.mlflow_manager.setup import MLflowSetupMixin
 from src.training.mlflow.autolog import MLflowAutologManager
 from src.training.mlflow.dataset_logger import MLflowDatasetLogger
 from src.training.mlflow.domain_logger import MLflowDomainLogger
 from src.training.mlflow.event_log import MLflowEventLog
-from src.training.mlflow.model_registry import MLflowModelRegistry
 from src.training.mlflow.resilient_transport import ResilientMLflowTransport
 from src.training.mlflow.run_analytics import MLflowRunAnalytics
 from src.utils.logger import get_logger
 
-from src.training.managers.mlflow_manager.setup import MLflowSetupMixin
-from src.training.managers.mlflow_manager.run_lifecycle import MLflowRunLifecycleMixin
-from src.training.managers.mlflow_manager.logging_core import MLflowLoggingMixin
-
 if TYPE_CHECKING:
+    from src.infrastructure.mlflow.environment import MLflowEnvironment
+    from src.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
+    from src.training.mlflow.model_registry import MLflowModelRegistry
     from src.utils.config import PipelineConfig
 
 logger = get_logger(__name__)
@@ -70,15 +69,19 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         self.config = config
         self._mlflow_config = config.integrations.mlflow
         self._runtime_role: MLflowRuntimeRole = runtime_role
-        self._resolved_uris: ResolvedMLflowUris | None = None
-        self._environment: MLflowEnvironment | None = None
+        # Mixin parent declares these as non-None for the post-setup state;
+        # concrete instances start in the pre-setup state, so we widen here.
+        self._resolved_uris: ResolvedMLflowUris | None = None  # type: ignore[assignment]
+        self._environment: MLflowEnvironment | None = None  # type: ignore[assignment]
         self._mlflow: Any = None
         self._run: Any = None
         self._run_id: str | None = None
         self._parent_run_id: str | None = None
         self._nested_run_stack: list[str] = []
 
-        self._gateway: IMLflowGateway = NullMLflowGateway()
+        # Mixin declares ``MLflowGateway`` (concrete class); we use the
+        # interface for null-object pattern before setup completes.
+        self._gateway: IMLflowGateway = NullMLflowGateway()  # type: ignore[assignment]
         self._event_log = MLflowEventLog()
         self._domain_logger: MLflowDomainLogger = MLflowDomainLogger(
             self,  # type: ignore[arg-type]
@@ -90,7 +93,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             tracking_uri=None,
         )
         self._resilient_transport = ResilientMLflowTransport()
-        self._registry: MLflowModelRegistry | None = None
+        self._registry: MLflowModelRegistry | None = None  # type: ignore[assignment]
         self._analytics: MLflowRunAnalytics = MLflowRunAnalytics(
             self._gateway,
             None,
@@ -180,7 +183,9 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         return self._resilient_transport.flush_buffer()
 
     def set_run_terminated(
-        self, run_id: str, status: str = "KILLED",
+        self,
+        run_id: str,
+        status: str = "KILLED",
     ) -> bool:
         """Force-set a run's terminal status via the MLflow client.
 
@@ -217,10 +222,12 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         try:
             client.set_terminated(run_id=run_id, status=status)
             return True
-        except Exception as exc:  # noqa: BLE001 — best-effort by contract
+        except Exception as exc:
             logger.warning(
                 "[MLFLOW] set_run_terminated(run_id=%s, status=%s) failed: %s",
-                run_id, status, exc,
+                run_id,
+                status,
+                exc,
             )
             return False
 
@@ -282,9 +289,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         artifact_name: str = "training_events.json",
         run_id: str | None = None,
     ) -> bool:
-        return self._event_log.log_events_artifact(
-            artifact_name, log_dict_fn=self.log_dict, run_id=run_id
-        )
+        return self._event_log.log_events_artifact(artifact_name, log_dict_fn=self.log_dict, run_id=run_id)
 
     # =========================================================================
     # AUTOLOG / TRACING — delegate to MLflowAutologManager
@@ -342,9 +347,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         attributes: dict[str, Any] | None = None,
     ) -> Any:
         self._autolog._mlflow = self._mlflow
-        return self._autolog.trace_llm_call(
-            name, model_name=model_name, span_type=span_type, attributes=attributes
-        )
+        return self._autolog.trace_llm_call(name, model_name=model_name, span_type=span_type, attributes=attributes)
 
     def log_trace_io(
         self,
@@ -447,9 +450,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             data, name, source=source, context=context, targets=targets, predictions=predictions
         )
 
-    def log_dataset_from_file(
-        self, file_path: str, name: str | None = None, context: str = "training"
-    ) -> bool:
+    def log_dataset_from_file(self, file_path: str, name: str | None = None, context: str = "training") -> bool:
         self._dataset_logger._mlflow = self._mlflow
         return self._dataset_logger.log_dataset_from_file(file_path, name=name, context=context)
 
@@ -480,9 +481,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             extra_tags=extra_tags,
         )
 
-    def create_mlflow_dataset(
-        self, data: Any, name: str, source: str, targets: str | None = None
-    ) -> Any:
+    def create_mlflow_dataset(self, data: Any, name: str, source: str, targets: str | None = None) -> Any:
         self._dataset_logger._mlflow = self._mlflow
         return self._dataset_logger.create_mlflow_dataset(data, name, source, targets=targets)
 
@@ -510,9 +509,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         gpu_type: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        self._domain_logger.log_provider_info(
-            provider_name, provider_type, gpu_type=gpu_type, resource_id=resource_id
-        )
+        self._domain_logger.log_provider_info(provider_name, provider_type, gpu_type=gpu_type, resource_id=resource_id)
 
     def log_strategy_info(self, strategy_type: str, phase_idx: int, total_phases: int) -> None:
         self._domain_logger.log_strategy_info(strategy_type, phase_idx, total_phases)
@@ -528,9 +525,7 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
             gpu_memory_used_gb, gpu_memory_total_gb, gpu_utilization=gpu_utilization, step=step
         )
 
-    def log_throughput(
-        self, tokens_per_second: float, samples_per_second: float, step: int | None = None
-    ) -> None:
+    def log_throughput(self, tokens_per_second: float, samples_per_second: float, step: int | None = None) -> None:
         self._domain_logger.log_throughput(tokens_per_second, samples_per_second, step=step)
 
     def log_gpu_detection(self, name: str, vram_gb: float, tier: str) -> None:
@@ -562,13 +557,9 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
         total_mb: int,
         utilization_percent: float,
     ) -> None:
-        self._domain_logger.log_memory_snapshot(
-            phase, used_mb, free_mb, total_mb, utilization_percent
-        )
+        self._domain_logger.log_memory_snapshot(phase, used_mb, free_mb, total_mb, utilization_percent)
 
-    def log_pipeline_initialized(
-        self, run_id: str, total_phases: int, strategy_chain: list[str]
-    ) -> None:
+    def log_pipeline_initialized(self, run_id: str, total_phases: int, strategy_chain: list[str]) -> None:
         self._domain_logger.log_pipeline_initialized(run_id, total_phases, strategy_chain)
 
     def log_state_saved(self, run_id: str, path: str) -> None:
@@ -580,12 +571,8 @@ class MLflowManager(MLflowSetupMixin, MLflowRunLifecycleMixin, MLflowLoggingMixi
     def log_stage_start(self, stage_name: str, stage_idx: int, total_stages: int) -> None:
         self._domain_logger.log_stage_start(stage_name, stage_idx, total_stages)
 
-    def log_stage_complete(
-        self, stage_name: str, stage_idx: int, duration_seconds: float | None = None
-    ) -> None:
-        self._domain_logger.log_stage_complete(
-            stage_name, stage_idx, duration_seconds=duration_seconds
-        )
+    def log_stage_complete(self, stage_name: str, stage_idx: int, duration_seconds: float | None = None) -> None:
+        self._domain_logger.log_stage_complete(stage_name, stage_idx, duration_seconds=duration_seconds)
 
     def log_stage_failed(self, stage_name: str, stage_idx: int, error: str) -> None:
         self._domain_logger.log_stage_failed(stage_name, stage_idx, error)

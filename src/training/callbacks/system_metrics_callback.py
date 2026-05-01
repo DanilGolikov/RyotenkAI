@@ -89,9 +89,7 @@ class SystemMetricsCallback(TrainerCallback):
                 self._pynvml = _pynvml
                 self._pynvml_available = True
                 self._gpu_count = int(_pynvml.nvmlDeviceGetCount())
-                self._gpu_handles = [
-                    _pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._gpu_count)
-                ]
+                self._gpu_handles = [_pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self._gpu_count)]
                 logger.debug(f"pynvml initialized — {self._gpu_count} GPU(s) visible")
             except (OSError, nvml_error) as e:  # type: ignore[misc]
                 logger.debug(f"pynvml not available: {e}")
@@ -130,6 +128,10 @@ class SystemMetricsCallback(TrainerCallback):
         """
         if not self._pynvml_available or not self._gpu_handles:
             return {}
+        # Narrow ``self._pynvml`` from ``Any | None`` — ``_pynvml_available``
+        # is set to True only after the import + ``nvmlInit`` both succeeded,
+        # which means ``self._pynvml`` is the imported module reference.
+        assert self._pynvml is not None
 
         out: dict[str, float] = {}
         nvml_error = getattr(self._pynvml, "NVMLError", RuntimeError)
@@ -151,9 +153,7 @@ class SystemMetricsCallback(TrainerCallback):
                     out[f"{prefix}/memory_percent"] = (used_gb / total_gb) * 100
 
             with contextlib.suppress(OSError, TypeError, ValueError, nvml_error):  # type: ignore[misc]
-                temp = self._pynvml.nvmlDeviceGetTemperature(
-                    handle, self._pynvml.NVML_TEMPERATURE_GPU
-                )
+                temp = self._pynvml.nvmlDeviceGetTemperature(handle, self._pynvml.NVML_TEMPERATURE_GPU)
                 # Temperature can legitimately be 0 only if the sensor
                 # reports it; treat genuine errors as missing instead.
                 temp_f = float(temp)
@@ -166,6 +166,7 @@ class SystemMetricsCallback(TrainerCallback):
         """CPU + RAM metrics, system-level."""
         if not self._psutil_available:
             return {}
+        assert self._psutil is not None  # _psutil_available pins this
 
         out: dict[str, float] = {}
         try:
@@ -201,6 +202,7 @@ class SystemMetricsCallback(TrainerCallback):
         tags: dict[str, str] = {}
 
         if self._pynvml_available and self._gpu_handles:
+            assert self._pynvml is not None  # _pynvml_available pins this
             tags["system.gpu.count"] = str(self._gpu_count)
             for i, handle in enumerate(self._gpu_handles):
                 with contextlib.suppress(Exception):
@@ -210,9 +212,7 @@ class SystemMetricsCallback(TrainerCallback):
                     tags[f"system.gpu.{i}.name"] = str(name)
                 with contextlib.suppress(Exception):
                     mem = self._pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    tags[f"system.gpu.{i}.memory_total_gb"] = (
-                        f"{mem.total / (1024**3):.1f}"
-                    )
+                    tags[f"system.gpu.{i}.memory_total_gb"] = f"{mem.total / (1024**3):.1f}"
             with contextlib.suppress(Exception):
                 drv = self._pynvml.nvmlSystemGetDriverVersion()
                 if isinstance(drv, bytes):
@@ -220,6 +220,7 @@ class SystemMetricsCallback(TrainerCallback):
                 tags["system.driver.version"] = str(drv)
 
         if self._psutil_available:
+            assert self._psutil is not None  # _psutil_available pins this
             with contextlib.suppress(Exception):
                 tags["system.cpu.count"] = str(self._psutil.cpu_count())
 

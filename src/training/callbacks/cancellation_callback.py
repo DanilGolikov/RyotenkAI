@@ -85,13 +85,16 @@ whatever from a worker thread (the timeout helper).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
 
 from src.utils.logger import get_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from transformers import TrainerControl, TrainerState, TrainingArguments
 
 
@@ -126,9 +129,9 @@ class CancellationCallback(TrainerCallback):
         shutdown_handler: object | None = None,
         mlflow_manager: object | None = None,
         flush_timeout_seconds: float | None = None,
-        event_publisher: "object | None" = None,
-        marker_writer: "object | None" = None,
-        workspace_dir: "object | None" = None,
+        event_publisher: Callable[..., Any] | None = None,
+        marker_writer: Callable[..., Any] | None = None,
+        workspace_dir: object | None = None,
     ) -> None:
         """Build a callback.
 
@@ -168,11 +171,7 @@ class CancellationCallback(TrainerCallback):
         """
         self._handler = shutdown_handler
         self._mlflow_manager = mlflow_manager
-        self._flush_timeout = (
-            flush_timeout_seconds
-            if flush_timeout_seconds is not None
-            else self.FLUSH_TIMEOUT_SECONDS
-        )
+        self._flush_timeout = flush_timeout_seconds if flush_timeout_seconds is not None else self.FLUSH_TIMEOUT_SECONDS
         self._signalled = False  # idempotency: we only log once per cancel
         # Phase 9.C plumbing — both nullable; production wires either
         # both or neither. Validated lazily on first use.
@@ -192,6 +191,7 @@ class CancellationCallback(TrainerCallback):
             from src.training.orchestrator.shutdown_handler import (
                 get_shutdown_handler,
             )
+
             self._handler = get_shutdown_handler()
         return self._handler
 
@@ -201,9 +201,9 @@ class CancellationCallback(TrainerCallback):
 
     def on_step_end(  # type: ignore[override]
         self,
-        args: "TrainingArguments",
-        state: "TrainerState",
-        control: "TrainerControl",
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
         **kwargs: object,
     ) -> None:
         """Pump the shutdown flag into HF ``TrainerControl``.
@@ -216,14 +216,14 @@ class CancellationCallback(TrainerCallback):
         handler = self._resolve_handler()
         try:
             should_stop = bool(handler.should_stop())  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — defensive
+        except Exception as exc:
             # An error reading the handler's flag must never crash
             # training. Log once and behave as if no cancellation
             # was requested; the orchestrator-level shutdown path
             # remains the safety-net.
             logger.warning(
-                "[CANCELLATION] failed to poll shutdown handler: %s — "
-                "continuing without cooperative stop", exc,
+                "[CANCELLATION] failed to poll shutdown handler: %s — " "continuing without cooperative stop",
+                exc,
             )
             return
 
@@ -248,9 +248,9 @@ class CancellationCallback(TrainerCallback):
 
     def on_train_end(  # type: ignore[override]
         self,
-        args: "TrainingArguments",
-        state: "TrainerState",
-        control: "TrainerControl",
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
         **kwargs: object,
     ) -> None:
         """Phase 9.B — explicit MLflow buffer flush before HF closes the run.
@@ -283,8 +283,7 @@ class CancellationCallback(TrainerCallback):
             # callback (shouldn't happen in practice — env gate in
             # factory.py prevents it — but defensive.)
             logger.debug(
-                "[CANCELLATION] on_train_end: no MLflow manager available; "
-                "skipping flush",
+                "[CANCELLATION] on_train_end: no MLflow manager available; " "skipping flush",
             )
             return
 
@@ -305,8 +304,7 @@ class CancellationCallback(TrainerCallback):
 
         if not outcome.timed_out and not outcome.raised:
             logger.info(
-                "[CANCELLATION] on_train_end: flushed %d buffered MLflow "
-                "records before HF closes the run",
+                "[CANCELLATION] on_train_end: flushed %d buffered MLflow " "records before HF closes the run",
                 outcome.drained_count,
             )
 
@@ -354,14 +352,14 @@ class CancellationCallback(TrainerCallback):
         publisher = self._event_publisher
         if publisher is None:
             logger.debug(
-                "[CANCELLATION] no event_publisher injected — "
-                "skipping cancellation_finalized telemetry",
+                "[CANCELLATION] no event_publisher injected — " "skipping cancellation_finalized telemetry",
             )
             return
         try:
             from src.runner.cancellation_telemetry import (
                 CANCELLATION_FINALIZED,
             )
+
             publisher(
                 CANCELLATION_FINALIZED,
                 {
@@ -371,10 +369,9 @@ class CancellationCallback(TrainerCallback):
                     "flush_budget_seconds": float(self._flush_timeout),
                 },
             )
-        except Exception as exc:  # noqa: BLE001 — best-effort
+        except Exception as exc:
             logger.debug(
-                "[CANCELLATION] failed to emit cancellation_finalized "
-                "event: %s",
+                "[CANCELLATION] failed to emit cancellation_finalized " "event: %s",
                 exc,
             )
 
@@ -393,7 +390,7 @@ class CancellationCallback(TrainerCallback):
         *,
         run_id: str | None,
         drained: int,
-    ) -> "object | None":
+    ) -> object | None:
         """Write ``<workspace>/cancelled.marker`` for Mac-side reconciliation.
 
         Best-effort: returns the resulting path on success, ``None``
@@ -411,12 +408,14 @@ class CancellationCallback(TrainerCallback):
         # Custom writer was injected — defer to it.
         if self._marker_writer is not None:
             try:
-                return self._marker_writer({  # type: ignore[operator]
-                    "run_id": run_id,
-                    "flushed_count": drained,
-                    "ts_ms": __import__("time").time() * 1000,
-                })
-            except Exception as exc:  # noqa: BLE001
+                return self._marker_writer(
+                    {  # type: ignore[operator]
+                        "run_id": run_id,
+                        "flushed_count": drained,
+                        "ts_ms": __import__("time").time() * 1000,
+                    }
+                )
+            except Exception as exc:
                 logger.debug(
                     "[CANCELLATION] injected marker_writer failed: %s",
                     exc,
@@ -426,24 +425,27 @@ class CancellationCallback(TrainerCallback):
         workspace = self._resolve_workspace_dir()
         if workspace is None:
             logger.debug(
-                "[CANCELLATION] no workspace dir resolved — "
-                "skipping cancelled.marker write",
+                "[CANCELLATION] no workspace dir resolved — " "skipping cancelled.marker write",
             )
             return None
 
         try:
-            from pathlib import Path
-            from src.utils.atomic_fs import atomic_write_text
             import json
             import time
+            from pathlib import Path
+
+            from src.utils.atomic_fs import atomic_write_text
 
             target = Path(workspace) / "cancelled.marker"
-            payload = json.dumps({
-                "run_id": run_id,
-                "flushed_count": int(drained),
-                "ts_ms": int(time.time() * 1000),
-                "reason": "flush_budget_exceeded",
-            }, indent=2)
+            payload = json.dumps(
+                {
+                    "run_id": run_id,
+                    "flushed_count": int(drained),
+                    "ts_ms": int(time.time() * 1000),
+                    "reason": "flush_budget_exceeded",
+                },
+                indent=2,
+            )
             atomic_write_text(target, payload)
             logger.warning(
                 "[CANCELLATION] wrote cancelled.marker to %s — "
@@ -452,19 +454,19 @@ class CancellationCallback(TrainerCallback):
                 target,
             )
             return target
-        except Exception as exc:  # noqa: BLE001 — best-effort
+        except Exception as exc:
             logger.warning(
-                "[CANCELLATION] failed to write cancelled.marker: %s — "
-                "Mac-side reconciliation will skip",
+                "[CANCELLATION] failed to write cancelled.marker: %s — " "Mac-side reconciliation will skip",
                 exc,
             )
             return None
 
-    def _resolve_workspace_dir(self) -> "object | None":
+    def _resolve_workspace_dir(self) -> str | Path | None:
         """Resolve workspace path: explicit injection > env var > None."""
-        if self._workspace_dir is not None:
+        if isinstance(self._workspace_dir, (str, Path)):
             return self._workspace_dir
         import os
+
         env_value = os.environ.get("HELIX_WORKSPACE")
         if env_value:
             return env_value

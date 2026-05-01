@@ -9,21 +9,21 @@ Thin orchestrator that delegates to:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.training.constants import CATEGORY_TRAINING
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, TrainingError
-
 from src.training.orchestrator.phase_executor.adapter_cache import (
     AdapterCacheManager,
     _retry_call,
 )
 from src.training.orchestrator.phase_executor.mlflow_logger import MlflowPhaseLogger
 from src.training.orchestrator.phase_executor.training_runner import PhaseTrainingRunner
+from src.utils.logger import logger
+from src.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
     from src.training.managers.data_buffer import DataBuffer
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 _TRAINING_INTERRUPTED_CODE = "TRAINING_INTERRUPTED"
 
 
-def _is_cancellation_error(result: "Result[Any, TrainingError]") -> bool:
+def _is_cancellation_error(result: Result[Any, TrainingError]) -> bool:
     """Did this Result fail because the user cancelled training?
 
     Returns True only when the failure carries the cancellation code,
@@ -88,9 +88,7 @@ class PhaseExecutor:
 
         # Sub-components (injected or built from args)
         self._cache_manager: AdapterCacheManager = cache_manager or AdapterCacheManager(config)
-        self._mlflow_logger: MlflowPhaseLogger = mlflow_logger or MlflowPhaseLogger(
-            mlflow_manager, config
-        )
+        self._mlflow_logger: MlflowPhaseLogger = mlflow_logger or MlflowPhaseLogger(mlflow_manager, config)
         self._training_runner: PhaseTrainingRunner = training_runner or PhaseTrainingRunner(
             tokenizer=tokenizer,
             config=config,
@@ -109,9 +107,10 @@ class PhaseExecutor:
         # strategy_factory kept as attribute for backward compat; no longer used in training loop
         if strategy_factory is None:
             from src.training.strategies.factory import StrategyFactory
+
             self.strategy_factory = StrategyFactory()
         else:
-            self.strategy_factory = strategy_factory
+            self.strategy_factory = strategy_factory  # type: ignore[assignment]
         self.trainer_factory = self._training_runner.trainer_factory
 
         # Internal tracking (for backward-compat access from tests/callbacks)
@@ -158,9 +157,7 @@ class PhaseExecutor:
 
         # 0. CHECK FOR PENDING SHUTDOWN
         if self._should_stop():
-            logger.warning(
-                f"[PE:SHUTDOWN_BEFORE_START] phase={phase_idx} - shutdown requested before phase start"
-            )
+            logger.warning(f"[PE:SHUTDOWN_BEFORE_START] phase={phase_idx} - shutdown requested before phase start")
             buffer.mark_phase_interrupted(
                 phase_idx,
                 reason="Shutdown requested before phase start",
@@ -193,9 +190,7 @@ class PhaseExecutor:
             if phase.adapter_cache.enabled:
                 dataset_fingerprint = self._compute_dataset_fingerprint_safe(phase_idx, phase)
                 if not upstream_retrained and dataset_fingerprint is not None:
-                    cache_result = self._try_adapter_cache_hit(
-                        phase_idx, phase, model, buffer, dataset_fingerprint
-                    )
+                    cache_result = self._try_adapter_cache_hit(phase_idx, phase, model, buffer, dataset_fingerprint)
                     if cache_result is not None:
                         self._mlflow_logger.log_cache_hit(phase_idx, phase)
                         phase_succeeded = cache_result.is_ok()
@@ -236,14 +231,14 @@ class PhaseExecutor:
 
             # 13. MLFLOW COMPLETION LOGGING
             self._mlflow_logger.log_completion(
-                phase_idx, metrics, str(final_checkpoint)
+                phase_idx,
+                metrics,  # type: ignore[arg-type]
+                str(final_checkpoint),
             )
 
             # 14. ADAPTER CACHE UPLOAD (soft-fail)
             if phase.adapter_cache.enabled and dataset_fingerprint is not None:
-                self._upload_adapter_to_cache(
-                    phase_idx, phase, final_checkpoint, buffer, dataset_fingerprint
-                )
+                self._upload_adapter_to_cache(phase_idx, phase, final_checkpoint, buffer, dataset_fingerprint)
 
             logger.debug(f"[PE:COMPLETE] phase={phase_idx}, strategy={phase.strategy_type}")
             phase_succeeded = True
@@ -279,9 +274,7 @@ class PhaseExecutor:
         """Backward-compat alias — delegates to AdapterCacheManager."""
         return AdapterCacheManager._compute_dataset_fingerprint(dataset_config)
 
-    def _compute_dataset_fingerprint_safe(
-        self, phase_idx: int, phase: StrategyPhaseConfig
-    ) -> str | None:
+    def _compute_dataset_fingerprint_safe(self, phase_idx: int, phase: StrategyPhaseConfig) -> str | None:
         """Backward-compat alias — delegates to cache manager."""
         return self._cache_manager.compute_fingerprint_safe(phase_idx, phase)
 
@@ -349,10 +342,8 @@ class PhaseExecutor:
     def _mlflow_log_dataset(self, phase_idx: int, dataset: Any, phase: StrategyPhaseConfig) -> None:
         self._mlflow_logger.log_dataset(phase_idx, dataset, phase)
 
-    def _mlflow_log_completion(
-        self, phase_idx: int, metrics: dict[str, Any], checkpoint_path: str
-    ) -> None:
-        self._mlflow_logger.log_completion(phase_idx, metrics, checkpoint_path)
+    def _mlflow_log_completion(self, phase_idx: int, metrics: dict[str, Any], checkpoint_path: str) -> None:
+        self._mlflow_logger.log_completion(phase_idx, metrics, checkpoint_path)  # type: ignore[arg-type]
 
     def _mlflow_log_error(self, phase_idx: int, error_type: str, error_msg: str) -> None:
         self._mlflow_logger.log_error(phase_idx, error_type, error_msg)

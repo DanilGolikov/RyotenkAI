@@ -3,11 +3,12 @@ from __future__ import annotations
 from src.constants import INFERENCE_DIRNAME
 
 
-def render_readme(*, manifest_filename: str, endpoint_url: str) -> str:
+def render_readme(*, manifest_filename: str, endpoint_url: str | None) -> str:
+    rendered_url = endpoint_url or "<set when chat_inference.py opens the SSH tunnel>"
     return f"""## Inference endpoint (MVP)
 
 - **Manifest**: `{manifest_filename}`
-- **Endpoint (via SSH tunnel)**: `{endpoint_url}`
+- **Endpoint (via SSH tunnel)**: `{rendered_url}`
 
 ### Quick commands
 

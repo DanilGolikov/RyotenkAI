@@ -85,14 +85,17 @@ def show_cmd(
     if state.is_machine_readable:
         renderer.emit(detail.model_dump())
     else:
-        renderer.kv({
-            "ID": detail.id,
-            "Name": detail.name,
-            "Path": detail.path,
-            "Description": detail.description or "-",
-            "Created": detail.created_at,
-            "Updated": detail.updated_at,
-        }, title=f"Project {detail.id}")
+        renderer.kv(
+            {
+                "ID": detail.id,
+                "Name": detail.name,
+                "Path": detail.path,
+                "Description": detail.description or "-",
+                "Created": detail.created_at,
+                "Updated": detail.updated_at,
+            },
+            title=f"Project {detail.id}",
+        )
     renderer.flush()
 
 
@@ -134,10 +137,12 @@ def current_cmd(ctx: typer.Context) -> None:
     renderer = get_renderer(state)
     persisted = context_store.load_context()
     if state.is_machine_readable:
-        renderer.emit({
-            "current_project_id": persisted.current_project_id,
-            "set_at": persisted.set_at,
-        })
+        renderer.emit(
+            {
+                "current_project_id": persisted.current_project_id,
+                "set_at": persisted.set_at,
+            }
+        )
     else:
         if persisted.current_project_id:
             renderer.text(persisted.current_project_id)
@@ -155,18 +160,25 @@ def current_cmd(ctx: typer.Context) -> None:
 def create_cmd(
     name: Annotated[str, typer.Argument(help="Human-readable project name.")],
     project_id: Annotated[
-        str | None, typer.Option(
-            "--id", help="Slug used on disk (default: derived from name).",
+        str | None,
+        typer.Option(
+            "--id",
+            help="Slug used on disk (default: derived from name).",
         ),
     ] = None,
     path: Annotated[
-        Path | None, typer.Option(
-            "--path", help="Project directory path (default: ~/.ryotenkai/<id>).",
-            file_okay=False, dir_okay=True, resolve_path=True,
+        Path | None,
+        typer.Option(
+            "--path",
+            help="Project directory path (default: ~/.ryotenkai/<id>).",
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
         ),
     ] = None,
     description: Annotated[
-        str, typer.Option("--description", help="Optional one-line description."),
+        str,
+        typer.Option("--description", help="Optional one-line description."),
     ] = "",
     dry_run: DryRunOpt = False,
 ) -> None:
@@ -174,15 +186,15 @@ def create_cmd(
     from src.api.services import project_service
 
     if dry_run:
-        typer.echo(
-            f"dry-run: would create project {project_id or '<derived from name>'} "
-            f"at {path or '<default>'}"
-        )
+        typer.echo(f"dry-run: would create project {project_id or '<derived from name>'} " f"at {path or '<default>'}")
         return
     try:
         summary = project_service.create_project(
-            _registry(), name=name, project_id=project_id,
-            path=str(path) if path else None, description=description,
+            _registry(),
+            name=name,
+            project_id=project_id,
+            path=str(path) if path else None,
+            description=description,
         )
     except project_service.ProjectServiceError as exc:
         raise die(str(exc))
@@ -198,8 +210,12 @@ def rm_cmd(
     """Unregister a project (does not delete the project directory)."""
     from src.api.services import project_service
 
-    if not yes and not dry_run and not typer.confirm(
-        f"Unregister project {project_id!r}?",
+    if (
+        not yes
+        and not dry_run
+        and not typer.confirm(
+            f"Unregister project {project_id!r}?",
+        )
     ):
         raise die("aborted by user", code=2)
 
@@ -249,7 +265,8 @@ def env_cmd(
 @project_app.command("run")
 def run_cmd(
     project_id: Annotated[
-        str | None, typer.Argument(
+        str | None,
+        typer.Argument(
             help="Project id (default: persisted via `project use`).",
         ),
     ] = None,
@@ -274,15 +291,15 @@ def run_cmd(
     # Delegate to the same code path as ``run start --project`` — the
     # adapter resolves the project's filesystem, integration refs, and
     # env mapping in one place. Keeps both CLI surfaces in lock-step.
-    from src.cli.commands.run import _exec_orchestrator
+    from src.cli.commands.run import _spawn_worker
 
-    _exec_orchestrator(
+    _spawn_worker(
+        mode="start",
         config=None,  # adapter pulls configs/current.yaml
         run_dir=None,
-        resume=False,
         restart_from_stage=None,
-        dry_run=dry_run,
         project_id=resolved_id,
+        dry_run=dry_run,
     )
 
 

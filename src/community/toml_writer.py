@@ -170,7 +170,7 @@ def _emit_scalars(
         path = f"{header}.{key}"
         value = body[key]
         if path in todo_fields:
-            lines.append(f'{key} = {_format_scalar(value)}  # TODO: fill in')
+            lines.append(f"{key} = {_format_scalar(value)}  # TODO: fill in")
         else:
             lines.append(f"{key} = {_format_scalar(value)}")
 
@@ -245,10 +245,7 @@ def _emit_array_of_tables(
                 # `[[parent.child]]` — community manifests don't use that
                 # shape today, so reject early instead of emitting
                 # something that can't round-trip.
-                raise TypeError(
-                    f"nested dicts inside [[{key}]] are not supported; "
-                    f"got mapping under {sk!r}"
-                )
+                raise TypeError(f"nested dicts inside [[{key}]] are not supported; " f"got mapping under {sk!r}")
             lines.append(f"{sk} = {_format_scalar(value)}")
         lines.append("")
 
@@ -284,11 +281,7 @@ def dump_manifest_toml(
     # Top-level scalars (currently just ``schema_version``) — emitted
     # before any section header so they appear at the top of the file,
     # matching how authors hand-write manifests.
-    root_scalars = [
-        k
-        for k, v in manifest.items()
-        if not isinstance(v, Mapping) and not isinstance(v, list)
-    ]
+    root_scalars = [k for k, v in manifest.items() if not isinstance(v, Mapping) and not isinstance(v, list)]
     if root_scalars:
         for key in _sort_keys(root_scalars):
             lines.append(f"{key} = {_format_scalar(manifest[key])}")
@@ -321,15 +314,14 @@ def dump_manifest_toml(
             entries = manifest.get(aot_key)
             if not entries:
                 continue
+            field_order: tuple[str, ...]
             if aot_key == "required_env":
                 field_order = _REQUIRED_ENV_FIELD_ORDER
             elif aot_key == "lib_requirements":
                 field_order = _LIB_REQ_FIELD_ORDER
             else:
                 field_order = ()
-            _emit_array_of_tables(
-                lines, aot_key, list(entries), field_order=field_order
-            )
+            _emit_array_of_tables(lines, aot_key, list(entries), field_order=field_order)
 
     # Trailing blank → single newline at EOF
     while lines and lines[-1] == "":

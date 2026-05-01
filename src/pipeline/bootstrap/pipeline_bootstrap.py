@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from src.pipeline.bootstrap.startup_validator import StartupValidator
 from src.pipeline.config_drift import ConfigDriftValidator
@@ -207,14 +207,14 @@ class PipelineBootstrap:
                     m.name,
                     f" — {m.description}" if m.description else "",
                 )
-            for e in report.instance_errors:
+            for inst_err in report.instance_errors:
                 logger.error(
                     "[PREFLIGHT] %s plugin %r (instance %r) shape error at %s: %s",
-                    e.plugin_kind,
-                    e.plugin_name,
-                    e.plugin_instance_id,
-                    e.location,
-                    e.message,
+                    inst_err.plugin_kind,
+                    inst_err.plugin_name,
+                    inst_err.plugin_instance_id,
+                    inst_err.location,
+                    inst_err.message,
                 )
             raise LaunchAbortedError(
                 missing=report.missing_envs,
@@ -253,9 +253,7 @@ class PipelineBootstrap:
             secrets=secrets,
             validation_artifact_mgr=validation_artifact_mgr,
         )
-        registry = StageRegistry(
-            config=config, stages=stages_list, collectors=collectors
-        )
+        registry = StageRegistry(config=config, stages=stages_list, collectors=collectors)
         logger.info(f"Initialized {len(registry.stages)} pipeline stages")
 
         # Step 6: Pure stage-ordering logic — needs finalised stages + config.
@@ -277,9 +275,7 @@ class PipelineBootstrap:
             attempt_controller=attempt_controller,
             metadata=read_metadata_from_env(),
         )
-        restart_inspector = RestartPointsInspector(
-            stages=registry.stages, config_drift=config_drift
-        )
+        restart_inspector = RestartPointsInspector(stages=registry.stages, config_drift=config_drift)
         stage_execution_loop = StageExecutionLoop(
             stages=registry.stages,
             collectors=collectors,

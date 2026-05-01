@@ -73,15 +73,19 @@ the syscall level for line-sized writes < 4 KiB).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any, Iterator
+from typing import IO, TYPE_CHECKING, Any
 
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = get_logger(__name__)
 
@@ -93,10 +97,10 @@ __all__ = [
     "DEFAULT_MAX_FILES",
     "EVENTS_DIR_REL",
     "EVENTS_FILE_FMT",
-    "EventJournal",
-    "JournalRecord",
     "MAX_SUPPORTED_SCHEMA_VERSION",
     "SCHEMA_VERSION",
+    "EventJournal",
+    "JournalRecord",
 ]
 
 
@@ -335,12 +339,15 @@ class EventJournal:
             "kind": str(kind),
             "payload": payload,
         }
-        line = json.dumps(
-            record,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            default=str,
-        ) + "\n"
+        line = (
+            json.dumps(
+                record,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                default=str,
+            )
+            + "\n"
+        )
         line_bytes = line.encode("utf-8")
 
         # Rotate BEFORE writing if this would put us past the cap.
@@ -350,10 +357,7 @@ class EventJournal:
         # one behind. Cleaner to write into the empty file in that
         # case (don't rotate when current_size == 0). Hence the
         # extra ``> 0`` guard.
-        if (
-            self._current_size > 0
-            and self._current_size + len(line_bytes) > self._file_size_cap
-        ):
+        if self._current_size > 0 and self._current_size + len(line_bytes) > self._file_size_cap:
             self._rotate()
 
         self._current_fh.write(line_bytes)
@@ -372,10 +376,7 @@ class EventJournal:
         self._unflushed_count += 1
 
         now = self._now_ms()
-        if (
-            self._unflushed_count >= self._fsync_batch
-            or (now - self._last_fsync_ms) >= self._fsync_interval_ms
-        ):
+        if self._unflushed_count >= self._fsync_batch or (now - self._last_fsync_ms) >= self._fsync_interval_ms:
             self._fsync_now_locked()
 
     def fsync_now(self) -> None:
@@ -386,6 +387,7 @@ class EventJournal:
 
     def _fsync_now_locked(self) -> None:
         # Caller has already verified _current_fh is not None.
+        assert self._current_fh is not None
         try:
             self._current_fh.flush()
             os.fsync(self._current_fh.fileno())
@@ -462,7 +464,7 @@ class EventJournal:
                     file_size_bytes=from_size,
                     oldest_remaining_seq=oldest_remaining,
                 )
-            except Exception as exc:  # noqa: BLE001 — best-effort
+            except Exception as exc:
                 logger.debug("[JOURNAL] on_rotate callback failed: %s", exc)
 
     def close(self) -> None:
@@ -475,10 +477,8 @@ class EventJournal:
                 os.fsync(self._current_fh.fileno())
             except OSError:
                 pass
-            try:
+            with contextlib.suppress(OSError):
                 self._current_fh.close()
-            except OSError:
-                pass
             self._current_fh = None
         self._closed = True
 
@@ -522,9 +522,11 @@ class EventJournal:
                         v = obj.get("v")
                         if not isinstance(v, int) or v > MAX_SUPPORTED_SCHEMA_VERSION:
                             logger.warning(
-                                "[JOURNAL] skipping record v=%r in %s line %d "
-                                "(reader supports v<=%d)",
-                                v, path.name, line_no, MAX_SUPPORTED_SCHEMA_VERSION,
+                                "[JOURNAL] skipping record v=%r in %s line %d " "(reader supports v<=%d)",
+                                v,
+                                path.name,
+                                line_no,
+                                MAX_SUPPORTED_SCHEMA_VERSION,
                             )
                             continue
                         offset = obj.get("offset")
@@ -544,7 +546,9 @@ class EventJournal:
                         )
             except OSError as exc:
                 logger.warning(
-                    "[JOURNAL] failed to read %s: %s — skipping", path, exc,
+                    "[JOURNAL] failed to read %s: %s — skipping",
+                    path,
+                    exc,
                 )
 
     def newest_persisted_offset(self) -> int | None:
@@ -574,9 +578,8 @@ class EventJournal:
                         if not isinstance(obj, dict):
                             continue
                         offset = obj.get("offset")
-                        if isinstance(offset, int):
-                            if newest is None or offset > newest:
-                                newest = offset
+                        if isinstance(offset, int) and (newest is None or offset > newest):
+                            newest = offset
             except OSError:
                 continue
             if newest is not None:

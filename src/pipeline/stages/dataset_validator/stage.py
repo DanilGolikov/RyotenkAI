@@ -315,7 +315,7 @@ class DatasetValidator(PipelineStage):
         # FORMAT CHECK FIRST — fail fast before quality plugins (before GPU)
         fmt_result = self._format_checker.check(dataset, dataset_name, strategy_phases)
         if fmt_result.is_err():
-            return fmt_result
+            return Err(fmt_result.unwrap_err())  # type: ignore[union-attr]
 
         # Get dataset train ref for event tracking
         dataset_path = self._split_loader.get_train_ref(dataset_config)
@@ -351,7 +351,7 @@ class DatasetValidator(PipelineStage):
             # FORMAT CHECK for eval dataset too
             fmt_eval_result = self._format_checker.check(eval_dataset, dataset_name, strategy_phases)
             if fmt_eval_result.is_err():
-                return fmt_eval_result
+                return Err(fmt_eval_result.unwrap_err())  # type: ignore[union-attr]
 
             eval_plugins = [
                 (plugin_id, plugin_name, p, apply_to)

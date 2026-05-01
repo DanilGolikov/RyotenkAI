@@ -137,7 +137,7 @@ class ModelEvaluator(PipelineStage):
         # "successful" eval with garbage results.
         preflight = _preflight_check_endpoint(endpoint_url)
         if preflight.is_err():
-            return preflight
+            return Err(preflight.unwrap_err())  # type: ignore[union-attr]
 
         # Model name for API requests.
         # vLLM serves the merged model under its directory path by default,
@@ -179,7 +179,7 @@ class ModelEvaluator(PipelineStage):
 
         secrets_resolver = SecretsResolver(self._secrets) if self._secrets is not None else None
         runner = EvaluationRunner(
-            cast(Any, eval_cfg),
+            cast("Any", eval_cfg),
             callbacks=self._callbacks,
             secrets_resolver=secrets_resolver,
         )

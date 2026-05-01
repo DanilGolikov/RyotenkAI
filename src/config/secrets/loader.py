@@ -120,8 +120,8 @@ def load_secrets(
         # absent — so BaseSettings has no chance to fall back to
         # ``os.environ``. Init kwargs always win over env sources in
         # Pydantic Settings' precedence chain.
-        init_kwargs = _explicit_alias_kwargs(source)
-        return Secrets(**init_kwargs)  # type: ignore[arg-type]
+        alias_kwargs = _explicit_alias_kwargs(source)
+        return Secrets(**alias_kwargs)  # type: ignore[arg-type]
 
     _log_mismatches(chosen_file, logger, source=source)
 
@@ -215,9 +215,7 @@ def _read_dotenv(path: Path) -> dict[str, str]:
         if not key:
             continue
         value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         entries[key] = value.strip()
     return entries
@@ -251,12 +249,8 @@ def _log_mismatches(
                 continue
             if env_val.strip() == file_val.strip():
                 continue
-            env_sha = hashlib.sha256(env_val.strip().encode()).hexdigest()[
-                :SHA256_HEXDIGEST_DISPLAY_LEN
-            ]
-            file_sha = hashlib.sha256(file_val.strip().encode()).hexdigest()[
-                :SHA256_HEXDIGEST_DISPLAY_LEN
-            ]
+            env_sha = hashlib.sha256(env_val.strip().encode()).hexdigest()[:SHA256_HEXDIGEST_DISPLAY_LEN]
+            file_sha = hashlib.sha256(file_val.strip().encode()).hexdigest()[:SHA256_HEXDIGEST_DISPLAY_LEN]
             logger.warning(
                 "[SECRETS] %s differs between env (sha256=%s) and %s (sha256=%s). "
                 "Environment value wins (project override > file).",

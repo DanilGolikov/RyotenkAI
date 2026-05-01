@@ -669,8 +669,8 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
             )
 
         pod_data = result.unwrap()
-        if not isinstance(pod_data, dict):
-            return AvailabilityVerdict(
+        if not isinstance(pod_data, dict):  # type: ignore[unreachable]
+            return AvailabilityVerdict(  # type: ignore[unreachable]
                 state="probe_failed",
                 resource_id=resource_id,
                 message="query_pod returned non-dict payload",
