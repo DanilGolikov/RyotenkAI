@@ -91,6 +91,7 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._last_status_log_time = 0.0
     monitor._ssh_client = None
     monitor._log_manager = None
+    monitor._runner_log_manager = None  # PR-B
     monitor._provider_name = None
     monitor._resource_id = None
     monitor._recovery_attempts = 0
@@ -611,19 +612,21 @@ class TestPeriodicLogDownload:
 class TestLogManagerFromContext:
     def test_returns_none_on_local_provider(self) -> None:
         monitor = _make_monitor()
-        log_manager, ssh = monitor._build_log_manager_from_context({
+        log_manager, runner_lm, ssh = monitor._build_log_manager_from_context({
             "provider_type": "local",
             "ssh_host": "127.0.0.1",
         })
         assert log_manager is None
+        assert runner_lm is None
         assert ssh is None
 
     def test_returns_none_when_ssh_host_missing(self) -> None:
         monitor = _make_monitor()
-        log_manager, ssh = monitor._build_log_manager_from_context({
+        log_manager, runner_lm, ssh = monitor._build_log_manager_from_context({
             "provider_type": "cloud",
         })
         assert log_manager is None
+        assert runner_lm is None
         assert ssh is None
 
     def test_constructs_for_cloud_provider(
@@ -654,6 +657,10 @@ class TestLogManagerFromContext:
             @property
             def remote_trainer_stdio_log(self):  # noqa: ANN001
                 return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
+            @property
+            def remote_runner_log(self):  # noqa: ANN001
+                # PR-B — second LogManager target
+                return Path("/tmp/fake-attempt/logs/runner.log")
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
@@ -662,7 +669,7 @@ class TestLogManagerFromContext:
         )
 
         monitor = _make_monitor()
-        lm, ssh = monitor._build_log_manager_from_context({
+        lm, runner_lm, ssh = monitor._build_log_manager_from_context({
             "provider_type": "cloud",
             "ssh_host": "pod.example.com",
             "ssh_port": 2222,
@@ -672,14 +679,17 @@ class TestLogManagerFromContext:
             "workspace_path": "/workspace/runs/run_x",
         })
         assert lm is not None
+        assert runner_lm is not None  # PR-B — runner.log puller
         assert ssh is not None
         assert constructed["host"] == "pod.example.com"
         assert constructed["port"] == 2222
         assert constructed["username"] == "root"
         assert constructed["key_path"] == "/tmp/key"
         # Per-PodLayout: remote_path is built from workspace_path and
-        # MUST be the per-run trainer.stdio.log under logs/.
-        assert constructed["remote_path"] == "/workspace/runs/run_x/logs/trainer.stdio.log"
+        # MUST be the per-run trainer.stdio.log under logs/. The fake
+        # LM stashes the LAST construction's args; with PR-B the last
+        # call is the runner_lm — so we assert on runner.log here.
+        assert constructed["remote_path"] == "/workspace/runs/run_x/logs/runner.log"
 
     def test_alias_mode_forces_username_and_key_to_none(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -703,6 +713,9 @@ class TestLogManagerFromContext:
             @property
             def remote_trainer_stdio_log(self):  # noqa: ANN001
                 return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
+            @property
+            def remote_runner_log(self):  # noqa: ANN001
+                return Path("/tmp/fake-attempt/logs/runner.log")
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
@@ -1287,7 +1300,7 @@ class TestLogDownloaderLoopDebugLogs:
                 await task
 
         _asyncio.run(_drive())
-        assert any("training.log download ok" in line for line in captured)
+        assert any("trainer.stdio.log download ok" in line for line in captured)
 
     def test_no_data_tick_emits_no_data_debug(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1309,7 +1322,7 @@ class TestLogDownloaderLoopDebugLogs:
                 await task
 
         _asyncio.run(_drive())
-        assert any("training.log download no data" in line for line in captured)
+        assert any("trainer.stdio.log download no data" in line for line in captured)
 
     def test_exception_logged_at_debug_and_loop_continues(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1332,7 +1345,7 @@ class TestLogDownloaderLoopDebugLogs:
 
         _asyncio.run(_drive())
         assert any(
-            "training.log download error" in line and "scp boom" in line
+            "trainer.stdio.log download error" in line and "scp boom" in line
             for line in captured
         )
         # Loop kept running and produced multiple attempts.
@@ -1356,7 +1369,7 @@ class TestFinalFlushDebugLogs:
 
         result = _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
         assert result.is_ok()
-        assert any("final training.log flush ok" in line for line in captured)
+        assert any("final trainer.stdio.log flush ok" in line for line in captured)
 
     def test_final_flush_no_data_emits_debug(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1373,7 +1386,7 @@ class TestFinalFlushDebugLogs:
         lm = _FakeLogManager(download_results=[False])
 
         _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
-        assert any("final training.log flush no data" in line for line in captured)
+        assert any("final trainer.stdio.log flush no data" in line for line in captured)
 
     def test_final_flush_exception_emits_debug(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1391,7 +1404,7 @@ class TestFinalFlushDebugLogs:
 
         _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
         assert any(
-            "final training.log flush error" in line and "scp exploded" in line
+            "final trainer.stdio.log flush error" in line and "scp exploded" in line
             for line in captured
         )
 
