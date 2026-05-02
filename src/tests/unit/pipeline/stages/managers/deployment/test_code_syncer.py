@@ -274,54 +274,25 @@ def test_set_workspace_propagates():
 # ---------------------------------------------------------------------------
 
 
-def test_required_modules_includes_src_runner() -> None:
-    """``src/runner`` must be in REQUIRED_MODULES.
+def test_required_modules_ships_full_src_tree() -> None:
+    """Phase 0 PR-0.3: ``REQUIRED_MODULES`` is the literal one-entry list
+    ``["src"]``. The deploy step ships the entire ``src/`` tree minus
+    ``EXCLUDE_PATTERNS``; transitive imports therefore always travel
+    with the trainer regardless of which subpackage references them.
 
-    Why this matters: the thin image (v2.0.0+) does NOT bake ``src/``
-    into the image. ``src.runner.main:app`` resolves only via
-    PYTHONPATH pointing at the rsync target. Drop this entry and
-    every uvicorn launch on a fresh pod fails with
-    ``ModuleNotFoundError: No module named 'src.runner'``.
+    This replaces the pre-2026-05-02 selective whitelist that drifted
+    every time someone added a transitive ``src.*`` import (e.g. the
+    16-crash chain in run_20260502_113553_r8rul where
+    ``src.providers.runpod.training.provider`` imported
+    ``src.pipeline`` and the whitelist did not cover it).
     """
-    assert "src/runner" in CodeSyncer.REQUIRED_MODULES
+    assert CodeSyncer.REQUIRED_MODULES == ["src"]
 
 
-def test_required_modules_keeps_runner_dep_closure() -> None:
-    """Regression: yesterday's closure-walk added community/workspace/
-    inference because the trainer imports them transitively. The
-    runner shares the same dep closure (it imports src.utils,
-    src.providers via the lifecycle client, etc.). If any drops we
-    can re-trip the cascade of ModuleNotFoundError fixes we've
-    already paid for.
+def test_excludes_cover_dev_and_test_artefacts() -> None:
+    """The "ship everything" policy is only safe if the exclude list
+    keeps real noise off the pod: tests, byte-caches, and markdown.
+    Drift-guard for the four critical patterns.
     """
-    expected = {
-        "src/training",
-        "src/infrastructure",
-        "src/utils",
-        "src/config",
-        "src/data",
-        "src/community",
-        "src/workspace",
-        "src/inference",
-        "src/runner",
-        # Runner imports lifecycle clients via
-        # ``src.runner.runtime.provider_registry`` which itself
-        # imports ``src.providers.{runpod,single_node}.runtime``.
-        # Reproduced ModuleNotFoundError in
-        # run_20260429_171726_49j32 when this entry was missing.
-        "src/providers",
-        "src/constants.py",
-        "src/__init__.py",
-    }
-    assert expected.issubset(set(CodeSyncer.REQUIRED_MODULES))
-
-
-def test_required_modules_no_duplicates() -> None:
-    """Belt-and-braces: a duplicate entry in REQUIRED_MODULES would
-    pass the rsync (idempotent) but yields a confusing diff in the
-    sync log and breaks the count-based assertion in test_sync_success.
-    """
-    modules = CodeSyncer.REQUIRED_MODULES
-    assert len(modules) == len(set(modules)), (
-        f"REQUIRED_MODULES contains duplicates: {modules}"
-    )
+    expected = {"__pycache__", "*.pyc", "tests", "*.md"}
+    assert expected.issubset(set(CodeSyncer.EXCLUDE_PATTERNS))

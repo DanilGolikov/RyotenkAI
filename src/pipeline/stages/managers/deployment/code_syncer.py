@@ -58,62 +58,55 @@ class CodeSyncer:
     the project's package layout under ``<workspace>/src/...``.
     """
 
-    # Modules required for training (relative to project root)
+    # Code shipping policy: ship the entire ``src/`` tree to the pod,
+    # filtered by ``EXCLUDE_PATTERNS`` (tests, caches, docs).
+    #
+    # Why "ship everything" rather than a hand-curated list of submodules:
+    #
+    #   * The selective whitelist drifts. Phase-1 had 12 explicit entries
+    #     (``src/training``, ``src/providers``, ``src/runner``, …) but
+    #     missed transitive imports — e.g. ``src/providers/runpod/training/
+    #     provider.py`` imports ``src.pipeline``, which was Mac-only and
+    #     not whitelisted, causing a ``ModuleNotFoundError`` at trainer
+    #     spawn (run_20260502_113553_r8rul, the 16th of a 16-crash chain).
+    #     Every new transitive import would re-trigger the same drift
+    #     until someone updates the list.
+    #
+    #   * Cost is negligible. Full ``src/`` is ~3.4 MB after exclusions
+    #     (vs ~5.2 MB previously — selective was actually larger because
+    #     it shipped full subdirs). rsync ships only changed bytes after
+    #     the first run; first-run cost is ~150 ms on a 25 MB/s link.
+    #
+    #   * Architectural enforcement belongs in static analysis, not in
+    #     the shipping list. Phase 3 introduces an importlinter rule that
+    #     forbids ``src.providers.* → src.pipeline.*`` (and similar
+    #     pod→Mac-only directions) at CI time — which is the right place
+    #     to catch boundary violations, not in the deploy step.
+    #
+    #   * Pod sees Mac-only code (``src/api``, ``src/cli``, ``src/pipeline``,
+    #     ``src/reports``) physically on disk but never imports it at
+    #     runtime: trainer imports start from ``src.training.run_training``
+    #     and pull only what they need. No RAM cost, no security cost
+    #     (no secrets in source), no startup cost.
     #
     # NOTE on ``src/community`` vs ``community/``:
     #   * ``src/community`` is the plugin FRAMEWORK (catalog, registry,
-    #     manifest, etc.) — ~560 KB of Python that the trainer imports
-    #     unconditionally at module-load time
-    #     (e.g. ``src/training/reward_plugins/factory.py`` and
-    #     ``src/training/reward_plugins/registry.py`` both have
-    #     top-level ``from src.community.* import …`` lines). Without
-    #     it the trainer crashes with ``ModuleNotFoundError`` before
-    #     reading the run config. So it travels with every run.
-    #   * ``community/`` (the SIBLING dir at repo root) holds the
-    #     actual plugin CONTENT (reward / evaluation / validation
-    #     plugin packages, ~1.4 MB). That stays delivered through
-    #     ``PluginPacker`` so we ship only the plugins a given run
-    #     declares, not the whole catalog.
-    REQUIRED_MODULES: ClassVar[list[str]] = [
-        "src/training",  # Training logic (includes src/training/models)
-        "src/infrastructure",  # Infrastructure layer (MLflow gateway, etc.)
-        "src/utils",  # Utilities
-        "src/config",  # Pydantic config schema (used by src/utils/config facade)
-        "src/data",  # Data loaders
-        "src/community",  # Plugin framework (registry / catalog / manifest)
-        # ``src/workspace`` carries the UX-layer config loader the trainer
-        # uses (``src.workspace.integrations.loader.load_pipeline_config``
-        # at ``src/training/run_training.py:55``). Stays small (~228 KB)
-        # because the heavy parts of workspace — projects, providers
-        # registries — are referenced only at top-level for type
-        # purposes; trainer doesn't pull them at runtime.
-        "src/workspace",
-        # ``src/inference`` exports ``SUPPORTED_INFERENCE_ENGINES``
-        # consumed by ``src/config/validators/inference.py``, which the
-        # trainer's config-validator chain pulls at startup. ~16 KB.
-        "src/inference",
-        # ``src/runner`` is the in-pod uvicorn job server. Until the
-        # thin-image migration it was baked into the docker image at
-        # ``/opt/ryotenkai/src/runner``; we now ship it like every other
-        # backend module so a pure runner-code change no longer forces
-        # an image rebuild. Mac SSH-execs ``python -m uvicorn
-        # src.runner.main:app`` from this rsync target after the sync
-        # lands. See ``docs/architecture/thin-image.md``.
-        "src/runner",
-        # ``src/providers`` carries the per-provider lifecycle clients
-        # the runner imports at startup
-        # (``src.providers.{runpod,single_node}.runtime.lifecycle_client``
-        # via ``src.runner.runtime.provider_registry``). Without it the
-        # runner's lifespan hook bails with ``ModuleNotFoundError: No
-        # module named 'src.providers'`` and uvicorn dies before
-        # binding 8080 — exactly the failure mode caught in
-        # run_20260429_171726_49j32. ~1.1 MB.
-        "src/providers",
-        "src/constants.py",  # Shared constants (imported by config schemas, validators, etc.)
-        "src/__init__.py",  # Package init
-    ]
+    #     manifest, etc.) — shipped with every run as part of the ``src/``
+    #     tree. Trainer imports it at module-load time
+    #     (``src/training/reward_plugins/factory.py`` etc).
+    #   * ``community/`` (the SIBLING dir at repo root) holds the actual
+    #     plugin CONTENT (reward / evaluation / validation plugin
+    #     packages). Delivered separately through ``PluginPacker`` so we
+    #     ship only the plugins a given run declares, not the whole
+    #     catalog.
+    REQUIRED_MODULES: ClassVar[list[str]] = ["src"]
 
-    # Patterns to exclude from sync
+    # Patterns to exclude from sync — keep the pod-side tree lean.
+    #   * tests / *.pyc / __pycache__ / .pytest_cache: dev artefacts
+    #   * *.md: docs are git-only, no value on the pod
+    #   * src/tests: project tests live under ``src/tests`` not top-level
+    #     ``tests/``; the ``tests`` glob below already covers both paths
+    #     because rsync ``--exclude`` matches by basename in any depth.
     EXCLUDE_PATTERNS: ClassVar[list[str]] = [
         "__pycache__",
         "*.pyc",
