@@ -37,11 +37,24 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from src.utils.log_filenames import (
+    PIPELINE_LOG,
+    RUNNER_LOG,
+    STAGE_LOG_SUFFIX,
+    TRAINER_STDIO_LOG,
+)
+
 LOGS_DIR_NAME = "logs"
-PIPELINE_LOG_NAME = "pipeline.log"
-REMOTE_TRAINER_STDIO_LOG_NAME = "trainer.stdio.log"
-REMOTE_RUNNER_LOG_NAME = "runner.log"
-STAGE_LOG_SUFFIX = ".log"
+
+# Re-export filename constants under their LogLayout-historical names so
+# existing consumers of this module keep working. Single source of truth
+# is :mod:`src.utils.log_filenames` — pod-side and Mac-side share the
+# same literals because LogManager scp does a 1:1 by-filename mapping.
+PIPELINE_LOG_NAME = PIPELINE_LOG
+REMOTE_TRAINER_STDIO_LOG_NAME = TRAINER_STDIO_LOG
+REMOTE_RUNNER_LOG_NAME = RUNNER_LOG
+# STAGE_LOG_SUFFIX is itself the canonical constant (re-imported above
+# so users of this module don't notice the move).
 
 STAGE_LOG_PATHS_KEY = "stage"
 REMOTE_TRAINER_STDIO_LOG_PATHS_KEY = "remote_trainer_stdio"

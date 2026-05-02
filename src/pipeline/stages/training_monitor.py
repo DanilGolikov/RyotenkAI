@@ -44,7 +44,7 @@ from src.constants import (
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.pipeline.stages.managers.log_manager import LogManager
-from src.utils.logger import logger
+from src.utils.logger import get_run_log_layout, logger
 from src.utils.result import AppError, Err, Ok, Result, TrainingError
 from src.utils.ssh_client import SSHClient
 
@@ -517,6 +517,15 @@ class TrainingMonitor(PipelineStage):
         # host so the log file is already available; nothing to scp.
         if provider_type != "cloud" or not ssh_host:
             return None, None
+
+        workspace_path = deployer_context.get("workspace_path")
+        if not workspace_path:
+            logger.debug(
+                "[MONITOR] deployer_context missing workspace_path — "
+                "periodic log download disabled",
+            )
+            return None, None
+
         try:
             ssh_port = int(deployer_context.get("ssh_port") or SSH_PORT_DEFAULT)
         except (TypeError, ValueError):
@@ -536,16 +545,30 @@ class TrainingMonitor(PipelineStage):
             logger.debug(f"[MONITOR] SSH client construction failed: {exc}")
             return None, None
 
-        # Use ``LogManager.DEFAULT_REMOTE_PATH`` (= ``/workspace/training.log``)
-        # rather than appending ``training.log`` to the deployer's
-        # ``workspace_path`` — the latter resolves to
-        # ``/workspace/runs/<id>`` (the trainer's CWD/code dir), but the
-        # trainer's FileHandler writes to the absolute path pinned by
-        # the launcher's ``RYOTENKAI_TRAINING_LOG_PATH`` env var, which
-        # in turn equals ``LogManager.DEFAULT_REMOTE_PATH``. Sharing the
-        # constant keeps both sides in lock-step.
+        # Build PodLayout from the deployer's workspace_path so we
+        # pull the canonical per-run trainer.stdio.log. Pre-PodLayout
+        # this code used a global LogManager.DEFAULT_REMOTE_PATH —
+        # which silently downloaded from the wrong path and made
+        # the periodic-tail feature a no-op. PodLayout closes that.
+        from pathlib import PurePosixPath
+
+        from src.utils.pod_layout import PodLayout
+
         try:
-            log_manager = LogManager(ssh_client)
+            pod_layout = PodLayout.from_root(PurePosixPath(workspace_path))
+        except ValueError as exc:
+            logger.debug(f"[MONITOR] Cannot build PodLayout: {exc}")
+            with contextlib.suppress(Exception):
+                ssh_client.close_master()
+            return None, None
+
+        try:
+            mac_layout = get_run_log_layout()
+            log_manager = LogManager(
+                ssh_client,
+                remote_path=str(pod_layout.trainer_stdio_log),
+                local_path=mac_layout.remote_trainer_stdio_log,
+            )
         except Exception as exc:
             logger.debug(f"[MONITOR] LogManager init failed: {exc}")
             with contextlib.suppress(Exception):
@@ -721,8 +744,6 @@ class TrainingMonitor(PipelineStage):
         (test / mock paths); per-probe failures are also swallowed so
         one broken command doesn't suppress the rest.
         """
-        from src.utils.logger import get_run_log_layout
-
         logger.info(
             "[MONITOR:POSTMORTEM] non-zero exit detected — collecting diagnostics",
         )
