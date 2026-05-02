@@ -176,6 +176,11 @@ def run_training(
             logger.warning(f"DEBUG: Failed to inspect config module: {e}")
 
         config = load_pipeline_config(Path(config_path))
+        # PR-A milestone M3 — config loaded and validated. If postmortem
+        # shows M1+M2+M3 but no further trainer output, the death is in
+        # the heavy-init chain that follows (MLflow setup, dataset load,
+        # model load, CUDA init).
+        print("[TRAINER:M3] Config loaded, entering heavy-init chain", file=sys.stderr, flush=True)
         strategies = config.training.get_strategy_chain()
 
         logger.info("Training config loaded")
@@ -640,6 +645,13 @@ def _install_crash_observability() -> None:
 
 def main() -> int:
     """CLI entry point."""
+    # PR-A milestone M1 — Python interpreter and stdlib are alive. If the
+    # postmortem on Mac shows nothing past M1, blame argparse / crash
+    # observability install / something between argv arrival and the next
+    # milestone. ``flush=True`` because we may die before line buffering
+    # gets a chance to drain.
+    print("[TRAINER:M1] Python interpreter started, argv parsed", file=sys.stderr, flush=True)
+
     # Crash observability MUST be installed before argparse / any heavy import
     # that may itself segfault (bitsandbytes, flash-attn). See
     # _install_crash_observability() docstring.
@@ -707,6 +719,15 @@ Debug log tags:
                 os.environ.setdefault(_key, _val)
     except Exception:
         pass  # never block training due to secrets propagation
+
+    # PR-A milestone M2 — argparse + secrets propagation done; about to
+    # touch the config file and the import chain it pulls in
+    # (load_pipeline_config → src.config validators → src.providers,
+    # historically the failure mode in run_20260429_171726_49j32 and the
+    # 15-crash incident on 2026-05-02). If the postmortem shows M1 but
+    # not M3, the death is in load_pipeline_config or its transitive
+    # imports.
+    print(f"[TRAINER:M2] Loading config from {args.config}", file=sys.stderr, flush=True)
 
     try:
         output_path = run_training(

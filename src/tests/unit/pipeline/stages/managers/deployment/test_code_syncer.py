@@ -106,7 +106,7 @@ def test_sync_success(syncer: CodeSyncer):
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
     ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "", "")
+    ssh_client.exec_command.return_value = (True, "OK", "")
 
     completed = MagicMock()
     completed.returncode = 0
@@ -131,7 +131,7 @@ def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
     ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "", "")
+    ssh_client.exec_command.return_value = (True, "OK", "")
 
     failing = MagicMock()
     failing.returncode = 1
@@ -204,7 +204,7 @@ def test_sync_skips_missing_module_and_still_ok(syncer: CodeSyncer, monkeypatch)
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
     ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "", "")
+    ssh_client.exec_command.return_value = (True, "OK", "")
 
     completed = MagicMock()
     completed.returncode = 0
@@ -224,7 +224,7 @@ def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
     ssh_client.ssh_target = "pc"
     ssh_client.key_path = ""
     ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "", "")
+    ssh_client.exec_command.return_value = (True, "OK", "")
 
     failing = MagicMock()
     failing.returncode = 1
