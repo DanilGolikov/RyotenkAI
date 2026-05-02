@@ -52,7 +52,7 @@ Storage layout
 --------------
 ::
 
-    <workspace>/.runner/events/
+    <workspace>/events/
     ├── events.000.jsonl
     ├── events.001.jsonl
     ├── events.002.jsonl
@@ -61,6 +61,11 @@ Storage layout
 
 After rotation past the 5-file cap, the oldest is deleted:
 opening events.005.jsonl deletes events.000.jsonl first.
+
+The directory location is supplied by the caller (the runner's
+lifespan reads ``pod_layout.events_dir``). The journal itself is
+layout-agnostic — it only knows the absolute ``root_dir`` it was
+constructed with.
 
 Thread / async safety
 ---------------------
@@ -106,7 +111,13 @@ __all__ = [
 
 # -- Constants ----------------------------------------------------------------
 
-EVENTS_DIR_REL = ".runner/events"
+# Legacy constant — pre-PodLayout layout used a ``.runner/events``
+# subdirectory under workspace. PodLayout migrated this to a flat
+# ``events/`` directory rooted at the per-run workspace. The constant
+# is kept ONLY for tests that build paths manually; production code
+# constructs the directory via ``PodLayout.events_dir`` and passes
+# the absolute path through ``EventJournal(root_dir=...)``.
+EVENTS_DIR_REL = "events"
 EVENTS_FILE_FMT = "events.{seq:03d}.jsonl"
 _FILE_NAME_RE = re.compile(r"^events\.(\d{3,})\.jsonl$")
 

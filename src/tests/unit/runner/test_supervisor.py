@@ -51,16 +51,23 @@ def bus() -> EventBus:
     return EventBus(capacity=100)
 
 
+@pytest.fixture
+def stdio_log_path(tmp_path: Path) -> Path:
+    """Per-test stdio capture file. Single-writer; test reads it
+    after the supervisor reaps."""
+    return tmp_path / "logs" / "trainer.stdio.log"
+
+
 @pytest_asyncio.fixture
 async def supervisor(
-    fsm: JobLifecycleFSM, bus: EventBus,
+    fsm: JobLifecycleFSM, bus: EventBus, stdio_log_path: Path,
 ) -> AsyncIterator[Supervisor]:
     """Real :class:`Supervisor` with cleanup on test exit.
 
     ``shutdown()`` is idempotent and safe even if the test never
     spawned a subprocess, so we always call it.
     """
-    s = Supervisor(fsm, bus)
+    s = Supervisor(fsm, bus, stdio_log_path=stdio_log_path)
     try:
         yield s
     finally:
@@ -70,6 +77,27 @@ async def supervisor(
 def _py(code: str) -> list[str]:
     """Build an argv that runs ``code`` in the test's Python."""
     return [sys.executable, "-c", code]
+
+
+def _read_stdio_lines(path: Path, kind: str | None = None) -> list[str]:
+    """Read captured stdio file and return lines, optionally filtered.
+
+    Each line in the file has form ``[OUT] <text>`` or ``[ERR] <text>``.
+    Pass ``kind="stdout"`` to keep only OUT lines, ``"stderr"`` for ERR,
+    or ``None`` for everything (with prefix stripped).
+    """
+    if not path.exists():
+        return []
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    out: list[str] = []
+    for line in raw.splitlines():
+        if line.startswith("[OUT] "):
+            if kind in (None, "stdout"):
+                out.append(line[6:])
+        elif line.startswith("[ERR] "):
+            if kind in (None, "stderr"):
+                out.append(line[6:])
+    return out
 
 
 async def _wait_for_state(
@@ -118,7 +146,7 @@ class TestNaturalExit:
 
     async def test_workdir_sets_subprocess_cwd(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM,
-        bus: EventBus, tmp_path: Path,
+        stdio_log_path: Path, tmp_path: Path,
     ) -> None:
         """``submit_and_spawn(..., workdir=PATH)`` must set the
         subprocess's cwd so relative paths resolve from there.
@@ -130,7 +158,7 @@ class TestNaturalExit:
         and FileNotFoundError'd on its config arg.
 
         We verify by spawning a Python that prints its CWD; the
-        line lands as a ``trainer_log`` event the supervisor emits.
+        line lands in the stdio capture file.
         """
         run_dir = tmp_path / "run-cwd-check"
         run_dir.mkdir()
@@ -143,35 +171,56 @@ class TestNaturalExit:
         )
         await _wait_for_state(fsm, JobState.COMPLETED)
 
-        # Drain the bus and look for the trainer_log line carrying
-        # the cwd that the child printed. (Mirrors the buffer-walk
-        # in ``test_stdout_lines_emitted_as_events``.)
-        cwd_lines = [
-            e.payload["line"]
-            for e in list(bus._buffer)
-            if e.kind == "trainer_log"
-            and isinstance(e.payload, dict)
-            and e.payload.get("kind") == "stdout"
-        ]
+        # Read the stdio capture file and look for the cwd line.
+        cwd_lines = _read_stdio_lines(stdio_log_path, kind="stdout")
         assert any(str(run_dir) in line for line in cwd_lines), (
-            f"expected child cwd to be {run_dir!s} but trainer_log lines "
+            f"expected child cwd to be {run_dir!s} but stdio lines "
             f"didn't contain it; got: {cwd_lines!r}"
         )
 
-    async def test_stdout_lines_emitted_as_events(
-        self, supervisor: Supervisor, bus: EventBus, fsm: JobLifecycleFSM,
+    async def test_stdout_lines_captured_to_file(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM,
+        stdio_log_path: Path,
     ) -> None:
         await supervisor.submit_and_spawn(
             "j-1", _py("print('hello'); print('world')"),
         )
         await _wait_for_state(fsm, JobState.COMPLETED)
-        log_events = [
-            e for e in list(bus._buffer)
-            if e.kind == "trainer_log" and e.payload.get("kind") == "stdout"
-        ]
-        lines = [e.payload["line"] for e in log_events]
+        lines = _read_stdio_lines(stdio_log_path, kind="stdout")
         assert "hello" in lines
         assert "world" in lines
+
+    async def test_stderr_lines_captured_to_file(
+        self, supervisor: Supervisor, fsm: JobLifecycleFSM,
+        stdio_log_path: Path,
+    ) -> None:
+        """Trainer stderr (incl. ImportError tracebacks) must land
+        in the stdio capture file independently of stdout."""
+        # Print to stderr explicitly so we can verify per-stream split.
+        await supervisor.submit_and_spawn(
+            "j-stderr",
+            _py("import sys; sys.stderr.write('boom\\n'); sys.exit(0)"),
+        )
+        await _wait_for_state(fsm, JobState.COMPLETED)
+        err_lines = _read_stdio_lines(stdio_log_path, kind="stderr")
+        assert "boom" in err_lines
+
+    async def test_no_trainer_log_event_published(
+        self, supervisor: Supervisor, bus: EventBus, fsm: JobLifecycleFSM,
+    ) -> None:
+        """Data plane no longer routes through the bus — log lines
+        go to the file, not to ``trainer_log`` events. This test pins
+        the contract."""
+        await supervisor.submit_and_spawn(
+            "j-no-log-events", _py("print('hello'); print('world')"),
+        )
+        await _wait_for_state(fsm, JobState.COMPLETED)
+        log_events = [
+            e for e in list(bus._buffer) if e.kind == "trainer_log"
+        ]
+        assert log_events == [], (
+            f"expected no trainer_log events on the bus; got {log_events!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +250,7 @@ class TestRequestStop:
 
     async def test_sigkill_escalation_when_term_ignored(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+        stdio_log_path: Path,
     ) -> None:
         # Subprocess swallows SIGTERM — the supervisor must escalate
         # to SIGKILL after the grace window. The "READY" print is a
@@ -218,16 +268,12 @@ class TestRequestStop:
         await _wait_for_state(fsm, JobState.RUNNING)
 
         # Wait for READY on stdout — the trainer's signal handler
-        # is installed by the time this event arrives.
+        # is installed by the time this line lands in the file.
         async def _wait_ready() -> None:
             deadline = asyncio.get_event_loop().time() + 5.0
             while asyncio.get_event_loop().time() < deadline:
-                for ev in list(bus._buffer):
-                    if (
-                        ev.kind == "trainer_log"
-                        and ev.payload.get("line") == "READY"
-                    ):
-                        return
+                if "READY" in _read_stdio_lines(stdio_log_path, kind="stdout"):
+                    return
                 await asyncio.sleep(0.02)
             raise AssertionError("trainer never printed READY")
 
@@ -591,6 +637,7 @@ class TestCancellationTelemetry:
 
     async def test_sigkill_escalation_still_emits_completed(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
+        stdio_log_path: Path,
     ) -> None:
         # Trainer ignores SIGTERM → SIGKILL escalates → FSM=cancelled.
         # ``cancellation_completed`` MUST still fire (we requested
@@ -614,12 +661,8 @@ class TestCancellationTelemetry:
         async def _wait_ready() -> None:
             deadline = asyncio.get_event_loop().time() + 5.0
             while asyncio.get_event_loop().time() < deadline:
-                for ev in list(bus._buffer):
-                    if (
-                        ev.kind == "trainer_log"
-                        and ev.payload.get("line") == "READY"
-                    ):
-                        return
+                if "READY" in _read_stdio_lines(stdio_log_path, kind="stdout"):
+                    return
                 await asyncio.sleep(0.02)
             raise AssertionError("trainer never printed READY")
 

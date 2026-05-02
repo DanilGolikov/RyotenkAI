@@ -114,7 +114,9 @@ class TestBuildJobEnv:
         # Crash observability defaults
         assert env["PYTHONUNBUFFERED"] == "1"
         assert env["PYTHONFAULTHANDLER"] == "1"
-        assert env["PYTHONFAULTHANDLER_PATH"].endswith("training.faulthandler.log")
+        # PYTHONFAULTHANDLER_PATH removed — faulthandler writes to
+        # stderr, captured by Supervisor pump into trainer.stdio.log.
+        assert "PYTHONFAULTHANDLER_PATH" not in env
         # Loopback runner URL — trainer's RunnerEventCallback uses this
         assert env["RYOTENKAI_RUNNER_URL"] == "http://127.0.0.1:8080"
 
@@ -146,24 +148,25 @@ class TestBuildJobEnv:
         assert env["LOG_LEVEL"] == "WARNING"  # overridden
         assert env["RUNPOD_API_KEY"] == "k"   # added
 
-    def test_build_job_env_includes_training_log_path(self) -> None:
-        """PR1: trainer attaches a FileHandler at this path so
-        ``log_manager`` can scp the resulting file as a post-mortem
-        artefact. Absent → no training.log written → broken pipeline."""
+    def test_build_job_env_does_not_set_training_log_path(self) -> None:
+        """Trainer no longer attaches its own FileHandler — pod-side
+        ``trainer.stdio.log`` (written by Supervisor pump) is the
+        ground-truth artefact. The legacy
+        ``RYOTENKAI_TRAINING_LOG_PATH`` env var was removed in the
+        log-pipeline-refactor PR."""
         launcher = _make_launcher()
         env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
-        assert "RYOTENKAI_TRAINING_LOG_PATH" in env
-        assert env["RYOTENKAI_TRAINING_LOG_PATH"].endswith("training.log")
+        assert "RYOTENKAI_TRAINING_LOG_PATH" not in env
 
-    def test_training_log_path_matches_log_manager_default(self) -> None:
-        """Drift guard: trainer writes here, log_manager reads here.
-        Two values mismatching = silent broken artefact path. They
-        MUST come from the same source — we use ``LogManager.DEFAULT_REMOTE_PATH``."""
-        from src.pipeline.stages.managers.log_manager import LogManager
-
+    def test_build_job_env_does_not_set_faulthandler_path(self) -> None:
+        """faulthandler now writes to stderr (default), captured by
+        the runner's Supervisor pump into ``trainer.stdio.log``. The
+        legacy ``PYTHONFAULTHANDLER_PATH`` was removed."""
         launcher = _make_launcher()
         env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
-        assert env["RYOTENKAI_TRAINING_LOG_PATH"] == LogManager.DEFAULT_REMOTE_PATH
+        assert "PYTHONFAULTHANDLER_PATH" not in env
+        # PYTHONFAULTHANDLER itself stays — that activates the handler.
+        assert env.get("PYTHONFAULTHANDLER") == "1"
 
 
 # ---------------------------------------------------------------------------

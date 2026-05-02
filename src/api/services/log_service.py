@@ -4,7 +4,14 @@ from pathlib import Path
 
 from src.api.schemas.log import LogChunk, LogFileInfo
 from src.pipeline.state import PipelineStateStore
-from src.utils.logs_layout import LOGS_DIR_NAME, PIPELINE_LOG_NAME, REMOTE_TRAINING_LOG_NAME, LogLayout
+from src.utils.logs_layout import (
+    LOGS_DIR_NAME,
+    PIPELINE_LOG_NAME,
+    REMOTE_RUNNER_LOG_NAME,
+    REMOTE_TRAINER_STDIO_LOG_NAME,
+    REMOTE_TRAINER_STDIO_LOG_PATHS_KEY,
+    LogLayout,
+)
 
 # Log files that live at the run root (not inside any attempt).
 _RUN_ROOT_LOG_FILES: tuple[str, ...] = ("tui_launch.log",)
@@ -13,7 +20,8 @@ _RUN_ROOT_LOG_FILES: tuple[str, ...] = ("tui_launch.log",)
 # Used only as a fallback when a run's state has no log_paths registry.
 _LEGACY_ATTEMPT_LOG_FILES: tuple[str, ...] = (
     PIPELINE_LOG_NAME,
-    REMOTE_TRAINING_LOG_NAME,
+    REMOTE_TRAINER_STDIO_LOG_NAME,
+    REMOTE_RUNNER_LOG_NAME,
     "inference.log",
     "eval.log",
 )
@@ -55,9 +63,9 @@ def _discover_from_state(run_dir: Path, attempt_no: int) -> dict[str, Path]:
             if not isinstance(rel_path, str) or not rel_path:
                 continue
             abs_path = (attempt_dir / rel_path).resolve()
-            if key == "remote_training":
-                # Expose the remote training log under its historical file name.
-                out[REMOTE_TRAINING_LOG_NAME] = abs_path
+            if key == REMOTE_TRAINER_STDIO_LOG_PATHS_KEY:
+                # Expose the remote trainer stdio log under its canonical filename.
+                out[REMOTE_TRAINER_STDIO_LOG_NAME] = abs_path
             else:
                 # File name is whatever the LogLayout actually wrote (slug),
                 # not a reconstruction from stage_name — which may carry

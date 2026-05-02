@@ -10,9 +10,22 @@ signals, and reaps the trainer child. It owns:
   group via :func:`os.killpg` — the trainer plus its dataloader
   workers and any fork()ed children all receive the stop request,
 - background asyncio tasks that pump the trainer's stdout / stderr
-  into the :class:`EventBus`,
+  **to a single ground-truth file on disk** (single-writer
+  ``trainer.stdio.log``) — survives import-time crashes, native
+  faulthandler dumps land here too because faulthandler defaults
+  to stderr,
 - the lifecycle bridge to :class:`JobLifecycleFSM` — every state
   transition originates here, never in the API layer.
+
+Data plane vs control plane:
+- Trainer stdout/stderr lines go ONLY to the stdio log file. They
+  do NOT flow through the EventBus (no ``trainer_log`` events).
+  Mac picks them up via SCP delta-pull from
+  ``<workspace>/logs/trainer.stdio.log``.
+- The EventBus carries ONLY control-plane events (``trainer_spawned``,
+  ``trainer_exited``, ``cancellation_*``) and telemetry events
+  (``mlflow_*``, ``health_snapshot``) published by the trainer's
+  loopback HTTP callbacks and the runner's HealthReporter.
 
 State machine (mirrored on top of :class:`JobLifecycleFSM`)::
 
@@ -49,10 +62,11 @@ Exit-code interpretation (POSIX):
 
 Stream pumping:
 The supervisor reads each stream line-by-line. Each non-empty line
-becomes a single :class:`Event` via :meth:`EventBus.publish`. Phase 2
-emits raw lines untouched; Phase 3+ may add a TrainerCallback hook
-on top that produces structured events while raw stdout still flows
-through this path.
+gets an ``[OUT]`` or ``[ERR]`` prefix and is appended to the stdio
+log file. Disk-write failures are suppressed (defensive: a stuck
+disk must not break trainer pump — pumps draining the pipe is the
+load-bearing invariant). Native faulthandler dumps land here too
+because Python's faulthandler writes to stderr by default.
 """
 
 from __future__ import annotations
@@ -122,6 +136,7 @@ class Supervisor:
         bus: "EventBus",
         *,
         terminal_hook: TerminalHook | None = None,
+        stdio_log_path: Path | None = None,
     ) -> None:
         self._fsm = fsm
         self._bus = bus
@@ -147,6 +162,13 @@ class Supervisor:
         # Production wires this to RunPod auto-stop; tests usually
         # leave it ``None``.
         self._terminal_hook: TerminalHook | None = terminal_hook
+        # Pod-side ground-truth for trainer stdout/stderr. When set,
+        # ``_pump_stream`` appends every line (with kind prefix) to
+        # this file — single-writer, append-only, byte-buffered.
+        # ``None`` means stdio capture is disabled (used by test
+        # harnesses that don't need the file artefact).
+        self._stdio_log_path: Path | None = stdio_log_path
+        self._stdio_log_file = None  # opened in _spawn, closed in shutdown
 
     # --- read-only accessors ------------------------------------------------
 
@@ -226,6 +248,27 @@ class Supervisor:
         merged_env: dict[str, str] | None = None
         if env is not None:
             merged_env = {**os.environ, **env}
+
+        # Open the stdio capture file BEFORE spawning the subprocess
+        # so the very first byte the pumps write lands on disk. If the
+        # path's parent directory doesn't exist, create it (idempotent).
+        # Failures are tolerated — capture is best-effort observability,
+        # never load-bearing.
+        if self._stdio_log_path is not None and self._stdio_log_file is None:
+            try:
+                self._stdio_log_path.parent.mkdir(parents=True, exist_ok=True)
+                # Append-binary, line-buffered (buffering=1 only works
+                # in text mode → use buffering=0 + manual flush per write).
+                self._stdio_log_file = open(  # noqa: SIM115 — closed in shutdown
+                    self._stdio_log_path, "ab", buffering=0,
+                )
+            except OSError as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "[SUPERVISOR] could not open stdio log file %s: %s",
+                    self._stdio_log_path, exc,
+                )
+                self._stdio_log_file = None
 
         self._proc = await asyncio.create_subprocess_exec(
             *command,
@@ -398,6 +441,14 @@ class Supervisor:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 
+        # Close the stdio capture file last — pumps must drain into it
+        # before the handle goes away. Suppressing because a closed
+        # bus / fs error here cannot affect terminal state.
+        if self._stdio_log_file is not None:
+            with contextlib.suppress(OSError, ValueError):
+                self._stdio_log_file.close()
+            self._stdio_log_file = None
+
     # --- internals ----------------------------------------------------------
 
     def _signal_group(self, sig: int) -> None:
@@ -420,9 +471,25 @@ class Supervisor:
         *,
         kind: str,
     ) -> None:
-        """Read ``stream`` line-by-line; each line becomes a bus event."""
+        """Read ``stream`` line-by-line; append each line to the stdio
+        capture file with a kind prefix.
+
+        Writes to the file are best-effort — disk-full / stale-handle
+        OSErrors are suppressed so the pump never blocks on disk
+        contention. The pumps drain the OS pipe buffer; failure to
+        drain would cause the subprocess to SIGPIPE its own writes,
+        which is the load-bearing invariant.
+
+        Output format per line:
+            ``[OUT] <line>\\n`` for stdout
+            ``[ERR] <line>\\n`` for stderr
+
+        ``kind`` is one of ``"stdout"`` / ``"stderr"``. Empty lines
+        are dropped.
+        """
         if stream is None:  # pragma: no cover — defensive
             return
+        prefix = b"[ERR] " if kind == "stderr" else b"[OUT] "
         while True:
             try:
                 raw = await stream.readline()
@@ -436,10 +503,15 @@ class Supervisor:
                 return
             if not raw:
                 return  # EOF — pipe closed (subprocess exited or stream done)
-            line = raw.decode("utf-8", errors="replace").rstrip("\n")
-            if not line:
+            # ``raw`` includes the trailing newline (or is empty on EOF
+            # which we already handled). Drop blank lines to keep the
+            # file tight.
+            stripped = raw.rstrip(b"\n")
+            if not stripped:
                 continue
-            self._bus.publish("trainer_log", {"kind": kind, "line": line})
+            if self._stdio_log_file is not None:
+                with contextlib.suppress(OSError, ValueError):
+                    self._stdio_log_file.write(prefix + stripped + b"\n")
 
     async def _reap(self) -> None:
         """Wait on the subprocess and drive the final FSM transition."""
@@ -535,6 +607,17 @@ class Supervisor:
         if self._terminal_hook is not None:
             with contextlib.suppress(Exception):
                 await self._terminal_hook(target.value)
+
+        # Close the stdio capture file once pumps have drained (the
+        # ``await asyncio.wait_for(task, timeout=2.0)`` calls above
+        # ensure the pumps are EOF'd before we land here). Leaving
+        # the handle open across runs is fine on the same Supervisor
+        # instance — but we close eagerly so on-disk size is exposed
+        # to log_manager scp without waiting for shutdown().
+        if self._stdio_log_file is not None:
+            with contextlib.suppress(OSError, ValueError):
+                self._stdio_log_file.close()
+            self._stdio_log_file = None
 
 
 # ---------------------------------------------------------------------------

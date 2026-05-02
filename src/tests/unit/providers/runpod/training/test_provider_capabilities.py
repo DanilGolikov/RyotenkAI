@@ -316,3 +316,38 @@ class TestLogicSpecific:
         env = provider.required_runtime_env_vars(resource_id="x")
         assert env[RUNTIME_PROVIDER_ENV_VAR] == provider.provider_name
         assert env[RUNTIME_PROVIDER_ENV_VAR] == PROVIDER_RUNPOD
+
+
+# ---------------------------------------------------------------------------
+# 8. PodLayout — provider exposes filesystem layout for a run
+# ---------------------------------------------------------------------------
+
+
+class TestPodLayoutForRun:
+    def test_layout_root_uses_workspace_runs_runid(self) -> None:
+        provider = _mk_provider()
+        layout = provider.pod_layout_for_run("run_alpha")
+        assert str(layout.root) == "/workspace/runs/run_alpha"
+
+    def test_layout_provides_per_run_artefact_paths(self) -> None:
+        provider = _mk_provider()
+        layout = provider.pod_layout_for_run("run_42")
+        assert str(layout.runner_log) == "/workspace/runs/run_42/logs/runner.log"
+        assert str(layout.trainer_stdio_log) == "/workspace/runs/run_42/logs/trainer.stdio.log"
+        assert str(layout.events_dir) == "/workspace/runs/run_42/events"
+        assert str(layout.state_dir) == "/workspace/runs/run_42/state"
+
+    def test_layout_rejects_empty_run_id(self) -> None:
+        provider = _mk_provider()
+        with pytest.raises(ValueError, match="run_id must be non-empty"):
+            provider.pod_layout_for_run("")
+
+    def test_layout_disjoint_for_different_runs(self) -> None:
+        # Resume-collision regression: same pod, different run_ids
+        # MUST produce DISJOINT path trees.
+        provider = _mk_provider()
+        a = provider.pod_layout_for_run("run_a")
+        b = provider.pod_layout_for_run("run_b")
+        assert a.root != b.root
+        assert a.runner_log != b.runner_log
+        assert a.trainer_stdio_log != b.trainer_stdio_log

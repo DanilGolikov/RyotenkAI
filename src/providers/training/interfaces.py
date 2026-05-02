@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodResourceInfo
+    from src.utils.pod_layout import PodLayout
     from src.utils.result import AppError, ProviderError, Result
     from src.utils.ssh_client import SSHClient
 
@@ -474,6 +475,34 @@ class IGPUProvider(Protocol):
                 to probe. Empty string is acceptable for providers
                 that don't track per-resource availability
                 (single_node).
+        """
+        ...
+
+    # ---- pod-side filesystem layout ----
+
+    def pod_layout_for_run(self, run_id: str) -> PodLayout:
+        """Pod-side filesystem layout for the given run.
+
+        Provider-agnostic interface backing the canonical path tree
+        defined in :class:`src.utils.pod_layout.PodLayout`. Each
+        provider supplies its own ``root`` (where the workspace lives
+        on its filesystem); the directory structure under ``root`` is
+        identical across providers.
+
+        Stateless by contract — depends only on ``run_id`` and the
+        provider's static config. Callable BEFORE :meth:`connect` so
+        that deployment-side components (CodeSyncer, FileUploader,
+        runner_launcher) can plan paths without round-tripping the
+        provider state.
+
+        Returns:
+            :class:`PodLayout` rooted at the provider-specific run
+            directory. RunPod's root: ``/workspace/runs/<run_id>``.
+            single_node's root: ``<config.workspace_path>/runs/<run_id>``.
+
+        Args:
+            run_id: Stable run identifier (typically ``run.name``).
+                Must not be empty.
         """
         ...
 

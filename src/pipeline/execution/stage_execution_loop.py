@@ -554,10 +554,10 @@ class StageExecutionLoop:
         self, *, stage_name: str, log_layout: LogLayout
     ) -> None:
         """Attach log-file registry for ``stage_name`` via AttemptController."""
-        include_remote_training = stage_name == StageNames.TRAINING_MONITOR
+        include_remote_trainer_stdio = stage_name == StageNames.TRAINING_MONITOR
         log_paths = log_layout.stage_log_registry(
             stage_name,
-            include_remote_training=include_remote_training,
+            include_remote_trainer_stdio=include_remote_trainer_stdio,
         )
         self._attempt_controller.record_stage_log_paths(
             stage_name=stage_name, log_paths=log_paths

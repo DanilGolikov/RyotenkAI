@@ -180,3 +180,39 @@ class TestLogicSpecific:
         env = provider.required_runtime_env_vars(resource_id=None)
         assert env[RUNTIME_PROVIDER_ENV_VAR] == provider.provider_name
         assert env[RUNTIME_PROVIDER_ENV_VAR] == PROVIDER_SINGLE_NODE
+
+
+# ---------------------------------------------------------------------------
+# 8. PodLayout — provider exposes filesystem layout for a run
+# ---------------------------------------------------------------------------
+
+
+class TestPodLayoutForRun:
+    def test_layout_root_uses_config_workspace_path(self) -> None:
+        provider = _mk_provider(
+            training={"workspace_path": "/home/user/ryotenkai_training"},
+        )
+        layout = provider.pod_layout_for_run("run_alpha")
+        assert str(layout.root) == "/home/user/ryotenkai_training/runs/run_alpha"
+
+    def test_layout_strips_trailing_slash_from_base(self) -> None:
+        provider = _mk_provider(
+            training={"workspace_path": "/data/runs/"},
+        )
+        layout = provider.pod_layout_for_run("run_x")
+        assert str(layout.root) == "/data/runs/runs/run_x"
+
+    def test_layout_provides_per_run_artefact_paths(self) -> None:
+        provider = _mk_provider(
+            training={"workspace_path": "/workspace"},
+        )
+        layout = provider.pod_layout_for_run("run_42")
+        assert str(layout.runner_log) == "/workspace/runs/run_42/logs/runner.log"
+        assert str(layout.trainer_stdio_log) == "/workspace/runs/run_42/logs/trainer.stdio.log"
+        assert str(layout.events_dir) == "/workspace/runs/run_42/events"
+        assert str(layout.state_dir) == "/workspace/runs/run_42/state"
+
+    def test_layout_rejects_empty_run_id(self) -> None:
+        provider = _mk_provider()
+        with pytest.raises(ValueError, match="run_id must be non-empty"):
+            provider.pod_layout_for_run("")

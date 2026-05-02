@@ -315,7 +315,7 @@ class TestRestoreReusedContext:
 class TestLogPathsPreservation:
     _LOG_PATHS: dict[str, str] = {
         "stage": "logs/dataset_validator.log",
-        "remote_training": "logs/training.log",
+        "remote_trainer_stdio": "logs/trainer.stdio.log",
     }
 
     def _running_with_log_paths(self) -> PipelineAttemptState:

@@ -30,12 +30,14 @@ further transitions and raise :class:`InvalidTransitionError` on any
 attempt — the supervisor is responsible for not calling
 :meth:`transition` past terminal.
 
-Persistence layout under ``<workspace>/.ryotenkai/``:
-- ``state.jsonl`` — append-only audit log; each line is the full
+Persistence layout under ``<workspace>/state/`` (or the explicit
+``state_dir_override`` passed by the runner's lifespan via
+``pod_layout.state_dir``):
+- ``job.jsonl`` — append-only audit log; each line is the full
   payload of a transition (state, message, timestamp, job_id, monotonic
   sequence). Ordering is the single source of truth — a duplicate
   state with the same sequence is a corruption signal.
-- ``state.json`` — latest snapshot, atomic-written via
+- ``job.json`` — latest snapshot, atomic-written via
   :func:`src.utils.atomic_fs.atomic_write_json`. Read on startup to
   rebuild the in-memory FSM without scanning the JSONL.
 
@@ -272,19 +274,29 @@ class JobLifecycleFSM:
     """
 
     workspace_dir: Path
+    state_dir_override: Path | None = None
     _snapshot: JobSnapshot | None = field(default=None, init=False, repr=False)
 
     @property
     def state_dir(self) -> Path:
-        return self.workspace_dir / ".ryotenkai"
+        """Directory where the FSM persists ``job.json`` + ``job.jsonl``.
+
+        When ``state_dir_override`` is set (the runner's lifespan passes
+        ``pod_layout.state_dir`` explicitly), that path is used as-is.
+        Otherwise the default is ``<workspace_dir>/state/`` — flat
+        per-run layout matching :class:`PodLayout`.
+        """
+        if self.state_dir_override is not None:
+            return self.state_dir_override
+        return self.workspace_dir / "state"
 
     @property
     def jsonl_path(self) -> Path:
-        return self.state_dir / "state.jsonl"
+        return self.state_dir / "job.jsonl"
 
     @property
     def json_path(self) -> Path:
-        return self.state_dir / "state.json"
+        return self.state_dir / "job.json"
 
     # --- read-only accessors ------------------------------------------------
 

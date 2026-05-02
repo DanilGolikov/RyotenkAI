@@ -716,15 +716,12 @@ class TestPostMortemDiagnostics:
 
         def _exec(*, command, silent=False, timeout=30):
             # Match by substring — the probes embed the label-specific
-            # path in the command, so we can pick up which probe fired.
+            # pattern in the command, so we can pick up which probe fired.
             label = "unknown"
             for marker, lbl in [
-                ("training.faulthandler.log", "faulthandler"),
-                ("training.log", "training_log_tail"),
-                ("oom|kill|memory", "dmesg_oom"),
-                ("nvrm|xid|nvidia", "dmesg_nvidia"),
-                ("dmesg", "dmesg_tail"),
+                ("oom|kill|memory|nvrm|xid|nvidia", "dmesg_kernel_signals"),
                 ("nvidia-smi", "nvidia_smi"),
+                ("dmesg", "dmesg_tail"),
             ]:
                 if marker in command:
                     label = lbl
@@ -759,6 +756,10 @@ class TestPostMortemDiagnostics:
         assert monitor._ssh_client.exec_command.call_count == 0
 
     def test_nonzero_exit_runs_full_probe_set(self) -> None:
+        """Postmortem refactor: trainer-output sources come from local
+        files (trainer.stdio.log + runner.log via LogManager scp), not
+        SSH probes. Live probes are restricted to environment-level
+        signals (kernel + GPU)."""
         monitor = _make_monitor()
         monitor._ssh_client = self._fake_ssh()
         monitor._handle_trainer_exited({
@@ -766,18 +767,24 @@ class TestPostMortemDiagnostics:
         })
         labels = [lbl for lbl, _ in monitor._ssh_client.executed]
         for required in [
-            "faulthandler", "training_log_tail", "dmesg_tail",
-            "dmesg_oom", "dmesg_nvidia", "nvidia_smi",
+            "dmesg_kernel_signals", "dmesg_tail", "nvidia_smi",
         ]:
             assert required in labels, (
                 f"missing probe {required!r} in {labels!r}"
             )
-        # Legacy markers (TRAINING_EXIT_CODE, TRAINING_COMPLETE, …) are
-        # never written by current code paths — no probe should mention them.
+        # Legacy probes that were folded into local-file reads (the
+        # trainer.stdio.log and runner.log paths) — no longer probed
+        # over SSH. Verify they do not fire to keep the data plane
+        # vs. environment plane separation explicit.
         commands = [cmd for _, cmd in monitor._ssh_client.executed]
-        assert not any("TRAINING_" in cmd for cmd in commands), (
-            f"dead legacy-marker probes still firing: {commands!r}"
-        )
+        for forbidden in (
+            "training.faulthandler.log",  # was probe 'faulthandler'
+            "/workspace/training.log",   # was probe 'training_log_tail'
+            "TRAINING_",                 # legacy marker IPC
+        ):
+            assert not any(forbidden in cmd for cmd in commands), (
+                f"forbidden legacy fragment {forbidden!r} in commands: {commands!r}"
+            )
 
     def test_signal_kill_with_zero_exit_still_triggers_postmortem(self) -> None:
         # SIGTERM-killed trainer that returns 0 (process raced before
@@ -806,8 +813,9 @@ class TestPostMortemDiagnostics:
         monitor._handle_trainer_exited({
             "exit_code": 1, "signal": None, "cancellation_requested": False,
         })
-        # All 6 probes attempted (legacy TRAINING_* markers dropped).
-        assert ssh.exec_command.call_count == 6
+        # All 3 environment probes attempted (data-plane probes were
+        # promoted to local-file reads in the postmortem refactor).
+        assert ssh.exec_command.call_count == 3
 
     def test_no_ssh_client_makes_postmortem_a_noop(self) -> None:
         # Single-node / mock flow — _ssh_client is None.

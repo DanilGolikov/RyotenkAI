@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from src.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
@@ -22,6 +23,7 @@ from src.providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
+from src.utils.pod_layout import PodLayout
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
@@ -604,6 +606,19 @@ class SingleNodeProvider(IGPUProvider):
         the pre-14.D inverse-of-PROVIDER_RUNPOD branch.
         """
         return ()
+
+    def pod_layout_for_run(self, run_id: str) -> PodLayout:
+        """User-config-rooted pod layout: ``<workspace_path>/runs/<run_id>``.
+
+        Matches the directory structure created in :meth:`connect`
+        (lines 247-249 use the same ``<base>/runs/{run.name}`` formula).
+        ``workspace_path`` comes from the provider config — typically
+        ``/home/user/ryotenkai_training`` or similar user-chosen path.
+        """
+        if not run_id:
+            raise ValueError("run_id must be non-empty")
+        base = self._config.workspace_path.rstrip("/")
+        return PodLayout.from_root(PurePosixPath(f"{base}/runs/{run_id}"))
 
     def get_resource_info(self) -> None:
         """Local provider has no dynamic resource metadata."""

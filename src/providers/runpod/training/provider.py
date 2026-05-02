@@ -7,7 +7,7 @@ Implements IGPUProvider for RunPod cloud instances.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
@@ -24,6 +24,7 @@ from src.providers.training.interfaces import (
     VolumeKind,
 )
 from src.runner.__about__ import RUNTIME_IMAGE
+from src.utils.pod_layout import PodLayout
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient
 
@@ -607,6 +608,17 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         branch in :mod:`src.pipeline.bootstrap.startup_validator`.
         """
         return ("RUNPOD_API_KEY",)
+
+    def pod_layout_for_run(self, run_id: str) -> PodLayout:
+        """RunPod-rooted pod layout: ``/workspace/runs/<run_id>/...``.
+
+        Matches the directory structure created in :meth:`connect`
+        (lines 281-283 use the same ``/workspace/runs/{run.name}``
+        formula).
+        """
+        if not run_id:
+            raise ValueError("run_id must be non-empty")
+        return PodLayout.from_root(PurePosixPath(f"/workspace/runs/{run_id}"))
 
     # ------------------------------------------------------------------
     # Phase 14.A — capability methods (IGPUProvider extension)
