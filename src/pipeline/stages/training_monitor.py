@@ -874,6 +874,13 @@ class TrainingMonitor(PipelineStage):
         Supervisor / runner_launcher) and reader (this code) is
         physically impossible — both go through the same source of
         truth.
+
+        Pod-side ``trainer.stdio.log`` is written by Supervisor with
+        ``[OUT] ``/``[ERR] `` per-line prefixes (single-file merge of
+        stdout+stderr for atomic ordering on disk). The prefix is an
+        on-disk serialization detail, NOT operator-facing — strip it
+        when emitting to ``pipeline.log``. Operators see clean trainer
+        output without protocol noise.
         """
         try:
             if not path.exists():
@@ -887,7 +894,16 @@ class TrainingMonitor(PipelineStage):
                 lines = fh.readlines()
             tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
             for raw_line in tail:
-                logger.info(f"[MONITOR:POSTMORTEM:{label}] {raw_line.rstrip()}")
+                line = raw_line.rstrip()
+                # Strip Supervisor-internal channel prefix. Both 6-char
+                # markers ("[OUT] " / "[ERR] ") map to plain operator
+                # output — severity routing through logger.error would
+                # alarm-spam on every trainer Python traceback, which
+                # is "expected trainer-side error" not "control-plane
+                # error". Keep everything at INFO.
+                if line.startswith("[OUT] ") or line.startswith("[ERR] "):
+                    line = line[6:]
+                logger.info(f"[MONITOR:POSTMORTEM:{label}] {line}")
         except OSError as exc:  # noqa: BLE001 — defensive
             logger.warning(
                 f"[MONITOR:POSTMORTEM:{label}] read failed: {exc}",
@@ -1102,10 +1118,25 @@ class TrainingMonitor(PipelineStage):
         elapsed_str = str(timedelta(seconds=int(elapsed)))
 
         gpu_util = payload.get("gpu_util_percent")
-        vram = payload.get("gpu_memory_percent")
+        vram_pct = payload.get("gpu_memory_percent")
+        vram_used = payload.get("vram_used_gb")
+        vram_total = payload.get("vram_total_gb")
+        gpu_temp = payload.get("gpu_temp_c")
         cpu = payload.get("cpu_percent")
         ram_used = payload.get("ram_used_gb")
         ram_total = payload.get("ram_total_gb")
+
+        # VRAM: prefer absolute GB if both fields present (richer signal
+        # for operator capacity planning), fall back to percent, else "—".
+        if isinstance(vram_used, (int, float)) and isinstance(vram_total, (int, float)):
+            vram_str = (
+                f"{vram_used:.1f}/{vram_total:.0f} GB"
+                + (f" ({vram_pct:.0f}%)" if isinstance(vram_pct, (int, float)) else "")
+            )
+        elif isinstance(vram_pct, (int, float)):
+            vram_str = f"{vram_pct:.0f}%"
+        else:
+            vram_str = "—"
 
         ram_str = (
             f"{ram_used:.1f}/{ram_total:.0f} GB"
@@ -1113,11 +1144,16 @@ class TrainingMonitor(PipelineStage):
             else "—"
         )
 
+        # ``running`` matches the develop-branch convention; the legacy
+        # ``ALIVE`` token confused operators ("alive vs what?") — here
+        # we always log when the trainer is actively running so the
+        # state name matches the FSM JobState.value.
         logger.info(
-            "[MONITOR] ALIVE | %s | GPU: %s | VRAM: %s | CPU: %s | RAM: %s",
+            "[MONITOR] running | %s | GPU: %s | VRAM: %s | Temp: %s | CPU: %s | RAM: %s",
             elapsed_str,
             f"{gpu_util:.0f}%" if isinstance(gpu_util, (int, float)) else "—",
-            f"{vram:.0f}%" if isinstance(vram, (int, float)) else "—",
+            vram_str,
+            f"{gpu_temp:.0f}C" if isinstance(gpu_temp, (int, float)) else "—",
             f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "—",
             ram_str,
         )
@@ -1129,25 +1165,15 @@ class TrainingMonitor(PipelineStage):
         """Translate a ``trainer_exited`` event to a terminal Result.
 
         Payload shape (per :class:`Supervisor._reap`):
-
-        v1 (legacy): ``{exit_code, signal, cancellation_requested}``.
-        v2 (PR-B): adds ``stderr_tail``, ``stdout_tail``,
-        ``stdio_log_path``, ``schema_version``. We render the tails
-        immediately so the operator gets the cause of death even when
-        the pod is platform-evicted before LogManager can SCP the file.
+        ``{exit_code, signal, cancellation_requested}``. The trainer's
+        last stdout/stderr lives on disk in ``trainer.stdio.log`` and
+        is rendered by :meth:`_collect_death_diagnostics` from the
+        SCP-pulled local copy — single source, no embedded WS tail.
         """
         duration = max(0.0, time.time() - self._training_start_time)
         exit_code = payload.get("exit_code")
         signal_name = payload.get("signal")
         cancelled = bool(payload.get("cancellation_requested"))
-
-        # PR-B — log embedded stdio tail BEFORE running pod-side probes.
-        # This is the one piece of evidence that survives a platform
-        # eviction: the WS event has already been delivered, so even if
-        # SSH is dead by the time _collect_death_diagnostics() tries to
-        # SCP, we still printed the trainer's last words to pipeline.log.
-        if int(payload.get("schema_version", 1)) >= 2:
-            self._log_trainer_exited_tail(payload)
 
         # Pull post-mortem context from the pod BEFORE returning Err.
         # Cancellation is operator-initiated (``stop`` from CLI/web UI)
@@ -1223,41 +1249,6 @@ class TrainingMonitor(PipelineStage):
             f"training failed ({message or 'no detail'})",
             duration,
         )
-
-    def _log_trainer_exited_tail(self, payload: dict[str, Any]) -> None:
-        """PR-B: render the embedded stdio tail from a schema-v2
-        ``trainer_exited`` payload to ``pipeline.log``.
-
-        Each line is logged with a prefix that mirrors its origin
-        (``[TRAINER:STDERR]`` / ``[TRAINER:STDOUT]``) so operators can
-        visually separate trainer output from monitor chatter. Already
-        redacted on the runner side (see
-        :func:`src.utils.secret_redaction.redact_secrets`) — no further
-        masking needed here.
-
-        Defensive: silent no-op when both tails are empty (the trainer
-        died without output) or when fields are missing (schema bump
-        future-proofing). Never raises — the caller is the post-mortem
-        path and must keep flowing.
-        """
-        try:
-            stderr_tail = payload.get("stderr_tail") or ""
-            stdout_tail = payload.get("stdout_tail") or ""
-
-            if not stderr_tail and not stdout_tail:
-                return
-
-            if stderr_tail:
-                logger.info("[MONITOR:TRAINER_EXITED] stderr tail (last lines):")
-                for line in stderr_tail.splitlines()[-30:]:
-                    logger.info(f"[TRAINER:STDERR] {line}")
-
-            if stdout_tail:
-                logger.info("[MONITOR:TRAINER_EXITED] stdout tail (last lines):")
-                for line in stdout_tail.splitlines()[-10:]:
-                    logger.info(f"[TRAINER:STDOUT] {line}")
-        except Exception as exc:  # pragma: no cover — best effort
-            logger.debug(f"[MONITOR] _log_trainer_exited_tail raised: {exc}")
 
     def _fail(
         self,
