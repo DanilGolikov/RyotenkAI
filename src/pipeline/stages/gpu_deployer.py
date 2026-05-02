@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
     from src.providers.training.interfaces import IGPUProvider, SSHConnectionInfo
     from src.utils.config import PipelineConfig, Secrets
+    from src.utils.pod_layout import PodLayout
 
 
 # =============================================================================
@@ -397,26 +398,29 @@ class GPUDeployer(PipelineStage):
 
     def _download_remote_logs(self, reason: str) -> None:
         """
-        Download remote pod logs from training workspace.
+        Download remote pod logs through PodLayout.
 
-        Two independent files are pulled in this order:
+        Two independent per-run files pulled via LogManager scp:
 
-        1. ``{workspace}/runner.log`` — uvicorn / runner stdout
-           captured by entrypoint.sh's redirect from the very first
-           byte of Python boot. **Survives uvicorn pre-import crashes**
+        1. ``<workspace>/logs/runner.log`` — uvicorn / runner stdout
+           captured by ``runner_launcher`` from the very first byte
+           of Python boot. **Survives uvicorn pre-import crashes**
            (ImportError, SyntaxError) that would otherwise leave us
            with no diagnostic. Downloaded best-effort: failure here
            does not break trainer-log download below.
-        2. ``{workspace}/training.log`` (or ``{workspace}/logs/.../
-           pipeline.log`` fallback) — trainer subprocess stdout. Only
-           exists after the trainer has actually started.
+        2. ``<workspace>/logs/trainer.stdio.log`` — trainer subprocess
+           stdout/stderr captured by the runner's Supervisor pump.
+           This is the ground-truth artefact for trainer crashes
+           (including native faulthandler dumps via stderr capture).
 
-        Why two channels: when the runner crashes at boot, ``training
-        .log`` does not exist yet — only ``runner.log`` has the trace.
-        When the trainer crashes during a real run, ``training.log``
-        has the full output — ``runner.log`` shows only lifecycle
-        events. Either file alone leaves a blind spot. Both together
-        cover before / during / after the training run.
+        Why two channels: when the runner crashes at boot,
+        ``trainer.stdio.log`` does not exist yet — only ``runner.log``
+        has the trace. When the trainer crashes during a real run,
+        ``trainer.stdio.log`` has the full output. Either file alone
+        leaves a blind spot.
+
+        Both files share PodLayout's per-run isolation so sequential
+        runs on the same pod never overwrite each other.
 
         Args:
             reason: Error context for logging.
@@ -424,89 +428,69 @@ class GPUDeployer(PipelineStage):
         if not self._ssh_client:
             return
 
-        workspace = self.deployment.workspace
+        # Build PodLayout from the per-run workspace path the provider
+        # established in connect(). Single source of truth — no more
+        # ad-hoc f-string concat.
+        from pathlib import PurePosixPath
+
+        from src.utils.pod_layout import PodLayout
+
+        try:
+            pod_layout = PodLayout.from_root(
+                PurePosixPath(self.deployment.workspace),
+            )
+        except ValueError as exc:
+            logger.warning(
+                f"[DEPLOYER] Cannot build PodLayout (reason='{reason}'): {exc}",
+            )
+            return
 
         # Channel 1 — runner.log. Best-effort, isolated try/except so
         # failures here do not skip the trainer log below.
-        self._download_runner_log(reason=reason)
+        self._download_runner_log(reason=reason, pod_layout=pod_layout)
 
-        # Channel 2 — training.log + fallbacks. Track which fallback
-        # paths we tried so the operator can see in the run log *what
-        # we looked for* when nothing landed locally. Previously every
-        # path failed silently and the run-level log only showed
-        # "Pod terminated" with no clue training was lost.
-        attempted: list[str] = []
+        # Channel 2 — trainer.stdio.log. This is the ground-truth
+        # artefact written by the runner's Supervisor pump; pulled to
+        # ``<attempt>/logs/trainer.stdio.log`` on Mac via LogLayout.
         try:
-            # 1) Primary path: docker-only training log in run dir
-            primary_log_path = f"{workspace}/training.log"
-            attempted.append(primary_log_path)
-            log_manager = LogManager(self._ssh_client, remote_path=primary_log_path)
-            if log_manager.download(silent=False):
-                return
-
-            logs_base = f"{workspace}/logs"
-
-            # Find the latest log directory (run_training creates timestamped dirs)
-            success, output, _ = self._ssh_client.exec_command(
-                f"ls -1t {logs_base}/ 2>/dev/null | head -1",
-                silent=True,
+            mac_layout = get_run_log_layout()
+            log_manager = LogManager(
+                self._ssh_client,
+                remote_path=str(pod_layout.trainer_stdio_log),
+                local_path=mac_layout.remote_trainer_stdio_log,
             )
-
-            if success and output.strip():
-                log_subdir = output.strip()
-                # Check if it's a directory with pipeline.log
-                remote_log_path = f"{logs_base}/{log_subdir}/pipeline.log"
-                attempted.append(remote_log_path)
-
-                success, content, _ = self._ssh_client.exec_command(
-                    f"cat {remote_log_path} 2>/dev/null || echo 'LOG_NOT_FOUND'",
-                    silent=True,
-                    timeout=10,
-                )
-
-                if success and "LOG_NOT_FOUND" not in content:
-                    # Save to local logs directory
-                    from src.utils.logger import get_run_log_dir
-
-                    local_path = get_run_log_dir() / "training.log"
-                    local_path.write_text(content)
-                    logger.info(f"📥 Downloaded training log: {local_path} ({len(content):,} bytes)")
-                    return
-
-            # Fallback: try simple path
-            remote_log_path = f"{logs_base}/training.log"
-            attempted.append(remote_log_path)
-            log_manager = LogManager(self._ssh_client, remote_path=remote_log_path)
             if log_manager.download(silent=False):
                 return
 
-            # All fallbacks empty — surface this loudly so it doesn't
-            # masquerade as a clean shutdown. Previously every path
-            # logged at DEBUG and the operator only saw "Pod terminated".
-            paths_str = ", ".join(attempted)
+            # File missing or empty on remote. Surface explicitly so
+            # the operator sees what we looked for. Previously every
+            # path failed silently and the run-level log only showed
+            # "Pod terminated".
             logger.warning(
-                f"[DEPLOYER] No training log found on remote (reason='{reason}'); "
-                f"tried: {paths_str}. The trainer may have crashed before "
-                f"flushing /workspace/training.log, or the pod was evicted "
-                f"by the platform before download — check the postmortem "
-                f"section above and the RunPod console."
+                f"[DEPLOYER] No trainer stdio log found on remote "
+                f"(reason='{reason}'); tried: {pod_layout.trainer_stdio_log}. "
+                f"The trainer may have crashed before any output flushed, "
+                f"or the pod was evicted by the platform before download "
+                f"— check the postmortem section above and the RunPod console."
             )
 
         except Exception as e:
             logger.warning(
-                f"[DEPLOYER] Training log download failed (reason='{reason}'): "
-                f"{type(e).__name__}: {e}; tried: {', '.join(attempted) or '(none)'}"
+                f"[DEPLOYER] trainer.stdio.log download failed "
+                f"(reason='{reason}'): {type(e).__name__}: {e}; "
+                f"tried: {pod_layout.trainer_stdio_log}"
             )
 
-    def _download_runner_log(self, *, reason: str) -> None:
+    def _download_runner_log(self, *, reason: str, pod_layout: "PodLayout") -> None:
         """
-        Pull pod-side ``runner.log`` to the attempt's logs/ dir.
+        Pull per-run ``runner.log`` from ``<workspace>/logs/`` to the
+        Mac attempt's logs/ dir.
 
-        This file holds uvicorn stdout/stderr captured from PID 1 of
-        the runner Python process — including pre-import errors that
-        kill the runner before trainer.log even gets created. It is
-        the primary diagnostic for ``/healthz did not return 200``
-        timeouts.
+        Captures uvicorn stdout/stderr from the very first byte of
+        Python boot — including pre-import errors (ImportError,
+        SyntaxError) that kill the runner before trainer.stdio.log
+        even gets created. Primary diagnostic for ``/healthz did not
+        return 200`` timeouts.
 
         Failure modes are non-fatal: missing file (trainer-only legacy
         images without entrypoint redirect), unreachable SSH, or any
@@ -515,31 +499,28 @@ class GPUDeployer(PipelineStage):
 
         Args:
             reason: error context propagated to the log message.
+            pod_layout: per-run PodLayout owning the canonical paths
+                (``pod_layout.runner_log`` is the source).
         """
         if not self._ssh_client:
             return
 
         try:
-            # Prefer /workspace/runner.log (entrypoint.sh writes there
-            # by default). Note: entrypoint resolves the full path via
-            # RYOTENKAI_RUNNER_LOG env var, but we hardcode the
-            # canonical default here — overrides are debugging-only.
-            remote_path = "/workspace/runner.log"
-            layout = get_run_log_layout()
+            mac_layout = get_run_log_layout()
             log_manager = LogManager(
                 self._ssh_client,
-                remote_path=remote_path,
-                local_path=layout.remote_runner_log,
+                remote_path=str(pod_layout.runner_log),
+                local_path=mac_layout.remote_runner_log,
             )
             if log_manager.download(silent=False):
                 return
             logger.debug(
-                "[DEPLOYER] runner.log not present on pod (likely legacy image)"
+                "[DEPLOYER] runner.log not present on pod (path=%s)"
                 " — context: %s",
-                reason,
+                pod_layout.runner_log, reason,
             )
         except Exception as e:
-            # Not warning: runner.log is best-effort. The training.log
+            # Not warning: runner.log is best-effort. The trainer.stdio.log
             # channel below is what carries the primary error trace
             # when the trainer DID run. Logging at debug avoids noise.
             logger.debug(f"[DEPLOYER] Failed to download runner.log: {e}")
