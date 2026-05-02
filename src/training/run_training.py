@@ -572,56 +572,6 @@ def run_training(
 train_v2 = run_training
 
 
-_DEFAULT_TRAINING_LOG_PATH = "/workspace/training.log"
-
-
-def _install_training_file_handler() -> None:
-    """Attach a FileHandler so the trainer's logger output lands on disk.
-
-    Without this, every ``logger.info(...)`` from the training pipeline
-    only goes to stdout (captured by the runner's supervisor) — leaving
-    ``runs/<id>/attempts/<n>/logs/training.log`` empty after the pipeline
-    pulls it via SCP. Operators read that file from the web UI's LogDock
-    and from the REST endpoint at
-    ``GET /api/v1/runs/<id>/attempts/<n>/logs?file=training.log``.
-
-    Path comes from ``RYOTENKAI_TRAINING_LOG_PATH`` (set by the deployer
-    when known), falling back to ``/workspace/training.log`` — the same
-    default ``LogManager.DEFAULT_REMOTE_PATH`` looks for on the pod.
-    Best-effort: a failure here must NEVER block training startup.
-    """
-    import logging
-
-    log_path = os.environ.get(
-        "RYOTENKAI_TRAINING_LOG_PATH", _DEFAULT_TRAINING_LOG_PATH,
-    )
-    try:
-        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
-        handler.setLevel(logging.INFO)
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s  %(name)-30s %(levelname)-7s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
-        # Attach to the ``ryotenkai`` root so child loggers (training.*,
-        # workspace.*, runner.*) propagate into the same file.
-        root = logging.getLogger("ryotenkai")
-        # Idempotent: don't double-attach if launched twice in-process (tests).
-        for existing in root.handlers:
-            if isinstance(existing, logging.FileHandler) and \
-               getattr(existing, "baseFilename", "") == str(Path(log_path).resolve()):
-                return
-        root.addHandler(handler)
-        logger.debug(f"[RUN_TRAINING:OBSERVABILITY] training.log FileHandler attached → {log_path}")
-    except OSError as exc:
-        logger.warning(
-            f"[RUN_TRAINING:OBSERVABILITY] could not attach training.log FileHandler "
-            f"({log_path}): {exc} — operator will only see stdout-captured logs",
-        )
-    except Exception as exc:  # noqa: BLE001 — defensive
-        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] FileHandler install failed: {exc}")
-
-
 def _install_crash_observability() -> None:
     """
     Install faulthandler + atexit logging flush so silent deaths leave a trace.
@@ -629,8 +579,8 @@ def _install_crash_observability() -> None:
     Why this exists
     ---------------
     On remote training (RunPod), training crashes have repeatedly left zero
-    evidence in ``training.log``: no Python traceback, no error message, just
-    a truncated progress bar. Three failure modes bypass normal logging:
+    evidence: no Python traceback, no error message, just a truncated
+    progress bar. Three failure modes bypass normal logging:
 
     1. **Native crash** (SEGV/ABRT/BUS/FPE/ILL) from a C extension
        (bitsandbytes, flash-attn, torch, CUDA kernels). Python never gets a
@@ -642,22 +592,21 @@ def _install_crash_observability() -> None:
 
     What we install
     ---------------
-    - ``faulthandler.enable(file=..., all_threads=True)``: CPython's built-in
+    - ``faulthandler.enable(all_threads=True)``: CPython's built-in
       native-crash handler. On fatal signals it writes Python + C stack frames
       of *all* threads directly via ``write(2)`` — it survives a Python
       runtime crash because it doesn't go through the logging stack.
 
-      We try a persistent sibling file (``training.faulthandler.log`` next to
-      ``training.log``) so the monitor can fetch it post-mortem. Path is taken
-      from ``PYTHONFAULTHANDLER_PATH`` env var (set by the bash wrapper in
-      ``deployment_manager._start_training_cloud``). If opening the file
-      fails, we fall back to stderr — ``faulthandler`` remains active either
-      way.
+      No custom file: faulthandler's default destination is ``sys.stderr``.
+      The runner's :class:`Supervisor` captures every byte of trainer
+      stderr into ``trainer.stdio.log`` (see :mod:`src.runner.supervisor`),
+      so native crash traces land on disk through the same path as
+      regular Python tracebacks. One ground-truth artefact, one writer.
 
     - ``atexit`` flush of all logging handlers: on *any* normal exit path
       (including ``sys.exit``, ``return``, or a Python exception that reaches
-      ``main()``), ensure the tail of ``training.log`` is written to disk
-      before Python tears down. Prevents "last 5 log lines lost" on crash.
+      ``main()``), ensure pending log records are flushed to stderr before
+      Python tears down. Prevents "last 5 log lines lost" on crash.
 
     Best-effort: this function never raises. Observability must never
     prevent training from starting.
@@ -665,62 +614,16 @@ def _install_crash_observability() -> None:
     import atexit
     import faulthandler
 
-    fault_log_path = os.environ.get("PYTHONFAULTHANDLER_PATH", "training.faulthandler.log")
     try:
-        # Line-buffered so each write hits disk as it happens. Kept open for the
-        # lifetime of the process — faulthandler writes to this fd on SIGSEGV.
-        fault_log = Path(fault_log_path).open("w", buffering=1)  # noqa: SIM115
-        faulthandler.enable(file=fault_log, all_threads=True)
-        logger.debug(f"[RUN_TRAINING:OBSERVABILITY] faulthandler enabled → {fault_log_path}")
-    except OSError as exc:
-        # Fall back to stderr — still captures native crashes.
-        with contextlib.suppress(Exception):  # pragma: no cover — faulthandler is stdlib
-            faulthandler.enable(all_threads=True)
-        logger.warning(
-            f"[RUN_TRAINING:OBSERVABILITY] could not open {fault_log_path} "
-            f"({exc}); faulthandler redirected to stderr",
+        # Default ``file=sys.stderr`` — Supervisor pump captures it.
+        faulthandler.enable(all_threads=True)
+        logger.debug(
+            "[RUN_TRAINING:OBSERVABILITY] faulthandler enabled (writes to stderr)",
         )
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning(f"[RUN_TRAINING:OBSERVABILITY] faulthandler.enable failed: {exc}")
-
-    # Attach a FileHandler to the trainer's ``ryotenkai`` logger so
-    # ``logger.info(...)`` writes directly into a human-readable
-    # ``training.log`` file on disk. This is the post-mortem artefact
-    # the Mac-side ``log_manager`` scp's into ``runs/<id>/attempts/<n>/
-    # logs/training.log``. The file is the source of truth for
-    # debugging an ended run; the parallel runner event-bus stream
-    # (Supervisor PIPE → ``trainer_log`` events) is the realtime
-    # channel for live-monitoring and survives independently — see
-    # ``docs/architecture/log-collection.md``.
-    #
-    # Path comes from ``RYOTENKAI_TRAINING_LOG_PATH`` env var which
-    # the Mac launcher sets to ``LogManager.DEFAULT_REMOTE_PATH``
-    # (``/workspace/training.log``). When the var is absent (e.g.
-    # standalone / unit-test usage) we silently skip — trainer remains
-    # functional without the file artefact.
-    training_log_path = os.environ.get("RYOTENKAI_TRAINING_LOG_PATH")
-    if training_log_path:
-        try:
-            from src.utils.logger import setup_logger as _setup_logger
-
-            _setup_logger(
-                "ryotenkai",
-                level=logger.getEffectiveLevel(),
-                log_file=Path(training_log_path),
-                use_color=False,
-            )
-            logger.debug(
-                f"[RUN_TRAINING:OBSERVABILITY] training.log → {training_log_path}",
-            )
-        except OSError as exc:
-            logger.warning(
-                f"[RUN_TRAINING:OBSERVABILITY] could not open {training_log_path} "
-                f"({exc}); training.log will not be written",
-            )
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.warning(
-                f"[RUN_TRAINING:OBSERVABILITY] FileHandler attach failed: {exc}",
-            )
+        logger.warning(
+            f"[RUN_TRAINING:OBSERVABILITY] faulthandler.enable failed: {exc}",
+        )
 
     def _flush_logging_handlers() -> None:
         """Flush every handler attached to the training logger on exit."""
@@ -737,9 +640,6 @@ def _install_crash_observability() -> None:
 
 def main() -> int:
     """CLI entry point."""
-    # File-based logging FIRST so any subsequent log line (including from
-    # _install_crash_observability and heavy imports) lands in training.log.
-    _install_training_file_handler()
     # Crash observability MUST be installed before argparse / any heavy import
     # that may itself segfault (bitsandbytes, flash-attn). See
     # _install_crash_observability() docstring.

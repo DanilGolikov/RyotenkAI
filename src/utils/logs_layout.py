@@ -7,24 +7,29 @@ All pipeline textual logs live under ``<attempt_dir>/logs/``:
     ├── logs/
     │   ├── pipeline.log              # aggregated stream (all stages)
     │   ├── <stage_name>.log          # per-stage stream
-    │   ├── training.log              # remote trainer-subprocess log (pulled by LogManager)
+    │   ├── trainer.stdio.log         # remote trainer subprocess stdout/stderr (pulled by LogManager)
     │   └── runner.log                # remote uvicorn / runner stdout (pulled by LogManager)
     ├── evaluation/                   # stage artifacts (not logs)
     └── inference/                    # stage artifacts (not logs)
 
 Two remote logs, two channels:
 
-* ``training.log`` — trainer subprocess stdout. Written pod-side by
-  the Supervisor / EventJournal once the training subprocess starts.
-  Empty when the trainer never launched (e.g. uvicorn died at boot).
-* ``runner.log`` — uvicorn / FastAPI runner stdout, redirected by
-  ``docker/training/entrypoint.sh`` from the very first byte of
-  Python boot. Captures ImportError / SyntaxError that fire BEFORE
-  the trainer ever spawns. This is the file that surfaces "what
-  killed the runner before /healthz answered".
+* ``trainer.stdio.log`` — trainer subprocess stdout/stderr ground-truth,
+  written pod-side by the Supervisor's pump (NOT by the trainer itself,
+  so it survives import-time crashes). Includes Python tracebacks, native
+  faulthandler dumps (SEGV/ABRT), and HuggingFace progress chatter.
+* ``runner.log`` — uvicorn / FastAPI runner stdout, redirected by the
+  Mac-orchestrated ``runner_launcher.py`` from the very first byte of
+  Python boot. Captures ImportError / SyntaxError that fire BEFORE the
+  trainer ever spawns — this is the file that surfaces "what killed the
+  runner before /healthz answered".
 
-Consumers (orchestrator, logger, log_manager, log_service) MUST go through this
-class — no module is allowed to construct log paths from raw string literals.
+Pod↔Mac symmetry: the pod-side filenames (see :mod:`src.utils.pod_layout`)
+match the Mac-side filenames here exactly. LogManager scp does a 1:1 mapping.
+
+Consumers (orchestrator, logger, log_manager, log_service) MUST go through
+this class — no module is allowed to construct log paths from raw string
+literals.
 """
 
 from __future__ import annotations
@@ -34,12 +39,12 @@ from pathlib import Path
 
 LOGS_DIR_NAME = "logs"
 PIPELINE_LOG_NAME = "pipeline.log"
-REMOTE_TRAINING_LOG_NAME = "training.log"
+REMOTE_TRAINER_STDIO_LOG_NAME = "trainer.stdio.log"
 REMOTE_RUNNER_LOG_NAME = "runner.log"
 STAGE_LOG_SUFFIX = ".log"
 
 STAGE_LOG_PATHS_KEY = "stage"
-REMOTE_TRAINING_LOG_PATHS_KEY = "remote_training"
+REMOTE_TRAINER_STDIO_LOG_PATHS_KEY = "remote_trainer_stdio"
 REMOTE_RUNNER_LOG_PATHS_KEY = "remote_runner"
 
 _SLUG_FALLBACK = "stage"
@@ -81,8 +86,15 @@ class LogLayout:
         return self.logs_dir / f"{_slugify(stage_name)}{STAGE_LOG_SUFFIX}"
 
     @property
-    def remote_training_log(self) -> Path:
-        return self.logs_dir / REMOTE_TRAINING_LOG_NAME
+    def remote_trainer_stdio_log(self) -> Path:
+        """Pod-side trainer stdout/stderr ground-truth, mirrored on Mac.
+
+        Source: ``<workspace>/logs/trainer.stdio.log`` written by the
+        Supervisor's pump in the runner. Captures everything the trainer
+        subprocess emits — including import-time tracebacks and native
+        faulthandler dumps.
+        """
+        return self.logs_dir / REMOTE_TRAINER_STDIO_LOG_NAME
 
     @property
     def remote_runner_log(self) -> Path:
@@ -107,7 +119,7 @@ class LogLayout:
         except ValueError:
             return str(path)
 
-    def stage_log_registry(self, stage_name: str, *, include_remote_training: bool = False) -> dict[str, str]:
+    def stage_log_registry(self, stage_name: str, *, include_remote_trainer_stdio: bool = False) -> dict[str, str]:
         """
         Registry of log paths owned by a stage, for persistence in StageRunState.log_paths.
 
@@ -116,8 +128,8 @@ class LogLayout:
         registry: dict[str, str] = {
             STAGE_LOG_PATHS_KEY: self.relative(self.stage_log(stage_name)),
         }
-        if include_remote_training:
-            registry[REMOTE_TRAINING_LOG_PATHS_KEY] = self.relative(self.remote_training_log)
+        if include_remote_trainer_stdio:
+            registry[REMOTE_TRAINER_STDIO_LOG_PATHS_KEY] = self.relative(self.remote_trainer_stdio_log)
         return registry
 
 
@@ -126,8 +138,8 @@ __all__ = [
     "PIPELINE_LOG_NAME",
     "REMOTE_RUNNER_LOG_NAME",
     "REMOTE_RUNNER_LOG_PATHS_KEY",
-    "REMOTE_TRAINING_LOG_NAME",
-    "REMOTE_TRAINING_LOG_PATHS_KEY",
+    "REMOTE_TRAINER_STDIO_LOG_NAME",
+    "REMOTE_TRAINER_STDIO_LOG_PATHS_KEY",
     "STAGE_LOG_PATHS_KEY",
     "STAGE_LOG_SUFFIX",
     "LogLayout",

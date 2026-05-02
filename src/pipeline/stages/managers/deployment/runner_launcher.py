@@ -16,18 +16,25 @@ trainer subprocess — via SSH exec — for three reasons:
   pod removes that ambiguity for any provider.
 
 The launched uvicorn writes its stdout/stderr to
-``/workspace/runner.log`` from the very first byte (including
-ImportError / SyntaxError that fire before Python's logging is
-initialized). That file is rsync'd to the Mac via the existing
-``LogManager`` chain — see ``docs/architecture/log-collection.md``.
+``<pod_layout.runner_log>`` (per-run, e.g.
+``/workspace/runs/<run_id>/logs/runner.log``) from the very first
+byte (including ImportError / SyntaxError that fire before Python's
+logging is initialized). That file is rsync'd to the Mac via the
+existing ``LogManager`` chain — see ``docs/architecture/log-collection.md``.
 
 PYTHONPATH points at the run-scoped workspace (the rsync target,
-typically ``/workspace/runs/<run_id>``) — that is now the SOLE
-source of ``src/runner``. The thin-image migration removed the
-baked-in ``/opt/ryotenkai/src`` baseline; if the rsync didn't run,
-uvicorn fails with ``ModuleNotFoundError: No module named
-'src.runner'`` and the diagnostic dump surfaces it. See
-``docs/architecture/thin-image.md``.
+``pod_layout.root``) — that is now the SOLE source of ``src/runner``.
+The thin-image migration removed the baked-in ``/opt/ryotenkai/src``
+baseline; if the rsync didn't run, uvicorn fails with
+``ModuleNotFoundError: No module named 'src.runner'`` and the
+diagnostic dump surfaces it. See ``docs/architecture/thin-image.md``.
+
+Per-run isolation is owned by :class:`PodLayout` — sequential runs
+on the same pod each get their own ``logs/runner.log`` so previous
+runs' diagnostics survive even after a re-launch. This is the
+resume-collision fix: pre-PodLayout the path was the global
+``/workspace/runner.log`` and a new run silently overwrote the
+previous one.
 """
 
 from __future__ import annotations
@@ -41,6 +48,7 @@ from src.utils.result import Err, Ok, ProviderError, Result
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from src.utils.pod_layout import PodLayout
     from src.utils.ssh_client import SSHClient
 
 
@@ -52,21 +60,19 @@ if TYPE_CHECKING:
 RUNNER_READY_TIMEOUT_SECONDS: int = 30
 RUNNER_HOST: str = "127.0.0.1"
 RUNNER_PORT: int = 8080
-RUNNER_LOG_PATH: str = "/workspace/runner.log"
 
 def _build_launch_command(
     *,
-    workspace_path: str,
+    pod_layout: "PodLayout",
     env: Mapping[str, str] | None = None,
 ) -> str:
     """Return the shell command that ssh-execs uvicorn in the pod.
 
     Four concerns the script handles:
 
-    1. **Idempotency.** ``pgrep -f 'uvicorn src.runner'`` short-circuits
-       if uvicorn is already running on the pod (e.g. a retry of
-       this stage after a transient SSH glitch). Re-execing would
-       race for port 8080.
+    1. **Idempotency.** A curl probe of /healthz short-circuits if
+       uvicorn is already running on the pod. Re-execing would race
+       for port 8080.
     2. **Runtime env vars.** The runner needs at least
        ``RYOTENKAI_RUNTIME_PROVIDER`` at startup (the lifespan
        hook ``resolve_lifecycle_client_from_env`` rejects an unset
@@ -76,7 +82,9 @@ def _build_launch_command(
        API keys, pod_id when known) and we forward it through
        ``env KEY=VALUE ...`` between ``nohup`` and ``stdbuf``.
        Values are shell-escaped to survive secrets containing
-       quotes / spaces / ``$``.
+       quotes / spaces / ``$``. ``RYOTENKAI_WORKSPACE`` is added
+       implicitly so the runner's ``_resolve_workspace`` finds the
+       per-run root regardless of cwd.
     3. **Detachment.** ``nohup ... < /dev/null & disown`` so the
        process survives the SSH session closing and won't get a
        SIGHUP.
@@ -92,48 +100,58 @@ def _build_launch_command(
     deployed runner-launch.sh on the pod to drift out of sync with
     the Mac's expectations. The image carries Python + uvicorn; the
     application code (``src.runner`` and its deps) arrives via
-    ``CodeSyncer.rsync`` into ``workspace_path``.
+    ``CodeSyncer.rsync`` into ``pod_layout.src_dir``.
 
     Args:
-        workspace_path: absolute pod-side directory where
-            ``CodeSyncer`` rsync'd ``src/...`` for this run (e.g.
-            ``/workspace/runs/<run_id>``). Used as the PYTHONPATH
-            entry that resolves ``src.runner.main:app`` and every
-            transitive ``from src.* import ...`` the runner does at
-            import time. Must be non-empty — passing ``""`` would
-            collapse PYTHONPATH to a leading ``:`` (CWD entry) which
-            silently masks missing modules in unrelated ways.
+        pod_layout: per-run filesystem layout for the pod. Provides:
+            - ``pod_layout.root`` — PYTHONPATH (where ``src/...`` was
+              rsync'd by ``CodeSyncer`` for this run);
+            - ``pod_layout.runner_log`` — per-run runner.log path
+              under ``logs/``;
+            - ``pod_layout.logs_dir`` — directory the bash script
+              creates eagerly so the redirect succeeds even on a
+              freshly-mounted pod with nothing else under workspace.
         env: provider-supplied env vars to inject into the runner
-            process. ``None`` is equivalent to ``{}``: only PYTHONPATH
-            is set, and the runner will fail at startup if it requires
-            anything else (e.g. RYOTENKAI_RUNTIME_PROVIDER on a real
-            provider).
+            process. ``None`` is equivalent to ``{}``: only
+            ``RYOTENKAI_WORKSPACE`` + PYTHONPATH are set, and the
+            runner will fail at startup if it requires anything
+            else (e.g. RYOTENKAI_RUNTIME_PROVIDER on a real provider).
     """
-    if not workspace_path or not workspace_path.strip():
-        msg = "workspace_path must be a non-empty absolute pod path"
-        raise ValueError(msg)
+    workspace = str(pod_layout.root)
+    runner_log = str(pod_layout.runner_log)
+    logs_dir = str(pod_layout.logs_dir)
 
-    env_assignments = ""
+    # Always inject RYOTENKAI_WORKSPACE so the runner's lifespan
+    # finds its per-run root regardless of cwd. Caller-supplied env
+    # values take precedence (intentional: a test harness might
+    # override).
+    merged_env: dict[str, str] = {"RYOTENKAI_WORKSPACE": workspace}
     if env:
-        # ``shlex.quote`` makes the value safe for any POSIX shell —
-        # tokens with quotes, spaces, ``$`` or backticks can't break
-        # out of the env arg.
-        parts = [f"{key}={shlex.quote(str(value))}" for key, value in env.items()]
-        env_assignments = " ".join(parts) + " "
+        merged_env.update(env)
+
+    # ``shlex.quote`` makes each value safe for any POSIX shell —
+    # tokens with quotes, spaces, ``$`` or backticks can't break
+    # out of the env arg.
+    env_parts = [f"{key}={shlex.quote(str(value))}" for key, value in merged_env.items()]
+    env_assignments = " ".join(env_parts) + " "
+
+    quoted_workspace = shlex.quote(workspace)
+    quoted_runner_log = shlex.quote(runner_log)
+    quoted_logs_dir = shlex.quote(logs_dir)
 
     return (
         "set -e; "
-        # Make sure the workspace directory exists before redirect.
-        # Without this, if /workspace happens to be unmounted the
-        # ``> runner.log`` redirect fails silently in the async &
-        # branch and we get "file not found" diagnostics with no
-        # trace of WHY the redirect didn't take.
-        "mkdir -p /workspace; "
-        # Probe writability EAGERLY so a read-only /workspace fails
+        # Create the per-run logs directory eagerly. Without this, if
+        # the parent directory tree is missing the ``> runner.log``
+        # redirect fails silently in the async & branch and we get
+        # "file not found" diagnostics with no trace of WHY the
+        # redirect didn't take.
+        f"mkdir -p {quoted_logs_dir}; "
+        # Probe writability EAGERLY so a read-only filesystem fails
         # here with a clear ``cannot create`` error instead of in the
         # async ``> runner.log`` redirect (where the failure would
         # be silenced and surface as "file not found" 30 s later).
-        f"touch {RUNNER_LOG_PATH}; "
+        f"touch {quoted_runner_log}; "
         # Idempotency: skip launching if a runner is ALREADY answering
         # /healthz on the loopback port.
         #
@@ -157,12 +175,12 @@ def _build_launch_command(
         # accumulate in the file with their own timestamps for
         # forensics.
         "  nohup env "
-        f"PYTHONPATH={shlex.quote(workspace_path)}:${{PYTHONPATH:-}} "
+        f"PYTHONPATH={quoted_workspace}:${{PYTHONPATH:-}} "
         f"    {env_assignments}"
         "    stdbuf -oL -eL "
         "    /usr/local/bin/python3 -m uvicorn src.runner.main:app "
         f"      --host {RUNNER_HOST} --port {RUNNER_PORT} --no-access-log "
-        f"    >> {RUNNER_LOG_PATH} 2>&1 < /dev/null & "
+        f"    >> {quoted_runner_log} 2>&1 < /dev/null & "
         "  disown; "
         "fi; "
         # Readiness probe — poll /healthz until uvicorn is bound.
@@ -181,10 +199,10 @@ def _build_launch_command(
         # write. Echoing ``ls -la`` of the file makes the existence
         # / size visible regardless of content.
         f"echo 'runner did not become ready within {RUNNER_READY_TIMEOUT_SECONDS}s' >&2; "
-        f"echo '--- ls -la {RUNNER_LOG_PATH} ---' >&2; "
-        f"ls -la {RUNNER_LOG_PATH} >&2 || echo '(file does not exist)' >&2; "
-        f"echo '--- tail of {RUNNER_LOG_PATH} ---' >&2; "
-        f"tail -100 {RUNNER_LOG_PATH} >&2 || true; "
+        f"echo '--- ls -la {runner_log} ---' >&2; "
+        f"ls -la {quoted_runner_log} >&2 || echo '(file does not exist)' >&2; "
+        f"echo '--- tail of {runner_log} ---' >&2; "
+        f"tail -100 {quoted_runner_log} >&2 || true; "
         "echo '--- end of diagnostic dump ---' >&2; "
         "exit 1"
     )
@@ -193,7 +211,7 @@ def _build_launch_command(
 def launch_runner(
     ssh_client: SSHClient,
     *,
-    workspace_path: str,
+    pod_layout: "PodLayout",
     env: Mapping[str, str] | None = None,
 ) -> Result[None, ProviderError]:
     """Start the uvicorn runner inside the pod and wait for /healthz.
@@ -204,30 +222,31 @@ def launch_runner(
 
     On failure, the runner is either not running or not responding
     on /healthz; the returned ``ProviderError`` carries the tail of
-    ``runner.log`` (or whatever stderr the SSH command produced) so
-    callers can surface a useful error message without a separate
-    log fetch.
+    ``pod_layout.runner_log`` (or whatever stderr the SSH command
+    produced) so callers can surface a useful error message without
+    a separate log fetch.
 
     Args:
         ssh_client: alive SSH connection to the pod.
-        workspace_path: absolute pod-side directory the caller's
-            ``CodeSyncer`` already rsync'd ``src/...`` into for this
-            run (typically ``/workspace/runs/<run_id>``). Used as the
-            PYTHONPATH entry the runner resolves ``src.runner`` from.
-            Must be non-empty.
+        pod_layout: per-run filesystem layout for the pod. Built by
+            the caller via :meth:`IGPUProvider.pod_layout_for_run`
+            so the layout root matches the per-run workspace where
+            ``CodeSyncer`` rsync'd ``src/...`` for this run.
         env: provider-supplied env vars to inject into the runner
             process. Should at minimum include
             ``RYOTENKAI_RUNTIME_PROVIDER``; missing it makes the
             runner's lifespan hook raise ``BootstrapConfigError`` and
             uvicorn dies before binding the port. Typically obtained
             from ``provider.required_runtime_env_vars(resource_id)``.
+            ``RYOTENKAI_WORKSPACE`` is automatically injected by the
+            launcher (caller does not need to pre-populate it).
 
     Returns:
         ``Ok(None)`` if uvicorn is running and /healthz returns 200
         within :data:`RUNNER_READY_TIMEOUT_SECONDS`. ``Err`` with code
         ``RUNNER_LAUNCH_FAILED`` otherwise.
     """
-    cmd = _build_launch_command(workspace_path=workspace_path, env=env)
+    cmd = _build_launch_command(pod_layout=pod_layout, env=env)
     # Allow the SSH command a bit longer than the readiness loop so
     # tail-of-log can run even if uvicorn never started.
     timeout_s = RUNNER_READY_TIMEOUT_SECONDS + 15
@@ -253,7 +272,7 @@ def launch_runner(
             message=(
                 f"runner did not become ready within "
                 f"{RUNNER_READY_TIMEOUT_SECONDS}s — see runner.log on pod "
-                f"({RUNNER_LOG_PATH})"
+                f"({pod_layout.runner_log})"
             ),
             code="RUNNER_LAUNCH_FAILED",
             details={"stderr_tail": detail[:4000]},
@@ -263,7 +282,6 @@ def launch_runner(
 
 __all__ = [
     "RUNNER_HOST",
-    "RUNNER_LOG_PATH",
     "RUNNER_PORT",
     "RUNNER_READY_TIMEOUT_SECONDS",
     "launch_runner",

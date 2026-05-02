@@ -26,6 +26,7 @@ The app binds ``127.0.0.1:8080`` per :file:`docker/training/entrypoint.sh`
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,7 +44,6 @@ from src.runner.event_bus import EventBus
 from src.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,
     DEFAULT_MAX_FILES,
-    EVENTS_DIR_REL,
     EventJournal,
 )
 from src.runner.health_reporter import (
@@ -65,6 +65,7 @@ from src.runner.runtime.provider_registry import (
 )
 from src.runner.state import JobLifecycleFSM
 from src.runner.supervisor import Supervisor, TerminalHook
+from src.utils.pod_layout import PodLayout
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -79,6 +80,10 @@ class _SupervisorFactory(Protocol):
     ``terminal_hook`` is optional: production passes the RunPod
     auto-stop callback; tests omit it (the :class:`MockSupervisor`
     fixture takes a 2-arg call shape).
+
+    ``stdio_log_path`` is optional too: production passes
+    ``pod_layout.trainer_stdio_log`` so trainer stdout/stderr lands
+    on the per-run pod-side ground-truth file.
     """
 
     def __call__(
@@ -87,18 +92,26 @@ class _SupervisorFactory(Protocol):
         bus: EventBus,
         *,
         terminal_hook: TerminalHook | None = ...,
+        stdio_log_path: Path | None = ...,
     ) -> Supervisor: ...
 
 
 def _resolve_workspace() -> Path:
-    """Workspace directory the FSM persists state under.
+    """Per-run workspace directory.
 
-    Defaults to ``/workspace`` inside the docker container — the
-    canonical persistent volume mount on RunPod. Override via
-    ``RYOTENKAI_WORKSPACE`` for tests / dev runs outside docker.
+    The runner is launched with ``cwd=<workspace>`` by Mac-side
+    ``runner_launcher.launch_runner`` where workspace =
+    ``<provider-base>/runs/<run_id>``. Inside the runner we read the
+    workspace via env var ``RYOTENKAI_WORKSPACE`` (set by the launcher);
+    fallback to ``os.getcwd()`` for safety. The legacy default
+    ``/workspace`` (pre-PodLayout / global) is no longer used —
+    sequential runs on the same pod each get their own per-run
+    directory under ``/workspace/runs/<run_id>``.
     """
-    raw = os.environ.get("RYOTENKAI_WORKSPACE", "/workspace")
-    return Path(raw)
+    raw = os.environ.get("RYOTENKAI_WORKSPACE")
+    if raw:
+        return Path(raw)
+    return Path(os.getcwd())
 
 
 def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-untyped-def]
@@ -137,16 +150,42 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
            ``trainer_exited`` event reaches subscribers.
         """
         workspace = _resolve_workspace()
-        fsm = JobLifecycleFSM(workspace_dir=workspace)
+
+        # PodLayout — single source of truth for every pod-side path
+        # the runner owns (logs/, events/, state/, output/, ...).
+        # Provider-agnostic: workspace is the per-run root supplied
+        # by the Mac-side ``runner_launcher`` cwd. PurePosixPath
+        # because pod is always Linux.
+        from pathlib import PurePosixPath
+        pod_layout = PodLayout.from_root(PurePosixPath(str(workspace)))
+
+        # Idempotent directory bootstrap. Creates every subdirectory
+        # in the layout (logs/, events/, state/, ...). Best-effort —
+        # failures fall through; downstream components (FSM, journal,
+        # supervisor) will surface their own errors if directories
+        # are still missing after this.
+        import subprocess
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["sh", "-c", pod_layout.ensure_dirs_command()],
+                check=False,
+                timeout=10,
+            )
+
+        fsm = JobLifecycleFSM(
+            workspace_dir=workspace,
+            state_dir_override=Path(str(pod_layout.state_dir)),
+        )
         fsm.restore_or_init()
 
         # Phase 12.B — durable event journal under
-        # ``<workspace>/.runner/events/``. The bus reconciles its
-        # starting offset from the journal's newest persisted record
-        # so a runner restart resumes the offset sequence without
-        # collisions. If construction fails (read-only fs etc.), we
-        # log + fall back to the journal-less behaviour so the runner
-        # boots.
+        # ``<workspace>/events/``. Layout owned by PodLayout so the
+        # path stays in sync with the rest of the per-run tree. The
+        # bus reconciles its starting offset from the journal's newest
+        # persisted record so a runner restart resumes the offset
+        # sequence without collisions. If construction fails (read-only
+        # fs etc.), we log + fall back to the journal-less behaviour
+        # so the runner boots.
         #
         # Phase 14.E (V1) — deferred binding via
         # :meth:`EventBus.attach_journal_rotation_listener`. Replaces
@@ -158,7 +197,7 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         # (rotations are append-driven; bus init does no appends).
         journal: EventJournal | None
         try:
-            journal = EventJournal(root_dir=workspace / EVENTS_DIR_REL)
+            journal = EventJournal(root_dir=Path(str(pod_layout.events_dir)))
         except Exception as exc:  # noqa: BLE001 — defensive
             import logging
             logging.getLogger(__name__).warning(
@@ -201,7 +240,12 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
                 bus_publish=bus.publish,
             )
 
-        supervisor = supervisor_factory(fsm, bus, terminal_hook=_terminal_hook)
+        supervisor = supervisor_factory(
+            fsm,
+            bus,
+            terminal_hook=_terminal_hook,
+            stdio_log_path=Path(str(pod_layout.trainer_stdio_log)),
+        )
 
         # Optional MLflow relay (Phase 4.3). Activated only when the
         # operator opts in via ``RYOTENKAI_RUNNER_MLFLOW_RELAY=1`` AND

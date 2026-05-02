@@ -1,9 +1,10 @@
 """Phase 12.B — :func:`_lifespan` journal wiring contract.
 
 Pin that the FastAPI lifespan constructs a journal under
-``<workspace>/.runner/events/``, attaches it to the bus, and stashes
-it on ``app.state.journal``. Failure to construct the journal must
-fall back to journal-less behaviour without crashing the runner boot.
+``<workspace>/events/`` (per :class:`PodLayout`), attaches it to the
+bus, and stashes it on ``app.state.journal``. Failure to construct
+the journal must fall back to journal-less behaviour without
+crashing the runner boot.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ class TestPositive:
     ) -> None:
         runner_client.get("/healthz")
         app = runner_client.app
-        assert app.state.journal.root_dir == tmp_path / ".runner" / "events"
+        assert app.state.journal.root_dir == tmp_path / "events"
 
 
 # ---------------------------------------------------------------------------

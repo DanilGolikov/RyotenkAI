@@ -62,7 +62,7 @@ def new_layout_run(tmp_path: Path) -> Path:
     (attempt_dir / "logs" / "pipeline.log").write_text("agg\n", encoding="utf-8")
     (attempt_dir / "logs" / "dataset_validator.log").write_text("dv\n", encoding="utf-8")
     (attempt_dir / "logs" / "training_monitor.log").write_text("tm\n", encoding="utf-8")
-    (attempt_dir / "logs" / "training.log").write_text("remote-tm\n", encoding="utf-8")
+    (attempt_dir / "logs" / "trainer.stdio.log").write_text("remote-tm\n", encoding="utf-8")
 
     attempt = _make_attempt({
         "dataset_validator": StageRunState(
@@ -75,7 +75,7 @@ def new_layout_run(tmp_path: Path) -> Path:
             status=StageRunState.STATUS_COMPLETED,
             log_paths={
                 "stage": "logs/training_monitor.log",
-                "remote_training": "logs/training.log",
+                "remote_trainer_stdio": "logs/trainer.stdio.log",
             },
         ),
     })
@@ -90,7 +90,7 @@ def legacy_run(tmp_path: Path) -> Path:
     attempt_dir = run_dir / "attempts" / "attempt_1"
     attempt_dir.mkdir(parents=True)
     (attempt_dir / "pipeline.log").write_text("legacy-pipeline\n", encoding="utf-8")
-    (attempt_dir / "training.log").write_text("legacy-training\n", encoding="utf-8")
+    (attempt_dir / "trainer.stdio.log").write_text("legacy-training\n", encoding="utf-8")
     # State exists but attempts[0].stage_runs have no log_paths entries.
     attempt = _make_attempt({})
     _write_state(run_dir, attempt)
@@ -109,7 +109,7 @@ def test_list_log_files_new_layout_exposes_pipeline_and_per_stage(new_layout_run
     assert names["dataset_validator.log"].exists is True
     assert names["training_monitor.log"].exists is True
     # Remote training log surfaces under its historical file name.
-    assert names["training.log"].exists is True
+    assert names["trainer.stdio.log"].exists is True
     # Run-root file still advertised even when absent.
     assert "tui_launch.log" in names
 
@@ -124,8 +124,8 @@ def test_read_chunk_reads_per_stage_content(new_layout_run: Path) -> None:
     assert "tm" in chunk.content
 
 
-def test_remote_training_surfaced_under_historical_name(new_layout_run: Path) -> None:
-    chunk = read_chunk(new_layout_run, 1, "training.log")
+def test_remote_trainer_stdio_surfaced_under_canonical_name(new_layout_run: Path) -> None:
+    chunk = read_chunk(new_layout_run, 1, "trainer.stdio.log")
     assert "remote-tm" in chunk.content
 
 
@@ -138,7 +138,7 @@ def test_legacy_layout_falls_back_to_attempt_root(legacy_run: Path) -> None:
     names = {info.name: info for info in infos}
 
     assert names["pipeline.log"].exists is True
-    assert names["training.log"].exists is True
+    assert names["trainer.stdio.log"].exists is True
 
 
 def test_legacy_resolve_returns_attempt_root_path(legacy_run: Path) -> None:
@@ -147,7 +147,7 @@ def test_legacy_resolve_returns_attempt_root_path(legacy_run: Path) -> None:
 
 
 def test_legacy_read_chunk_returns_content(legacy_run: Path) -> None:
-    chunk = read_chunk(legacy_run, 1, "training.log")
+    chunk = read_chunk(legacy_run, 1, "trainer.stdio.log")
     assert "legacy-training" in chunk.content
 
 
@@ -326,7 +326,7 @@ def test_resolve_by_slug_filename_when_state_key_has_spaces(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# Delta-fetch contract — clients tail training.log by polling with
+# Delta-fetch contract — clients tail trainer.stdio.log by polling with
 # offset=last next_offset. This is the primary "give me logs as they
 # stream in" use case backed by the read_chunk endpoint.
 # ---------------------------------------------------------------------------
@@ -339,19 +339,19 @@ def test_training_log_delta_polling_returns_only_new_bytes(
     new_layout_run: Path,
 ) -> None:
     # First poll: full file from offset 0.
-    first = read_chunk(new_layout_run, 1, "training.log", offset=0)
+    first = read_chunk(new_layout_run, 1, "trainer.stdio.log", offset=0)
     assert first.content == "remote-tm\n"
     assert first.eof is True
     initial_offset = first.next_offset
 
     # Append more lines (simulates log_manager.download writing a delta).
-    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "trainer.stdio.log"
     with log_path.open("a", encoding="utf-8") as fh:
         fh.write("step=10 loss=2.34\n")
         fh.write("step=20 loss=1.95\n")
 
     # Second poll using the previous next_offset → only the new bytes.
-    second = read_chunk(new_layout_run, 1, "training.log", offset=initial_offset)
+    second = read_chunk(new_layout_run, 1, "trainer.stdio.log", offset=initial_offset)
     assert "step=10 loss=2.34" in second.content
     assert "step=20 loss=1.95" in second.content
     assert "remote-tm" not in second.content  # no duplicates
@@ -362,10 +362,10 @@ def test_training_log_delta_polling_returns_only_new_bytes(
 def test_training_log_offset_past_eof_returns_empty_eof(
     new_layout_run: Path,
 ) -> None:
-    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "trainer.stdio.log"
     size = log_path.stat().st_size
 
-    chunk = read_chunk(new_layout_run, 1, "training.log", offset=size)
+    chunk = read_chunk(new_layout_run, 1, "trainer.stdio.log", offset=size)
     assert chunk.content == ""
     assert chunk.eof is True
 
@@ -376,9 +376,9 @@ def test_training_log_offset_beyond_size_resets_to_zero(
     """File-rotation simulation: caller passes a stale offset that is
     bigger than the current file size → resolver resets to 0 so the
     client re-syncs from the start instead of getting stuck."""
-    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "training.log"
+    log_path = new_layout_run / "attempts" / "attempt_1" / "logs" / "trainer.stdio.log"
     real_size = log_path.stat().st_size
 
-    chunk = read_chunk(new_layout_run, 1, "training.log", offset=real_size + 9999)
+    chunk = read_chunk(new_layout_run, 1, "trainer.stdio.log", offset=real_size + 9999)
     assert chunk.offset == 0
     assert chunk.content == "remote-tm\n"

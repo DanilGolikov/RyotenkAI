@@ -68,10 +68,12 @@ class MockSupervisor:
         bus: EventBus,
         *,
         terminal_hook: TerminalHook | None = None,
+        stdio_log_path: Path | None = None,
     ) -> None:
         self._fsm = fsm
         self._bus = bus
         self._terminal_hook = terminal_hook
+        self._stdio_log_path = stdio_log_path
         self._running = False
         self.last_command: list[str] | None = None
         self.last_env: dict[str, str] | None = None

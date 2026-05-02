@@ -84,7 +84,7 @@ class LogManager:
                 ``/workspace/training.log``. Pass
                 ``/workspace/runner.log`` for the runner log.
             local_path: Local destination Path. Keyword-only.
-                Defaults to ``LogLayout.remote_training_log``
+                Defaults to ``LogLayout.remote_trainer_stdio_log``
                 (preserves existing behavior). Pass
                 ``LogLayout.remote_runner_log`` for the runner log.
         """
@@ -92,7 +92,7 @@ class LogManager:
         self._remote_path = remote_path or self.DEFAULT_REMOTE_PATH
         layout = get_run_log_layout()
         layout.ensure_logs_dir()
-        self._local_path = local_path if local_path is not None else layout.remote_training_log
+        self._local_path = local_path if local_path is not None else layout.remote_trainer_stdio_log
         # Track last downloaded size in BYTES (not characters).
         # Used to incrementally append only new bytes on subsequent downloads.
         self._last_size = self._get_local_size_bytes()

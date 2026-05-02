@@ -27,7 +27,7 @@ def test_from_dict_restores_log_paths() -> None:
 def test_roundtrip_preserves_log_paths() -> None:
     original = StageRunState(
         stage_name="training_monitor",
-        log_paths={"stage": "logs/training_monitor.log", "remote_training": "logs/training.log"},
+        log_paths={"stage": "logs/training_monitor.log", "remote_trainer_stdio": "logs/trainer.stdio.log"},
     )
     restored = StageRunState.from_dict(original.to_dict())
     assert restored.log_paths == original.log_paths
@@ -105,7 +105,7 @@ def test_from_dict_stringifies_keys() -> None:
     [
         {},
         {"stage": "logs/s1.log"},
-        {"stage": "logs/s1.log", "remote_training": "logs/training.log"},
+        {"stage": "logs/s1.log", "remote_trainer_stdio": "logs/trainer.stdio.log"},
     ],
 )
 def test_status_log_paths_roundtrip(status: str, log_paths: dict[str, str]) -> None:

@@ -63,6 +63,7 @@ TRAINING_MONITOR_LINE_WIDTH = CONSOLE_LINE_WIDTH
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from src.api.clients.job_client import JobClient
     from src.api.services.tunnel_service import SSHTunnelManager
@@ -695,57 +696,78 @@ class TrainingMonitor(PipelineStage):
     # --- post-mortem diagnostics ---------------------------------------
 
     def _collect_death_diagnostics(self) -> None:
-        """Pull a fixed set of probes from the pod when the trainer
-        dies non-zero. Each probe's output is logged at INFO under
-        ``[MONITOR:POSTMORTEM] <label>:`` so the run-level
-        ``training_monitor.log`` carries a self-contained autopsy
-        without the operator needing to ssh in.
+        """Render a self-contained autopsy when the trainer dies
+        non-zero. Three sources, in priority order:
 
-        The probes are deliberately conservative:
-        - workspace markers and the trainer's own faulthandler dump
-          for the application-level cause,
-        - last 30 lines of the trainer log (filtered to drop the
-          progress-bar spam) for a recent context window,
-        - kernel ``dmesg`` slices for OOM / NVRM / Xid hardware
-          signals,
-        - ``nvidia-smi`` snapshot for current GPU state.
+        1. **Local ``trainer.stdio.log``** — pulled by LogManager
+           periodically + on cleanup. Contains the full
+           stdout/stderr of the trainer subprocess including Python
+           tracebacks AND native faulthandler dumps (SEGV/ABRT/CUDA).
+           This is the ground-truth for application-level death.
+        2. **Local ``runner.log``** — pulled the same way. Captures
+           uvicorn boot output: surfaces ImportError / SyntaxError
+           that fired BEFORE the trainer ever spawned (when
+           trainer.stdio.log is empty by definition).
+        3. **Live SSH probes** — kernel signals (OOM, NVRM/Xid)
+           and current GPU state. These cannot come from local files
+           because they are environment-level, not subprocess output.
 
-        Skipped silently if no SSH client is wired (single_node /
-        mock); per-probe failures are also swallowed so one broken
-        command doesn't suppress the rest.
+        Each source gets ``<<MISSING>>`` / ``<<EMPTY>>`` tokens when
+        appropriate so an operator can distinguish "file does not
+        exist" from "file exists but empty" from "file has data" —
+        no more "0/6 probes empty" black-box.
+
+        Skipped silently if no SSH client AND no log layout are wired
+        (test / mock paths); per-probe failures are also swallowed so
+        one broken command doesn't suppress the rest.
         """
+        from src.utils.logger import get_run_log_layout
+
+        logger.info(
+            "[MONITOR:POSTMORTEM] non-zero exit detected — collecting diagnostics",
+        )
+
+        # --- Source 1+2: local files pulled by LogManager ---
+        try:
+            log_layout = get_run_log_layout()
+        except Exception:  # noqa: BLE001 — defensive (test paths)
+            log_layout = None
+
+        if log_layout is not None:
+            self._dump_local_log_tail(
+                label="trainer",
+                path=log_layout.remote_trainer_stdio_log,
+                tail_lines=30,
+            )
+            self._dump_local_log_tail(
+                label="runner",
+                path=log_layout.remote_runner_log,
+                tail_lines=30,
+            )
+
+        # --- Source 3: live SSH probes (kernel + GPU) ---
         if self._ssh_client is None:
+            logger.info(
+                "[MONITOR:POSTMORTEM] (no SSH client wired — kernel/GPU probes skipped)",
+            )
             return
-        workspace = "/workspace"
-        # Probe order = decisiveness. Application-level cause first
-        # (faulthandler, trainer log tail), then kernel-level signals
-        # (dmesg slices), then GPU state. The legacy ``TRAINING_*``
-        # marker files (``TRAINING_EXIT_CODE``, ``TRAINING_COMPLETE``,
-        # …) are no longer written by any current code path
-        # (Phase 6.3b dropped marker IPC entirely — see
-        # ``docs/plans/harmonic-rolling-crayon.md``), so we don't
-        # probe for them.
+
+        # Kernel signals + GPU state. These cannot come from local
+        # log files — they are environment-level.
         probes: list[tuple[str, str, int]] = [
-            ("faulthandler", f"tail -n 200 {workspace}/training.faulthandler.log 2>/dev/null", 5),
             (
-                "training_log_tail",
-                f"tail -n 500 {workspace}/training.log 2>/dev/null"
-                " | grep -v -E '^\\s*$|^\\s*[0-9]+%\\|' | tail -n 30",
+                "dmesg_kernel_signals",
+                "dmesg 2>/dev/null | grep -iE 'oom|kill|memory|nvrm|xid|nvidia' | tail -n 30",
                 10,
             ),
-            ("dmesg_tail", "dmesg 2>/dev/null | tail -n 80", 10),
-            ("dmesg_oom", "dmesg 2>/dev/null | grep -iE 'oom|kill|memory' | tail -n 30", 10),
-            ("dmesg_nvidia", "dmesg 2>/dev/null | grep -iE 'nvrm|xid|nvidia' | tail -n 30", 10),
+            ("dmesg_tail", "dmesg 2>/dev/null | tail -n 30", 10),
             (
                 "nvidia_smi",
-                "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total" " --format=csv,noheader",
+                "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total"
+                " --format=csv,noheader",
                 10,
             ),
         ]
-        logger.info(
-            "[MONITOR:POSTMORTEM] non-zero exit detected — collecting pod-side diagnostics",
-        )
-        probes_with_data = 0
         for label, command, timeout in probes:
             try:
                 ok, stdout, stderr = self._ssh_client.exec_command(
@@ -753,28 +775,52 @@ class TrainingMonitor(PipelineStage):
                     silent=True,
                     timeout=timeout,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — defensive
                 logger.debug(f"[MONITOR:POSTMORTEM] {label} raised: {exc}")
                 continue
             text = (stdout or "").strip()
             if ok and text:
-                probes_with_data += 1
                 for line in text.splitlines():
                     logger.info(f"[MONITOR:POSTMORTEM] {label}: {line}")
+            elif ok and not text:
+                logger.info(f"[MONITOR:POSTMORTEM] {label}: <<EMPTY>>")
             elif stderr:
                 logger.debug(f"[MONITOR:POSTMORTEM] {label} stderr: {stderr.strip()}")
-        # Summary: silence here previously masked the case where the
-        # pod was already gone (RunPod auto-removes after crash) — every
-        # probe returned empty and we logged nothing, leaving the
-        # operator with "trainer crashed" and zero context.
-        logger.info(
-            f"[MONITOR:POSTMORTEM] {probes_with_data}/{len(probes)} probes returned data",
-        )
-        if probes_with_data == 0:
+
+    def _dump_local_log_tail(
+        self,
+        *,
+        label: str,
+        path: "Path",
+        tail_lines: int,
+    ) -> None:
+        """Read the tail of a local log file and emit it under the
+        ``[MONITOR:POSTMORTEM:<label>]`` prefix.
+
+        Distinguishes three states explicitly so the operator can
+        tell missing-file from empty-file from has-content. The
+        ``trainer.stdio.log`` / ``runner.log`` paths come from
+        :class:`LogLayout` so the layout drift between writer (pod
+        Supervisor / runner_launcher) and reader (this code) is
+        physically impossible — both go through the same source of
+        truth.
+        """
+        try:
+            if not path.exists():
+                logger.info(f"[MONITOR:POSTMORTEM:{label}] <<MISSING>>")
+                return
+            size = path.stat().st_size
+            if size == 0:
+                logger.info(f"[MONITOR:POSTMORTEM:{label}] <<EMPTY>>")
+                return
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+            tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
+            for raw_line in tail:
+                logger.info(f"[MONITOR:POSTMORTEM:{label}] {raw_line.rstrip()}")
+        except OSError as exc:  # noqa: BLE001 — defensive
             logger.warning(
-                "[MONITOR:POSTMORTEM] all probes empty — pod may have been "
-                "terminated by the platform after the crash; no further "
-                "context is available beyond the runner-side terminal event"
+                f"[MONITOR:POSTMORTEM:{label}] read failed: {exc}",
             )
 
     async def _watch_and_download(
@@ -895,15 +941,17 @@ class TrainingMonitor(PipelineStage):
         - first event (any kind) → "[MONITOR] WS stream open"
         - ``trainer_spawned`` → "[MONITOR] Trainer process started"
         - ``health_snapshot`` → ``on_resource_check`` + rate-limited ALIVE
-        - ``trainer_log`` → debug only — full trainer stdout lives in
-          ``training.log`` on disk and is reachable from the web UI's
-          LogDock + the ``GET .../logs?file=training.log&offset=N``
-          delta endpoint. The monitor stream is reserved for
-          control-plane signals, not training metric chatter.
         - ``trainer_exited`` → ``on_training_completed`` /
           ``on_training_failed`` / ``on_process_died`` based on
           payload, then return terminal Result
         - other kinds → log only at debug
+
+        Note: ``trainer_log`` events were removed in the data-plane
+        refactor — trainer stdout/stderr now lands in
+        ``trainer.stdio.log`` on the pod (written by the Supervisor's
+        pump) and is pulled to Mac via LogManager scp. The Web UI's
+        LogDock reads ``trainer.stdio.log`` directly. The bus / WS
+        stream carries only control + telemetry events.
         """
         kind = event.get("kind") or ""
         payload = event.get("payload") or {}
@@ -919,14 +967,6 @@ class TrainingMonitor(PipelineStage):
                 "[MONITOR] Trainer process started%s",
                 f" (pid={pid})" if pid else "",
             )
-
-        if kind == "trainer_log":
-            # Intentionally silent on the orchestrator log (see
-            # docstring above). Full trainer stdout lives on disk in
-            # /workspace/training.log and is pulled either whole or via
-            # offset-delta by the LogManager — control-plane stream is
-            # not the channel for log content.
-            return None
 
         if kind == "health_snapshot":
             self._maybe_log_status(payload)

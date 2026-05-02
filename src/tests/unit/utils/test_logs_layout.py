@@ -9,8 +9,8 @@ import pytest
 from src.utils.logs_layout import (
     LOGS_DIR_NAME,
     PIPELINE_LOG_NAME,
-    REMOTE_TRAINING_LOG_NAME,
-    REMOTE_TRAINING_LOG_PATHS_KEY,
+    REMOTE_TRAINER_STDIO_LOG_NAME,
+    REMOTE_TRAINER_STDIO_LOG_PATHS_KEY,
     STAGE_LOG_PATHS_KEY,
     STAGE_LOG_SUFFIX,
     LogLayout,
@@ -38,9 +38,9 @@ def test_stage_log_uses_stage_name_and_suffix(tmp_path: Path) -> None:
     )
 
 
-def test_remote_training_log_path(tmp_path: Path) -> None:
+def test_remote_trainer_stdio_log_path(tmp_path: Path) -> None:
     layout = LogLayout(tmp_path / "attempt_1")
-    assert layout.remote_training_log == tmp_path / "attempt_1" / "logs" / REMOTE_TRAINING_LOG_NAME
+    assert layout.remote_trainer_stdio_log == tmp_path / "attempt_1" / "logs" / REMOTE_TRAINER_STDIO_LOG_NAME
 
 
 def test_attempt_dir_property_preserves_input(tmp_path: Path) -> None:
@@ -127,7 +127,7 @@ def test_invariant_logs_dir_is_always_child_of_attempt_dir(tmp_path: Path) -> No
 
 def test_invariant_all_log_paths_live_under_logs_dir(tmp_path: Path) -> None:
     layout = LogLayout(tmp_path / "attempt_1")
-    for path in (layout.pipeline_log, layout.remote_training_log, layout.stage_log("x")):
+    for path in (layout.pipeline_log, layout.remote_trainer_stdio_log, layout.stage_log("x")):
         assert path.parent == layout.logs_dir
 
 
@@ -140,36 +140,36 @@ def test_invariant_stage_log_name_ends_with_suffix(tmp_path: Path) -> None:
 # Registry (stage_log_registry) — positive + combinatorial
 # ---------------------------------------------------------------------------
 
-def test_registry_without_remote_training_has_only_stage_key(tmp_path: Path) -> None:
+def test_registry_without_remote_trainer_stdio_has_only_stage_key(tmp_path: Path) -> None:
     layout = LogLayout(tmp_path / "attempt_1")
-    registry = layout.stage_log_registry("gpu_deployer", include_remote_training=False)
+    registry = layout.stage_log_registry("gpu_deployer", include_remote_trainer_stdio=False)
     assert registry == {STAGE_LOG_PATHS_KEY: f"{LOGS_DIR_NAME}/gpu_deployer.log"}
 
 
-def test_registry_with_remote_training_adds_remote_key(tmp_path: Path) -> None:
+def test_registry_with_remote_trainer_stdio_adds_remote_key(tmp_path: Path) -> None:
     layout = LogLayout(tmp_path / "attempt_1")
-    registry = layout.stage_log_registry("training_monitor", include_remote_training=True)
+    registry = layout.stage_log_registry("training_monitor", include_remote_trainer_stdio=True)
     assert registry == {
         STAGE_LOG_PATHS_KEY: f"{LOGS_DIR_NAME}/training_monitor.log",
-        REMOTE_TRAINING_LOG_PATHS_KEY: f"{LOGS_DIR_NAME}/{REMOTE_TRAINING_LOG_NAME}",
+        REMOTE_TRAINER_STDIO_LOG_PATHS_KEY: f"{LOGS_DIR_NAME}/{REMOTE_TRAINER_STDIO_LOG_NAME}",
     }
 
 
 @pytest.mark.parametrize("stage_name", ["dataset_validator", "gpu_deployer", "model_retriever"])
-@pytest.mark.parametrize("include_remote_training", [True, False])
-def test_registry_combinations(tmp_path: Path, stage_name: str, include_remote_training: bool) -> None:
+@pytest.mark.parametrize("include_remote_trainer_stdio", [True, False])
+def test_registry_combinations(tmp_path: Path, stage_name: str, include_remote_trainer_stdio: bool) -> None:
     layout = LogLayout(tmp_path / "attempt_1")
-    registry = layout.stage_log_registry(stage_name, include_remote_training=include_remote_training)
+    registry = layout.stage_log_registry(stage_name, include_remote_trainer_stdio=include_remote_trainer_stdio)
 
     assert STAGE_LOG_PATHS_KEY in registry
     assert registry[STAGE_LOG_PATHS_KEY].endswith(f"{stage_name}.log")
-    assert (REMOTE_TRAINING_LOG_PATHS_KEY in registry) is include_remote_training
+    assert (REMOTE_TRAINER_STDIO_LOG_PATHS_KEY in registry) is include_remote_trainer_stdio
 
 
 def test_registry_returns_relative_paths_only(tmp_path: Path) -> None:
     """Paths in registry must be relative (portable across machines)."""
     layout = LogLayout(tmp_path / "attempt_1")
-    registry = layout.stage_log_registry("x", include_remote_training=True)
+    registry = layout.stage_log_registry("x", include_remote_trainer_stdio=True)
     for value in registry.values():
         assert not value.startswith("/"), value
 

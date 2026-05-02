@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useLogStream } from '../api/hooks/useLogStream'
 import { Toggle } from './ui'
 
-const FILES = ['pipeline.log', 'training.log', 'inference.log', 'eval.log'] as const
+const FILES = ['pipeline.log', 'trainer.stdio.log', 'runner.log', 'inference.log', 'eval.log'] as const
 type LogFile = (typeof FILES)[number]
 
 export function LogDock({

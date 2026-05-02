@@ -208,7 +208,7 @@ class TestPersistence:
     def test_state_dir_created_under_workspace(self, tmp_path: Path) -> None:
         f = JobLifecycleFSM(workspace_dir=tmp_path)
         f.restore_or_init()
-        assert (tmp_path / ".ryotenkai").is_dir()
+        assert (tmp_path / "state").is_dir()
 
     def test_jsonl_appends_one_line_per_transition(
         self, fsm: JobLifecycleFSM
@@ -292,24 +292,24 @@ class TestRestoreOrInit:
         # that left a truncated file behind. The FSM must boot, not
         # crash; the corrupt file is preserved as ``state.json.corrupt``
         # so on-call has it for forensics.
-        state_dir = tmp_path / ".ryotenkai"
+        state_dir = tmp_path / "state"
         state_dir.mkdir()
-        (state_dir / "state.json").write_text("{not valid json", encoding="utf-8")
+        (state_dir / "job.json").write_text("{not valid json", encoding="utf-8")
 
         f = JobLifecycleFSM(workspace_dir=tmp_path)
         f.restore_or_init()  # must not raise
         assert f.current() is None
-        assert (state_dir / "state.json.corrupt").exists()
-        assert not (state_dir / "state.json").exists()
+        assert (state_dir / "job.json.corrupt").exists()
+        assert not (state_dir / "job.json").exists()
 
     def test_state_json_with_missing_keys_treated_as_fresh(self, tmp_path: Path) -> None:
         # Snapshot.from_dict raises KeyError on missing required keys.
         # Same recovery path as JSONDecodeError.
         import json as _json  # local — not on hot path
 
-        state_dir = tmp_path / ".ryotenkai"
+        state_dir = tmp_path / "state"
         state_dir.mkdir()
-        (state_dir / "state.json").write_text(
+        (state_dir / "job.json").write_text(
             _json.dumps({"job_id": "j", "state": "running"}),  # missing sequence/started_at/...
             encoding="utf-8",
         )
@@ -317,7 +317,7 @@ class TestRestoreOrInit:
         f = JobLifecycleFSM(workspace_dir=tmp_path)
         f.restore_or_init()
         assert f.current() is None
-        assert (state_dir / "state.json.corrupt").exists()
+        assert (state_dir / "job.json.corrupt").exists()
 
     def test_running_state_preserved_on_restore(self, tmp_path: Path) -> None:
         # RUNNING is *not* unsafe — it just means "trainer was alive

@@ -193,6 +193,7 @@ class TrainingLauncher:
         # finds uvicorn already running short-circuits and returns
         # Ok immediately.
         runner_env: dict[str, str] = {}
+        run_id_for_layout = ""
         if provider is not None:
             resource_id = (
                 context.get("resource_id") or context.get("pod_id")
@@ -202,14 +203,32 @@ class TrainingLauncher:
                     resource_id=resource_id if resource_id else None,
                 ),
             )
-        # ``workspace_path`` is the rsync target the CodeSyncer dropped
+            # Provider's per-run layout drives every pod-side path
+            # the runner uses (logs/, events/, state/). The layout's
+            # root MUST equal the workspace_path the CodeSyncer used
+            # — provider.connect() set both from ``run.name``.
+            run_id_for_layout = context.get("run_id") or context.get("run_name") or ""
+            if not run_id_for_layout:
+                # Fall back to deriving run_id from the workspace path.
+                # ``self.workspace`` is ``<base>/runs/<run_id>``.
+                run_id_for_layout = self.workspace.rstrip("/").rsplit("/", 1)[-1]
+            pod_layout_for_runner = provider.pod_layout_for_run(run_id_for_layout)
+        else:
+            # Should not happen in production paths but the test path
+            # builds the launcher without a provider for unit-coverage.
+            from src.utils.pod_layout import PodLayout
+            from pathlib import PurePosixPath
+            pod_layout_for_runner = PodLayout.from_root(
+                PurePosixPath(self.workspace),
+            )
+        # The layout's root is the rsync target the CodeSyncer dropped
         # ``src/...`` into for this run; the thin image (v2.0.0+) ships
         # only Python + libs, so this directory is the SOLE source of
         # ``src.runner`` on the pod. Without it, uvicorn fails with
         # ``ModuleNotFoundError: No module named 'src.runner'``.
         runner_ready = launch_runner(
             ssh_client,
-            workspace_path=self.workspace,
+            pod_layout=pod_layout_for_runner,
             env=runner_env,
         )
         if runner_ready.is_err():
@@ -511,20 +530,15 @@ class TrainingLauncher:
         # explicitly here.
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONFAULTHANDLER"] = "1"
-        env["PYTHONFAULTHANDLER_PATH"] = f"{workspace_env}/training.faulthandler.log"
-        # Trainer's ``_install_crash_observability`` reads this and
-        # attaches a FileHandler to its ``ryotenkai`` logger so
-        # ``logger.info(...)`` flows directly into a human-readable
-        # ``training.log`` file. Mac-side ``LogManager`` scp's this
-        # exact path into ``runs/<id>/attempts/<n>/logs/training.log``.
-        # Value MUST stay in sync with ``LogManager.DEFAULT_REMOTE_PATH``
-        # (the regression-guard test verifies this). See
-        # ``docs/architecture/log-collection.md``.
-        # Imported lazily to avoid a top-of-module circular import
-        # (log_manager → ssh_helpers → managers package init).
-        from src.pipeline.stages.managers.log_manager import LogManager
-
-        env["RYOTENKAI_TRAINING_LOG_PATH"] = LogManager.DEFAULT_REMOTE_PATH
+        # Note: ``PYTHONFAULTHANDLER_PATH`` removed — faulthandler
+        # writes to stderr by default, which the runner's Supervisor
+        # captures into ``trainer.stdio.log``. One ground-truth path
+        # for both regular Python tracebacks AND native crash dumps.
+        #
+        # Note: ``RYOTENKAI_TRAINING_LOG_PATH`` removed — the trainer
+        # no longer attaches its own FileHandler. Pod-side
+        # ``trainer.stdio.log`` (written by Supervisor pump) is the
+        # source of truth for trainer output, pulled by LogManager scp.
 
         # Tell the trainer where the runner is so RunnerEventCallback
         # (Phase 3) starts pushing events. Loopback URL — the runner
