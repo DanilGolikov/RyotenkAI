@@ -104,7 +104,20 @@ class PodTerminalOutcome:
     """User clicked Stop → terminate (irreversible)."""
 
     TERMINATED_SAFETY = "terminated_safety"
-    """Failed/network-volume → terminate (no resume path)."""
+    """Failed run on a network volume → terminate (no resume path).
+
+    Pre PR-C this outcome also covered ``failed + mac_alive`` on
+    persistent volumes — but that left Mac zero grace to SCP the final
+    diagnostics, racing the post-mortem with pod teardown. Persistent
+    failures on alive Mac now route to
+    :data:`TERMINATED_AFTER_DIAGNOSTIC_GRACE` instead.
+    """
+
+    TERMINATED_AFTER_DIAGNOSTIC_GRACE = "terminated_after_diagnostic_grace"
+    """PR-C — failed + Mac alive (persistent volume): wait briefly so
+    Mac's post-mortem SCP completes, then terminate. Bounded at
+    :attr:`PodTerminator.DIAGNOSTIC_GRACE_SECONDS` and aborted early
+    if the heartbeat dies (Mac went away → grace pointless)."""
 
     STOPPED_FOR_RESUME = "stopped_for_resume"
     """Mac asleep → pause immediately (artifacts wait for resume)."""
@@ -192,10 +205,15 @@ def decide_terminal_outcome(
     # ``persistent`` (default) volume: stop-vs-terminate based on
     # state + heartbeat.
     if terminal_state == "failed":
-        # Failed run + Mac alive: nothing to recover, terminate.
-        # Failed run + Mac asleep: keep checkpoint accessible, stop.
+        # PR-C — failed run + Mac alive: brief diagnostic grace so the
+        # post-mortem SCP completes before resource cleanup races it.
+        # Pre PR-C this returned TERMINATED_SAFETY (0 grace), causing
+        # the 15-crash-incident postmortems to consistently see
+        # ``<<MISSING>>`` because the pod was gone before LogManager
+        # could pull. Failed + Mac asleep keeps the legacy semantics:
+        # pause to keep checkpoint accessible.
         if mac_alive:
-            return PodTerminalOutcome.TERMINATED_SAFETY
+            return PodTerminalOutcome.TERMINATED_AFTER_DIAGNOSTIC_GRACE
         return PodTerminalOutcome.STOPPED_FOR_RESUME
 
     if terminal_state == "completed":
@@ -265,6 +283,19 @@ class PodTerminator:
     #: round-trip.
     HEARTBEAT_RETRY_TICK_SECONDS: float = 10.0
 
+    #: PR-C — diagnostic grace for ``failed + mac_alive`` decisions.
+    #: One Mac-side SCP roundtrip + tail decode is ~2-5 s; we give 30 s
+    #: to cover slower SSH connections and the periodic-pull window
+    #: (LOG_DOWNLOAD_INTERVAL_DEFAULT=5 s × ~6 ticks). Aborted early
+    #: when the heartbeat dies so the cost is paid only when Mac is
+    #: actually trying to read.
+    DIAGNOSTIC_GRACE_SECONDS: float = 30.0
+
+    #: Polling interval for the diagnostic-grace heartbeat watcher.
+    #: 2 s is a balance between snappy abort (when Mac dies) and event
+    #: bus chatter — 2 s × 15 ticks = 30 s in the typical no-abort case.
+    DIAGNOSTIC_GRACE_TICK_SECONDS: float = 2.0
+
     def __init__(
         self,
         *,
@@ -278,6 +309,8 @@ class PodTerminator:
         grace_tick_seconds: float | None = None,
         heartbeat_retry_attempts: int | None = None,
         heartbeat_retry_tick_seconds: float | None = None,
+        diagnostic_grace_seconds: float | None = None,
+        diagnostic_grace_tick_seconds: float | None = None,
     ) -> None:
         self._client = client
         self._resource_id = resource_id
@@ -313,6 +346,17 @@ class PodTerminator:
             heartbeat_retry_tick_seconds
             if heartbeat_retry_tick_seconds is not None
             else self.HEARTBEAT_RETRY_TICK_SECONDS
+        )
+        # PR-C — diagnostic grace knobs. Tests pass small values to
+        # keep wall-clock time bounded; production uses class defaults.
+        self._diagnostic_grace_seconds = (
+            diagnostic_grace_seconds if diagnostic_grace_seconds is not None
+            else self.DIAGNOSTIC_GRACE_SECONDS
+        )
+        self._diagnostic_grace_tick = (
+            diagnostic_grace_tick_seconds
+            if diagnostic_grace_tick_seconds is not None
+            else self.DIAGNOSTIC_GRACE_TICK_SECONDS
         )
 
     async def decide_and_act(
@@ -378,6 +422,17 @@ class PodTerminator:
             PodTerminalOutcome.TERMINATED_USER_STOP,
             PodTerminalOutcome.TERMINATED_SAFETY,
         ):
+            client_result = await self._client.terminate(
+                resource_id=self._resource_id,
+            )
+        elif decision == PodTerminalOutcome.TERMINATED_AFTER_DIAGNOSTIC_GRACE:
+            # PR-C — wait briefly so Mac can pull the post-mortem
+            # before we tear the pod down. Heartbeat-aware: if Mac
+            # disconnects during the grace, abort early — no point
+            # waiting for a reader that left.
+            await self._wait_diagnostic_grace(
+                heartbeat=heartbeat, bus_publish=bus_publish,
+            )
             client_result = await self._client.terminate(
                 resource_id=self._resource_id,
             )
@@ -487,6 +542,57 @@ class PodTerminator:
             {"attempts": self._heartbeat_retry_attempts},
         )
         return False, self._heartbeat_retry_attempts
+
+    # --- PR-C diagnostic grace --------------------------------------------
+
+    async def _wait_diagnostic_grace(
+        self,
+        *,
+        heartbeat: "MacHeartbeat",
+        bus_publish: "Callable[[str, dict[str, Any]], Any]",
+    ) -> None:
+        """Wait up to :attr:`DIAGNOSTIC_GRACE_SECONDS` so Mac can SCP
+        the post-mortem (trainer.stdio.log + runner.log) before pod
+        teardown.
+
+        Distinct from :meth:`_wait_grace` (the SHORT_GRACE path):
+
+        * SHORT_GRACE waits for the **happy** path — ModelRetriever
+          fetching adapters after a successful run. Up to 600 s, polled
+          every 10 s.
+        * DIAGNOSTIC_GRACE waits for the **failure** post-mortem —
+          tail SCP, dmesg/nvidia-smi probes. 30 s default, polled
+          every 2 s. Aborted early when heartbeat dies (RP8).
+
+        Always emits ``pod_terminal_diagnostic_grace_started`` /
+        ``…ended`` events so operator dashboards can plot how often we
+        wait the full window vs abort early.
+        """
+        bus_publish(
+            "pod_terminal_diagnostic_grace_started",
+            {
+                "max_seconds": self._diagnostic_grace_seconds,
+                "tick_seconds": self._diagnostic_grace_tick,
+            },
+        )
+
+        elapsed = 0.0
+        reason = "max_budget_reached"
+        while elapsed < self._diagnostic_grace_seconds:
+            await self._sleep(self._diagnostic_grace_tick)
+            elapsed += self._diagnostic_grace_tick
+
+            if not heartbeat.is_alive():
+                # Mac went away mid-grace — no reader left, no point
+                # waiting. Abort early so resource cleanup doesn't
+                # bill for an empty wait.
+                reason = "heartbeat_lost"
+                break
+
+        bus_publish(
+            "pod_terminal_diagnostic_grace_ended",
+            {"reason": reason, "elapsed_s": elapsed},
+        )
 
     # --- grace loop -------------------------------------------------------
 
