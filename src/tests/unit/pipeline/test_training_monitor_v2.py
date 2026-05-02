@@ -641,14 +641,25 @@ class TestLogManagerFromContext:
                 pass
 
         class _FakeLM:
-            def __init__(self, ssh, remote_path=None):
+            def __init__(self, ssh, *, remote_path, local_path):
                 constructed["remote_path"] = remote_path
+                constructed["local_path"] = local_path
                 constructed["ssh"] = ssh
-                self.local_path = Path("/tmp/fake-local-training.log")
-                self.remote_path = remote_path or "/workspace/training.log"
+                self.local_path = local_path
+                self.remote_path = remote_path
+
+        class _FakeMacLayout:
+            def ensure_logs_dir(self):  # noqa: ANN001
+                pass
+            @property
+            def remote_trainer_stdio_log(self):  # noqa: ANN001
+                return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+        monkeypatch.setattr(
+            _monitor_mod, "get_run_log_layout", lambda: _FakeMacLayout(),
+        )
 
         monitor = _make_monitor()
         lm, ssh = monitor._build_log_manager_from_context({
@@ -658,7 +669,7 @@ class TestLogManagerFromContext:
             "ssh_user": "root",
             "ssh_key_path": "/tmp/key",
             "is_alias_mode": False,
-            "workspace_path": "/workspace",
+            "workspace_path": "/workspace/runs/run_x",
         })
         assert lm is not None
         assert ssh is not None
@@ -666,10 +677,9 @@ class TestLogManagerFromContext:
         assert constructed["port"] == 2222
         assert constructed["username"] == "root"
         assert constructed["key_path"] == "/tmp/key"
-        # Remote path is left to LogManager's DEFAULT_REMOTE_PATH so it
-        # stays in lock-step with the launcher's RYOTENKAI_TRAINING_LOG_PATH
-        # env var. The monitor must NOT pass an override here.
-        assert constructed["remote_path"] is None
+        # Per-PodLayout: remote_path is built from workspace_path and
+        # MUST be the per-run trainer.stdio.log under logs/.
+        assert constructed["remote_path"] == "/workspace/runs/run_x/logs/trainer.stdio.log"
 
     def test_alias_mode_forces_username_and_key_to_none(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -685,10 +695,20 @@ class TestLogManagerFromContext:
         class _FakeLM:
             def __init__(self, *args, **kwargs):
                 self.local_path = Path("/tmp/fake-local-training.log")
-                self.remote_path = "/workspace/training.log"
+                self.remote_path = kwargs.get("remote_path", "/unused")
+
+        class _FakeMacLayout:
+            def ensure_logs_dir(self):  # noqa: ANN001
+                pass
+            @property
+            def remote_trainer_stdio_log(self):  # noqa: ANN001
+                return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+        monkeypatch.setattr(
+            _monitor_mod, "get_run_log_layout", lambda: _FakeMacLayout(),
+        )
 
         monitor = _make_monitor()
         monitor._build_log_manager_from_context({
@@ -697,6 +717,7 @@ class TestLogManagerFromContext:
             "ssh_user": "root",
             "ssh_key_path": "/should-be-ignored",
             "is_alias_mode": True,
+            "workspace_path": "/workspace/runs/run_alias",
         })
         # Alias mode tells SSHClient to read ~/.ssh/config — username
         # and key_path must NOT be passed through.
@@ -1375,14 +1396,14 @@ class TestFinalFlushDebugLogs:
         )
 
 
-class TestLogManagerUsesDefaultRemotePath:
-    def test_does_not_use_workspace_path_for_remote(
+class TestLogManagerUsesPodLayoutForRemote:
+    def test_uses_per_run_trainer_stdio_log(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Trainer writes to ``/workspace/training.log`` (absolute path
-        # pinned by RYOTENKAI_TRAINING_LOG_PATH = LogManager.DEFAULT_REMOTE_PATH).
-        # The monitor must NOT prepend ``workspace_path`` (= /workspace/runs/<id>),
-        # else the SCP looks at the wrong place.
+        # The monitor MUST resolve remote_path through PodLayout —
+        # ``<workspace>/logs/trainer.stdio.log``. Pre-PodLayout this
+        # used a global ``LogManager.DEFAULT_REMOTE_PATH`` which
+        # silently downloaded from the wrong file.
         constructed: dict[str, Any] = {}
 
         class _FakeSSH:
@@ -1392,16 +1413,24 @@ class TestLogManagerUsesDefaultRemotePath:
                 pass
 
         class _FakeLM:
-            def __init__(self, ssh, remote_path=None):
-                # ``remote_path`` should be None here (LogManager will
-                # use its DEFAULT_REMOTE_PATH internally) — we MUST NOT
-                # see "/workspace/runs/<id>/training.log".
+            def __init__(self, ssh, *, remote_path, local_path):
                 constructed["remote_path"] = remote_path
-                self.local_path = Path("/tmp/fake")
-                self.remote_path = remote_path or "/workspace/training.log"
+                constructed["local_path"] = local_path
+                self.local_path = local_path
+                self.remote_path = remote_path
+
+        class _FakeMacLayout:
+            def ensure_logs_dir(self):  # noqa: ANN001
+                pass
+            @property
+            def remote_trainer_stdio_log(self):  # noqa: ANN001
+                return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
 
         monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
         monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+        monkeypatch.setattr(
+            _monitor_mod, "get_run_log_layout", lambda: _FakeMacLayout(),
+        )
 
         monitor = _make_monitor()
         monitor._build_log_manager_from_context({
@@ -1411,8 +1440,7 @@ class TestLogManagerUsesDefaultRemotePath:
             "ssh_user": "root",
             "ssh_key_path": "/tmp/key",
             "is_alias_mode": False,
-            # Deployer reports the trainer's CWD here — tempting to
-            # concatenate, but we MUST NOT.
             "workspace_path": "/workspace/runs/run_xyz",
         })
-        assert constructed["remote_path"] is None
+        # Per-run path under PodLayout: <workspace>/logs/trainer.stdio.log.
+        assert constructed["remote_path"] == "/workspace/runs/run_xyz/logs/trainer.stdio.log"

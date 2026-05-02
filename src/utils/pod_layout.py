@@ -40,6 +40,15 @@ import shlex
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from src.utils.log_filenames import (
+    FSM_STATE_JSON,
+    FSM_STATE_JSONL,
+    PIPELINE_CONFIG_FILE,
+    RUNNER_LOG,
+    TRAINER_STDIO_LOG,
+)
+
+# Directory names live here (PodLayout-internal — not shared with Mac).
 LOGS_DIR_NAME = "logs"
 EVENTS_DIR_NAME = "events"
 STATE_DIR_NAME = "state"
@@ -49,11 +58,14 @@ DATA_DIR_NAME = "data"
 COMMUNITY_DIR_NAME = "community"
 OUTPUT_DIR_NAME = "output"
 
-CONFIG_FILE_NAME = "pipeline_config.yaml"
-RUNNER_LOG_NAME = "runner.log"
-TRAINER_STDIO_LOG_NAME = "trainer.stdio.log"
-FSM_STATE_JSON_NAME = "job.json"
-FSM_STATE_JSONL_NAME = "job.jsonl"
+# Re-export filename constants under their PodLayout-historical names so
+# external consumers that imported them from this module keep working.
+# The single source of truth is :mod:`src.utils.log_filenames`.
+CONFIG_FILE_NAME = PIPELINE_CONFIG_FILE
+RUNNER_LOG_NAME = RUNNER_LOG
+TRAINER_STDIO_LOG_NAME = TRAINER_STDIO_LOG
+FSM_STATE_JSON_NAME = FSM_STATE_JSON
+FSM_STATE_JSONL_NAME = FSM_STATE_JSONL
 
 
 @dataclass(frozen=True)

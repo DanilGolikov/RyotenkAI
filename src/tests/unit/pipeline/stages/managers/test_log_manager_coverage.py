@@ -30,6 +30,27 @@ def _layout(attempt_dir: Path) -> LogLayout:
     return layout
 
 
+# Canonical fixed paths used by every test below — keeps SSH command
+# response keys aligned with the LogManager's own size/cat probes.
+# (LogManager has no default path of its own — caller MUST be explicit.)
+_FIXED_REMOTE_PATH = "/workspace/training.log"
+_FIXED_LOCAL_FILENAME = "training.log"
+
+
+def _make_lm(ssh, tmp_path: Path) -> LogManager:
+    """Construct LogManager with explicit per-test paths.
+
+    Mirrors the production contract (no defaults). Tests use a fixed
+    ``/workspace/training.log`` because the SSH stub keys to that
+    string in its response map.
+    """
+    return LogManager(
+        ssh,
+        remote_path=_FIXED_REMOTE_PATH,
+        local_path=tmp_path / "logs" / _FIXED_LOCAL_FILENAME,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Minimal SSH stub (command-map based)
 # ---------------------------------------------------------------------------
@@ -49,7 +70,7 @@ class _SSH:
 def test_get_local_size_bytes_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
     ssh = _SSH()
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
 
     # Patch stat to raise a generic OSError (not FileNotFoundError)
     original_stat = Path.stat
@@ -77,7 +98,7 @@ def test_get_remote_size_bytes_stat_fails_wc_succeeds(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
         "wc -c < /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "42\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr._get_remote_size_bytes() == 42
 
 
@@ -90,7 +111,7 @@ def test_get_remote_size_bytes_stat_not_success_wc_succeeds(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (False, "", ""),
         "wc -c < /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "100\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr._get_remote_size_bytes() == 100
 
 
@@ -103,7 +124,7 @@ def test_get_remote_size_bytes_both_fail_returns_none(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
         "wc -c < /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr._get_remote_size_bytes() is None
 
 
@@ -116,7 +137,7 @@ def test_get_remote_size_bytes_invalid_output_returns_none(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "not-a-number\n", ""),
         "wc -c < /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "also-bad\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr._get_remote_size_bytes() is None
 
 
@@ -131,7 +152,7 @@ def test_download_returns_false_when_remote_size_none(
     monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
 
     # Create a local file so local_size > 0
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text("existing content\n", encoding="utf-8")
 
@@ -140,7 +161,7 @@ def test_download_returns_false_when_remote_size_none(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
         "wc -c < /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is False
 
 
@@ -157,7 +178,7 @@ def test_download_handles_log_rotation(
     old_content = "line1\nline2\nline3\n"
     new_content = "fresh start\n"
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(old_content, encoding="utf-8")
 
@@ -167,7 +188,7 @@ def test_download_handles_log_rotation(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, f"{remote_size}\n", ""),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, new_content, ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is True
     assert local_file.read_text(encoding="utf-8") == new_content
 
@@ -181,7 +202,7 @@ def test_download_handles_log_rotation_silent_false(
     old_content = "aaaa\n" * 10
     new_content = "new\n"
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(old_content, encoding="utf-8")
 
@@ -191,7 +212,7 @@ def test_download_handles_log_rotation_silent_false(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, f"{remote_size}\n", ""),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, new_content, ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download(silent=False) is True
     assert local_file.read_text(encoding="utf-8") == new_content
 
@@ -202,7 +223,7 @@ def test_download_log_rotation_full_download_fails(
     """Log rotation: remote smaller, but full re-download also fails."""
     monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text("old long content\n" * 5, encoding="utf-8")
 
@@ -210,7 +231,7 @@ def test_download_log_rotation_full_download_fails(
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "1\n", ""),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is False
 
 
@@ -225,7 +246,7 @@ def test_download_no_new_content(
     monkeypatch.setattr(lm, "get_run_log_layout", lambda: _layout(tmp_path))
 
     content = "same content\n"
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(content, encoding="utf-8")
 
@@ -234,7 +255,7 @@ def test_download_no_new_content(
     ssh = _SSH(responses={
         "stat -c%s /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, f"{size}\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     result = mgr.download()
     assert result is True
     # File must be unchanged
@@ -255,7 +276,7 @@ def test_download_tail_fails_uses_full_fallback(
     full_content = "line1\nline2\n"
     delta_bytes = len(full_content.encode("utf-8")) - len(first_content.encode("utf-8"))
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(first_content, encoding="utf-8")
 
@@ -272,7 +293,7 @@ def test_download_tail_fails_uses_full_fallback(
         ),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, full_content, ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is True
     assert local_file.read_text(encoding="utf-8") == full_content
 
@@ -287,7 +308,7 @@ def test_download_tail_not_success_uses_full_fallback(
     full_content = "aa\nbb\n"
     delta_bytes = len(full_content.encode("utf-8")) - len(first_content.encode("utf-8"))
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(first_content, encoding="utf-8")
 
@@ -304,7 +325,7 @@ def test_download_tail_not_success_uses_full_fallback(
         ),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, full_content, ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is True
     assert local_file.read_text(encoding="utf-8") == full_content
 
@@ -319,7 +340,7 @@ def test_download_tail_fallback_fails(
     full_size = len(first_content.encode("utf-8")) + 3
     delta_bytes = 3
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(first_content, encoding="utf-8")
 
@@ -330,7 +351,7 @@ def test_download_tail_fallback_fails(
         ),
         "cat /workspace/training.log 2>/dev/null || echo 'LOG_NOT_FOUND'": (True, "LOG_NOT_FOUND\n", ""),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download() is False
 
 
@@ -349,7 +370,7 @@ def test_download_silent_false_after_delta_append(
     full_content = first_content + delta_text
     delta_bytes = len(delta_text.encode("utf-8"))
 
-    local_file = tmp_path / "logs" / LogManager.LOCAL_LOG_NAME
+    local_file = tmp_path / "logs" / _FIXED_LOCAL_FILENAME
     local_file.parent.mkdir(parents=True, exist_ok=True)
     local_file.write_text(first_content, encoding="utf-8")
 
@@ -365,7 +386,7 @@ def test_download_silent_false_after_delta_append(
             "",
         ),
     })
-    mgr = LogManager(ssh)
+    mgr = _make_lm(ssh, tmp_path)
     assert mgr.download(silent=False) is True
     assert local_file.read_text(encoding="utf-8") == full_content
 

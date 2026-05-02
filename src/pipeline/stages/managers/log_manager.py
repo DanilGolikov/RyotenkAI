@@ -8,27 +8,40 @@ Responsibilities:
 - Persist into run-scoped attempt directory through LogLayout
 - Called periodically during monitoring and on errors
 
+Both ``remote_path`` and ``local_path`` are REQUIRED constructor args —
+the caller is expected to source them from PodLayout / LogLayout so the
+LogManager itself never hardcodes a path. This closes the legacy
+"DEFAULT_REMOTE_PATH = /workspace/training.log" trap where mis-configured
+calls silently downloaded from the wrong file.
+
 Two distinct logs, same downloader:
 
-* ``training.log`` — trainer subprocess stdout. Source of truth for
-  trainer events. Default behavior of LogManager (kept for backward
-  compatibility with all existing call-sites).
+* ``trainer.stdio.log`` — trainer subprocess stdout/stderr ground-truth,
+  written pod-side by the runner's :class:`Supervisor` pump. Read with
+  ``remote_path=str(pod_layout.trainer_stdio_log)`` /
+  ``local_path=mac_layout.remote_trainer_stdio_log``.
 * ``runner.log`` — uvicorn / runner stdout. Captures pre-import
-  failures and runner lifecycle events. Pass explicit
-  ``remote_path=/workspace/runner.log`` and
-  ``local_path=layout.remote_runner_log`` to instantiate.
+  failures and runner lifecycle events. Read with
+  ``remote_path=str(pod_layout.runner_log)`` /
+  ``local_path=mac_layout.remote_runner_log``.
 
 Usage:
-    # Default — trainer log:
-    lm = LogManager(ssh_client)
-    lm.download()  # → <attempt>/logs/training.log
+    pod_layout = provider.pod_layout_for_run(run_id)
+    mac_layout = get_run_log_layout()
 
-    # Runner log (NEW path):
-    layout = get_run_log_layout()
+    # Trainer stdout/stderr:
     lm = LogManager(
         ssh_client,
-        remote_path="/workspace/runner.log",
-        local_path=layout.remote_runner_log,
+        remote_path=str(pod_layout.trainer_stdio_log),
+        local_path=mac_layout.remote_trainer_stdio_log,
+    )
+    lm.download()  # → <attempt>/logs/trainer.stdio.log
+
+    # Runner uvicorn output:
+    lm = LogManager(
+        ssh_client,
+        remote_path=str(pod_layout.runner_log),
+        local_path=mac_layout.remote_runner_log,
     )
     lm.download()  # → <attempt>/logs/runner.log
 """
@@ -56,43 +69,41 @@ class LogManager:
     Manages downloading logs from remote training.
 
     Provider-agnostic: works with any SSH-accessible server.
-    The default remote log (training.log) is persisted at
-    ``<attempt_dir>/logs/training.log`` via LogLayout — the single
-    source of truth for FS layout. A different remote/local pair can
-    be supplied for non-training logs (e.g. runner.log).
+    Both ``remote_path`` and ``local_path`` MUST be supplied by the
+    caller — the canonical sources are :class:`PodLayout` (pod-side)
+    and :class:`LogLayout` (Mac-side). LogManager itself owns no path
+    constants.
     """
-
-    DEFAULT_REMOTE_PATH = "/workspace/training.log"
-    # File name of the default remote training log inside the local
-    # logs/ directory. Preserved for backward-compat with consumers
-    # that build paths by hand.
-    LOCAL_LOG_NAME = "training.log"
 
     def __init__(
         self,
         ssh_client: SSHClient,
-        remote_path: str | None = None,
         *,
-        local_path: Path | None = None,
+        remote_path: str,
+        local_path: Path,
     ):
         """
         Initialize log manager.
 
         Args:
             ssh_client: SSH client connected to remote host.
-            remote_path: Path to log file on remote host. Defaults to
-                ``/workspace/training.log``. Pass
-                ``/workspace/runner.log`` for the runner log.
-            local_path: Local destination Path. Keyword-only.
-                Defaults to ``LogLayout.remote_trainer_stdio_log``
-                (preserves existing behavior). Pass
-                ``LogLayout.remote_runner_log`` for the runner log.
+            remote_path: Absolute pod-side path to the log file.
+                Source of truth: ``PodLayout`` (e.g.
+                ``str(pod_layout.trainer_stdio_log)``).
+                Required (keyword-only) — no default; callers must be
+                explicit about which channel they're pulling.
+            local_path: Mac-side destination ``Path``. Source of truth:
+                :class:`LogLayout` (e.g.
+                ``mac_layout.remote_trainer_stdio_log``).
+                Required (keyword-only).
         """
+        if not remote_path:
+            raise ValueError("LogManager: remote_path must be non-empty")
         self.ssh = ssh_client
-        self._remote_path = remote_path or self.DEFAULT_REMOTE_PATH
+        self._remote_path = remote_path
         layout = get_run_log_layout()
         layout.ensure_logs_dir()
-        self._local_path = local_path if local_path is not None else layout.remote_trainer_stdio_log
+        self._local_path = local_path
         # Track last downloaded size in BYTES (not characters).
         # Used to incrementally append only new bytes on subsequent downloads.
         self._last_size = self._get_local_size_bytes()
