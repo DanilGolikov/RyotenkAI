@@ -155,7 +155,13 @@ SSH_CMD_TIMEOUT: Final[int] = 30  # Timeout for SSH command execution (seconds)
 ERROR_MESSAGE_TRUNCATE: Final[int] = 200  # Max chars for error messages in logs
 CONSOLE_LINE_WIDTH: Final[int] = 80  # Width for console separators/boxes
 TRAINING_START_TIMEOUT_DEFAULT: Final[int] = 120  # Default timeout waiting for training to start
-LOG_DOWNLOAD_INTERVAL_DEFAULT: Final[int] = 30  # Default interval for downloading training logs (seconds)
+# PR-B: was 30s pre-2026-05-02. Lowered to 5s so a trainer that crashes
+# at T+11s (the 15-crash incident) gets at least one mid-flight pull
+# before postmortem. Cost is negligible: ``stat -c%s`` on the remote
+# is ~10ms; 12×/min × 60min = ~720 calls aggregating ~7s of SSH per
+# hour. PR-B's push-tail in ``trainer_exited`` covers the case where
+# even 5s is too long (sub-5-sec crashes still get the tail via WS).
+LOG_DOWNLOAD_INTERVAL_DEFAULT: Final[int] = 5  # Default interval for downloading training logs (seconds)
 
 # ---------------------------------------------------------------------------
 # HuggingFace Hub upload policy (shared: adapter_cache + model_retriever)

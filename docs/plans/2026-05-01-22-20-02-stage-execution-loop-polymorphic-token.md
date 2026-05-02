@@ -852,3 +852,4 @@ src/tests/unit/pipeline/stages/managers/deployment/test_training_launcher_v2.py 
 | **Data (logs)** | trainer stdout/stderr | trainer FileHandler → training.log + bus.publish('trainer_log') → silenced на Mac | Supervisor → trainer.stdio.log file → LogManager scp → Mac |
 
 Этот PR трогает **только** Data plane. Control/Telemetry — orthogonal.
+

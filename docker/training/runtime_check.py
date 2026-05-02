@@ -2,31 +2,49 @@
 """Runtime contract checker — baked into the training image at
 ``/opt/helix/runtime_check.py``.
 
-The control plane runs this inside the pod's container after pulling
-the image to verify the runtime profile is intact (right CUDA build of
-torch, all training deps importable, etc.). It is the single source of
-truth for "what does this image actually have?" — read from outside via
-``docker run --rm <image> python3 /opt/helix/runtime_check.py``.
+Two modes (mutually exclusive flags):
 
-Output contract (parsed by
-:mod:`src.pipeline.stages.managers.deployment.dependency_installer`):
+* **No flag** (default): verify pip packages — torch, transformers, etc.
+  Used by :class:`DependencyInstaller` after the runtime image is pulled
+  to confirm the image profile is intact.
+* **``--check-source``**: verify ``src.*`` Python modules importable from
+  the *current* workspace's PYTHONPATH. Used by :class:`CodeSyncer` after
+  rsync to enforce a fail-fast post-deployment contract: rsync rc=0 does
+  not guarantee that all required src.* modules ended up on the pod
+  (see ``code_syncer.py:86-93`` failure mode caught in
+  ``run_20260429_171726_49j32`` and the 15-crash incident on 2026-05-02).
 
-* First line: ``OK`` (literal). The verifier looks for this token in
-  stdout to declare success.
-* Subsequent lines: ``<name>=<version>`` for each required package, in
-  a stable order. Missing packages emit ``<name>=missing`` and turn the
-  exit code non-zero. Packages without ``__version__`` (e.g. pynvml)
-  emit ``<name>=unknown`` but don't fail.
+Output contracts (parsed by control plane):
 
-Why a separate script and not an ``import`` smoke test inline in the
-SSH command: keeping the contract in one file makes "what does the
-image promise?" inspectable from a published image without reading
-control-plane code, and the file gets versioned alongside
+Default mode — parsed by
+:mod:`src.pipeline.stages.managers.deployment.dependency_installer`:
+
+* First line: ``OK`` / ``FAIL``
+* Subsequent lines: ``<name>=<version>`` for each required package.
+* Missing required packages → ``<name>=missing (<ExceptionType>)``,
+  exit code 1.
+* Missing optional packages → ``<name>=unknown``, exit code unchanged.
+
+``--check-source`` mode — parsed by
+:mod:`src.pipeline.stages.managers.deployment.code_syncer`:
+
+* First line: ``OK`` / ``FAILED``.
+* Subsequent lines: ``<module>=importable`` on success, or
+  ``<module>=NOT_IMPORTABLE (<ExceptionType>: <message>)`` on failure.
+* Exit code 0 on success, 2 on failure (distinct from rc=1 of the
+  default mode so the parser can disambiguate which contract was
+  violated).
+
+Why a separate script and not an ``import`` smoke test inline in the SSH
+command: keeping the contract in one file makes "what does the image
+promise?" inspectable from a published image without reading control
+plane code, and the file gets versioned alongside
 ``requirements.runtime.txt``.
 """
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import sys
 
@@ -54,6 +72,31 @@ _OPTIONAL: list[tuple[str, str]] = [
     ("pynvml", ""),
 ]
 
+# Required src.* modules — every entry must be importable on the pod for
+# the trainer to spawn cleanly. Drift between this list and the trainer's
+# actual top-level imports is guarded by
+# ``src/tests/unit/training/test_required_modules_drift.py``.
+#
+# Why each module is here:
+#   * ``src.workspace.integrations.loader`` — load_pipeline_config(),
+#     called at run_training.py module-load.
+#   * ``src.config`` — pydantic schemas the loader validates against.
+#   * ``src.providers`` — provider lifecycle clients the runner imports
+#     at startup. Recurring failure mode: missing → uvicorn dies before
+#     binding 8080 (run_20260429_171726_49j32, plus 15-crash incident).
+#   * ``src.training.run_training`` — trainer entrypoint itself.
+#   * ``src.runner.main`` — runner entrypoint (shipped via thin-image
+#     since Phase 6.6, no longer baked in the docker image).
+#   * ``src.utils.config`` — config façade re-exported from src.config.
+_REQUIRED_SRC_MODULES: list[str] = [
+    "src.workspace.integrations.loader",
+    "src.config",
+    "src.providers",
+    "src.training.run_training",
+    "src.runner.main",
+    "src.utils.config",
+]
+
 
 def _version(mod_name: str, attr: str) -> str:
     """Return the version string for ``mod_name``, or raise on failure.
@@ -69,17 +112,18 @@ def _version(mod_name: str, attr: str) -> str:
     return str(getattr(mod, "__version__", "unknown"))
 
 
-def main() -> int:
-    """Print the manifest. Return non-zero if any required package is
-    missing or fails to import — that's a broken-image signal the
-    control plane will surface as a deployment failure."""
+def check_pip_packages() -> int:
+    """Default mode — verify pip packages from the runtime image.
+
+    Returns 0 on success, 1 if any required package is missing.
+    """
     lines: list[str] = []
     failed = False
 
     for name, attr in _REQUIRED:
         try:
             v = _version(name, attr)
-        except Exception as exc:  # noqa: BLE001 — any import error means broken image
+        except Exception as exc:
             lines.append(f"{name}=missing ({type(exc).__name__})")
             failed = True
         else:
@@ -88,7 +132,7 @@ def main() -> int:
     for name, attr in _OPTIONAL:
         try:
             v = _version(name, attr)
-        except Exception:  # noqa: BLE001 — optional, soft-fail
+        except Exception:
             lines.append(f"{name}=unknown")
         else:
             lines.append(f"{name}={v}")
@@ -104,6 +148,56 @@ def main() -> int:
         print(line)
 
     return 1 if failed else 0
+
+
+def check_source_importable() -> int:
+    """``--check-source`` mode — verify each required ``src.*`` module
+    is import-able from the current PYTHONPATH.
+
+    Returns 0 on success, 2 on failure. The non-1 exit code lets the
+    parser distinguish "image broken" (rc=1) from "synced source broken"
+    (rc=2).
+    """
+    failed: list[tuple[str, str]] = []
+    for mod_name in _REQUIRED_SRC_MODULES:
+        try:
+            importlib.import_module(mod_name)
+        except Exception as exc:
+            failed.append((mod_name, f"{type(exc).__name__}: {exc}"))
+
+    if not failed:
+        print("OK")
+        for m in _REQUIRED_SRC_MODULES:
+            print(f"{m}=importable")
+        return 0
+
+    print("FAILED")
+    # Print importable modules first, then the failing ones — operator
+    # gets a full picture of what made it through.
+    failed_names = {m for m, _ in failed}
+    for m in _REQUIRED_SRC_MODULES:
+        if m not in failed_names:
+            print(f"{m}=importable")
+    for mod_name, err in failed:
+        print(f"{mod_name}=NOT_IMPORTABLE ({err})")
+    return 2
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="runtime_check",
+        description="Verify runtime contract on a training pod.",
+    )
+    parser.add_argument(
+        "--check-source",
+        action="store_true",
+        help="Verify required src.* modules are importable (post-sync gate).",
+    )
+    args = parser.parse_args(argv)
+
+    if args.check_source:
+        return check_source_importable()
+    return check_pip_packages()
 
 
 if __name__ == "__main__":

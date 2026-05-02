@@ -181,6 +181,9 @@ class TrainingMonitor(PipelineStage):
         # Single-node / mock flows keep both as ``None``.
         self._ssh_client: SSHClient | None = None
         self._log_manager: LogManager | None = None
+        # PR-B — second LogManager for runner.log (uvicorn / pre-import
+        # crashes). Shares the SSH ControlMaster with ``_log_manager``.
+        self._runner_log_manager: LogManager | None = None
         # Pod recovery (laptop-sleep): captured from deployer context
         # so :meth:`_recover_pod_if_needed` can probe the RunPod SDK
         # without re-reading the orchestrator state.
@@ -243,14 +246,17 @@ class TrainingMonitor(PipelineStage):
         if self._callbacks.on_training_started:
             self._callbacks.on_training_started()
 
-        # Build pod-side log puller. Cloud providers expose
-        # ``/workspace/training.log`` over SCP; single_node / mock
-        # flows skip — the file is already on the host filesystem.
-        # Captured on ``self`` so :meth:`cleanup` closes the SSH
-        # ControlMaster after downstream stages finish.
-        self._log_manager, self._ssh_client = self._build_log_manager_from_context(
-            deployer_context,
-        )
+        # Build pod-side log pullers. Cloud providers expose both the
+        # trainer's ``trainer.stdio.log`` and the runner's ``runner.log``
+        # over SCP via PodLayout; single_node / mock flows skip — the
+        # files are already on the host filesystem. Captured on ``self``
+        # so :meth:`cleanup` closes the shared SSH ControlMaster after
+        # downstream stages finish.
+        (
+            self._log_manager,
+            self._runner_log_manager,
+            self._ssh_client,
+        ) = self._build_log_manager_from_context(deployer_context)
         # Pod-recovery preconditions (Phase 11.E follow-up): record
         # provider + resource so a transient WS error can trigger an
         # SDK wake-up without losing terminal-state semantics.
@@ -265,7 +271,7 @@ class TrainingMonitor(PipelineStage):
         # cleanly — orchestrator's reverse-order cleanup() will still
         # tear down the captured handles.
         watch_result = asyncio.run(
-            self._watch_and_download(client, job_id, self._log_manager),
+            self._watch_and_download(client, job_id, self._log_manager, self._runner_log_manager),
         )
 
         # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
@@ -344,6 +350,7 @@ class TrainingMonitor(PipelineStage):
                 logger.debug(f"[MONITOR] ssh_client.close_master failed: {exc}")
             self._ssh_client = None
         self._log_manager = None
+        self._runner_log_manager = None
 
     # --- Phase 9.C / Phase 11.A reconciliation --------------------------
 
@@ -500,23 +507,29 @@ class TrainingMonitor(PipelineStage):
     def _build_log_manager_from_context(
         self,
         deployer_context: dict[str, Any],
-    ) -> tuple[LogManager | None, SSHClient | None]:
-        """Construct an SSH-backed :class:`LogManager` from gpu_deployer
-        context, or ``(None, None)`` when the active flow doesn't need
-        one (single_node / mock / missing handles).
+    ) -> tuple[LogManager | None, LogManager | None, SSHClient | None]:
+        """Construct SSH-backed :class:`LogManager` instances for both
+        ``trainer.stdio.log`` and ``runner.log`` from gpu_deployer
+        context, or ``(None, None, None)`` when the active flow doesn't
+        need one (single_node / mock / missing handles).
+
+        Returns ``(trainer_lm, runner_lm, ssh_client)``. Both managers
+        share a single SSH ControlMaster connection — RP6 (5s polling)
+        is cheap because each tick is just a ``stat -c%s`` round-trip
+        on the existing connection.
 
         The legacy SSH-polling monitor did the periodic
         ``log_manager.download(silent=True)`` itself; restoring that
-        keeps ``runs/<id>/attempts/<n>/logs/training.log`` populated
-        on the operator's machine as the run progresses, which the
-        web UI's :class:`LogDock` already tails.
+        keeps ``runs/<id>/attempts/<n>/logs/{trainer.stdio,runner}.log``
+        populated as the run progresses, which the web UI's
+        :class:`LogDock` already tails.
         """
         provider_type = deployer_context.get("provider_type")
         ssh_host = deployer_context.get("ssh_host")
         # Cloud-only: local providers ship the trainer on the same
         # host so the log file is already available; nothing to scp.
         if provider_type != "cloud" or not ssh_host:
-            return None, None
+            return None, None, None
 
         workspace_path = deployer_context.get("workspace_path")
         if not workspace_path:
@@ -524,7 +537,7 @@ class TrainingMonitor(PipelineStage):
                 "[MONITOR] deployer_context missing workspace_path — "
                 "periodic log download disabled",
             )
-            return None, None
+            return None, None, None
 
         try:
             ssh_port = int(deployer_context.get("ssh_port") or SSH_PORT_DEFAULT)
@@ -543,7 +556,7 @@ class TrainingMonitor(PipelineStage):
             )
         except Exception as exc:
             logger.debug(f"[MONITOR] SSH client construction failed: {exc}")
-            return None, None
+            return None, None, None
 
         # Build PodLayout from the deployer's workspace_path so we
         # pull the canonical per-run trainer.stdio.log. Pre-PodLayout
@@ -560,43 +573,79 @@ class TrainingMonitor(PipelineStage):
             logger.debug(f"[MONITOR] Cannot build PodLayout: {exc}")
             with contextlib.suppress(Exception):
                 ssh_client.close_master()
-            return None, None
+            return None, None, None
 
         try:
             mac_layout = get_run_log_layout()
-            log_manager = LogManager(
+            trainer_lm = LogManager(
                 ssh_client,
                 remote_path=str(pod_layout.trainer_stdio_log),
                 local_path=mac_layout.remote_trainer_stdio_log,
+            )
+            # PR-B — second LogManager for runner.log. Without it,
+            # uvicorn pre-import crashes (e.g. ImportError before the
+            # FastAPI app even binds 8080) never hit Mac until the
+            # postmortem fires — and by then the pod might be evicted.
+            runner_lm = LogManager(
+                ssh_client,
+                remote_path=str(pod_layout.runner_log),
+                local_path=mac_layout.remote_runner_log,
             )
         except Exception as exc:
             logger.debug(f"[MONITOR] LogManager init failed: {exc}")
             with contextlib.suppress(Exception):
                 ssh_client.close_master()
-            return None, None
-        return log_manager, ssh_client
+            return None, None, None
+        return trainer_lm, runner_lm, ssh_client
 
-    async def _log_downloader_loop(self, log_manager: LogManager) -> None:
-        """Pull ``training.log`` every
-        :data:`TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL` seconds.
+    async def _log_downloader_loop(
+        self,
+        trainer_log_manager: LogManager,
+        runner_log_manager: LogManager | None = None,
+    ) -> None:
+        """Pull ``trainer.stdio.log`` (and optionally ``runner.log``)
+        every :data:`TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL` seconds.
 
-        Single debug line per tick — ``ok`` / ``no data`` / ``error``.
+        Single debug line per tick per file —
+        ``ok`` / ``no data`` / ``error``. Errors on either pull do not
+        abort the loop or each other; both pulls are independent
+        best-effort observability.
         """
         while True:
             try:
                 await asyncio.sleep(TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL)
             except asyncio.CancelledError:
                 return
+
+            # Trainer stdio — ground truth for trainer subprocess output.
             try:
-                ok = await asyncio.to_thread(log_manager.download, silent=True)
+                ok_trainer = await asyncio.to_thread(
+                    trainer_log_manager.download, silent=True,
+                )
+                logger.debug(
+                    f"[MONITOR] trainer.stdio.log download "
+                    f"{'ok' if ok_trainer else 'no data'}",
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.debug(f"[MONITOR] training.log download error: {exc}")
-                continue
-            logger.debug(
-                f"[MONITOR] training.log download {'ok' if ok else 'no data'}",
-            )
+                logger.debug(f"[MONITOR] trainer.stdio.log download error: {exc}")
+
+            # Runner stdout (uvicorn) — covers pre-import crashes the
+            # trainer pump cannot capture.
+            if runner_log_manager is not None:
+                try:
+                    ok_runner = await asyncio.to_thread(
+                        runner_log_manager.download, silent=True,
+                    )
+                    logger.debug(
+                        f"[MONITOR] runner.log download "
+                        f"{'ok' if ok_runner else 'no data'}",
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.debug(f"[MONITOR] runner.log download error: {exc}")
 
     # --- pod resilience (laptop-sleep recovery) ------------------------
 
@@ -849,20 +898,24 @@ class TrainingMonitor(PipelineStage):
         client: JobClient,
         job_id: str,
         log_manager: LogManager | None,
+        runner_log_manager: LogManager | None = None,
     ) -> Result[dict[str, Any], AppError]:
         """Run :meth:`_watch` with a parallel periodic-download task.
 
-        The downloader is spawned only when a :class:`LogManager` is
-        wired (cloud providers); for local / mock flows we still want
-        the unchanged WS-watcher behaviour. The final ``silent=False``
-        flush guarantees the on-disk log artefact is complete even
-        when the watcher exits between tick boundaries.
+        The downloader is spawned only when the trainer
+        :class:`LogManager` is wired (cloud providers); for local / mock
+        flows we still want the unchanged WS-watcher behaviour. PR-B
+        adds an optional second ``runner_log_manager`` so uvicorn /
+        pre-import crashes also flow to Mac as the run progresses, not
+        just at postmortem time. The final ``silent=False`` flush of
+        BOTH files guarantees on-disk artefact completeness even when
+        the watcher exits between tick boundaries.
         """
         if log_manager is None:
             return await self._watch(client, job_id)
 
         download_task = asyncio.create_task(
-            self._log_downloader_loop(log_manager),
+            self._log_downloader_loop(log_manager, runner_log_manager),
             name="monitor.log_downloader",
         )
         try:
@@ -871,17 +924,31 @@ class TrainingMonitor(PipelineStage):
             download_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await download_task
+            # Final flush trainer.stdio.log
             try:
                 ok = await asyncio.wait_for(
                     asyncio.to_thread(log_manager.download, silent=False),
                     timeout=_FINAL_LOG_FLUSH_TIMEOUT,
                 )
             except (TimeoutError, Exception) as exc:
-                logger.debug(f"[MONITOR] final training.log flush error: {exc}")
+                logger.debug(f"[MONITOR] final trainer.stdio.log flush error: {exc}")
             else:
                 logger.debug(
-                    f"[MONITOR] final training.log flush {'ok' if ok else 'no data'}",
+                    f"[MONITOR] final trainer.stdio.log flush {'ok' if ok else 'no data'}",
                 )
+            # Final flush runner.log (PR-B)
+            if runner_log_manager is not None:
+                try:
+                    ok = await asyncio.wait_for(
+                        asyncio.to_thread(runner_log_manager.download, silent=False),
+                        timeout=_FINAL_LOG_FLUSH_TIMEOUT,
+                    )
+                except (TimeoutError, Exception) as exc:
+                    logger.debug(f"[MONITOR] final runner.log flush error: {exc}")
+                else:
+                    logger.debug(
+                        f"[MONITOR] final runner.log flush {'ok' if ok else 'no data'}",
+                    )
 
     # --- async core -----------------------------------------------------
 
@@ -1062,13 +1129,25 @@ class TrainingMonitor(PipelineStage):
         """Translate a ``trainer_exited`` event to a terminal Result.
 
         Payload shape (per :class:`Supervisor._reap`):
-        ``{"exit_code": int, "signal": str | None,
-           "cancellation_requested": bool}``
+
+        v1 (legacy): ``{exit_code, signal, cancellation_requested}``.
+        v2 (PR-B): adds ``stderr_tail``, ``stdout_tail``,
+        ``stdio_log_path``, ``schema_version``. We render the tails
+        immediately so the operator gets the cause of death even when
+        the pod is platform-evicted before LogManager can SCP the file.
         """
         duration = max(0.0, time.time() - self._training_start_time)
         exit_code = payload.get("exit_code")
         signal_name = payload.get("signal")
         cancelled = bool(payload.get("cancellation_requested"))
+
+        # PR-B — log embedded stdio tail BEFORE running pod-side probes.
+        # This is the one piece of evidence that survives a platform
+        # eviction: the WS event has already been delivered, so even if
+        # SSH is dead by the time _collect_death_diagnostics() tries to
+        # SCP, we still printed the trainer's last words to pipeline.log.
+        if int(payload.get("schema_version", 1)) >= 2:
+            self._log_trainer_exited_tail(payload)
 
         # Pull post-mortem context from the pod BEFORE returning Err.
         # Cancellation is operator-initiated (``stop`` from CLI/web UI)
@@ -1144,6 +1223,41 @@ class TrainingMonitor(PipelineStage):
             f"training failed ({message or 'no detail'})",
             duration,
         )
+
+    def _log_trainer_exited_tail(self, payload: dict[str, Any]) -> None:
+        """PR-B: render the embedded stdio tail from a schema-v2
+        ``trainer_exited`` payload to ``pipeline.log``.
+
+        Each line is logged with a prefix that mirrors its origin
+        (``[TRAINER:STDERR]`` / ``[TRAINER:STDOUT]``) so operators can
+        visually separate trainer output from monitor chatter. Already
+        redacted on the runner side (see
+        :func:`src.utils.secret_redaction.redact_secrets`) — no further
+        masking needed here.
+
+        Defensive: silent no-op when both tails are empty (the trainer
+        died without output) or when fields are missing (schema bump
+        future-proofing). Never raises — the caller is the post-mortem
+        path and must keep flowing.
+        """
+        try:
+            stderr_tail = payload.get("stderr_tail") or ""
+            stdout_tail = payload.get("stdout_tail") or ""
+
+            if not stderr_tail and not stdout_tail:
+                return
+
+            if stderr_tail:
+                logger.info("[MONITOR:TRAINER_EXITED] stderr tail (last lines):")
+                for line in stderr_tail.splitlines()[-30:]:
+                    logger.info(f"[TRAINER:STDERR] {line}")
+
+            if stdout_tail:
+                logger.info("[MONITOR:TRAINER_EXITED] stdout tail (last lines):")
+                for line in stdout_tail.splitlines()[-10:]:
+                    logger.info(f"[TRAINER:STDOUT] {line}")
+        except Exception as exc:  # pragma: no cover — best effort
+            logger.debug(f"[MONITOR] _log_trainer_exited_tail raised: {exc}")
 
     def _fail(
         self,

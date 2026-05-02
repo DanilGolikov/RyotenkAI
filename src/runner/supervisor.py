@@ -83,6 +83,7 @@ from src.runner.state import (
     InvalidTransitionError,
     JobState,
 )
+from src.utils.secret_redaction import redact_secrets
 
 if TYPE_CHECKING:
     from src.runner.event_bus import EventBus
@@ -111,6 +112,21 @@ TerminalHook = Callable[[str], Awaitable[None]]
 # HuggingFace Trainer to finish the current step and run on_save —
 # checkpoint write speed dominates this.
 DEFAULT_GRACE_SECONDS = 30.0
+
+# Schema version for the ``trainer_exited`` event payload.
+#   v1 — pre PR-B: ``{exit_code, signal, cancellation_requested}``.
+#   v2 — PR-B   : adds ``stderr_tail``, ``stdout_tail``, ``stdio_log_path``.
+# Mac-side consumers gate the new fields behind ``schema_version >= 2``.
+TRAINER_EXITED_SCHEMA_VERSION = 2
+
+# Cap on how much trainer stdout/stderr we embed in the ``trainer_exited``
+# event payload. Designed for "the last few seconds of output before
+# death" — typical Python traceback fits in 2-4 KB; HuggingFace progress
+# bar lines are ~200 bytes each. 10 KB carries ≈50 lines comfortably.
+# Sized to fit a single WS frame without fragmentation and to bound the
+# memory cost of a fast crash loop (every reap reads up to this much).
+STDIO_TAIL_MAX_BYTES = 10240
+STDIO_TAIL_MAX_LINES = 50
 
 
 class SupervisorError(RuntimeError):
@@ -513,6 +529,67 @@ class Supervisor:
                 with contextlib.suppress(OSError, ValueError):
                     self._stdio_log_file.write(prefix + stripped + b"\n")
 
+    def _read_stdio_tail(self) -> tuple[str, str]:
+        """Read the last ``STDIO_TAIL_MAX_BYTES`` of the stdio capture
+        file and split into ``(stderr_tail, stdout_tail)`` by the
+        ``[ERR] /[OUT] `` prefix the pumps wrote.
+
+        Returns ``("", "")`` when no stdio file is configured, the file
+        is missing, or any IO error occurs. Failures are silent on
+        purpose — this method runs on the reap path and **must not**
+        raise: the FSM transition that drives terminal cleanup depends
+        on the reap completing.
+
+        Bounds payload size deterministically by reading bytes-from-end
+        rather than line-counting from the start, so a 100 MB log with
+        10 lines or a 100 KB log with 100 K lines both produce a payload
+        ≤ ``STDIO_TAIL_MAX_BYTES``. The first line after the seek is
+        likely partial and is discarded.
+
+        All emitted text passes through :func:`redact_secrets` so a
+        ``HF_TOKEN=hf_xxx`` leaked by trainer ``os.environ`` dump does
+        not reach the WS bridge.
+        """
+        if self._stdio_log_path is None or self._stdio_log_file is None:
+            return "", ""
+
+        # Flush our own writer before reading — the file handle is
+        # buffering=0 so this is a no-op for normal writes, but safe
+        # against a subclass / future change.
+        with contextlib.suppress(OSError, ValueError):
+            self._stdio_log_file.flush()
+
+        try:
+            with self._stdio_log_path.open("rb") as fh:
+                fh.seek(0, 2)  # SEEK_END
+                size = fh.tell()
+                if size <= 0:
+                    return "", ""
+                if size > STDIO_TAIL_MAX_BYTES:
+                    fh.seek(-STDIO_TAIL_MAX_BYTES, 2)
+                    fh.readline()  # drop probably-partial first line
+                else:
+                    fh.seek(0)
+                tail_bytes = fh.read()
+        except OSError:
+            return "", ""
+
+        text = tail_bytes.decode("utf-8", errors="replace")
+        lines = text.splitlines()[-STDIO_TAIL_MAX_LINES:]
+
+        err_lines: list[str] = []
+        out_lines: list[str] = []
+        for line in lines:
+            if line.startswith("[ERR] "):
+                err_lines.append(line[6:])
+            elif line.startswith("[OUT] "):
+                out_lines.append(line[6:])
+            # Lines without a prefix were not produced by our pumps —
+            # ignore (defensive against external writers / partial
+            # decode artifacts after the seek).
+
+        return redact_secrets("\n".join(err_lines)), redact_secrets("\n".join(out_lines))
+
     async def _reap(self) -> None:
         """Wait on the subprocess and drive the final FSM transition."""
         if self._proc is None:  # pragma: no cover — defensive
@@ -556,6 +633,18 @@ class Supervisor:
         else:
             target = JobState.FAILED
 
+        # PR-B — embed the trainer's last stderr/stdout in the terminal
+        # event so Mac sees the cause of death even if the pod is
+        # platform-evicted before LogManager can SCP the file. Read AFTER
+        # the pumps drained (above) so the tail reflects every byte
+        # written before exit. Errors here are tolerated: tail is purely
+        # diagnostic, never load-bearing — the FSM transition that drives
+        # cleanup must always proceed.
+        try:
+            stderr_tail, stdout_tail = self._read_stdio_tail()
+        except Exception:  # pragma: no cover — best effort
+            stderr_tail, stdout_tail = "", ""
+
         # Publish first, transition second — ensures the WS subscriber
         # sees the final event slot before the FSM closes.
         self._bus.publish(
@@ -564,6 +653,12 @@ class Supervisor:
                 "exit_code": rc,
                 "signal": signal_name,
                 "cancellation_requested": self._cancellation_requested,
+                "stderr_tail": stderr_tail,
+                "stdout_tail": stdout_tail,
+                "stdio_log_path": (
+                    str(self._stdio_log_path) if self._stdio_log_path else None
+                ),
+                "schema_version": TRAINER_EXITED_SCHEMA_VERSION,
             },
         )
 

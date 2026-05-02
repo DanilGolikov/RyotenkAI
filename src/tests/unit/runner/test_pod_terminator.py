@@ -217,14 +217,18 @@ class TestDecisionMatrixExhaustive:
             )
             assert out == PodTerminalOutcome.KEPT_ALIVE_FOR_DEBUG
 
-    def test_failed_mac_alive_persistent_terminates(self) -> None:
+    def test_failed_mac_alive_persistent_terminates_after_diagnostic_grace(self) -> None:
+        """PR-C — was TERMINATED_SAFETY (0 grace) pre-2026-05-02. Now we
+        give Mac a brief window to SCP the post-mortem before tearing
+        the pod down — closes the race that produced the
+        ``<<MISSING>>`` postmortem in the 15-crash incident."""
         out = decide_terminal_outcome(
             terminal_state="failed",
             mac_alive=True,
             volume_kind="persistent",
             keep_on_error=False,
         )
-        assert out == PodTerminalOutcome.TERMINATED_SAFETY
+        assert out == PodTerminalOutcome.TERMINATED_AFTER_DIAGNOSTIC_GRACE
 
     def test_failed_mac_asleep_persistent_stops(self) -> None:
         out = decide_terminal_outcome(
