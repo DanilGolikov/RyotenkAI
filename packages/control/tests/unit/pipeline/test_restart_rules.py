@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.launch.restart_rules import compute_restart_points
-from src.pipeline.stages import StageNames
-from src.pipeline.state.models import PipelineState, StageLineageRef, StageRunState
+from ryotenkai_control.pipeline.launch.restart_rules import compute_restart_points
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state.models import PipelineState, StageLineageRef, StageRunState
 
 STAGE_ORDER = [
     StageNames.DATASET_VALIDATOR,

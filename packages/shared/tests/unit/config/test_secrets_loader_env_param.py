@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config.secrets.loader import load_secrets
+from ryotenkai_shared.config.secrets.loader import load_secrets
 
 
 def _write(path: Path, text: str) -> None:

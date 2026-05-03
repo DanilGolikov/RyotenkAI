@@ -12,10 +12,10 @@ timing, logging, artifact flushing, and the decision of whether a stage
 is eligible to run.
 """
 
-from src.pipeline.execution.restart_inspector import RestartPointsInspector
-from src.pipeline.execution.stage_execution_loop import StageExecutionLoop
-from src.pipeline.execution.stage_planner import StagePlanner, is_inference_runtime_healthy
-from src.pipeline.execution.stage_registry import StageRegistry
+from ryotenkai_control.pipeline.execution.restart_inspector import RestartPointsInspector
+from ryotenkai_control.pipeline.execution.stage_execution_loop import StageExecutionLoop
+from ryotenkai_control.pipeline.execution.stage_planner import StagePlanner, is_inference_runtime_healthy
+from ryotenkai_control.pipeline.execution.stage_registry import StageRegistry
 
 __all__ = [
     "RestartPointsInspector",

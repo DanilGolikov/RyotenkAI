@@ -12,8 +12,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from src.pipeline.state import PipelineStateStore
-from src.api.state_cache import clear_cache
+from ryotenkai_control.pipeline.state import PipelineStateStore
+from ryotenkai_control.api.state_cache import clear_cache
 
 if TYPE_CHECKING:
     from collections.abc import Callable

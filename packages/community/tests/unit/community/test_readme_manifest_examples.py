@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from src.community.constants import COMMUNITY_ROOT
-from src.community.manifest import PluginManifest, PresetManifest
+from ryotenkai_community.constants import COMMUNITY_ROOT
+from ryotenkai_community.manifest import PluginManifest, PresetManifest
 
 _TOML_BLOCK = re.compile(r"```toml\n(.*?)```", re.DOTALL)
 _EXPECTED_READMES = (

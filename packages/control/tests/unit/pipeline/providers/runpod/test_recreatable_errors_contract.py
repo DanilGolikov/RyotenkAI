@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.providers.runpod.training.provider import _RECREATABLE_ERRORS
+from ryotenkai_providers.runpod.training.provider import _RECREATABLE_ERRORS
 
 pytestmark = pytest.mark.unit
 

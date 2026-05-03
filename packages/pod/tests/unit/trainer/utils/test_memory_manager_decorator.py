@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.training.memory_manager import (
+from ryotenkai_pod.trainer.memory_manager import (
     MemoryEventCallbacks,
     MemoryManager,
     OOMRecoverableError,

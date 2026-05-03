@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from src.api.dependencies import resolve_run_dir
-from src.api.http_cache import apply_cache_headers, is_fresh
-from src.api.schemas.attempt import AttemptDetail, StagesResponse
-from src.api.services import run_service
+from ryotenkai_control.api.dependencies import resolve_run_dir
+from ryotenkai_control.api.http_cache import apply_cache_headers, is_fresh
+from ryotenkai_control.api.schemas.attempt import AttemptDetail, StagesResponse
+from ryotenkai_control.api.services import run_service
 
 if TYPE_CHECKING:
     from pathlib import Path

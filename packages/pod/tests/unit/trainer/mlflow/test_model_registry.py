@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.mlflow.model_registry import MLflowModelRegistry
+from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
 
 
 def _make_registry(log_model: bool = True) -> tuple[MLflowModelRegistry, MagicMock, MagicMock]:

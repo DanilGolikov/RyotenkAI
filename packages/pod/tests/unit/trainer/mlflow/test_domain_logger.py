@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.mlflow.domain_logger import MLflowDomainLogger
-from src.training.mlflow.event_log import MLflowEventLog
+from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
+from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 
 
 def _make_domain_logger() -> tuple[MLflowDomainLogger, MagicMock, MLflowEventLog]:

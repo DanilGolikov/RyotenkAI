@@ -20,20 +20,20 @@ from __future__ import annotations
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
-from src.data.validation.base import ValidationPlugin
-from src.pipeline.stages.dataset_validator.constants import (
+from ryotenkai_control.data.validation.base import ValidationPlugin
+from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     VALIDATION_STATUS_KEY,
     VALIDATION_STATUS_PASSED,
     VALIDATIONS_ATTR,
 )
-from src.utils.logger import logger
-from src.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
-    from src.pipeline.stages.dataset_validator.plugin_loader import PluginTuple
-    from src.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
+    from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginTuple
+    from ryotenkai_control.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
 
 
 class PluginRunner:

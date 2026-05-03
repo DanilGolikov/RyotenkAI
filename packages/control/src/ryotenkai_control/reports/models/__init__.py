@@ -4,8 +4,8 @@ Report Models.
 Typed dataclasses for report generation.
 """
 
-from src.reports.domain.entities import MetricHistory
-from src.reports.models.report import (
+from ryotenkai_control.reports.domain.entities import MetricHistory
+from ryotenkai_control.reports.models.report import (
     ConfigInfo,
     ExperimentHealth,
     ExperimentReport,

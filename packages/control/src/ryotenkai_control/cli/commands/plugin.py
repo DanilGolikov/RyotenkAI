@@ -23,11 +23,11 @@ from typing import Annotated, Any, Literal, cast
 
 import typer
 
-from src.cli.common_options import DryRunOpt, ForceOpt, RequiredConfigOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
-from src.community.constants import ALL_PLUGIN_KINDS
+from ryotenkai_control.cli.common_options import DryRunOpt, ForceOpt, RequiredConfigOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
+from ryotenkai_community.constants import ALL_PLUGIN_KINDS
 
 plugin_app = typer.Typer(
     no_args_is_help=True,
@@ -55,7 +55,7 @@ def ls_cmd(
     ],
 ) -> None:
     """List installed plugins of the given kind."""
-    from src.api.services import plugin_service
+    from ryotenkai_control.api.services import plugin_service
 
     if kind not in ALL_PLUGIN_KINDS:
         raise die(
@@ -90,7 +90,7 @@ def show_cmd(
     plugin_id: Annotated[str, typer.Argument(help="Plugin id.")],
 ) -> None:
     """Show full manifest for a plugin."""
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     if kind not in ALL_PLUGIN_KINDS:
         raise die(f"unknown kind: {kind!r}")
@@ -133,8 +133,8 @@ def scaffold_cmd(
     force: ForceOpt = False,
 ) -> None:
     """Bootstrap a new plugin folder with a minimum-valid manifest + skeleton."""
-    from src.community.constants import COMMUNITY_ROOT, PLUGIN_KIND_DIRS
-    from src.community.scaffold_template import (
+    from ryotenkai_community.constants import COMMUNITY_ROOT, PLUGIN_KIND_DIRS
+    from ryotenkai_community.scaffold_template import (
         ScaffoldKind,
         class_name_from_id,
         render_manifest,
@@ -214,8 +214,8 @@ def sync_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Re-run manifest inference, 3-way-merge with on-disk file, bump version."""
-    from src.community.constants import LIBS_DIR_NAME, PRESET_DIR_NAME
-    from src.community.sync import (
+    from ryotenkai_community.constants import LIBS_DIR_NAME, PRESET_DIR_NAME
+    from ryotenkai_community.sync import (
         sync_lib_manifest,
         sync_plugin_manifest,
         sync_preset_manifest,
@@ -265,7 +265,7 @@ def sync_envs_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Re-render manifest's ``[[required_env]]`` from ``REQUIRED_ENV``."""
-    from src.community.sync import sync_plugin_envs
+    from ryotenkai_community.sync import sync_plugin_envs
 
     manifest_path = path / "manifest.toml"
     if not manifest_path.is_file():
@@ -304,7 +304,7 @@ def pack_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Zip a plugin/preset folder into ``<folder>.zip`` next to it."""
-    from src.community.pack import pack_community_folder
+    from ryotenkai_community.pack import pack_community_folder
 
     try:
         result = pack_community_folder(path, force=force, dry_run=dry_run)
@@ -338,7 +338,7 @@ def validate_cmd(
     ] = False,
 ) -> None:
     """Validate a manifest.toml (TOML + Pydantic) without importing the plugin."""
-    from src.community.validate_manifest import (
+    from ryotenkai_community.validate_manifest import (
         validate_manifest_dir,
         validate_manifest_file,
     )
@@ -415,7 +415,7 @@ def install_cmd(
     force: ForceOpt = False,
 ) -> None:
     """Install a plugin from a local folder, .zip archive, or git URL."""
-    from src.community.install import (
+    from ryotenkai_community.install import (
         InstallError,
         install_git,
         install_local,
@@ -477,8 +477,8 @@ def preflight_cmd(
     ] = False,
 ) -> None:
     """Pre-launch gate: missing envs + instance-shape errors for a config."""
-    from src.community.preflight import run_preflight
-    from src.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_community.preflight import run_preflight
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -553,8 +553,8 @@ def stale_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """List references to plugins absent from the catalog."""
-    from src.community.stale_plugins import find_stale_plugins
-    from src.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_community.stale_plugins import find_stale_plugins
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

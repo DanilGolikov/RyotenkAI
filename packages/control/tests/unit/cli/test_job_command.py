@@ -47,8 +47,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from src.cli.app import app
-from src.pipeline.state.job_submission import JobSubmission, save_job_submission
+from ryotenkai_control.cli.app import app
+from ryotenkai_control.pipeline.state.job_submission import JobSubmission, save_job_submission
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def _patch_with_runner(client: MagicMock):
     teardown out of the test path."""
     async def _stub(submission, fn):  # type: ignore[no-untyped-def]
         return await fn(client, submission.job_id)
-    return patch("src.cli.commands.job._with_runner", side_effect=_stub)
+    return patch("ryotenkai_control.cli.commands.job._with_runner", side_effect=_stub)
 
 
 @pytest.fixture()
@@ -524,7 +524,7 @@ class TestRegressions:
         # Direct test of the helper — guards against a future refactor
         # that loses the > 4-keys clamp and dumps multi-MB payloads to
         # the terminal.
-        from src.cli.commands.job import _format_event_line
+        from ryotenkai_control.cli.commands.job import _format_event_line
 
         emitted: list[str] = []
 
@@ -549,7 +549,7 @@ class TestRegressions:
         assert "k5=5" not in line
 
     def test_format_event_line_handles_missing_fields(self) -> None:
-        from src.cli.commands.job import _format_event_line
+        from ryotenkai_control.cli.commands.job import _format_event_line
 
         emitted: list[str] = []
 
@@ -740,7 +740,7 @@ class TestFormatLogLine:
     """Direct tests for the ``[stream] line`` text-mode helper."""
 
     def _render(self, event: dict[str, Any]) -> str:
-        from src.cli.commands.job import _format_log_line
+        from ryotenkai_control.cli.commands.job import _format_log_line
 
         sink: list[str] = []
 
@@ -781,7 +781,7 @@ class TestFormatEventLine:
     """
 
     def _render(self, event: dict[str, Any]) -> str:
-        from src.cli.commands.job import _format_event_line
+        from ryotenkai_control.cli.commands.job import _format_event_line
 
         sink: list[str] = []
 

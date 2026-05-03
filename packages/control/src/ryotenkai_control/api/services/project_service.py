@@ -9,8 +9,8 @@ from typing import Any
 
 import yaml
 
-from src.api.schemas.config_validate import ConfigValidationResult
-from src.api.schemas.project import (
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.schemas.project import (
     ConfigResponse,
     ConfigVersion,
     ConfigVersionsResponse,
@@ -18,15 +18,15 @@ from src.api.schemas.project import (
     ProjectSummary,
     StalePluginEntry,
 )
-from src.api.services import config_service
-from src.workspace.projects import (
+from ryotenkai_control.api.services import config_service
+from ryotenkai_control.workspace.projects import (
     ProjectMetadata,
     ProjectRegistry,
     ProjectRegistryEntry,
     ProjectStore,
 )
-from src.workspace.projects.registry import ProjectRegistryError, validate_project_id
-from src.workspace.projects.store import ProjectStoreError
+from ryotenkai_control.workspace.projects.registry import ProjectRegistryError, validate_project_id
+from ryotenkai_control.workspace.projects.store import ProjectStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
@@ -231,8 +231,8 @@ def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
     # when there's actually parsed YAML to walk.
     from pydantic import ValidationError
 
-    from src.community.stale_plugins import find_stale_plugins
-    from src.config import PipelineConfig
+    from ryotenkai_community.stale_plugins import find_stale_plugins
+    from ryotenkai_shared.config import PipelineConfig
 
     # ``find_stale_plugins`` walks plugin lists; it does NOT touch
     # ``integrations``. Drop the ``integrations`` block before
@@ -371,8 +371,8 @@ def list_project_runs(
     — there is no separate file to keep in sync, and ``project rm``
     naturally drops the runs alongside the rest of the workspace.
     """
-    from src.pipeline.run_queries import scan_runs_dir
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.pipeline.run_queries import scan_runs_dir
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     _, store, _ = _load_project(registry, project_id)
 

@@ -4,8 +4,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends
 
-from src.api.dependencies import get_runs_dir
-from src.api.schemas.health import HealthStatus
+from ryotenkai_control.api.dependencies import get_runs_dir
+from ryotenkai_control.api.schemas.health import HealthStatus
 
 router = APIRouter(tags=["health"])
 

@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.constants import PROVIDER_RUNPOD
-from src.runner.heartbeat import MacHeartbeat
-from src.runner.pod_terminator import PodTerminalOutcome, PodTerminator
-from src.runner.runtime.lifecycle_client import LifecycleActionResult
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_pod.runner.heartbeat import MacHeartbeat
+from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome, PodTerminator
+from ryotenkai_pod.runner.runtime.lifecycle_client import LifecycleActionResult
 
 
 # ---------------------------------------------------------------------------

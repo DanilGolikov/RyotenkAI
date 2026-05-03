@@ -31,8 +31,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.training.run_training import _install_crash_observability
-from src.utils.logger import logger as ryotenkai_logger
+from ryotenkai_pod.trainer.run_training import _install_crash_observability
+from ryotenkai_shared.utils.logger import logger as ryotenkai_logger
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -169,14 +169,14 @@ def test_install_unwritable_path_warns_not_raises(
     # behaviour and force OSError on FileHandler open.
     monkeypatch.setenv("RYOTENKAI_TRAINING_LOG_PATH", str(bad))
 
-    real_setup = __import__("src.utils.logger", fromlist=["setup_logger"]).setup_logger
+    real_setup = __import__("ryotenkai_shared.utils.logger", fromlist=["setup_logger"]).setup_logger
 
     def _raising_setup(*args, **kwargs):
         if "log_file" in kwargs and kwargs["log_file"] is not None:
             raise OSError("simulated read-only fs")
         return real_setup(*args, **kwargs)
 
-    with patch("src.utils.logger.setup_logger", side_effect=_raising_setup):
+    with patch("ryotenkai_shared.utils.logger.setup_logger", side_effect=_raising_setup):
         # Must not raise — install is best-effort.
         _install_crash_observability()
 
@@ -257,7 +257,7 @@ def test_install_when_setup_logger_raises_does_not_kill_training(
     def _bad(*args, **kwargs):
         raise RuntimeError("simulated unexpected error")
 
-    with patch("src.utils.logger.setup_logger", side_effect=_bad):
+    with patch("ryotenkai_shared.utils.logger.setup_logger", side_effect=_bad):
         _install_crash_observability()  # MUST NOT raise
 
 

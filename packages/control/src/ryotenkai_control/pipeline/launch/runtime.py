@@ -159,7 +159,7 @@ def read_lock_pid(run_dir: Path) -> int | None:
     Kept here for ``src.pipeline.launch``-based callers that pass a
     ``run_dir`` rather than an explicit lock path.
     """
-    from src.pipeline.state.store import read_lock_pid as _read_lock_pid
+    from ryotenkai_control.pipeline.state.store import read_lock_pid as _read_lock_pid
 
     return _read_lock_pid(run_dir.expanduser().resolve() / "run.lock")
 
@@ -176,7 +176,7 @@ def build_worker_command(request: LaunchRequest, *, python_executable: str | Non
     command = [
         python_executable or sys.executable,
         "-m",
-        "src.pipeline.worker",
+        "ryotenkai_control.pipeline.worker",
         "--run-dir",
         str(normalized.run_dir),
     ]

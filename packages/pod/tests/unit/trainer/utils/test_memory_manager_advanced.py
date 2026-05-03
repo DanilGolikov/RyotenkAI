@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.memory_manager import (
+from ryotenkai_pod.trainer.memory_manager import (
     GPUInfo,
     GPUTier,
     MemoryEventCallbacks,

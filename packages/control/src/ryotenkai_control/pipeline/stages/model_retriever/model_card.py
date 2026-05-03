@@ -10,9 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
-from src.pipeline.stages.model_retriever.types import (
+from ryotenkai_control.pipeline.stages.model_retriever.types import (
     ModelCardContext,
     _PHASE_IDX,
     _STRATEGY_TYPE,
@@ -20,7 +20,7 @@ from src.pipeline.stages.model_retriever.types import (
 )
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class ModelCardGenerator:

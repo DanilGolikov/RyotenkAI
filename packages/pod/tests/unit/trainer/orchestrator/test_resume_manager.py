@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.orchestrator.resume_manager import ResumeManager
+from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
 
 
 def _mk_cfg() -> MagicMock:
@@ -30,7 +30,7 @@ class TestSetupBuffer:
             assert kwargs["run_id"] == "rid"
             return buf
 
-        monkeypatch.setattr("src.training.orchestrator.resume_manager.DataBuffer", mk_buffer)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.resume_manager.DataBuffer", mk_buffer)
 
         strategies = [MagicMock()]
         out_buf, start_phase, should_load = rm.setup_buffer(strategies, resume=False, run_id="rid")
@@ -50,7 +50,7 @@ class TestSetupBuffer:
         buf = MagicMock()
         buf.load_state.return_value = True
         buf.get_resume_phase.return_value = 2
-        monkeypatch.setattr("src.training.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
 
         strategies = [MagicMock()]
         out_buf, start_phase, should_load = rm.setup_buffer(strategies, resume=True, run_id="rid")
@@ -66,7 +66,7 @@ class TestSetupBuffer:
         buf = MagicMock()
         buf.load_state.return_value = True
         buf.get_resume_phase.return_value = 0
-        monkeypatch.setattr("src.training.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
 
         out_buf, start_phase, should_load = rm.setup_buffer([MagicMock()], resume=True, run_id="rid")
         assert out_buf is buf
@@ -80,7 +80,7 @@ class TestSetupBuffer:
         buf = MagicMock()
         buf.load_state.return_value = True
         buf.get_resume_phase.return_value = None
-        monkeypatch.setattr("src.training.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
 
         out_buf, start_phase, should_load = rm.setup_buffer([MagicMock()], resume=True, run_id="rid")
         assert out_buf is buf
@@ -94,7 +94,7 @@ class TestSetupBuffer:
 
         buf = MagicMock()
         buf.load_state.return_value = False
-        monkeypatch.setattr("src.training.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.resume_manager.DataBuffer", lambda **kw: buf)
 
         strategies = [MagicMock()]
         out_buf, start_phase, should_load = rm.setup_buffer(strategies, resume=True, run_id="rid")
@@ -213,7 +213,7 @@ class TestResumeSignals:
         buf.state.status = "running"
 
         # Use the real PhaseStatus enum from module
-        from src.training.managers.data_buffer import PhaseStatus
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 
         buf.state.phases = [SimpleNamespace(status=PhaseStatus.INTERRUPTED, phase_idx=1)]
         assert rm.was_interrupted(buf) is True
@@ -222,7 +222,7 @@ class TestResumeSignals:
         rm = ResumeManager(_mk_cfg())
         buf = MagicMock()
 
-        from src.training.managers.data_buffer import PhaseStatus
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 
         phase = SimpleNamespace(
             status=PhaseStatus.INTERRUPTED,

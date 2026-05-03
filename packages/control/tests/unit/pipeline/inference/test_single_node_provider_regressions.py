@@ -14,14 +14,14 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from src.providers.single_node.inference.provider import SingleNodeInferenceProvider
-from src.providers.single_node.training.config import (
+from ryotenkai_providers.single_node.inference.provider import SingleNodeInferenceProvider
+from ryotenkai_providers.single_node.training.config import (
     SingleNodeConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
 )
-from src.config import (
+from ryotenkai_shared.config import (
     InferenceSingleNodeServeConfig,
     InferenceVLLMEngineConfig,
     PipelineConfig,

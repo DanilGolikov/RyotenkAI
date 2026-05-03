@@ -987,7 +987,7 @@ class TestPodResilience:
         sdk.start_pod = MagicMock()
 
         monkeypatch.setattr(
-            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
         )
 
@@ -1022,7 +1022,7 @@ class TestPodResilience:
         sdk = MagicMock()
         sdk.get_pod = MagicMock(return_value=_FakeOk(running_pod))
         monkeypatch.setattr(
-            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
         )
 
@@ -1052,7 +1052,7 @@ class TestPodResilience:
         sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
         sdk.start_pod = MagicMock(return_value=_FakeOk(None))
         monkeypatch.setattr(
-            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
         )
 
@@ -1082,7 +1082,7 @@ class TestPodResilience:
         sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
         sdk.start_pod = MagicMock(return_value=_FakeErr("rate limit"))
         monkeypatch.setattr(
-            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
         )
 
@@ -1105,7 +1105,7 @@ class TestPodResilience:
         # SDK should never be touched once the cap is hit.
         sdk = MagicMock()
         monkeypatch.setattr(
-            "src.providers.runpod.sdk_adapter.RunPodSDKClient",
+            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
         )
 

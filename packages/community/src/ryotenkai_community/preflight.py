@@ -37,7 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from src.community.instance_validator import (
+from ryotenkai_community.instance_validator import (
     InstanceValidationError,
     validate_instance,
 )
@@ -45,9 +45,9 @@ from src.community.instance_validator import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from src.community.manifest import PluginKind, PluginManifest
-    from src.config.secrets.model import Secrets
-    from src.config import PipelineConfig
+    from ryotenkai_community.manifest import PluginKind, PluginManifest
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class _PluginRef(NamedTuple):
@@ -169,7 +169,7 @@ def _enabled_report_plugins(
     constructor kwargs, so ``params`` / ``thresholds`` are always
     empty.
     """
-    from src.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+    from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
 
     reports_cfg = getattr(config, "reports", None)
     sections: tuple[str, ...] = (
@@ -287,8 +287,8 @@ def validate_required_env(
     and re-raising here would shadow it with a misleading "missing env"
     message.
     """
-    from src.community.catalog import catalog
-    from src.community.manifest import PluginKind as _PluginKindType  # noqa: F401
+    from ryotenkai_community.catalog import catalog
+    from ryotenkai_community.manifest import PluginKind as _PluginKindType  # noqa: F401
 
     catalog.ensure_loaded()
     lookup = _build_value_lookup(secrets, project_env)
@@ -347,7 +347,7 @@ def validate_instances(
     rationale as :func:`validate_required_env` (the runtime path will
     surface a clearer "plugin not found" message).
     """
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.ensure_loaded()
 

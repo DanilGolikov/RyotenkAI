@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from src.api.services import launch_service
-from src.pipeline import launch as pipeline_launch
+from ryotenkai_control.api.services import launch_service
+from ryotenkai_control.pipeline import launch as pipeline_launch
 
 
 def _fake_spawn(monkeypatch: pytest.MonkeyPatch, *, pid: int = 42424, command: tuple[str, ...] = ("python3",)) -> list[dict]:
@@ -113,7 +113,7 @@ def test_launch_inside_project_workspace_passes_RYOTENKAI_env_vars(
     in extra_env so the worker's bootstrap can stamp them onto state
     and MLflow tags.
     """
-    from src.workspace.projects.adapter import ResolvedProject
+    from ryotenkai_control.workspace.projects.adapter import ResolvedProject
 
     seed_completed_run("run_proj")
     config_file = tmp_path / "config.yaml"

@@ -22,16 +22,16 @@ a second cloud provider arrives, the abstractions cross-cut at the
 
 from __future__ import annotations
 
-from src.providers.runpod.lifecycle.pod_ssh_waiter import (
+from ryotenkai_providers.runpod.lifecycle.pod_ssh_waiter import (
     PodQuery,
     PodSshWaiter,
 )
-from src.providers.runpod.lifecycle.policy import (
+from ryotenkai_providers.runpod.lifecycle.policy import (
     INFERENCE_PROFILE,
     TRAINING_PROFILE,
     WaitPolicy,
 )
-from src.providers.runpod.lifecycle.tcp_probe import default_tcp_probe
+from ryotenkai_providers.runpod.lifecycle.tcp_probe import default_tcp_probe
 
 __all__ = [
     "INFERENCE_PROFILE",

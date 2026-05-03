@@ -19,16 +19,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.stages.inference_deployer import InferenceDeployer
-from src.pipeline.stages.model_evaluator import ModelEvaluator
-from src.pipeline.state import RunContext
-from src.providers.inference.interfaces import (
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.stages.inference_deployer import InferenceDeployer
+from ryotenkai_control.pipeline.stages.model_evaluator import ModelEvaluator
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     InferenceCapabilities,
 )
-from src.config import Secrets
-from src.utils.result import Failure, InferenceError, Ok, Success
+from ryotenkai_shared.config import Secrets
+from ryotenkai_shared.utils.result import Failure, InferenceError, Ok, Success
 
 
 # ---------------------------------------------------------------------------
@@ -80,14 +80,14 @@ class _FakeInferenceProvider:
         return None
 
     def get_pipeline_readiness_mode(self):
-        from src.providers.inference.interfaces import PipelineReadinessMode
+        from ryotenkai_providers.inference.interfaces import PipelineReadinessMode
         return PipelineReadinessMode.SKIP
 
     def collect_startup_logs(self, *, local_path: Path) -> None:
         return None
 
     def build_inference_artifacts(self, *, ctx):
-        from src.providers.inference.interfaces import InferenceArtifacts
+        from ryotenkai_providers.inference.interfaces import InferenceArtifacts
         return Ok(InferenceArtifacts(
             manifest={"endpoint": {"client_base_url": "http://127.0.0.1:8000/v1"}},
             chat_script="# stub\n",
@@ -170,7 +170,7 @@ def test_deploy_ok_activate_err_aborts_pipeline_before_eval(
         )),
     )
 
-    import src.pipeline.stages.inference_deployer as deployer_mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as deployer_mod
     monkeypatch.setattr(
         deployer_mod.InferenceProviderFactory, "create",
         lambda **kwargs: Success(fake),
@@ -195,7 +195,7 @@ def test_deploy_ok_activate_ok_preflight_err_stops_evaluator(
     import httpx as _httpx
 
     fake = _FakeInferenceProvider()  # all defaults = success
-    import src.pipeline.stages.inference_deployer as deployer_mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as deployer_mod
     monkeypatch.setattr(
         deployer_mod.InferenceProviderFactory, "create",
         lambda **kwargs: Success(fake),
@@ -214,9 +214,9 @@ def test_deploy_ok_activate_ok_preflight_err_stops_evaluator(
 
     # Now run evaluator — endpoint dies between stages.
     evaluator = ModelEvaluator(_mk_eval_cfg())
-    with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
-         patch("src.pipeline.stages.model_evaluator.time.sleep"), \
-         patch("src.evaluation.runner.EvaluationRunner") as MockRunner:
+    with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
+         patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"), \
+         patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner:
         mock_get.side_effect = _httpx.ConnectError("connection refused")
         eval_res = evaluator.execute(deploy_res.unwrap())
         # The eval runner must NOT have been instantiated.
@@ -231,7 +231,7 @@ def test_deploy_ok_activate_ok_preflight_ok_runs_evaluation(
 ) -> None:
     """Happy path: all three steps succeed, eval actually runs."""
     fake = _FakeInferenceProvider()
-    import src.pipeline.stages.inference_deployer as deployer_mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as deployer_mod
     monkeypatch.setattr(
         deployer_mod.InferenceProviderFactory, "create",
         lambda **kwargs: Success(fake),
@@ -244,17 +244,17 @@ def test_deploy_ok_activate_ok_preflight_ok_runs_evaluation(
     ).execute(_initial_context())
     assert deploy_res.is_success()
 
-    from src.evaluation.runner import RunSummary
+    from ryotenkai_control.evaluation.runner import RunSummary
 
     summary = RunSummary(overall_passed=True, sample_count=10, duration_seconds=1.0)
     summary.plugin_results = {}
 
     evaluator = ModelEvaluator(_mk_eval_cfg())
-    with patch("src.pipeline.stages.model_evaluator._preflight_check_endpoint",
+    with patch("ryotenkai_control.pipeline.stages.model_evaluator._preflight_check_endpoint",
                return_value=Ok(None)), \
-         patch("src.evaluation.runner.EvaluationRunner") as MockRunner, \
+         patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner, \
          patch(
-             "src.evaluation.model_client.factory.ModelClientFactory.create",
+             "ryotenkai_control.evaluation.model_client.factory.ModelClientFactory.create",
              return_value=MagicMock(),
          ):
         mock_runner = MagicMock()
@@ -281,7 +281,7 @@ def test_provider_without_capability_aborts_at_inference_deployer(
         ),
     )
 
-    import src.pipeline.stages.inference_deployer as deployer_mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as deployer_mod
     monkeypatch.setattr(
         deployer_mod.InferenceProviderFactory, "create",
         lambda **kwargs: Success(fake),

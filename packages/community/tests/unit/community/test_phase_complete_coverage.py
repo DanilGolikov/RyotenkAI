@@ -37,20 +37,20 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from src.community.catalog import CommunityCatalog
-from src.community.instance_validator import validate_instance
-from src.community.loader import LoadFailure, load_plugins
-from src.community.manifest import LATEST_SCHEMA_VERSION, PluginManifest, RequiredEnvSpec
-from src.community.preflight import (
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.instance_validator import validate_instance
+from ryotenkai_community.loader import LoadFailure, load_plugins
+from ryotenkai_community.manifest import LATEST_SCHEMA_VERSION, PluginManifest, RequiredEnvSpec
+from ryotenkai_community.preflight import (
     LaunchAbortedError,
     run_preflight,
     validate_required_env,
 )
-from src.community.stale_plugins import find_stale_plugins
-from src.data.validation.registry import ValidationPluginRegistry
-from src.evaluation.plugins.registry import EvaluatorPluginRegistry
-from src.reports.plugins.registry import ReportPluginRegistry
-from src.training.reward_plugins.registry import RewardPluginRegistry
+from ryotenkai_community.stale_plugins import find_stale_plugins
+from ryotenkai_control.data.validation.registry import ValidationPluginRegistry
+from ryotenkai_control.evaluation.plugins.registry import EvaluatorPluginRegistry
+from ryotenkai_control.reports.plugins.registry import ReportPluginRegistry
+from ryotenkai_pod.trainer.reward_plugins.registry import RewardPluginRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +68,8 @@ def _load_pipeline_config():
     ``reports.sections=[]`` so tests that focus on validation/eval/
     reward don't trip on the default 13-plugin reports list (whose
     plugins live under the *real* community/, not the temp catalog)."""
-    from src.config.reports.schema import ReportsConfig
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config.reports.schema import ReportsConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     config = PipelineConfig.model_validate(yaml.safe_load(_FIXTURE.read_text()))
     config.reports = ReportsConfig(sections=[])
@@ -78,7 +78,7 @@ def _load_pipeline_config():
 
 def _attach_eval(config, plugin_id: str, *, params=None, thresholds=None, enabled=True):
     """Wire a single evaluator plugin instance into ``config``."""
-    from src.config.evaluation.schema import (
+    from ryotenkai_shared.config.evaluation.schema import (
         EvaluationDatasetConfig,
         EvaluatorPluginConfig,
     )
@@ -102,7 +102,7 @@ def _attach_eval(config, plugin_id: str, *, params=None, thresholds=None, enable
 def _make_minimal_eval_plugin(make_plugin_dir, plugin_id: str) -> None:
     """Drop a working evaluator plugin folder under the temp catalog."""
     src = dedent(f"""
-        from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
         class {plugin_id.title().replace('_', '')}Plugin(EvaluatorPlugin):
             def evaluate(self, samples):
@@ -122,10 +122,10 @@ def _make_minimal_eval_plugin(make_plugin_dir, plugin_id: str) -> None:
 def patched_catalog(tmp_community_root, monkeypatch):
     """Per-test catalog rooted at the temp tree."""
     import sys
-    import src.community as community_pkg
+    import ryotenkai_community as community_pkg
 
     cat = CommunityCatalog(root=tmp_community_root)
-    catalog_module = sys.modules["src.community.catalog"]
+    catalog_module = sys.modules["ryotenkai_community.catalog"]
     monkeypatch.setattr(catalog_module, "catalog", cat)
     monkeypatch.setattr(community_pkg, "catalog", cat)
     return cat
@@ -238,7 +238,7 @@ class TestNegative:
                 managed_by = ""
             """),
             plugin_source=dedent("""
-                from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+                from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
                 class NeedsKeyPlugin(EvaluatorPlugin):
                     def evaluate(self, samples):
                         return EvalResult(plugin_name="needs_key", passed=True)
@@ -407,7 +407,7 @@ class TestDependencyErrors:
                 managed_by = ""
             """),
             plugin_source=dedent("""
-                from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+                from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
                 class NeedsKeyPlugin(EvaluatorPlugin):
                     def evaluate(self, samples):
                         return EvalResult(plugin_name="needs_key", passed=True)
@@ -492,8 +492,8 @@ class TestRegressions:
             managed_by = ""
         """).strip())
         (plugin_dir / "plugin.py").write_text(dedent("""
-            from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
-            from src.community.manifest import RequiredEnvSpec
+            from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+            from ryotenkai_community.manifest import RequiredEnvSpec
 
             class DriftyPlugin(EvaluatorPlugin):
                 REQUIRED_ENV = (
@@ -521,7 +521,7 @@ class TestRegressions:
         """The API ``PluginManifest.schema_version`` default used to
         read 1; it now mirrors LATEST so OpenAPI consumers see the
         version the API actually emits."""
-        from src.api.schemas.plugin import PluginManifest as ApiPluginManifest
+        from ryotenkai_control.api.schemas.plugin import PluginManifest as ApiPluginManifest
 
         assert ApiPluginManifest.model_fields["schema_version"].default == LATEST_SCHEMA_VERSION
 
@@ -529,7 +529,7 @@ class TestRegressions:
         """The reports scaffold used to emit ``plugin_id = ""`` and
         rely on the loader to stamp it. Tests instantiating directly
         saw an empty id in render output. Now seeded from manifest."""
-        from src.community.scaffold_template import render_plugin_py
+        from ryotenkai_community.scaffold_template import render_plugin_py
 
         body = render_plugin_py("reports", "my_section", "MySectionPlugin")
         assert 'plugin_id = "my_section"' in body
@@ -547,7 +547,7 @@ class TestLogicSpecific:
         """Validation plugins are fenced into the DTST_* prefix; any
         attempt to resolve a non-DTST_ key raises so a buggy manifest
         can't leak system secrets through the validation surface."""
-        from src.data.validation.secrets import SecretsResolver
+        from ryotenkai_control.data.validation.secrets import SecretsResolver
 
         secrets = fake_secrets(EVAL_OTHER_KIND="leaked", DTST_OK="value")
         resolver = SecretsResolver(secrets)
@@ -558,7 +558,7 @@ class TestLogicSpecific:
         self, fake_secrets
     ) -> None:
         """Symmetric check for evaluation kind."""
-        from src.evaluation.plugins.secrets import SecretsResolver
+        from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
 
         secrets = fake_secrets(DTST_OTHER_KIND="leaked", EVAL_OK="value")
         resolver = SecretsResolver(secrets)
@@ -582,7 +582,7 @@ class TestLogicSpecific:
                 managed_by = "integrations"
             """),
             plugin_source=dedent("""
-                from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+                from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
                 class ManagedPlugin(EvaluatorPlugin):
                     def evaluate(self, samples):
                         return EvalResult(plugin_name="managed", passed=True)
@@ -611,7 +611,7 @@ class TestLogicSpecific:
                 managed_by = ""
             """),
             plugin_source=dedent("""
-                from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+                from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
                 class NeedsKeyPlugin(EvaluatorPlugin):
                     def evaluate(self, samples):
                         return EvalResult(plugin_name="needs_key", passed=True)
@@ -657,8 +657,8 @@ class TestLogicSpecific:
         """LaunchAbortedError concatenates env + shape failure
         descriptions so the user sees the full picture in one
         traceback line."""
-        from src.community.instance_validator import InstanceValidationError
-        from src.community.preflight import MissingEnv
+        from ryotenkai_community.instance_validator import InstanceValidationError
+        from ryotenkai_community.preflight import MissingEnv
 
         err = LaunchAbortedError(
             missing=[MissingEnv(

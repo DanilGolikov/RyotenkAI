@@ -70,7 +70,7 @@ def test_pack_then_submit_unpacks_under_workspace_community(
     """
     # PluginPacker is dragged in only when needed — keeps the rest of
     # the integration suite free of the heavy pipeline import.
-    from src.pipeline.stages.managers.deployment.plugin_packer import (
+    from ryotenkai_control.pipeline.stages.managers.deployment.plugin_packer import (
         PluginPacker,
         PluginRef,
     )
@@ -96,8 +96,8 @@ def test_pack_then_submit_unpacks_under_workspace_community(
 
     from fastapi.testclient import TestClient
 
-    from src.runner.main import create_app
-    from src.tests.unit.runner.conftest import MockSupervisor
+    from ryotenkai_pod.runner.main import create_app
+    from tests.unit.runner.conftest import MockSupervisor
 
     app = create_app(supervisor_factory=MockSupervisor)
     with TestClient(app) as client:

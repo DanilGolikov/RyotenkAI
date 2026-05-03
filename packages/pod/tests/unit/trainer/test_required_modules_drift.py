@@ -45,8 +45,8 @@ _RUNTIME_CHECK_PATH = Path("docker/training/runtime_check.py")
 # Entrypoints whose absence in the gate list would defeat the gate's
 # whole purpose. Keep this set exactly aligned with what the pod runs.
 _REQUIRED_ENTRYPOINTS: set[str] = {
-    "src.training.run_training",  # trainer CLI invoked by training_launcher
-    "src.runner.main",            # uvicorn FastAPI app the runner spins up
+    "ryotenkai_pod.trainer.run_training",  # trainer CLI invoked by training_launcher
+    "ryotenkai_pod.runner.main",            # uvicorn FastAPI app the runner spins up
 }
 
 
@@ -82,11 +82,11 @@ def test_runtime_check_lists_both_entrypoints():
 
 
 def test_runtime_check_required_modules_are_unique_and_dotted():
-    """Sanity: no duplicates, all entries look like ``src.…`` paths."""
+    """Sanity: no duplicates, all entries look like ``ryotenkai_<pkg>.…`` paths."""
     required = _load_required_src_modules()
     assert len(required) == len(set(required)), f"Duplicate entries: {required}"
     for name in required:
-        assert name.startswith("src."), f"Non-src.* entry: {name!r}"
+        assert name.startswith("ryotenkai_"), f"Non-ryotenkai_*.* entry: {name!r}"
         assert " " not in name, f"Whitespace in entry: {name!r}"
 
 

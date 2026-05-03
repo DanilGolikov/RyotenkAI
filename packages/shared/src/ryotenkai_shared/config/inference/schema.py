@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, model_validator
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     INFERENCE_ENGINE_VLLM,
     InferenceEngineName,
     InferenceProviderName,

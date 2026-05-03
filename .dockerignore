@@ -50,7 +50,7 @@ mlruns
 # Rationale: the image ships the trainer, not its test suite. Tests
 # also pull in dev-only deps (pytest, hypothesis) that aren't in
 # requirements.runtime.txt — including them wouldn't even import.
-src/tests
+packages/*/tests
 tests
 
 # --- Docs / plans / scratch ---

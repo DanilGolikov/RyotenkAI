@@ -3,14 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.api.schemas.launch import (
+from ryotenkai_control.api.schemas.launch import (
     InterruptResponse,
     LaunchRequestSchema,
     LaunchResponse,
     RestartPoint,
     RestartPointsResponse,
 )
-from src.pipeline.launch import (
+from ryotenkai_control.pipeline.launch import (
     LaunchRequest,
     interrupt_launch_process,
     is_process_alive,
@@ -20,8 +20,8 @@ from src.pipeline.launch import (
     spawn_launch,
     validate_resume_run,
 )
-from src.pipeline.state import PipelineStateStore, remove_stale_lock
-from src.workspace.projects.adapter import (
+from ryotenkai_control.pipeline.state import PipelineStateStore, remove_stale_lock
+from ryotenkai_control.workspace.projects.adapter import (
     build_subprocess_extra_env,
     resolve_project_launch_inputs_from_run_dir,
 )
@@ -159,7 +159,7 @@ def resume_pod_for_run(run_dir: Path) -> ResumePodResponse:
     (see :mod:`src.cli.commands.run`); both surfaces share the same
     orchestrator but have different output shapes.
     """
-    from src.pipeline.launch.resume_service import LaunchResumeService
+    from ryotenkai_control.pipeline.launch.resume_service import LaunchResumeService
 
     outcome = LaunchResumeService().resume(run_dir)
     return ResumePodResponse(

@@ -16,13 +16,13 @@ Based on real-world LLM fine-tuning issues:
 
 import pytest
 
-from src.reports.core.analyzers import (
+from ryotenkai_control.reports.core.analyzers import (
     METRIC_DESCRIPTIONS,
     MetricAnalyzer,
     PercentileCalculator,
 )
-from src.reports.domain.entities import MetricTrend
-from src.reports.models.report import MetricStatus
+from ryotenkai_control.reports.domain.entities import MetricTrend
+from ryotenkai_control.reports.models.report import MetricStatus
 
 # ============================================================================
 # FIXTURES

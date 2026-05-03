@@ -30,7 +30,7 @@ def _config_from_run_dir(run_dir: Path) -> Path:
     the original config path is recorded in the state file.
     """
     # Local imports keep ``worker --help`` cheap.
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     store = PipelineStateStore(run_dir)
     if not store.exists():
@@ -85,9 +85,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Heavy imports stay lazy so ``--help`` doesn't pay torch/mlflow costs.
-    from src.config.runtime import RuntimeSettings, load_runtime_settings
-    from src.pipeline.orchestrator import PipelineOrchestrator
-    from src.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
+    from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
     run_dir: Path | None = args.run_dir.expanduser().resolve() if args.run_dir else None
     if args.config is not None:
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     # Pollers (PodSshWaiter, etc.) check the cancel event via
     # ``sleep_cancellable`` and raise PipelineCancelled at their own
     # boundaries — see ``src/utils/cancellation.py``.
-    from src.utils.cancellation import (
+    from ryotenkai_shared.utils.cancellation import (
         install_handler,
         set_active_orchestrator,
     )

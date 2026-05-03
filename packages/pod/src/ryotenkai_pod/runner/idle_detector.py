@@ -63,8 +63,8 @@ from time import monotonic
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
-    from src.runner.supervisor import Supervisor
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.supervisor import Supervisor
 
 
 __all__ = [

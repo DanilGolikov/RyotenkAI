@@ -36,10 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.pipeline.state.store import PipelineStateLoadError, PipelineStateStore
+from ryotenkai_control.pipeline.state.store import PipelineStateLoadError, PipelineStateStore
 
 if TYPE_CHECKING:
-    from src.pipeline.state.models import PipelineState
+    from ryotenkai_control.pipeline.state.models import PipelineState
 
 
 DEFAULT_MAX_ENTRIES = 256

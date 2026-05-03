@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.runner.cancellation_telemetry import (
+from ryotenkai_pod.runner.cancellation_telemetry import (
     CANCELLATION_EVENT_KINDS,
     DURABILITY_EVENT_KINDS,
     EVENTS_DISK_PRESSURE,
@@ -30,8 +30,8 @@ from src.runner.cancellation_telemetry import (
     METRICS_BUFFER_RETRIEVED,
     TERMINAL_EVENT_KINDS,
 )
-from src.runner.event_bus import EventBus
-from src.runner.event_journal import EVENTS_DIR_REL, EventJournal
+from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.event_journal import EVENTS_DIR_REL, EventJournal
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ class TestBusDiskPressureRateLimit:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        from src.runner import event_bus as bus_mod
+        from ryotenkai_pod.runner import event_bus as bus_mod
 
         # Pin monotonic clock for deterministic rate-limit window.
         # `_signal_disk_pressure` does ``import time as _time`` locally
@@ -203,7 +203,7 @@ class TestPeriodicHealthCheck:
     async def test_emits_disk_pressure_when_above_threshold(
         self, tmp_path: Path
     ) -> None:
-        from src.runner.main import _periodic_journal_health_check
+        from ryotenkai_pod.runner.main import _periodic_journal_health_check
 
         # Build a journal whose total_bytes > threshold.
         j = EventJournal(root_dir=tmp_path / EVENTS_DIR_REL)
@@ -239,7 +239,7 @@ class TestPeriodicHealthCheck:
     async def test_no_event_when_below_threshold(
         self, tmp_path: Path
     ) -> None:
-        from src.runner.main import _periodic_journal_health_check
+        from ryotenkai_pod.runner.main import _periodic_journal_health_check
 
         j = EventJournal(root_dir=tmp_path / EVENTS_DIR_REL)
         j.total_bytes = lambda: 1_000  # well below
@@ -272,7 +272,7 @@ class TestPeriodicHealthCheck:
     ) -> None:
         # When we stay above threshold for multiple ticks, we should
         # emit only ONE event (until we drop back below and re-cross).
-        from src.runner.main import _periodic_journal_health_check
+        from ryotenkai_pod.runner.main import _periodic_journal_health_check
 
         j = EventJournal(root_dir=tmp_path / EVENTS_DIR_REL)
         j.total_bytes = lambda: 999_999_999

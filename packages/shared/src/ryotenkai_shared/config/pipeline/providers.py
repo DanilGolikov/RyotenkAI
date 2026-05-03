@@ -30,7 +30,7 @@ class PipelineProviderMixin:
             ValueError: If no provider specified
         """
         # Local import to avoid heavy side-effects at module import time.
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
 
         # Resolve name
         if name is None:

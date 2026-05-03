@@ -14,13 +14,13 @@ from typing import Any
 
 import pytest
 
-from src.runner.api.events import _subscribe_with_disk_fallback
-from src.runner.event_bus import (
+from ryotenkai_pod.runner.api.events import _subscribe_with_disk_fallback
+from ryotenkai_pod.runner.event_bus import (
     BufferTruncatedError,
     DiskJournalExhausted,
     EventBus,
 )
-from src.runner.event_journal import EVENTS_DIR_REL, EventJournal
+from ryotenkai_pod.runner.event_journal import EVENTS_DIR_REL, EventJournal
 
 
 # ---------------------------------------------------------------------------

@@ -11,13 +11,13 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from src.training.mlflow.autolog import MLflowAutologManager
-from src.training.mlflow.dataset_logger import MLflowDatasetLogger
-from src.training.mlflow.domain_logger import MLflowDomainLogger
-from src.training.mlflow.event_log import MLflowEventLog
-from src.training.mlflow.model_registry import MLflowModelRegistry
-from src.training.mlflow.primitives import IMLflowPrimitives
-from src.training.mlflow.run_analytics import MLflowRunAnalytics
+from ryotenkai_pod.trainer.mlflow.autolog import MLflowAutologManager
+from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
+from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
+from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
+from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
+from ryotenkai_pod.trainer.mlflow.primitives import IMLflowPrimitives
+from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
 
 
 @runtime_checkable

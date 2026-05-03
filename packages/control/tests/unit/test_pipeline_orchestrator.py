@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.orchestrator import PipelineOrchestrator
-from src.pipeline.execution import StageRegistry
-from src.utils.result import AppError, Err, Ok, StrategyError
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
+from ryotenkai_control.pipeline.execution import StageRegistry
+from ryotenkai_shared.utils.result import AppError, Err, Ok, StrategyError
 
 # ========================================================================
 # FIXTURES
@@ -127,13 +127,13 @@ class TestPipelineOrchestratorInitialization:
     ):
         """Test successful initialization loads config and secrets."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.execution.stage_registry.DatasetValidator"),
-            patch("src.pipeline.execution.stage_registry.GPUDeployer"),
-            patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
-            patch("src.pipeline.execution.stage_registry.ModelRetriever"),
-            patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.DatasetValidator"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.GPUDeployer"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.TrainingMonitor"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelRetriever"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelEvaluator"),
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -166,13 +166,13 @@ class TestPipelineOrchestratorInitialization:
         mock_config.training.strategies = [mock_strategy1, mock_strategy2]
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.execution.stage_registry.DatasetValidator"),
-            patch("src.pipeline.execution.stage_registry.GPUDeployer"),
-            patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
-            patch("src.pipeline.execution.stage_registry.ModelRetriever"),
-            patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.DatasetValidator"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.GPUDeployer"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.TrainingMonitor"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelRetriever"),
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelEvaluator"),
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -195,8 +195,8 @@ class TestPipelineOrchestratorInitialization:
         mock_config.training.strategies = [mock_strategy]
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Err(
@@ -214,14 +214,14 @@ class TestPipelineOrchestratorInitialization:
     ):
         """Test that canonical stages are created in correct order."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
-            patch("src.pipeline.execution.stage_registry.DatasetValidator") as MockValidator,
-            patch("src.pipeline.execution.stage_registry.GPUDeployer") as MockDeployer,
-            patch("src.pipeline.execution.stage_registry.TrainingMonitor") as MockMonitor,
-            patch("src.pipeline.execution.stage_registry.ModelRetriever") as MockRetriever,
-            patch("src.pipeline.execution.stage_registry.InferenceDeployer") as MockInferenceDeployer,
-            patch("src.pipeline.execution.stage_registry.ModelEvaluator") as MockEvaluator,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.DatasetValidator") as MockValidator,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.GPUDeployer") as MockDeployer,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.TrainingMonitor") as MockMonitor,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelRetriever") as MockRetriever,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.InferenceDeployer") as MockInferenceDeployer,
+            patch("ryotenkai_control.pipeline.execution.stage_registry.ModelEvaluator") as MockEvaluator,
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -256,8 +256,8 @@ class TestPipelineOrchestratorHappyPath:
     ):
         """Test that run executes all stages sequentially."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -287,8 +287,8 @@ class TestPipelineOrchestratorHappyPath:
         mock_stages[1].run.return_value = Ok({"stage2_data": "value2"})
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -318,8 +318,8 @@ class TestPipelineOrchestratorHappyPath:
     ):
         """Test that run returns Ok with final context."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -354,8 +354,8 @@ class TestPipelineOrchestratorHappyPath:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -390,8 +390,8 @@ class TestPipelineOrchestratorHappyPath:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_generate_experiment_report") as mock_gen_report,
@@ -425,8 +425,8 @@ class TestPipelineOrchestratorHappyPath:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_aggregate_training_metrics") as mock_aggregate,
@@ -451,8 +451,8 @@ class TestPipelineOrchestratorHappyPath:
     ):
         """Test that cleanup_resources is called in finally block."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_cleanup_resources") as mock_cleanup,
@@ -490,8 +490,8 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages[0].run.return_value = Err(AppError(message="Stage 1 failed", code="TEST_ERROR"))
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -530,8 +530,8 @@ class TestPipelineOrchestratorErrorHandling:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -558,8 +558,8 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages[0].run.return_value = Err(AppError(message="Stage failed", code="TEST_ERROR"))
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_cleanup_resources") as mock_cleanup,
@@ -587,8 +587,8 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages[0].run.side_effect = RuntimeError("Unexpected error")
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -616,8 +616,8 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages[0].run.return_value = Err(AppError(message=error_msg, code="TEST_ERROR"))
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -656,8 +656,8 @@ class TestPipelineOrchestratorPartialExecution:
         mock_stages[2].run.return_value = Err(AppError(message="Stage 3 failed", code="TEST_ERROR"))
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -697,8 +697,8 @@ class TestPipelineOrchestratorPartialExecution:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -728,8 +728,8 @@ class TestPipelineOrchestratorPartialExecution:
         mock_stages[1].run.return_value = Err(AppError(message="Stage 2 failed", code="TEST_ERROR"))
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -775,8 +775,8 @@ class TestPipelineOrchestratorMLflowLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -809,8 +809,8 @@ class TestPipelineOrchestratorMLflowLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -845,8 +845,8 @@ class TestPipelineOrchestratorMLflowLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -880,8 +880,8 @@ class TestPipelineOrchestratorMLflowLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -924,8 +924,8 @@ class TestPipelineOrchestratorMLflowAggregation:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -961,8 +961,8 @@ class TestPipelineOrchestratorMLflowAggregation:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -997,8 +997,8 @@ class TestPipelineOrchestratorMLflowAggregation:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -1042,11 +1042,11 @@ class TestPipelineOrchestratorReportGeneration:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
+            patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -1081,11 +1081,11 @@ class TestPipelineOrchestratorReportGeneration:
         mock_report_gen.generate_report.return_value = "# Experiment Report\n..."
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
+            patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             MockReportGen.return_value = mock_report_gen
             mock_load_secrets.return_value = mock_secrets
@@ -1118,11 +1118,11 @@ class TestPipelineOrchestratorReportGeneration:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
+            patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             MockReportGen.side_effect = Exception("Report generation failed")
             mock_load_secrets.return_value = mock_secrets
@@ -1145,11 +1145,11 @@ class TestPipelineOrchestratorReportGeneration:
     ):
         """Test that report generation is not called when MLflow is disabled."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
-            patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
+            patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as MockReportGen,
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -1181,8 +1181,8 @@ class TestPipelineOrchestratorHelpers:
     ):
         """Test that _cleanup_resources calls cleanup() for all stages in reverse order."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1220,8 +1220,8 @@ class TestPipelineOrchestratorHelpers:
         we must NOT call cleanup() on the GPU Deployer stage (provider disconnect).
         """
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1254,8 +1254,8 @@ class TestPipelineOrchestratorHelpers:
     ):
         """Test that _print_summary generates console output."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1291,8 +1291,8 @@ class TestPipelineOrchestratorEdgeCases:
         mock_stages[0].run.side_effect = KeyboardInterrupt()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1316,8 +1316,8 @@ class TestPipelineOrchestratorEdgeCases:
     ):
         """Test that run handles empty stages list."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1344,8 +1344,8 @@ class TestPipelineOrchestratorEdgeCases:
         mock_stages[0].run.return_value = Ok(None)
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1402,8 +1402,8 @@ class TestPipelineOrchestratorStageSpecificLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1449,8 +1449,8 @@ class TestPipelineOrchestratorStageSpecificLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1493,8 +1493,8 @@ class TestPipelineOrchestratorStageSpecificLogging:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1537,8 +1537,8 @@ class TestPipelineOrchestratorMetricsAggregation:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_aggregate_training_metrics") as mock_aggregate,
@@ -1573,8 +1573,8 @@ class TestPipelineOrchestratorMetricsAggregation:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -1601,8 +1601,8 @@ class TestPipelineOrchestratorMetricsAggregation:
     ):
         """Test aggregation when MLflow is disabled."""
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1645,8 +1645,8 @@ class TestPipelineOrchestratorExceptionHandlers:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1682,8 +1682,8 @@ class TestPipelineOrchestratorExceptionHandlers:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1734,8 +1734,8 @@ class TestPipelineOrchestratorPrintSummary:
         )
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1772,8 +1772,8 @@ class TestPipelineOrchestratorPrintSummary:
         )
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1801,8 +1801,8 @@ class TestPipelineOrchestratorPrintSummary:
         mock_stages[1].run.return_value = Ok({"GPU Deployer": {"provider_type": "local"}})
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1841,8 +1841,8 @@ class TestPipelineOrchestratorEvaluationDisplay:
         )
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1873,8 +1873,8 @@ class TestPipelineOrchestratorEvaluationDisplay:
         )
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -1916,8 +1916,8 @@ class TestPipelineOrchestratorAggregationDetails:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -1954,8 +1954,8 @@ class TestPipelineOrchestratorAggregationDetails:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -1991,8 +1991,8 @@ class TestPipelineOrchestratorAggregationDetails:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -2028,8 +2028,8 @@ class TestPipelineOrchestratorAggregationDetails:
         mock_mlflow_manager.start_run.return_value = mock_context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
             patch.object(PipelineOrchestrator, "_collect_descendant_metrics") as mock_collect,
@@ -2072,8 +2072,8 @@ class TestPipelineOrchestratorAdditionalCoverage:
         mock_stages[1].run.return_value = Ok({})  # Empty context
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -2097,8 +2097,8 @@ class TestPipelineOrchestratorAdditionalCoverage:
         """Test summary when Model Retriever context is missing."""
         # Skip Model Retriever
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
             patch.object(PipelineOrchestrator, "_setup_mlflow") as mock_setup_mlflow,
         ):
@@ -2133,8 +2133,8 @@ class TestPipelineOrchestratorMLflowInternals:
         mock_config.integrations.mlflow = None
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
         ):
             mock_load_secrets.return_value = mock_secrets
@@ -2163,10 +2163,10 @@ class TestPipelineOrchestratorMLflowInternals:
         mock_mlflow_manager_class.side_effect = Exception("Setup failed")
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
-            patch("src.training.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
+            patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -2197,10 +2197,10 @@ class TestPipelineOrchestratorMLflowInternals:
         mock_mlflow_manager_class.return_value = mock_manager_instance
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
-            patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
+            patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
-            patch("src.training.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
+            patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
             patch.dict("sys.modules", {"mlflow": MagicMock()}),
         ):
             mock_load_secrets.return_value = mock_secrets

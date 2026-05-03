@@ -12,17 +12,17 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
     TRUNCATE_ERROR_MSG,
 )
-from src.training.metrics_models import TrainingMetricsSnapshot
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.training.container import IMLflowManager
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_pod.trainer.container import IMLflowManager
 
 
 # Phase 9.B — retry-with-grace constants for ``start_nested_run``.

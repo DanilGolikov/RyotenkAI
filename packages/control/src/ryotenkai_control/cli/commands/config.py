@@ -15,10 +15,10 @@ from typing import Annotated
 
 import typer
 
-from src.cli.common_options import RequiredConfigOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.common_options import RequiredConfigOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 config_app = typer.Typer(
     no_args_is_help=True,
@@ -35,7 +35,7 @@ def validate_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Static pre-flight checks for a pipeline config (no network calls)."""
-    from src.api.services import config_service
+    from ryotenkai_control.api.services import config_service
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -77,7 +77,7 @@ def show_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Print the parsed pipeline config (model_dump)."""
-    from src.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -92,8 +92,8 @@ def explain_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Show a short human-readable summary of model / dataset / training."""
-    from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-    from src.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -139,7 +139,7 @@ def schema_cmd(
     indent: Annotated[int, typer.Option("--indent", help="JSON indent (text mode only).")] = 2,
 ) -> None:
     """Print the JSON Schema for ``PipelineConfig``."""
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

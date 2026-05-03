@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-from src.api.schemas.provider import (
+from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
+from ryotenkai_control.api.schemas.provider import (
     ProviderConfigResponse,
     ProviderConfigVersion,
     ProviderConfigVersionsResponse,
@@ -17,23 +17,23 @@ from src.api.schemas.provider import (
     ProviderTypeInfo,
     ProviderTypesResponse,
 )
-from src.api.services.token_crypto import (
+from ryotenkai_control.api.services.token_crypto import (
     TokenCrypto,
     delete_token_file,
     write_token_file,
 )
-from src.config.providers.registry import PROVIDER_TYPES
-from src.workspace.providers import (
+from ryotenkai_shared.config.providers.registry import PROVIDER_TYPES
+from ryotenkai_control.workspace.providers import (
     ProviderMetadata,
     ProviderRegistry,
     ProviderRegistryEntry,
     ProviderStore,
 )
-from src.workspace.providers.registry import (
+from ryotenkai_control.workspace.providers.registry import (
     ProviderRegistryError,
     validate_provider_id,
 )
-from src.workspace.providers.store import ProviderStoreError
+from ryotenkai_control.workspace.providers.store import ProviderStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 

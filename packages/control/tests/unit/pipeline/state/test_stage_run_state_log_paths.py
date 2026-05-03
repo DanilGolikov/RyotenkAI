@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.pipeline.state import StageRunState
+from ryotenkai_control.pipeline.state import StageRunState
 
 pytestmark = pytest.mark.unit
 

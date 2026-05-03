@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, TrainingError
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

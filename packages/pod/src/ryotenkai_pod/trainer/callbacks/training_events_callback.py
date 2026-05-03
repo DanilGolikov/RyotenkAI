@@ -4,7 +4,7 @@ Training Events Callback for HuggingFace Trainer.
 Logs epoch-level events and checkpoint events to MLflow.
 
 Usage:
-    from src.training.callbacks.training_events_callback import TrainingEventsCallback
+    from ryotenkai_pod.trainer.callbacks.training_events_callback import TrainingEventsCallback
 
     callback = TrainingEventsCallback(mlflow_manager)
     trainer = SFTTrainer(..., callbacks=[callback])
@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING
 
 from transformers import TrainerCallback
 
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     MLFLOW_CATEGORY_TRAINING,
     MLFLOW_SOURCE_TRAINING_EVENTS,
 )
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from transformers import TrainerControl, TrainerState, TrainingArguments
 
-    from src.training.container import IMLflowManager
+    from ryotenkai_pod.trainer.container import IMLflowManager
 
 logger = get_logger(__name__)
 

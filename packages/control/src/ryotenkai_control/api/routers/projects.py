@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_project_registry
-from src.api.schemas.config_validate import ConfigValidationResult
-from src.api.schemas.project import (
+from ryotenkai_control.api.dependencies import get_project_registry
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.schemas.project import (
     ConfigResponse,
     ConfigVersionDetail,
     ConfigVersionsResponse,
@@ -21,9 +21,9 @@ from src.api.schemas.project import (
     ToggleFavoriteResponse,
     UpdateProjectDescriptionRequest,
 )
-from src.api.services import project_service
-from src.api.services.project_service import ProjectServiceError
-from src.workspace.projects import ProjectRegistry
+from ryotenkai_control.api.services import project_service
+from ryotenkai_control.api.services.project_service import ProjectServiceError
+from ryotenkai_control.workspace.projects import ProjectRegistry
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 

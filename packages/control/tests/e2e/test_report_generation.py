@@ -6,7 +6,7 @@ Connects to real MLflow server if available.
 import pytest
 import requests
 
-from src.reports.report_generator import ExperimentReportGenerator
+from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
 TRACKING_URI = "http://localhost:5002"
 # Run ID provided by user for reproduction

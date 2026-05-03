@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from datasets import Dataset
 
-from src.data.validation.base import ValidationErrorGroup, ValidationPlugin, ValidationResult
-from src.data.validation.standalone import (
+from ryotenkai_control.data.validation.base import ValidationErrorGroup, ValidationPlugin, ValidationResult
+from ryotenkai_control.data.validation.standalone import (
     FormatCheckResult,
     check_dataset_format,
     run_plugins,
@@ -144,7 +144,7 @@ class _StubFromPhase:
         self.message = message
 
     def validate_dataset(self, dataset):
-        from src.utils.result import DatasetError, Err, Ok
+        from ryotenkai_shared.utils.result import DatasetError, Err, Ok
 
         if self.ok:
             return Ok(None)
@@ -166,7 +166,7 @@ def test_check_dataset_format_aggregates_per_strategy(monkeypatch):
             return _StubFromPhase(ok=False, message="missing chosen")
 
     monkeypatch.setattr(
-        "src.training.strategies.factory.StrategyFactory",
+        "ryotenkai_pod.trainer.strategies.factory.StrategyFactory",
         _StubFactory,
     )
 
@@ -191,7 +191,7 @@ def test_check_dataset_format_short_circuits_on_unknown_strategy(monkeypatch):
             raise ValueError("strategy 'xyz' not registered")
 
     monkeypatch.setattr(
-        "src.training.strategies.factory.StrategyFactory",
+        "ryotenkai_pod.trainer.strategies.factory.StrategyFactory",
         _Factory,
     )
 

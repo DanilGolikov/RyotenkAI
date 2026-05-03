@@ -205,7 +205,7 @@ def save_stage_artifact(
             e.g. "evaluation" → "evaluation/sub_results.json"
     """
     try:
-        from src.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
 
         mlflow_mgr: Any = context.get(PipelineContextKeys.MLFLOW_MANAGER)
         run_id: Any = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)

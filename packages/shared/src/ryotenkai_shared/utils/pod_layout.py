@@ -40,7 +40,7 @@ import shlex
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from src.utils.log_filenames import (
+from ryotenkai_shared.utils.log_filenames import (
     FSM_STATE_JSON,
     FSM_STATE_JSONL,
     PIPELINE_CONFIG_FILE,

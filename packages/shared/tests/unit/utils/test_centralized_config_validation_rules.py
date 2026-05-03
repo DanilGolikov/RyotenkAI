@@ -2,8 +2,8 @@ import pytest
 from pydantic import ValidationError
 from unittest.mock import patch
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.config import (
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -94,7 +94,7 @@ def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: di
 
 
 def test_rule_1_strategies_chain_invalid_transition_warns_only() -> None:
-    with patch("src.utils.logger.logger.warning") as mock_warning:
+    with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
         cfg = TrainingOnlyConfig(
             type="qlora",
             qlora=_lora_cfg(),

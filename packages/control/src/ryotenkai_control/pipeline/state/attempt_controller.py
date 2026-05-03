@@ -47,14 +47,14 @@ from __future__ import annotations
 import copy
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.state import lineage_manager
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.state import lineage_manager
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     StageLineageRef,
     StageRunState,
 )
-from src.pipeline.state.transitioner import (
+from ryotenkai_control.pipeline.state.transitioner import (
     finalize_attempt_state,
     mark_stage_completed,
     mark_stage_failed,
@@ -481,7 +481,7 @@ class AttemptController:
             return
         if self._active_attempt is None:
             return
-        from src.pipeline.state.models import PodMetadata, utc_now_iso
+        from ryotenkai_control.pipeline.state.models import PodMetadata, utc_now_iso
 
         self._active_attempt.pod_metadata = PodMetadata(
             pod_id=pod_id,
@@ -510,7 +510,7 @@ class AttemptController:
         meta = self._active_attempt.pod_metadata
         if meta is None:
             return
-        from src.pipeline.state.models import PodMetadata
+        from ryotenkai_control.pipeline.state.models import PodMetadata
 
         self._active_attempt.pod_metadata = PodMetadata(
             pod_id=meta.pod_id,

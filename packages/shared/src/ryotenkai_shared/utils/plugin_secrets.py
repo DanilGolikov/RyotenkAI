@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.config.secrets.model import Secrets
+    from ryotenkai_shared.config.secrets.model import Secrets
 
 
 class PluginSecretsResolver:

@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.providers.training.factory import GPUProviderFactory
-from src.config import Secrets
-from src.utils.result import ProviderError
+from ryotenkai_providers.training.factory import GPUProviderFactory
+from ryotenkai_shared.config import Secrets
+from ryotenkai_shared.utils.result import ProviderError
 
 
 @dataclass

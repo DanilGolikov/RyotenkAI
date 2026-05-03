@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from src.api.schemas.report import ReportResponse
-from src.pipeline.state import PipelineStateStore
+from ryotenkai_control.api.schemas.report import ReportResponse
+from ryotenkai_control.pipeline.state import PipelineStateStore
 
 
 def get_or_generate_report(run_dir: Path, *, regenerate: bool = False) -> ReportResponse:
@@ -21,7 +21,7 @@ def get_or_generate_report(run_dir: Path, *, regenerate: bool = False) -> Report
         raise ValueError("root_mlflow_run_id not found in pipeline_state.json")
 
     # Import lazily to avoid pulling MLflow on every call.
-    from src.reports.report_generator import ExperimentReportGenerator
+    from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
     generator = ExperimentReportGenerator()
     markdown = generator.generate(state.root_mlflow_run_id, local_logs_dir=run_dir)

@@ -10,9 +10,9 @@ import logging
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
-from src.utils.cancellation import PipelineCancelled
-from src.providers.training.interfaces import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
+from ryotenkai_shared.utils.cancellation import PipelineCancelled
+from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
@@ -23,10 +23,10 @@ from src.providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from src.constants import RUNTIME_IMAGE
-from src.utils.pod_layout import PodLayout
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.utils.pod_layout import PodLayout
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from ..models import PodResourceInfo
 from ..pod_control import RunPodTrainingPodControl
@@ -70,9 +70,9 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
-    from src.pipeline.state import RunContext
-    from src.providers.runpod.models import PodSnapshot
-    from src.config import Secrets
+    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_providers.runpod.models import PodSnapshot
+    from ryotenkai_shared.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 
@@ -83,7 +83,7 @@ logger = logging.getLogger("ryotenkai")
 # package's heavy ``training/__init__.py`` chain. We re-export it
 # here for symmetry — callers who already import from the provider
 # module keep working.
-from src.providers.runpod._status_mapper import (
+from ryotenkai_providers.runpod._status_mapper import (
     map_runpod_desired_status_to_availability,
 )
 
@@ -720,7 +720,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         # vocabulary; the shared probe (:class:`PodAvailabilityProbe`)
         # now consumes ``map_runpod_desired_status_to_availability``
         # instead of importing the raw dict.
-        from src.pipeline.launch.pod_availability import PodAvailability
+        from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
 
         raw_status = str(pod_data.get("desiredStatus") or "").upper()
         if not raw_status:

@@ -74,8 +74,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from src.runner.heartbeat import MacHeartbeat
-    from src.runner.runtime.lifecycle_client import IPodLifecycleClient
+    from ryotenkai_pod.runner.heartbeat import MacHeartbeat
+    from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient
 
 
 __all__ = [

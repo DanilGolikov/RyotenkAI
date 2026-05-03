@@ -10,14 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from src.reports.core.analyzers import (
+from ryotenkai_control.reports.core.analyzers import (
     MetricAnalyzer,
     PercentileCalculator,
 )
-from src.reports.core.analyzers_memory import MemoryAnalyzer
-from src.reports.core.health_policy import DEFAULT_HEALTH_POLICY, HealthPolicy
-from src.reports.core.metrics_registry import get_metrics_for_strategy
-from src.reports.domain.entities import (
+from ryotenkai_control.reports.core.analyzers_memory import MemoryAnalyzer
+from ryotenkai_control.reports.core.health_policy import DEFAULT_HEALTH_POLICY, HealthPolicy
+from ryotenkai_control.reports.core.metrics_registry import get_metrics_for_strategy
+from ryotenkai_control.reports.domain.entities import (
     DatasetValidation,
     EvalPluginResult,
     EvaluationReport,
@@ -28,7 +28,7 @@ from src.reports.domain.entities import (
     ValidationPluginResults,
     ValidationReport,
 )
-from src.reports.models.report import (
+from ryotenkai_control.reports.models.report import (
     ConfigInfo,
     ExperimentHealth,
     ExperimentReport,
@@ -43,7 +43,7 @@ from src.reports.models.report import (
     ResourcesInfo,
     TimelineEvent,
 )
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

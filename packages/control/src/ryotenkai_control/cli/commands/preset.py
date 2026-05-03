@@ -22,10 +22,10 @@ from typing import Annotated
 import typer
 import yaml
 
-from src.cli.common_options import DryRunOpt, RequiredConfigOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.common_options import DryRunOpt, RequiredConfigOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 preset_app = typer.Typer(
     no_args_is_help=True,
@@ -43,7 +43,7 @@ def _loaded_presets() -> list:  # type: ignore[type-arg]
     Cached for the lifetime of the process so two preset verbs in a row
     (e.g. ``preset show`` after ``preset ls``) don't re-walk the disk.
     """
-    from src.community.loader import load_presets
+    from ryotenkai_community.loader import load_presets
 
     return list(load_presets().presets)
 
@@ -118,7 +118,7 @@ def apply_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Apply a preset to a config file — print or write the merged result."""
-    from src.community.preset_apply import apply_preset
+    from ryotenkai_community.preset_apply import apply_preset
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -164,7 +164,7 @@ def diff_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Print the per-key diff a preset would apply to ``config``."""
-    from src.community.preset_apply import apply_preset
+    from ryotenkai_community.preset_apply import apply_preset
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

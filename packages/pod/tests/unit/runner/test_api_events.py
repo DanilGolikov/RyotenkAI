@@ -22,7 +22,7 @@ import pytest
 from starlette.testclient import WebSocketTestSession  # noqa: F401  (used only for typing)
 from starlette.websockets import WebSocketDisconnect
 
-from src.runner.main import API_V1_PREFIX
+from ryotenkai_pod.runner.main import API_V1_PREFIX
 
 JOBS = f"{API_V1_PREFIX}/jobs"
 
@@ -120,7 +120,7 @@ class TestCloseCodes:
         # Saturate the bus past its capacity. Default capacity is
         # 10000; we can't reasonably bump that here, so manually
         # narrow the bus to make the test fast.
-        from src.runner.event_bus import EventBus
+        from ryotenkai_pod.runner.event_bus import EventBus
 
         narrow = EventBus(capacity=4)
         runner_client.app.state.bus = narrow

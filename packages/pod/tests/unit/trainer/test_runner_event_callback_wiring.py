@@ -33,7 +33,7 @@ import pytest
 # falls back to a static read of the source file.
 factory_mod: object | None
 try:
-    from src.training.trainers import factory as factory_mod  # type: ignore[no-redef]
+    from ryotenkai_pod.trainer.trainers import factory as factory_mod  # type: ignore[no-redef]
 except Exception:  # noqa: BLE001 — env-specific import issues
     factory_mod = None
 
@@ -251,7 +251,7 @@ class TestFactoryRuntime:
         no-op (env-unset) path. The factory imports it lazily —
         verify the lazy import target works without env."""
         monkeypatch.delenv("RYOTENKAI_RUNNER_URL", raising=False)
-        from src.training.callbacks.runner_event_callback import (
+        from ryotenkai_pod.trainer.callbacks.runner_event_callback import (
             RUNNER_URL_ENV,
             RunnerEventCallback,
         )

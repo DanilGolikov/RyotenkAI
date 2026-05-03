@@ -13,14 +13,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.orchestrator import (
+from ryotenkai_pod.trainer.orchestrator import (
     ChainRunner,
     DatasetLoader,
     MetricsCollector,
     ResumeManager,
     StrategyOrchestrator,
 )
-from src.config import StrategyPhaseConfig
+from ryotenkai_shared.config import StrategyPhaseConfig
 
 
 class TestDatasetLoader:
@@ -158,7 +158,7 @@ class TestMetricsCollector:
 
     def test_aggregate_phases(self):
         """Test aggregation of multiple phases."""
-        from src.training.metrics_models import TrainingMetricsSnapshot
+        from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
 
         collector = MetricsCollector()
         phase_metrics = [
@@ -358,20 +358,20 @@ class TestBackwardCompatibility:
     """Tests for backward compatibility of imports."""
 
     def test_import_from_training(self):
-        """Test import from src.training still works."""
-        from src.training import StrategyOrchestrator
+        """Test import from ryotenkai_pod.trainer still works."""
+        from ryotenkai_pod.trainer import StrategyOrchestrator
 
         assert StrategyOrchestrator is not None
 
     def test_import_from_orchestrator_module(self):
-        """Test import from src.training.orchestrator module works."""
-        from src.training.orchestrator import StrategyOrchestrator
+        """Test import from ryotenkai_pod.trainer.orchestrator module works."""
+        from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator
 
         assert StrategyOrchestrator is not None
 
     def test_both_imports_same_class(self):
         """Test both imports point to same class."""
-        from src.training import StrategyOrchestrator as SO1
-        from src.training.orchestrator import StrategyOrchestrator as SO2
+        from ryotenkai_pod.trainer import StrategyOrchestrator as SO1
+        from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator as SO2
 
         assert SO1 is SO2

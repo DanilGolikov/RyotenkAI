@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.constants import HF_UPLOAD_TIMEOUT_S, SSH_CMD_TIMEOUT, SSH_PORT_DEFAULT
+from ryotenkai_shared.constants import HF_UPLOAD_TIMEOUT_S, SSH_CMD_TIMEOUT, SSH_PORT_DEFAULT
 
 # HuggingFace HTTP error codes that the retriever inspects for friendly
 # fail-fast messages.

@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
-from src.api.services.config_service import _check_reward_strategy_compat
-from src.api.schemas.config_validate import ConfigCheck
+from ryotenkai_control.api.services.config_service import _check_reward_strategy_compat
+from ryotenkai_control.api.schemas.config_validate import ConfigCheck
 
 
 def _fake_reward_plugin(plugin_id: str, supported: list[str]) -> MagicMock:
@@ -37,7 +37,7 @@ def fake_catalog(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     gotcha this project has — ``src.community.__init__`` re-exports
     ``catalog`` as an attribute, which shadows the module path for
     ``monkeypatch.setattr`` with a dotted string."""
-    from src.community.catalog import catalog as real_catalog
+    from ryotenkai_community.catalog import catalog as real_catalog
 
     monkeypatch.setattr(real_catalog, "ensure_loaded", MagicMock())
     fake_plugins = MagicMock()

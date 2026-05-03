@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from src.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
-from src.runner.api.schemas import EventResponse, InternalEventRequest
-from src.runner.mlflow_relay import MLFLOW_EVENT_KINDS
+from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
+from ryotenkai_pod.runner.api.schemas import EventResponse, InternalEventRequest
+from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
-    from src.runner.mlflow_relay import MLflowRelay
-    from src.runner.state import JobLifecycleFSM
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.mlflow_relay import MLflowRelay
+    from ryotenkai_pod.runner.state import JobLifecycleFSM
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 

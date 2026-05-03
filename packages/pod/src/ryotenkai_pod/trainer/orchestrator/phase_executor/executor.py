@@ -11,26 +11,26 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import CATEGORY_TRAINING
-from src.training.orchestrator.phase_executor.adapter_cache import (
+from ryotenkai_pod.trainer.constants import CATEGORY_TRAINING
+from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import (
     AdapterCacheManager,
     _retry_call,
 )
-from src.training.orchestrator.phase_executor.mlflow_logger import MlflowPhaseLogger
-from src.training.orchestrator.phase_executor.training_runner import PhaseTrainingRunner
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, TrainingError
+from ryotenkai_pod.trainer.orchestrator.phase_executor.mlflow_logger import MlflowPhaseLogger
+from ryotenkai_pod.trainer.orchestrator.phase_executor.training_runner import PhaseTrainingRunner
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.training.managers.data_buffer import DataBuffer
-    from src.training.orchestrator.metrics_collector import MetricsCollector
-    from src.training.orchestrator.shutdown_handler import ShutdownHandler
-    from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.training.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
+    from ryotenkai_pod.trainer.orchestrator.metrics_collector import MetricsCollector
+    from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
 # Phase 9.A: error code emitted by ``PhaseTrainingRunner.handle_graceful_shutdown``.
@@ -106,7 +106,7 @@ class PhaseExecutor:
         self.metrics_collector = metrics_collector
         # strategy_factory kept as attribute for backward compat; no longer used in training loop
         if strategy_factory is None:
-            from src.training.strategies.factory import StrategyFactory
+            from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
             self.strategy_factory = StrategyFactory()
         else:

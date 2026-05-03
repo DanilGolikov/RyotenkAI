@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from src.api.services.log_service import list_log_files, read_chunk, resolve_log_path
-from src.pipeline.state import (
+from ryotenkai_control.api.services.log_service import list_log_files, read_chunk, resolve_log_path
+from ryotenkai_control.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
     PipelineStateStore,
@@ -332,7 +332,7 @@ def test_resolve_by_slug_filename_when_state_key_has_spaces(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-from src.api.services.log_service import read_chunk  # noqa: E402
+from ryotenkai_control.api.services.log_service import read_chunk  # noqa: E402
 
 
 def test_training_log_delta_polling_returns_only_new_bytes(

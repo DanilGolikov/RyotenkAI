@@ -15,8 +15,8 @@ import asyncio
 
 import pytest
 
-from src.runner.event_bus import EventBus
-from src.runner.health_reporter import (
+from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.health_reporter import (
     DEFAULT_HEALTH_INTERVAL,
     HealthReporter,
     HealthSnapshot,

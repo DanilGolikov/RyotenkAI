@@ -21,19 +21,19 @@ from typing import Any
 
 import pytest
 
-from src.community.constants import (
+from ryotenkai_community.constants import (
     ALL_PLUGIN_KINDS,
     MANIFEST_FILENAME,
     PRESET_DIR_NAME,
 )
-from src.community.install import (
+from ryotenkai_community.install import (
     ALLOWED_KINDS,
     InstallError,
     InstallResult,
     install_git,
     install_local,
 )
-from src.community.manifest import LATEST_SCHEMA_VERSION
+from ryotenkai_community.manifest import LATEST_SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------

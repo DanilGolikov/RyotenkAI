@@ -31,22 +31,22 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from src.utils.clients.job_client import (
+from ryotenkai_shared.utils.clients.job_client import (
     JobClientError,
     JobNotFoundError,
     ReplayTruncatedError,
 )
-from src.constants import (
+from ryotenkai_shared.constants import (
     CONSOLE_LINE_WIDTH,
     LOG_DOWNLOAD_INTERVAL_DEFAULT,
     SSH_PORT_DEFAULT,
 )
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import PipelineContextKeys, StageNames
-from src.pipeline.stages.managers.log_manager import LogManager
-from src.utils.logger import get_run_log_layout, logger
-from src.utils.result import AppError, Err, Ok, Result, TrainingError
-from src.utils.ssh_client import SSHClient
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_control.pipeline.stages.managers.log_manager import LogManager
+from ryotenkai_shared.utils.logger import get_run_log_layout, logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, Result, TrainingError
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 # Final-flush deadline. Pod-side training.log can be hundreds of KB
 # even for short runs; 60 s mirrors LogManager's per-command timeout.
@@ -65,10 +65,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.utils.clients.job_client import JobClient
-    from src.utils.clients.ssh_tunnel import SSHTunnelManager
-    from src.config.secrets.model import Secrets
-    from src.config import PipelineConfig
+    from ryotenkai_shared.utils.clients.job_client import JobClient
+    from ryotenkai_shared.utils.clients.ssh_tunnel import SSHTunnelManager
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.config import PipelineConfig
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +565,7 @@ class TrainingMonitor(PipelineStage):
         # the periodic-tail feature a no-op. PodLayout closes that.
         from pathlib import PurePosixPath
 
-        from src.utils.pod_layout import PodLayout
+        from ryotenkai_shared.utils.pod_layout import PodLayout
 
         try:
             pod_layout = PodLayout.from_root(PurePosixPath(workspace_path))
@@ -698,8 +698,8 @@ class TrainingMonitor(PipelineStage):
         self._recovery_attempts += 1
 
         try:
-            from src.providers.runpod.models import PodSnapshot
-            from src.providers.runpod.sdk_adapter import RunPodSDKClient
+            from ryotenkai_providers.runpod.models import PodSnapshot
+            from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
         except ImportError as imp_exc:
             logger.debug(f"[MONITOR] RunPod SDK not importable: {imp_exc}")
             return None

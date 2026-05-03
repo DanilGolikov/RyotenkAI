@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-import src.providers.runpod.training.provider as rp
-from src.pipeline.state import RunContext
-from src.providers.runpod.models import PodSnapshot, SshEndpoint
-from src.providers.runpod.training.provider import RunPodProvider
-from src.providers.training.interfaces import ProviderStatus
-from src.config import Secrets
-from src.utils.result import Err, Ok, ProviderError, Result
+import ryotenkai_providers.runpod.training.provider as rp
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
+from ryotenkai_providers.runpod.training.provider import RunPodProvider
+from ryotenkai_providers.training.interfaces import ProviderStatus
+from ryotenkai_shared.config import Secrets
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 _SSH_OK = SshEndpoint(host="1.2.3.4", port=2222)
 

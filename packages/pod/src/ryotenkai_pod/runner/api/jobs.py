@@ -33,29 +33,29 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
-from src.runner.api.deps import (
+from ryotenkai_pod.runner.api.deps import (
     get_bus,
     get_fsm,
     get_plugin_unpacker,
     get_supervisor,
 )
-from src.runner.api.schemas import (
+from ryotenkai_pod.runner.api.schemas import (
     JobSnapshotResponse,
     JobSpec,
     JobStopAcceptedResponse,
     JobSubmittedResponse,
 )
-from src.runner.plugin_unpacker import PluginUnpackError
-from src.runner.state import (
+from ryotenkai_pod.runner.plugin_unpacker import PluginUnpackError
+from ryotenkai_pod.runner.state import (
     JobState,
 )
-from src.runner.supervisor import SupervisorBusy
+from ryotenkai_pod.runner.supervisor import SupervisorBusy
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
-    from src.runner.plugin_unpacker import PluginUnpacker
-    from src.runner.state import JobLifecycleFSM
-    from src.runner.supervisor import Supervisor
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.plugin_unpacker import PluginUnpacker
+    from ryotenkai_pod.runner.state import JobLifecycleFSM
+    from ryotenkai_pod.runner.supervisor import Supervisor
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -239,7 +239,7 @@ def get_job(
     # off the pod; each successful GET refreshes the heartbeat so
     # PodTerminator's natural-completion grace window stretches
     # to cover the whole download.
-    from src.runner.api._activity import mark_heartbeat_if_present
+    from ryotenkai_pod.runner.api._activity import mark_heartbeat_if_present
     mark_heartbeat_if_present(request.app.state)
     return _snapshot_to_response(fsm, bus)
 

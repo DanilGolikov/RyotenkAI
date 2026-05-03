@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.reports.core.builder import ReportBuilder
-from src.reports.domain.entities import (
+from ryotenkai_control.reports.core.builder import ReportBuilder
+from ryotenkai_control.reports.domain.entities import (
     ExperimentData,
     MetricHistory,
     PhaseData,

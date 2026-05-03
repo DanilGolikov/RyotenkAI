@@ -10,7 +10,7 @@ Key simplification:
 - No manual model.setup() or prepare_model_for_kbit_training()
 
 Example:
-    from src.training.trainer_builder import create_peft_config, create_trainer
+    from ryotenkai_pod.trainer.trainer_builder import create_peft_config, create_trainer
 
     peft_config = create_peft_config(config)
     trainer = create_trainer(config, strategy, model, tokenizer, dataset, peft_config)
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from peft import AdaLoraConfig, LoraConfig, TaskType
 from trl import DPOConfig, DPOTrainer, GRPOConfig, GRPOTrainer, ORPOConfig, ORPOTrainer, SFTConfig, SFTTrainer
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     DEFAULT_LEARNING_RATES,
     STRATEGY_COT,
     STRATEGY_CPT,
@@ -35,20 +35,20 @@ from src.constants import (
     STRATEGY_SAPO,
     STRATEGY_SFT,
 )
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     DEFAULT_MAX_COMPLETION_LENGTH,
     HP_MAX_COMPLETION_LENGTH,
     HP_MAX_LENGTH,
 )
-from src.training.reward_plugins import build_reward_plugin_result
-from src.utils.logger import get_logger
+from ryotenkai_pod.trainer.reward_plugins import build_reward_plugin_result
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.training.strategies.base import TrainingStrategy
-    from src.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_pod.trainer.strategies.base import TrainingStrategy
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 logger = get_logger(__name__)
 
@@ -120,7 +120,7 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
 
     # AdaLoRA: Adaptive Low-Rank Adaptation
     if training_type == "adalora":
-        from src.config import AdaLoraConfig as AdaLoraConfigType
+        from ryotenkai_shared.config import AdaLoraConfig as AdaLoraConfigType
 
         if not isinstance(adapter_cfg, AdaLoraConfigType):
             raise ValueError("type='adalora' requires 'adalora:' section in config")
@@ -146,7 +146,7 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
         )
 
     # LoRA / QLoRA (both use LoraConfig, difference is in model quantization)
-    from src.config import LoraConfig as LoraConfigType
+    from ryotenkai_shared.config import LoraConfig as LoraConfigType
 
     if not isinstance(adapter_cfg, LoraConfigType):
         raise ValueError(f"type='{training_type}' requires 'lora:' section in config")

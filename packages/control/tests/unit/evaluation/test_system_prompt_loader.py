@@ -71,8 +71,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from src.config.inference.common import InferenceLLMConfig
-from src.evaluation.system_prompt import SystemPromptLoader, SystemPromptResult
+from ryotenkai_shared.config.inference.common import InferenceLLMConfig
+from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader, SystemPromptResult
 
 
 # ---------------------------------------------------------------------------

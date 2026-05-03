@@ -13,8 +13,8 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from src.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
-from src.pipeline.stages.managers.deployment_constants import (
+from ryotenkai_control.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
+from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_MARKER_EXISTS,
     DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
     DEPLOYMENT_RSYNC_TIMEOUT,
@@ -24,12 +24,12 @@ from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_TAR_TIMEOUT,
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, Secrets
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 DEFAULT_WORKSPACE = "/workspace"

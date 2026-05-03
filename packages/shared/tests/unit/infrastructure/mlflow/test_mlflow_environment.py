@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.infrastructure.mlflow.environment import MLflowEnvironment
+from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
 
 pytestmark = pytest.mark.unit
 

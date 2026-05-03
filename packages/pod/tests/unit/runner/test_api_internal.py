@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import json
 
-from src.runner.main import API_V1_PREFIX
+from ryotenkai_pod.runner.main import API_V1_PREFIX
 
 INTERNAL_EVENTS = f"{API_V1_PREFIX}/internal/events"
 JOBS = f"{API_V1_PREFIX}/jobs"
@@ -95,7 +95,7 @@ class TestLoopbackGate:
         # change TestClient's peer host, so instead we widen the
         # check: monkeypatch the trusted set down to a value
         # TestClient does not match, and confirm the gate fires.
-        from src.runner.api import internal as internal_module
+        from ryotenkai_pod.runner.api import internal as internal_module
 
         _submit(runner_client)
         original = internal_module._TRUSTED_HOSTS

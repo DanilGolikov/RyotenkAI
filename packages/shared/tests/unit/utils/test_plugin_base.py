@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 
 class _Plugin(BasePlugin):

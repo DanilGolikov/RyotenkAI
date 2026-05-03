@@ -50,8 +50,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.artifacts.base import utc_now_iso
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.artifacts.base import utc_now_iso
+from ryotenkai_control.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
     PipelineState,
@@ -60,19 +60,19 @@ from src.pipeline.state import (
     StageRunState,
     build_attempt_state,
 )
-from src.utils.logger import init_run_logging, logger
-from src.utils.logs_layout import LogLayout
-from src.utils.result import AppError
+from ryotenkai_shared.utils.logger import init_run_logging, logger
+from ryotenkai_shared.utils.logs_layout import LogLayout
+from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.config.runtime import RuntimeSettings
-    from src.pipeline.config_drift import ConfigDriftValidator
-    from src.pipeline.execution import StagePlanner
-    from src.pipeline.stages.base import PipelineStage
-    from src.pipeline.state import RunContext
+    from ryotenkai_shared.config.runtime import RuntimeSettings
+    from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
+    from ryotenkai_control.pipeline.execution import StagePlanner
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_control.pipeline.state import RunContext
 
 _SEPARATOR_CHAR = "="
 _SEPARATOR_LINE_WIDTH = 80

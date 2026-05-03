@@ -164,7 +164,7 @@ class TestBoundary:
     ) -> None:
         # Buffer has pending entries but no install() was called →
         # no log_metric original to drain through. Logged warning.
-        caplog.set_level(logging.WARNING, logger="src.training.mlflow.resilient_transport")
+        caplog.set_level(logging.WARNING, logger="ryotenkai_pod.trainer.mlflow.resilient_transport")
         transport, buffer = _make_transport_with_buffer(
             count=10, installed=False,
         )
@@ -200,7 +200,7 @@ class TestDependencyErrors:
     ) -> None:
         # Pin: best-effort contract — flush failures don't propagate;
         # caller's flow continues.
-        caplog.set_level(logging.WARNING, logger="src.training.mlflow.resilient_transport")
+        caplog.set_level(logging.WARNING, logger="ryotenkai_pod.trainer.mlflow.resilient_transport")
         transport, buffer = _make_transport_with_buffer(count=3)
         buffer.raise_on_next_flush(RuntimeError("upstream stalled"))
 

@@ -14,14 +14,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from src.providers.runpod.lifecycle import (
+from ryotenkai_providers.runpod.lifecycle import (
     TRAINING_PROFILE,
     PodQuery,
     PodSshWaiter,
 )
-from src.providers.runpod.models import PodSnapshot
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.models import PodSnapshot
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 
 class PodLifecycleManager:

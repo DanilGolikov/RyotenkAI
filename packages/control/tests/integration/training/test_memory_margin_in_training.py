@@ -18,7 +18,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.training.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
+from ryotenkai_pod.trainer.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
 
 
 def test_safe_operation_checks_margin():

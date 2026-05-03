@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
-from src.api.dependencies import get_runs_dir, resolve_run_dir
-from src.api.http_cache import apply_cache_headers, is_fresh
-from src.api.schemas.delete import DeleteResultSchema
-from src.api.schemas.run import CreateRunRequest, RunDetail, RunsListResponse, RunSummary
-from src.api.services import delete_service, run_service
+from ryotenkai_control.api.dependencies import get_runs_dir, resolve_run_dir
+from ryotenkai_control.api.http_cache import apply_cache_headers, is_fresh
+from ryotenkai_control.api.schemas.delete import DeleteResultSchema
+from ryotenkai_control.api.schemas.run import CreateRunRequest, RunDetail, RunsListResponse, RunSummary
+from ryotenkai_control.api.services import delete_service, run_service
 
 if TYPE_CHECKING:
     from pathlib import Path

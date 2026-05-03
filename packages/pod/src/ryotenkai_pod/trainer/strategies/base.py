@@ -20,13 +20,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig
-    from src.utils.result import Result, StrategyError
+    from ryotenkai_shared.config import PipelineConfig
+    from ryotenkai_shared.utils.result import Result, StrategyError
 
 
 @dataclass

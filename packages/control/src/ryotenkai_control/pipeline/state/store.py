@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState, utc_now_iso
+from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState, utc_now_iso
 
 if TYPE_CHECKING:
-    from src.pipeline.state.run_context import RunContext
+    from ryotenkai_control.pipeline.state.run_context import RunContext
 
 SCHEMA_VERSION = 1
 

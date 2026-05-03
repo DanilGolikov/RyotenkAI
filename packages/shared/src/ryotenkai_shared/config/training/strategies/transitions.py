@@ -7,7 +7,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     STRATEGY_COT,
     STRATEGY_CPT,
     STRATEGY_DPO,
@@ -19,7 +19,7 @@ from src.constants import (
 
 if TYPE_CHECKING:
     from .phase import StrategyPhaseConfig
-    from src.utils.result import Result, StrategyError
+    from ryotenkai_shared.utils.result import Result, StrategyError
 
 # Valid strategy transitions (from → to)
 # WPS407: use MappingProxyType for immutable module-level constant
@@ -42,7 +42,7 @@ VALID_START_STRATEGIES: tuple[str, ...] = (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_
 
 
 def _strategy_chain_error(message: str, code: str) -> Result[None, StrategyError]:
-    from src.utils.result import Err, StrategyError
+    from ryotenkai_shared.utils.result import Err, StrategyError
 
     return Err(StrategyError(message=message, code=code))
 
@@ -58,8 +58,8 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> Result[Non
     - Datasets must still be unique across non-cached phases
     """
     # Local import to avoid heavy side-effects at module import time.
-    from src.utils.logger import logger
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.logger import logger
+    from ryotenkai_shared.utils.result import Ok
 
     if not strategies:
         logger.debug("[CFG:CHAIN_INVALID] reason=empty_chain")

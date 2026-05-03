@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.utils.clients.job_client import JobClient
+    from ryotenkai_shared.utils.clients.job_client import JobClient
 
 
 __all__ = [

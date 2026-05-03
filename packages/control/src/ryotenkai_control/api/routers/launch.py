@@ -5,14 +5,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
-from src.api.dependencies import resolve_run_dir
-from src.api.schemas.launch import (
+from ryotenkai_control.api.dependencies import resolve_run_dir
+from ryotenkai_control.api.schemas.launch import (
     InterruptResponse,
     LaunchRequestSchema,
     LaunchResponse,
     RestartPointsResponse,
 )
-from src.api.services import launch_service
+from ryotenkai_control.api.services import launch_service
 
 router = APIRouter(prefix="/runs/{run_id:path}", tags=["launch"])
 

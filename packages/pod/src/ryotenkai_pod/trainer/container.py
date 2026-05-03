@@ -33,16 +33,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.training.mlflow import IMLflowManager  # re-export; canonical home is src/training/mlflow
-    from src.training.orchestrator import StrategyOrchestrator
-    from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.training.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
+    from ryotenkai_pod.trainer.mlflow import IMLflowManager  # re-export; canonical home is src/training/mlflow
+    from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_pod.trainer.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
 
 
 # =============================================================================
@@ -294,7 +294,7 @@ class TrainingContainer:
 
         # Lazy initialization of real MemoryManager
         if self._lazy_memory_manager is None:
-            from src.training.memory_manager import MemoryManager
+            from ryotenkai_pod.trainer.memory_manager import MemoryManager
 
             self._lazy_memory_manager = MemoryManager.auto_configure()
             logger.debug("[CONTAINER:MM_CREATED] MemoryManager auto-configured")
@@ -317,7 +317,7 @@ class TrainingContainer:
         Returns:
             IMemoryManager with callbacks configured
         """
-        from src.training.memory_manager import MemoryEventCallbacks, MemoryManager
+        from ryotenkai_pod.trainer.memory_manager import MemoryEventCallbacks, MemoryManager
 
         # If no MLflow manager, return regular memory manager
         if mlflow_manager is None:
@@ -357,7 +357,7 @@ class TrainingContainer:
 
         # Lazy initialization of real StrategyFactory
         if self._lazy_strategy_factory is None:
-            from src.training.strategies.factory import StrategyFactory
+            from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
             self._lazy_strategy_factory = StrategyFactory()
             logger.debug("[CONTAINER:SF_CREATED] StrategyFactory instance created")
@@ -383,7 +383,7 @@ class TrainingContainer:
 
         # Lazy initialization of real TrainerFactory
         if self._lazy_trainer_factory is None:
-            from src.training.trainers.factory import TrainerFactory
+            from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 
             # PyCharm: may not reliably treat Protocols as structural types here (false positive).
             self._lazy_trainer_factory = cast("ITrainerFactory", cast("object", TrainerFactory()))
@@ -410,7 +410,7 @@ class TrainingContainer:
 
         # Lazy initialization: runtime training loader (uses source_local.training_paths / source_hf.*)
         if self._lazy_dataset_loader is None:
-            from src.training.orchestrator.dataset_loader import DatasetLoader
+            from ryotenkai_pod.trainer.orchestrator.dataset_loader import DatasetLoader
 
             self._lazy_dataset_loader = DatasetLoader(config=self.config)
             logger.debug("[CONTAINER:DL_CREATED] DatasetLoader (training runtime)")
@@ -429,7 +429,7 @@ class TrainingContainer:
         Returns:
             IDatasetLoader: Loader for the dataset's source type
         """
-        from src.data.loaders import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders import DatasetLoaderFactory
 
         # Get dataset config
         dataset_config = self.config.datasets.get(dataset_name)
@@ -462,7 +462,7 @@ class TrainingContainer:
 
         # Lazy initialization of real MLflowManager
         if self._lazy_mlflow_manager is None:
-            from src.training.managers.mlflow_manager import MLflowManager
+            from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
             # PyCharm: may not reliably treat Protocols as structural types here (false positive).
             self._lazy_mlflow_manager = cast("IMLflowManager", cast("object", MLflowManager(self.config)))
@@ -501,7 +501,7 @@ class TrainingContainer:
         Returns:
             StrategyOrchestrator: Configured orchestrator
         """
-        from src.training.orchestrator import StrategyOrchestrator
+        from ryotenkai_pod.trainer.orchestrator import StrategyOrchestrator
 
         # Use provided mlflow_manager or get from container
         mlflow = mlflow_manager or self.mlflow_manager
@@ -548,7 +548,7 @@ class TrainingContainer:
             f"4bit={self.config.training.get_effective_load_in_4bit()}"
         )
 
-        from src.training.models.loader import load_model_and_tokenizer as _load_model_and_tokenizer
+        from ryotenkai_pod.trainer.models.loader import load_model_and_tokenizer as _load_model_and_tokenizer
 
         with self.memory_manager.safe_operation("model_loading"):
             model, tokenizer = _load_model_and_tokenizer(config=self.config)
@@ -611,7 +611,7 @@ class TrainingContainer:
         """
         from pathlib import Path
 
-        from src.workspace.integrations.loader import load_pipeline_config
+        from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
         config = load_pipeline_config(Path(config_path))
         return cls(config=config)

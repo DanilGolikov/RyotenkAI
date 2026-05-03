@@ -16,11 +16,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.training_monitor import (
+from ryotenkai_control.pipeline.stages.training_monitor import (
     TrainingMonitor,
     TrainingMonitorEventCallbacks,
 )
-from src.utils.result import Ok
+from ryotenkai_shared.utils.result import Ok
 
 pytestmark = pytest.mark.skip(
     reason=(
@@ -190,8 +190,8 @@ class TestExecuteMethod:
         assert result.is_err()
 
 
-    @patch("src.pipeline.stages.training_monitor.SSHClient")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.SSHClient")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_execute_ssh_port_conversion(self, mock_log_manager_cls, mock_ssh_cls, mock_config, mock_callbacks):
         """Test SSH port conversion from string to int."""
         context = {
@@ -225,8 +225,8 @@ class TestExecuteMethod:
 
         assert result.is_err()  # Failed to start
 
-    @patch("src.pipeline.stages.training_monitor.SSHClient")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.SSHClient")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_execute_alias_mode(self, mock_log_manager_cls, mock_ssh_cls, mock_config, mock_context):
         """Test alias mode (username=None for SSH config)."""
         mock_context["GPU Deployer"]["is_alias_mode"] = True
@@ -248,8 +248,8 @@ class TestExecuteMethod:
 
         assert result.is_err()
 
-    @patch("src.pipeline.stages.training_monitor.SSHClient")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.SSHClient")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_execute_training_start_timeout(self, mock_log_manager_cls, mock_ssh_cls, mock_config, mock_callbacks):
         """Test training start timeout."""
         mock_ssh_instance = MagicMock()
@@ -284,8 +284,8 @@ class TestExecuteMethod:
         mock_log_manager_instance.download_on_error.assert_called_once()
         assert "Training failed to start" in str(mock_log_manager_instance.download_on_error.call_args)
 
-    @patch("src.pipeline.stages.training_monitor.SSHClient")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.SSHClient")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     @patch("time.sleep")
     def test_execute_success_flow(
         self,
@@ -470,7 +470,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_completion_success(
         self,
         mock_log_manager_cls,
@@ -526,7 +526,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_failed_marker(
         self,
         mock_log_manager_cls,
@@ -572,7 +572,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_process_died_no_marker(
         self,
         mock_log_manager_cls,
@@ -613,7 +613,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_process_died_late_marker(
         self,
         mock_log_manager_cls,
@@ -660,7 +660,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_rate_limiting_status_logs(
         self,
         mock_log_manager_cls,
@@ -710,7 +710,7 @@ class TestMonitorTraining:
                     # Each iteration: TRAINING_COMPLETE, TRAINING_FAILED
                     # Already handled by check_marker_side_effect above
 
-                    with patch("src.pipeline.stages.training_monitor.logger") as mock_logger:
+                    with patch("ryotenkai_control.pipeline.stages.training_monitor.logger") as mock_logger:
                         result = monitor._monitor_training(mock_ssh_client, {})
 
                     # Count INFO logs with "[MONITOR]" (status logs)
@@ -724,7 +724,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_rate_limiting_downloads(
         self,
         mock_log_manager_cls,
@@ -783,7 +783,7 @@ class TestMonitorTraining:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_resource_check_callback(
         self,
         mock_log_manager_cls,
@@ -1246,7 +1246,7 @@ class TestParseMemInfoRam:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_process_died_failed_marker_in_retry(
         self,
         mock_log_manager_cls,
@@ -1300,7 +1300,7 @@ class TestParseMemInfoRam:
 
     @patch("time.sleep")
     @patch("time.time")
-    @patch("src.pipeline.stages.training_monitor.LogManager")
+    @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_monitor_training_process_died_failed_marker_immediate(
         self,
         mock_log_manager_cls,

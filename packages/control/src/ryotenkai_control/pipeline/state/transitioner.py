@@ -37,8 +37,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.pipeline.artifacts.base import utc_now_iso
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.artifacts.base import utc_now_iso
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     StageRunState,

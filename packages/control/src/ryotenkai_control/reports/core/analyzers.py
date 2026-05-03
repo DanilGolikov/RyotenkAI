@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.reports.core.constants import MetricThresholds
-from src.reports.core.metrics_registry import METRIC_DESCRIPTIONS
-from src.reports.domain.interfaces import IMetricAnalyzer, IPercentileCalculator
-from src.reports.models.report import MetricAnalysis, MetricStatus, PercentileStats
+from ryotenkai_control.reports.core.constants import MetricThresholds
+from ryotenkai_control.reports.core.metrics_registry import METRIC_DESCRIPTIONS
+from ryotenkai_control.reports.domain.interfaces import IMetricAnalyzer, IPercentileCalculator
+from ryotenkai_control.reports.models.report import MetricAnalysis, MetricStatus, PercentileStats
 
 DIR_STABLE = "Stable"
 DIR_DECREASED = "decreased"
@@ -26,7 +26,7 @@ PERCENTILE_95 = 0.95
 PERCENTILE_99 = 0.99
 
 if TYPE_CHECKING:
-    from src.reports.domain.entities import MetricTrend
+    from ryotenkai_control.reports.domain.entities import MetricTrend
 
 # ============================================================================
 # METRIC ANALYZER (Strategy Pattern)

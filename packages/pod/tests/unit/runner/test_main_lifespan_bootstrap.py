@@ -38,15 +38,15 @@ if "runpod" not in sys.modules:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from src.constants import (  # noqa: E402
+from ryotenkai_shared.constants import (  # noqa: E402
     PROVIDER_RUNPOD,
     PROVIDER_SINGLE_NODE,
     RUNTIME_PROVIDER_ENV_VAR,
 )
-from src.runner.main import create_app  # noqa: E402
-from src.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
-from src.runner.runtime.provider_registry import BootstrapConfigError  # noqa: E402
-from src.tests.unit.runner.conftest import MockSupervisor  # noqa: E402
+from ryotenkai_pod.runner.main import create_app  # noqa: E402
+from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
+from ryotenkai_pod.runner.runtime.provider_registry import BootstrapConfigError  # noqa: E402
+from tests.unit.runner.conftest import MockSupervisor  # noqa: E402
 
 if TYPE_CHECKING:
     pass
@@ -237,7 +237,7 @@ class TestInvariants:
         # accepts ``env=...``. Calling it with the old kwarg raises
         # TypeError — pin the new signature.
         import inspect
-        from src.runner.pod_terminator import PodTerminator
+        from ryotenkai_pod.runner.pod_terminator import PodTerminator
         sig = inspect.signature(PodTerminator.decide_and_act)
         assert "env" not in sig.parameters
         # And the constructor takes the new lifespan-static params.
@@ -264,14 +264,14 @@ class TestRegressions:
         # Pin: ``DEFAULT_RUNPOD_GRAPHQL_URL`` was removed from
         # :mod:`src.runner.pod_terminator` in Phase 14.B (lives in
         # :mod:`src.providers.runpod.runtime.lifecycle_client` now).
-        from src.runner import pod_terminator as pt
+        from ryotenkai_pod.runner import pod_terminator as pt
         assert not hasattr(pt, "DEFAULT_RUNPOD_GRAPHQL_URL")
         assert "DEFAULT_RUNPOD_GRAPHQL_URL" not in pt.__all__
 
     def test_pod_terminator_no_httpx_import(self) -> None:
         # Pin: pod_terminator no longer imports httpx.
         import inspect
-        from src.runner import pod_terminator as pt
+        from ryotenkai_pod.runner import pod_terminator as pt
         source = Path(inspect.getsourcefile(pt)).read_text(  # type: ignore[arg-type]
             encoding="utf-8",
         )

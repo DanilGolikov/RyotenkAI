@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.community.inference import (
+from ryotenkai_community.inference import (
     bump_version,
     find_entry_module,
     infer_plugin,
@@ -53,7 +53,7 @@ def test_find_entry_module_missing_raises(tmp_path: Path) -> None:
 
 def test_infer_validation_plugin_basic(tmp_path: Path) -> None:
     src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         class MyValidator(ValidationPlugin):
             """Checks that foo equals bar."""
@@ -78,7 +78,7 @@ def test_infer_validation_plugin_basic(tmp_path: Path) -> None:
 def test_infer_evaluation_params_via_params_get(tmp_path: Path) -> None:
     """``self.params.get("key", default)`` is inferred alongside ``_param``."""
     src = textwrap.dedent('''
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         class MyJudgePlugin(EvaluatorPlugin):
             """LLM judge plugin."""
@@ -103,7 +103,7 @@ def test_infer_evaluation_params_via_params_get(tmp_path: Path) -> None:
 
 def test_infer_reward_plugin(tmp_path: Path) -> None:
     src = textwrap.dedent('''
-        from src.training.reward_plugins.base import RewardPlugin
+        from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
 
         class MyReward(RewardPlugin):
             """Cheap lexical reward."""
@@ -137,7 +137,7 @@ def test_infer_report_plugin_duck_typed(tmp_path: Path) -> None:
 
 def test_infer_required_secrets(tmp_path: Path) -> None:
     src = textwrap.dedent('''
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         class MyJudgePlugin(EvaluatorPlugin):
             """Uses a secret."""
@@ -163,7 +163,7 @@ def test_infer_required_secrets(tmp_path: Path) -> None:
 def test_infer_module_level_constant_resolves(tmp_path: Path) -> None:
     """Constants like ``DEFAULT_MODEL = "x"`` are followed when used as default."""
     src = textwrap.dedent('''
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         DEFAULT_MODEL = "llama3.1-8b"
 
@@ -190,7 +190,7 @@ def test_infer_package_plugin_scans_siblings(tmp_path: Path) -> None:
     """Entry class can live in a sibling file alongside ``__init__.py``."""
     init_src = "from .sibling import MyValidator\n__all__ = ['MyValidator']\n"
     sibling_src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         class MyValidator(ValidationPlugin):
             """In a sibling module."""
@@ -214,7 +214,7 @@ def test_infer_no_entry_class_raises(tmp_path: Path) -> None:
 def test_infer_dynamic_key_is_skipped(tmp_path: Path) -> None:
     """Non-literal keys log a warning but do not fail the scan."""
     src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         class MyValidator(ValidationPlugin):
             """Has a dynamic param key."""

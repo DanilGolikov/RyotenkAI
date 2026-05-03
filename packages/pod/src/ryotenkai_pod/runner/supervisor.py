@@ -79,14 +79,14 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.runner.state import (
+from ryotenkai_pod.runner.state import (
     InvalidTransitionError,
     JobState,
 )
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
-    from src.runner.state import JobLifecycleFSM
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.state import JobLifecycleFSM
 
 __all__ = [
     "Supervisor",
@@ -353,7 +353,7 @@ class Supervisor:
         # Phase 9.C — anchor for the cancellation chain's latency
         # bookkeeping. Stamped BEFORE bus publishes so the event
         # payload carries the same anchor downstream consumers see.
-        from src.runner.cancellation_telemetry import (
+        from ryotenkai_pod.runner.cancellation_telemetry import (
             CANCELLATION_STARTED,
             now_ms,
         )
@@ -589,7 +589,7 @@ class Supervisor:
             self._cancellation_requested
             and self._cancellation_started_at_ms is not None
         ):
-            from src.runner.cancellation_telemetry import (
+            from ryotenkai_pod.runner.cancellation_telemetry import (
                 CANCELLATION_COMPLETED,
                 latency_ms_since,
             )

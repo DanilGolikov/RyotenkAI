@@ -15,7 +15,7 @@
     {
       "name": "web-backend",
       "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["-m", "src.main", "serve", "--host", "127.0.0.1", "--port", "8010", "--runs-dir", "runs", "--cors-origins", "http://localhost:5183"],
+      "runtimeArgs": ["-m", "ryotenkai_control.main", "serve", "--host", "127.0.0.1", "--port", "8010", "--runs-dir", "runs", "--cors-origins", "http://localhost:5183"],
       "port": 8010
     }
   ]

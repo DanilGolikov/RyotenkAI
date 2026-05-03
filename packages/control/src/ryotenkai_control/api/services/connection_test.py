@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from src.api.schemas.integration import ConnectionTestResult
+from ryotenkai_control.api.schemas.integration import ConnectionTestResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable

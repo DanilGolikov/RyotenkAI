@@ -5,8 +5,8 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from src.api.dependencies import get_runs_dir
-from src.api.schemas.config_preset import (
+from ryotenkai_control.api.dependencies import get_runs_dir
+from ryotenkai_control.api.schemas.config_preset import (
     ConfigPreset,
     ConfigPresetsResponse,
     PresetDiffEntry,
@@ -17,8 +17,8 @@ from src.api.schemas.config_preset import (
     PresetRequirementsOut,
     PresetScopeOut,
 )
-from src.api.schemas.config_validate import ConfigValidationResult
-from src.api.services import config_service
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.services import config_service
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -58,7 +58,7 @@ def default(runs_dir: Path = Depends(get_runs_dir)) -> DefaultConfigResponse:
 @router.get("/schema", response_model=dict)
 def schema() -> dict:
     """Return the full PipelineConfig JSON schema for the UI builder."""
-    from src.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
 
     return PipelineConfig.model_json_schema()
 
@@ -72,7 +72,7 @@ def presets() -> ConfigPresetsResponse:
     placeholders) and the actual config YAML referenced via
     ``[preset.entry_point]``.
     """
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     items: list[ConfigPreset] = []
     for loaded in catalog.presets():
@@ -116,9 +116,9 @@ def preview_preset(preset_id: str, body: PresetPreviewRequest) -> PresetPreviewR
     populate the Apply-preset modal (three sections: what changes / what's
     preserved / what the user still needs to fill).
     """
-    from src.community.catalog import catalog
-    from src.community.preset_apply import apply_preset
-    from src.config.secrets.loader import load_secrets
+    from ryotenkai_community.catalog import catalog
+    from ryotenkai_community.preset_apply import apply_preset
+    from ryotenkai_shared.config.secrets.loader import load_secrets
 
     try:
         loaded = next(p for p in catalog.presets() if p.manifest.preset.id == preset_id)

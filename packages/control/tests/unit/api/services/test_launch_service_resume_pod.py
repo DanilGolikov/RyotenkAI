@@ -18,11 +18,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.api.services.launch_service import (
+from ryotenkai_control.api.services.launch_service import (
     ResumePodResponse,
     resume_pod_for_run,
 )
-from src.pipeline.state.attempt_controller import AttemptController
+from ryotenkai_control.pipeline.state.attempt_controller import AttemptController
 
 
 # RunPodAPIClient transitively imports the ``runpod`` SDK package
@@ -32,7 +32,7 @@ from src.pipeline.state.attempt_controller import AttemptController
 _RUNPOD_SDK_AVAILABLE = True
 try:
     import importlib
-    importlib.import_module("src.providers.runpod.training.api_client")
+    importlib.import_module("ryotenkai_providers.runpod.training.api_client")
 except Exception:  # noqa: BLE001
     _RUNPOD_SDK_AVAILABLE = False
 
@@ -40,13 +40,13 @@ requires_runpod_sdk = pytest.mark.skipif(
     not _RUNPOD_SDK_AVAILABLE,
     reason="runpod SDK not installed (slim dev venv)",
 )
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     StageRunState,
     utc_now_iso,
 )
-from src.pipeline.state.store import PipelineStateStore
+from ryotenkai_control.pipeline.state.store import PipelineStateStore
 
 
 def _seed_run(tmp_path: Path, *, with_pod: bool, provider: str = "runpod") -> Path:
@@ -105,14 +105,14 @@ class TestRESTAdapterDelegation:
     def test_running_outcome_maps_to_resume_pod_response(
         self, tmp_path: Path,
     ) -> None:
-        from src.pipeline.launch.resume_service import ResumeOutcome
+        from ryotenkai_control.pipeline.launch.resume_service import ResumeOutcome
 
         outcome = ResumeOutcome(
             availability="running", ok=True, message="Pod is already running",
         )
 
         with patch(
-            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            "ryotenkai_control.pipeline.launch.resume_service.LaunchResumeService.resume",
             return_value=outcome,
         ):
             result = resume_pod_for_run(tmp_path)
@@ -125,7 +125,7 @@ class TestRESTAdapterDelegation:
     def test_gone_outcome_maps_to_not_ok_response(
         self, tmp_path: Path,
     ) -> None:
-        from src.pipeline.launch.resume_service import ResumeOutcome
+        from ryotenkai_control.pipeline.launch.resume_service import ResumeOutcome
 
         outcome = ResumeOutcome(
             availability="gone", ok=False,
@@ -133,7 +133,7 @@ class TestRESTAdapterDelegation:
         )
 
         with patch(
-            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            "ryotenkai_control.pipeline.launch.resume_service.LaunchResumeService.resume",
             return_value=outcome,
         ):
             result = resume_pod_for_run(tmp_path)
@@ -145,7 +145,7 @@ class TestRESTAdapterDelegation:
     def test_resumed_outcome_maps_to_running_response(
         self, tmp_path: Path,
     ) -> None:
-        from src.pipeline.launch.resume_service import ResumeOutcome
+        from ryotenkai_control.pipeline.launch.resume_service import ResumeOutcome
 
         outcome = ResumeOutcome(
             availability="running", ok=True,
@@ -155,7 +155,7 @@ class TestRESTAdapterDelegation:
         )
 
         with patch(
-            "src.pipeline.launch.resume_service.LaunchResumeService.resume",
+            "ryotenkai_control.pipeline.launch.resume_service.LaunchResumeService.resume",
             return_value=outcome,
         ):
             result = resume_pod_for_run(tmp_path)

@@ -47,14 +47,14 @@ def _stub(name: str, attrs: dict[str, object] | None = None) -> None:
 
 # Pre-build the parent ``src.training`` shell + the constants module
 # that mlflow_logger imports.
-_stub("src.training", {})
-_stub("src.training.constants", {
+_stub("ryotenkai_pod.trainer", {})
+_stub("ryotenkai_pod.trainer.constants", {
     "CATEGORY_TRAINING": "training",
     "TAG_PHASE_IDX": "mlflow.phase_idx",
     "TAG_STRATEGY_TYPE": "mlflow.strategy_type",
     "TRUNCATE_ERROR_MSG": 1024,
 })
-_stub("src.training.metrics_models", {"TrainingMetricsSnapshot": object})
+_stub("ryotenkai_pod.trainer.metrics_models", {"TrainingMetricsSnapshot": object})
 
 
 _LOGGER_PATH = (

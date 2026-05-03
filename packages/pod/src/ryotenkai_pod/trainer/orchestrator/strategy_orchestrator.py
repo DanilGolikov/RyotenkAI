@@ -27,23 +27,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.training.managers.data_buffer import DataBuffer, DataBufferEventCallbacks, PhaseStatus
-from src.training.orchestrator.chain_runner import ChainRunner
-from src.training.orchestrator.metrics_collector import MetricsCollector
-from src.training.orchestrator.phase_executor import PhaseExecutor
-from src.training.orchestrator.resume_manager import ResumeManager
-from src.training.orchestrator.shutdown_handler import ShutdownHandler
-from src.training.strategies.factory import StrategyFactory
-from src.training.trainers.factory import TrainerFactory
-from src.utils.logger import logger
-from src.training.memory_manager import MemoryManager, get_memory_manager
-from src.utils.result import Err, Ok, Result, TrainingError
+from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, DataBufferEventCallbacks, PhaseStatus
+from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+from ryotenkai_pod.trainer.orchestrator.metrics_collector import MetricsCollector
+from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
+from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
+from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
+from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_pod.trainer.memory_manager import MemoryManager, get_memory_manager
+from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.training.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
 class StrategyOrchestrator:
@@ -116,7 +116,7 @@ class StrategyOrchestrator:
         if dataset_loader is not None:
             self._dataset_loader: IDatasetLoader = dataset_loader
         else:
-            from src.data.loaders import JsonDatasetLoader
+            from ryotenkai_control.data.loaders import JsonDatasetLoader
 
             self._dataset_loader = JsonDatasetLoader(config)
 

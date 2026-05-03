@@ -25,15 +25,15 @@ Example config:
           gpu_type: "RTX 4060"               # Optional, for logging
 
 Usage:
-    from src.providers.single_node.training import SingleNodeProvider
+    from ryotenkai_providers.single_node.training import SingleNodeProvider
 
     provider = SingleNodeProvider(config=provider_config, secrets=secrets)
     result = provider.connect()
 """
 
 # Auto-register with factory
-from src.constants import PROVIDER_SINGLE_NODE
-from src.providers.training.factory import GPUProviderFactory
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
+from ryotenkai_providers.training.factory import GPUProviderFactory
 
 from .config import SingleNodeConfig
 from .health_check import SingleNodeHealthCheck

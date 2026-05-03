@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 if TYPE_CHECKING:
-    from src.training.managers.mlflow_manager import MLflowManager
+    from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
 
 class TestMLflowManagerEvents:
@@ -37,7 +37,7 @@ class TestMLflowManagerEvents:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -136,7 +136,7 @@ class TestMemoryEvents:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -235,7 +235,7 @@ class TestDataBufferEvents:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -303,7 +303,7 @@ class TestPipelineEvents:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -365,7 +365,7 @@ class TestSummaryGeneration:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -425,7 +425,7 @@ class TestEnvironmentLogging:
     @pytest.fixture
     def mlflow_manager(self, mock_config: MagicMock) -> MLflowManager:
         """Create MLflowManager with mocked dependencies."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         return manager
@@ -491,7 +491,7 @@ class TestMLflowManagerSetup:
         from unittest.mock import MagicMock as Mock
         from unittest.mock import patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config_enabled)
 
@@ -503,7 +503,7 @@ class TestMLflowManagerSetup:
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             # Mock connectivity check on MLflowGateway class (setup() creates a new gateway)
-            with patch("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", return_value=True):
+            with patch("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", return_value=True):
                 result = manager.setup()
 
                 assert result is True
@@ -517,7 +517,7 @@ class TestMLflowManagerSetup:
         from unittest.mock import MagicMock as Mock
         from unittest.mock import patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config_enabled)
 
@@ -527,7 +527,7 @@ class TestMLflowManagerSetup:
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             # Mock connectivity check on MLflowGateway class - server unavailable
-            with patch("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", return_value=False):
+            with patch("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", return_value=False):
                 result = manager.setup()
 
                 assert result is False
@@ -543,7 +543,7 @@ class TestMLflowManagerSetup:
         from unittest.mock import MagicMock as Mock
         from unittest.mock import patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config_enabled)
 
@@ -553,7 +553,7 @@ class TestMLflowManagerSetup:
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
             # Mock connectivity check on MLflowGateway class with timeout
-            with patch("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            with patch("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
                        side_effect=TimeoutError("Connection timeout")):
                 result = manager.setup()
 
@@ -566,7 +566,7 @@ class TestMLflowManagerSetup:
         from unittest.mock import MagicMock as Mock
         from unittest.mock import patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_config_enabled.integrations.mlflow.tracking_uri = "invalid://uri"
         manager = MLflowManager(mock_config_enabled)
@@ -586,7 +586,7 @@ class TestMLflowManagerSetup:
         """Test setup returns False when MLflow package is unavailable."""
         import builtins
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config_import_error)
 
@@ -632,7 +632,7 @@ class TestMLflowManagerNestedRuns:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -784,7 +784,7 @@ class TestMLflowManagerEventLoggingExtension:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -802,7 +802,7 @@ class TestMLflowManagerEventLoggingExtension:
         """Test exporting events as artifact."""
         from unittest.mock import PropertyMock, patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         # Add some events
         mlflow_manager.log_event_start("Test started", category="training")
@@ -911,7 +911,7 @@ class TestMLflowManagerAutologging:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -984,7 +984,7 @@ class TestMLflowManagerAutologging:
 
     def test_autolog_not_initialized(self, mock_config: MagicMock) -> None:
         """Test autolog when MLflow not initialized."""
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
         # Don't initialize _mlflow
@@ -1019,7 +1019,7 @@ class TestMLflowManagerTracing:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -1070,7 +1070,7 @@ class TestMLflowManagerTracing:
         """Test tracing when not available (old MLflow version)."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -1109,7 +1109,7 @@ class TestMLflowManagerDatasetVersioning:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -1241,8 +1241,8 @@ class TestMLflowManagerModelRegistry:
         """Create MLflowManager with mocked MLflow and gateway."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
-        from src.training.mlflow.model_registry import MLflowModelRegistry
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
 
         manager = MLflowManager(mock_config)
 
@@ -1344,7 +1344,7 @@ class TestMLflowManagerRunManagement:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -1427,7 +1427,7 @@ class TestMLflowManagerBoundaryCases:
         """Create MLflowManager with mocked MLflow."""
         from unittest.mock import MagicMock
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         manager = MLflowManager(mock_config)
 
@@ -1474,7 +1474,7 @@ class TestMLflowManagerBoundaryCases:
         """Test logging empty dictionary."""
         from unittest.mock import PropertyMock, patch
 
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_client = MagicMock()
         mock_client.log_dict = MagicMock()
@@ -1522,7 +1522,7 @@ class TestMLflowManagerBoundaryCases:
 
     def test_gateway_preserves_explicit_localhost_uri(self, mlflow_manager: MLflowManager) -> None:
         """Explicit localhost URI is preserved without hidden normalization."""
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
         gw = MLflowGateway("http://localhost:5002")
         assert "localhost" in gw.uri or "127.0.0.1" in gw.uri
@@ -1531,7 +1531,7 @@ class TestMLflowManagerBoundaryCases:
         """Test connectivity check with timeout — tested via MLflowGateway."""
         from unittest.mock import patch
 
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
         gw = MLflowGateway("http://unreachable:5002")
 

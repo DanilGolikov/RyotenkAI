@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.config import PipelineConfig
-from src.training.container import TrainingContainer
-from src.utils.result import Ok
+from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+from ryotenkai_shared.config import PipelineConfig
+from ryotenkai_pod.trainer.container import TrainingContainer
+from ryotenkai_shared.utils.result import Ok
 
 
 @dataclass(frozen=True)
@@ -160,7 +160,7 @@ datasets:
     eval_ds = MagicMock()
     eval_ds.__len__.return_value = 1
 
-    with patch("src.training.orchestrator.dataset_loader.load_dataset", side_effect=[train_ds, eval_ds]) as mock_ld:
+    with patch("ryotenkai_pod.trainer.orchestrator.dataset_loader.load_dataset", side_effect=[train_ds, eval_ds]) as mock_ld:
         loader = TrainingContainer(config=cfg).dataset_loader
         phase = cfg.training.strategies[0]
         out = loader.load_for_phase(phase)

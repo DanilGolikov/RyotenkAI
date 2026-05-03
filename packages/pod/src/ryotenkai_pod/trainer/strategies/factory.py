@@ -16,7 +16,7 @@ Architecture:
     TrainingFactory → TrainingAdapter (QLoRA, LoRA, Full FT)
 
 Example:
-    from src.training.strategies.factory import StrategyFactory
+    from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
     # List available strategies
     strategies = StrategyFactory.list_available()
@@ -32,7 +32,7 @@ Example:
 
 from typing import ClassVar
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     DEFAULT_BATCH_SIZES,
     DEFAULT_EPOCHS,
     DEFAULT_LEARNING_RATES,
@@ -44,15 +44,15 @@ from src.constants import (
     STRATEGY_SAPO,
     STRATEGY_SFT,
 )
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     BATCH_SIZE_DEFAULT_FALLBACK,
     EPOCHS_DEFAULT_FALLBACK,
     LEARNING_RATE_DEFAULT_FALLBACK,
     STRATEGY_VERSION_DEFAULT,
 )
-from src.training.strategies.base import StrategyMetadata, TrainingStrategy
-from src.config import PipelineConfig, StrategyPhaseConfig
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
+from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+from ryotenkai_shared.utils.logger import logger
 
 _DEP_TRL = "trl"
 
@@ -129,7 +129,7 @@ class StrategyFactory:
             metadata: Optional strategy metadata
 
         Example:
-            from src.training.strategies.sft import SFTStrategy
+            from ryotenkai_pod.trainer.strategies.sft import SFTStrategy
             StrategyFactory.register("sft", SFTStrategy)
         """
         strategy_type = strategy_type.lower()
@@ -319,13 +319,13 @@ def register_builtin_strategies() -> None:
     Called automatically when module is imported.
     """
     # Import here to avoid circular imports
-    from src.training.strategies.cot import CoTStrategy
-    from src.training.strategies.cpt import CPTStrategy
-    from src.training.strategies.dpo import DPOStrategy
-    from src.training.strategies.grpo import GRPOStrategy
-    from src.training.strategies.orpo import ORPOStrategy
-    from src.training.strategies.sapo import SAPOStrategy
-    from src.training.strategies.sft import SFTStrategy
+    from ryotenkai_pod.trainer.strategies.cot import CoTStrategy
+    from ryotenkai_pod.trainer.strategies.cpt import CPTStrategy
+    from ryotenkai_pod.trainer.strategies.dpo import DPOStrategy
+    from ryotenkai_pod.trainer.strategies.grpo import GRPOStrategy
+    from ryotenkai_pod.trainer.strategies.orpo import ORPOStrategy
+    from ryotenkai_pod.trainer.strategies.sapo import SAPOStrategy
+    from ryotenkai_pod.trainer.strategies.sft import SFTStrategy
 
     # Register with metadata
     StrategyFactory.register(

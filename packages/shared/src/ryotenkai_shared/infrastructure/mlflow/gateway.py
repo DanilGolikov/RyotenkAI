@@ -23,8 +23,8 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextvars import copy_context
 from typing import Any, Protocol
 
-from src.utils.logger import get_logger
-from src.utils.result import AppError, ConfigError
+from ryotenkai_shared.utils.logger import get_logger
+from ryotenkai_shared.utils.result import AppError, ConfigError
 
 logger = get_logger(__name__)
 

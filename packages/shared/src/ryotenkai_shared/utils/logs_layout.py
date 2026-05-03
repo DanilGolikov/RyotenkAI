@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from src.utils.log_filenames import (
+from ryotenkai_shared.utils.log_filenames import (
     PIPELINE_LOG,
     RUNNER_LOG,
     STAGE_LOG_SUFFIX,

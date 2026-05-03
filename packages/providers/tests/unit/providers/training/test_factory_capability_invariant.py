@@ -37,14 +37,14 @@ if "runpod" not in sys.modules:
     sys.modules["runpod"] = _stub
 
 
-from src.providers.runpod.training.provider import RunPodProvider  # noqa: E402
-from src.providers.single_node.training.provider import SingleNodeProvider  # noqa: E402
-from src.providers.training.interfaces import (  # noqa: E402
+from ryotenkai_providers.runpod.training.provider import RunPodProvider  # noqa: E402
+from ryotenkai_providers.single_node.training.provider import SingleNodeProvider  # noqa: E402
+from ryotenkai_providers.training.interfaces import (  # noqa: E402
     IGPUProvider,
     ITerminalActionProvider,
     ProviderStatus,
 )
-from src.config import Secrets  # noqa: E402
+from ryotenkai_shared.config import Secrets  # noqa: E402
 
 
 def _mk_runpod() -> RunPodProvider:

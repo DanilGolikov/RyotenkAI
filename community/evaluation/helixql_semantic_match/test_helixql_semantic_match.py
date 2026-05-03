@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 from plugin import HelixQLSemanticMatchPlugin
 
-from src.evaluation.plugins.base import EvalSample
+from ryotenkai_control.evaluation.plugins.base import EvalSample
 
 
 @pytest.fixture(autouse=True)
@@ -65,8 +65,8 @@ def _make_plugin(thresholds: dict[str, Any] | None = None) -> HelixQLSemanticMat
 
 class TestSemanticMatchPluginRegistration:
     def test_is_registered(self) -> None:
-        from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import evaluator_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
 
         catalog.reload()
         assert "helixql_semantic_match" in evaluator_registry.list_ids()

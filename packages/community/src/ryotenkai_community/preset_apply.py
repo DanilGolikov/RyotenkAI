@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 import yaml
 
-from src.community.loader import LoadedPreset
+from ryotenkai_community.loader import LoadedPreset
 
 DiffKind = Literal["added", "removed", "changed", "unchanged"]
 Reason = Literal["preset_replaced", "preset_added", "preset_preserved", "no_scope"]

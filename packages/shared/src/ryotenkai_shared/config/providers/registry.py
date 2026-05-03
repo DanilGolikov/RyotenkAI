@@ -16,12 +16,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.config.providers.runpod import RunPodProviderConfig
-from src.config.providers.single_node import SingleNodeConfig
-from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
+from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
+from ryotenkai_shared.config.providers.single_node import SingleNodeConfig
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 
 if TYPE_CHECKING:
-    from src.config.base import StrictBaseModel
+    from ryotenkai_shared.config.base import StrictBaseModel
 
 
 @dataclass(slots=True)

@@ -11,7 +11,7 @@
 # Quick start:
 #   1. Fill in the TODO sections below (SSH keys, workspace paths, system prompt, …)
 #   2. Run:  ryotenkai config-validate --config examples/quickstart-qlora-sft/pipeline_config.yaml
-#   3. Run:  python -m src.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
+#   3. Run:  python -m ryotenkai_control.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
 #
 # =============================================================================
 

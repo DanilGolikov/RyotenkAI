@@ -15,9 +15,9 @@ through this path.
 
 from __future__ import annotations
 
-from src.constants import PROVIDER_SINGLE_NODE
-from src.runner.pod_terminator import PodTerminalOutcome
-from src.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
+from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome
+from ryotenkai_pod.runner.runtime.lifecycle_client import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

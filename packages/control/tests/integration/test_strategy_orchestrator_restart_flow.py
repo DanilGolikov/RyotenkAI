@@ -17,11 +17,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.managers.data_buffer import DataBuffer
-from src.training.orchestrator.resume_manager import ResumeManager
-from src.training.orchestrator.strategy_orchestrator import StrategyOrchestrator
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.utils.result import Ok
+from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
+from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
+from ryotenkai_pod.trainer.orchestrator.strategy_orchestrator import StrategyOrchestrator
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.utils.result import Ok
 
 
 def test_resume_manager_fresh_init_pipeline_applies_global_hyperparams_to_state(

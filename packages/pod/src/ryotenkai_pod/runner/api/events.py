@@ -33,8 +33,8 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 
-from src.runner.api.deps import get_bus, get_fsm
-from src.runner.event_bus import (
+from ryotenkai_pod.runner.api.deps import get_bus, get_fsm
+from ryotenkai_pod.runner.event_bus import (
     BufferTruncatedError,
     DiskJournalExhausted,
     Event,
@@ -143,7 +143,7 @@ async def stream_events(
     # ``send_json`` hangs or raises (TCP backpressure / connection
     # loss) ⇒ mark_active never fires ⇒ heartbeat goes stale ⇒
     # correct. PodTerminator reads the ledger on terminal hooks.
-    from src.runner.api._activity import send_ws_with_activity
+    from ryotenkai_pod.runner.api._activity import send_ws_with_activity
 
     try:
         async for event in _subscribe_with_disk_fallback(bus, since=since):

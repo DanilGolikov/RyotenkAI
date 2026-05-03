@@ -4,10 +4,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.config import ApiSettings
-from src.api.dependencies import get_settings, resolve_run_dir
-from src.api.schemas.log import LogChunk, LogFileInfo
-from src.api.services import log_service
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.dependencies import get_settings, resolve_run_dir
+from ryotenkai_control.api.schemas.log import LogChunk, LogFileInfo
+from ryotenkai_control.api.services import log_service
 
 router = APIRouter(prefix="/runs/{run_id:path}/attempts/{attempt_no}/logs", tags=["logs"])
 

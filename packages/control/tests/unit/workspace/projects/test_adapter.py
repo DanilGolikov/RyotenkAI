@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from src.workspace.projects.adapter import (
+from ryotenkai_control.workspace.projects.adapter import (
     ProjectNotFoundError,
     ResolvedProject,
     resolve_project_launch_inputs,
     resolve_project_launch_inputs_from_run_dir,
 )
-from src.workspace.projects.registry import ProjectRegistry
-from src.workspace.projects.store import ProjectStore
+from ryotenkai_control.workspace.projects.registry import ProjectRegistry
+from ryotenkai_control.workspace.projects.store import ProjectStore
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -18,18 +18,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.config_drift import compute_config_hashes
-from src.pipeline.launch.restart_rules import compute_restart_points
-from src.pipeline.stages.constants import CANONICAL_STAGE_ORDER
-from src.pipeline.state import PipelineStateStore
-from src.pipeline.state.queries import first_unfinished_stage
-from src.workspace.integrations.loader import load_pipeline_config
+from ryotenkai_control.pipeline.config_drift import compute_config_hashes
+from ryotenkai_control.pipeline.launch.restart_rules import compute_restart_points
+from ryotenkai_control.pipeline.stages.constants import CANONICAL_STAGE_ORDER
+from ryotenkai_control.pipeline.state import PipelineStateStore
+from ryotenkai_control.pipeline.state.queries import first_unfinished_stage
+from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.pipeline.state import PipelineState
-    from src.config import PipelineConfig
+    from ryotenkai_control.pipeline.state import PipelineState
+    from ryotenkai_shared.config import PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)

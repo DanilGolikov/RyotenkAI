@@ -13,8 +13,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.utils.logger import logger
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -215,7 +215,7 @@ class ValidationPlugin(BasePlugin, ABC):
         if isinstance(dataset, IterableDataset):
             return True  # Treat streaming as large
         else:
-            from src.data.constants import VALIDATION_LARGE_DATASET_THRESHOLD
+            from ryotenkai_control.data.constants import VALIDATION_LARGE_DATASET_THRESHOLD
 
             return len(dataset) > VALIDATION_LARGE_DATASET_THRESHOLD
 

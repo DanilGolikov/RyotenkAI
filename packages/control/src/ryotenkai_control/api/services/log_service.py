@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.api.schemas.log import LogChunk, LogFileInfo
-from src.pipeline.state import PipelineStateStore
-from src.utils.logs_layout import (
+from ryotenkai_control.api.schemas.log import LogChunk, LogFileInfo
+from ryotenkai_control.pipeline.state import PipelineStateStore
+from ryotenkai_shared.utils.logs_layout import (
     LOGS_DIR_NAME,
     PIPELINE_LOG_NAME,
     REMOTE_RUNNER_LOG_NAME,

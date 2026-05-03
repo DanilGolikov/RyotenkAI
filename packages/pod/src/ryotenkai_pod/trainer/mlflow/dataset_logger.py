@@ -19,13 +19,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import MLFLOW_CONTEXT_TRAINING
-from src.utils.logger import get_logger
+from ryotenkai_pod.trainer.constants import MLFLOW_CONTEXT_TRAINING
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.training.mlflow.primitives import IMLflowPrimitives
+    from ryotenkai_pod.trainer.mlflow.primitives import IMLflowPrimitives
 
 logger = get_logger(__name__)
 

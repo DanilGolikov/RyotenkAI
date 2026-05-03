@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.utils.logger import (
+from ryotenkai_shared.utils.logger import (
     _current_stage,
     get_run_log_dir,
     get_run_log_layout,
@@ -15,12 +15,12 @@ from src.utils.logger import (
     setup_logger,
     stage_logging_context,
 )
-from src.utils.logs_layout import LogLayout
+from ryotenkai_shared.utils.logs_layout import LogLayout
 
 # Re-bind the actual module (sys.modules bypasses the name shadowing done by
 # src/utils/__init__.py which exposes `logger` as a Logger instance under the
 # same attribute name as the submodule).
-logger_module = importlib.import_module("src.utils.logger")
+logger_module = importlib.import_module("ryotenkai_shared.utils.logger")
 
 
 # ---------------------------------------------------------------------------

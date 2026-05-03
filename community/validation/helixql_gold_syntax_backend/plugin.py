@@ -12,7 +12,7 @@ from community_libs.helixql import (
     extract_schema_block,
     get_compiler,
 )
-from src.data.validation.base import ValidationPlugin, ValidationResult
+from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset

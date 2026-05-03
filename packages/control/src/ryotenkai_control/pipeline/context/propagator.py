@@ -21,12 +21,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.constants import CTX_TRAINING_DURATION, CTX_UPLOAD_DURATION
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.constants import CTX_TRAINING_DURATION, CTX_UPLOAD_DURATION
+from ryotenkai_control.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
-    from src.pipeline.artifacts import StageArtifactCollector
-    from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+    from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
+    from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 
 
 class ContextPropagator:

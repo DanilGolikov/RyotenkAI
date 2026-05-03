@@ -15,8 +15,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.reporting.summary_reporter import ExecutionSummaryReporter
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.reporting.summary_reporter import ExecutionSummaryReporter
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 # -----------------------------------------------------------------------------
@@ -157,7 +157,7 @@ def test_collect_returns_empty_on_client_error() -> None:
 
 
 def test_report_warns_when_no_run_id() -> None:
-    with patch("src.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as gen:
+    with patch("ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator") as gen:
         ExecutionSummaryReporter.generate_experiment_report(run_id=None, mlflow_manager=None)
         gen.assert_not_called()
 
@@ -168,7 +168,7 @@ def test_report_calls_generator_and_swallows_exceptions(tmp_path: Path) -> None:
 
     # Failure path — must not raise
     with patch(
-        "src.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
+        "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
         side_effect=RuntimeError("generator down"),
     ):
         ExecutionSummaryReporter.generate_experiment_report(run_id="rid-abc", mlflow_manager=mgr)
@@ -181,11 +181,11 @@ def test_report_success_invokes_generate() -> None:
     generator_inst.generate.return_value = "report-content"
     with (
         patch(
-            "src.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
+            "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
             return_value=generator_inst,
         ),
         patch(
-            "src.pipeline.reporting.summary_reporter.get_run_log_dir",
+            "ryotenkai_control.pipeline.reporting.summary_reporter.get_run_log_dir",
             return_value=Path("/tmp/logs"),
         ),
     ):
@@ -203,7 +203,7 @@ def test_report_success_invokes_generate() -> None:
 def test_print_summary_smoke(reporter: ExecutionSummaryReporter) -> None:
     """Happy-path smoke — patched console captures all print calls."""
     fake_console = MagicMock()
-    with patch("src.pipeline.reporting.summary_reporter.console", fake_console):
+    with patch("ryotenkai_control.pipeline.reporting.summary_reporter.console", fake_console):
         reporter.print_summary(
             context={
                 StageNames.DATASET_VALIDATOR: {"sample_count": 1000, "avg_length": 45},
@@ -235,7 +235,7 @@ def test_print_summary_smoke(reporter: ExecutionSummaryReporter) -> None:
 
 def test_print_summary_handles_missing_stages(reporter: ExecutionSummaryReporter) -> None:
     fake_console = MagicMock()
-    with patch("src.pipeline.reporting.summary_reporter.console", fake_console):
+    with patch("ryotenkai_control.pipeline.reporting.summary_reporter.console", fake_console):
         reporter.print_summary(context={})
     # Still prints configuration / dataset / empty placeholders
     assert fake_console.print.call_count > 3

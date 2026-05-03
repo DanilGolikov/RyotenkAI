@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
-from src.api.state_cache import (
+from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
+from ryotenkai_control.api.state_cache import (
     cache_stats,
     clear_cache,
     load_state_snapshot,

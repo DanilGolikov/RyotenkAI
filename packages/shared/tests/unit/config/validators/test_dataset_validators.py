@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.validators.datasets import validate_dataset_source_blocks
-from src.config import DatasetConfig
+from ryotenkai_shared.config.validators.datasets import validate_dataset_source_blocks
+from ryotenkai_shared.config import DatasetConfig
 
 pytestmark = pytest.mark.unit
 

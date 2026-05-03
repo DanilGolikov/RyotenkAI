@@ -29,8 +29,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.providers.single_node.training.provider import SingleNodeProvider
-from src.providers.training.interfaces import ProviderStatus
+from ryotenkai_providers.single_node.training.provider import SingleNodeProvider
+from ryotenkai_providers.training.interfaces import ProviderStatus
 
 
 # ---------------------------------------------------------------------------

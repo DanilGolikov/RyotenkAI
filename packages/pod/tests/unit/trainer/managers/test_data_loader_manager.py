@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 from datasets import Dataset
 
-import src.training.managers.data_loader as dl
-from src.training.managers.data_loader import DataLoaderEventCallbacks, DataLoaderManager
+import ryotenkai_pod.trainer.managers.data_loader as dl
+from ryotenkai_pod.trainer.managers.data_loader import DataLoaderEventCallbacks, DataLoaderManager
 
 
 def _ds(n: int) -> Dataset:

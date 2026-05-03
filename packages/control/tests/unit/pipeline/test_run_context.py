@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import src.pipeline.state.run_context as rc
-import src.utils.run_naming as rn
+import ryotenkai_control.pipeline.state.run_context as rc
+import ryotenkai_shared.utils.run_naming as rn
 
 
 def test_generate_run_name_format_and_utc(monkeypatch) -> None:

@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.bootstrap import BootstrapResult, PipelineBootstrap
-from src.pipeline.state import AttemptController
+from ryotenkai_control.pipeline.bootstrap import BootstrapResult, PipelineBootstrap
+from ryotenkai_control.pipeline.state import AttemptController
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,16 +81,16 @@ def _build_bootstrap(
     controller = _make_attempt_controller()
     with (
         patch(
-            "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+            "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
             return_value=config,
         ),
         patch(
-            "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+            "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
             return_value=secrets,
         ),
         # Stages need real-ish constructors; mock _build_stages to skip them.
         patch(
-            "src.pipeline.execution.stage_registry.StageRegistry._build_stages",
+            "ryotenkai_control.pipeline.execution.stage_registry.StageRegistry._build_stages",
             return_value=[MagicMock(stage_name=f"Stage {i}") for i in range(3)],
         ),
     ):
@@ -148,7 +148,7 @@ class TestNegative:
         s2.strategy_type = "grpo"
         cfg.training.strategies = [s1, s2]
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_strategy_chain",
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
             return_value=MagicMock(is_failure=lambda: True, unwrap_err=lambda: "chain broken"),
         ), pytest.raises(Exception, match="Invalid strategy chain"):
             _build_bootstrap(tmp_path, config=cfg)
@@ -156,11 +156,11 @@ class TestNegative:
     def test_missing_secrets_file_propagates(self, tmp_path: Path) -> None:
         with (
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
                 return_value=_mk_config(),
             ),
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
                 side_effect=FileNotFoundError("no secrets.env"),
             ),pytest.raises(FileNotFoundError)
         ):
@@ -203,15 +203,15 @@ class TestInvariants:
         controller = _make_attempt_controller()
         with (
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
                 return_value=_mk_config(),
             ),
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
                 return_value=_mk_secrets(),
             ),
             patch(
-                "src.pipeline.execution.stage_registry.StageRegistry._build_stages",
+                "ryotenkai_control.pipeline.execution.stage_registry.StageRegistry._build_stages",
                 return_value=[],
             ),
         ):
@@ -233,15 +233,15 @@ class TestInvariants:
         shutdown_calls: list[str] = []
         with (
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
                 return_value=_mk_config(),
             ),
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
                 return_value=_mk_secrets(),
             ),
             patch(
-                "src.pipeline.execution.stage_registry.StageRegistry._build_stages",
+                "ryotenkai_control.pipeline.execution.stage_registry.StageRegistry._build_stages",
                 return_value=[],
             ),
         ):
@@ -270,11 +270,11 @@ class TestDependencyErrors:
     def test_load_config_failure_propagates(self, tmp_path: Path) -> None:
         with (
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
                 side_effect=OSError("config read fail"),
             ),
             patch(
-                "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+                "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
                 return_value=_mk_secrets(),
             ),pytest.raises(OSError, match="config read fail")
         ):
@@ -321,15 +321,15 @@ class TestRegressions:
 def test_varying_stage_counts(tmp_path: Path, num_stages: int) -> None:
     with (
         patch(
-            "src.pipeline.bootstrap.pipeline_bootstrap.load_config",
+            "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config",
             return_value=_mk_config(),
         ),
         patch(
-            "src.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
+            "ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets",
             return_value=_mk_secrets(),
         ),
         patch(
-            "src.pipeline.execution.stage_registry.StageRegistry._build_stages",
+            "ryotenkai_control.pipeline.execution.stage_registry.StageRegistry._build_stages",
             return_value=[MagicMock(stage_name=f"S{i}") for i in range(num_stages)],
         ),
     ):

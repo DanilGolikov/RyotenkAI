@@ -370,7 +370,7 @@ class TestPersistJobSubmissionPositive:
 
         target = attempt_dir / "job_submission.json"
         assert target.is_file()
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         sub = load_job_submission(attempt_dir)
         assert sub.job_id == "j-1"
@@ -394,7 +394,7 @@ class TestPersistJobSubmissionPositive:
 
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).provider_name == "single_node"
 
@@ -452,7 +452,7 @@ class TestPersistJobSubmissionBoundary:
         }
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).pod_id == "pod-old"
 
@@ -467,7 +467,7 @@ class TestPersistJobSubmissionBoundary:
         }
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).pod_id == "pod-new"
 
@@ -478,7 +478,7 @@ class TestPersistJobSubmissionBoundary:
         ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).pod_id is None
 
@@ -491,7 +491,7 @@ class TestPersistJobSubmissionBoundary:
 
         launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).ssh_username == "root"
 
@@ -509,7 +509,7 @@ class TestPersistJobSubmissionBoundary:
 
         launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).ssh_key_path is None
 
@@ -572,7 +572,7 @@ class TestPersistJobSubmissionInvariants:
             ctx, _ssh_client_stub(), "j-z", SimpleNamespace(provider_name="runpod"),
         )
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         sub = load_job_submission(attempt_dir)
         assert sub.job_id == "j-z"
@@ -613,7 +613,7 @@ class TestPersistJobSubmissionRegressions:
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "first", None)
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "second", None)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).job_id == "second"
 
@@ -631,6 +631,6 @@ class TestPersistJobSubmissionRegressions:
 
         launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", broken_provider)
 
-        from src.pipeline.state.job_submission import load_job_submission
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
         assert load_job_submission(attempt_dir).provider_name == "unknown"

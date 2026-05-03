@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-import src.pipeline.stages.managers.log_manager as lm
-from src.pipeline.stages.managers.log_manager import LogManager
-from src.utils.logs_layout import LogLayout
+import ryotenkai_control.pipeline.stages.managers.log_manager as lm
+from ryotenkai_control.pipeline.stages.managers.log_manager import LogManager
+from ryotenkai_shared.utils.logs_layout import LogLayout
 
 
 def _layout(attempt_dir: Path) -> LogLayout:

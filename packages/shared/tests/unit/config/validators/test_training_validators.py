@@ -6,12 +6,12 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
-from src.config.validators.training import (
+from ryotenkai_shared.config.validators.training import (
     validate_lora_config,
     validate_strategy_phase_config,
     validate_training_adapter_requires_block,
 )
-from src.config import (
+from ryotenkai_shared.config import (
     AdaLoraConfig,
     GlobalHyperparametersConfig,
     LoraConfig,
@@ -119,13 +119,13 @@ class TestValidateLoraConfig:
 
     def test_regression_dora_pissa_warns_but_does_not_raise(self) -> None:
         cfg = SimpleNamespace(use_dora=True, init_lora_weights="pissa")
-        with patch("src.utils.logger.logger.warning") as warn:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as warn:
             validate_lora_config(cfg)  # type: ignore[arg-type]
         warn.assert_called_once()
 
     def test_regression_dora_pissa_niter_warns_but_does_not_raise(self) -> None:
         cfg = SimpleNamespace(use_dora=True, init_lora_weights="pissa_niter_16")
-        with patch("src.utils.logger.logger.warning") as warn:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as warn:
             validate_lora_config(cfg)  # type: ignore[arg-type]
         warn.assert_called_once()
 

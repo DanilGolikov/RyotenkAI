@@ -18,7 +18,7 @@ import asyncio
 
 import pytest
 
-from src.runner.event_bus import (
+from ryotenkai_pod.runner.event_bus import (
     DEFAULT_BUFFER_SIZE,
     MAX_BUFFER_SIZE,
     MIN_BUFFER_SIZE,

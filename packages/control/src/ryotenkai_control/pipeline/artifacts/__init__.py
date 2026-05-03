@@ -6,12 +6,12 @@ Each pipeline stage writes its own JSON artifact with a unified envelope:
 The `data` field is typed via TypedDict schemas defined in schemas.py.
 """
 
-from src.pipeline.artifacts.base import (
+from ryotenkai_control.pipeline.artifacts.base import (
     StageArtifactCollector,
     StageArtifactEnvelope,
     save_stage_artifact,
 )
-from src.pipeline.artifacts.schemas import (
+from ryotenkai_control.pipeline.artifacts.schemas import (
     DeploymentArtifactData,
     EvalArtifactData,
     EvalPluginData,

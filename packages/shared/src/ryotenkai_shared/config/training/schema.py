@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import Field, field_validator, model_validator
 
-from src.constants import STRATEGY_SFT
+from ryotenkai_shared.constants import STRATEGY_SFT
 
 from ..base import StrictBaseModel
 from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
@@ -16,7 +16,7 @@ from .metrics_buffer import MetricsBufferConfig
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
 
 if TYPE_CHECKING:
-    from src.utils.result import Result, StrategyError
+    from ryotenkai_shared.utils.result import Result, StrategyError
 
 
 class TrainingOnlyConfig(StrictBaseModel):

@@ -20,8 +20,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.config.pipeline.schema import PipelineConfig
-    from src.config.secrets.model import Secrets
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
 
 
 def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
@@ -43,9 +43,9 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
     if not eval_cfg or not getattr(eval_cfg, "enabled", False):
         return
 
-    from src.community.catalog import catalog
-    from src.evaluation.plugins.registry import evaluator_registry
-    from src.evaluation.plugins.secrets import SecretsResolver
+    from ryotenkai_community.catalog import catalog
+    from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
+    from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
 
     catalog.ensure_loaded()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tomllib
 
-from src.community.toml_writer import dump_manifest_toml
+from ryotenkai_community.toml_writer import dump_manifest_toml
 
 
 def test_plugin_manifest_round_trip() -> None:

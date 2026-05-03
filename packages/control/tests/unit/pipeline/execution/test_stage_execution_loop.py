@@ -25,10 +25,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.execution import StageExecutionLoop
-from src.pipeline.launch import PreparedAttempt
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.execution import StageExecutionLoop
+from ryotenkai_control.pipeline.launch import PreparedAttempt
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
     PipelineState,
@@ -37,8 +37,8 @@ from src.pipeline.state import (
     StageRunState,
     build_attempt_state,
 )
-from src.utils.logs_layout import LogLayout
-from src.utils.result import AppError, Err, Ok
+from ryotenkai_shared.utils.logs_layout import LogLayout
+from ryotenkai_shared.utils.result import AppError, Err, Ok
 
 if TYPE_CHECKING:
     from pathlib import Path

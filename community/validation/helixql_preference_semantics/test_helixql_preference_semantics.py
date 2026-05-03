@@ -79,8 +79,8 @@ def _run_validate(samples: list[dict[str, Any]], config: dict[str, Any] | None =
 
 class TestDPOValidatorRegistration:
     def test_is_registered(self) -> None:
-        from src.community.catalog import catalog
-        from src.data.validation.registry import validation_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.data.validation.registry import validation_registry
 
         catalog.reload()
         assert "helixql_preference_semantics" in validation_registry.list_ids()

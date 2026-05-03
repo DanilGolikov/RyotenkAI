@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.providers.runpod.models import PodSnapshot, SshEndpoint, read_ssh_public_key
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint, read_ssh_public_key
 
 pytestmark = pytest.mark.unit
 

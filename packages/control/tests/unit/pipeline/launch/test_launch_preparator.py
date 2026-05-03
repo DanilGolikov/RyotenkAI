@@ -21,12 +21,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.launch import (
+from ryotenkai_control.pipeline.launch import (
     LaunchPreparationError,
     LaunchPreparator,
     PreparedAttempt,
 )
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
     PipelineState,
@@ -34,7 +34,7 @@ from src.pipeline.state import (
     PipelineStateStore,
     StageRunState,
 )
-from src.utils.result import AppError
+from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from pathlib import Path

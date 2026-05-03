@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.data.validation.standalone import FormatCheckResult
-from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
-from src.utils.result import DatasetError, Failure, Ok
+from ryotenkai_control.data.validation.standalone import FormatCheckResult
+from ryotenkai_control.pipeline.stages.dataset_validator.format_checker import FormatChecker
+from ryotenkai_shared.utils.result import DatasetError, Failure, Ok
 
 pytestmark = pytest.mark.unit
 
@@ -26,7 +26,7 @@ def dataset() -> MagicMock:
 def test_check_returns_ok_when_no_phases(monkeypatch, checker, dataset):
     """Empty strategy_phases → Ok (no formats to check)."""
     monkeypatch.setattr(
-        "src.data.validation.standalone.check_dataset_format",
+        "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: Ok([]),
     )
     result = checker.check(dataset, "ds_a", strategy_phases=[])
@@ -35,7 +35,7 @@ def test_check_returns_ok_when_no_phases(monkeypatch, checker, dataset):
 
 def test_check_returns_ok_when_all_phases_pass(monkeypatch, checker, dataset):
     monkeypatch.setattr(
-        "src.data.validation.standalone.check_dataset_format",
+        "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: Ok(
             [
                 FormatCheckResult(strategy_type="sft", ok=True, message=""),
@@ -50,7 +50,7 @@ def test_check_returns_ok_when_all_phases_pass(monkeypatch, checker, dataset):
 def test_check_early_fails_on_first_failed_strategy(monkeypatch, checker, dataset):
     """First failed strategy short-circuits with DATASET_FORMAT_ERROR."""
     monkeypatch.setattr(
-        "src.data.validation.standalone.check_dataset_format",
+        "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: Ok(
             [
                 FormatCheckResult(strategy_type="sft", ok=True, message=""),
@@ -75,7 +75,7 @@ def test_check_propagates_underlying_failure(monkeypatch, checker, dataset):
     """If standalone helper returns Failure (e.g. unknown strategy), bubble up."""
     underlying = DatasetError(message="strategy 'xyz' not registered", code="UNKNOWN_STRATEGY")
     monkeypatch.setattr(
-        "src.data.validation.standalone.check_dataset_format",
+        "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: Failure(underlying),
     )
     result = checker.check(dataset, "ds_a", strategy_phases=[MagicMock()])

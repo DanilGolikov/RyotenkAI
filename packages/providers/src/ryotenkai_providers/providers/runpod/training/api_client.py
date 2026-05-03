@@ -7,11 +7,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from src.providers.runpod.models import PodSnapshot, read_ssh_public_key
-from src.providers.runpod.sdk_adapter import RunPodSDKClient
-from src.constants import RUNTIME_IMAGE
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.models import PodSnapshot, read_ssh_public_key
+from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
+from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 _POD_ID_KEY = "pod_id"
 
@@ -19,7 +19,7 @@ _POD_NAME_MAX_LEN_UI = 80
 _VOLUME_MOUNT = "/workspace"
 
 if TYPE_CHECKING:
-    from src.providers.runpod.training.config import RunPodProviderConfig
+    from ryotenkai_providers.runpod.training.config import RunPodProviderConfig
 
 
 # Empty docker_args = use the image's CMD.

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.cli.run_rendering import (
+from ryotenkai_control.cli.run_rendering import (
     RunInspectionRenderer,
     format_duration,
     render_run_diff_lines,
@@ -12,8 +12,8 @@ from src.cli.run_rendering import (
     render_run_status_snapshot,
     render_runs_list_lines,
 )
-from src.pipeline.run_queries import RunInspectionData, RunSummaryRow
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
+from ryotenkai_control.pipeline.run_queries import RunInspectionData, RunSummaryRow
+from ryotenkai_control.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 
 
 def _build_attempt(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.community.manifest import LATEST_SCHEMA_VERSION, PluginManifest
+from ryotenkai_community.manifest import LATEST_SCHEMA_VERSION, PluginManifest
 
 
 def _minimal_manifest_dict(**overrides):

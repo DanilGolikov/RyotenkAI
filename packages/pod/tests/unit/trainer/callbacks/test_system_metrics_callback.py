@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from src.training.callbacks.system_metrics_callback import SystemMetricsCallback
+from ryotenkai_pod.trainer.callbacks.system_metrics_callback import SystemMetricsCallback
 
 # ---------------------------------------------------------------------------
 # Test fixtures: fake mlflow / pynvml / psutil modules

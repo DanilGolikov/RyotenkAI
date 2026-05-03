@@ -8,7 +8,7 @@ from datasets import Dataset
 def ensure_plugins_loaded():
     """Ensure validation plugins are loaded before each test."""
     # Import plugins to register them
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
 

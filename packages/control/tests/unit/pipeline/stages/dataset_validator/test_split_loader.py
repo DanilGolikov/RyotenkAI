@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
+from ryotenkai_control.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
 
 pytestmark = pytest.mark.unit
 

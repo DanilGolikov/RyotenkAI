@@ -9,16 +9,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.utils.logger import logger
-from src.utils.result import Ok, Result, TrainingError
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
-    from src.training.managers.data_buffer import DataBuffer
-    from src.training.orchestrator.phase_executor import PhaseExecutor
-    from src.config import StrategyPhaseConfig
-    from src.training.container import IMLflowManager
+    from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
+    from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
+    from ryotenkai_shared.config import StrategyPhaseConfig
+    from ryotenkai_pod.trainer.container import IMLflowManager
 
 
 class ChainRunner:
@@ -151,7 +151,7 @@ class ChainRunner:
             current_model = result.unwrap()
 
             # Update cascade flag: if phase was actually trained (not skipped), mark upstream as retrained
-            from src.training.managers.data_buffer import PhaseStatus
+            from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 
             phase_status = buffer.state.phases[idx].status
             if phase_status != PhaseStatus.SKIPPED:

@@ -17,8 +17,8 @@ from community_libs.helixql import (
     get_compiler,
     semantic_match_details,
 )
-from src.training.reward_plugins.base import RewardPlugin
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
+from ryotenkai_shared.utils.logger import logger
 
 _DEFAULT_TIMEOUT_SECONDS = 10
 _BACKEND_COMPILE = "compile"

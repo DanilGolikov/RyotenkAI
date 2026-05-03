@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from src.providers.runpod.training.cleanup_manager import RunPodCleanupManager, create_cleanup_manager
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.training.cleanup_manager import RunPodCleanupManager, create_cleanup_manager
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 
 @dataclass
@@ -44,7 +44,7 @@ def test_create_cleanup_manager_uses_api_client(monkeypatch: pytest.MonkeyPatch)
             created["api_base_url"] = api_base_url
             created["api_key"] = api_key
 
-    import src.providers.runpod.training.api_client as api_mod
+    import ryotenkai_providers.runpod.training.api_client as api_mod
 
     monkeypatch.setattr(api_mod, "RunPodAPIClient", FakeClient)
 

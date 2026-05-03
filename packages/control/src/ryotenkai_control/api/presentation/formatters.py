@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from src.pipeline.state.models import StageRunState
+from ryotenkai_control.pipeline.state.models import StageRunState
 
 _SECS_PER_HOUR = 3600
 _SECS_PER_MINUTE = 60

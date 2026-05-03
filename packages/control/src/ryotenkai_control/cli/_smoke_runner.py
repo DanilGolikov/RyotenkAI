@@ -249,7 +249,7 @@ def _run_single(
     cmd = [
         sys.executable,
         "-m",
-        "src.pipeline.worker",
+        "ryotenkai_control.pipeline.worker",
         "--config",
         str(config),
     ]

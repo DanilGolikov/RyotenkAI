@@ -7,8 +7,8 @@ from pathlib import Path
 
 import yaml
 
-from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-from src.api.schemas.integration import (
+from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
+from ryotenkai_control.api.schemas.integration import (
     IntegrationConfigResponse,
     IntegrationConfigVersion,
     IntegrationConfigVersionsResponse,
@@ -17,23 +17,23 @@ from src.api.schemas.integration import (
     IntegrationTypeInfo,
     IntegrationTypesResponse,
 )
-from src.api.services.token_crypto import (
+from ryotenkai_control.api.services.token_crypto import (
     TokenCrypto,
     delete_token_file,
     write_token_file,
 )
-from src.config.integrations.registry import INTEGRATION_TYPES
-from src.workspace.integrations import (
+from ryotenkai_shared.config.integrations.registry import INTEGRATION_TYPES
+from ryotenkai_control.workspace.integrations import (
     IntegrationMetadata,
     IntegrationRegistry,
     IntegrationRegistryEntry,
     IntegrationStore,
 )
-from src.workspace.integrations.registry import (
+from ryotenkai_control.workspace.integrations.registry import (
     IntegrationRegistryError,
     validate_integration_id,
 )
-from src.workspace.integrations.store import IntegrationStoreError
+from ryotenkai_control.workspace.integrations.store import IntegrationStoreError
 
 _SLUG_STRIP_RE = re.compile(r"[^a-z0-9]+")
 

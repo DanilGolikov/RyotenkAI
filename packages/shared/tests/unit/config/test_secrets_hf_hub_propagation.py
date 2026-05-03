@@ -40,7 +40,7 @@ def _write_env(tmp_path: Path, content: str) -> Path:
 
 
 def _load_with_file(env_file: Path) -> "Secrets":  # type: ignore[name-defined]
-    from src.config.secrets.loader import load_secrets
+    from ryotenkai_shared.config.secrets.loader import load_secrets
 
     return load_secrets(env_file=env_file)
 
@@ -196,7 +196,7 @@ def _run_main_with_secrets_extra(
     Returns a snapshot of os.environ changes applied during the call.
     Restores original os.environ afterwards.
     """
-    from src.training.run_training import main
+    from ryotenkai_pod.trainer.run_training import main
 
     mock_secrets = MagicMock()
     mock_secrets.model_extra = extra
@@ -211,8 +211,8 @@ def _run_main_with_secrets_extra(
             os.environ.update(existing_env)
 
         with (
-            patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-            patch("src.training.run_training.run_training", return_value=Path("/tmp/out")),
+            patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+            patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")),
             patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
         ):
             main()
@@ -249,7 +249,7 @@ class TestRunTrainingHFHubPropagation:
 
     def test_negative_non_hf_hub_key_not_propagated(self) -> None:
         """MY_CUSTOM_KEY is in model_extra but must NOT go to os.environ."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_secrets = MagicMock()
         mock_secrets.model_extra = {"MY_CUSTOM_KEY": "secret_value"}
@@ -257,8 +257,8 @@ class TestRunTrainingHFHubPropagation:
         original = os.environ.get("MY_CUSTOM_KEY")
         try:
             with (
-                patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-                patch("src.training.run_training.run_training", return_value=Path("/tmp/out")),
+                patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+                patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")),
                 patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
             ):
                 main()
@@ -271,7 +271,7 @@ class TestRunTrainingHFHubPropagation:
 
     def test_negative_non_string_value_not_propagated(self) -> None:
         """Non-str values in model_extra (e.g. int) must NOT be set in os.environ."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_secrets = MagicMock()
         mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": 1}  # int, not str
@@ -279,8 +279,8 @@ class TestRunTrainingHFHubPropagation:
         original = os.environ.get("HF_HUB_DISABLE_XET")
         try:
             with (
-                patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-                patch("src.training.run_training.run_training", return_value=Path("/tmp/out")),
+                patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+                patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")),
                 patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
             ):
                 main()
@@ -297,7 +297,7 @@ class TestRunTrainingHFHubPropagation:
 
     def test_invariant_setdefault_does_not_overwrite_existing_env_var(self) -> None:
         """If HF_HUB_DISABLE_XET is already set in os.environ, it must NOT be changed."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_secrets = MagicMock()
         mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": "1"}
@@ -307,8 +307,8 @@ class TestRunTrainingHFHubPropagation:
 
         try:
             with (
-                patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-                patch("src.training.run_training.run_training", return_value=Path("/tmp/out")),
+                patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+                patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")),
                 patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
             ):
                 main()
@@ -337,11 +337,11 @@ class TestRunTrainingHFHubPropagation:
 
     def test_dependency_load_secrets_failure_does_not_block_training(self) -> None:
         """If load_secrets raises, main() must still call run_training."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         with (
-            patch("src.config.secrets.load_secrets", side_effect=RuntimeError("vault down")),
-            patch("src.training.run_training.run_training", return_value=Path("/tmp/out")) as mock_rt,
+            patch("ryotenkai_shared.config.secrets.load_secrets", side_effect=RuntimeError("vault down")),
+            patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")) as mock_rt,
             patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
         ):
             result = main()
@@ -351,11 +351,11 @@ class TestRunTrainingHFHubPropagation:
 
     def test_dependency_load_secrets_import_error_does_not_block_training(self) -> None:
         """ImportError during secrets loading must not block training."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         with (
-            patch("src.config.secrets.load_secrets", side_effect=ImportError("no module")),
-            patch("src.training.run_training.run_training", return_value=Path("/tmp/out")) as mock_rt,
+            patch("ryotenkai_shared.config.secrets.load_secrets", side_effect=ImportError("no module")),
+            patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")) as mock_rt,
             patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
         ):
             result = main()
@@ -370,7 +370,7 @@ class TestRunTrainingHFHubPropagation:
         An empty string val in model_extra is a string type, so setdefault would set it.
         The isinstance check passes for empty strings — this tests the boundary.
         """
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_secrets = MagicMock()
         mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": ""}
@@ -380,8 +380,8 @@ class TestRunTrainingHFHubPropagation:
 
         try:
             with (
-                patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-                patch("src.training.run_training.run_training", return_value=Path("/tmp/out")),
+                patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+                patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/tmp/out")),
                 patch.object(sys, "argv", ["run_training", "--config", "test.yaml"]),
             ):
                 main()
@@ -399,7 +399,7 @@ class TestRunTrainingHFHubPropagation:
 
     def test_regression_training_completes_successfully_with_xet_disabled(self) -> None:
         """End-to-end regression: HF_HUB_DISABLE_XET=1 propagated, training runs OK."""
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_secrets = MagicMock()
         mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": "1"}
@@ -409,8 +409,8 @@ class TestRunTrainingHFHubPropagation:
 
         try:
             with (
-                patch("src.config.secrets.load_secrets", return_value=mock_secrets),
-                patch("src.training.run_training.run_training", return_value=Path("/out")) as mock_rt,
+                patch("ryotenkai_shared.config.secrets.load_secrets", return_value=mock_secrets),
+                patch("ryotenkai_pod.trainer.run_training.run_training", return_value=Path("/out")) as mock_rt,
                 patch.object(sys, "argv", ["run_training", "--config", "cfg.yaml"]),
             ):
                 exit_code = main()

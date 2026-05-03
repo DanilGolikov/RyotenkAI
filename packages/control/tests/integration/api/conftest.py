@@ -7,10 +7,10 @@ from typing import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.config import ApiSettings
-from src.api.dependencies import get_settings
-from src.api.main import create_app
-from src.pipeline.state import (
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.dependencies import get_settings
+from ryotenkai_control.api.main import create_app
+from ryotenkai_control.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
     PipelineStateStore,

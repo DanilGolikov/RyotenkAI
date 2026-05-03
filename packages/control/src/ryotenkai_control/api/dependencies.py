@@ -8,16 +8,16 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import Depends, HTTPException
 
-from src.api.config import ApiSettings
-from src.workspace.projects import ProjectRegistry, ProjectStore
-from src.workspace.projects.registry import ProjectRegistryError
-from src.workspace.integrations import IntegrationRegistry
-from src.workspace.providers import ProviderRegistry
-from src.pipeline.state import PipelineStateStore
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.workspace.projects import ProjectRegistry, ProjectStore
+from ryotenkai_control.workspace.projects.registry import ProjectRegistryError
+from ryotenkai_control.workspace.integrations import IntegrationRegistry
+from ryotenkai_control.workspace.providers import ProviderRegistry
+from ryotenkai_control.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:
-    from src.api.services.token_crypto import TokenCrypto
-    from src.config.datasets.schema import DatasetConfig
+    from ryotenkai_control.api.services.token_crypto import TokenCrypto
+    from ryotenkai_shared.config.datasets.schema import DatasetConfig
 
 
 @lru_cache(maxsize=1)
@@ -145,7 +145,7 @@ def resolve_dataset_key(
     # Local import — config schema imports validators which transitively
     # touch many subsystems; keeping the import lazy avoids slowing down
     # API boot for endpoints that don't need it.
-    from src.config.datasets.schema import DatasetConfig
+    from ryotenkai_shared.config.datasets.schema import DatasetConfig
 
     try:
         dataset_config = DatasetConfig.model_validate(raw)
@@ -170,6 +170,6 @@ def get_token_crypto() -> TokenCrypto:
     Cached — one instance per process. The master key is auto-generated
     on first call when absent (see ``token_crypto.load_or_create_master_key``).
     """
-    from src.api.services.token_crypto import TokenCrypto as _TokenCrypto
+    from ryotenkai_control.api.services.token_crypto import TokenCrypto as _TokenCrypto
 
     return _TokenCrypto()

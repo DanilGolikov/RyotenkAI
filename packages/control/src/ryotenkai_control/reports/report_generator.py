@@ -14,20 +14,20 @@ from typing import TYPE_CHECKING
 import mlflow
 from mlflow.tracking import MlflowClient
 
-from src.community.catalog import catalog
-from src.reports.adapters.mlflow_adapter import MLflowAdapter
-from src.reports.core.builder import ReportBuilder
-from src.reports.plugins.composer import ReportComposer
-from src.reports.plugins.interfaces import IReportBlockPlugin, ReportPluginContext
-from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
-from src.reports.plugins.registry import build_report_plugins
-from src.utils.logger import get_logger
+from ryotenkai_community.catalog import catalog
+from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
+from ryotenkai_control.reports.core.builder import ReportBuilder
+from ryotenkai_control.reports.plugins.composer import ReportComposer
+from ryotenkai_control.reports.plugins.interfaces import IReportBlockPlugin, ReportPluginContext
+from ryotenkai_control.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
+from ryotenkai_control.reports.plugins.registry import build_report_plugins
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from src.infrastructure.mlflow.gateway import IMLflowGateway
-    from src.reports.domain.entities import ExperimentData
-    from src.reports.domain.interfaces import IExperimentDataProvider
-    from src.reports.models.report import ExperimentReport
+    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
+    from ryotenkai_control.reports.domain.entities import ExperimentData
+    from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
+    from ryotenkai_control.reports.models.report import ExperimentReport
 
 logger = get_logger(__name__)
 

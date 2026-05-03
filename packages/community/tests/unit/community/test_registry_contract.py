@@ -15,17 +15,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from src.community.loader import load_plugins
-from src.data.validation.registry import ValidationPluginRegistry
-from src.evaluation.plugins.registry import EvaluatorPluginRegistry
-from src.reports.plugins.registry import ReportPluginRegistry
-from src.training.reward_plugins.registry import RewardPluginRegistry
+from ryotenkai_community.loader import load_plugins
+from ryotenkai_control.data.validation.registry import ValidationPluginRegistry
+from ryotenkai_control.evaluation.plugins.registry import EvaluatorPluginRegistry
+from ryotenkai_control.reports.plugins.registry import ReportPluginRegistry
+from ryotenkai_pod.trainer.reward_plugins.registry import RewardPluginRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.community.registry_base import PluginRegistry
+    from ryotenkai_community.registry_base import PluginRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 VALIDATION_SRC = dedent("""
-    from src.data.validation.base import ValidationPlugin, ValidationResult
+    from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
 
 
     class TinyValidationPlugin(ValidationPlugin):
@@ -56,7 +56,7 @@ VALIDATION_SRC = dedent("""
 """)
 
 EVALUATION_SRC = dedent("""
-    from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+    from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
 
     class TinyEvalPlugin(EvaluatorPlugin):
@@ -68,7 +68,7 @@ EVALUATION_SRC = dedent("""
 """)
 
 REWARD_SRC = dedent("""
-    from src.training.reward_plugins.base import RewardPlugin
+    from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
 
 
     class TinyRewardPlugin(RewardPlugin):
@@ -77,7 +77,7 @@ REWARD_SRC = dedent("""
 """)
 
 REPORT_SRC = dedent("""
-    from src.reports.plugins.interfaces import ReportBlock, ReportPlugin
+    from ryotenkai_control.reports.plugins.interfaces import ReportBlock, ReportPlugin
 
 
     class TinyReportPlugin(ReportPlugin):
@@ -316,7 +316,7 @@ def test_secret_injection_attaches_resolved_dict(
     fake_secrets,
 ) -> None:
     """A plugin declaring required secrets gets ``_secrets`` populated."""
-    from src.evaluation.plugins.secrets import SecretsResolver
+    from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
 
     make_plugin_dir(
         "evaluation",

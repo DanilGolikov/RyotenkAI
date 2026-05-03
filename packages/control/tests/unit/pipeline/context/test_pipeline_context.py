@@ -19,8 +19,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.context.pipeline_context import PipelineContext
-from src.pipeline.stages.constants import PipelineContextKeys
+from ryotenkai_control.pipeline.context.pipeline_context import PipelineContext
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
 
 
 def _fake_run_ctx() -> Any:

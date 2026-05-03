@@ -7,7 +7,7 @@ top-level constants module to genuinely cross-cutting values only.
 
 from __future__ import annotations
 
-from src.constants import ERROR_MESSAGE_TRUNCATE, SSH_CMD_TIMEOUT, TRAINING_START_TIMEOUT_DEFAULT
+from ryotenkai_shared.constants import ERROR_MESSAGE_TRUNCATE, SSH_CMD_TIMEOUT, TRAINING_START_TIMEOUT_DEFAULT
 
 DEPLOYMENT_RSYNC_TIMEOUT = 120
 DEPLOYMENT_SSH_CMD_TIMEOUT = SSH_CMD_TIMEOUT

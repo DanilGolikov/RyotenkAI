@@ -11,7 +11,7 @@ from __future__ import annotations
 import io
 import json
 
-from src.runner.main import API_V1_PREFIX
+from ryotenkai_pod.runner.main import API_V1_PREFIX
 
 JOBS = f"{API_V1_PREFIX}/jobs"
 

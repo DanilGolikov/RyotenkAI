@@ -15,12 +15,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-from src.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
-from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
-from src.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
-from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
+from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
+from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import FileUploader
+from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -33,7 +33,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Ok
+from ryotenkai_shared.utils.result import Ok
 
 pytestmark = pytest.mark.unit
 

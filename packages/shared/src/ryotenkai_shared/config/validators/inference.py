@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     SUPPORTED_INFERENCE_ENGINES,
     SUPPORTED_INFERENCE_PROVIDERS,
 )
-from src.inference import SUPPORTED_INFERENCE_ENGINES as _ENGINES_WITH_IMAGES
+from ryotenkai_shared.inference import SUPPORTED_INFERENCE_ENGINES as _ENGINES_WITH_IMAGES
 
 if TYPE_CHECKING:
     from ..inference.schema import InferenceConfig

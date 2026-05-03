@@ -17,7 +17,7 @@ from typing import Any
 
 import runpod
 
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 _RUNPOD_SDK_CALL_FAILED = "RUNPOD_SDK_CALL_FAILED"
 _RUNPOD_SDK_VALIDATION_ERROR = "RUNPOD_SDK_VALIDATION_ERROR"

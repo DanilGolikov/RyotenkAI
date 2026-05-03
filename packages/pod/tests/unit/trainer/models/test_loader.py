@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import src.training.models.loader as loader
-from src.config import QLoRAConfig as QLoRAConfigType
+import ryotenkai_pod.trainer.models.loader as loader
+from ryotenkai_shared.config import QLoRAConfig as QLoRAConfigType
 
 
 class _Model:

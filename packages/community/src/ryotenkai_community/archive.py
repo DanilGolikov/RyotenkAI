@@ -13,7 +13,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from src.community.constants import CACHE_DIR
+from ryotenkai_community.constants import CACHE_DIR
 
 
 def _sha256(path: Path) -> str:

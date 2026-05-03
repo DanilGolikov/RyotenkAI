@@ -22,7 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import (
+from ryotenkai_shared.config import (
     VALID_START_STRATEGIES,
     VALID_STRATEGY_TRANSITIONS,
     StrategyPhaseConfig,
@@ -181,7 +181,7 @@ class TestValidSinglePhaseChains:
     def test_single_phase_cot_warns_but_passes(self):
         """Single CoT should emit warning but still pass validation."""
         strategies = [_mk_phase("cot")]
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -294,7 +294,7 @@ class TestInvalidStartStrategies:
         invalid_start = "cot"
         strategies = [_mk_phase(invalid_start)]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -322,7 +322,7 @@ class TestInvalidTransitions:
         """Invalid transitions should warn but still pass validation."""
         strategies = [_mk_phase(t, dataset=f"ds_{idx}_{t}") for idx, t in enumerate(chain)]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -339,7 +339,7 @@ class TestInvalidTransitions:
             _mk_phase("sft", dataset="ds_sft2"),  # Invalid
         ]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -354,7 +354,7 @@ class TestInvalidTransitions:
             _mk_phase("dpo", dataset="ds_dpo"),  # Invalid
         ]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -368,7 +368,7 @@ class TestInvalidTransitions:
             _mk_phase("sft", dataset="ds_sft"),  # Invalid
         ]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -397,7 +397,7 @@ class TestTrainingConfigIntegration:
 
     def test_training_config_invalid_start_warns_but_builds(self):
         """TrainingOnlyConfig should still build when ordering is only semantically invalid."""
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             config = TrainingOnlyConfig(
                 type="qlora",
                 qlora=_MIN_LORA,
@@ -415,7 +415,7 @@ class TestTrainingConfigIntegration:
 
     def test_training_config_terminal_then_more_warns_but_builds(self):
         """Terminal strategy followed by another phase should only warn."""
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             config = TrainingOnlyConfig(
                 type="qlora",
                 qlora=_MIN_LORA,
@@ -536,7 +536,7 @@ class TestErrorMessages:
             _mk_phase("dpo", dataset="ds_dpo"),  # Invalid: CPT can't go to DPO
         ]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 
@@ -550,7 +550,7 @@ class TestErrorMessages:
             _mk_phase("sft", dataset="ds_sft2"),  # Invalid: can't repeat
         ]
 
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(strategies)
         warning_text = _warning_text(mock_warning)
 

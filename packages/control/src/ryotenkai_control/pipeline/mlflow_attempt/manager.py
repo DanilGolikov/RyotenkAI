@@ -24,18 +24,18 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from src.infrastructure.mlflow.protocol import IMLflowManager
-from src.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
-from src.pipeline.stages import PipelineContextKeys
-from src.utils.logger import logger
-from src.utils.result import AppError
+from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
+from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
+from ryotenkai_control.pipeline.stages import PipelineContextKeys
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.pipeline.state import PipelineAttemptState, PipelineState
-    from src.config import PipelineConfig
+    from ryotenkai_control.pipeline.state import PipelineAttemptState, PipelineState
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class MLflowAttemptManager:
@@ -105,7 +105,7 @@ class MLflowAttemptManager:
             # imported at construction time. After Phase B (monorepo packagization)
             # this construction is moved out of the control-plane package entirely
             # — the manager is injected by the orchestrator instead.
-            from src.training.managers.mlflow_manager import MLflowManager
+            from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
             manager = MLflowManager(self._config, runtime_role="control_plane")
             manager.setup()

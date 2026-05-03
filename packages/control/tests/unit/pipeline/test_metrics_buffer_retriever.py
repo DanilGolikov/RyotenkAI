@@ -17,11 +17,11 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.stages.model_retriever.metrics_buffer_retriever import (
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_buffer_retriever import (
     FetchResult,
     MetricsBufferRetriever,
 )
-from src.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 
 # ---------------------------------------------------------------------------

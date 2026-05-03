@@ -8,16 +8,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     PROVIDER_RUNPOD,
     PROVIDER_SINGLE_NODE,
     SUPPORTED_INFERENCE_PROVIDERS,
 )
-from src.utils.result import Failure, ProviderError, Success, err
+from ryotenkai_shared.utils.result import Failure, ProviderError, Success, err
 
 if TYPE_CHECKING:
-    from src.providers.inference.interfaces import IInferenceProvider
-    from src.config import PipelineConfig, Secrets
+    from ryotenkai_providers.inference.interfaces import IInferenceProvider
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 class InferenceProviderFactory:
@@ -35,12 +35,12 @@ class InferenceProviderFactory:
         provider: str = config.inference.provider or ""
 
         if provider == PROVIDER_SINGLE_NODE:
-            from src.providers.single_node.inference.provider import SingleNodeInferenceProvider
+            from ryotenkai_providers.single_node.inference.provider import SingleNodeInferenceProvider
 
             return Success(SingleNodeInferenceProvider(config=config, secrets=secrets))
 
         if provider == PROVIDER_RUNPOD:
-            from src.providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
+            from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
 
             return Success(RunPodPodInferenceProvider(config=config, secrets=secrets))
 

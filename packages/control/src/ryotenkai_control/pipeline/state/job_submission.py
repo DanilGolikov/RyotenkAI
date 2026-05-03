@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar
 
-from src.utils.atomic_fs import atomic_write_json
+from ryotenkai_shared.utils.atomic_fs import atomic_write_json
 
 __all__ = [
     "JOB_SUBMISSION_FILENAME",

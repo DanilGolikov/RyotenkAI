@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import colorlog
 from rich.console import Console
 
-from src.utils.logs_layout import LogLayout
+from ryotenkai_shared.utils.logs_layout import LogLayout
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

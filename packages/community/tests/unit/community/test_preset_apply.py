@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.community.loader import LoadedPreset, load_presets
-from src.community.manifest import PresetManifest
-from src.community.preset_apply import apply_preset
+from ryotenkai_community.loader import LoadedPreset, load_presets
+from ryotenkai_community.manifest import PresetManifest
+from ryotenkai_community.preset_apply import apply_preset
 
 
 def _build_preset(

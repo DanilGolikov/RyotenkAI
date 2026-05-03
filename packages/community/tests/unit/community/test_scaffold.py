@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from src.community.manifest import PluginManifest, PresetManifest
-from src.community.scaffold import scaffold_plugin_manifest, scaffold_preset_manifest
+from ryotenkai_community.manifest import PluginManifest, PresetManifest
+from ryotenkai_community.scaffold import scaffold_plugin_manifest, scaffold_preset_manifest
 
 
 def _write_plugin_py(plugin_dir: Path, source: str) -> None:
@@ -19,7 +19,7 @@ def _write_plugin_py(plugin_dir: Path, source: str) -> None:
 
 def test_scaffold_plugin_is_fully_valid(tmp_path: Path) -> None:
     src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         class MyValidator(ValidationPlugin):
             """Checks the thing."""
@@ -49,7 +49,7 @@ def test_scaffold_plugin_is_fully_valid(tmp_path: Path) -> None:
 
 def test_scaffold_plugin_emits_todo_markers(tmp_path: Path) -> None:
     src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
         class X(ValidationPlugin):
             """doc."""
             def validate(self, d): return None
@@ -66,7 +66,7 @@ def test_scaffold_plugin_with_secrets(tmp_path: Path) -> None:
     """``self._secrets["KEY"]`` accesses become ``[[required_env]]`` blocks
     with the safe defaults (``secret=true, optional=false``)."""
     src = textwrap.dedent('''
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         class MyPlugin(EvaluatorPlugin):
             """Judge."""

@@ -9,8 +9,8 @@ logic-specific.
 
 from __future__ import annotations
 
-from src.pipeline.mlflow_attempt.manager import _stringify_tag_value
-from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
+from ryotenkai_control.pipeline.mlflow_attempt.manager import _stringify_tag_value
+from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
 
 # ---------------------------------------------------------------------------
 # 1. Positive — round-trip serialisation
@@ -249,7 +249,7 @@ class TestLogicSpecific:
 
     def test_stringify_value_at_exactly_limit_passthrough(self) -> None:
         # A value exactly at the cap should NOT be truncated.
-        from src.pipeline.mlflow_attempt.manager import (
+        from ryotenkai_control.pipeline.mlflow_attempt.manager import (
             _MLFLOW_TAG_VALUE_MAX_CHARS,
         )
 
@@ -259,7 +259,7 @@ class TestLogicSpecific:
         assert "…" not in out
 
     def test_stringify_value_one_over_limit_gets_truncated(self) -> None:
-        from src.pipeline.mlflow_attempt.manager import (
+        from ryotenkai_control.pipeline.mlflow_attempt.manager import (
             _MLFLOW_TAG_VALUE_MAX_CHARS,
         )
 

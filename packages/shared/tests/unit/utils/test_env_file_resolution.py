@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import load_secrets
+from ryotenkai_shared.config import load_secrets
 
 
 def _write_env(path: Path, text: str) -> None:

@@ -4,10 +4,10 @@
 # which is what keeps the import order circular-safe regardless of ordering
 # here. Changing any of those downstream imports to go through the package
 # would re-introduce the cycle — see the top of transitioner.py.
-from src.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
-from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
-from src.pipeline.state.run_context import RunContext
-from src.pipeline.state.store import (
+from ryotenkai_control.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
+from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
+from ryotenkai_control.pipeline.state.run_context import RunContext
+from ryotenkai_control.pipeline.state.store import (
     SCHEMA_VERSION,
     PipelineRunLock,
     PipelineStateError,

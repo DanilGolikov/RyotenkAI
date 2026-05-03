@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
-from src.data.validation.base import ValidationErrorGroup, ValidationPlugin
-from src.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_control.data.validation.base import ValidationErrorGroup, ValidationPlugin
+from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -63,7 +63,7 @@ def check_dataset_format(
 
     # Local import to avoid a circular dependency: factory imports
     # config which transitively imports validation plugins.
-    from src.training.strategies.factory import StrategyFactory
+    from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
     factory = StrategyFactory()
     seen: set[str] = set()

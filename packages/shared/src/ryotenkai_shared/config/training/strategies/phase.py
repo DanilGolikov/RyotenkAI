@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import Field, field_validator, model_validator
 
-from src.constants import ALL_STRATEGIES
+from ryotenkai_shared.constants import ALL_STRATEGIES
 
 from ...base import StrictBaseModel
 from ..adapter_cache import AdapterCacheConfig  # noqa: TC001

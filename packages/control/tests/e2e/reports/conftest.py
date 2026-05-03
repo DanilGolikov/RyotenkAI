@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from src.pipeline.artifacts.base import StageArtifactEnvelope
-from src.reports.domain.entities import (
+from ryotenkai_control.pipeline.artifacts.base import StageArtifactEnvelope
+from ryotenkai_control.reports.domain.entities import (
     ExperimentData,
     MemoryEvent,
     MetricHistory,

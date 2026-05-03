@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
-from src.providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 pytestmark = pytest.mark.unit
 

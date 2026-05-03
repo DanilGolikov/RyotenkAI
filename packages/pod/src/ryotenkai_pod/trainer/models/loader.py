@@ -10,7 +10,7 @@ Key simplification:
 - Quantization controlled by config
 
 Example:
-    from src.training.models.loader import load_model_and_tokenizer
+    from ryotenkai_pod.trainer.models.loader import load_model_and_tokenizer
     model, tokenizer = load_model_and_tokenizer(config)
 """
 
@@ -21,12 +21,12 @@ from typing import TYPE_CHECKING, Any
 import torch as torch_module
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 logger = get_logger(__name__)
 
@@ -71,7 +71,7 @@ def load_model_and_tokenizer(
         # ``get_adapter_config`` returns a ``QloraConfig`` (the only branch
         # that carries the bnb_4bit_* fields). Narrow explicitly so mypy
         # doesn't see the union over LoraConfig / AdaLoraConfig.
-        from src.config.training.lora import QloraConfig
+        from ryotenkai_shared.config.training.lora import QloraConfig
 
         adapter_cfg = config.training.get_adapter_config()
         assert isinstance(

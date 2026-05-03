@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.artifacts import StageArtifactCollector
-from src.pipeline.context.propagator import ContextPropagator
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
+from ryotenkai_control.pipeline.context.propagator import ContextPropagator
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 @pytest.fixture

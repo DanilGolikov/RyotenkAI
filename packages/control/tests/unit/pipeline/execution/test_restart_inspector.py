@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.execution import RestartPointsInspector
-from src.pipeline.stages import StageNames
-from src.pipeline.state import PipelineStateStore, StageLineageRef
+from ryotenkai_control.pipeline.execution import RestartPointsInspector
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state import PipelineStateStore, StageLineageRef
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -200,7 +200,7 @@ class TestBoundary:
             config_drift=_mk_drift(late_stage="new_late"),
         )
         with patch(
-            "src.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
+            "ryotenkai_control.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
             return_value=True,
         ):
             points = {p["stage"]: p for p in inspector.inspect(tmp_path / "r9")}
@@ -281,7 +281,7 @@ class TestDependencyErrors:
         )
         inspector = RestartPointsInspector(stages=_mk_stages(), config_drift=_mk_drift())
         with patch(
-            "src.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
+            "ryotenkai_control.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
             return_value=False,
         ):
             points = {p["stage"]: p for p in inspector.inspect(tmp_path / "r_health")}
@@ -346,7 +346,7 @@ def test_availability_matrix_by_lineage_keys(
     _mk_state_with_lineage(tmp_path / f"m_{len(lineage_keys)}", lineage=lineage)
     inspector = RestartPointsInspector(stages=_mk_stages(), config_drift=_mk_drift())
     with patch(
-        "src.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
+        "ryotenkai_control.pipeline.execution.restart_inspector.is_inference_runtime_healthy",
         return_value=True,
     ):
         points = {

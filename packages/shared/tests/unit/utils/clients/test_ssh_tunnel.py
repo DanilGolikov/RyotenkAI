@@ -23,7 +23,7 @@ import subprocess
 
 import pytest
 
-from src.utils.clients.ssh_tunnel import (
+from ryotenkai_shared.utils.clients.ssh_tunnel import (
     DEFAULT_REMOTE_PORT,
     SSHTunnelEndpoint,
     SSHTunnelError,
@@ -278,7 +278,7 @@ class TestReadinessProbe:
         # Probe says is_free=True (so allocation succeeds) but never
         # reports is_open=True — the readiness loop must time out
         # cleanly. Shrink the timeout so the test stays fast.
-        from src.utils.clients import ssh_tunnel as _tunnel_mod
+        from ryotenkai_shared.utils.clients import ssh_tunnel as _tunnel_mod
 
         monkeypatch.setattr(
             _tunnel_mod, "_TUNNEL_READY_TIMEOUT_SECONDS", 0.05,

@@ -22,9 +22,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.utils.atomic_fs import atomic_write_json, atomic_write_text, utc_now_iso
-from src.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
-from src.workspace.integrations.models import (
+from ryotenkai_shared.utils.atomic_fs import atomic_write_json, atomic_write_text, utc_now_iso
+from ryotenkai_control.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
+from ryotenkai_control.workspace.integrations.models import (
     IntegrationConfigVersion,
     IntegrationMetadata,
 )

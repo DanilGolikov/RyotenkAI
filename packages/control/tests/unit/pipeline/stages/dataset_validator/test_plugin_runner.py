@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.data.validation.base import ValidationResult
-from src.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
-from src.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
+from ryotenkai_control.data.validation.base import ValidationResult
+from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
+from ryotenkai_control.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
 
 pytestmark = pytest.mark.unit
 

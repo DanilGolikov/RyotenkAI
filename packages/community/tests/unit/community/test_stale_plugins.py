@@ -15,8 +15,8 @@ from textwrap import dedent
 import pytest
 import yaml
 
-from src.community.catalog import CommunityCatalog
-from src.community.stale_plugins import StalePluginRef, find_stale_plugins
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.stale_plugins import StalePluginRef, find_stale_plugins
 
 
 @pytest.fixture
@@ -25,10 +25,10 @@ def patched_catalog(tmp_community_root, monkeypatch):
     so callers that imported ``catalog`` earlier see the temp instance.
     Same shape as in test_preflight / test_instance_validation."""
     import sys
-    import src.community as community_pkg
+    import ryotenkai_community as community_pkg
 
     cat = CommunityCatalog(root=tmp_community_root)
-    catalog_module = sys.modules["src.community.catalog"]
+    catalog_module = sys.modules["ryotenkai_community.catalog"]
     monkeypatch.setattr(catalog_module, "catalog", cat)
     monkeypatch.setattr(community_pkg, "catalog", cat)
     return cat
@@ -42,8 +42,8 @@ def _load_pipeline_config(yaml_text: str):
     Tests that exercise reports staleness override the field
     explicitly.
     """
-    from src.config.reports.schema import ReportsConfig
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config.reports.schema import ReportsConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     config = PipelineConfig.model_validate(yaml.safe_load(yaml_text))
     config.reports = ReportsConfig(sections=[])
@@ -60,7 +60,7 @@ def _fixture_config_yaml() -> str:
 
 def _make_eval_plugin(make_plugin_dir, plugin_id: str) -> None:
     plugin_source = dedent(f"""
-        from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
         class {plugin_id.title().replace('_', '')}Plugin(EvaluatorPlugin):
             def evaluate(self, samples):
@@ -78,7 +78,7 @@ def _make_eval_plugin(make_plugin_dir, plugin_id: str) -> None:
 
 
 def _attach_eval_instance(config, plugin_id: str, *, instance_id: str = "main"):
-    from src.config.evaluation.schema import (
+    from ryotenkai_shared.config.evaluation.schema import (
         EvaluationDatasetConfig,
         EvaluatorPluginConfig,
     )
@@ -142,7 +142,7 @@ def test_validation_plugin_stale_flagged(
     config = _load_pipeline_config(_fixture_config_yaml())
     primary = next(iter(config.datasets.values()))
     primary_id = next(iter(config.datasets.keys()))
-    from src.config.datasets.validation import (
+    from ryotenkai_shared.config.datasets.validation import (
         DatasetValidationPluginConfig,
         DatasetValidationsConfig,
     )
@@ -170,9 +170,9 @@ def test_reward_plugin_stale_flagged(
 ) -> None:
     config = _load_pipeline_config(_fixture_config_yaml())
     # Replace the SFT phase with a GRPO one referencing a ghost reward.
-    from src.config.training.strategies.phase import StrategyPhaseConfig
+    from ryotenkai_shared.config.training.strategies.phase import StrategyPhaseConfig
 
-    from src.config.training.hyperparams import PhaseHyperparametersConfig
+    from ryotenkai_shared.config.training.hyperparams import PhaseHyperparametersConfig
 
     config.training.strategies = [
         StrategyPhaseConfig(
@@ -202,7 +202,7 @@ def test_report_section_stale_flagged(
     patched_catalog,
 ) -> None:
     config = _load_pipeline_config(_fixture_config_yaml())
-    from src.config.reports.schema import ReportsConfig
+    from ryotenkai_shared.config.reports.schema import ReportsConfig
 
     config.reports = ReportsConfig(sections=["ghost_report"])
     stale = find_stale_plugins(config)
@@ -219,7 +219,7 @@ def test_multiple_stale_refs_returned_together(
     flat list — the UI renders it as a single banner with per-row
     deep-links."""
     config = _load_pipeline_config(_fixture_config_yaml())
-    from src.config.reports.schema import ReportsConfig
+    from ryotenkai_shared.config.reports.schema import ReportsConfig
 
     _attach_eval_instance(config, "ghost_eval", instance_id="judge")
     config.reports = ReportsConfig(sections=["ghost_section"])

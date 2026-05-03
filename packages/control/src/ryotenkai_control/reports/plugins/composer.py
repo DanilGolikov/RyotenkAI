@@ -11,8 +11,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from src.reports.document.nodes import DocBlock, Heading, HorizontalRule, Paragraph, inlines, strong, txt
-from src.reports.plugins.interfaces import (
+from ryotenkai_control.reports.document.nodes import DocBlock, Heading, HorizontalRule, Paragraph, inlines, strong, txt
+from ryotenkai_control.reports.plugins.interfaces import (
     IReportBlockPlugin,
     PluginExecutionRecord,
     ReportBlock,

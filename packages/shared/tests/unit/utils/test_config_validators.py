@@ -13,8 +13,8 @@ import pytest
 from pydantic import ValidationError
 from unittest.mock import patch
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.config import (
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config import (
     AdaLoraConfig,
     DatasetConfig,
     DatasetLocalPaths,
@@ -221,7 +221,7 @@ class TestTrainingOnlyConfig:
             _ = _training_cfg(type="adalora", adalora=None)
 
     def test_invalid_strategy_chain_warns_but_builds(self) -> None:
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             cfg = _training_cfg(
                 strategies=[
                     StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),

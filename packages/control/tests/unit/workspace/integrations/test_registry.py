@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.workspace.integrations import (
+from ryotenkai_control.workspace.integrations import (
     IntegrationRegistry,
     IntegrationRegistryError,
 )

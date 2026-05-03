@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.reports.document.nodes import (
+from ryotenkai_control.reports.document.nodes import (
     DocBlock,
     Heading,
     HorizontalRule,
@@ -12,7 +12,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
+from ryotenkai_control.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
 def _format_number(value: int) -> str:

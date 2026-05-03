@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import (
+from ryotenkai_shared.config import (
     VALID_START_STRATEGIES,
     VALID_STRATEGY_TRANSITIONS,
     PhaseHyperparametersConfig,
@@ -211,7 +211,7 @@ class TestInvalidChainsBadStart:
     def test_cot_can_start_with_warning(self):
         """CoT start should warn but not fail validation."""
         chain = make_chain("cot")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -221,7 +221,7 @@ class TestInvalidChainsBadStart:
     def test_cot_then_sft_warns_for_start_and_transition(self):
         """Invalid start and transition should both be warning-only."""
         chain = make_chain("cot", "sft")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -240,7 +240,7 @@ class TestInvalidChainsBadTransitions:
     def test_dpo_is_terminal(self):
         """DPO → anything should warn but not fail validation."""
         chain = make_chain("sft", "dpo", "sft")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -250,7 +250,7 @@ class TestInvalidChainsBadTransitions:
     def test_orpo_is_terminal(self):
         """ORPO → anything should warn but not fail validation."""
         chain = make_chain("orpo", "sft")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -260,7 +260,7 @@ class TestInvalidChainsBadTransitions:
     def test_cpt_to_dpo_invalid(self):
         """CPT → DPO should warn but not fail validation."""
         chain = make_chain("cpt", "dpo")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -271,7 +271,7 @@ class TestInvalidChainsBadTransitions:
     def test_cpt_to_orpo_invalid(self):
         """CPT → ORPO should warn but not fail validation."""
         chain = make_chain("cpt", "orpo")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -280,7 +280,7 @@ class TestInvalidChainsBadTransitions:
     def test_sft_to_sft_invalid(self):
         """SFT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "sft")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -289,7 +289,7 @@ class TestInvalidChainsBadTransitions:
     def test_cot_to_cot_invalid(self):
         """CoT → CoT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cot")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -298,7 +298,7 @@ class TestInvalidChainsBadTransitions:
     def test_cot_to_sft_invalid(self):
         """CoT → SFT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "sft")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -307,7 +307,7 @@ class TestInvalidChainsBadTransitions:
     def test_cot_to_cpt_invalid(self):
         """CoT → CPT should warn but not fail validation."""
         chain = make_chain("sft", "cot", "cpt")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -372,7 +372,7 @@ class TestErrorMessageQuality:
     def test_invalid_start_warning_shows_allowed(self):
         """Invalid start warning should show allowed strategies."""
         chain = make_chain("cot")
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -381,7 +381,7 @@ class TestErrorMessageQuality:
     def test_invalid_transition_warning_shows_valid_options(self):
         """Invalid transition warning should show valid options."""
         chain = make_chain("sft", "sft")  # sft → sft invalid
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)
@@ -390,7 +390,7 @@ class TestErrorMessageQuality:
     def test_invalid_transition_warning_shows_from_to(self):
         """Warning should show which transition was attempted."""
         chain = make_chain("cpt", "dpo")  # cpt → dpo invalid
-        with patch("src.utils.logger.logger.warning") as mock_warning:
+        with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             result = validate_strategy_chain(chain)
         warning_text = _warning_text(mock_warning)
         _assert_ok(result)

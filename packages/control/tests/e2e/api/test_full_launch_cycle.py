@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.config import ApiSettings
-from src.api.main import create_app
-from src.api.services import launch_service
-from src.pipeline import launch as pipeline_launch
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.main import create_app
+from ryotenkai_control.api.services import launch_service
+from ryotenkai_control.pipeline import launch as pipeline_launch
 
 
 pytestmark = pytest.mark.slow
@@ -107,7 +107,7 @@ def test_launch_then_poll_state_reflects_completion(tmp_path: Path, monkeypatch)
 
     settings = ApiSettings(runs_dir=runs_dir, serve_spa=False)
     app = create_app(settings)
-    from src.api.dependencies import get_settings
+    from ryotenkai_control.api.dependencies import get_settings
 
     app.dependency_overrides[get_settings] = lambda: settings
 
@@ -177,7 +177,7 @@ def test_stale_lock_interrupt_cleans_up(tmp_path: Path, monkeypatch) -> None:
 
     settings = ApiSettings(runs_dir=runs_dir, serve_spa=False)
     app = create_app(settings)
-    from src.api.dependencies import get_settings
+    from ryotenkai_control.api.dependencies import get_settings
 
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as client:

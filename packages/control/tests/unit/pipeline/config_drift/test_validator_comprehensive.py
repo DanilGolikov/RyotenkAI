@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.config_drift.validator import ConfigDriftValidator
-from src.pipeline.stages import StageNames
-from src.pipeline.state import PipelineState, StageRunState
-from src.utils.result import ConfigDriftError
+from ryotenkai_control.pipeline.config_drift.validator import ConfigDriftValidator
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state import PipelineState, StageRunState
+from ryotenkai_shared.utils.result import ConfigDriftError
 
 
 # -----------------------------------------------------------------------------

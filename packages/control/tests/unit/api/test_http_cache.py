@@ -10,7 +10,7 @@ from fastapi import Response
 from starlette.datastructures import Headers
 from starlette.requests import Request
 
-from src.api.http_cache import apply_cache_headers, etag_for, is_fresh, last_modified_for
+from ryotenkai_control.api.http_cache import apply_cache_headers, etag_for, is_fresh, last_modified_for
 
 
 def _make_request(headers: dict[str, str]) -> Request:

@@ -24,9 +24,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from src.utils.clients.job_client import JobClient, JobNotFoundError
-from src.runner.main import create_app
-from src.tests.unit.runner.conftest import MockSupervisor
+from ryotenkai_shared.utils.clients.job_client import JobClient, JobNotFoundError
+from ryotenkai_pod.runner.main import create_app
+from tests.unit.runner.conftest import MockSupervisor
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

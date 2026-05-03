@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.data.preview.loader import (
+from ryotenkai_control.data.preview.loader import (
     PREVIEW_LIMIT_MAX,
     ROW_SIZE_LIMIT_BYTES,
     DatasetPreviewLoader,

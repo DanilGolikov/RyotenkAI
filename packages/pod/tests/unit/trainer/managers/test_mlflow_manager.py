@@ -9,8 +9,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from src.training.managers.mlflow_manager import MLflowManager
-from src.config import (
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -116,7 +116,7 @@ def test_is_active_reflects_runtime_setup() -> None:
 
 
 def test_resolve_runtime_tracking_uri_control_plane_prefers_local_tracking_uri() -> None:
-    from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+    from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
     cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
     resolved = resolve_mlflow_uris(cfg.integrations.mlflow, runtime_role="control_plane")
@@ -126,7 +126,7 @@ def test_resolve_runtime_tracking_uri_control_plane_prefers_local_tracking_uri()
 
 
 def test_resolve_runtime_tracking_uri_training_prefers_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+    from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "https://env.example")
     cfg = _mk_cfg(tracking_uri="https://public.example", local_tracking_uri="http://localhost:5002")
@@ -140,7 +140,7 @@ def test_check_connectivity_http_error_4xx_counts_as_reachable(monkeypatch: pyte
     import urllib.error
     import urllib.request
 
-    from src.infrastructure.mlflow.gateway import MLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
     def fake_urlopen(req, timeout):
         raise urllib.error.HTTPError(url="x", code=404, msg="not found", hdrs=None, fp=None)
@@ -154,7 +154,7 @@ def test_check_connectivity_http_error_4xx_counts_as_reachable(monkeypatch: pyte
 def test_check_connectivity_exception_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     import urllib.request
 
-    from src.infrastructure.mlflow.gateway import MLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
 
@@ -166,7 +166,7 @@ def test_check_connectivity_exception_returns_false(monkeypatch: pytest.MonkeyPa
 
 def test_client_property_uses_tracking_uri_from_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
     """client property on MLflowManager delegates to gateway.get_client()."""
-    from src.infrastructure.mlflow.gateway import MLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
     created: dict[str, Any] = {}
 
@@ -175,7 +175,7 @@ def test_client_property_uses_tracking_uri_from_gateway(monkeypatch: pytest.Monk
             created["tracking_uri"] = tracking_uri
 
     # Patch mlflow.MlflowClient inside the gateway module
-    monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.get_client",
+    monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.get_client",
                         lambda self: FakeMlflowClient(self._uri))
 
     mgr = MLflowManager(_mk_cfg(tracking_uri="http://127.0.0.1:5002"))
@@ -342,7 +342,7 @@ def test_log_dataset_info_builds_params_and_extra(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(mgr, "log_dict", lambda d, name, run_id=None: captured.__setitem__("dict", (d, name, run_id)))
 
     # Build dataset_logger manually using the facade as primitives provider
-    from src.training.mlflow.dataset_logger import MLflowDatasetLogger
+    from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
     mgr._dataset_logger = MLflowDatasetLogger(
         mlflow_module=None,
         primitives=mgr,  # type: ignore[arg-type]
@@ -387,7 +387,7 @@ def test_create_mlflow_dataset_from_pandas(monkeypatch: pytest.MonkeyPatch) -> N
     mgr._mlflow = fake_mlflow
 
     # Build dataset_logger manually using the fake mlflow module
-    from src.training.mlflow.dataset_logger import MLflowDatasetLogger
+    from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
     mgr._dataset_logger = MLflowDatasetLogger(
         mlflow_module=fake_mlflow,
         primitives=mgr,  # type: ignore[arg-type]

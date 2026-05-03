@@ -17,15 +17,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.community.registry_base import PluginRegistry
-from src.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+from ryotenkai_community.registry_base import PluginRegistry
+from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.community.loader import LoadedPlugin
-    from src.config.secrets.model import Secrets
-    from src.reports.plugins.interfaces import IReportBlockPlugin, ReportPlugin
+    from ryotenkai_community.loader import LoadedPlugin
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_control.reports.plugins.interfaces import IReportBlockPlugin, ReportPlugin
 
 
 class ReportPluginRegistry(PluginRegistry["ReportPlugin"]):
@@ -77,8 +77,8 @@ def build_report_plugins(
     the wiring matches the validation/evaluation/reward kinds for
     consistency and forward-compat.
     """
-    from src.community.catalog import catalog
-    from src.reports.plugins.secrets import SecretsResolver as ReportSecretsResolver
+    from ryotenkai_community.catalog import catalog
+    from ryotenkai_control.reports.plugins.secrets import SecretsResolver as ReportSecretsResolver
 
     catalog.ensure_loaded()
     available_ids = report_registry.list_ids()

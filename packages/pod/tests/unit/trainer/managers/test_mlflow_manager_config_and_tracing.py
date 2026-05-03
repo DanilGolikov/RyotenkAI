@@ -9,8 +9,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from src.training.managers.mlflow_manager import MLflowManager
-from src.config import (
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -231,7 +231,7 @@ class TestRunQueries:
                 return [_MetricPoint(step=1, timestamp=2, value=3.0)]
 
         from unittest.mock import MagicMock
-        from src.training.mlflow.run_analytics import MLflowRunAnalytics
+        from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
         mock_gw = MagicMock()
         mock_gw.get_client.return_value = _Client()
         mgr._gateway = mock_gw
@@ -253,7 +253,7 @@ class TestRunQueries:
         cfg = _mk_cfg()
         mgr = MLflowManager(cfg)
 
-        from src.training.mlflow.run_analytics import MLflowRunAnalytics
+        from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
         from unittest.mock import MagicMock
 
         # empty df

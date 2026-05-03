@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.config import (
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -35,7 +35,7 @@ from src.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
-from src.training.container import TrainingContainer
+from ryotenkai_pod.trainer.container import TrainingContainer
 
 # =============================================================================
 # FIXTURES

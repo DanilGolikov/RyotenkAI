@@ -11,14 +11,14 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import PipelineContextKeys, StageNames
-from src.pipeline.stages.managers import LogManager, TrainingDeploymentManager
-from src.pipeline.state import RunContext
-from src.providers.training.factory import GPUProviderFactory
-from src.utils.logger import get_run_log_layout, logger
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_control.pipeline.stages.managers import LogManager, TrainingDeploymentManager
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_providers.training.factory import GPUProviderFactory
+from ryotenkai_shared.utils.logger import get_run_log_layout, logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 # Truncation length for the docker image SHA shown in pipeline logs.
 GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
@@ -26,9 +26,9 @@ GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.providers.training.interfaces import IGPUProvider, SSHConnectionInfo
-    from src.config import PipelineConfig, Secrets
-    from src.utils.pod_layout import PodLayout
+    from ryotenkai_providers.training.interfaces import IGPUProvider, SSHConnectionInfo
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.pod_layout import PodLayout
 
 
 # =============================================================================
@@ -433,7 +433,7 @@ class GPUDeployer(PipelineStage):
         # ad-hoc f-string concat.
         from pathlib import PurePosixPath
 
-        from src.utils.pod_layout import PodLayout
+        from ryotenkai_shared.utils.pod_layout import PodLayout
 
         try:
             pod_layout = PodLayout.from_root(

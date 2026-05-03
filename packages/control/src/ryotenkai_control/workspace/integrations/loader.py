@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import yaml
 
 if TYPE_CHECKING:
-    from src.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
 
 
 def load_pipeline_config(path: str | Path) -> PipelineConfig:
@@ -39,7 +39,7 @@ def load_pipeline_config(path: str | Path) -> PipelineConfig:
     """
     # Lazy import: keep this loader light; PipelineConfig pulls a fair
     # amount of pydantic schema machinery.
-    from src.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
 
     path_obj = Path(path).expanduser().resolve()
     raw_text = path_obj.read_text(encoding="utf-8")

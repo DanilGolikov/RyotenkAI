@@ -64,7 +64,7 @@ repos:
         name: Wemake essential (WPS432,WPS404,WPS407,WPS515)
         args:
           - --select=WPS432,WPS404,WPS407,WPS515
-        files: ^src/(config|data|pipeline|providers|reports|training|utils)/
+        files: ^packages/.*/src/ryotenkai_.*/(config|data|pipeline|providers|reports|training|utils)/
 
   # ============================================
   # MyPy - Static type checker
@@ -82,7 +82,7 @@ repos:
           - types-PyYAML
           - types-requests
           - pydantic>=2.10.0
-        files: ^src/
+        files: ^packages/.*/src/
         exclude: ^tests/
 
   # ============================================
@@ -96,7 +96,7 @@ repos:
         args:
           - --pythonversion=3.13
           - --project=pyrightconfig.json
-        files: ^src/
+        files: ^packages/.*/src/
         exclude: ^tests/
 
   # ============================================
@@ -111,7 +111,7 @@ repos:
           - -c
           - pyproject.toml
         additional_dependencies: ["bandit[toml]"]
-        files: ^src/
+        files: ^packages/.*/src/
 
 # ============================================
 # Pre-commit configuration
@@ -121,8 +121,8 @@ default_language_version:
 
 # Do not run pre-commit for commit types "WIP", "fixup", "squash"
 # Globally exclude artifacts/generation and tests (focus on src/ code)
-# Note: `src/tests/` is under `src/`, so a separate exclude is required.
-exclude: '^(generated_reports/|src/tests/|tests/|scripts/|\.idea/|src/docs/archive_|.*\.md$)'
+# Note: `packages/.*/tests/` is under `src/`, so a separate exclude is required.
+exclude: '^(generated_reports/|packages/.*/tests/|tests/|scripts/|\.idea/|packages/.*/docs/archive_|.*\.md$)'
 
 # Do not fail fast on merge commits
 fail_fast: false

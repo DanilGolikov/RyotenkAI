@@ -107,7 +107,7 @@ def _ctx_with_attempt(attempt_dir: Path) -> dict[str, Any]:
 
 
 def _patch_pipeline_context_keys() -> Any:
-    """Stub the lazy ``from src.pipeline.stages.constants import
+    """Stub the lazy ``from ryotenkai_control.pipeline.stages.constants import
     PipelineContextKeys`` so the test doesn't need the heavy package.
 
     The monitor reads ``PipelineContextKeys.ATTEMPT_DIRECTORY`` to look
@@ -118,7 +118,7 @@ def _patch_pipeline_context_keys() -> Any:
     fake_module = SimpleNamespace(PipelineContextKeys=fake)
     return patch.dict(
         sys.modules,
-        {"src.pipeline.stages.constants": fake_module},
+        {"ryotenkai_control.pipeline.stages.constants": fake_module},
     )
 
 

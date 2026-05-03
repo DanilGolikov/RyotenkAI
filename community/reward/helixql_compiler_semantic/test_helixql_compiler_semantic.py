@@ -28,7 +28,7 @@ from plugin import (
     _coerce_column,
 )
 
-from src.training.reward_plugins.registry import reward_registry
+from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,14 +55,14 @@ def _make_plugin(params: dict[str, Any] | None = None) -> HelixQLCompilerSemanti
 
 class TestHelixQLCompilerSemanticRewardPluginRegistration:
     def test_is_registered_under_correct_name(self) -> None:
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.ensure_loaded()
 
         assert "helixql_compiler_semantic" in reward_registry.list_ids()
 
     def test_registered_class_is_correct(self) -> None:
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.ensure_loaded()
 
@@ -445,7 +445,7 @@ class TestFactoryCallsSetup:
     @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
     @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
     def test_build_reward_plugin_result_calls_setup(self, _mock_which: Any, _mock_works: Any) -> None:
-        from src.training.reward_plugins.factory import build_reward_plugin_result
+        from ryotenkai_pod.trainer.reward_plugins.factory import build_reward_plugin_result
 
         phase_config = MagicMock()
         phase_config.params = {
@@ -467,7 +467,7 @@ class TestFactoryCallsSetup:
     @patch.object(plugin_mod, "_helix_binary_works", return_value=True)
     @patch.object(plugin_mod.shutil, "which", return_value="/usr/bin/helix")
     def test_result_plugin_has_teardown(self, _mock_which: Any, _mock_works: Any) -> None:
-        from src.training.reward_plugins.factory import build_reward_plugin_result
+        from ryotenkai_pod.trainer.reward_plugins.factory import build_reward_plugin_result
 
         phase_config = MagicMock()
         phase_config.params = {

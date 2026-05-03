@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING, cast
 
 from datasets import load_dataset
 
-from src.data.loaders.base import BaseDatasetLoader
-from src.utils.logger import logger
+from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class JsonDatasetLoader(BaseDatasetLoader):

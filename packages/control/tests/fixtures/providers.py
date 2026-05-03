@@ -31,8 +31,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.providers.runpod.models import PodResourceInfo
-from src.providers.training.interfaces import (
+from ryotenkai_providers.runpod.models import PodResourceInfo
+from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
@@ -42,8 +42,8 @@ from src.providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from src.utils.result import Err, Ok, ProviderError, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 @dataclass

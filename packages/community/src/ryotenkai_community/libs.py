@@ -47,13 +47,13 @@ import traceback
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.community.constants import (
+from ryotenkai_community.constants import (
     LIBS_DIR_NAME,
     LIBS_NAMESPACE,
     MANIFEST_FILENAME,
 )
-from src.community.manifest import LibManifest
-from src.utils.logger import logger
+from ryotenkai_community.manifest import LibManifest
+from ryotenkai_shared.utils.logger import logger
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +214,7 @@ def load_libs(*, libs_root: Path) -> LibLoadResult:
     """
     # Late imports — these helpers live in loader.py and we deliberately
     # avoid circular import at module load.
-    from src.community.archive import ensure_extracted, resolve_extraction_root
+    from ryotenkai_community.archive import ensure_extracted, resolve_extraction_root
 
     libs: list[LoadedLib] = []
     failures: list[LibLoadFailure] = []

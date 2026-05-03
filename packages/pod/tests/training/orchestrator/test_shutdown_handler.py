@@ -15,7 +15,7 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from src.training.orchestrator.shutdown_handler import (
+from ryotenkai_pod.trainer.orchestrator.shutdown_handler import (
     ShutdownHandler,
     ShutdownReason,
     ShutdownState,

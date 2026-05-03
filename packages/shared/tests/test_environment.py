@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.utils.environment import EnvironmentReporter, EnvironmentSnapshot
+from ryotenkai_shared.utils.environment import EnvironmentReporter, EnvironmentSnapshot
 
 # =============================================================================
 # TESTS: EnvironmentSnapshot

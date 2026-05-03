@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.infrastructure.mlflow.gateway import MLflowGateway
-from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
+from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
 pytestmark = pytest.mark.unit
 

@@ -5,7 +5,7 @@ Test InferenceHealthCheckConfig validation (regression for retries limit).
 import pytest
 from pydantic import ValidationError
 
-from src.config import InferenceHealthCheckConfig
+from ryotenkai_shared.config import InferenceHealthCheckConfig
 
 
 def test_health_check_retries_within_limit():

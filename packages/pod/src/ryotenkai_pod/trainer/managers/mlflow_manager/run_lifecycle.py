@@ -13,7 +13,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Generator

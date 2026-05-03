@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-from src.runner import cancellation_telemetry as ct
+from ryotenkai_pod.runner import cancellation_telemetry as ct
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,7 @@ class TestNowMs:
         # If ``now_ms`` ever switches to ``time.monotonic``, JSON
         # round-tripping breaks (monotonic is per-process, not epoch).
         # Patch ``time.time`` and confirm the return value follows.
-        with patch("src.runner.cancellation_telemetry.time.time") as mock_time:
+        with patch("ryotenkai_pod.runner.cancellation_telemetry.time.time") as mock_time:
             mock_time.return_value = 1234567890.123  # epoch seconds
             result = ct.now_ms()
             assert result == 1234567890123  # ms

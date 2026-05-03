@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from src.cli.app import app
+from ryotenkai_control.cli.app import app
 
 
 def _all_command_paths() -> list[list[str]]:

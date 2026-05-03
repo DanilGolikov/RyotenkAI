@@ -18,13 +18,13 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
-from src.inference import resolve_inference_image
-from src.providers.inference.vllm.engine import VLLMEngine
-from src.providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
-from src.providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
-from src.providers.constants import SHA12_LEN
-from src.providers.inference.interfaces import (
+from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
+from ryotenkai_shared.inference import resolve_inference_image
+from ryotenkai_providers.inference.vllm.engine import VLLMEngine
+from ryotenkai_providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
+from ryotenkai_providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
+from ryotenkai_providers.constants import SHA12_LEN
+from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     IInferenceProvider,
     InferenceArtifacts,
@@ -33,24 +33,24 @@ from src.providers.inference.interfaces import (
     InferenceEventLogger,
     PipelineReadinessMode,
 )
-from src.providers.single_node.training.health_check import SingleNodeHealthCheck
-from src.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
-from src.utils.docker import (
+from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
+from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
+from ryotenkai_shared.utils.docker import (
     docker_container_exit_code,
     docker_is_container_running,
     docker_logs,
     docker_rm_force,
     ensure_docker_image,
 )
-from src.utils.logger import get_run_log_dir, logger
-from src.utils.result import Err, InferenceError, Ok, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_shared.utils.logger import get_run_log_dir, logger
+from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
 
 if TYPE_CHECKING:
-    from src.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from ryotenkai_shared.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
 
 PULL_TIMEOUT = 1200
 MERGE_TIMEOUT = 3600
@@ -82,7 +82,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
 
         # NEW (v3): Get providers.single_node config
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_SINGLE_NODE)
-        from src.config.providers.single_node import SingleNodeConfig
+        from ryotenkai_shared.config.providers.single_node import SingleNodeConfig
 
         self._provider_cfg = SingleNodeConfig(**provider_cfg_raw)
 
@@ -494,7 +494,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
         the chat script on the remote machine does not need MLflow access.
         system_prompt_source carries audit metadata (origin type + name/path + version).
         """
-        from src.evaluation.system_prompt import SystemPromptLoader
+        from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader
 
         llm_cfg = self._provider_cfg.inference.llm
         mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)

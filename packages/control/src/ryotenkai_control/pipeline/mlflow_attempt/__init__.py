@@ -4,7 +4,7 @@ Encapsulates MLflow setup, preflight, root/attempt run open/close, and
 teardown — extracted from PipelineOrchestrator.
 """
 
-from src.pipeline.mlflow_attempt.manager import (
+from ryotenkai_control.pipeline.mlflow_attempt.manager import (
     MLflowAttemptManager,
     MLflowManagerNotInitializedError,
 )

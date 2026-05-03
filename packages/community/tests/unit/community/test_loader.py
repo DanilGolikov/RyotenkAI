@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.community.loader import load_plugins, load_presets
+from ryotenkai_community.loader import load_plugins, load_presets
 
 
 def _build_plugin_folder(root: Path, kind: str, plugin_id: str, *, class_name: str) -> Path:

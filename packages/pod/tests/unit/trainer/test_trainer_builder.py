@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import src.training.trainer_builder as tb
-from src.config import AdaLoraConfig as AdaLoraConfigType
-from src.config import LoraConfig as LoraConfigType
+import ryotenkai_pod.trainer.trainer_builder as tb
+from ryotenkai_shared.config import AdaLoraConfig as AdaLoraConfigType
+from ryotenkai_shared.config import LoraConfig as LoraConfigType
 
 
 @dataclass
@@ -94,7 +94,7 @@ def test_create_peft_config_adalora(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.constants import STRATEGY_SFT
+    from ryotenkai_shared.constants import STRATEGY_SFT
 
     new_configs = dict(tb.STRATEGY_CONFIGS)
     new_configs[STRATEGY_SFT] = lambda **kw: DummyTrainConfig(kw)  # type: ignore[assignment]
@@ -119,7 +119,7 @@ def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.Monke
 
 
 def test_create_trainer_uses_reward_plugin_for_sapo(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.training.reward_plugins.factory import RewardPluginResult
+    from ryotenkai_pod.trainer.reward_plugins.factory import RewardPluginResult
 
     monkeypatch.setattr(
         tb,

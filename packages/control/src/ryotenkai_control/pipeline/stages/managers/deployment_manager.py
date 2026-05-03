@@ -21,17 +21,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-from src.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
-from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
-from src.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
-from src.utils.logger import logger
+from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
+from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
+from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import FileUploader
+from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.providers.training.interfaces import IGPUProvider
-    from src.config import PipelineConfig, Secrets
-    from src.utils.result import AppError, Result
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_providers.training.interfaces import IGPUProvider
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.result import AppError, Result
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 class TrainingDeploymentManager:

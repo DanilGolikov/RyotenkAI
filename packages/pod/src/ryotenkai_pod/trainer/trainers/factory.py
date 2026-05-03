@@ -16,7 +16,7 @@ Architecture:
     TrainingFactory  → TrainingAdapter (model setup: QLoRA, LoRA)
 
 Example:
-    from src.training.trainers import TrainerFactory
+    from ryotenkai_pod.trainer.trainers import TrainerFactory
 
     # Create SFT trainer
     trainer = TrainerFactory().create(
@@ -35,17 +35,17 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from src.training.constants import DEFAULT_EVAL_SAVE_STEPS
-from src.training.reward_plugins import build_reward_plugin_result
-from src.training.strategies.factory import StrategyFactory
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.constants import DEFAULT_EVAL_SAVE_STEPS
+from ryotenkai_pod.trainer.reward_plugins import build_reward_plugin_result
+from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.training.mlflow import IMLflowManager
-    from src.config import (
+    from ryotenkai_pod.trainer.mlflow import IMLflowManager
+    from ryotenkai_shared.config import (
         GlobalHyperparametersConfig,
         PhaseHyperparametersConfig,
         PipelineConfig,
@@ -267,7 +267,7 @@ class TrainerFactory:
         # All strategies need adapters when using QLoRA/LoRA
         # Note: We could move this to strategy too, but it seems generic for the pipeline
         if hasattr(config.training, "type") and config.training.type in ("qlora", "lora", "adalora"):
-            from src.training.trainer_builder import create_peft_config
+            from ryotenkai_pod.trainer.trainer_builder import create_peft_config
 
             # PEFT double-apply guard. When a model is loaded from a HF checkpoint
             # that was previously published as a PEFT adapter (e.g. SFT checkpoints
@@ -332,7 +332,7 @@ class TrainerFactory:
         callbacks = trainer_kwargs.get("callbacks", []) or []
 
         if mlflow_config:
-            from src.training.callbacks import TrainingEventsCallback
+            from ryotenkai_pod.trainer.callbacks import TrainingEventsCallback
 
             callbacks.append(TrainingEventsCallback(mlflow_manager=mlflow_manager))
 
@@ -349,7 +349,7 @@ class TrainerFactory:
             sm_block = getattr(mlflow_config, "system_metrics", None)
             sm_callback_on = bool(getattr(sm_block, "callback_enabled", False))
             if sm_callback_on:
-                from src.training.callbacks import SystemMetricsCallback
+                from ryotenkai_pod.trainer.callbacks import SystemMetricsCallback
 
                 callbacks.append(SystemMetricsCallback())
 
@@ -371,7 +371,7 @@ class TrainerFactory:
         # binary works in both contexts without a YAML toggle.
         import os as _os
 
-        from src.training.callbacks.runner_event_callback import (
+        from ryotenkai_pod.trainer.callbacks.runner_event_callback import (
             RUNNER_URL_ENV,
             RunnerEventCallback,
         )
@@ -401,7 +401,7 @@ class TrainerFactory:
             # run with the correct status (driven by 9.A's
             # ``executor.py`` finally block which picks ``KILLED`` when
             # ``handle_graceful_shutdown`` propagated ``TRAINING_INTERRUPTED``).
-            from src.training.callbacks.cancellation_callback import (
+            from ryotenkai_pod.trainer.callbacks.cancellation_callback import (
                 CancellationCallback,
             )
 
@@ -461,7 +461,7 @@ class TrainerFactory:
             # so the buffered HTTP loopback already in flight handles
             # ``completion_finalized`` events identically to
             # ``cancellation_finalized``.
-            from src.training.callbacks.completion_callback import (
+            from ryotenkai_pod.trainer.callbacks.completion_callback import (
                 CompletionCallback,
             )
             callbacks.insert(

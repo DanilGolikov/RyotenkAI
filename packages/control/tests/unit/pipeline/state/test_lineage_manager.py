@@ -17,14 +17,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.state.lineage_manager import (
+from ryotenkai_control.pipeline.state.lineage_manager import (
     after_stage_completed,
     after_stage_failed,
     after_stage_skipped,
     invalidate_from,
     restore_reused,
 )
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     StageLineageRef,
     StageRunState,

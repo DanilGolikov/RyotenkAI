@@ -6,8 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
-from src.config import DatasetConfig, PipelineConfig
+from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
+from ryotenkai_shared.config import DatasetConfig, PipelineConfig
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +28,7 @@ def _mk_primary_only_config(ds: DatasetConfig) -> MagicMock:
     return cfg
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_load_for_dataset_empty_plugins_returns_empty_list(mock_registry):
     """Empty plugins config → no plugins run (no hidden defaults)."""
     ds = _local_ds(plugins=[])
@@ -41,7 +41,7 @@ def test_load_for_dataset_empty_plugins_returns_empty_list(mock_registry):
     mock_registry.instantiate.assert_not_called()
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_load_for_dataset_no_validations_attr_returns_empty_list(mock_registry):
     """Dataset with no validations attr → no plugins run (no hidden defaults)."""
     cfg = _mk_primary_only_config(_local_ds(plugins=[]))
@@ -54,7 +54,7 @@ def test_load_for_dataset_no_validations_attr_returns_empty_list(mock_registry):
     mock_registry.instantiate.assert_not_called()
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_load_for_dataset_uses_configured_plugins(mock_registry):
     """Explicit plugins config → exactly those plugins instantiated."""
     ds = _local_ds(
@@ -73,7 +73,7 @@ def test_load_for_dataset_uses_configured_plugins(mock_registry):
     assert mock_registry.instantiate.call_count == 2
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_load_for_dataset_per_dataset_resolution(mock_registry):
     """load_for_dataset uses the dataset's own validations.plugins, not config defaults."""
     cfg = _mk_primary_only_config(_local_ds(plugins=[]))
@@ -91,7 +91,7 @@ def test_load_for_dataset_per_dataset_resolution(mock_registry):
     assert apply_to == {"train"}
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_load_raises_keyerror_for_unknown_plugin(mock_registry):
     """Registry KeyError propagates with available-plugins log."""
     ds = _local_ds(plugins=[{"id": "x", "plugin": "missing_plugin", "params": {}, "apply_to": ["train"]}])
@@ -104,7 +104,7 @@ def test_load_raises_keyerror_for_unknown_plugin(mock_registry):
         loader.load_for_dataset(ds)
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_secrets_resolver_built_when_secrets_provided(mock_registry):
     """When secrets is non-None, resolver is constructed and passed to instantiate()."""
     ds = _local_ds(plugins=[{"id": "p", "plugin": "p", "params": {}, "apply_to": ["train"]}])
@@ -119,7 +119,7 @@ def test_secrets_resolver_built_when_secrets_provided(mock_registry):
     assert kwargs["resolver"] is not None
 
 
-@patch("src.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
+@patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
 def test_secrets_resolver_is_none_when_no_secrets(mock_registry):
     """When secrets is None, resolver passed to instantiate() is None too."""
     ds = _local_ds(plugins=[{"id": "p", "plugin": "p", "params": {}, "apply_to": ["train"]}])

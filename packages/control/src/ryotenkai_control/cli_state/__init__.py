@@ -10,10 +10,10 @@ touches the API, the workspace registries, or the Web UI. Web has its
 own URL-based context; the two are intentionally independent.
 """
 
-from src.cli_state.context_store import (
+from ryotenkai_control.cli_state.context_store import (
     CLIContext as PersistedCLIContext,
 )
-from src.cli_state.context_store import (
+from ryotenkai_control.cli_state.context_store import (
     clear_current_project,
     cli_context_path,
     get_current_project,

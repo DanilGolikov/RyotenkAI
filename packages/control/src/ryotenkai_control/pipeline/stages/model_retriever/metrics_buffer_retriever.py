@@ -39,8 +39,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
-from src.utils.logger import get_logger
-from src.utils.ssh_client import SSHClient
+from ryotenkai_shared.utils.logger import get_logger
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 logger = get_logger(__name__)
 

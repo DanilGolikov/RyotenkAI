@@ -16,7 +16,7 @@ from typing import ClassVar
 
 import pytest
 
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 # ---------------------------------------------------------------------------
 # Default values
@@ -128,22 +128,22 @@ class TestBasePluginMRO:
 
 class TestBasePluginInRealABCs:
     def test_validation_plugin_abc_uses_base_plugin(self) -> None:
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         assert issubclass(ValidationPlugin, BasePlugin)
 
     def test_evaluator_plugin_abc_uses_base_plugin(self) -> None:
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         assert issubclass(EvaluatorPlugin, BasePlugin)
 
     def test_reward_plugin_abc_uses_base_plugin(self) -> None:
-        from src.training.reward_plugins.base import RewardPlugin
+        from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
 
         assert issubclass(RewardPlugin, BasePlugin)
 
     def test_validation_plugin_inherits_default_version(self) -> None:
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         # Concrete plugins should define their own name; base class version is inherited
         assert hasattr(ValidationPlugin, "version")

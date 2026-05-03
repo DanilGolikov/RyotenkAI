@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from src.config.base import StrictBaseModel
+from ryotenkai_shared.config.base import StrictBaseModel
 
 
 class ReportsConfig(StrictBaseModel):

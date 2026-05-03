@@ -9,13 +9,13 @@ pipeline-side and CLI-side callers no longer have to import from
 
 from __future__ import annotations
 
-from src.utils.clients.job_client import (
+from ryotenkai_shared.utils.clients.job_client import (
     JobClient,
     JobClientError,
     JobNotFoundError,
     ReplayTruncatedError,
 )
-from src.utils.clients.ssh_tunnel import (
+from ryotenkai_shared.utils.clients.ssh_tunnel import (
     SSHTunnelEndpoint,
     SSHTunnelError,
     SSHTunnelManager,

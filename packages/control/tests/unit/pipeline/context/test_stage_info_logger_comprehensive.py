@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.context.stage_info_logger import StageInfoLogger
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.context.stage_info_logger import StageInfoLogger
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 @pytest.fixture

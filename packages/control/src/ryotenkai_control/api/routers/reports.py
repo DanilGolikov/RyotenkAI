@@ -4,9 +4,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import resolve_run_dir
-from src.api.schemas.report import ReportResponse
-from src.api.services import report_service
+from ryotenkai_control.api.dependencies import resolve_run_dir
+from ryotenkai_control.api.schemas.report import ReportResponse
+from ryotenkai_control.api.services import report_service
 
 router = APIRouter(prefix="/runs/{run_id:path}", tags=["reports"])
 

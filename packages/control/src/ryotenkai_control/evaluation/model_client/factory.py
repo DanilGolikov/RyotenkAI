@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from src.constants import INFERENCE_ENGINE_VLLM
-from src.utils.logger import logger
+from ryotenkai_shared.constants import INFERENCE_ENGINE_VLLM
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from .interfaces import IModelInference

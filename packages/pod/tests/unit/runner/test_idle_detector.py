@@ -28,8 +28,8 @@ from collections.abc import Iterable
 
 import pytest
 
-from src.runner.event_bus import EventBus
-from src.runner.idle_detector import (
+from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.idle_detector import (
     DEFAULT_GPU_MEM_MAX_PCT,
     DEFAULT_GPU_UTIL_MAX,
     GPUMetrics,

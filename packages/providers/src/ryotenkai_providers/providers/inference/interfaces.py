@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.utils.result import InferenceError, Result
+    from ryotenkai_shared.utils.result import InferenceError, Result
 
 
 class PipelineReadinessMode(StrEnum):

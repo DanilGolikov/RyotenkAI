@@ -34,7 +34,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.dependencies import resolve_run_dir
+from ryotenkai_control.api.dependencies import resolve_run_dir
 
 router = APIRouter(prefix="/runs/{run_id:path}/job", tags=["job"])
 
@@ -79,7 +79,7 @@ def _latest_attempt_dir(run_dir: Path, attempt: int | None) -> Path:
 
 
 def _load_submission(attempt_dir: Path) -> Any:
-    from src.pipeline.state.job_submission import (
+    from ryotenkai_control.pipeline.state.job_submission import (
         JobSubmissionLoadError,
         load_job_submission,
     )
@@ -101,8 +101,8 @@ async def _with_runner(submission, fn):  # type: ignore[no-untyped-def]
     tear everything down. Mirror of the CLI's helper — duplicated
     here rather than imported to keep the API router free of CLI
     deps."""
-    from src.utils.clients.job_client import JobClient
-    from src.utils.clients.ssh_tunnel import (
+    from ryotenkai_shared.utils.clients.job_client import JobClient
+    from ryotenkai_shared.utils.clients.ssh_tunnel import (
         SSHTunnelEndpoint,
         SSHTunnelManager,
     )

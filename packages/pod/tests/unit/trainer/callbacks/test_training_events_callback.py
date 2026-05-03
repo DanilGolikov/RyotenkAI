@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import src.training.callbacks.training_events_callback as te
-from src.training.callbacks.training_events_callback import TrainingEventsCallback
+import ryotenkai_pod.trainer.callbacks.training_events_callback as te
+from ryotenkai_pod.trainer.callbacks.training_events_callback import TrainingEventsCallback
 
 
 @dataclass

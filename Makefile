@@ -94,31 +94,31 @@ test-fast: _check-venv
 	$(PYTEST) -m "not slow"
 
 test-unit: _check-venv
-	$(PYTEST) src/tests/unit -v
+	$(PYTEST) packages/*/tests/unit -v
 
 test-cov: _check-venv
-	$(PYTEST) --cov=src --cov-report=html:src/tests/coverage/htmlcov --cov-report=term-missing
-	@echo "Report: src/tests/coverage/htmlcov/index.html"
+	$(PYTEST) --cov=packages --cov-report=html:tests/coverage/htmlcov --cov-report=term-missing
+	@echo "Report: tests/coverage/htmlcov/index.html"
 
 # ============================================
 # Code Quality
 # ============================================
 
 lint: _check-venv
-	@$(RUFF) check src/ || true
-	@$(RUFF) format --check src/ || true
-	@$(MYPY) src/ --config-file pyproject.toml || true
+	@$(RUFF) check packages/ || true
+	@$(RUFF) format --check packages/ || true
+	@$(MYPY) packages/ --config-file pyproject.toml || true
 
 format: _check-venv
-	$(RUFF) check --fix src/
-	$(RUFF) format src/
-	$(BLACK) src/
+	$(RUFF) check --fix packages/
+	$(RUFF) format packages/
+	$(BLACK) packages/
 
 fix-all: _check-venv
 	@echo "Auto-fixing..."
-	$(RUFF) check --fix --unsafe-fixes src/ || true
-	$(RUFF) format src/
-	$(BLACK) src/
+	$(RUFF) check --fix --unsafe-fixes packages/ || true
+	$(RUFF) format packages/
+	$(BLACK) packages/
 	@echo "Done. Run 'make lint' to verify"
 
 pre-commit: _check-venv
@@ -200,7 +200,7 @@ web-frontend-restart:
 # Dump the live FastAPI OpenAPI spec to a checked-in snapshot so codegen
 # is offline-safe and CI can fail on drift without a running backend.
 web-openapi-dump:
-	$(PYTHON) -m src.api.openapi_dump > web/src/api/openapi.json
+	$(PYTHON) -m ryotenkai_control.api.openapi_dump > web/src/api/openapi.json
 
 # Regenerate web/src/api/schema.d.ts from the checked-in spec.
 gen-api: web-openapi-dump
@@ -220,12 +220,12 @@ clean:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf htmlcov/ .coverage build/ dist/ .test_venv/ mlflow.db src/tests/coverage/ 2>/dev/null || true
+	rm -rf htmlcov/ .coverage build/ dist/ .test_venv/ mlflow.db tests/coverage/ 2>/dev/null || true
 	@echo "Cleaned"
 
 info:
 	@echo "Project: ryotenkai v1.0.0"
 	@echo "Python: $$($(PYTHON) --version 2>/dev/null)"
 	@echo ""
-	@echo "Config example: src/config/pipeline_config.yaml"
-	@echo "Config ref:     src/config/CONFIG_REFERENCE.md"
+	@echo "Config example: packages/shared/src/ryotenkai_shared/config/pipeline_config.yaml"
+	@echo "Config ref:     packages/config/CONFIG_REFERENCE.md"

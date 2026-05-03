@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -137,8 +137,8 @@ class TestOrchestratorCallsRelease:
         self, *, terminate_after_retrieval: bool
     ) -> tuple[object, GPUDeployer]:
         """Build a minimal orchestrator mock with a real GPUDeployer."""
-        from src.pipeline.execution import StageRegistry
-        from src.pipeline.orchestrator import PipelineOrchestrator
+        from ryotenkai_control.pipeline.execution import StageRegistry
+        from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
 
@@ -184,8 +184,8 @@ class TestOrchestratorCallsRelease:
 
     def test_release_not_called_when_flag_missing(self) -> None:
         """_maybe_early_release_gpu() must NOT call release() if flag not in config."""
-        from src.pipeline.execution import StageRegistry
-        from src.pipeline.orchestrator import PipelineOrchestrator
+        from ryotenkai_control.pipeline.execution import StageRegistry
+        from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
         deployer = _make_gpu_deployer()
@@ -202,8 +202,8 @@ class TestOrchestratorCallsRelease:
 
     def test_release_not_called_when_config_raises(self) -> None:
         """_maybe_early_release_gpu() must be silent if config access raises."""
-        from src.pipeline.execution import StageRegistry
-        from src.pipeline.orchestrator import PipelineOrchestrator
+        from ryotenkai_control.pipeline.execution import StageRegistry
+        from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
         deployer = _make_gpu_deployer()
@@ -220,8 +220,8 @@ class TestOrchestratorCallsRelease:
 
     def test_only_first_releasable_stage_is_released(self) -> None:
         """If multiple IEarlyReleasable stages exist, only the first one is released."""
-        from src.pipeline.execution import StageRegistry
-        from src.pipeline.orchestrator import PipelineOrchestrator
+        from ryotenkai_control.pipeline.execution import StageRegistry
+        from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 
         orch = object.__new__(PipelineOrchestrator)
 

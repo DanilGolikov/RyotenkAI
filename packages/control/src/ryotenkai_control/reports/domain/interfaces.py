@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from src.reports.domain.entities import ExperimentData, MetricTrend
+    from ryotenkai_control.reports.domain.entities import ExperimentData, MetricTrend
 
 
 class IExperimentDataProvider(Protocol):

@@ -3,8 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
-from src.data.validation.base import ValidationErrorGroup, ValidationPlugin
-from src.data.validation.models import AggregatedValidationResult, PluginConfig
+from ryotenkai_control.data.validation.base import ValidationErrorGroup, ValidationPlugin
+from ryotenkai_control.data.validation.models import AggregatedValidationResult, PluginConfig
 
 
 class TestPluginConfig:

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config.validators.runtime import validate_eval_plugin_secrets
+from ryotenkai_shared.config.validators.runtime import validate_eval_plugin_secrets
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,7 +58,7 @@ def _reset_community_catalog_for_eval_plugin_tests() -> None:
     ``validate_eval_plugin_secrets`` becomes a no-op, so ask for an explicit
     reload here to make sure our lookup resolves to the up-to-date class.
     """
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
 

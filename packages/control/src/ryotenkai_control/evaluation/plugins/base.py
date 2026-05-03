@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 
 @dataclass

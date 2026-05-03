@@ -12,8 +12,8 @@ import time
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
-from src.providers.training.interfaces import (
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
+from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
@@ -23,9 +23,9 @@ from src.providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from src.utils.pod_layout import PodLayout
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_shared.utils.pod_layout import PodLayout
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from .config import SingleNodeConfig
 from .health_check import SingleNodeHealthCheck
@@ -34,8 +34,8 @@ _SSH_PORT_DEFAULT = 22
 _CLEANUP_TIMEOUT = 1800
 
 if TYPE_CHECKING:
-    from src.pipeline.state import RunContext
-    from src.config import Secrets
+    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_shared.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 

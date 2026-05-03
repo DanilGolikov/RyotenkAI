@@ -17,12 +17,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
-    from src.pipeline.state.models import PipelineState
+    from ryotenkai_control.pipeline.state.models import PipelineState
 
 # Late-stage config changes don't invalidate runtime-only restarts of the
 # inference/eval stages — those only depend on runtime hashes.

@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.community.registry_base import PluginRegistry
+from ryotenkai_community.registry_base import PluginRegistry
 
 if TYPE_CHECKING:
-    from src.evaluation.plugins.base import EvaluatorPlugin
+    from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
 
 class EvaluatorPluginRegistry(PluginRegistry["EvaluatorPlugin"]):

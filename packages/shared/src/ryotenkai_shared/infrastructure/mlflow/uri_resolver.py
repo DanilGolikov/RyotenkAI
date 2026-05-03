@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-from src.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
 
 MLflowRuntimeRole = Literal["control_plane", "training"]
 

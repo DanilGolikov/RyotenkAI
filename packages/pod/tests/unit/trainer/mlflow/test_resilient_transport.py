@@ -20,8 +20,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.mlflow.metrics_buffer import MetricsBuffer
-from src.training.mlflow.resilient_transport import (
+from ryotenkai_pod.trainer.mlflow.metrics_buffer import MetricsBuffer
+from ryotenkai_pod.trainer.mlflow.resilient_transport import (
     MLflowTransportCircuitBreaker,
     ResilientMLflowTransport,
     _FAILURE_THRESHOLD,
@@ -537,7 +537,7 @@ class TestRateLimitedWarnings:
     def test_different_keys_not_suppressed(self) -> None:
         transport = ResilientMLflowTransport(warning_interval_s=10.0)
 
-        with patch("src.training.mlflow.resilient_transport.logger") as mock_logger:
+        with patch("ryotenkai_pod.trainer.mlflow.resilient_transport.logger") as mock_logger:
             transport._warn_rate_limited("key_a", "msg_a")
             transport._warn_rate_limited("key_b", "msg_b")
             assert mock_logger.warning.call_count == 2

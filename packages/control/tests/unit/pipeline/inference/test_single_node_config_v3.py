@@ -24,14 +24,14 @@ Coverage:
 import pytest
 from pydantic import ValidationError
 
-from src.providers.single_node.training.config import (
+from ryotenkai_providers.single_node.training.config import (
     SingleNodeCleanupConfig,
     SingleNodeConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
 )
-from src.config import (
+from ryotenkai_shared.config import (
     InferenceSingleNodeServeConfig,
     SSHConfig,
     SSHConnectSettings,

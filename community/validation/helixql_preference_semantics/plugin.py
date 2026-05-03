@@ -13,7 +13,7 @@ from community_libs.helixql import (
     get_compiler,
     semantic_match_details,
 )
-from src.data.validation.base import ValidationPlugin, ValidationResult
+from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
 
 _MIN_VALID_RATIO_DEFAULT = 0.95
 

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.managers.data_buffer import PhaseStatus
-from src.training.orchestrator.strategy_orchestrator import StrategyOrchestrator
-from src.utils.result import Err, Ok
+from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+from ryotenkai_pod.trainer.orchestrator.strategy_orchestrator import StrategyOrchestrator
+from ryotenkai_shared.utils.result import Err, Ok
 
 
 def _mk_cfg(*, strategies: list[Any] | None = None) -> MagicMock:
@@ -149,7 +149,7 @@ class TestSinglePhaseAndUtilities:
         orch.buffer = None
 
         created_buf = MagicMock()
-        monkeypatch.setattr("src.training.orchestrator.strategy_orchestrator.DataBuffer", lambda **kw: created_buf)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.strategy_orchestrator.DataBuffer", lambda **kw: created_buf)
 
         out_model = MagicMock()
         orch._phase_executor.execute = MagicMock(return_value=Ok(out_model))

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
-from src.reports.plugins.registry import build_report_plugins
+from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+from ryotenkai_control.reports.plugins.registry import build_report_plugins
 
 
 def test_default_returns_built_in_order() -> None:
@@ -46,8 +46,8 @@ def test_empty_sections_returns_empty_list() -> None:
 
 def test_default_sections_match_registry_keys() -> None:
     """Guardrail: DEFAULT_REPORT_SECTIONS shouldn't drift away from shipped plugins."""
-    from src.community.catalog import catalog
-    from src.reports.plugins.registry import report_registry
+    from ryotenkai_community.catalog import catalog
+    from ryotenkai_control.reports.plugins.registry import report_registry
 
     catalog.ensure_loaded()
     registered = set(report_registry.list_ids())

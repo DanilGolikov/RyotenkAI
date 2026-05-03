@@ -13,10 +13,10 @@ Internal structure:
 
 from __future__ import annotations
 
-from src.training.managers.mlflow_manager.manager import MLflowManager, get_mlflow_manager
-from src.training.managers.mlflow_manager.setup import MLflowSetupMixin
-from src.training.managers.mlflow_manager.run_lifecycle import MLflowRunLifecycleMixin
-from src.training.managers.mlflow_manager.logging_core import MLflowLoggingMixin
+from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager, get_mlflow_manager
+from ryotenkai_pod.trainer.managers.mlflow_manager.setup import MLflowSetupMixin
+from ryotenkai_pod.trainer.managers.mlflow_manager.run_lifecycle import MLflowRunLifecycleMixin
+from ryotenkai_pod.trainer.managers.mlflow_manager.logging_core import MLflowLoggingMixin
 
 __all__ = [
     "MLflowManager",

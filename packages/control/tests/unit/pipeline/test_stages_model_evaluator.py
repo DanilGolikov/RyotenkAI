@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.model_evaluator import ModelEvaluator
+from ryotenkai_control.pipeline.stages.model_evaluator import ModelEvaluator
 
 
 def _mk_cfg(*, eval_enabled: bool = True) -> MagicMock:
@@ -33,10 +33,10 @@ def _mk_cfg(*, eval_enabled: bool = True) -> MagicMock:
 @pytest.fixture
 def mock_preflight_ok():
     """Stub the pre-flight ping so happy-path tests don't need a live HTTP server."""
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     with patch(
-        "src.pipeline.stages.model_evaluator._preflight_check_endpoint",
+        "ryotenkai_control.pipeline.stages.model_evaluator._preflight_check_endpoint",
         return_value=Ok(None),
     ) as m:
         yield m
@@ -82,7 +82,7 @@ class TestModelEvaluatorHappyPath:
 
     def test_run_succeeds_with_passing_summary(self, mock_preflight_ok) -> None:
         """When EvaluationRunner returns passed=True, stage returns success with metrics."""
-        from src.evaluation.runner import RunSummary
+        from ryotenkai_control.evaluation.runner import RunSummary
 
         mock_summary = RunSummary(
             overall_passed=True,
@@ -99,8 +99,8 @@ class TestModelEvaluatorHappyPath:
         stage = ModelEvaluator(_mk_cfg(eval_enabled=True))
 
         with (
-            patch("src.evaluation.runner.EvaluationRunner") as MockRunner,
-            patch("src.evaluation.model_client.factory.ModelClientFactory.create", return_value=MagicMock()),
+            patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner,
+            patch("ryotenkai_control.evaluation.model_client.factory.ModelClientFactory.create", return_value=MagicMock()),
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run.return_value = mock_summary
@@ -119,7 +119,7 @@ class TestModelEvaluatorHappyPath:
 
     def test_run_with_failing_summary_still_returns_ok(self, mock_preflight_ok) -> None:
         """Even when evaluation fails, stage returns Ok (failure is in eval_passed)."""
-        from src.evaluation.runner import RunSummary
+        from ryotenkai_control.evaluation.runner import RunSummary
 
         mock_summary = RunSummary(
             overall_passed=False,
@@ -138,8 +138,8 @@ class TestModelEvaluatorHappyPath:
         stage = ModelEvaluator(_mk_cfg(eval_enabled=True))
 
         with (
-            patch("src.evaluation.runner.EvaluationRunner") as MockRunner,
-            patch("src.evaluation.model_client.factory.ModelClientFactory.create", return_value=MagicMock()),
+            patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner,
+            patch("ryotenkai_control.evaluation.model_client.factory.ModelClientFactory.create", return_value=MagicMock()),
         ):
             mock_runner_instance = MagicMock()
             mock_runner_instance.run.return_value = mock_summary
@@ -156,8 +156,8 @@ class TestModelEvaluatorHappyPath:
 
     def test_mlflow_metrics_are_flattened_correctly(self) -> None:
         """MLflow metrics follow eval.{plugin_name}.{metric_key} naming convention."""
-        from src.evaluation.plugins.base import EvalResult
-        from src.evaluation.runner import RunSummary
+        from ryotenkai_control.evaluation.plugins.base import EvalResult
+        from ryotenkai_control.evaluation.runner import RunSummary
 
         plugin_result = EvalResult(
             plugin_name="helixql_syntax",
@@ -178,7 +178,7 @@ class TestModelEvaluatorHappyPath:
 
     def test_uses_model_name_from_config_when_not_in_context(self, mock_preflight_ok) -> None:
         """Uses config.model.name when inference_model_name is not in context."""
-        from src.evaluation.runner import RunSummary
+        from ryotenkai_control.evaluation.runner import RunSummary
 
         mock_summary = RunSummary(overall_passed=True, sample_count=0)
 
@@ -191,9 +191,9 @@ class TestModelEvaluatorHappyPath:
             return MagicMock()
 
         with (
-            patch("src.evaluation.runner.EvaluationRunner") as MockRunner,
+            patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner,
             patch(
-                "src.evaluation.model_client.factory.ModelClientFactory.create",
+                "ryotenkai_control.evaluation.model_client.factory.ModelClientFactory.create",
                 side_effect=lambda engine, base_url, model, **kw: fake_client_init(base_url, model, **kw),
             ),
         ):
@@ -225,18 +225,18 @@ class TestPreflight:
         return resp
 
     def test_returns_ok_on_2xx(self) -> None:
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get:
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(200)
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_success()
         mock_get.assert_called_once_with("http://example/v1/models", timeout=5.0)
 
     def test_returns_ok_on_204_no_content(self) -> None:
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get:
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(204)
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_success()
@@ -245,18 +245,18 @@ class TestPreflight:
         """404 means the server answered → endpoint is reachable. The /models
         contract check is left to the eval client itself; pre-flight only
         cares about TCP/HTTP-level reachability."""
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get:
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(404)
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_success()
 
     def test_returns_err_on_5xx(self) -> None:
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"):
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.return_value = self._mk_response(503)
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_err()
@@ -264,10 +264,10 @@ class TestPreflight:
 
     def test_returns_err_on_connect_error(self) -> None:
         import httpx as _httpx
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"):
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.side_effect = _httpx.ConnectError("refused")
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_err()
@@ -275,10 +275,10 @@ class TestPreflight:
 
     def test_returns_err_on_timeout(self) -> None:
         import httpx as _httpx
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"):
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.side_effect = _httpx.ReadTimeout("slow")
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_err()
@@ -286,7 +286,7 @@ class TestPreflight:
 
     def test_retries_once_then_fails(self) -> None:
         import httpx as _httpx
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         call_count = {"n": 0}
 
@@ -294,8 +294,8 @@ class TestPreflight:
             call_count["n"] += 1
             raise _httpx.ConnectError("nope")
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get", side_effect=_raise), \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"):
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get", side_effect=_raise), \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             res = _preflight_check_endpoint("http://example/v1")
         # One initial + one retry = 2 attempts
         assert call_count["n"] == 2
@@ -303,7 +303,7 @@ class TestPreflight:
 
     def test_retry_succeeds_on_second_attempt(self) -> None:
         import httpx as _httpx
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         call_count = {"n": 0}
         good_resp = MagicMock()
@@ -315,16 +315,16 @@ class TestPreflight:
                 raise _httpx.ConnectError("nope")
             return good_resp
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get", side_effect=_flaky), \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"):
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get", side_effect=_flaky), \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             res = _preflight_check_endpoint("http://example/v1")
         assert res.is_success()
         assert call_count["n"] == 2
 
     def test_strips_trailing_slash_from_endpoint(self) -> None:
-        from src.pipeline.stages.model_evaluator import _preflight_check_endpoint
+        from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get:
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(200)
             _preflight_check_endpoint("http://example/v1/")
         # No double slash before /models
@@ -341,9 +341,9 @@ class TestEvaluatorPreflightIntegration:
 
         stage = ModelEvaluator(_mk_cfg(eval_enabled=True))
 
-        with patch("src.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
-             patch("src.pipeline.stages.model_evaluator.time.sleep"), \
-             patch("src.evaluation.runner.EvaluationRunner") as MockRunner:
+        with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
+             patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"), \
+             patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner:
             mock_get.side_effect = _httpx.ConnectError("refused")
             res = cast("Any", stage.execute({
                 "endpoint_url": "http://127.0.0.1:8000/v1",

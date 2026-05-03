@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     CATEGORY_TRAINING,
     MLFLOW_EVENTS_DISPLAY_LIMIT,
     MLFLOW_KEY_EVENT_TYPE,
@@ -24,7 +24,7 @@ from src.training.constants import (
     MLFLOW_SEVERITY_START,
     MLFLOW_SEVERITY_WARNING,
 )
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable

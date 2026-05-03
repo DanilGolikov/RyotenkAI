@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sys
 
-from src.api.main import create_app
+from ryotenkai_control.api.main import create_app
 
 
 def main() -> None:

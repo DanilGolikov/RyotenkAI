@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from src.infrastructure.mlflow.environment import MLflowEnvironment
-from src.pipeline.state.queries import discover_run_dirs, load_pipeline_state
+from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
+from ryotenkai_control.pipeline.state.queries import discover_run_dirs, load_pipeline_state
 
 _LOG = logging.getLogger("ryotenkai.pipeline.deletion")
 

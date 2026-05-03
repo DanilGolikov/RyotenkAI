@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.launch.pod_availability import (
+from ryotenkai_control.pipeline.launch.pod_availability import (
     RESUME_BACKOFFS,
     PodAvailability,
     PodAvailabilityProbe,
@@ -23,7 +23,7 @@ from src.pipeline.launch.pod_availability import (
     ResumeResult,
     resume_pod_with_retry,
 )
-from src.pipeline.state.models import PodMetadata
+from ryotenkai_control.pipeline.state.models import PodMetadata
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ class TestResumeRegressions:
         assert RESUME_BACKOFFS == (10.0, 30.0, 60.0, 120.0)
 
     def test_default_budget_is_300_seconds(self) -> None:
-        from src.pipeline.launch.pod_availability import (
+        from ryotenkai_control.pipeline.launch.pod_availability import (
             RESUME_RETRY_BUDGET_SECONDS,
         )
         assert RESUME_RETRY_BUDGET_SECONDS == 300.0

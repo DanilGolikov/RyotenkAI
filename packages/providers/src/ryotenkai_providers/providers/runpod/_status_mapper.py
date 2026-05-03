@@ -11,7 +11,7 @@ vocabulary. Mac-side resume-flow callers
 (:class:`PodAvailabilityProbe`, :class:`LaunchResumeService`)
 consume :func:`map_runpod_desired_status_to_availability` via lazy
 import; the broader RunPod provider re-exports it for symmetry
-(``from src.providers.runpod.training.provider import
+(``from ryotenkai_providers.runpod.training.provider import
 map_runpod_desired_status_to_availability`` keeps working).
 
 Phase 14.C migration: replaces the pre-14.C
@@ -24,14 +24,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from src.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
 
 
 def _build_map() -> "dict[str, PodAvailability]":
     # Local import — pod_availability.py is light (no provider chain),
     # so this is cheap; deferring keeps the module-load order
     # symmetric with the rest of the pipeline.launch package.
-    from src.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
     return {
         "RUNNING": PodAvailability.RUNNING,
         "EXITED": PodAvailability.SLEEPING_RESUMABLE,
@@ -56,7 +56,7 @@ def map_runpod_desired_status_to_availability(
     lowercased / mixed-case status strings depending on the
     upstream SDK version.
     """
-    from src.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
     return _build_map().get(
         raw_status.upper(), PodAvailability.PROBE_FAILED,
     )

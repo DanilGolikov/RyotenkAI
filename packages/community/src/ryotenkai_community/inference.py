@@ -15,7 +15,7 @@ from typing import Literal
 
 # PluginKind is a type alias used at runtime in the annotation of
 # ``_BASE_TO_KIND`` below — keep the import outside TYPE_CHECKING.
-from src.community.manifest import PluginKind
+from ryotenkai_community.manifest import PluginKind
 
 logger = logging.getLogger(__name__)
 

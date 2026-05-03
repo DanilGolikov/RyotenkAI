@@ -20,11 +20,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.metrics_models import TrainingMetricsSnapshot
-from src.training.orchestrator.phase_executor import PhaseExecutor
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.training.memory_manager import OOMRecoverableError
-from src.utils.result import Err, Ok
+from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
+from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_pod.trainer.memory_manager import OOMRecoverableError
+from ryotenkai_shared.utils.result import Err, Ok
 
 # ========================================================================
 # FIXTURES
@@ -283,8 +283,8 @@ class TestPhaseExecutorInitialization:
         )
 
         # Default factories should be instances
-        from src.training.strategies.factory import StrategyFactory
-        from src.training.trainers.factory import TrainerFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 
         assert isinstance(executor.strategy_factory, StrategyFactory)
         assert isinstance(executor.trainer_factory, TrainerFactory)

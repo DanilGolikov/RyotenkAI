@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.reports.domain.entities import RunStatus
-from src.reports.models.report import ExperimentHealth, Issue
+from ryotenkai_control.reports.domain.entities import RunStatus
+from ryotenkai_control.reports.models.report import ExperimentHealth, Issue
 
 _REASONS_JOIN = "; "
 

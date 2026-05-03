@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.constants import (
+from ryotenkai_control.pipeline.constants import (
     CTX_PROVIDER_NAME_UNKNOWN,
     CTX_PROVIDER_TYPE_UNKNOWN,
     CTX_RUNTIME_SECONDS,
@@ -21,10 +21,10 @@ from src.pipeline.constants import (
     CTX_TRAINING_INFO,
     CTX_UPLOAD_DURATION,
 )
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
-    from src.infrastructure.mlflow.protocol import IMLflowManager
+    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 
 
 class StageInfoLogger:

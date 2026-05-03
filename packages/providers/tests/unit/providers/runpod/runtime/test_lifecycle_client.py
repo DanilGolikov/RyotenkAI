@@ -21,13 +21,13 @@ from typing import Any
 import httpx
 import pytest
 
-from src.constants import PROVIDER_RUNPOD
-from src.providers.runpod.runtime.lifecycle_client import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_providers.runpod.runtime.lifecycle_client import (
     DEFAULT_RUNPOD_GRAPHQL_URL,
     RunPodPodLifecycleClient,
 )
-from src.runner.pod_terminator import PodTerminalOutcome
-from src.runner.runtime.lifecycle_client import (
+from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome
+from ryotenkai_pod.runner.runtime.lifecycle_client import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

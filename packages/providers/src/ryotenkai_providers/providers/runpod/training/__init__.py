@@ -26,7 +26,7 @@ Example config:
           ports: "8888/http,22/tcp"
 
 Usage:
-    from src.providers.runpod.training import RunPodProvider
+    from ryotenkai_providers.runpod.training import RunPodProvider
 
     provider = RunPodProvider(config=provider_config, secrets=secrets)
     result = provider.connect()  # Creates pod, waits for ready
@@ -37,8 +37,8 @@ Usage:
 """
 
 # Auto-register with factory
-from src.constants import PROVIDER_RUNPOD
-from src.providers.training.factory import GPUProviderFactory
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_providers.training.factory import GPUProviderFactory
 
 from .api_client import RunPodAPIClient
 from .cleanup_manager import RunPodCleanupManager, create_cleanup_manager

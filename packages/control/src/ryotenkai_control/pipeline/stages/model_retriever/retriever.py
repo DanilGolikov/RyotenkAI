@@ -12,29 +12,29 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import PipelineContextKeys, StageNames
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, ModelError, Ok, Result
-from src.utils.ssh_client import SSHClient
+from ryotenkai_control.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, ModelError, Ok, Result
+from ryotenkai_shared.utils.ssh_client import SSHClient
 
-from src.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
-from src.pipeline.stages.model_retriever.metrics_buffer_retriever import (
+from ryotenkai_control.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_buffer_retriever import (
     MetricsBufferRetriever,
 )
-from src.pipeline.stages.model_retriever.metrics_replay import (
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_replay import (
     BufferedMetricsReplay,
 )
-from src.pipeline.stages.model_retriever.model_card import ModelCardGenerator
-from src.pipeline.stages.model_retriever.types import (
+from ryotenkai_control.pipeline.stages.model_retriever.model_card import ModelCardGenerator
+from ryotenkai_control.pipeline.stages.model_retriever.types import (
     ModelCardContext,
     ModelRetrieverEventCallbacks,
     PhaseMetricsResult,
 )
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, Secrets
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 class ModelRetriever(PipelineStage):
@@ -176,7 +176,7 @@ class ModelRetriever(PipelineStage):
 
         effective_username = None if is_alias_mode else (ssh_user if ssh_user else None)
         import sys as _sys
-        _pkg = _sys.modules.get("src.pipeline.stages.model_retriever")
+        _pkg = _sys.modules.get("ryotenkai_control.pipeline.stages.model_retriever")
         _SSHClientCls = getattr(_pkg, "SSHClient", SSHClient) if _pkg else SSHClient
         self._ssh_client = _SSHClientCls(
             host=str(ssh_host),

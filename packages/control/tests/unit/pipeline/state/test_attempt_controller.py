@@ -20,11 +20,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.state.attempt_controller import (
+from ryotenkai_control.pipeline.state.attempt_controller import (
     AttemptController,
     AttemptControllerError,
 )
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     StageLineageRef,

@@ -35,7 +35,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
 
-from src.utils.atomic_fs import (
+from ryotenkai_shared.utils.atomic_fs import (
     atomic_write_json,
     atomic_write_text,
     created_at_from_filename,

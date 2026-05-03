@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.utils.result import ProviderError, Result
+    from ryotenkai_shared.utils.result import ProviderError, Result
 
 
 class _PodTerminateControl(Protocol):
@@ -39,7 +39,7 @@ def create_cleanup_manager(api_base: str, api_key: str) -> RunPodCleanupManager:
     Returns:
         RunPodCleanupManager instance
     """
-    from src.providers.runpod.training.api_client import RunPodAPIClient
+    from ryotenkai_providers.runpod.training.api_client import RunPodAPIClient
 
     api_client = RunPodAPIClient(api_base_url=api_base, api_key=api_key)
     return RunPodCleanupManager(api_client)

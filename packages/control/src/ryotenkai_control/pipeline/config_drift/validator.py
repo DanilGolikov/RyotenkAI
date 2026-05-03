@@ -20,13 +20,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.pipeline.stages import StageNames
-from src.pipeline.state import hash_payload
-from src.utils.result import AppError, ConfigDriftError
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state import hash_payload
+from ryotenkai_shared.utils.result import AppError, ConfigDriftError
 
 if TYPE_CHECKING:
-    from src.pipeline.state import PipelineState
-    from src.config import PipelineConfig
+    from ryotenkai_control.pipeline.state import PipelineState
+    from ryotenkai_shared.config import PipelineConfig
 
 
 def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:

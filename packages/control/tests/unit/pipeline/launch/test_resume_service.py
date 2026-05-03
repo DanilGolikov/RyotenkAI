@@ -23,14 +23,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.constants import PROVIDER_RUNPOD
-from src.pipeline.launch.pod_availability import PodAvailability
-from src.pipeline.launch.resume_service import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+from ryotenkai_control.pipeline.launch.resume_service import (
     LaunchResumeService,
     ResumeOutcome,
     ResumeProgress,
 )
-from src.pipeline.state.models import PodMetadata
+from ryotenkai_control.pipeline.state.models import PodMetadata
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def _stub_capacity_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
     """Install a fake ``is_capacity_error_message`` so the resume
     service's lazy import doesn't require the ``runpod`` SDK.
 
-    The service does ``from src.providers.runpod.sdk_adapter import
+    The service does ``from ryotenkai_providers.runpod.sdk_adapter import
     is_capacity_error_message`` inside :meth:`_do_resume`. In slim
     CI venvs that import fails at the SDK-adapter's module-top
     ``import runpod``. We side-step it by installing a synthetic
@@ -48,16 +48,16 @@ def _stub_capacity_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
     import types
 
-    if "src.providers.runpod.sdk_adapter" in sys.modules:
+    if "ryotenkai_providers.runpod.sdk_adapter" in sys.modules:
         return
 
-    fake = types.ModuleType("src.providers.runpod.sdk_adapter")
+    fake = types.ModuleType("ryotenkai_providers.runpod.sdk_adapter")
     fake.is_capacity_error_message = lambda msg: (  # type: ignore[attr-defined]
         "no instances currently available" in msg.lower()
         or "capacity" in msg.lower()
     )
     monkeypatch.setitem(
-        sys.modules, "src.providers.runpod.sdk_adapter", fake,
+        sys.modules, "ryotenkai_providers.runpod.sdk_adapter", fake,
     )
 
 
@@ -156,14 +156,14 @@ def _seed_run_with_metadata(
     Uses the same AttemptController flow as
     :mod:`test_launch_service_resume_pod` to keep the seeding
     consistent with the other resume-flow tests."""
-    from src.pipeline.state.attempt_controller import AttemptController
-    from src.pipeline.state.models import (
+    from ryotenkai_control.pipeline.state.attempt_controller import AttemptController
+    from ryotenkai_control.pipeline.state.models import (
         PipelineAttemptState,
         PipelineState,
         StageRunState,
         utc_now_iso,
     )
-    from src.pipeline.state.store import PipelineStateStore
+    from ryotenkai_control.pipeline.state.store import PipelineStateStore
 
     store = PipelineStateStore(tmp_path)
     state = PipelineState(
@@ -304,11 +304,11 @@ class TestNegative:
         # Mock resume_pod_with_retry to return a capacity-exhausted
         # ResumeResult immediately — the actual retry loop has its
         # own tests in test_pod_availability.py.
-        from src.pipeline.launch import pod_availability as pa
-        from src.pipeline.launch.resume_service import (
+        from ryotenkai_control.pipeline.launch import pod_availability as pa
+        from ryotenkai_control.pipeline.launch.resume_service import (
             ResumeOutcome as _RO,  # noqa: F401 — keeps the import seen
         )
-        from src.pipeline.launch import resume_service as rs
+        from ryotenkai_control.pipeline.launch import resume_service as rs
 
         async def _fake_resume(*args: Any, **kwargs: Any) -> Any:
             return pa.ResumeResult(
@@ -496,7 +496,7 @@ class TestLogicSpecific:
         # default. Pin: with no RUNPOD_API_KEY env, default returns
         # None (skipped path).
         monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
-        from src.pipeline.launch.resume_service import (
+        from ryotenkai_control.pipeline.launch.resume_service import (
             _default_resolve_lifecycle_provider,
         )
         result = _default_resolve_lifecycle_provider("runpod")

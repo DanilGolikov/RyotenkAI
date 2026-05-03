@@ -26,7 +26,7 @@ naming collisions (e.g. ``validate_config`` exists in both
 :mod:`config_service` and :mod:`project_service` with different shapes).
 """
 
-from src.api.services import (
+from ryotenkai_control.api.services import (
     config_service,
     connection_test,
     delete_service,

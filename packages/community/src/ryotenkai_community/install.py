@@ -40,17 +40,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from src.community.archive import resolve_extraction_root
-from src.community.constants import (
+from ryotenkai_community.archive import resolve_extraction_root
+from ryotenkai_community.constants import (
     ALL_PLUGIN_KINDS,
     COMMUNITY_ROOT,
     PRESET_DIR_NAME,
 )
-from src.community.validate_manifest import (
+from ryotenkai_community.validate_manifest import (
     ManifestValidationResult,
     validate_manifest_dir,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 #: Accepts either a 40-char SHA-1 (full commit hash) or a >=7-char hex
 #: short hash. Matches the form ``git rev-parse <ref>`` would emit.

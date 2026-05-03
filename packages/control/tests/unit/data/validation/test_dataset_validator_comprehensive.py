@@ -14,8 +14,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.pipeline.stages.dataset_validator import DatasetValidator
-from src.config import DatasetConfig, PipelineConfig
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator
+from ryotenkai_shared.config import DatasetConfig, PipelineConfig
 
 
 def _mk_local_dataset_config(
@@ -63,7 +63,7 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)
@@ -85,7 +85,7 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)
@@ -107,7 +107,7 @@ class TestDatasetValidatorBoundary:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)

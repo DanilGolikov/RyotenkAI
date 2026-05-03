@@ -30,12 +30,12 @@ from typing import Any
 
 import pytest
 
-from src.config.inference.schema import InferenceConfig
-from src.config.providers.runpod import RunPodProviderConfig
-from src.constants import PROVIDER_RUNPOD
-from src.providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext, PipelineReadinessMode
-from src.providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
-from src.utils.result import Err, InferenceError, Ok, ProviderError
+from ryotenkai_shared.config.inference.schema import InferenceConfig
+from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext, PipelineReadinessMode
+from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
+from ryotenkai_shared.utils.result import Err, InferenceError, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -261,7 +261,7 @@ def test_deploy_success_no_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     p = _mk_provider(key_path=str(key_file))
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-123", "pod-name")))
@@ -284,7 +284,7 @@ def test_deploy_keep_running_skips_stop(tmp_path: Path, monkeypatch: pytest.Monk
     stop_called: list[bool] = []
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-456", "pod-name")))
@@ -302,7 +302,7 @@ def test_deploy_with_volume_success(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     p = _mk_provider(key_path=str(key_file), with_volume=True)
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(p, "_ensure_network_volume", lambda: Ok("vol-123"))
@@ -321,7 +321,7 @@ def test_deploy_volume_ensure_failure_returns_err(tmp_path: Path, monkeypatch: p
     p = _mk_provider(key_path=str(key_file), with_volume=True)
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(
@@ -342,7 +342,7 @@ def test_deploy_pod_ensure_failure_returns_err(tmp_path: Path, monkeypatch: pyte
     p = _mk_provider(key_path=str(key_file))
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(
@@ -363,7 +363,7 @@ def test_deploy_stop_failure_returns_err(tmp_path: Path, monkeypatch: pytest.Mon
     p = _mk_provider(key_path=str(key_file))
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-123", "pod-name")))
@@ -387,7 +387,7 @@ def test_deploy_provider_error_from_volume_wrapped_as_inference_error(
     p = _mk_provider(key_path=str(key_file), with_volume=True)
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
+        "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
     monkeypatch.setattr(
@@ -516,7 +516,7 @@ def test_activate_for_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> N
     fake_session = SimpleNamespace(endpoint_url="http://127.0.0.1:8000/v1")
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.activate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
         lambda **kw: Ok(fake_session),  # type: ignore[call-arg]
     )
 
@@ -530,7 +530,7 @@ def test_activate_for_eval_session_failure_returns_inference_err(monkeypatch: py
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="hf-org/model")
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.activate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
         lambda **kw: Err(ProviderError(message="ssh fail", code="SSH_FAIL")),
     )
 
@@ -551,7 +551,7 @@ def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
     deferred cleanup-in-reverse caught up — bad UX (user sees a billing
     pod still running after Ctrl+C).
     """
-    from src.utils.cancellation import PipelineCancelled
+    from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
     api = StubApi(delete_pod_results=[Ok(None)])
     p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
@@ -560,7 +560,7 @@ def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
         raise PipelineCancelled()
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.activate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
         raise_cancelled,
     )
 
@@ -577,7 +577,7 @@ def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
 ) -> None:
     """Best-effort delete on cancel — if delete itself fails, we still
     re-raise PipelineCancelled (don't mask the user's intent)."""
-    from src.utils.cancellation import PipelineCancelled
+    from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
     api = StubApi(
         delete_pod_results=[Err(ProviderError(message="boom", code="DELETE_FAIL"))],
@@ -588,7 +588,7 @@ def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
         raise PipelineCancelled()
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.activate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
         raise_cancelled,
     )
 
@@ -599,11 +599,11 @@ def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
 def test_activate_for_eval_session_inference_error_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="hf-org/model")
 
-    from src.utils.result import ProviderError
+    from ryotenkai_shared.utils.result import ProviderError
 
     orig_err = ProviderError(message="vllm error", code="VLLM_FAIL")
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.activate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
         lambda **kw: Err(orig_err),
     )
 
@@ -662,7 +662,7 @@ def test_deactivate_after_eval_session_success(monkeypatch: pytest.MonkeyPatch) 
     p = _mk_provider(api=StubApi(), pod_id="pod-1", eval_session=fake_session)
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.deactivate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.deactivate",
         lambda **kw: Ok(None),  # type: ignore[call-arg]
     )
 
@@ -676,7 +676,7 @@ def test_deactivate_after_eval_session_failure_returns_err(monkeypatch: pytest.M
     p = _mk_provider(api=StubApi(), pod_id="pod-1", eval_session=fake_session)
 
     monkeypatch.setattr(
-        "src.providers.runpod.inference.pods.pod_session.deactivate",
+        "ryotenkai_providers.runpod.inference.pods.pod_session.deactivate",
         lambda **kw: Err(ProviderError(message="deactivate fail", code="DEACT_FAIL")),
     )
 
@@ -928,7 +928,7 @@ def test_stop_pod_if_running_stop_failure_returns_err() -> None:
 
 
 def test_ensure_network_volume_by_id_success() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         get_network_volume_results=[
@@ -943,7 +943,7 @@ def test_ensure_network_volume_by_id_success() -> None:
 
 
 def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         get_network_volume_results=[
@@ -958,7 +958,7 @@ def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
 
 
 def test_ensure_network_volume_list_failure_returns_err() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         list_network_volumes_results=[Err(ProviderError(message="list fail", code="LIST_FAIL"))]
@@ -971,7 +971,7 @@ def test_ensure_network_volume_list_failure_returns_err() -> None:
 
 
 def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         list_network_volumes_results=[
@@ -994,7 +994,7 @@ def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
 
 
 def test_ensure_network_volume_returns_ambiguous_when_multiple_name_matches() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         list_network_volumes_results=[
@@ -1027,7 +1027,7 @@ def test_ensure_network_volume_missing_data_center_returns_err_before_create() -
 
 
 def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_err() -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
         list_network_volumes_results=[Ok([{"name": "my-vol", "dataCenterId": "US-KS-2"}])]  # type: ignore[call-arg]
@@ -1042,7 +1042,7 @@ def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_er
 
 
 def test_ensure_network_volume_create_success_without_id_but_relist_finds_volume(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.config.providers.runpod.inference import RunPodNetworkVolumeConfig
+    from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     monkeypatch.setattr("time.sleep", lambda s: None)
     api = StubApi(

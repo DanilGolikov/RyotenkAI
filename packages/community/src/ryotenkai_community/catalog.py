@@ -19,25 +19,25 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.community.constants import ALL_PLUGIN_KINDS, COMMUNITY_ROOT
-from src.community.libs import (
+from ryotenkai_community.constants import ALL_PLUGIN_KINDS, COMMUNITY_ROOT
+from ryotenkai_community.libs import (
     LibLoadFailure,
     LoadedLib,
     libs_fingerprint_entries,
     libs_root_for,
     load_libs,
 )
-from src.community.loader import (
+from ryotenkai_community.loader import (
     LoadedPlugin,
     LoadedPreset,
     LoadFailure,
     load_all_plugins,
     load_presets,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.community.manifest import PluginKind
+    from ryotenkai_community.manifest import PluginKind
 
 
 def _append(
@@ -217,10 +217,10 @@ class CommunityCatalog:
         clear/register lifecycle through that instance, never directly
         through the class.
         """
-        from src.data.validation.registry import validation_registry
-        from src.evaluation.plugins.registry import evaluator_registry
-        from src.reports.plugins.registry import report_registry
-        from src.training.reward_plugins.registry import reward_registry
+        from ryotenkai_control.data.validation.registry import validation_registry
+        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
+        from ryotenkai_control.reports.plugins.registry import report_registry
+        from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
 
         validation_registry.clear()
         evaluator_registry.clear()

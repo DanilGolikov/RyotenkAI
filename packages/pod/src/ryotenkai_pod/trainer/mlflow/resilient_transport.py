@@ -31,7 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

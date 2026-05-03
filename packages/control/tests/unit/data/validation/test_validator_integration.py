@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
-from src.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
-from src.config import DatasetConfig, PipelineConfig
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
+from ryotenkai_shared.config import DatasetConfig, PipelineConfig
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> Mock:
@@ -44,7 +44,7 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)
@@ -66,7 +66,7 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)
@@ -87,7 +87,7 @@ class TestDatasetValidatorIntegration:
 
         cfg = _mk_primary_only_config(_mk_local_ds(str(dataset_file), plugins=[], critical_failures=1))
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         validator = DatasetValidator(cfg)
@@ -110,7 +110,7 @@ class TestDatasetValidatorIntegration:
             )
         )
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.reload()
         callbacks = DatasetValidatorEventCallbacks(

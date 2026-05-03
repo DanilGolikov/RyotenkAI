@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.base import PipelineStage
-from src.utils.result import Failure, Success
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_shared.utils.result import Failure, Success
 
 # =========================================================================
 # CONCRETE IMPLEMENTATIONS FOR TESTING
@@ -234,7 +234,7 @@ def test_metadata_mutable(concrete_stage):
 # =========================================================================
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_log_start_logs_correctly(mock_logger, concrete_stage):
     """log_start logs stage start with expected format."""
     concrete_stage.log_start()
@@ -246,7 +246,7 @@ def test_log_start_logs_correctly(mock_logger, concrete_stage):
     assert "TestStage" in call_args
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_log_end_success(mock_logger, concrete_stage):
     """log_end logs success with checkmark."""
     concrete_stage.log_end(success=True)
@@ -258,7 +258,7 @@ def test_log_end_success(mock_logger, concrete_stage):
     assert "TestStage" in call_args
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_log_end_failure(mock_logger, concrete_stage):
     """log_end logs failure with cross."""
     concrete_stage.log_end(success=False)
@@ -316,7 +316,7 @@ def test_update_context_overwrites_existing(concrete_stage):
 # =========================================================================
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_calls_execute_and_logs(mock_logger, concrete_stage):
     """run() calls execute() and logs start/end."""
     context = {"initial": "data"}
@@ -356,7 +356,7 @@ def test_run_failure_propagates_error(error_stage):
     assert error_msg == "Execution failed"
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_exception_handling(mock_logger, exception_stage):
     """Exception in execute() is caught as Err."""
     context = {}
@@ -372,7 +372,7 @@ def test_run_exception_handling(mock_logger, exception_stage):
     mock_logger.exception.assert_called_once()
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_always_calls_log_end(mock_logger, exception_stage):
     """log_end runs even on exception."""
     context = {}
@@ -391,7 +391,7 @@ def test_run_always_calls_log_end(mock_logger, exception_stage):
 # =========================================================================
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_logging_order_invariant(mock_logger, concrete_stage):
     """log_start before execute; log_end after."""
     context = {}
@@ -413,7 +413,7 @@ def test_run_logging_order_invariant(mock_logger, concrete_stage):
     assert "Stage completed:" in info_calls[1]
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_logging_order_on_exception(mock_logger, exception_stage):
     """Logging order on exception."""
     context = {}
@@ -476,7 +476,7 @@ def test_cleanup_default_is_noop(mock_config):
     assert stage.teardown_called is False
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_setup_exception_is_handled_and_no_execute_teardown(mock_logger, mock_config):
     """Negative: setup() raises → Err; execute/teardown skipped."""
     stage = ConcreteStageWithSetupException(config=mock_config, stage_name="SetupExceptionStage")
@@ -490,7 +490,7 @@ def test_run_setup_exception_is_handled_and_no_execute_teardown(mock_logger, moc
     mock_logger.exception.assert_called_once()
 
 
-@patch("src.pipeline.stages.base.logger")
+@patch("ryotenkai_control.pipeline.stages.base.logger")
 def test_run_teardown_exception_is_swallowed_and_result_preserved(mock_logger, mock_config):
     """Edge: teardown() raises → swallowed; execute Result preserved."""
     stage = ConcreteStageWithTeardownException(config=mock_config, stage_name="TeardownExceptionStage")

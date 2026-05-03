@@ -40,7 +40,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.pipeline.state.job_submission import (
+from ryotenkai_control.pipeline.state.job_submission import (
     JOB_SUBMISSION_FILENAME,
     JobSubmission,
     JobSubmissionLoadError,
@@ -320,7 +320,7 @@ class TestDependencyErrors:
     def test_save_propagates_atomic_write_errors(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from src.pipeline.state import job_submission as mod
+        from ryotenkai_control.pipeline.state import job_submission as mod
 
         def _boom(_path: Any, _payload: Any) -> None:
             raise OSError("disk full")
@@ -402,7 +402,7 @@ class TestLogicSpecific:
     ) -> None:
         # Pin the timestamp via patching ``datetime.now`` inside the
         # module so the assertion is deterministic.
-        from src.pipeline.state import job_submission as mod
+        from ryotenkai_control.pipeline.state import job_submission as mod
 
         fixed = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 

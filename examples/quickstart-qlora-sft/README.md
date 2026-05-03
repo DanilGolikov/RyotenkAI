@@ -57,7 +57,7 @@ ryotenkai config-validate --config examples/quickstart-qlora-sft/pipeline_config
 ## Step 5: Run the pipeline
 
 ```bash
-python -m src.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
+python -m ryotenkai_control.pipeline.orchestrator examples/quickstart-qlora-sft/pipeline_config.yaml
 ```
 
 The pipeline will:

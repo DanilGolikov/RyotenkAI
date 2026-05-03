@@ -37,21 +37,21 @@ import pytest
 
 _TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "training"
 
-if "src.training" not in _sys.modules:
-    _shell = _types.ModuleType("src.training")
+if "ryotenkai_pod.trainer" not in _sys.modules:
+    _shell = _types.ModuleType("ryotenkai_pod.trainer")
     _shell.__path__ = [str(_TRAINING_PKG)]  # type: ignore[attr-defined]
-    _sys.modules["src.training"] = _shell
+    _sys.modules["ryotenkai_pod.trainer"] = _shell
 
 # Pre-load _concurrent_helpers under its real module name so the lazy
 # import inside _flush_helper's body resolves without dragging the
 # package init.
 _CONCURRENT = _TRAINING_PKG / "_concurrent_helpers.py"
 _concurrent_spec = _importlib_util.spec_from_file_location(
-    "src.training._concurrent_helpers", _CONCURRENT,
+    "ryotenkai_pod.trainer._concurrent_helpers", _CONCURRENT,
 )
 assert _concurrent_spec is not None and _concurrent_spec.loader is not None
 _concurrent_mod = _importlib_util.module_from_spec(_concurrent_spec)
-_sys.modules["src.training._concurrent_helpers"] = _concurrent_mod
+_sys.modules["ryotenkai_pod.trainer._concurrent_helpers"] = _concurrent_mod
 _concurrent_spec.loader.exec_module(_concurrent_mod)
 
 

@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from src.community.catalog import CommunityCatalog
-from src.community.preflight import (
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.preflight import (
     LaunchAbortedError,
     run_preflight,
     validate_instances,
@@ -33,17 +33,17 @@ def patched_catalog(tmp_community_root, monkeypatch):
     the module-level singleton and the package re-export so callers
     that imported ``catalog`` earlier see the temp instance."""
     import sys
-    import src.community as community_pkg
+    import ryotenkai_community as community_pkg
 
     cat = CommunityCatalog(root=tmp_community_root)
-    catalog_module = sys.modules["src.community.catalog"]
+    catalog_module = sys.modules["ryotenkai_community.catalog"]
     monkeypatch.setattr(catalog_module, "catalog", cat)
     monkeypatch.setattr(community_pkg, "catalog", cat)
     return cat
 
 
 def _load_pipeline_config(yaml_text: str):
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     return PipelineConfig.model_validate(yaml.safe_load(yaml_text))
 
@@ -83,7 +83,7 @@ def _make_eval_plugin_with_schema(make_plugin_dir, plugin_id: str) -> None:
         default = 0.5
     """)
     plugin_source = dedent(f"""
-        from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
         class {plugin_id.title().replace('_', '')}Plugin(EvaluatorPlugin):
             def evaluate(self, samples):
@@ -102,7 +102,7 @@ def _make_eval_plugin_with_schema(make_plugin_dir, plugin_id: str) -> None:
 
 
 def _attach_eval_instance(config, plugin_id: str, *, params=None, thresholds=None):
-    from src.config.evaluation.schema import (
+    from ryotenkai_shared.config.evaluation.schema import (
         EvaluationDatasetConfig,
         EvaluatorPluginConfig,
     )

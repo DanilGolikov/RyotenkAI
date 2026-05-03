@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.constants import INFERENCE_DIRNAME
+from ryotenkai_shared.constants import INFERENCE_DIRNAME
 
 _ENDPOINT_PENDING_PLACEHOLDER = "<set when chat_inference.py opens the SSH tunnel>"
 

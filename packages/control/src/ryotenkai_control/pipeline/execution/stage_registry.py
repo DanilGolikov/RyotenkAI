@@ -24,24 +24,24 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.pipeline.artifacts import StageArtifactCollector
-from src.utils.cancellation import PipelineCancelled
-from src.pipeline.stages import StageNames
-from src.pipeline.stages.dataset_validator import DatasetValidator
-from src.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
-from src.pipeline.stages.inference_deployer import InferenceDeployer
-from src.pipeline.stages.model_evaluator import ModelEvaluator
-from src.pipeline.stages.model_retriever import ModelRetriever
-from src.pipeline.stages.training_monitor import TrainingMonitor
-from src.utils.logger import logger
+from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
+from ryotenkai_shared.utils.cancellation import PipelineCancelled
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator
+from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable
+from ryotenkai_control.pipeline.stages.inference_deployer import InferenceDeployer
+from ryotenkai_control.pipeline.stages.model_evaluator import ModelEvaluator
+from ryotenkai_control.pipeline.stages.model_retriever import ModelRetriever
+from ryotenkai_control.pipeline.stages.training_monitor import TrainingMonitor
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from src.pipeline.context import PipelineContext
-    from src.pipeline.stages.base import PipelineStage
-    from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-    from src.config import PipelineConfig, Secrets
+    from ryotenkai_control.pipeline.context import PipelineContext
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 class StageRegistry:
@@ -111,7 +111,7 @@ class StageRegistry:
         Imported lazily so a partially-configured test orchestrator can skip
         this path with ``patch.object(StageRegistry, "_build_stages", ...)``.
         """
-        from src.pipeline.stages.dataset_validator import DatasetValidatorEventCallbacks
+        from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidatorEventCallbacks
 
         vam = validation_artifact_mgr
         validator_callbacks = DatasetValidatorEventCallbacks(

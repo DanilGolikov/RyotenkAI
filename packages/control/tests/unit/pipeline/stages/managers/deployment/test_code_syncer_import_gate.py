@@ -24,11 +24,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.code_syncer import (
+from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import (
     RUNTIME_CHECK_SCRIPT,
     CodeSyncer,
 )
-from src.config import (
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -41,7 +41,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Ok
+from ryotenkai_shared.utils.result import Ok
 
 pytestmark = pytest.mark.unit
 
@@ -142,7 +142,7 @@ def test_gate_passes_on_clean_ok(syncer: CodeSyncer):
     completed.stdout = ""
     completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
         result = syncer.sync(ssh)
 
     assert result.is_ok()
@@ -166,9 +166,9 @@ def test_gate_blocks_when_providers_missing_regression(syncer: CodeSyncer):
     blocks Stage 1 with named module + actionable error."""
     failed_manifest = (
         "FAILED\n"
-        "src.workspace.integrations.loader=importable\n"
-        "src.config=importable\n"
-        "src.providers=NOT_IMPORTABLE (ModuleNotFoundError: No module named 'src.providers')\n"
+        "ryotenkai_control.workspace.integrations.loader=importable\n"
+        "ryotenkai_shared.config=importable\n"
+        "ryotenkai_providers=NOT_IMPORTABLE (ModuleNotFoundError: No module named 'ryotenkai_providers')\n"
         "GATE_RC=2"
     )
     ssh = _make_ssh(stdout=failed_manifest)
@@ -178,19 +178,19 @@ def test_gate_blocks_when_providers_missing_regression(syncer: CodeSyncer):
     assert result.is_err()
     err = result.unwrap_err()
     assert err.code == "IMPORT_GATE_FAILED"
-    assert "src.providers" in err.message
+    assert "ryotenkai_providers" in err.message
     # operator-friendly action present
     assert "ensure" in err.message.lower()
     # details preserved for forensics
     assert err.details is not None
-    assert err.details["failed_modules"] == ["src.providers"]
+    assert err.details["failed_modules"] == ["ryotenkai_providers"]
 
 
 def test_gate_blocks_on_syntax_error(syncer: CodeSyncer):
     """A SyntaxError surfaces as NOT_IMPORTABLE just like a missing module."""
     failed_manifest = (
         "FAILED\n"
-        "src.providers=NOT_IMPORTABLE (SyntaxError: invalid syntax (foo.py, line 42))\n"
+        "ryotenkai_providers=NOT_IMPORTABLE (SyntaxError: invalid syntax (foo.py, line 42))\n"
         "GATE_RC=2"
     )
     ssh = _make_ssh(stdout=failed_manifest)
@@ -203,14 +203,14 @@ def test_gate_blocks_when_multiple_modules_fail(syncer: CodeSyncer):
     """Multiple failing modules end up in the failed_modules list."""
     failed_manifest = (
         "FAILED\n"
-        "src.config=NOT_IMPORTABLE (ImportError: ...)\n"
-        "src.providers=NOT_IMPORTABLE (ModuleNotFoundError: ...)\n"
+        "ryotenkai_shared.config=NOT_IMPORTABLE (ImportError: ...)\n"
+        "ryotenkai_providers=NOT_IMPORTABLE (ModuleNotFoundError: ...)\n"
         "GATE_RC=2"
     )
     ssh = _make_ssh(stdout=failed_manifest)
     result = syncer._verify_importability(ssh)
     assert result.is_err()
-    assert sorted(result.unwrap_err().details["failed_modules"]) == ["src.config", "src.providers"]
+    assert sorted(result.unwrap_err().details["failed_modules"]) == ["ryotenkai_shared.config", "ryotenkai_providers"]
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +258,7 @@ def test_gate_uses_python_verify_timeout(syncer: CodeSyncer):
     """Gate command runs with the same timeout as the runtime contract
     check (DEPLOYMENT_PYTHON_VERIFY_TIMEOUT), not the short SSH command
     timeout — heavy imports (torch, transformers) can take 30+ seconds."""
-    from src.pipeline.stages.managers.deployment_constants import (
+    from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
         DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
     )
 
@@ -316,7 +316,7 @@ def test_sync_returns_err_when_gate_fails_after_successful_rsync(syncer: CodeSyn
     Stage 1 instead of proceeding to Training Monitor and crashing."""
     failed_manifest = (
         "FAILED\n"
-        "src.providers=NOT_IMPORTABLE (ModuleNotFoundError)\n"
+        "ryotenkai_providers=NOT_IMPORTABLE (ModuleNotFoundError)\n"
         "GATE_RC=2"
     )
     ssh = _make_ssh(stdout=failed_manifest)
@@ -326,7 +326,7 @@ def test_sync_returns_err_when_gate_fails_after_successful_rsync(syncer: CodeSyn
     completed.stdout = ""
     completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
         result = syncer.sync(ssh)
 
     assert result.is_err()
@@ -346,7 +346,7 @@ def test_sync_returns_err_when_gate_fails_in_tar_fallback_path(syncer: CodeSynce
     rsync_failing.stderr = "rsync failed"
 
     with (
-        patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=rsync_failing),
+        patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=rsync_failing),
         patch.object(syncer, "_sync_module_tar", return_value=Ok(None)),
     ):
         result = syncer.sync(ssh)

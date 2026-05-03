@@ -34,14 +34,14 @@ from typing import Any
 
 import pytest
 
-from src.constants import PROVIDER_RUNPOD
-from src.runner.pod_terminator import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_pod.runner.pod_terminator import (
     PodTerminalOutcome,
     PodTerminator,
     decide_terminal_outcome,
     run_terminal_hook,
 )
-from src.runner.runtime.lifecycle_client import (
+from ryotenkai_pod.runner.runtime.lifecycle_client import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

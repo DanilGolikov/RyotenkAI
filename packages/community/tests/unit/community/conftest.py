@@ -26,8 +26,8 @@ from typing import Any
 
 import pytest
 
-from src.community.catalog import CommunityCatalog
-from src.config.secrets.model import Secrets
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_shared.config.secrets.model import Secrets
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +193,7 @@ def _invalidate_global_catalog_after_test():
     """
     import sys
 
-    from src.community.constants import LIBS_NAMESPACE
+    from ryotenkai_community.constants import LIBS_NAMESPACE
 
     prefix = f"{LIBS_NAMESPACE}."
     snapshot = {
@@ -210,7 +210,7 @@ def _invalidate_global_catalog_after_test():
             del sys.modules[name]
     for name, module in snapshot.items():
         sys.modules[name] = module
-    from src.community.catalog import catalog as _global_catalog
+    from ryotenkai_community.catalog import catalog as _global_catalog
 
     _global_catalog._loaded = False
 

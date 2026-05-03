@@ -8,15 +8,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.constants import PROVIDER_SINGLE_NODE
-from src.pipeline.stages.managers.deployment.provider_config import (
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
+from ryotenkai_control.pipeline.stages.managers.deployment.provider_config import (
     get_active_provider_name,
     get_cloud_training_cfg,
     get_provider_training_cfg,
     get_single_node_training_cfg,
     is_single_node_provider,
 )
-from src.config import (
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

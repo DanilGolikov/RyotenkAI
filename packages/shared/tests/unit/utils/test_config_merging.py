@@ -5,8 +5,8 @@ Tests that phase-specific hyperparameters correctly override global defaults.
 
 import pytest
 
-from src.training.trainers.factory import TrainerFactory
-from src.config import (
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.config import (
     GlobalHyperparametersConfig,
     PhaseHyperparametersConfig,
     QLoRAConfig,

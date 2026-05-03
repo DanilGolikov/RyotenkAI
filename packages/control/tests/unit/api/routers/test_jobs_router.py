@@ -50,10 +50,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.config import ApiSettings
-from src.api.dependencies import get_settings
-from src.api.routers import jobs as jobs_router
-from src.pipeline.state.job_submission import JobSubmission, save_job_submission
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.dependencies import get_settings
+from ryotenkai_control.api.routers import jobs as jobs_router
+from ryotenkai_control.pipeline.state.job_submission import JobSubmission, save_job_submission
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def _patch_with_runner(client_mock: MagicMock):
     async def _stub(submission, fn):  # type: ignore[no-untyped-def]
         return await fn(client_mock, submission.job_id)
 
-    return patch("src.api.routers.jobs._with_runner", side_effect=_stub)
+    return patch("ryotenkai_control.api.routers.jobs._with_runner", side_effect=_stub)
 
 
 # ---------------------------------------------------------------------------

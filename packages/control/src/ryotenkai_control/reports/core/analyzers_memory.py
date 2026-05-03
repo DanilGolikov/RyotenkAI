@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.reports.models.report import MemoryAnalysis, MemoryManagementInfo, MetricStatus
+from ryotenkai_control.reports.models.report import MemoryAnalysis, MemoryManagementInfo, MetricStatus
 
 _OOM_PENALTY_PER_EVENT = 20
 _WARN_PENALTY_HIGH = 30
 _CONFIG_PENALTY = 15
 
 if TYPE_CHECKING:
-    from src.reports.domain.entities import MemoryEvent, PhaseData
+    from ryotenkai_control.reports.domain.entities import MemoryEvent, PhaseData
 
 
 class MemoryAnalyzer:

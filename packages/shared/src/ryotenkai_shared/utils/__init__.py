@@ -7,7 +7,7 @@ GPU-introspection / DI-container code anymore. Import them from
 ``src.training.{container,memory_manager}`` directly.
 """
 
-from src.config import PipelineConfig, Secrets, load_secrets
+from ryotenkai_shared.config import PipelineConfig, Secrets, load_secrets
 from .environment import EnvironmentReporter, EnvironmentSnapshot
 from .logger import console, logger
 from .result import (

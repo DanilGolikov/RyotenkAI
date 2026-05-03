@@ -17,10 +17,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.providers.runpod.inference.pods import pod_session as ps
-from src.providers.runpod.lifecycle.policy import INFERENCE_PROFILE
-from src.providers.runpod.models import PodSnapshot, SshEndpoint
-from src.utils.result import Err, Ok, ProviderError
+from ryotenkai_providers.runpod.inference.pods import pod_session as ps
+from ryotenkai_providers.runpod.lifecycle.policy import INFERENCE_PROFILE
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -55,7 +55,7 @@ def test_wait_for_ssh_returns_host_port_tuple_on_success(
             return Ok(_ready_snapshot())
 
     monkeypatch.setattr(
-        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+        "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
     api = MagicMock()
     res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
@@ -80,7 +80,7 @@ def test_wait_for_ssh_uses_inference_profile_when_timeout_matches_default(
             return Ok(_ready_snapshot())
 
     monkeypatch.setattr(
-        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+        "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
     ps._wait_for_ssh(
         api=MagicMock(),
@@ -104,7 +104,7 @@ def test_wait_for_ssh_overrides_only_total_timeout(
             return Ok(_ready_snapshot())
 
     monkeypatch.setattr(
-        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+        "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
     ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=42)
     pol = captured["policy"]
@@ -133,7 +133,7 @@ def test_wait_for_ssh_propagates_waiter_error_unchanged(
             return err
 
     monkeypatch.setattr(
-        "src.providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
+        "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
     res = ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=600)
     assert res.is_failure()

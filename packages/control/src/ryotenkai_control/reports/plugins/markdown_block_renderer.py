@@ -10,11 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.reports.renderers.markdown_ir import MarkdownIRRenderer
+from ryotenkai_control.reports.renderers.markdown_ir import MarkdownIRRenderer
 
 if TYPE_CHECKING:
-    from src.reports.document.nodes import DocBlock
-    from src.reports.plugins.interfaces import ReportBlock
+    from ryotenkai_control.reports.document.nodes import DocBlock
+    from ryotenkai_control.reports.plugins.interfaces import ReportBlock
 
 
 @dataclass(frozen=True, slots=True)

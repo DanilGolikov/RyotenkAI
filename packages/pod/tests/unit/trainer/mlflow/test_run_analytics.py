@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.mlflow.event_log import MLflowEventLog
-from src.training.mlflow.run_analytics import MLflowRunAnalytics
+from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
+from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
 
 
 def _make_analytics(

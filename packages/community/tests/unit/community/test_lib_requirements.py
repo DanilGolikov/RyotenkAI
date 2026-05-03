@@ -37,12 +37,12 @@ from pathlib import Path
 
 import pytest
 
-from src.community.libs import preload_community_libs
-from src.community.loader import (
+from ryotenkai_community.libs import preload_community_libs
+from ryotenkai_community.loader import (
     _normalise_required_libs,
     load_plugins,
 )
-from src.community.manifest import (
+from ryotenkai_community.manifest import (
     EntryPoint,
     LATEST_SCHEMA_VERSION,
     LibManifest,
@@ -117,7 +117,7 @@ def _write_plugin(
 
 def _libs_by_id(community_root: Path) -> dict[str, LibManifest]:
     """Mirror what the catalog passes to ``load_plugins``."""
-    from src.community.libs import load_libs, libs_root_for
+    from ryotenkai_community.libs import load_libs, libs_root_for
 
     result = load_libs(libs_root=libs_root_for(community_root))
     return {lib.manifest.lib.id: lib.manifest for lib in result.libs}
@@ -448,7 +448,7 @@ class TestSyncIntegration:
     def test_sync_writes_lib_requirements_from_class(
         self, with_alpha_lib: Path
     ) -> None:
-        from src.community.sync import sync_plugin_manifest
+        from ryotenkai_community.sync import sync_plugin_manifest
 
         community_root = with_alpha_lib
         plugin_dir = community_root / "validation" / "to_sync"
@@ -471,7 +471,7 @@ class TestSyncIntegration:
             + "\n"
         )
         (plugin_dir / "plugin.py").write_text(
-            "from src.data.validation.base import ValidationPlugin\n"
+            "from ryotenkai_control.data.validation.base import ValidationPlugin\n"
             "class ToSyncPlugin(ValidationPlugin):\n"
             '    REQUIRED_LIBS = (("alpha", ">=1.0"),)\n'
             "    def validate(self, dataset):\n        ...\n"
@@ -484,7 +484,7 @@ class TestSyncIntegration:
         assert 'version = ">=1.0"' in result.new_text
 
     def test_sync_preserves_author(self, with_alpha_lib: Path) -> None:
-        from src.community.sync import sync_plugin_manifest
+        from ryotenkai_community.sync import sync_plugin_manifest
 
         community_root = with_alpha_lib
         plugin_dir = community_root / "validation" / "with_author"
@@ -507,7 +507,7 @@ class TestSyncIntegration:
             + "\n"
         )
         (plugin_dir / "plugin.py").write_text(
-            "from src.data.validation.base import ValidationPlugin\n"
+            "from ryotenkai_control.data.validation.base import ValidationPlugin\n"
             "class AuthoredPlugin(ValidationPlugin):\n"
             "    def validate(self, dataset):\n        ...\n"
         )
@@ -557,7 +557,7 @@ class TestAuthor:
 
 class TestRealHelixqlPluginsRegression:
     def test_six_helixql_plugins_load_with_lib_requirement(self) -> None:
-        from src.community.catalog import catalog as real_catalog
+        from ryotenkai_community.catalog import catalog as real_catalog
 
         real_catalog.reload()
         helixql_plugins: list[str] = []
@@ -575,7 +575,7 @@ class TestRealHelixqlPluginsRegression:
         ]
 
     def test_real_helixql_lib_at_version_one_zero(self) -> None:
-        from src.community.catalog import catalog as real_catalog
+        from ryotenkai_community.catalog import catalog as real_catalog
 
         real_catalog.reload()
         helixql = real_catalog.get_lib("helixql")

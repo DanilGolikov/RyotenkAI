@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from src.runner.state import (
+from ryotenkai_pod.runner.state import (
     InvalidTransitionError,
     JobLifecycleFSM,
     JobSnapshot,

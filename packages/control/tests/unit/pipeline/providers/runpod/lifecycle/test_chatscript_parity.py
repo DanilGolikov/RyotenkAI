@@ -28,8 +28,8 @@ import re
 
 import pytest
 
-from src.providers.runpod.inference.pods.artifacts import CHAT_SCRIPT
-from src.providers.runpod.lifecycle.policy import INFERENCE_PROFILE
+from ryotenkai_providers.runpod.inference.pods.artifacts import CHAT_SCRIPT
+from ryotenkai_providers.runpod.lifecycle.policy import INFERENCE_PROFILE
 
 pytestmark = pytest.mark.unit
 

@@ -11,8 +11,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.reporting.summary_reporter import ExecutionSummaryReporter
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.reporting.summary_reporter import ExecutionSummaryReporter
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 def _build_config() -> MagicMock:
@@ -74,7 +74,7 @@ class TestNegative:
 
     def test_generate_report_no_run_id_skips(self) -> None:
         with patch(
-            "src.pipeline.reporting.summary_reporter.ExperimentReportGenerator"
+            "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator"
         ) as MockGen:
             ExecutionSummaryReporter.generate_experiment_report(run_id=None, mlflow_manager=None)
             MockGen.assert_not_called()
@@ -188,11 +188,11 @@ class TestDependencyErrors:
         mgr.tracking_uri = "http://x"
         with (
             patch(
-                "src.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
+                "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
                 side_effect=RuntimeError("broken"),
             ),
             patch(
-                "src.pipeline.reporting.summary_reporter.get_run_log_dir",
+                "ryotenkai_control.pipeline.reporting.summary_reporter.get_run_log_dir",
                 return_value=Path("/tmp"),
             ),
         ):
@@ -285,10 +285,10 @@ class TestRegressions:
         mgr.tracking_uri = "http://public-uri"
         with (
             patch(
-                "src.pipeline.reporting.summary_reporter.ExperimentReportGenerator"
+                "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator"
             ) as MockGen,
             patch(
-                "src.pipeline.reporting.summary_reporter.get_run_log_dir",
+                "ryotenkai_control.pipeline.reporting.summary_reporter.get_run_log_dir",
                 return_value=Path("/tmp"),
             ),
         ):

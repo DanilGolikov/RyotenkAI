@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from src.api.services.token_crypto import TokenCrypto, write_token_file
-from src.config.secrets.model import Secrets
+from ryotenkai_control.api.services.token_crypto import TokenCrypto, write_token_file
+from ryotenkai_shared.config.secrets.model import Secrets
 
 
 @pytest.fixture(autouse=True)

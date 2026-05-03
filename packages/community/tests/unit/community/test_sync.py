@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from src.community.sync import sync_plugin_manifest, sync_preset_manifest
+from ryotenkai_community.sync import sync_plugin_manifest, sync_preset_manifest
 
 _VALIDATION_PLUGIN_SRC = textwrap.dedent('''
-    from src.data.validation.base import ValidationPlugin
+    from ryotenkai_control.data.validation.base import ValidationPlugin
 
     class MyValidator(ValidationPlugin):
         """Checks the thing."""
@@ -157,7 +157,7 @@ def test_new_schema_key_is_added(tmp_path: Path) -> None:
     ''')
     # A new ``_param("new_param", ...)`` call appears inside the class body.
     src = textwrap.dedent('''
-        from src.data.validation.base import ValidationPlugin
+        from ryotenkai_control.data.validation.base import ValidationPlugin
 
         class MyValidator(ValidationPlugin):
             """Checks the thing."""
@@ -207,7 +207,7 @@ def test_required_env_is_merged_not_overwritten(tmp_path: Path) -> None:
     entries (with hand-edited descriptions / non-default flags) are kept
     verbatim, and entries no longer inferred are preserved too."""
     src = textwrap.dedent('''
-        from src.evaluation.plugins.base import EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvaluatorPlugin
 
         class MyPlugin(EvaluatorPlugin):
             """."""
@@ -257,7 +257,7 @@ def test_required_env_is_merged_not_overwritten(tmp_path: Path) -> None:
 def test_sync_is_idempotent(tmp_path: Path) -> None:
     """Running sync twice with --bump patch should always bump, but content
     stays otherwise identical (no other drift)."""
-    from src.community.scaffold import scaffold_plugin_manifest
+    from ryotenkai_community.scaffold import scaffold_plugin_manifest
 
     plugin_dir = tmp_path / "my_plugin"
     plugin_dir.mkdir()
@@ -276,7 +276,7 @@ def test_sync_is_idempotent(tmp_path: Path) -> None:
 def test_sync_result_changed_flag(tmp_path: Path) -> None:
     """If code is already in sync, sync with bump=patch still reports changed
     (version moved)."""
-    from src.community.scaffold import scaffold_plugin_manifest
+    from ryotenkai_community.scaffold import scaffold_plugin_manifest
 
     plugin_dir = tmp_path / "my_plugin"
     plugin_dir.mkdir()

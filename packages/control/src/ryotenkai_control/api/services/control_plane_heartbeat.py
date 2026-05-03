@@ -6,7 +6,7 @@ Removed at the start of Phase B (monorepo packagization, see
 
 from __future__ import annotations
 
-from src.pipeline.heartbeat.heartbeat import (
+from ryotenkai_control.pipeline.heartbeat.heartbeat import (
     DEFAULT_PING_INTERVAL_SECONDS,
     DEFAULT_TTL_SECONDS,
     ControlPlaneHeartbeat,

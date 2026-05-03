@@ -4,7 +4,7 @@ import ast
 
 import pytest
 
-from src.providers.runpod.inference.pods.artifacts import CHAT_SCRIPT, render_readme
+from ryotenkai_providers.runpod.inference.pods.artifacts import CHAT_SCRIPT, render_readme
 
 pytestmark = pytest.mark.unit
 

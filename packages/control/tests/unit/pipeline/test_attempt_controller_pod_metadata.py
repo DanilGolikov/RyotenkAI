@@ -14,15 +14,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.pipeline.state.attempt_controller import AttemptController
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.state.attempt_controller import AttemptController
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     PipelineState,
     PodMetadata,
     StageRunState,
     utc_now_iso,
 )
-from src.pipeline.state.store import PipelineStateStore
+from ryotenkai_control.pipeline.state.store import PipelineStateStore
 
 
 def _make_state(*, with_attempt: bool = True) -> PipelineState:

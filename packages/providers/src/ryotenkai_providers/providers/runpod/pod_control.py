@@ -16,9 +16,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
-from src.providers.runpod.models import PodSnapshot
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.models import PodSnapshot
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 _CREATE_POD_MAX_RETRIES = 3
 _CREATE_POD_RETRY_DELAY_S = 10
@@ -35,7 +35,7 @@ _TRANSIENT_MARKERS = (
 )
 
 if TYPE_CHECKING:
-    from src.config.providers.runpod import RunPodProviderConfig
+    from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
 
 
 class _TrainingApiProtocol(Protocol):

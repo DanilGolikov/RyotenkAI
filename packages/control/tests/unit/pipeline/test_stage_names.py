@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.stages.constants import StageNames
 
 
 def test_stage_names_is_str_compatible_for_context_keys() -> None:

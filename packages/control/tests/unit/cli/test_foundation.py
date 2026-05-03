@@ -20,7 +20,7 @@ def runner() -> CliRunner:
 
 
 def test_root_version_flag(runner: CliRunner) -> None:
-    from src.main import app
+    from ryotenkai_control.main import app
 
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0, result.output
@@ -30,7 +30,7 @@ def test_root_version_flag(runner: CliRunner) -> None:
 
 
 def test_root_short_version_flag(runner: CliRunner) -> None:
-    from src.main import app
+    from ryotenkai_control.main import app
 
     result = runner.invoke(app, ["-V"])
     assert result.exit_code == 0, result.output
@@ -39,7 +39,7 @@ def test_root_short_version_flag(runner: CliRunner) -> None:
 
 def test_version_command_matches_flag(runner: CliRunner) -> None:
     """`ryotenkai version` and `ryotenkai --version` print the same first line."""
-    from src.main import app
+    from ryotenkai_control.main import app
 
     a = runner.invoke(app, ["version"])
     b = runner.invoke(app, ["--version"])
@@ -48,7 +48,7 @@ def test_version_command_matches_flag(runner: CliRunner) -> None:
 
 
 def test_version_command_json(runner: CliRunner) -> None:
-    from src.main import app
+    from ryotenkai_control.main import app
 
     result = runner.invoke(app, ["-o", "json", "version"])
     assert result.exit_code == 0, result.output
@@ -59,7 +59,7 @@ def test_version_command_json(runner: CliRunner) -> None:
 
 
 def test_help_alias(runner: CliRunner) -> None:
-    from src.main import app
+    from ryotenkai_control.main import app
 
     for args in (["help"], ["--help"], ["-h"]):
         out = runner.invoke(app, args)
@@ -68,7 +68,7 @@ def test_help_alias(runner: CliRunner) -> None:
 
 
 def test_invalid_output_mode_gives_clean_error(runner: CliRunner) -> None:
-    from src.main import app
+    from ryotenkai_control.main import app
 
     result = runner.invoke(app, ["-o", "xml", "version"])
     assert result.exit_code == 1
@@ -82,7 +82,7 @@ def test_invalid_output_mode_gives_clean_error(runner: CliRunner) -> None:
 
 
 def test_text_renderer_prints_table(capsys: pytest.CaptureFixture[str]) -> None:
-    from src.cli.renderer import TextRenderer
+    from ryotenkai_control.cli.renderer import TextRenderer
 
     renderer = TextRenderer()
     renderer.table(
@@ -101,7 +101,7 @@ def test_text_renderer_prints_table(capsys: pytest.CaptureFixture[str]) -> None:
 def test_json_renderer_buffers_and_flushes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from src.cli.renderer import JsonRenderer
+    from ryotenkai_control.cli.renderer import JsonRenderer
 
     renderer = JsonRenderer()
     renderer.table(
@@ -118,7 +118,7 @@ def test_json_renderer_buffers_and_flushes(
 
 
 def test_json_renderer_refuses_double_emit() -> None:
-    from src.cli.renderer import JsonRenderer
+    from ryotenkai_control.cli.renderer import JsonRenderer
 
     renderer = JsonRenderer()
     renderer.emit({"a": 1})
@@ -129,7 +129,7 @@ def test_json_renderer_refuses_double_emit() -> None:
 def test_json_renderer_flush_without_emit_is_noop(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from src.cli.renderer import JsonRenderer
+    from ryotenkai_control.cli.renderer import JsonRenderer
 
     renderer = JsonRenderer()
     renderer.flush()
@@ -138,8 +138,8 @@ def test_json_renderer_flush_without_emit_is_noop(
 
 
 def test_get_renderer_picks_by_output_mode() -> None:
-    from src.cli.context import CLIContext
-    from src.cli.renderer import JsonRenderer, TextRenderer, get_renderer
+    from ryotenkai_control.cli.context import CLIContext
+    from ryotenkai_control.cli.renderer import JsonRenderer, TextRenderer, get_renderer
 
     assert isinstance(get_renderer(CLIContext(output="text")), TextRenderer)
     assert isinstance(get_renderer(CLIContext(output="json")), JsonRenderer)
@@ -151,7 +151,7 @@ def test_get_renderer_picks_by_output_mode() -> None:
 
 
 def test_context_no_color_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.cli.context import CLIContext
+    from ryotenkai_control.cli.context import CLIContext
 
     monkeypatch.setenv("NO_COLOR", "1")
     ctx = CLIContext(color=True, stdout_is_tty=True)
@@ -159,14 +159,14 @@ def test_context_no_color_env_wins(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_context_color_flag_off_wins_over_tty() -> None:
-    from src.cli.context import CLIContext
+    from ryotenkai_control.cli.context import CLIContext
 
     ctx = CLIContext(color=False, stdout_is_tty=True)
     assert ctx.use_color is False
 
 
 def test_context_no_tty_disables_color() -> None:
-    from src.cli.context import CLIContext
+    from ryotenkai_control.cli.context import CLIContext
 
     ctx = CLIContext(color=True, stdout_is_tty=False)
     assert ctx.use_color is False
@@ -178,7 +178,7 @@ def test_context_no_tty_disables_color() -> None:
 
 
 def test_die_raises_typer_exit(capsys: pytest.CaptureFixture[str]) -> None:
-    from src.cli.errors import die
+    from ryotenkai_control.cli.errors import die
 
     with pytest.raises(typer.Exit) as exc:
         die("something wrong", hint="try again")
@@ -191,7 +191,7 @@ def test_die_raises_typer_exit(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_suggest_hint_single_match() -> None:
-    from src.cli.errors import suggest_hint
+    from ryotenkai_control.cli.errors import suggest_hint
 
     hint = suggest_hint("sycn", ["sync", "scaffold", "pack"])
     assert hint is not None
@@ -199,7 +199,7 @@ def test_suggest_hint_single_match() -> None:
 
 
 def test_suggest_hint_no_match() -> None:
-    from src.cli.errors import suggest_hint
+    from ryotenkai_control.cli.errors import suggest_hint
 
     hint = suggest_hint("zzqqwe", ["sync", "scaffold", "pack"])
     assert hint is None

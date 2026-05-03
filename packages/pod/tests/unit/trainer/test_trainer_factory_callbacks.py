@@ -6,11 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import src.training.trainers.factory as tf
-from src.training.callbacks.system_metrics_callback import SystemMetricsCallback
-from src.training.callbacks.training_events_callback import TrainingEventsCallback
-from src.training.trainers.factory import TrainerFactory
-from src.config import (
+import ryotenkai_pod.trainer.trainers.factory as tf
+from ryotenkai_pod.trainer.callbacks.system_metrics_callback import SystemMetricsCallback
+from ryotenkai_pod.trainer.callbacks.training_events_callback import TrainingEventsCallback
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -89,7 +89,7 @@ def _mk_cfg(*, callback_enabled: bool) -> PipelineConfig:
     # ``system_metrics_*`` fields were collapsed into a sub-block, and
     # ``callback_interval`` was removed altogether (callback now logs
     # every step, no throttle).
-    from src.config.integrations.system_metrics import SystemMetricsConfig
+    from ryotenkai_shared.config.integrations.system_metrics import SystemMetricsConfig
 
     return PipelineConfig(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
@@ -143,7 +143,7 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
     # Avoid exercising PEFT config construction in this unit test
-    import src.training.trainer_builder as trainer_builder
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
@@ -174,7 +174,7 @@ def test_callbacks_added_when_mlflow_configured(monkeypatch: pytest.MonkeyPatch)
 def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
-    import src.training.trainer_builder as trainer_builder
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
@@ -199,7 +199,7 @@ def test_report_to_becomes_none_when_mlflow_manager_inactive(monkeypatch: pytest
 def test_callbacks_still_attached_when_manager_inactive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
-    import src.training.trainer_builder as trainer_builder
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 
@@ -234,7 +234,7 @@ def test_eval_strategy_key_is_used_instead_of_evaluation_strategy(monkeypatch: p
     """
     monkeypatch.setattr(tf, "StrategyFactory", StubStrategyFactory)
 
-    import src.training.trainer_builder as trainer_builder
+    import ryotenkai_pod.trainer.trainer_builder as trainer_builder
 
     monkeypatch.setattr(trainer_builder, "create_peft_config", lambda cfg: None)
 

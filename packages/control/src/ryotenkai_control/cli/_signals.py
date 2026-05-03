@@ -29,7 +29,7 @@ import signal
 import sys
 import threading
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 #: 30-second hard deadline. If the orchestrator's cleanup hangs longer
 #: than this we fall back to ``os._exit`` to guarantee the process

@@ -16,13 +16,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.managers.data_buffer import (
+from ryotenkai_pod.trainer.managers.data_buffer import (
     DataBuffer,
     DataBufferEventCallbacks,
     PhaseState,
     PhaseStatus,
 )
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
 pytestmark = pytest.mark.unit
 

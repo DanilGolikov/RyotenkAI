@@ -16,13 +16,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.config.evaluation.schema import EvaluationConfig
-    from src.evaluation.model_client.interfaces import IModelInference
-    from src.evaluation.plugins.base import EvalResult, EvalSample
-    from src.pipeline.stages.model_evaluator import EvaluatorEventCallbacks
+    from ryotenkai_shared.config.evaluation.schema import EvaluationConfig
+    from ryotenkai_control.evaluation.model_client.interfaces import IModelInference
+    from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample
+    from ryotenkai_control.pipeline.stages.model_evaluator import EvaluatorEventCallbacks
 
 
 @dataclass
@@ -186,7 +186,7 @@ class EvaluationRunner:
                 result = plugin.evaluate(samples)
             except Exception as e:
                 logger.error(f"[EVAL] Plugin '{plugin.name}' raised an exception: {e}")
-                from src.evaluation.plugins.base import EvalResult
+                from ryotenkai_control.evaluation.plugins.base import EvalResult
 
                 result = EvalResult(
                     plugin_name=plugin.name,
@@ -278,7 +278,7 @@ class EvaluationRunner:
         context, messages) are collected into EvalSample.metadata and passed
         through to plugins unchanged.
         """
-        from src.evaluation.plugins.base import EvalSample
+        from ryotenkai_control.evaluation.plugins.base import EvalSample
 
         samples: list[EvalSample] = []
 
@@ -364,7 +364,7 @@ class EvaluationRunner:
         for every collected sample. Best-effort: errors are logged but never propagate.
         """
         try:
-            from src.utils.logger import get_run_log_dir
+            from ryotenkai_shared.utils.logger import get_run_log_dir
 
             out_dir = get_run_log_dir() / "evaluation"
             out_dir.mkdir(parents=True, exist_ok=True)
@@ -392,8 +392,8 @@ class EvaluationRunner:
 
         Run explicit plugin discovery first, then instantiate enabled plugin instances.
         """
-        from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import evaluator_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
 
         catalog.ensure_loaded()
         plugins: list[tuple[Any, EvaluatorPlugin]] = []

@@ -10,10 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.data.loaders.factory import DatasetLoaderFactory
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.stages.dataset_validator.constants import (
+from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     CRITICAL_FAILURES_ATTR,
     SPLIT_EVAL,
     SPLIT_TRAIN,
@@ -26,18 +26,18 @@ from src.pipeline.stages.dataset_validator.constants import (
     VALIDATIONS_ATTR,
     WARNINGS_KEY,
 )
-from src.pipeline.stages.dataset_validator.format_checker import FormatChecker
-from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
-from src.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
-from src.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
-from src.utils.logger import logger
-from src.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_control.pipeline.stages.dataset_validator.format_checker import FormatChecker
+from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
+from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
+from ryotenkai_control.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.config.secrets.model import Secrets
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.config import PipelineConfig
 
 
 # =============================================================================

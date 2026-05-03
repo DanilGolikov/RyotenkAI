@@ -71,16 +71,16 @@ _TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "training"
 
 # Make src.training a real package shell so other tests in the same
 # session can still import sibling modules.
-if "src.training" not in _sys.modules:
-    _shell = _types.ModuleType("src.training")
+if "ryotenkai_pod.trainer" not in _sys.modules:
+    _shell = _types.ModuleType("ryotenkai_pod.trainer")
     _shell.__path__ = [str(_TRAINING_PKG)]  # type: ignore[attr-defined]
-    _sys.modules["src.training"] = _shell
+    _sys.modules["ryotenkai_pod.trainer"] = _shell
 
 # Pre-load _concurrent_helpers and _flush_helper under their real names
 # so the lazy imports inside the callback body resolve.
 for relpath, modname in (
-    ("_concurrent_helpers.py", "src.training._concurrent_helpers"),
-    ("callbacks/_flush_helper.py", "src.training.callbacks._flush_helper"),
+    ("_concurrent_helpers.py", "ryotenkai_pod.trainer._concurrent_helpers"),
+    ("callbacks/_flush_helper.py", "ryotenkai_pod.trainer.callbacks._flush_helper"),
 ):
     if modname not in _sys.modules:
         path = _TRAINING_PKG / relpath

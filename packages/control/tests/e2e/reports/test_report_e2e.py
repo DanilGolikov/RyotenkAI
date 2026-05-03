@@ -6,14 +6,14 @@ Full cycle: ExperimentData -> ReportBuilder -> Plugins -> Markdown -> report fil
 
 import logging
 
-from src.pipeline.artifacts.base import StageArtifactEnvelope
-from src.reports.core.builder import ReportBuilder
-from src.reports.models.report import ExperimentHealth
-from src.reports.plugins.composer import ReportComposer
-from src.community.catalog import catalog
-from src.reports.plugins.interfaces import ReportPluginContext
-from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
-from src.reports.plugins.registry import build_report_plugins
+from ryotenkai_control.pipeline.artifacts.base import StageArtifactEnvelope
+from ryotenkai_control.reports.core.builder import ReportBuilder
+from ryotenkai_control.reports.models.report import ExperimentHealth
+from ryotenkai_control.reports.plugins.composer import ReportComposer
+from ryotenkai_community.catalog import catalog
+from ryotenkai_control.reports.plugins.interfaces import ReportPluginContext
+from ryotenkai_control.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
+from ryotenkai_control.reports.plugins.registry import build_report_plugins
 
 
 class _DummyProvider:
@@ -333,7 +333,7 @@ class TestReportHealthLogic:
         """
         Priority: RunStatus.FAILED -> RED (even with only 3 WARN).
         """
-        from src.reports.domain.entities import RunStatus
+        from ryotenkai_control.reports.domain.entities import RunStatus
 
         # Modify data
         boundary_3_warnings_data.status = RunStatus.FAILED

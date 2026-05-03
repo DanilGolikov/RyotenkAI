@@ -13,14 +13,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from src.training.managers.constants import (
+from ryotenkai_pod.trainer.managers.constants import (
     KEY_COMPLETED_AT,
     KEY_PHASES,
     KEY_STARTED_AT,
     KEY_STATUS,
 )
-from src.training.metrics_models import TrainingMetricsSnapshot
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
+from ryotenkai_shared.utils.logger import logger
 
 
 class PhaseStatus(Enum):

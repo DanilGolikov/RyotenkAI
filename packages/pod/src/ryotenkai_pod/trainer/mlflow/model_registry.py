@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import MLFLOW_KEY_TAGS
-from src.utils.logger import get_logger
+from ryotenkai_pod.trainer.constants import MLFLOW_KEY_TAGS
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
-    from src.infrastructure.mlflow.gateway import IMLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
 
 logger = get_logger(__name__)
 

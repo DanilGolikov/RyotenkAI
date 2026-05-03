@@ -43,38 +43,38 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
-from src.utils.clients.job_client import JobClient, JobClientError
-from src.utils.clients.ssh_tunnel import (
+from ryotenkai_control.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
+from ryotenkai_shared.utils.clients.job_client import JobClient, JobClientError
+from ryotenkai_shared.utils.clients.ssh_tunnel import (
     SSHTunnelEndpoint,
     SSHTunnelError,
     SSHTunnelManager,
 )
-from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
-from src.pipeline.stages.constants import PipelineContextKeys
-from src.pipeline.stages.managers.deployment.plugin_packer import (
+from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+from ryotenkai_control.pipeline.stages.managers.deployment.plugin_packer import (
     PluginPacker,
     PluginPackError,
 )
-from src.pipeline.stages.managers.deployment.provider_config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.provider_config import (
     is_single_node_provider,
 )
-from src.pipeline.stages.managers.deployment.runner_launcher import launch_runner
-from src.pipeline.stages.managers.deployment_constants import (
+from ryotenkai_control.pipeline.stages.managers.deployment.runner_launcher import launch_runner
+from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
 )
-from src.pipeline.state.job_submission import JobSubmission, save_job_submission
-from src.providers.training.interfaces import TrainingScriptHooks
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_control.pipeline.state.job_submission import JobSubmission, save_job_submission
+from ryotenkai_providers.training.interfaces import TrainingScriptHooks
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.pipeline.stages.managers.deployment.dependency_installer import (
+    from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import (
         DependencyInstaller,
     )
-    from src.providers.training.interfaces import IGPUProvider
-    from src.config import PipelineConfig, Secrets
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_providers.training.interfaces import IGPUProvider
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 # ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ class TrainingLauncher:
         else:
             # Should not happen in production paths but the test path
             # builds the launcher without a provider for unit-coverage.
-            from src.utils.pod_layout import PodLayout
+            from ryotenkai_shared.utils.pod_layout import PodLayout
             from pathlib import PurePosixPath
             pod_layout_for_runner = PodLayout.from_root(
                 PurePosixPath(self.workspace),
@@ -225,7 +225,7 @@ class TrainingLauncher:
         # ``src/...`` into for this run; the thin image (v2.0.0+) ships
         # only Python + libs, so this directory is the SOLE source of
         # ``src.runner`` on the pod. Without it, uvicorn fails with
-        # ``ModuleNotFoundError: No module named 'src.runner'``.
+        # ``ModuleNotFoundError: No module named 'ryotenkai_pod.runner'``.
         runner_ready = launch_runner(
             ssh_client,
             pod_layout=pod_layout_for_runner,
@@ -278,7 +278,7 @@ class TrainingLauncher:
             "command": [
                 "python",
                 "-m",
-                "src.training.run_training",
+                "ryotenkai_pod.trainer.run_training",
                 "--config",
                 DEPLOYMENT_CONFIG_PATH,
             ],

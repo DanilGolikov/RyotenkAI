@@ -39,12 +39,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Final
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     PROVIDER_RUNPOD,
     PROVIDER_SINGLE_NODE,
     RUNTIME_PROVIDER_ENV_VAR,
 )
-from src.runner.runtime.lifecycle_client import IPodLifecycleClient
+from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient
 
 __all__ = [
     "BootstrapConfigError",
@@ -79,7 +79,7 @@ def _build_runpod_client(env: Mapping[str, str]) -> IPodLifecycleClient:
         )
     # Local import: keeps single-node-only deployments from importing
     # httpx at module-load time.
-    from src.providers.runpod.runtime.lifecycle_client import (
+    from ryotenkai_providers.runpod.runtime.lifecycle_client import (
         RunPodPodLifecycleClient,
     )
     return RunPodPodLifecycleClient(api_key=api_key)
@@ -87,7 +87,7 @@ def _build_runpod_client(env: Mapping[str, str]) -> IPodLifecycleClient:
 
 def _build_single_node_client(env: Mapping[str, str]) -> IPodLifecycleClient:
     # No env reads — single-node has no creds to validate.
-    from src.providers.single_node.runtime.lifecycle_client import (
+    from ryotenkai_providers.single_node.runtime.lifecycle_client import (
         NoOpPodLifecycleClient,
     )
     return NoOpPodLifecycleClient()

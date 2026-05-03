@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from community_libs.helixql import semantic_match_details
-from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
-from src.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
+from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
+from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
 
 
 class HelixQLSemanticMatchPlugin(EvaluatorPlugin):

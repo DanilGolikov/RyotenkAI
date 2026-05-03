@@ -5,18 +5,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from src.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
-from src.api.schemas.run import LineageRefSchema, RunDetail, RunsListResponse, RunSummary
-from src.pipeline.launch import is_process_alive, read_lock_pid
-from src.api.presentation import STATUS_COLORS, STATUS_ICONS, format_mode_label
-from src.pipeline.run_queries import (
+from ryotenkai_control.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
+from ryotenkai_control.api.schemas.run import LineageRefSchema, RunDetail, RunsListResponse, RunSummary
+from ryotenkai_control.pipeline.launch import is_process_alive, read_lock_pid
+from ryotenkai_control.api.presentation import STATUS_COLORS, STATUS_ICONS, format_mode_label
+from ryotenkai_control.pipeline.run_queries import (
     RunSummaryRow,
     effective_pipeline_status,
     scan_runs_dir_grouped,
 )
-from src.pipeline.state import PipelineState
-from src.api.state_cache import StateSnapshot, load_state_snapshot
-from src.pipeline.state.queries import (
+from ryotenkai_control.pipeline.state import PipelineState
+from ryotenkai_control.api.state_cache import StateSnapshot, load_state_snapshot
+from ryotenkai_control.pipeline.state.queries import (
     find_running_attempt_no,
     get_attempt_by_no,
     predict_next_attempt_no,

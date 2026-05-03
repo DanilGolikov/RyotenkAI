@@ -37,12 +37,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.stages.constants import PipelineContextKeys
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.pipeline.state.run_context import RunContext
+    from ryotenkai_control.pipeline.state.run_context import RunContext
 
 
 class PipelineContext(dict[str, Any]):

@@ -14,7 +14,7 @@ Tests cover:
 
 from unittest.mock import MagicMock, patch
 
-from src.utils.environment import (
+from ryotenkai_shared.utils.environment import (
     EnvironmentReporter,
     EnvironmentSnapshot,
     _get_cuda_version,

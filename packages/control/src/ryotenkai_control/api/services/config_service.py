@@ -6,8 +6,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-from src.config.datasets.constants import SOURCE_TYPE_LOCAL
+from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
 
 
 def _loc_to_path(loc: tuple) -> str:
@@ -20,7 +20,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
     field_errors: dict[str, list[str]] = {}
     cfg = None
     try:
-        from src.workspace.integrations.loader import load_pipeline_config
+        from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
         cfg = load_pipeline_config(config_path)
         checks.append(ConfigCheck(label="YAML schema valid (Pydantic)", status="ok"))
@@ -91,7 +91,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         # startup validator uses. Each provider declares its own
         # tuple — adding a third provider with credentials = one
         # registry update, no edits here.
-        from src.pipeline.bootstrap.startup_validator import (
+        from ryotenkai_control.pipeline.bootstrap.startup_validator import (
             _resolve_required_secrets_for_provider,
         )
 
@@ -120,7 +120,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
                 plugin_type = getattr(plug_cfg, "type", None)
                 if plugin_type:
                     try:
-                        importlib.import_module(f"src.evaluation.plugins.builtins.{plugin_type}")
+                        importlib.import_module(f"ryotenkai_control.evaluation.plugins.builtins.{plugin_type}")
                         checks.append(ConfigCheck(label=f"Eval plugin '{plugin_type}' importable", status="ok"))
                     except ImportError:
                         checks.append(
@@ -181,7 +181,7 @@ def _check_reward_strategy_compat(
 
     # Load once per validation — cheap and uses the mtime-fingerprint
     # cache already in CommunityCatalog.
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.ensure_loaded()
     reward_plugins = {entry.manifest.plugin.id: entry.manifest.plugin for entry in catalog.plugins("reward")}

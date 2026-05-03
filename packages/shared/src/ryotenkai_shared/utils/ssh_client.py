@@ -18,8 +18,8 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
-from src.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 logger = logging.getLogger("ryotenkai")
 

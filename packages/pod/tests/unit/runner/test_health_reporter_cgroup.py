@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.runner import health_reporter as hr
+from ryotenkai_pod.runner import health_reporter as hr
 
 
 def _patch_cgroup_paths(

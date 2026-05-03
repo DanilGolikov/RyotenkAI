@@ -11,11 +11,11 @@ import importlib
 import logging
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from src.utils.result import Failure, ProviderError, Success, err
+from ryotenkai_shared.utils.result import Failure, ProviderError, Success, err
 
 if TYPE_CHECKING:
-    from src.providers.training.interfaces import IGPUProvider
-    from src.config import Secrets
+    from ryotenkai_providers.training.interfaces import IGPUProvider
+    from ryotenkai_shared.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 
@@ -200,13 +200,13 @@ def auto_register_providers() -> None:
     # Import here to avoid circular imports
     # These imports will register providers via their module-level code
     try:
-        importlib.import_module("src.providers.single_node.training")
+        importlib.import_module("ryotenkai_providers.single_node.training")
         logger.debug("[FACTORY:AUTO_REGISTER] single_node provider loaded")
     except ImportError as e:
         logger.debug(f"[FACTORY:AUTO_REGISTER] single_node not available: {e}")
 
     try:
-        importlib.import_module("src.providers.runpod.training")
+        importlib.import_module("ryotenkai_providers.runpod.training")
         logger.debug("[FACTORY:AUTO_REGISTER] runpod provider loaded")
     except ImportError as e:
         logger.debug(f"[FACTORY:AUTO_REGISTER] runpod not available: {e}")

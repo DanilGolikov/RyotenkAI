@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from src.cli.formatters import format_duration  # re-exported for back-compat
-from src.pipeline.run_queries import RunInspectionData, RunSummaryRow, effective_pipeline_status
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
+from ryotenkai_control.cli.formatters import format_duration  # re-exported for back-compat
+from ryotenkai_control.pipeline.run_queries import RunInspectionData, RunSummaryRow, effective_pipeline_status
+from ryotenkai_control.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 
 __all__ = (
     "RunInspectionRenderer",

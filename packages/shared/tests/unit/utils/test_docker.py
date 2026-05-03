@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import src.utils.docker as docker_mod
-from src.utils.docker import (
+import ryotenkai_shared.utils.docker as docker_mod
+from ryotenkai_shared.utils.docker import (
     _is_latest_tag,
     _validate_container_name,
     docker_container_exit_code,
@@ -17,7 +17,7 @@ from src.utils.docker import (
     docker_rm_force,
     ensure_docker_image,
 )
-from src.utils.result import ProviderError
+from ryotenkai_shared.utils.result import ProviderError
 
 
 # ---------------------------------------------------------------------------

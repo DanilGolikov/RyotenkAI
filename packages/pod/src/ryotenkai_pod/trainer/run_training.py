@@ -40,22 +40,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     CATEGORY_TRAINING,
     EXIT_KEYBOARD_INTERRUPT,
     SOURCE_RUN_TRAINING,
     TRUNCATE_ERROR_MSG,
     TRUNCATE_SHA_DISPLAY,
 )
-from src.training.managers.mlflow_manager import MLflowManager
-from src.training.container import TrainingContainer
-from src.utils.environment import EnvironmentReporter
-from src.utils.logger import logger
-from src.utils.run_naming import generate_run_name
-from src.workspace.integrations.loader import load_pipeline_config
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_pod.trainer.container import TrainingContainer
+from ryotenkai_shared.utils.environment import EnvironmentReporter
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.run_naming import generate_run_name
+from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 def _extract_model_size(model_name: str) -> str:
@@ -712,7 +712,7 @@ Debug log tags:
     # variables like HF_HUB_DISABLE_XET=1 would be silently ignored without this step.
     # setdefault() preserves any values already set in the environment.
     try:
-        from src.config.secrets import load_secrets as _load_secrets
+        from ryotenkai_shared.config.secrets import load_secrets as _load_secrets
         _secrets = _load_secrets()
         for _key, _val in (_secrets.model_extra or {}).items():
             if _key.startswith("HF_HUB_") and isinstance(_val, str):

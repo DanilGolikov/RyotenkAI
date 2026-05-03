@@ -14,14 +14,14 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from src.config.datasets.constants import SOURCE_TYPE_LOCAL
-from src.utils.logger import logger
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.result import DataLoaderError, Result
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.utils.result import DataLoaderError, Result
 
 
 class BaseDatasetLoader(ABC):
@@ -128,7 +128,7 @@ class BaseDatasetLoader(ABC):
             if result.is_success():
                 dataset = result.unwrap()
         """
-        from src.utils.result import DataLoaderError, Err, Ok
+        from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
 
         try:
             # Get dataset config for this phase

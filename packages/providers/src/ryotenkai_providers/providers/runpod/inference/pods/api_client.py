@@ -15,7 +15,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from src.providers.constants import (
+from ryotenkai_providers.constants import (
     HTTP_GET,
     HTTP_POST,
     HTTP_STATUS_ERROR_THRESHOLD,
@@ -25,9 +25,9 @@ from src.providers.constants import (
     TIMEOUT_REQUEST_LONG,
     TIMEOUT_REQUEST_SHORT,
 )
-from src.providers.runpod.sdk_adapter import RunPodSDKClient
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 from .constants import RUNPOD_REST_API_BASE_URL
 

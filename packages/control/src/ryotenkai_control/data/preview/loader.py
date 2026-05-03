@@ -28,7 +28,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import IterableDataset

@@ -5,9 +5,9 @@ from pathlib import Path
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_integration_registry, get_token_crypto
-from src.api.schemas.config_validate import ConfigValidationResult
-from src.api.schemas.integration import (
+from ryotenkai_control.api.dependencies import get_integration_registry, get_token_crypto
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.schemas.integration import (
     ConnectionTestResult,
     CreateIntegrationRequest,
     IntegrationConfigResponse,
@@ -20,11 +20,11 @@ from src.api.schemas.integration import (
     IntegrationTokenRequest,
     IntegrationTypesResponse,
 )
-from src.api.services import integration_service
-from src.api.services.connection_test import test_integration
-from src.api.services.integration_service import IntegrationServiceError
-from src.api.services.token_crypto import TokenCrypto, read_token_file
-from src.workspace.integrations import IntegrationRegistry, IntegrationStore
+from ryotenkai_control.api.services import integration_service
+from ryotenkai_control.api.services.connection_test import test_integration
+from ryotenkai_control.api.services.integration_service import IntegrationServiceError
+from ryotenkai_control.api.services.token_crypto import TokenCrypto, read_token_file
+from ryotenkai_control.workspace.integrations import IntegrationRegistry, IntegrationStore
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 

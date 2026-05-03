@@ -15,15 +15,15 @@ from typing import Any
 
 import pytest
 
-from src.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
-from src.providers.single_node.training.provider import SingleNodeProvider
-from src.providers.training.interfaces import (
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_ENV_VAR
+from ryotenkai_providers.single_node.training.provider import SingleNodeProvider
+from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     ITerminalActionProvider,
     ProviderCapabilities,
     VolumeKind,
 )
-from src.config import Secrets
+from ryotenkai_shared.config import Secrets
 
 
 def _mk_provider(**overrides: Any) -> SingleNodeProvider:

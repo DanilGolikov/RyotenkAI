@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from src.providers.runpod import sdk_adapter
-from src.providers.runpod.sdk_adapter import RunPodSDKClient
-from src.utils.result import Err, Ok, ProviderError
+from ryotenkai_providers.runpod import sdk_adapter
+from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 
 pytestmark = pytest.mark.unit

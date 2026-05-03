@@ -9,14 +9,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from src.training.managers.data_buffer import DataBuffer, DataBufferEventCallbacks
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, TrainingError
+from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, DataBufferEventCallbacks
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
-    from src.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
 class ResumeManager:
@@ -227,7 +227,7 @@ class ResumeManager:
         Returns:
             True if previous run was interrupted
         """
-        from src.training.managers.data_buffer import PhaseStatus
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 
         # FIX BUG-004: Check if buffer is initialized before accessing state
         if not buffer.is_initialized:
@@ -255,7 +255,7 @@ class ResumeManager:
         Returns:
             Dict with interrupt info or None if not interrupted
         """
-        from src.training.managers.data_buffer import PhaseStatus
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 
         for phase in buffer.state.phases:
             if phase.status == PhaseStatus.INTERRUPTED:

@@ -26,7 +26,7 @@ PYTHONPATH points at the run-scoped workspace (the rsync target,
 ``pod_layout.root``) — that is now the SOLE source of ``src/runner``.
 The thin-image migration removed the baked-in ``/opt/ryotenkai/src``
 baseline; if the rsync didn't run, uvicorn fails with
-``ModuleNotFoundError: No module named 'src.runner'`` and the
+``ModuleNotFoundError: No module named 'ryotenkai_pod.runner'`` and the
 diagnostic dump surfaces it. See ``docs/architecture/thin-image.md``.
 
 Per-run isolation is owned by :class:`PodLayout` — sequential runs
@@ -42,14 +42,14 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from src.utils.pod_layout import PodLayout
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.utils.pod_layout import PodLayout
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 # How long to wait for uvicorn to bind 127.0.0.1:RUNNER_PORT inside

@@ -29,13 +29,13 @@ if "runpod" not in sys.modules:
     sys.modules["runpod"] = _stub
 
 
-from src.constants import (  # noqa: E402
+from ryotenkai_shared.constants import (  # noqa: E402
     PROVIDER_RUNPOD,
     PROVIDER_SINGLE_NODE,
     RUNTIME_PROVIDER_ENV_VAR,
 )
-from src.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
-from src.runner.runtime.provider_registry import (  # noqa: E402
+from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
+from ryotenkai_pod.runner.runtime.provider_registry import (  # noqa: E402
     BootstrapConfigError,
     registered_providers,
     resolve_keep_on_error_from_env,
@@ -261,8 +261,8 @@ class TestCrossProtocolInvariant:
         # Same pattern as
         # :func:`tests.unit.providers.runpod.training.test_provider_capabilities._mk_provider`
         # — bypasses the heavy Pydantic config validator.
-        from src.providers.runpod.training.provider import RunPodProvider
-        from src.providers.training.interfaces import ProviderStatus
+        from ryotenkai_providers.runpod.training.provider import RunPodProvider
+        from ryotenkai_providers.training.interfaces import ProviderStatus
 
         provider = object.__new__(RunPodProvider)
         provider._api_key = "rk_test"
@@ -289,7 +289,7 @@ class TestCrossProtocolInvariant:
         self,
     ) -> None:
         # Mac side: RunPodProvider conforms to ITerminalActionProvider.
-        from src.providers.training.interfaces import ITerminalActionProvider
+        from ryotenkai_providers.training.interfaces import ITerminalActionProvider
         provider = self._build_runpod_provider()
         assert isinstance(provider, ITerminalActionProvider)
 
@@ -305,7 +305,7 @@ class TestCrossProtocolInvariant:
         # ITerminalActionProvider — but it's STILL registered on the
         # runner side (as NoOp). That's by design: every provider
         # needs a lifecycle client, even if it's a no-op.
-        from src.constants import PROVIDER_SINGLE_NODE
+        from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
         registered = registered_providers()
         assert PROVIDER_SINGLE_NODE in registered
 

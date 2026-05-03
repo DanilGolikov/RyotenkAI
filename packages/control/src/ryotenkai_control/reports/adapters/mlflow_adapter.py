@@ -18,15 +18,15 @@ from typing import TYPE_CHECKING, Any
 import mlflow
 from mlflow.tracking import MlflowClient
 
-from src.reports.domain.entities import (
+from ryotenkai_control.reports.domain.entities import (
     ExperimentData,
     MemoryEvent,
     MetricHistory,
     PhaseData,
     RunStatus,
 )
-from src.reports.domain.interfaces import IExperimentDataProvider
-from src.utils.logger import get_logger
+from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
+from ryotenkai_shared.utils.logger import get_logger
 
 FILE_TRAINING_EVENTS = "training_events.json"
 KEY_BATCH_SIZE = "batch_size"
@@ -51,7 +51,7 @@ STAGE_ARTIFACT_FILES: tuple[str, ...] = (
 if TYPE_CHECKING:
     from mlflow.entities import Run
 
-    from src.infrastructure.mlflow.gateway import IMLflowGateway
+    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
 
 logger = get_logger(__name__)
 
@@ -138,7 +138,7 @@ class MLflowAdapter(IExperimentDataProvider):
         """
         Load complete experiment data from MLflow run.
         """
-        from src.pipeline.artifacts.base import StageArtifactEnvelope
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactEnvelope
 
         logger.info(f"[ADAPTER] Loading experiment data for run {run_id[:8]}...")
 

@@ -7,7 +7,7 @@ and is described by a ``manifest.toml`` that is the single source of truth
 for its metadata. Plugin/preset code itself is imported/read lazily.
 """
 
-from src.community.catalog import CommunityCatalog, catalog
-from src.community.loader import LoadedPlugin, LoadedPreset
+from ryotenkai_community.catalog import CommunityCatalog, catalog
+from ryotenkai_community.loader import LoadedPlugin, LoadedPreset
 
 __all__ = ["CommunityCatalog", "LoadedPlugin", "LoadedPreset", "catalog"]

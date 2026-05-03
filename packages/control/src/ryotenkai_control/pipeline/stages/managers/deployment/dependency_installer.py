@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
-from src.pipeline.stages.managers.deployment.provider_config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.provider_config import (
     is_single_node_provider,
 )
-from src.pipeline.stages.managers.deployment_constants import (
+from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_DOCKER_PULL_TIMEOUT,
     DEPLOYMENT_DOCKER_VERIFY_TIMEOUT,
     DEPLOYMENT_ERROR_TRUNCATE,
@@ -22,14 +22,14 @@ from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_STDERR_TRUNCATE,
     DEPLOYMENT_STDOUT_LINES,
 )
-from src.constants import RUNTIME_IMAGE
-from src.utils.docker import ensure_docker_image
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Ok, ProviderError, Result
+from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.utils.docker import ensure_docker_image
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, Secrets
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 DEFAULT_WORKSPACE = "/workspace"

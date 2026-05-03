@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.mlflow_attempt.manager import MLflowAttemptManager
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
+from ryotenkai_control.pipeline.mlflow_attempt.manager import MLflowAttemptManager
+from ryotenkai_control.pipeline.state import PipelineAttemptState, PipelineState, StageRunState
 
 
 # -----------------------------------------------------------------------------
@@ -74,7 +74,7 @@ def manager_under_test(tmp_path: Path) -> MLflowAttemptManager:
 def test_bootstrap_success_sets_manager(manager_under_test: MLflowAttemptManager) -> None:
     mock_mgr = MagicMock()
     mock_mgr.is_active = True
-    with patch("src.training.managers.mlflow_manager.MLflowManager", return_value=mock_mgr):
+    with patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", return_value=mock_mgr):
         out = manager_under_test.bootstrap()
     assert out is mock_mgr
     assert manager_under_test.manager is mock_mgr
@@ -83,7 +83,7 @@ def test_bootstrap_success_sets_manager(manager_under_test: MLflowAttemptManager
 
 def test_bootstrap_exception_returns_none(manager_under_test: MLflowAttemptManager) -> None:
     with patch(
-        "src.training.managers.mlflow_manager.MLflowManager",
+        "ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager",
         side_effect=RuntimeError("boom"),
     ):
         assert manager_under_test.bootstrap() is None
@@ -218,7 +218,7 @@ def test_setup_for_attempt_opens_root_and_attempt_runs(manager_under_test: MLflo
     attempt = _build_attempt()
     mgr = _build_active_mgr()
 
-    with patch("src.training.managers.mlflow_manager.MLflowManager", return_value=mgr):
+    with patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", return_value=mgr):
         context: dict = {}
         manager_under_test.setup_for_attempt(
             state=state,
@@ -243,7 +243,7 @@ def test_setup_for_attempt_uses_injected_manager(manager_under_test: MLflowAttem
 
     # Patch must NOT be used — injected manager should short-circuit bootstrap.
     with patch(
-        "src.training.managers.mlflow_manager.MLflowManager",
+        "ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager",
         side_effect=AssertionError("bootstrap should not be called"),
     ):
         manager_under_test.setup_for_attempt(
@@ -356,7 +356,7 @@ def test_open_existing_root_run_raises_when_no_manager(
     manager_under_test: MLflowAttemptManager,
 ) -> None:
     """Explicit raise (not assert) — this path also exercises -O builds correctly."""
-    from src.pipeline.mlflow_attempt.manager import MLflowManagerNotInitializedError
+    from ryotenkai_control.pipeline.mlflow_attempt.manager import MLflowManagerNotInitializedError
 
     with pytest.raises(MLflowManagerNotInitializedError):
         manager_under_test.open_existing_root_run("x")

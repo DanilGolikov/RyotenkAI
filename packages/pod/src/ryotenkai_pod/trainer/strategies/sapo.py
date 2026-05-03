@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.constants import STRATEGY_SAPO
-from src.training.strategies.base import StrategyMetadata
-from src.training.strategies.base_rl import BaseRLStrategy
+from ryotenkai_shared.constants import STRATEGY_SAPO
+from ryotenkai_pod.trainer.strategies.base import StrategyMetadata
+from ryotenkai_pod.trainer.strategies.base_rl import BaseRLStrategy
 
 
 class SAPOStrategy(BaseRLStrategy):

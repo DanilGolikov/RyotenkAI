@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.community.pack import pack_community_folder
+from ryotenkai_community.pack import pack_community_folder
 
 _VALID_PLUGIN_MANIFEST = textwrap.dedent('''
     [plugin]

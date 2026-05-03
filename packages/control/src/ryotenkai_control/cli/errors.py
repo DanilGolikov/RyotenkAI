@@ -19,10 +19,10 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from src.cli.style import COLOR_DIM, COLOR_ERR, err_console
+from ryotenkai_control.cli.style import COLOR_DIM, COLOR_ERR, err_console
 
 if TYPE_CHECKING:
-    from src.config.pipeline.schema import PipelineConfig
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
 
 
 def die(message: str, *, hint: str | None = None, code: int = 1) -> typer.Exit:
@@ -66,7 +66,7 @@ def load_config_or_die(path: Path | str) -> PipelineConfig:
     failure modes (missing file, malformed YAML, schema mismatch) into
     one-line ``die()`` errors with field-level detail.
     """
-    from src.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
     path_str = str(path)
     try:

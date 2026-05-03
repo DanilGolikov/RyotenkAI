@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from src.training.managers.model_saver import ModelSaverEventCallbacks, ModelSaverManager
+from ryotenkai_pod.trainer.managers.model_saver import ModelSaverEventCallbacks, ModelSaverManager
 
 
 def test_save_model_saves_model_and_tokenizer_and_calls_callback(tmp_path: Path) -> None:

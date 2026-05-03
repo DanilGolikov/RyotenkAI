@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from transformers import TrainerControl, TrainerState, TrainingArguments

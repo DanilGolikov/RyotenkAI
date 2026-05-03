@@ -31,22 +31,22 @@ if "runpod" not in sys.modules:
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from src.runner.event_bus import EventBus  # noqa: E402
-from src.runner.event_journal import (  # noqa: E402
+from ryotenkai_pod.runner.event_bus import EventBus  # noqa: E402
+from ryotenkai_pod.runner.event_journal import (  # noqa: E402
     EventJournal,
     validate_journal_config,
 )
-from src.runner.api._activity import (  # noqa: E402
+from ryotenkai_pod.runner.api._activity import (  # noqa: E402
     mark_heartbeat_if_present,
     send_ws_with_activity,
 )
-from src.runner.heartbeat import (  # noqa: E402
+from ryotenkai_pod.runner.heartbeat import (  # noqa: E402
     EXPLICIT_HEARTBEAT_TTL_SECONDS,
     HEARTBEAT_TTL_SECONDS,
     MacHeartbeat,
 )
-from src.runner.main import create_app  # noqa: E402
-from src.tests.unit.runner.conftest import MockSupervisor  # noqa: E402
+from ryotenkai_pod.runner.main import create_app  # noqa: E402
+from tests.unit.runner.conftest import MockSupervisor  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +76,7 @@ class TestRotationBinding:
     def test_publish_rotation_event_emits_events_rotated(
         self, tmp_path: Path,
     ) -> None:
-        from src.runner.cancellation_telemetry import EVENTS_ROTATED
+        from ryotenkai_pod.runner.cancellation_telemetry import EVENTS_ROTATED
 
         journal = EventJournal(root_dir=tmp_path / "events")
         bus = EventBus(journal=journal)

@@ -12,14 +12,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from src.utils.cancellation import PipelineCancelled
-from src.providers.runpod.lifecycle.pod_ssh_waiter import (
+from ryotenkai_shared.utils.cancellation import PipelineCancelled
+from ryotenkai_providers.runpod.lifecycle.pod_ssh_waiter import (
     PodQuery,
     PodSshWaiter,
 )
-from src.providers.runpod.lifecycle.policy import WaitPolicy
-from src.providers.runpod.models import PodSnapshot, SshEndpoint
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.lifecycle.policy import WaitPolicy
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 pytestmark = pytest.mark.unit
 

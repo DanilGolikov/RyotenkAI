@@ -21,9 +21,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.config import (
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -37,7 +37,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = [
     pytest.mark.unit,
@@ -66,7 +66,7 @@ RUNPOD_PROVIDER_CFG: dict[str, Any] = {
     "inference": {},
 }
 
-LAUNCHER_MODULE = "src.pipeline.stages.managers.deployment.training_launcher"
+LAUNCHER_MODULE = "ryotenkai_control.pipeline.stages.managers.deployment.training_launcher"
 
 
 @dataclass(frozen=True)
@@ -496,15 +496,15 @@ def test_start_training_docker_timeout_returns_provider_error(
 
 
 def test_sanitize_docker_name_replaces_unsafe_chars():
-    from src.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+    from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
 
     assert TrainingLauncher._sanitize_docker_name("my run!@#") == "my_run___"
     assert TrainingLauncher._sanitize_docker_name("ok-name.v1_2") == "ok-name.v1_2"
 
 
 def test_sanitize_docker_name_truncates_long_names():
-    from src.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
-    from src.pipeline.stages.managers.deployment_constants import DEPLOYMENT_CONTAINER_NAME_MAX_LEN
+    from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+    from ryotenkai_control.pipeline.stages.managers.deployment_constants import DEPLOYMENT_CONTAINER_NAME_MAX_LEN
 
     long = "a" * (DEPLOYMENT_CONTAINER_NAME_MAX_LEN + 50)
     out = TrainingLauncher._sanitize_docker_name(long)

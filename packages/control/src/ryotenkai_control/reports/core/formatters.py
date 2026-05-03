@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.reports.core.constants import FormatSpec, MarkdownSymbols
+from ryotenkai_control.reports.core.constants import FormatSpec, MarkdownSymbols
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.reports.models.report import PercentileStats
+    from ryotenkai_control.reports.models.report import PercentileStats
 
 
 class ValueFormatter:
@@ -165,7 +165,7 @@ class ValueFormatter:
             >>> ValueFormatter.format_loss_trend(None, None)
             '—'
         """
-        from src.reports.core.constants import TrendIcons
+        from ryotenkai_control.reports.core.constants import TrendIcons
 
         if first is not None and last is not None:
             result = f"{first:{FormatSpec.LOSS_PRECISION}} → {last:{FormatSpec.LOSS_PRECISION}}"
@@ -223,7 +223,7 @@ class ValueFormatter:
             >>> ValueFormatter.truncate_message("Short")
             'Short'
         """
-        from src.reports.core.constants import RenderLimits
+        from ryotenkai_control.reports.core.constants import RenderLimits
 
         max_len = max_length or RenderLimits.MAX_MESSAGE_LENGTH
         # For custom max_length, truncate so that `len(result) <= max_len` (including suffix).

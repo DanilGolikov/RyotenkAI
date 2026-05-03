@@ -10,7 +10,7 @@ and forking the execution context — those stay outside this package because
 they are cross-cutting concerns with their own lifecycle.
 """
 
-from src.pipeline.launch.launch_preparator import (
+from ryotenkai_control.pipeline.launch.launch_preparator import (
     LaunchPreparationError,
     LaunchPreparator,
     PreparedAttempt,
@@ -18,7 +18,7 @@ from src.pipeline.launch.launch_preparator import (
 
 # Subprocess launch/interrupt mechanics — process spawning, PID tracking,
 # launch-log tail readers.
-from src.pipeline.launch.runtime import (
+from ryotenkai_control.pipeline.launch.runtime import (
     MODE_FRESH,
     MODE_NEW_RUN,
     MODE_RESTART,
@@ -41,7 +41,7 @@ from src.pipeline.launch.runtime import (
 # Restart-point + resume queries — pure read-only inspections of run state.
 # Defined in launch_queries.py so they stay light enough for the CLI's lazy
 # imports (no orchestrator/torch in the chain).
-from src.pipeline.launch.restart_options import (
+from ryotenkai_control.pipeline.launch.restart_options import (
     RestartPointOption,
     load_restart_point_options,
     pick_default_launch_mode,

@@ -9,7 +9,7 @@ engine-specific config class.
 
 from __future__ import annotations
 
-from src.inference.__about__ import (
+from ryotenkai_shared.inference.__about__ import (
     INFERENCE_IMAGE_OVERRIDE_ENV_PREFIX,
     INFERENCE_IMAGES,
     SUPPORTED_INFERENCE_ENGINES,

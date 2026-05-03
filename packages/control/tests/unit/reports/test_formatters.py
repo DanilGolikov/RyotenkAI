@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from types import SimpleNamespace
 
-from src.reports.core.constants import MarkdownSymbols, RenderLimits, TrendIcons
-from src.reports.core.formatters import ValueFormatter
+from ryotenkai_control.reports.core.constants import MarkdownSymbols, RenderLimits, TrendIcons
+from ryotenkai_control.reports.core.formatters import ValueFormatter
 
 
 def test_format_or_dash() -> None:

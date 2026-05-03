@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from src.pipeline.state import PipelineStateLoadError, PipelineStateLockError
+from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateLockError
 
 
 def _error_body(detail: str, code: str | None = None) -> dict[str, str]:

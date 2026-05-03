@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-from src.config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -22,7 +22,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -113,7 +113,7 @@ def test_sync_success(syncer: CodeSyncer):
     completed.stdout = ""
     completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
         result = syncer.sync(ssh_client)
 
     assert result.is_ok()
@@ -139,7 +139,7 @@ def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
     failing.stderr = "rsync failed"
 
     with (
-        patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
+        patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
         patch.object(syncer, "_sync_module_tar", return_value=Ok(None)) as mock_tar,
     ):
         result = syncer.sync(ssh_client)
@@ -164,7 +164,7 @@ def test_sync_module_tar_dir_verify_exists_on_failure_returns_ok(syncer: CodeSyn
     failing.stdout = ""
     failing.stderr = "tar failed"
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
 
     assert result.is_ok()
@@ -186,7 +186,7 @@ def test_sync_module_tar_dir_verify_missing_returns_err(syncer: CodeSyncer):
     failing.stdout = ""
     failing.stderr = "tar failed"
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
 
     assert result.is_err()
@@ -211,7 +211,7 @@ def test_sync_skips_missing_module_and_still_ok(syncer: CodeSyncer, monkeypatch)
     completed.stdout = ""
     completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
         result = syncer.sync(ssh_client)
 
     assert result.is_ok()
@@ -232,7 +232,7 @@ def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
     failing.stderr = "rsync failed"
 
     with (
-        patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
+        patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
         patch.object(syncer, "_sync_module_tar", return_value=Failure(ProviderError(message="tar failed", code="TAR_FAILED"))),
     ):
         result = syncer.sync(ssh_client)
@@ -256,7 +256,7 @@ def test_sync_module_tar_file_success_returns_ok(syncer: CodeSyncer):
     completed.stdout = ""
     completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
 
     assert result.is_ok()

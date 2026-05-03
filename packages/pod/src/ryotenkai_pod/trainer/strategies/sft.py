@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.constants import STRATEGY_SFT
-from src.training.strategies.base import StrategyMetadata, TrainingStrategy
-from src.utils.result import Err, Ok, Result, StrategyError
+from ryotenkai_shared.constants import STRATEGY_SFT
+from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
+from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from datasets import Dataset

@@ -11,7 +11,7 @@ Anything here must satisfy: read by ≥ 2 different stages OR by the
 orchestrator/MLflow integration directly.
 """
 
-from src.constants import CONSOLE_LINE_WIDTH
+from ryotenkai_shared.constants import CONSOLE_LINE_WIDTH
 
 # Console / report rendering
 SEPARATOR_CHAR = "="

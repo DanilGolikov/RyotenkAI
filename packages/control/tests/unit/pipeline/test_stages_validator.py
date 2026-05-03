@@ -13,10 +13,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.data.validation.base import ValidationResult
-from src.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
-from src.config import DatasetConfig, PipelineConfig
-from src.utils.result import DatasetError, Err, Ok
+from ryotenkai_control.data.validation.base import ValidationResult
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
+from ryotenkai_shared.config import DatasetConfig, PipelineConfig
+from ryotenkai_shared.utils.result import DatasetError, Err, Ok
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> MagicMock:
@@ -55,7 +55,7 @@ def test_execute_returns_err_on_critical_failure(tmp_path) -> None:
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
 
@@ -75,7 +75,7 @@ def test_execute_returns_ok_with_failed_status_in_advisory_mode(tmp_path) -> Non
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
 
@@ -97,7 +97,7 @@ def test_execute_returns_ok_when_failed_plugins_below_critical_threshold(tmp_pat
     )
     cfg = _mk_primary_only_config(ds)
 
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
 
@@ -126,7 +126,7 @@ def test_hf_streaming_fast_uses_train_id(mock_load_dataset: MagicMock) -> None:
     loader.token = "test_token"
     loader_factory.create_for_dataset.return_value = loader
 
-    with patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory", return_value=loader_factory):
+    with patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory", return_value=loader_factory):
         validator = DatasetValidator(cfg)
         _ = validator.execute({})
 
@@ -266,7 +266,7 @@ class TestDatasetValidatorAdditionalCoverage:
         assert res.is_failure()
         assert f2.cancelled is True
 
-    @patch("src.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
+    @patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
     def test_get_datasets_to_validate_falls_back_when_strategy_dataset_missing(self, _mock_loader_factory) -> None:
         cfg = MagicMock(spec=PipelineConfig)
         primary = MagicMock()

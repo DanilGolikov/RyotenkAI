@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.stages.model_retriever.metrics_replay import (
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_replay import (
     BufferedMetricsReplay,
     ReplayResult,
 )

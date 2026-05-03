@@ -13,12 +13,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class FormatChecker:
@@ -34,7 +34,7 @@ class FormatChecker:
         strategy_phases: list,
     ) -> Result[None, AppError]:
         """Run format checks for every strategy phase. Early-fails on first error."""
-        from src.data.validation.standalone import check_dataset_format
+        from ryotenkai_control.data.validation.standalone import check_dataset_format
 
         bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
         if bundle.is_failure():

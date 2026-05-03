@@ -120,7 +120,7 @@ def _resolve_token(
 
     # Local imports keep Secrets construction free of crypto cost until a
     # caller actually asks for a token.
-    from src.api.services.token_crypto import TokenCrypto, TokenCryptoError, read_token_file
+    from ryotenkai_control.api.services.token_crypto import TokenCrypto, TokenCryptoError, read_token_file
 
     path = Path.home() / ".ryotenkai" / workspace_kind / resource_id / "token.enc"
     if not path.is_file():
@@ -131,7 +131,7 @@ def _resolve_token(
     except TokenCryptoError:
         # Master-key rotated since this token was written — fall back so
         # we don't brick pipelines, but emit a loud warning.
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
 
         logger.error(
             "[SECRETS] Failed to decrypt %s — master key mismatch? Falling back to env.",
@@ -150,7 +150,7 @@ def _fallback_with_warning(
         # Only warn when a workspace token was *expected* but missing —
         # pure env usage stays quiet for back-compat.
         try:
-            from src.utils.logger import logger
+            from ryotenkai_shared.utils.logger import logger
 
             logger.warning(
                 "[SECRETS] No token.enc for %s/%s — using env fallback. "

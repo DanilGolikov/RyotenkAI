@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from src.constants import _resolve_runtime_image
+from ryotenkai_shared.constants import _resolve_runtime_image
 
 RUNTIME_IMAGE: Final[str] = _resolve_runtime_image()
 

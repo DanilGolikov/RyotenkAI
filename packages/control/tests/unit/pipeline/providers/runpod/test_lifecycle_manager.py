@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from src.providers.runpod.lifecycle.policy import TRAINING_PROFILE
-from src.providers.runpod.models import PodSnapshot, SshEndpoint
-from src.providers.runpod.training.lifecycle_manager import PodLifecycleManager
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.lifecycle.policy import TRAINING_PROFILE
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
+from ryotenkai_providers.runpod.training.lifecycle_manager import PodLifecycleManager
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 pytestmark = pytest.mark.unit
 
@@ -75,7 +75,7 @@ def test_wait_for_ready_uses_training_profile_when_no_timeout(
             return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
 
     monkeypatch.setattr(
-        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
         CapturingWaiter,
     )
     api = StubQuery()
@@ -99,7 +99,7 @@ def test_wait_for_ready_overrides_total_timeout_only(
             return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
 
     monkeypatch.setattr(
-        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
         CapturingWaiter,
     )
     api = StubQuery()
@@ -128,7 +128,7 @@ def test_wait_for_ready_forwards_waiter_result(
             return sentinel_err
 
     monkeypatch.setattr(
-        "src.providers.runpod.training.lifecycle_manager.PodSshWaiter",
+        "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
         StaticWaiter,
     )
     api = StubQuery()

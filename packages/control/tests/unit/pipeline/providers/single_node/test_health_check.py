@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.providers.single_node.training.health_check import SingleNodeHealthCheck
-from src.utils.result import Err
+from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
+from ryotenkai_shared.utils.result import Err
 
 
 @dataclass

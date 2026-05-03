@@ -13,8 +13,8 @@ from textwrap import dedent
 import pytest
 import yaml
 
-from src.community.catalog import CommunityCatalog
-from src.community.preflight import (
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.preflight import (
     LaunchAbortedError,
     MissingEnv,
     validate_required_env,
@@ -31,7 +31,7 @@ def _minimal_pipeline_config_yaml() -> str:
 
 
 def _load_pipeline_config(yaml_text: str):
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     return PipelineConfig.model_validate(yaml.safe_load(yaml_text))
 
@@ -51,11 +51,11 @@ def patched_catalog(tmp_community_root, monkeypatch):
     # ``sys.modules`` is the unambiguous way to grab the actual module
     # and patch its top-level singleton; the package re-export gets
     # patched separately so readers that did
-    # ``from src.community import catalog`` see the new instance too.
+    # ``from ryotenkai_community import catalog`` see the new instance too.
     import sys
-    import src.community as community_pkg
+    import ryotenkai_community as community_pkg
 
-    catalog_module = sys.modules["src.community.catalog"]
+    catalog_module = sys.modules["ryotenkai_community.catalog"]
     monkeypatch.setattr(catalog_module, "catalog", cat)
     monkeypatch.setattr(community_pkg, "catalog", cat)
     return cat
@@ -72,7 +72,7 @@ def _make_eval_plugin(make_plugin_dir, plugin_id: str, env_name: str, *, optiona
         managed_by = ""
     """)
     plugin_source = dedent(f"""
-        from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
         class {plugin_id.title().replace('_', '')}Plugin(EvaluatorPlugin):
             def evaluate(self, samples):
@@ -98,12 +98,12 @@ def _attach_eval_plugin(config, plugin_id: str, *, instance_id: str = "main", en
     concatenation collides with the fixture's existing inference/eval
     sections and is awkward to keep in sync with schema evolution.
     """
-    from src.config.evaluation.schema import EvaluatorPluginConfig
+    from ryotenkai_shared.config.evaluation.schema import EvaluatorPluginConfig
 
     config.inference.enabled = True
     config.evaluation.enabled = True
     if config.evaluation.dataset is None:
-        from src.config.evaluation.schema import EvaluationDatasetConfig
+        from ryotenkai_shared.config.evaluation.schema import EvaluationDatasetConfig
 
         config.evaluation.dataset = EvaluationDatasetConfig(path="data/eval.jsonl")
     config.evaluation.evaluators.plugins = [
@@ -273,7 +273,7 @@ def test_managed_by_envs_are_skipped(
         managed_by = "integrations"
     """)
     plugin_source = dedent("""
-        from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin
+        from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin
 
         class ManagedPlugin(EvaluatorPlugin):
             def evaluate(self, samples):

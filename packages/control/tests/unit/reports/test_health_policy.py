@@ -4,13 +4,13 @@ Unit tests for HealthPolicy.
 Validates ExperimentHealth (RED/YELLOW/GREEN) from configurable rules and thresholds.
 """
 
-from src.reports.core.health_policy import (
+from ryotenkai_control.reports.core.health_policy import (
     DEFAULT_HEALTH_POLICY,
     HealthPolicy,
     HealthPolicySettings,
 )
-from src.reports.domain.entities import RunStatus
-from src.reports.models.report import ExperimentHealth, Issue
+from ryotenkai_control.reports.domain.entities import RunStatus
+from ryotenkai_control.reports.models.report import ExperimentHealth, Issue
 
 
 class TestHealthPolicy:

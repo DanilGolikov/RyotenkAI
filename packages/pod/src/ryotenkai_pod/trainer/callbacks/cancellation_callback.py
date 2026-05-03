@@ -90,7 +90,7 @@ from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -188,7 +188,7 @@ class CancellationCallback(TrainerCallback):
         TrainerFactory wiring layer).
         """
         if self._handler is None:
-            from src.training.orchestrator.shutdown_handler import (
+            from ryotenkai_pod.trainer.orchestrator.shutdown_handler import (
                 get_shutdown_handler,
             )
 
@@ -291,7 +291,7 @@ class CancellationCallback(TrainerCallback):
         # so CompletionCallback (natural-completion counterpart) gets
         # bit-identical behaviour for free. Helper never raises;
         # outcome carries ``timed_out`` / ``raised`` / ``drained_count``.
-        from src.training.callbacks._flush_helper import (
+        from ryotenkai_pod.trainer.callbacks._flush_helper import (
             run_flush_with_deadline,
         )
 
@@ -356,7 +356,7 @@ class CancellationCallback(TrainerCallback):
             )
             return
         try:
-            from src.runner.cancellation_telemetry import (
+            from ryotenkai_pod.runner.cancellation_telemetry import (
                 CANCELLATION_FINALIZED,
             )
 
@@ -434,7 +434,7 @@ class CancellationCallback(TrainerCallback):
             import time
             from pathlib import Path
 
-            from src.utils.atomic_fs import atomic_write_text
+            from ryotenkai_shared.utils.atomic_fs import atomic_write_text
 
             target = Path(workspace) / "cancelled.marker"
             payload = json.dumps(

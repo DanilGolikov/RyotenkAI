@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.stages.model_retriever import ModelCardContext, ModelRetriever, PhaseMetricsResult
-from src.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.utils.result import Err, Ok
+from ryotenkai_control.pipeline.stages.model_retriever import ModelCardContext, ModelRetriever, PhaseMetricsResult
+from ryotenkai_shared.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.utils.result import Err, Ok
 
 
 @pytest.fixture
@@ -444,7 +444,7 @@ class TestModelRetrieverExecute:
         monkeypatch.setattr("time.time", lambda: next(times))
 
         # Avoid real SSH construction
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -469,7 +469,7 @@ class TestModelRetrieverExecute:
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(100.0))
         monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("fail"))
         monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -492,7 +492,7 @@ class TestModelRetrieverExecute:
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(100.0))
         monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("hf fail"))
         monkeypatch.setattr(retriever, "_download_model", lambda: Err("dl fail"))
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -509,7 +509,7 @@ class TestModelRetrieverExecute:
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
         monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -528,7 +528,7 @@ class TestModelRetrieverExecute:
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
         monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -543,7 +543,7 @@ class TestModelRetrieverExecute:
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(2048.0))
         monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("fail"))
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
@@ -988,7 +988,7 @@ class TestExecuteCloseMasterException:
                 raise RuntimeError("close failed")
 
         monkeypatch.setattr(
-            "src.pipeline.stages.model_retriever.SSHClient", MagicMock(return_value=_BoomSSH())
+            "ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock(return_value=_BoomSSH())
         )
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4"}}
@@ -1013,7 +1013,7 @@ class TestExecuteRetrievalTypeErrorFallback:
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
         monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", upload_mock)
-        monkeypatch.setattr("src.pipeline.stages.model_retriever.SSHClient", MagicMock())
+        monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "workspace_path": "/w"}}
         res = retriever.execute(ctx)

@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.community.registry_base import PluginRegistry
+from ryotenkai_community.registry_base import PluginRegistry
 
 if TYPE_CHECKING:
-    from src.data.validation.base import ValidationPlugin
+    from ryotenkai_control.data.validation.base import ValidationPlugin
 
 
 class ValidationPluginRegistry(PluginRegistry["ValidationPlugin"]):

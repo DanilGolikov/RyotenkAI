@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.training.constants import (
+from ryotenkai_pod.trainer.constants import (
     KEY_EVAL_LOSS,
     KEY_LEARNING_RATE,
     KEY_TRAIN_LOSS,
@@ -16,8 +16,8 @@ from src.training.constants import (
     KEY_TRAIN_SAMPLES_PER_SECOND,
     KEY_TRAIN_STEPS_PER_SECOND,
 )
-from src.training.metrics_models import PhasesMetricsAggregate, TrainingMetricsSnapshot
-from src.utils.logger import logger
+from ryotenkai_pod.trainer.metrics_models import PhasesMetricsAggregate, TrainingMetricsSnapshot
+from ryotenkai_shared.utils.logger import logger
 
 
 def _as_float(value: Any) -> float | None:

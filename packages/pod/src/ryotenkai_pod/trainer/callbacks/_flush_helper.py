@@ -110,7 +110,7 @@ def run_flush_with_deadline(
     # Lazy import keeps this module slim-venv-importable even when
     # the heavy ``src.training`` package init is stubbed (the
     # cancellation callback's slim-venv test pattern).
-    from src.training._concurrent_helpers import (
+    from ryotenkai_pod.trainer._concurrent_helpers import (
         TimeoutExceededError,
         with_timeout,
     )

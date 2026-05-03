@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from src.pipeline.artifacts import StageArtifactEnvelope
+    from ryotenkai_control.pipeline.artifacts import StageArtifactEnvelope
 
 # =============================================================================
 # ENUMS

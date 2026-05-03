@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.state import RunContext
-from src.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
-from src.utils.result import Failure, ProviderError, Success
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
+from ryotenkai_shared.utils.result import Failure, ProviderError, Success
 
 # =========================================================================
 # HELPER CLASSES
@@ -127,7 +127,7 @@ def run_ctx() -> RunContext:
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_deployer_initialization(mock_tdm_class, mock_config_with_gpu, mock_secrets):
     """GPUDeployer initialization."""
     deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets)
@@ -143,7 +143,7 @@ def test_deployer_initialization(mock_tdm_class, mock_config_with_gpu, mock_secr
     mock_tdm_class.assert_called_once_with(config=mock_config_with_gpu, secrets=mock_secrets)
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_deployer_with_callbacks(mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_callbacks):
     """Initialization with custom callbacks."""
     deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets, callbacks=mock_callbacks)
@@ -156,9 +156,9 @@ def test_deployer_with_callbacks(mock_tdm_class, mock_config_with_gpu, mock_secr
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_successful_deployment(
     mock_tdm_class,
     mock_factory,
@@ -191,9 +191,9 @@ def test_execute_successful_deployment(
     mock_deployment_manager.start_training.assert_called_once()
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_returns_correct_context(
     mock_tdm_class,
     mock_factory,
@@ -238,8 +238,8 @@ def test_execute_returns_correct_context(
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_provider_creation_failure(
     mock_tdm_class, mock_factory, mock_config_with_gpu, mock_secrets, mock_callbacks, run_ctx
 ):
@@ -261,8 +261,8 @@ def test_execute_provider_creation_failure(
     assert call_args[0] == "provider_create"
 
 
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_connection_failure(
     mock_tdm_class, mock_factory, mock_config_with_gpu, mock_secrets, mock_provider, mock_callbacks, run_ctx
 ):
@@ -286,8 +286,8 @@ def test_execute_connection_failure(
     assert "Connection timeout" in call_args[1]
 
 
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_ssh_info_none(
     mock_tdm_class, mock_factory, mock_config_with_gpu, mock_secrets, mock_provider, mock_callbacks, run_ctx
 ):
@@ -308,9 +308,9 @@ def test_execute_ssh_info_none(
     mock_callbacks.on_error.assert_called_once()
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_upload_failure(
     mock_tdm_class,
     mock_factory,
@@ -343,9 +343,9 @@ def test_execute_upload_failure(
     mock_callbacks.on_error.assert_called()
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_deps_failure(
     mock_tdm_class,
     mock_factory,
@@ -374,9 +374,9 @@ def test_execute_deps_failure(
     mock_callbacks.on_error.assert_called()
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_training_start_failure(
     mock_tdm_class,
     mock_factory,
@@ -412,9 +412,9 @@ def test_execute_training_start_failure(
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_callbacks_on_provider_created(
     mock_tdm_class,
     mock_factory,
@@ -443,9 +443,9 @@ def test_callbacks_on_provider_created(
     assert call_args[1] == "cloud"  # provider_type
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_callbacks_on_connected(
     mock_tdm_class,
     mock_factory,
@@ -475,9 +475,9 @@ def test_callbacks_on_connected(
     assert call_args[2] == 22  # port
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_callbacks_on_files_uploaded(
     mock_tdm_class,
     mock_factory,
@@ -507,9 +507,9 @@ def test_callbacks_on_files_uploaded(
     assert duration >= 0
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_callbacks_on_training_started(
     mock_tdm_class,
     mock_factory,
@@ -542,9 +542,9 @@ def test_callbacks_on_training_started(
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_cleanup_disconnects_provider(
     mock_tdm_class,
     mock_factory,
@@ -584,9 +584,9 @@ def test_cleanup_disconnects_provider(
     assert deployer._provider is None
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_get_provider_returns_active_provider(
     mock_tdm_class,
     mock_factory,
@@ -619,7 +619,7 @@ def test_get_provider_returns_active_provider(
 # =========================================================================
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_missing_run_context_returns_error(
     mock_tdm_class, mock_config_with_gpu, mock_secrets
 ):
@@ -634,9 +634,9 @@ def test_execute_missing_run_context_returns_error(
     assert "RunContext" in err.message
 
 
-@patch("src.pipeline.stages.gpu_deployer.SSHClient")
-@patch("src.pipeline.stages.gpu_deployer.GPUProviderFactory")
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.SSHClient")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.GPUProviderFactory")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_execute_image_sha_added_to_context(
     mock_tdm_class,
     mock_factory,
@@ -664,7 +664,7 @@ def test_execute_image_sha_added_to_context(
     assert result.unwrap().get("docker_image_sha") == image_sha
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_release_calls_download_logs_when_ssh_client_set(
     mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_provider
 ):
@@ -682,7 +682,7 @@ def test_release_calls_download_logs_when_ssh_client_set(
     assert deployer._released is True
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_release_swallows_download_logs_exception(
     mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_provider
 ):
@@ -700,7 +700,7 @@ def test_release_swallows_download_logs_exception(
     assert deployer._released is True
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_handle_error_and_disconnect_calls_mark_error_on_provider(
     mock_tdm_class, mock_config_with_gpu, mock_secrets
 ):
@@ -719,7 +719,7 @@ def test_handle_error_and_disconnect_calls_mark_error_on_provider(
     mock_provider.disconnect.assert_called_once()
 
 
-@patch("src.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
+@patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
 def test_cleanup_swallows_download_logs_exception(
     mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_provider
 ):

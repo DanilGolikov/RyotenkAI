@@ -24,12 +24,12 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from src.tests.contract._normalize import normalise
+from ._normalize import normalise
 
 
 def _seed_run(runs_dir: Path, run_id: str = "run_parity") -> Path:
     """Materialise a minimal completed-run directory the CLI + API can read."""
-    from src.pipeline.state import (
+    from ryotenkai_control.pipeline.state import (
         PipelineAttemptState,
         PipelineState,
         PipelineStateStore,

@@ -14,18 +14,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.config.runtime import RuntimeSettings, load_runtime_settings
-from src.pipeline.bootstrap import PipelineBootstrap
-from src.pipeline.constants import (
+from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
+from ryotenkai_control.pipeline.bootstrap import PipelineBootstrap
+from ryotenkai_control.pipeline.constants import (
     EXIT_CODE_SIGINT,
     SEPARATOR_CHAR,
     SEPARATOR_LINE_WIDTH,
 )
-from src.pipeline.launch import LaunchPreparationError, PreparedAttempt
-from src.pipeline.launch.run_lock_guard import RunLockGuard
-from src.pipeline.reporting import ExecutionSummaryReporter
-from src.pipeline.stages import StageNames
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.launch import LaunchPreparationError, PreparedAttempt
+from ryotenkai_control.pipeline.launch.run_lock_guard import RunLockGuard
+from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
     PipelineState,
@@ -33,16 +33,16 @@ from src.pipeline.state import (
     PipelineStateStore,
     RunContext,
 )
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.config.pipeline.schema import PipelineConfig
-    from src.pipeline.stages.base import PipelineStage
-    from src.infrastructure.mlflow.protocol import IMLflowManager
-    from src.utils.logs_layout import LogLayout
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
+    from ryotenkai_shared.utils.logs_layout import LogLayout
 
 # Re-export from the launch package so downstream test imports keep working
 # without needing to know that the exception moved. Orchestrator.run() still
@@ -532,7 +532,7 @@ def run_pipeline(config_path: str) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    from src.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
 
     try:
         cfg = load_pipeline_config(config_path)

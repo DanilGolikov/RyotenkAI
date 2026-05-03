@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
-from src.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
-from src.utils.logger import logger
+from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
+from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, aggregate_scores, save_plugin_report
+from ryotenkai_shared.utils.logger import logger
 
 from .provider import (
     DEFAULT_MAX_RETRIES,

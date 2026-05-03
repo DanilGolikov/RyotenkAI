@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from src.reports.document.nodes import Heading, HorizontalRule, inlines, txt
-from src.reports.domain.entities import ExperimentData, RunStatus
-from src.reports.models.report import (
+from ryotenkai_control.reports.document.nodes import Heading, HorizontalRule, inlines, txt
+from ryotenkai_control.reports.domain.entities import ExperimentData, RunStatus
+from ryotenkai_control.reports.models.report import (
     ConfigInfo,
     ExperimentHealth,
     ExperimentReport,
@@ -13,9 +13,9 @@ from src.reports.models.report import (
     ReportSummary,
     ResourcesInfo,
 )
-from src.reports.plugins.composer import ReportComposer
-from src.reports.plugins.interfaces import ReportBlock, ReportPluginContext
-from src.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
+from ryotenkai_control.reports.plugins.composer import ReportComposer
+from ryotenkai_control.reports.plugins.interfaces import ReportBlock, ReportPluginContext
+from ryotenkai_control.reports.plugins.markdown_block_renderer import MarkdownBlockRenderer
 
 
 class _DummyProvider:

@@ -8,17 +8,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.state import RunContext
-from src.providers.inference.interfaces import (
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     InferenceArtifacts,
     InferenceArtifactsContext,
     PipelineReadinessMode,
 )
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.stages.inference_deployer import InferenceDeployer
-from src.config import PipelineConfig, Secrets
-from src.utils.result import Err, Ok, Success
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.stages.inference_deployer import InferenceDeployer
+from ryotenkai_shared.config import PipelineConfig, Secrets
+from ryotenkai_shared.utils.result import Err, Ok, Success
 
 
 class _FakeProvider:
@@ -59,7 +59,7 @@ class _FakeProvider:
         return
 
     def build_inference_artifacts(self, *, ctx: InferenceArtifactsContext):
-        from src.providers.single_node.inference.artifacts import CHAT_SCRIPT, render_readme
+        from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT, render_readme
 
         manifest = {
             "run_name": ctx.run_name,
@@ -91,7 +91,7 @@ class _FakeProvider:
         return Ok(True)
 
     def get_capabilities(self):
-        from src.providers.inference.interfaces import InferenceCapabilities
+        from ryotenkai_providers.inference.interfaces import InferenceCapabilities
         return InferenceCapabilities(
             provider_type="fake",
             supported_engines=["vllm"],
@@ -138,7 +138,7 @@ def test_inference_deployer_writes_manifest_and_scripts(tmp_path: Path, monkeypa
     fake = _FakeProvider()
 
     # Patch factory to avoid real SSH/Docker
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
 
@@ -253,7 +253,7 @@ def test_inference_deployer_writes_runpod_manifest_and_scripts(tmp_path: Path, m
             return
 
         def build_inference_artifacts(self, *, ctx: InferenceArtifactsContext):
-            from src.providers.runpod.inference.pods.artifacts import CHAT_SCRIPT, render_readme
+            from ryotenkai_providers.runpod.inference.pods.artifacts import CHAT_SCRIPT, render_readme
 
             manifest = {
                 "run_name": ctx.run_name,
@@ -284,7 +284,7 @@ def test_inference_deployer_writes_runpod_manifest_and_scripts(tmp_path: Path, m
             return Ok(True)
 
         def get_capabilities(self):
-            from src.providers.inference.interfaces import InferenceCapabilities
+            from ryotenkai_providers.inference.interfaces import InferenceCapabilities
             return InferenceCapabilities(
                 provider_type="runpod",
                 supported_engines=["vllm"],
@@ -302,7 +302,7 @@ def test_inference_deployer_writes_runpod_manifest_and_scripts(tmp_path: Path, m
 
     fake = _FakePodProvider()
 
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -367,7 +367,7 @@ def test_chat_script_checks_status_before_chat(tmp_path: Path) -> None:
 
     chat_script_path = inference_dir / "chat_inference.py"
 
-    from src.providers.single_node.inference.artifacts import CHAT_SCRIPT
+    from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT
     chat_script_path.write_text(CHAT_SCRIPT)
     # Regression: Python 3.13 forbids capture_output + stderr/stdout args together
     assert "capture_output=True, stderr=subprocess.STDOUT" not in CHAT_SCRIPT
@@ -435,7 +435,7 @@ def test_chat_script_reports_when_container_not_running(tmp_path: Path) -> None:
 
     chat_script_path = inference_dir / "chat_inference.py"
 
-    from src.providers.single_node.inference.artifacts import CHAT_SCRIPT
+    from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT
     chat_script_path.write_text(CHAT_SCRIPT)
 
     # Verify script compiles and has correct structure
@@ -461,7 +461,7 @@ def test_resolve_model_source_prefers_explicit_config(
     cfg.inference.common.model_source = "explicit/hf-repo-id"
 
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -489,7 +489,7 @@ def test_resolve_model_source_fallback_local_model_path(
     cfg.inference.enabled = True
 
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -537,7 +537,7 @@ def test_deploy_fails_on_provider_deploy_failure(
     cfg = _load_test_config()
     cfg.inference.enabled = True
     fake = FailingProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
 
@@ -568,7 +568,7 @@ def test_deploy_fails_on_build_artifacts_failure(
     cfg = _load_test_config()
     cfg.inference.enabled = True
     fake = ArtifactsFailingProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -611,7 +611,7 @@ def test_health_check_waits_for_healthy_then_succeeds(
             return Ok(call_count[0] >= 2)
 
     fake = DelayedHealthyProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -646,7 +646,7 @@ def test_health_check_provider_error_returns_err(
             return Err("SSH command failed")
 
     fake = ErrorHealthProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -704,7 +704,7 @@ def test_health_check_timeout_returns_err(
         def log_event_error(self, message: str, **kwargs):
             event_errors.append(message)
 
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -739,7 +739,7 @@ def test_skip_readiness_when_health_check_disabled(
     cfg.inference.common.health_check.enabled = False
 
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
 
@@ -765,7 +765,7 @@ def test_mlflow_run_id_empty_strip_treated_as_none(
     cfg = _load_test_config()
     cfg.inference.enabled = True
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -800,7 +800,7 @@ def test_invariant_output_contains_all_required_keys(
     cfg = _load_test_config()
     cfg.inference.enabled = True
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -832,7 +832,7 @@ def test_invariant_manifest_is_valid_json(tmp_path: Path, monkeypatch: pytest.Mo
     cfg = _load_test_config()
     cfg.inference.enabled = True
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -885,7 +885,7 @@ def test_event_logger_called_on_health_success(
         def log_event_error(self, message: str, **kwargs):
             event_log.append(("error", message))
 
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -917,7 +917,7 @@ def test_regression_python313_no_capture_output_with_stdout(
     tmp_path: Path,
 ) -> None:
     """Regression: subprocess.run must not use capture_output=True with stdout/stderr."""
-    from src.providers.single_node.inference.artifacts import CHAT_SCRIPT
+    from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT
 
     for name, script in [("CHAT_SCRIPT", CHAT_SCRIPT)]:
         assert "capture_output=True, stderr=subprocess.STDOUT" not in script, (
@@ -938,7 +938,7 @@ def test_regression_provider_set_event_logger_called(
             logger_calls.append(("set_event_logger", event_logger))
 
     fake = TrackingProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -996,7 +996,7 @@ def test_health_check_combinatorial(
     cfg.inference.common.health_check.interval_seconds = 0.01
 
     fake = CountingProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -1026,7 +1026,7 @@ def test_health_check_combinatorial(
 
 def test_single_node_render_readme() -> None:
     """single_node provider: render_readme returns manifest_filename and endpoint_url."""
-    from src.providers.single_node.inference.artifacts import render_readme
+    from ryotenkai_providers.single_node.inference.artifacts import render_readme
 
     out = render_readme(manifest_filename="test_manifest.json", endpoint_url="http://localhost:8000/v1")
     assert "test_manifest.json" in out
@@ -1038,7 +1038,7 @@ def test_single_node_render_readme() -> None:
 
 def test_pods_render_readme() -> None:
     """runpod (pods) provider: render_readme mentions SSH tunnel and HF_TOKEN."""
-    from src.providers.runpod.inference.pods.artifacts import render_readme
+    from ryotenkai_providers.runpod.inference.pods.artifacts import render_readme
 
     out = render_readme(manifest_filename="m.json", endpoint_url="http://127.0.0.1:8000/v1")
     assert "SSH" in out or "ssh" in out
@@ -1073,7 +1073,7 @@ def test_pipeline_readiness_mode_values() -> None:
 
 def test_inference_artifacts_structure() -> None:
     """InferenceArtifacts contains manifest, chat_script, readme."""
-    from src.providers.single_node.inference.artifacts import CHAT_SCRIPT, render_readme
+    from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT, render_readme
 
     artifacts = InferenceArtifacts(
         manifest={"k": "v"},
@@ -1093,7 +1093,7 @@ def test_mlflow_logging_success(
     cfg.inference.enabled = True
 
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -1127,7 +1127,7 @@ def test_mlflow_logging_skipped_when_run_id_empty(
 
     fake = _FakeProvider()
 
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -1157,7 +1157,7 @@ def test_mlflow_logging_failure_does_not_fail_deploy(
     cfg.inference.enabled = True
 
     fake = _FakeProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
@@ -1184,7 +1184,7 @@ def test_mlflow_logging_failure_does_not_fail_deploy(
 
 def test_make_deferred_endpoint_returns_correct_fields() -> None:
     """Line 63: _make_deferred_endpoint builds EndpointInfo with correct fields."""
-    from src.pipeline.stages.inference_deployer import _make_deferred_endpoint
+    from ryotenkai_control.pipeline.stages.inference_deployer import _make_deferred_endpoint
 
     endpoint = _make_deferred_endpoint(
         port=9090,
@@ -1205,13 +1205,13 @@ def test_factory_create_failure_returns_inference_provider_create_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Line 120: InferenceProviderFactory.create fails → INFERENCE_PROVIDER_CREATE_FAILED."""
-    from src.utils.result import Failure, InferenceError
+    from ryotenkai_shared.utils.result import Failure, InferenceError
 
     cfg = _load_test_config()
     cfg.inference.enabled = True
     cfg.inference.common.model_source = "test/repo"
 
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(
         mod.InferenceProviderFactory,
@@ -1249,7 +1249,7 @@ def test_no_capacity_deploy_error_creates_deferred_endpoint(
     cfg.inference.enabled = True
 
     fake = NoCapacityProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1290,7 +1290,7 @@ def test_no_capacity_deploy_error_uses_serve_cfg_port(
     cfg.inference.enabled = True
 
     fake = NoCapacityProviderWithPort()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1366,7 +1366,7 @@ def test_activate_for_eval_failure_aborts_pipeline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """activate_for_eval fails → stage Err(INFERENCE_ACTIVATION_FAILED)."""
-    from src.utils.result import Failure, InferenceError
+    from ryotenkai_shared.utils.result import Failure, InferenceError
 
     deactivate_called: list[bool] = []
 
@@ -1382,7 +1382,7 @@ def test_activate_for_eval_failure_aborts_pipeline(
 
     cfg = _mk_inference_cfg(eval_enabled=True)
     fake = _ActivateFailing()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1401,7 +1401,7 @@ def test_provider_without_activate_capability_fails_fast(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """eval_enabled + supports_activate_for_eval=False → Err without calling activate_for_eval."""
-    from src.providers.inference.interfaces import InferenceCapabilities
+    from ryotenkai_providers.inference.interfaces import InferenceCapabilities
 
     activate_called: list[bool] = []
 
@@ -1419,7 +1419,7 @@ def test_provider_without_activate_capability_fails_fast(
 
     cfg = _mk_inference_cfg(eval_enabled=True)
     fake = _NoActivateSupport()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1437,7 +1437,7 @@ def test_activate_failure_masks_deactivate_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """deactivate_after_eval errors during cleanup → original ACTIVATION_FAILED still propagates."""
-    from src.utils.result import Failure, InferenceError
+    from ryotenkai_shared.utils.result import Failure, InferenceError
 
     class _BothFail(_FakeProvider):
         def activate_for_eval(self):
@@ -1448,7 +1448,7 @@ def test_activate_failure_masks_deactivate_failure(
 
     cfg = _mk_inference_cfg(eval_enabled=True)
     fake = _BothFail()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1466,7 +1466,7 @@ def test_eval_enabled_with_no_capacity_fails_fast(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """eval_enabled + NO_GPU_CAPACITY → Err(INFERENCE_NO_CAPACITY_BLOCKS_EVAL)."""
-    from src.utils.result import Failure, InferenceError
+    from ryotenkai_shared.utils.result import Failure, InferenceError
 
     class _NoCapacityProvider(_FakeProvider):
         def deploy(self, model_source: str, **kwargs):
@@ -1479,7 +1479,7 @@ def test_eval_enabled_with_no_capacity_fails_fast(
 
     cfg = _mk_inference_cfg(eval_enabled=True)
     fake = _NoCapacityProvider()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1507,7 +1507,7 @@ def test_eval_disabled_does_not_call_activate(
 
     cfg = _mk_inference_cfg(eval_enabled=False)
     fake = _TrackActivate()
-    import src.pipeline.stages.inference_deployer as mod
+    import ryotenkai_control.pipeline.stages.inference_deployer as mod
 
     monkeypatch.setattr(mod.InferenceProviderFactory, "create", lambda **kwargs: Success(fake))
     monkeypatch.setattr(mod, "get_run_log_dir", lambda: tmp_path)
@@ -1545,7 +1545,7 @@ def test_cleanup_skips_deactivate_when_eval_disabled() -> None:
 
 def test_cleanup_logs_warning_on_deactivate_failure() -> None:
     """Lines 263-264: cleanup() eval enabled + deactivate_after_eval fails → warning, no raise."""
-    from src.utils.result import Failure, InferenceError
+    from ryotenkai_shared.utils.result import Failure, InferenceError
 
     cfg = _load_test_config()
     cfg.evaluation.enabled = True
@@ -1565,7 +1565,7 @@ def test_cleanup_logs_warning_on_deactivate_failure() -> None:
 
 def test_cleanup_deactivates_when_eval_enabled_success() -> None:
     """Lines 265-266: cleanup() eval enabled + deactivate_after_eval succeeds → ok."""
-    from src.utils.result import Success as _Success
+    from ryotenkai_shared.utils.result import Success as _Success
 
     cfg = _load_test_config()
     cfg.evaluation.enabled = True
@@ -1596,7 +1596,7 @@ def test_cleanup_keeps_runtime_when_keep_inference_after_eval_enabled() -> None:
 
 def test_single_node_provider_build_inference_artifacts() -> None:
     """Real SingleNodeInferenceProvider.build_inference_artifacts returns valid artifacts."""
-    from src.providers.single_node.inference.provider import SingleNodeInferenceProvider
+    from ryotenkai_providers.single_node.inference.provider import SingleNodeInferenceProvider
 
     cfg = _load_test_config()
     provider = SingleNodeInferenceProvider(config=cfg, secrets=Secrets(HF_TOKEN="hf_test"))

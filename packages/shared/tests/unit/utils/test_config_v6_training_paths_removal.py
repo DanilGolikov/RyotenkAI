@@ -12,7 +12,7 @@ Tests that:
 
 import pytest
 
-from src.config import (
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -97,8 +97,8 @@ class TestDeploymentManagerPathGeneration:
         """_get_training_path() should generate data/{strategy_type}/{basename}."""
         from unittest.mock import MagicMock
 
-        from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from src.config import Secrets
+        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+        from ryotenkai_shared.config import Secrets
 
         # Create minimal mock config and secrets
         manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
@@ -115,8 +115,8 @@ class TestDeploymentManagerPathGeneration:
         """_get_training_path() should use only basename (no subdirs)."""
         from unittest.mock import MagicMock
 
-        from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from src.config import Secrets
+        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+        from ryotenkai_shared.config import Secrets
 
         manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
 
@@ -132,8 +132,8 @@ class TestDeploymentManagerPathGeneration:
         """_get_training_path() should generate different paths per strategy."""
         from unittest.mock import MagicMock
 
-        from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from src.config import Secrets
+        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+        from ryotenkai_shared.config import Secrets
 
         manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
         local_path = "data/dataset.jsonl"

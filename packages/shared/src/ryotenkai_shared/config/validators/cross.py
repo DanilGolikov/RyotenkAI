@@ -15,18 +15,18 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING, Any, cast
 
-from src.config.providers.registry import PROVIDER_TYPES
-from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
+from ryotenkai_shared.config.providers.registry import PROVIDER_TYPES
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 
 from .constants import ERR_FALLBACK_LOC, ERR_FALLBACK_MSG, ERR_KEY_LOC, ERR_KEY_MSG
 
 if TYPE_CHECKING:
     from ..pipeline.schema import PipelineConfig
-    from src.utils.result import ConfigError, Result
+    from ryotenkai_shared.utils.result import ConfigError, Result
 
 
 def _config_error(message: str, code: str) -> Result[None, ConfigError]:
-    from src.utils.result import ConfigError, Err
+    from ryotenkai_shared.utils.result import ConfigError, Err
 
     return Err(ConfigError(message=message, code=code))
 
@@ -46,7 +46,7 @@ def _validate_provider_schema(
     """
     from pydantic import ValidationError
 
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     del Ok  # imported for side effect — Ok is returned by callers
     try:
@@ -76,7 +76,7 @@ def validate_pipeline_providers_config(cfg: PipelineConfig) -> Result[None, Conf
     - training.provider references existing provider in providers registry
     """
 
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     # Must have at least one provider
     if not cfg.providers:
@@ -128,8 +128,8 @@ def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Resu
     """
 
     # Local import to avoid heavy side-effects at module import time.
-    from src.utils.logger import logger
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.logger import logger
+    from ryotenkai_shared.utils.result import Ok
 
     # Only validate when provider is explicitly set.
     if not cfg.training.provider:
@@ -145,15 +145,15 @@ def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Resu
         # (the package's __init__ imports each provider module). The
         # importlib indirection lets modular runtimes that don't ship the
         # providers tree skip this check via the ModuleNotFoundError branch.
-        providers_mod = importlib.import_module("src.providers.training")
+        providers_mod = importlib.import_module("ryotenkai_providers.training")
         gpu_provider_factory = providers_mod.GPUProviderFactory
         available = gpu_provider_factory.get_available_providers()
     except ModuleNotFoundError as e:
         missing = getattr(e, "name", "") or ""
-        if missing.startswith("src.providers"):
+        if missing.startswith("ryotenkai_providers"):
             logger.debug(
                 "[CFG:PROVIDER_REGISTRY] Skipping provider factory validation: "
-                "src.providers is not available in this runtime"
+                "ryotenkai_providers is not available in this runtime"
             )
             return Ok(None)
         return _config_error(
@@ -188,7 +188,7 @@ def validate_pipeline_strategy_dataset_references(cfg: PipelineConfig) -> Result
     - if strategy.dataset is set → it must exist in cfg.datasets
     """
 
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     # Must have at least one dataset
     if not cfg.datasets:
@@ -226,7 +226,7 @@ def validate_pipeline_inference_provider_config(cfg: PipelineConfig) -> Result[N
       - `providers.single_node` is a valid `SingleNodeConfig` (schema validation only)
     """
 
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     if not getattr(cfg, "inference", None) or not cfg.inference.enabled:
         return Ok(None)
@@ -270,7 +270,7 @@ def validate_pipeline_inference_provider_config(cfg: PipelineConfig) -> Result[N
 
     # Provider-specific additional checks beyond schema validation.
     if provider == PROVIDER_RUNPOD:
-        from src.config.providers.runpod import RunPodProviderConfig
+        from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
 
         parsed = RunPodProviderConfig(**provider_cfg)
         if parsed.inference.pod is None:
@@ -293,7 +293,7 @@ def validate_pipeline_evaluation_requires_inference(cfg: PipelineConfig) -> Resu
     Evaluation needs an active inference endpoint to collect model answers.
     If inference is disabled, there is nothing to evaluate against.
     """
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     eval_cfg = getattr(cfg, "evaluation", None)
     if not eval_cfg or not getattr(eval_cfg, "enabled", False):
@@ -323,7 +323,7 @@ def validate_pipeline_adapter_cache_hf_config(cfg: PipelineConfig) -> Result[Non
       → adapter_cache.repo_id must differ from integrations.huggingface.repo_id
         (to prevent mixing intermediate adapters with the final merged model)
     """
-    from src.utils.result import Ok
+    from ryotenkai_shared.utils.result import Ok
 
     cache_phases = [
         s for s in cfg.training.strategies

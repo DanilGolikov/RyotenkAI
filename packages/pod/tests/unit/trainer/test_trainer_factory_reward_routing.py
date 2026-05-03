@@ -34,9 +34,9 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-import src.training.trainers.factory as tf_module
-from src.training.reward_plugins.factory import RewardPluginResult
-from src.training.trainers.factory import TrainerFactory
+import ryotenkai_pod.trainer.trainers.factory as tf_module
+from ryotenkai_pod.trainer.reward_plugins.factory import RewardPluginResult
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 
 
 # ---------------------------------------------------------------------------

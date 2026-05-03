@@ -14,13 +14,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
     PipelineStateStore,
     StageRunState,
 )
-from src.workspace.projects.store import ProjectStore
+from ryotenkai_control.workspace.projects.store import ProjectStore
 
 
 def _create_project(client: TestClient, project_id: str = "p1") -> None:

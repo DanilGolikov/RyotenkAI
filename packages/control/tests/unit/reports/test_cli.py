@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-import src.reports.cli as reports_cli
+import ryotenkai_control.reports.cli as reports_cli
 
 
 @dataclass

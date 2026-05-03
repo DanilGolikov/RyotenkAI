@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from src.community.catalog import catalog
-from src.training.reward_plugins.registry import reward_registry
-from src.training.reward_plugins.secrets import SecretsResolver as RewardSecretsResolver
-from src.utils.logger import logger
+from ryotenkai_community.catalog import catalog
+from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
+from ryotenkai_pod.trainer.reward_plugins.secrets import SecretsResolver as RewardSecretsResolver
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config.secrets.model import Secrets
-    from src.training.reward_plugins.base import RewardPlugin
-    from src.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
 class RewardPluginResult(NamedTuple):

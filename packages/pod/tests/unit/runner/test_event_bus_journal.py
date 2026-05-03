@@ -15,8 +15,8 @@ from typing import Any
 
 import pytest
 
-from src.runner.event_bus import EventBus
-from src.runner.event_journal import EVENTS_DIR_REL, EventJournal
+from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.event_journal import EVENTS_DIR_REL, EventJournal
 
 
 # ---------------------------------------------------------------------------

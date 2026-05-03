@@ -6,9 +6,9 @@ re-exports from :mod:`src.providers.inference` — engine helpers (vLLM,
 The shim is removed at the start of Phase B as part of the codemod.
 """
 
-from src.providers.inference.factory import InferenceProviderFactory
-from src.providers.inference.interfaces import EndpointInfo, IInferenceProvider, InferenceCapabilities
-from src.providers.inference.vllm.engine import VLLMEngine
+from ryotenkai_providers.inference.factory import InferenceProviderFactory
+from ryotenkai_providers.inference.interfaces import EndpointInfo, IInferenceProvider, InferenceCapabilities
+from ryotenkai_providers.inference.vllm.engine import VLLMEngine
 
 __all__ = [
     "EndpointInfo",

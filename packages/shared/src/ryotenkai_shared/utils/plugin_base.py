@@ -33,7 +33,7 @@ import os
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
-    from src.community.manifest import PluginManifest, RequiredEnvSpec
+    from ryotenkai_community.manifest import PluginManifest, RequiredEnvSpec
 
 
 class BasePlugin:

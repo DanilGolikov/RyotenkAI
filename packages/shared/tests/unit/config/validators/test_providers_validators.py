@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.validators.providers import validate_ssh
-from src.config import SSHConfig
+from ryotenkai_shared.config.validators.providers import validate_ssh
+from ryotenkai_shared.config import SSHConfig
 
 pytestmark = pytest.mark.unit
 

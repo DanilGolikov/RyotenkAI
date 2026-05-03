@@ -40,9 +40,9 @@ from typing import Final
 
 import httpx
 
-from src.constants import PROVIDER_RUNPOD
-from src.runner.pod_terminator import PodTerminalOutcome
-from src.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD
+from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome
+from ryotenkai_pod.runner.runtime.lifecycle_client import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

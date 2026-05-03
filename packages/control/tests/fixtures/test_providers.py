@@ -25,12 +25,12 @@ if "runpod" not in sys.modules:
     sys.modules["runpod"] = _stub
 
 
-from src.providers.training.interfaces import (  # noqa: E402
+from ryotenkai_providers.training.interfaces import (  # noqa: E402
     IGPUProvider,
     ProviderCapabilities,
     VolumeKind,
 )
-from src.tests.fixtures.providers import (  # noqa: E402
+from .providers import (  # noqa: E402
     FailingGPUProvider,
     FakeGPUProvider,
 )

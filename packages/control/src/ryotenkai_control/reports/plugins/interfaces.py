@@ -31,15 +31,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 if TYPE_CHECKING:
     from logging import Logger
 
-    from src.reports.document.nodes import DocBlock
-    from src.reports.domain.entities import ExperimentData
-    from src.reports.domain.interfaces import IExperimentDataProvider
-    from src.reports.models.report import ExperimentReport
+    from ryotenkai_control.reports.document.nodes import DocBlock
+    from ryotenkai_control.reports.domain.entities import ExperimentData
+    from ryotenkai_control.reports.domain.interfaces import IExperimentDataProvider
+    from ryotenkai_control.reports.models.report import ExperimentReport
 
 Clock = Callable[[], datetime]
 PluginStatus = Literal["ok", "failed"]

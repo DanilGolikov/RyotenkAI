@@ -32,7 +32,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used (required fixture for context)
-        from src.config import validate_strategy_chain
+        from ryotenkai_shared.config import validate_strategy_chain
 
         # Create invalid chain: DPO first
         dpo_phase = MagicMock()
@@ -48,7 +48,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.config import validate_strategy_chain
+        from ryotenkai_shared.config import validate_strategy_chain
 
         # Create valid chain
         sft_phase = MagicMock()
@@ -67,7 +67,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.config import validate_strategy_chain
+        from ryotenkai_shared.config import validate_strategy_chain
 
         # Create valid chain
         cpt_phase = MagicMock()
@@ -89,7 +89,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.config import validate_strategy_chain
+        from ryotenkai_shared.config import validate_strategy_chain
 
         sft_phase = MagicMock()
         sft_phase.strategy_type = "sft"
@@ -103,7 +103,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.config import validate_strategy_chain
+        from ryotenkai_shared.config import validate_strategy_chain
 
         cpt_phase = MagicMock()
         cpt_phase.strategy_type = "cpt"
@@ -126,7 +126,7 @@ class TestStrategyOrchestratorComponents:
         When: Imported
         Then: No import errors
         """
-        from src.training.orchestrator.strategy_orchestrator import StrategyOrchestrator
+        from ryotenkai_pod.trainer.orchestrator.strategy_orchestrator import StrategyOrchestrator
 
         assert StrategyOrchestrator is not None
 
@@ -136,7 +136,7 @@ class TestStrategyOrchestratorComponents:
         When: Imported
         Then: No import errors
         """
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         assert ChainRunner is not None
 
@@ -146,7 +146,7 @@ class TestStrategyOrchestratorComponents:
         When: Imported
         Then: No import errors
         """
-        from src.training.orchestrator.phase_executor import PhaseExecutor
+        from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
 
         assert PhaseExecutor is not None
 
@@ -156,7 +156,7 @@ class TestStrategyOrchestratorComponents:
         When: Imported
         Then: No import errors
         """
-        from src.training.orchestrator.resume_manager import ResumeManager
+        from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
 
         assert ResumeManager is not None
 
@@ -176,8 +176,8 @@ class TestDataBufferIntegration:
         When: Phases are tracked
         Then: State updates correctly
         """
-        from src.training.managers.data_buffer import DataBuffer
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         # Create strategies
         strategies = [
@@ -214,8 +214,8 @@ class TestDataBufferIntegration:
         When: get_resume_phase is called
         Then: Returns failed phase index
         """
-        from src.training.managers.data_buffer import DataBuffer
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         # Create strategies
         strategies = [
@@ -262,7 +262,7 @@ class TestStrategyFactoryIntegration:
         When: StrategyFactory creates each
         Then: All strategies are created successfully
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
 
@@ -279,7 +279,7 @@ class TestStrategyFactoryIntegration:
         When: get_default_hyperparameters is called
         Then: Returns valid hyperparameters for each strategy
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
 
@@ -298,7 +298,7 @@ class TestStrategyFactoryIntegration:
         When: get_default_hyperparameters is called
         Then: Learning rate is much lower than SFT (10-100x)
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
 
@@ -323,7 +323,7 @@ class TestMemoryManagerIntegration:
         Given: get_memory_manager called multiple times
         Then: Returns same instance (singleton)
         """
-        from src.training.memory_manager import get_memory_manager
+        from ryotenkai_pod.trainer.memory_manager import get_memory_manager
 
         mm1 = get_memory_manager()
         mm2 = get_memory_manager()
@@ -336,7 +336,7 @@ class TestMemoryManagerIntegration:
         When: preset is accessed
         Then: Returns valid preset
         """
-        from src.training.memory_manager import get_memory_manager
+        from ryotenkai_pod.trainer.memory_manager import get_memory_manager
 
         mm = get_memory_manager()
         # Even without CUDA, defaults are applied, but preset might be None if not auto-detected

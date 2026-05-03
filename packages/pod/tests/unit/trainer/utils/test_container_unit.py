@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.container import TrainingContainer, _create_noop_memory_manager
+from ryotenkai_pod.trainer.container import TrainingContainer, _create_noop_memory_manager
 
 
 def _mk_cfg() -> MagicMock:
@@ -30,7 +30,7 @@ class TestMemoryManagerProperty:
         container = TrainingContainer(cfg, _memory_manager=injected)
 
         auto = MagicMock()
-        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("ryotenkai_pod.trainer.memory_manager.MemoryManager.auto_configure", auto)
 
         assert container.memory_manager is injected
         auto.assert_not_called()
@@ -41,7 +41,7 @@ class TestMemoryManagerProperty:
 
         mm = MagicMock()
         auto = MagicMock(return_value=mm)
-        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("ryotenkai_pod.trainer.memory_manager.MemoryManager.auto_configure", auto)
 
         assert container.memory_manager is mm
         assert container.memory_manager is mm
@@ -61,7 +61,7 @@ class TestMemoryManagerWithCallbacks:
 
         mlflow = MagicMock()
         auto = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("ryotenkai_pod.trainer.memory_manager.MemoryManager.auto_configure", auto)
 
         _ = container.create_memory_manager_with_callbacks(mlflow_manager=mlflow)
         callbacks = auto.call_args.kwargs["callbacks"]
@@ -86,7 +86,7 @@ class TestDatasetLoaderFactory:
         container = TrainingContainer(cfg, _dataset_loader=injected_loader)
 
         factory_cls = MagicMock()
-        monkeypatch.setattr("src.data.loaders.DatasetLoaderFactory", factory_cls)
+        monkeypatch.setattr("ryotenkai_control.data.loaders.DatasetLoaderFactory", factory_cls)
 
         loader = container.get_loader_for_dataset("missing")
         assert loader is injected_loader
@@ -101,7 +101,7 @@ class TestDatasetLoaderFactory:
         out_loader = MagicMock()
         factory.create_for_dataset.return_value = out_loader
         factory_cls = MagicMock(return_value=factory)
-        monkeypatch.setattr("src.data.loaders.DatasetLoaderFactory", factory_cls)
+        monkeypatch.setattr("ryotenkai_control.data.loaders.DatasetLoaderFactory", factory_cls)
 
         loader = container.get_loader_for_dataset("x")
         assert loader is out_loader
@@ -122,7 +122,7 @@ class TestMLflowManagerProperty:
 
         mgr = MagicMock()
         cls = MagicMock(return_value=mgr)
-        monkeypatch.setattr("src.training.managers.mlflow_manager.MLflowManager", cls)
+        monkeypatch.setattr("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", cls)
 
         assert container.mlflow_manager is mgr
         assert container.mlflow_manager is mgr
@@ -154,7 +154,7 @@ class TestOrchestratorAndModelLoading:
 
         orchestrator = MagicMock()
         orch_cls = MagicMock(return_value=orchestrator)
-        monkeypatch.setattr("src.training.orchestrator.StrategyOrchestrator", orch_cls)
+        monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.StrategyOrchestrator", orch_cls)
 
         model = MagicMock()
         tok = MagicMock()
@@ -183,7 +183,7 @@ class TestOrchestratorAndModelLoading:
         model = MagicMock()
         tok = MagicMock()
         loader = MagicMock(return_value=(model, tok))
-        monkeypatch.setattr("src.training.models.loader.load_model_and_tokenizer", loader)
+        monkeypatch.setattr("ryotenkai_pod.trainer.models.loader.load_model_and_tokenizer", loader)
 
         out_model, out_tok = container.load_model_and_tokenizer()
         assert out_model is model

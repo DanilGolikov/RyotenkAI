@@ -5,13 +5,13 @@ config history, plugin selection, and runs output. Sibling to the file-based
 
 from __future__ import annotations
 
-from src.workspace.projects.models import (
+from ryotenkai_control.workspace.projects.models import (
     ProjectConfigVersion,
     ProjectMetadata,
     ProjectRegistryEntry,
 )
-from src.workspace.projects.registry import ProjectRegistry
-from src.workspace.projects.store import ProjectStore
+from ryotenkai_control.workspace.projects.registry import ProjectRegistry
+from ryotenkai_control.workspace.projects.store import ProjectStore
 
 __all__ = [
     "ProjectConfigVersion",

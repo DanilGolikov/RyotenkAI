@@ -35,9 +35,9 @@ from pathlib import Path
 
 import pytest
 
-from src.community.catalog import CommunityCatalog
-from src.community.constants import LIBS_NAMESPACE
-from src.community.libs import (
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.constants import LIBS_NAMESPACE
+from ryotenkai_community.libs import (
     LibLoadFailure,
     LibLoadResult,
     LoadedLib,
@@ -291,7 +291,7 @@ class TestCatalogIntegration:
         assert "bad" in failures[0].entry_name
 
     def test_real_catalog_carries_helixql(self) -> None:
-        from src.community.catalog import catalog as real_catalog
+        from ryotenkai_community.catalog import catalog as real_catalog
 
         real_catalog.reload()
         ids = sorted(lib.manifest.lib.id for lib in real_catalog.libs())
@@ -310,7 +310,7 @@ class TestLibsInvisibleToPluginLoader:
         # Drop something inside libs/ that LOOKS like a plugin (has
         # [plugin] section). The plugin loader must NOT walk into
         # libs/.
-        from src.community.loader import load_all_plugins
+        from ryotenkai_community.loader import load_all_plugins
 
         bogus = tmp_community_root / "libs" / "shape_shifter"
         bogus.mkdir(parents=True)

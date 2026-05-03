@@ -15,12 +15,12 @@ from typing import TYPE_CHECKING
 from fastapi import Request
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
-    from src.runner.heartbeat import MacHeartbeat
-    from src.runner.mlflow_relay import MLflowRelay
-    from src.runner.plugin_unpacker import PluginUnpacker
-    from src.runner.state import JobLifecycleFSM
-    from src.runner.supervisor import Supervisor
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.heartbeat import MacHeartbeat
+    from ryotenkai_pod.runner.mlflow_relay import MLflowRelay
+    from ryotenkai_pod.runner.plugin_unpacker import PluginUnpacker
+    from ryotenkai_pod.runner.state import JobLifecycleFSM
+    from ryotenkai_pod.runner.supervisor import Supervisor
 
 __all__ = [
     "get_bus",

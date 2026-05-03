@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from src.providers.runpod.models import PodSnapshot, SshEndpoint
-from src.providers.runpod.pod_control import (
+from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
+from ryotenkai_providers.runpod.pod_control import (
     RunPodInferencePodControl,
     RunPodTrainingPodControl,
 )
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 pytestmark = pytest.mark.unit
 
@@ -186,7 +186,7 @@ class _CountingTrainingApi(FakeTrainingApi):
 
 
 def test_create_retries_on_transient_capacity_error(monkeypatch) -> None:
-    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
     transient = Err(ProviderError(
         message="There are no longer any instances available with the requested specifications. Please refresh and try again.",
         code="RUNPOD_GRAPHQL_ERROR",
@@ -202,7 +202,7 @@ def test_create_retries_on_transient_capacity_error(monkeypatch) -> None:
 
 
 def test_create_does_not_retry_non_transient_error(monkeypatch) -> None:
-    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
     permanent = Err(ProviderError(
         message="Invalid API key",
         code="RUNPOD_GRAPHQL_ERROR",
@@ -216,7 +216,7 @@ def test_create_does_not_retry_non_transient_error(monkeypatch) -> None:
 
 
 def test_create_exhausts_retries_on_persistent_transient_error(monkeypatch) -> None:
-    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
     transient = Err(ProviderError(
         message="no instances available, try again",
         code="RUNPOD_GRAPHQL_ERROR",
@@ -239,7 +239,7 @@ def test_create_exhausts_retries_on_persistent_transient_error(monkeypatch) -> N
     ],
 )
 def test_create_retries_on_additional_transient_markers(monkeypatch, message: str) -> None:
-    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
     transient = Err(ProviderError(message=message, code="RUNPOD_GRAPHQL_ERROR"))
     success = Ok({"pod_id": "pod-ok"})  # type: ignore[call-arg]
     api = _CountingTrainingApi(results=[transient, success])
@@ -252,7 +252,7 @@ def test_create_retries_on_additional_transient_markers(monkeypatch, message: st
 
 
 def test_create_returns_last_error_instance_after_retry_exhaustion(monkeypatch) -> None:
-    monkeypatch.setattr("src.providers.runpod.pod_control.time.sleep", lambda _: None)
+    monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
     first = Err(ProviderError(message="timeout", code="RUNPOD_GRAPHQL_ERROR"))
     second_err = ProviderError(message="503 unavailable", code="RUNPOD_GRAPHQL_ERROR")
     second = Err(second_err)

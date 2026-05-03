@@ -13,9 +13,9 @@ import mlflow
 import pytest
 from mlflow.entities import Run, RunData, RunInfo
 
-from src.reports.adapters.mlflow_adapter import MLflowAdapter
-from src.reports.domain.entities import RunStatus
-from src.reports.report_generator import ExperimentReportGenerator
+from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
+from ryotenkai_control.reports.domain.entities import RunStatus
+from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
 # =============================================================================
 # FIXTURES & HELPERS
@@ -25,7 +25,7 @@ from src.reports.report_generator import ExperimentReportGenerator
 @pytest.fixture
 def mock_mlflow_client(mocker):
     """Mock MlflowClient using mocker for proper cleanup."""
-    mock = mocker.patch("src.reports.adapters.mlflow_adapter.MlflowClient")
+    mock = mocker.patch("ryotenkai_control.reports.adapters.mlflow_adapter.MlflowClient")
     return mock.return_value
 
 

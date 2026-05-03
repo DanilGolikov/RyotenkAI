@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.pipeline.artifacts import (
+from ryotenkai_control.pipeline.artifacts import (
     StageArtifactCollector,
     ValidationArtifactData,
     ValidationDatasetData,
     ValidationPluginData,
 )
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.stages import StageNames
 
 _STATUS_FAILED = "failed"
 _STATUS_PASSED = "passed"

@@ -10,7 +10,7 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.config import InferenceVLLMEngineConfig
+    from ryotenkai_shared.config import InferenceVLLMEngineConfig
 
 
 class VLLMEngine:

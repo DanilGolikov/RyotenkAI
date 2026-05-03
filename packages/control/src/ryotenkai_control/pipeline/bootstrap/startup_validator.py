@@ -28,10 +28,10 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from src.config.validators.runtime import validate_eval_plugin_secrets
-from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
-from src.config import validate_strategy_chain
-from src.utils.logger import logger
+from ryotenkai_shared.config.validators.runtime import validate_eval_plugin_secrets
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
+from ryotenkai_shared.config import validate_strategy_chain
+from ryotenkai_shared.utils.logger import logger
 
 
 def _resolve_required_secrets_for_provider(
@@ -56,7 +56,7 @@ def _resolve_required_secrets_for_provider(
     return ()
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, Secrets
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 class StartupValidationError(ValueError):

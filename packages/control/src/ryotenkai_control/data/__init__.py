@@ -11,7 +11,7 @@ Supported formats:
 - `text`: Plain text (TRL uses directly)
 
 Example:
-    from src.data.loaders import JsonDatasetLoader
+    from ryotenkai_control.data.loaders import JsonDatasetLoader
     loader = JsonDatasetLoader(config)
     dataset = loader.load("data/train.jsonl")
 """

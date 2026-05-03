@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.validators.cross import (
+from ryotenkai_shared.config.validators.cross import (
     validate_pipeline_active_provider_is_registered,
     validate_pipeline_evaluation_requires_inference,
     validate_pipeline_inference_provider_config,
     validate_pipeline_providers_config,
     validate_pipeline_strategy_dataset_references,
 )
-from src.config.validators.pipeline import validate_pipeline_config_references
+from ryotenkai_shared.config.validators.pipeline import validate_pipeline_config_references
 
 pytestmark = pytest.mark.unit
 
@@ -114,8 +114,8 @@ class TestValidatePipelineActiveProviderIsRegistered:
             datasets={"default": object()},
         )
         with patch(
-            "src.config.validators.cross.importlib.import_module",
-            side_effect=ModuleNotFoundError("nope", name="src.providers.training"),
+            "ryotenkai_shared.config.validators.cross.importlib.import_module",
+            side_effect=ModuleNotFoundError("nope", name="ryotenkai_providers.training"),
         ):
             result = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
         _assert_ok(result)
@@ -133,7 +133,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
                 return ["single_node"]
 
         dummy_mod = SimpleNamespace(GPUProviderFactory=DummyFactory)
-        with patch("src.config.validators.cross.importlib.import_module", return_value=dummy_mod):
+        with patch("ryotenkai_shared.config.validators.cross.importlib.import_module", return_value=dummy_mod):
             err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_NOT_REGISTERED")  # type: ignore[arg-type]
         assert "Unknown provider" in err
         assert "local" in err
@@ -158,7 +158,7 @@ class TestValidatePipelineActiveProviderIsRegistered:
                 return ["single_node", "runpod"]
 
         dummy_mod = SimpleNamespace(GPUProviderFactory=DummyFactory)
-        with patch("src.config.validators.cross.importlib.import_module", return_value=dummy_mod):
+        with patch("ryotenkai_shared.config.validators.cross.importlib.import_module", return_value=dummy_mod):
             result = validate_pipeline_active_provider_is_registered(cfg)  # type: ignore[arg-type]
         _assert_ok(result)
 
@@ -260,7 +260,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         assert "invalid for SingleNodeConfig" in err
 
     def test_negative_single_node_generic_exception(self) -> None:
-        from src.config.providers.registry import PROVIDER_TYPES
+        from ryotenkai_shared.config.providers.registry import PROVIDER_TYPES
 
         cfg = DummyPipelineCfg(
             providers={"single_node": {}},
@@ -283,7 +283,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         assert "invalid for RunPodProviderConfig" in err
 
     def test_negative_runpod_generic_exception(self) -> None:
-        from src.config.providers.registry import PROVIDER_TYPES
+        from ryotenkai_shared.config.providers.registry import PROVIDER_TYPES
 
         cfg = DummyPipelineCfg(
             providers={"runpod": {}},
@@ -316,7 +316,7 @@ class TestValidatePipelineActiveProviderIsRegisteredEdgeCases:
     def test_negative_non_pipeline_module_not_found_error(self) -> None:
         cfg = self._cfg_with_custom_provider()
         with patch(
-            "src.config.validators.cross.importlib.import_module",
+            "ryotenkai_shared.config.validators.cross.importlib.import_module",
             side_effect=ModuleNotFoundError("bad module", name="some.other.module"),
         ):
             err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_REGISTRY_LOAD_FAILED")  # type: ignore[arg-type]
@@ -325,7 +325,7 @@ class TestValidatePipelineActiveProviderIsRegisteredEdgeCases:
     def test_negative_generic_exception_from_factory_import(self) -> None:
         cfg = self._cfg_with_custom_provider()
         with patch(
-            "src.config.validators.cross.importlib.import_module",
+            "ryotenkai_shared.config.validators.cross.importlib.import_module",
             side_effect=RuntimeError("unexpected crash"),
         ):
             err = _assert_err(validate_pipeline_active_provider_is_registered(cfg), code="CONFIG_PROVIDER_REGISTRY_LOAD_FAILED")  # type: ignore[arg-type]
@@ -390,7 +390,7 @@ class TestValidatePipelineInferenceProviderConfig:
         )
         mock_sn = MagicMock()
         mock_sn.SingleNodeConfig.side_effect = OSError("disk error")
-        with patch.dict(sys.modules, {"src.config.providers.single_node": mock_sn}):
+        with patch.dict(sys.modules, {"ryotenkai_shared.config.providers.single_node": mock_sn}):
             err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_SINGLE_NODE_INVALID")  # type: ignore[arg-type]
         assert "invalid for SingleNodeConfig" in err
 
@@ -442,7 +442,7 @@ class TestValidatePipelineInferenceProviderConfig:
         )
         mock_rp = MagicMock()
         mock_rp.RunPodProviderConfig.side_effect = OSError("crash")
-        with patch.dict(sys.modules, {"src.config.providers.runpod": mock_rp}):
+        with patch.dict(sys.modules, {"ryotenkai_shared.config.providers.runpod": mock_rp}):
             err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_RUNPOD_INVALID")  # type: ignore[arg-type]
         assert "invalid for RunPodProviderConfig" in err
 
@@ -531,7 +531,7 @@ class TestValidatePipelineConfigReferences:
                 return ["single_node"]
 
         dummy_mod = SimpleNamespace(GPUProviderFactory=DummyFactory)
-        with patch("src.config.validators.cross.importlib.import_module", return_value=dummy_mod):
+        with patch("ryotenkai_shared.config.validators.cross.importlib.import_module", return_value=dummy_mod):
             with pytest.raises(ValueError, match=r"Unknown provider: 'local'"):
                 validate_pipeline_config_references(cfg)  # type: ignore[arg-type]
 

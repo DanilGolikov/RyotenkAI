@@ -19,19 +19,19 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from src.api.dependencies import DatasetRequestContext, resolve_dataset_key
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.data.preview.loader import (
+from ryotenkai_control.api.dependencies import DatasetRequestContext, resolve_dataset_key
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
+from ryotenkai_control.data.preview.loader import (
     PREVIEW_LIMIT_MAX,
     DatasetPreviewLoader,
 )
-from src.data.validation.standalone import (
+from ryotenkai_control.data.validation.standalone import (
     FormatCheckResult,
     StandalonePluginRun,
     check_dataset_format,
     run_plugins,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 router = APIRouter(prefix="/projects/{project_id}/datasets", tags=["datasets"])
 
@@ -284,7 +284,7 @@ def _local_split_check(project_root: Path, raw_path: str) -> PathCheckSplit:
     # loader's mtime cache.
     line_count: int | None
     try:
-        from src.data.preview.loader import _count_lines  # type: ignore[attr-defined]
+        from ryotenkai_control.data.preview.loader import _count_lines  # type: ignore[attr-defined]
 
         line_count = _count_lines(path)
     except Exception as exc:
@@ -418,7 +418,7 @@ def _strategy_phases_for_dataset(ctx: DatasetRequestContext) -> list[Any]:
 def _phase_from_dict(raw: dict[str, Any]):
     """Materialise a StrategyPhaseConfig from a raw dict, swallowing
     pydantic errors — the user might still be editing the form."""
-    from src.config.training.strategies.phase import StrategyPhaseConfig
+    from ryotenkai_shared.config.training.strategies.phase import StrategyPhaseConfig
 
     try:
         return StrategyPhaseConfig.model_validate(raw)
@@ -437,7 +437,7 @@ def _try_build_pipeline_config(parsed: dict[str, Any]):
     returns None — the format check is then skipped with a soft
     warning, but the plugin pass still runs (it doesn't need it)."""
     try:
-        from src.config import PipelineConfig
+        from ryotenkai_shared.config import PipelineConfig
 
         return PipelineConfig.model_validate(parsed)
     except Exception as exc:
@@ -462,8 +462,8 @@ def _run_configured_plugins(dataset: Any, cfg: Any) -> list[StandalonePluginRun]
     if not plugin_configs:
         return []
 
-    from src.community import catalog
-    from src.data.validation.registry import validation_registry
+    from ryotenkai_community import catalog
+    from ryotenkai_control.data.validation.registry import validation_registry
 
     catalog.ensure_loaded()  # idempotent
 
@@ -473,7 +473,7 @@ def _run_configured_plugins(dataset: Any, cfg: Any) -> list[StandalonePluginRun]
     # value always wins; we only fill in keys the user never provided.
     manifests_by_id: dict[str, Any] = {}
     try:
-        from src.community.catalog import catalog as community_catalog
+        from ryotenkai_community.catalog import catalog as community_catalog
 
         for loaded in community_catalog.plugins("validation"):
             manifests_by_id[loaded.manifest.plugin.id] = loaded.manifest
@@ -588,7 +588,7 @@ def _resolve_hf_token() -> str | None:
     """Pull HF token from existing Secrets layer (set via Settings →
     Integrations → HuggingFace). None → use anonymous access."""
     try:
-        from src.config.secrets.model import Secrets
+        from ryotenkai_shared.config.secrets.model import Secrets
 
         return Secrets().hf_token
     except Exception as exc:

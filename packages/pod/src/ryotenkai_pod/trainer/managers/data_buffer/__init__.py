@@ -15,19 +15,19 @@ Internal structure:
 
 from __future__ import annotations
 
-from src.training.managers.data_buffer.checkpoint_utils import (
+from ryotenkai_pod.trainer.managers.data_buffer.checkpoint_utils import (
     _extract_checkpoint_step,
     _get_sorted_checkpoints,
     _sanitize_metrics,
     list_available_runs,
 )
-from src.training.managers.data_buffer.events import DataBufferEventCallbacks
-from src.training.managers.data_buffer.fault_simulator import (
+from ryotenkai_pod.trainer.managers.data_buffer.events import DataBufferEventCallbacks
+from ryotenkai_pod.trainer.managers.data_buffer.fault_simulator import (
     FaultSimulator,
     SimulatedFaultError,
 )
-from src.training.managers.data_buffer.manager import DataBuffer
-from src.training.managers.data_buffer.state_models import (
+from ryotenkai_pod.trainer.managers.data_buffer.manager import DataBuffer
+from ryotenkai_pod.trainer.managers.data_buffer.state_models import (
     PhaseState,
     PhaseStatus,
     PipelineState,

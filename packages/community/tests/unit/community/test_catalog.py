@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from src.community.catalog import CommunityCatalog
+from ryotenkai_community.catalog import CommunityCatalog
 
 
 def _make_plugin(root: Path, kind: str, plugin_id: str, class_name: str) -> None:

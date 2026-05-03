@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
-from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
+from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
+from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, save_plugin_report
 
 _QUERY_LINE_RE = re.compile(r"^\s*QUERY\s+", flags=re.MULTILINE)
 _QUERY_SIG_RE = re.compile(

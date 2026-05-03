@@ -97,7 +97,7 @@ from typing import TYPE_CHECKING, Any
 
 from transformers import TrainerCallback
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -205,7 +205,7 @@ class CompletionCallback(TrainerCallback):
             return
 
         # Lazy imports keep this module slim-venv-importable.
-        from src.training.callbacks._flush_helper import (
+        from ryotenkai_pod.trainer.callbacks._flush_helper import (
             run_flush_with_deadline,
         )
 
@@ -256,7 +256,7 @@ class CompletionCallback(TrainerCallback):
         handler = self._handler
         if handler is None:
             try:
-                from src.training.orchestrator.shutdown_handler import (
+                from ryotenkai_pod.trainer.orchestrator.shutdown_handler import (
                     get_shutdown_handler,
                 )
 
@@ -299,7 +299,7 @@ class CompletionCallback(TrainerCallback):
             )
             return
         try:
-            from src.runner.cancellation_telemetry import (
+            from ryotenkai_pod.runner.cancellation_telemetry import (
                 COMPLETION_FINALIZED,
             )
 
@@ -368,7 +368,7 @@ class CompletionCallback(TrainerCallback):
             import time
             from pathlib import Path
 
-            from src.utils.atomic_fs import atomic_write_text
+            from ryotenkai_shared.utils.atomic_fs import atomic_write_text
 
             target = Path(workspace) / "completion.marker"
             reason = "flush_budget_exceeded" if flush_timed_out else "natural_completion"

@@ -25,8 +25,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.community.manifest import PluginKind
-    from src.config import PipelineConfig
+    from ryotenkai_community.manifest import PluginKind
+    from ryotenkai_shared.config import PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ def find_stale_plugins(config: PipelineConfig) -> list[StalePluginRef]:
     that's already silent for the same triple — keep this strictly
     informational).
     """
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.ensure_loaded()
 
@@ -64,7 +64,7 @@ def find_stale_plugins(config: PipelineConfig) -> list[StalePluginRef]:
     # triple — params/thresholds aren't relevant for staleness. Keeping
     # the enumerators in one place means stale-detection automatically
     # picks up any new plugin kinds added later.
-    from src.community.preflight import (
+    from ryotenkai_community.preflight import (
         _enabled_evaluation_plugins,
         _enabled_report_plugins,
         _enabled_reward_plugins,
@@ -130,19 +130,19 @@ def _is_registered(kind: PluginKind, plugin_name: str) -> bool:
     method is the cleaner shape for boolean tests.
     """
     if kind == "validation":
-        from src.data.validation.registry import validation_registry
+        from ryotenkai_control.data.validation.registry import validation_registry
 
         return validation_registry.is_registered(plugin_name)
     if kind == "evaluation":
-        from src.evaluation.plugins.registry import evaluator_registry
+        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
 
         return evaluator_registry.is_registered(plugin_name)
     if kind == "reward":
-        from src.training.reward_plugins.registry import reward_registry
+        from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
 
         return reward_registry.is_registered(plugin_name)
     if kind == "reports":
-        from src.reports.plugins.registry import report_registry
+        from ryotenkai_control.reports.plugins.registry import report_registry
 
         return report_registry.is_registered(plugin_name)
     return False  # type: ignore[unreachable]  # defensive: mypy sees the Literal union as exhaustive

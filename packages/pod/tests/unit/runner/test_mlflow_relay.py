@@ -41,7 +41,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.runner.mlflow_relay import (
+from ryotenkai_pod.runner.mlflow_relay import (
     MLFLOW_EVENT_KINDS,
     MLflowRelay,
     MLflowRelayCircuitBreaker,
@@ -422,7 +422,7 @@ class TestLogicSpecific:
         # Calling ``make_mlflow_forward_fn`` shouldn't fail when
         # mlflow is missing — at module-import time. It only fails
         # when the user actually invokes the factory.
-        from src.runner import mlflow_relay as relay_mod
+        from ryotenkai_pod.runner import mlflow_relay as relay_mod
 
         # Monkey-patch ``mlflow`` to be importable but stubbed; the
         # body of ``make_mlflow_forward_fn`` then runs without the
@@ -461,7 +461,7 @@ class TestLogicSpecific:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Production stub of mlflow as in the previous test.
-        from src.runner import mlflow_relay as relay_mod
+        from ryotenkai_pod.runner import mlflow_relay as relay_mod
         import sys
         import types
 

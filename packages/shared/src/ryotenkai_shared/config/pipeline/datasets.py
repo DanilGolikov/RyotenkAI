@@ -30,7 +30,7 @@ class PipelineDatasetMixin:
             KeyError: If dataset name not found in registry
         """
         # Local import to avoid heavy side-effects at module import time.
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
 
         if name is None:
             return self.get_primary_dataset()
@@ -89,7 +89,7 @@ class PipelineDatasetMixin:
             DatasetConfig for this strategy
         """
         # Local import to avoid heavy side-effects at module import time.
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
 
         if strategy.dataset:
             dataset = self.get_dataset(strategy.dataset)

@@ -10,14 +10,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from urllib.request import urlopen
 
-from src.pipeline.stages import StageNames
-from src.pipeline.state import PipelineState
-from src.pipeline.state.queries import first_unfinished_stage
-from src.utils.result import AppError
+from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.state import PipelineState
+from ryotenkai_control.pipeline.state.queries import first_unfinished_stage
+from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
-    from src.pipeline.stages.base import PipelineStage
-    from src.config import PipelineConfig
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_shared.config import PipelineConfig
 
 
 _HTTP_OK_MIN = 200

@@ -22,15 +22,15 @@ from typing import Annotated
 
 import typer
 
-from src.cli.common_options import (
+from ryotenkai_control.cli.common_options import (
     DryRunOpt,
     OptionalRunDirOpt,
     ProjectOpt,
     RunDirArg,
 )
-from src.cli.context import CLIContext
-from src.cli.errors import die, format_validation_errors
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die, format_validation_errors
+from ryotenkai_control.cli.renderer import get_renderer
 
 run_app = typer.Typer(
     no_args_is_help=True,
@@ -57,7 +57,7 @@ def _resolve_config(config: Path | None, run_dir: Path | None) -> Path:
     if config is not None:
         return config
     if run_dir is not None:
-        from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+        from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
         store = PipelineStateStore(run_dir.expanduser().resolve())
         if not store.exists():
@@ -103,7 +103,7 @@ def _resolve_project_for_launch(
     """
     from pydantic import ValidationError
 
-    from src.workspace.projects.adapter import (
+    from ryotenkai_control.workspace.projects.adapter import (
         ProjectNotFoundError,
         resolve_project_launch_inputs,
         resolve_project_launch_inputs_from_run_dir,
@@ -145,8 +145,8 @@ def _spawn_worker(
     plan (``dry_run``) or forks ``python -m src.pipeline.worker``
     foreground (stdio inherited, blocking).
     """
-    from src.pipeline.launch import LaunchRequest
-    from src.workspace.projects.adapter import build_subprocess_extra_env
+    from ryotenkai_control.pipeline.launch import LaunchRequest
+    from ryotenkai_control.workspace.projects.adapter import build_subprocess_extra_env
 
     resolved = _resolve_project_for_launch(
         project_id,
@@ -214,7 +214,7 @@ def _spawn_worker(
     # Construct the command directly (LaunchRequest validation expects
     # a real run_dir for fresh-mode; we shortcut around it for the
     # "no run_dir" case by building the command manually).
-    cmd = ["python", "-m", "src.pipeline.worker"]
+    cmd = ["python", "-m", "ryotenkai_control.pipeline.worker"]
     if run_dir is not None:
         cmd.extend(["--run-dir", str(run_dir.expanduser().resolve())])
     if config_for_spawn is not None:
@@ -296,7 +296,7 @@ def start_cmd(
         # Only consult the persisted context when the user gave us
         # nothing else to anchor on — keeps "ad-hoc -c X.yaml" paths
         # untouched.
-        from src.cli_state import context_store
+        from ryotenkai_control.cli_state import context_store
 
         resolved_project = context_store.get_current_project()
 
@@ -407,8 +407,8 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
       always-on providers).
     * RUNPOD_API_KEY missing.
     """
-    from src.pipeline.launch.pod_availability import PodAvailability
-    from src.pipeline.launch.resume_service import (
+    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_control.pipeline.launch.resume_service import (
         LaunchResumeService,
         ResumeProgress,
     )
@@ -510,7 +510,7 @@ def interrupt_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Send SIGINT to a detached run's pid (graceful stop)."""
-    from src.api.services import launch_service
+    from ryotenkai_control.api.services import launch_service
 
     if dry_run:
         typer.echo(f"dry-run: would interrupt run at {run_dir}")
@@ -536,7 +536,7 @@ def restart_points_cmd(
     ] = None,
 ) -> None:
     """List the stages this run can be restarted / resumed from."""
-    from src.pipeline.launch.restart_options import load_restart_point_options
+    from ryotenkai_control.pipeline.launch.restart_options import load_restart_point_options
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

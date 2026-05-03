@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.pipeline.state import PipelineState, PipelineStateLoadError, PipelineStateStore
+from ryotenkai_control.pipeline.state import PipelineState, PipelineStateLoadError, PipelineStateStore
 
 _LOG_TAIL_LINES = 30
 ROOT_GROUP = "(root)"

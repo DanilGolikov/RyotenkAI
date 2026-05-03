@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.execution.stage_planner import is_inference_runtime_healthy
-from src.pipeline.launch.restart_rules import compute_restart_points
-from src.pipeline.state import PipelineStateStore
+from ryotenkai_control.pipeline.execution.stage_planner import is_inference_runtime_healthy
+from ryotenkai_control.pipeline.launch.restart_rules import compute_restart_points
+from ryotenkai_control.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.pipeline.config_drift import ConfigDriftValidator
-    from src.pipeline.stages.base import PipelineStage
+    from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
 
 
 class RestartPointsInspector:

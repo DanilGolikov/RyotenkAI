@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.runner.heartbeat import MacHeartbeat
+from ryotenkai_pod.runner.heartbeat import MacHeartbeat
 
 
 class _Clock:

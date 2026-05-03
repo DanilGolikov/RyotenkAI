@@ -14,7 +14,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from src.utils.text_utils import extract_nested_text
+from ryotenkai_shared.utils.text_utils import extract_nested_text
 
 # Schema fences look like ```helixschema\n...\n``` in plugin prompts.
 # Compile once at import time — the regex is hot-path on validation

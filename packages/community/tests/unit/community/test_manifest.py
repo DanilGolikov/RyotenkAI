@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.community.manifest import PluginManifest, PresetManifest
+from ryotenkai_community.manifest import PluginManifest, PresetManifest
 
 
 def _base_plugin_body(**overrides):

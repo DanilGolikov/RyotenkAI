@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.reports.core.analyzers_memory import MemoryAnalyzer
-from src.reports.models.report import MemoryEvent, MemoryManagementInfo, MetricStatus
+from ryotenkai_control.reports.core.analyzers_memory import MemoryAnalyzer
+from ryotenkai_control.reports.models.report import MemoryEvent, MemoryManagementInfo, MetricStatus
 
 
 @pytest.fixture

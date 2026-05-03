@@ -11,6 +11,6 @@ pipeline orchestrator.
 
 from __future__ import annotations
 
-from src.providers.inference.vllm.engine import VLLMEngine
+from ryotenkai_providers.inference.vllm.engine import VLLMEngine
 
 __all__ = ["VLLMEngine"]

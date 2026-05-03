@@ -10,7 +10,7 @@ Collects and reports environment information critical for reproducibility:
 - OS information
 
 Usage:
-    from src.utils.environment import EnvironmentReporter
+    from ryotenkai_shared.utils.environment import EnvironmentReporter
     reporter = EnvironmentReporter.collect()
     reporter.log_summary()  # Print to console
     reporter.to_dict()      # For W&B/checkpoint
@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 _VERSION_UNAVAILABLE = "N/A"
 

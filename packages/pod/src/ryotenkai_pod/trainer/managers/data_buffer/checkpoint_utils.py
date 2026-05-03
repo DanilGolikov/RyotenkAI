@@ -10,14 +10,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.training.managers.constants import (
+from ryotenkai_pod.trainer.managers.constants import (
     CHECKPOINT_FINAL_DIR,
     CHECKPOINT_SIZE_ESTIMATE_MB,  # noqa: F401  (re-exported for convenience)
     KEY_PHASES,
     KEY_STARTED_AT,
     KEY_STATUS,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 
 # ---------------------------------------------------------------------------

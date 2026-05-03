@@ -27,11 +27,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from src.utils.cancellation import sleep_cancellable
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import PipelineContextKeys, StageNames
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, InferenceError, Ok, Result
+from ryotenkai_shared.utils.cancellation import sleep_cancellable
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, InferenceError, Ok, Result
 
 # Pre-flight probe parameters. Strict by design: a healthy endpoint
 # answers within ~1 s; two attempts are enough to absorb a single
@@ -43,8 +43,8 @@ _PREFLIGHT_RETRY_BACKOFF_S = 1.0
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.config.secrets.model import Secrets
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.config import PipelineConfig
 
 
 @dataclass
@@ -153,7 +153,7 @@ class ModelEvaluator(PipelineStage):
         start_time = time.time()
 
         # Build inference client via factory (DIP: depends on IModelInference, not concrete class)
-        from src.evaluation.model_client.factory import ModelClientFactory
+        from ryotenkai_control.evaluation.model_client.factory import ModelClientFactory
 
         system_prompt = self._load_system_prompt(context)
         if system_prompt:
@@ -174,8 +174,8 @@ class ModelEvaluator(PipelineStage):
         # Run evaluation
         from typing import cast
 
-        from src.evaluation.plugins.secrets import SecretsResolver
-        from src.evaluation.runner import EvaluationRunner
+        from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
+        from ryotenkai_control.evaluation.runner import EvaluationRunner
 
         secrets_resolver = SecretsResolver(self._secrets) if self._secrets is not None else None
         runner = EvaluationRunner(
@@ -270,8 +270,8 @@ class ModelEvaluator(PipelineStage):
         except (KeyError, ValueError):
             return None
 
-        from src.config.inference.common import InferenceLLMConfig
-        from src.evaluation.system_prompt import SystemPromptLoader
+        from ryotenkai_shared.config.inference.common import InferenceLLMConfig
+        from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader
 
         llm_raw = provider_cfg_raw.get("inference", {}).get("llm", {})
         if not isinstance(llm_raw, dict):

@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.constants import STRATEGY_DPO
-from src.training.strategies.base import StrategyMetadata, TrainingStrategy
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, StrategyError
+from ryotenkai_shared.constants import STRATEGY_DPO
+from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from datasets import Dataset

@@ -13,10 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.strategies.base import StrategyMetadata
-from src.training.strategies.cot import CoTStrategy
-from src.training.strategies.cpt import CPTStrategy
-from src.training.strategies.sft import SFTStrategy
+from ryotenkai_pod.trainer.strategies.base import StrategyMetadata
+from ryotenkai_pod.trainer.strategies.cot import CoTStrategy
+from ryotenkai_pod.trainer.strategies.cpt import CPTStrategy
+from ryotenkai_pod.trainer.strategies.sft import SFTStrategy
 
 # =============================================================================
 # FIXTURES
@@ -286,7 +286,7 @@ class TestStrategyFactory:
         When: StrategyFactory().create is called
         Then: Returns SFTStrategy
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         strategy = factory.create("sft", mock_pipeline_config)
@@ -299,7 +299,7 @@ class TestStrategyFactory:
         When: StrategyFactory().create is called
         Then: Returns CPTStrategy
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         strategy = factory.create("cpt", mock_pipeline_config)
@@ -312,7 +312,7 @@ class TestStrategyFactory:
         When: StrategyFactory().create is called
         Then: Returns CoTStrategy
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         strategy = factory.create("cot", mock_pipeline_config)
@@ -325,7 +325,7 @@ class TestStrategyFactory:
         When: StrategyFactory().create is called
         Then: Raises ValueError
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         with pytest.raises(ValueError):
@@ -337,7 +337,7 @@ class TestStrategyFactory:
         When: list_available is called
         Then: Returns dict with sft, cpt, cot
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         strategies = factory.list_available()
@@ -352,7 +352,7 @@ class TestStrategyFactory:
         When: get_default_hyperparameters is called
         Then: Returns dict with defaults for strategy
         """
-        from src.training.strategies.factory import StrategyFactory
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
         factory = StrategyFactory()
         defaults = factory.get_default_hyperparameters("sft")
@@ -422,7 +422,7 @@ class TestStrategyInterface:
 @pytest.fixture
 def orpo_strategy(mock_pipeline_config):
     """Create ORPOStrategy instance."""
-    from src.training.strategies.orpo import ORPOStrategy
+    from ryotenkai_pod.trainer.strategies.orpo import ORPOStrategy
 
     return ORPOStrategy(mock_pipeline_config)
 
@@ -430,7 +430,7 @@ def orpo_strategy(mock_pipeline_config):
 @pytest.fixture
 def dpo_strategy(mock_pipeline_config):
     """Create DPOStrategy instance."""
-    from src.training.strategies.dpo import DPOStrategy
+    from ryotenkai_pod.trainer.strategies.dpo import DPOStrategy
 
     return DPOStrategy(mock_pipeline_config)
 
@@ -438,7 +438,7 @@ def dpo_strategy(mock_pipeline_config):
 @pytest.fixture
 def sapo_strategy(mock_pipeline_config):
     """Create SAPOStrategy instance."""
-    from src.training.strategies.sapo import SAPOStrategy
+    from ryotenkai_pod.trainer.strategies.sapo import SAPOStrategy
 
     return SAPOStrategy(mock_pipeline_config)
 

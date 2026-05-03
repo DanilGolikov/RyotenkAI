@@ -22,10 +22,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from src.cli.run_rendering import RunInspectionRenderer, format_duration
-from src.main import app
-from src.pipeline.state import RunContext
-from src.pipeline.run_queries import (
+from ryotenkai_control.cli.run_rendering import RunInspectionRenderer, format_duration
+from ryotenkai_control.main import app
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_control.pipeline.run_queries import (
     ROOT_GROUP,
     RunInspector,
     RunSummaryRow,
@@ -36,7 +36,7 @@ from src.pipeline.run_queries import (
     scan_runs_dir_grouped,
     tail_lines,
 )
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.state import (
     PipelineState,
     PipelineStateStore,
     StageRunState,
@@ -189,7 +189,7 @@ def test_run_inspector_reads_log_tail_when_file_exists(tmp_path: Path) -> None:
 
 
 def test_run_inspector_raises_on_missing_state(tmp_path: Path) -> None:
-    from src.pipeline.state import PipelineStateLoadError
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError
 
     missing_dir = tmp_path / "ghost_run"
     missing_dir.mkdir()
@@ -263,7 +263,7 @@ def test_renderer_empty_attempts(tmp_path: Path) -> None:
         late_stage_config_hash="h2",
     )
 
-    from src.pipeline.run_queries import RunInspectionData
+    from ryotenkai_control.pipeline.run_queries import RunInspectionData
 
     data = RunInspectionData(run_dir=run_dir, state=state, log_tails={})
     renderer = RunInspectionRenderer()
@@ -722,7 +722,7 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
     # HF_TOKEN is now part of the validator's readiness check; provide it so
     # the "valid-config" branch doesn't trip on a missing token in CI.
     with (
-        patch("src.config.load_config", return_value=mock_cfg),
+        patch("ryotenkai_shared.config.load_config", return_value=mock_cfg),
         patch.dict("os.environ", {"HF_TOKEN": "hf_test_token"}, clear=False),
     ):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
@@ -745,7 +745,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
-    with patch("src.config.load_config", return_value=mock_cfg), \
+    with patch("ryotenkai_shared.config.load_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
 

@@ -38,16 +38,16 @@ if "runpod" not in sys.modules:
     sys.modules["runpod"] = _stub
 
 
-from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR  # noqa: E402
-from src.providers.runpod.training.provider import RunPodProvider  # noqa: E402
-from src.providers.training.interfaces import (  # noqa: E402
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR  # noqa: E402
+from ryotenkai_providers.runpod.training.provider import RunPodProvider  # noqa: E402
+from ryotenkai_providers.training.interfaces import (  # noqa: E402
     AvailabilityVerdict,
     ITerminalActionProvider,
     ProviderCapabilities,
     ProviderStatus,
     VolumeKind,
 )
-from src.utils.result import Err, Ok, ProviderError  # noqa: E402
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError  # noqa: E402
 
 
 def _mk_provider(*, keep_on_error: bool = False) -> RunPodProvider:

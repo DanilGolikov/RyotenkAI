@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config import PipelineConfig
+from ryotenkai_shared.config import PipelineConfig
 
 
 def _write_yaml(path: Path, text: str) -> None:
@@ -78,7 +78,7 @@ integrations:
 """,
     )
 
-    with patch("src.providers.training.GPUProviderFactory.get_available_providers", return_value=["single_node"]):
+    with patch("ryotenkai_providers.training.GPUProviderFactory.get_available_providers", return_value=["single_node"]):
         with pytest.raises(ValueError, match=r"Unknown provider: 'local'"):
             _ = PipelineConfig.from_yaml(cfg_path)
 
@@ -144,7 +144,7 @@ integrations:
 """,
     )
 
-    with patch("src.providers.training.GPUProviderFactory.get_available_providers", return_value=["x"]):
+    with patch("ryotenkai_providers.training.GPUProviderFactory.get_available_providers", return_value=["x"]):
         cfg = PipelineConfig.from_yaml(cfg_path)
 
     assert cfg.training.provider == "x"
@@ -221,8 +221,8 @@ integrations:
     real_import_module = importlib.import_module
 
     def _fake_import_module(name: str, package=None):  # type: ignore[no-untyped-def]
-        if name.startswith("src.providers"):
-            raise ModuleNotFoundError("No module named 'src.providers'", name="src.providers")
+        if name.startswith("ryotenkai_providers"):
+            raise ModuleNotFoundError("No module named 'ryotenkai_providers'", name="ryotenkai_providers")
         return real_import_module(name, package)
 
     with patch("importlib.import_module", side_effect=_fake_import_module):

@@ -14,14 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from src.community.constants import (
+from ryotenkai_community.constants import (
     ALL_PLUGIN_KINDS,
     LIBS_DIR_NAME,
     LIBS_NAMESPACE,
     PLUGIN_KIND_DIRS,
 )
-from src.community.catalog import CommunityCatalog
-from src.community.loader import load_all_plugins
+from ryotenkai_community.catalog import CommunityCatalog
+from ryotenkai_community.loader import load_all_plugins
 
 
 class TestLibsNotAKind:

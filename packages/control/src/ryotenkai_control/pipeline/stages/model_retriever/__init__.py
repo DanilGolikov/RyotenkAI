@@ -13,22 +13,22 @@ Internal structure:
 
 from __future__ import annotations
 
-# Re-export SSHClient so that `patch("src.pipeline.stages.model_retriever.SSHClient")`
+# Re-export SSHClient so that `patch("ryotenkai_control.pipeline.stages.model_retriever.SSHClient")`
 # keeps working for tests that patch at the package level.
-from src.utils.ssh_client import SSHClient  # noqa: F401
+from ryotenkai_shared.utils.ssh_client import SSHClient  # noqa: F401
 
-from src.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
-from src.pipeline.stages.model_retriever.metrics_buffer_retriever import (
+from ryotenkai_control.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_buffer_retriever import (
     FetchResult,
     MetricsBufferRetriever,
 )
-from src.pipeline.stages.model_retriever.metrics_replay import (
+from ryotenkai_control.pipeline.stages.model_retriever.metrics_replay import (
     BufferedMetricsReplay,
     ReplayResult,
 )
-from src.pipeline.stages.model_retriever.model_card import ModelCardGenerator
-from src.pipeline.stages.model_retriever.retriever import ModelRetriever
-from src.pipeline.stages.model_retriever.types import (
+from ryotenkai_control.pipeline.stages.model_retriever.model_card import ModelCardGenerator
+from ryotenkai_control.pipeline.stages.model_retriever.retriever import ModelRetriever
+from ryotenkai_control.pipeline.stages.model_retriever.types import (
     ModelCardContext,
     ModelRetrieverEventCallbacks,
     PhaseMetricsResult,

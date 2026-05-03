@@ -10,8 +10,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.mlflow import MLflowConfig
-from src.config import (
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

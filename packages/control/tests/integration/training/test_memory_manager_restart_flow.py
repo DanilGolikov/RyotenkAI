@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
+from ryotenkai_pod.trainer.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
 
 
 def test_safe_operation_oom_becomes_recoverable_error_and_triggers_cleanup_and_callback() -> None:

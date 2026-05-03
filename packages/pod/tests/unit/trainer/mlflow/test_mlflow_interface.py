@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.mlflow import (
+from ryotenkai_pod.trainer.mlflow import (
     IMLflowManager,
     IMLflowPrimitives,
     MLflowAutologManager,
@@ -133,7 +133,7 @@ class _ConcreteManager:
 
 class TestModuleExports:
     def test_all_symbols_importable(self):
-        import src.training.mlflow as mlflow_pkg
+        import ryotenkai_pod.trainer.mlflow as mlflow_pkg
         for sym in mlflow_pkg.__all__:
             assert hasattr(mlflow_pkg, sym), f"Missing export: {sym}"
 

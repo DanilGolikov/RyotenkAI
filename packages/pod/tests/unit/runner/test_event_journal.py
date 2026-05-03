@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.runner.event_journal import (
+from ryotenkai_pod.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,
     EVENTS_DIR_REL,
     EVENTS_FILE_FMT,
@@ -208,7 +208,7 @@ class TestBoundary:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # Replace os.fsync with a counter to verify batching.
-        from src.runner import event_journal as ej_mod
+        from ryotenkai_pod.runner import event_journal as ej_mod
 
         fsync_calls: list[int] = []
         original_fsync = os.fsync
@@ -233,7 +233,7 @@ class TestBoundary:
     def test_fsync_interval_triggers_flush(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from src.runner import event_journal as ej_mod
+        from ryotenkai_pod.runner import event_journal as ej_mod
 
         # Pin monotonic so the interval check is deterministic.
         clock = [0]

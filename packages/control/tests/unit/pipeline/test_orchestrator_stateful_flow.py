@@ -6,12 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.orchestrator import PipelineOrchestrator
-from src.pipeline.execution import StageRegistry
-from src.pipeline.state import PipelineStateStore, StageRunState
-from src.pipeline.stages.base import PipelineStage
-from src.pipeline.stages.constants import StageNames
-from src.utils.result import AppError, Err, Failure, Ok, Result, Success
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
+from ryotenkai_control.pipeline.execution import StageRegistry
+from ryotenkai_control.pipeline.state import PipelineStateStore, StageRunState
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_shared.utils.result import AppError, Err, Failure, Ok, Result, Success
 
 
 def _build_mock_config(*, inference_enabled: bool, evaluation_enabled: bool) -> MagicMock:
@@ -159,9 +159,9 @@ def _build_orchestrator(
         ControlledStage(config, StageNames.MODEL_EVALUATOR, calls=calls, behavior=stage_behaviors[StageNames.MODEL_EVALUATOR]),
     ]
     with (
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
-        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+        patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
         patch.object(StageRegistry, "_build_stages", return_value=stages),
         patch.object(PipelineOrchestrator, "_setup_mlflow", return_value=None),
     ):
@@ -241,7 +241,7 @@ def test_stateful_resume_reuses_completed_stages_and_appends_attempt(tmp_path: P
     )
 
     with patch(
-        "src.pipeline.execution.stage_planner.is_inference_runtime_healthy",
+        "ryotenkai_control.pipeline.execution.stage_planner.is_inference_runtime_healthy",
         return_value=True,
     ):
         second_result = second_orchestrator.run(run_dir=run_dir, resume=True)

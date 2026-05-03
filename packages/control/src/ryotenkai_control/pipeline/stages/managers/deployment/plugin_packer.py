@@ -49,14 +49,14 @@ import zipfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.community.constants import COMMUNITY_ROOT, LIBS_DIR_NAME, PLUGIN_KIND_DIRS
-from src.community.manifest import PluginManifest
-from src.community.validate_manifest import validate_manifest_dir
+from ryotenkai_community.constants import COMMUNITY_ROOT, LIBS_DIR_NAME, PLUGIN_KIND_DIRS
+from ryotenkai_community.manifest import PluginManifest
+from ryotenkai_community.validate_manifest import validate_manifest_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 __all__ = [
     "LibRef",

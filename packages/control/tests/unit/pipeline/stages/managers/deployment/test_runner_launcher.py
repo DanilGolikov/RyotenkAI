@@ -20,14 +20,14 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.runner_launcher import (
+from ryotenkai_control.pipeline.stages.managers.deployment.runner_launcher import (
     RUNNER_PORT,
     RUNNER_READY_TIMEOUT_SECONDS,
     _build_launch_command,
     launch_runner,
 )
-from src.utils.pod_layout import PodLayout
-from src.utils.result import ProviderError
+from ryotenkai_shared.utils.pod_layout import PodLayout
+from ryotenkai_shared.utils.result import ProviderError
 
 # Canonical run-scoped workspace used in tests — the rsync target
 # CodeSyncer dropped ``src/...`` into for this run. The thin image
@@ -109,7 +109,7 @@ def test_launch_runner_healthz_timeout_returns_err_with_log_tail() -> None:
         stderr=(
             "runner did not become ready within 30s\n"
             "--- tail of /workspace/runs/test_run/logs/runner.log ---\n"
-            "ModuleNotFoundError: No module named 'src.utils'\n"
+            "ModuleNotFoundError: No module named 'ryotenkai_shared.utils'\n"
         ),
     )
     result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
@@ -271,7 +271,7 @@ def test_command_pythonpath_uses_layout_root() -> None:
     # First entry: the run-scoped rsync target. Must precede any
     # inherited ${PYTHONPATH:-} value.
     assert "PYTHONPATH=/workspace/runs/r1:" in cmd
-    assert "src.runner.main:app" in cmd
+    assert "ryotenkai_pod.runner.main:app" in cmd
 
 
 def test_command_pythonpath_no_longer_references_opt_ryotenkai() -> None:
@@ -374,7 +374,7 @@ def test_command_with_no_env_still_injects_workspace() -> None:
     cmd_none = _build_launch_command(pod_layout=_layout(), env=None)
     cmd_empty = _build_launch_command(pod_layout=_layout(), env={})
     for cmd in (cmd_none, cmd_empty):
-        assert "src.runner.main:app" in cmd
+        assert "ryotenkai_pod.runner.main:app" in cmd
         assert f"RYOTENKAI_WORKSPACE={_WORKSPACE}" in cmd
 
 

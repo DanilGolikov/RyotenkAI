@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from src.community.loader import load_plugins
-from src.community.sync import sync_plugin_envs
+from ryotenkai_community.loader import load_plugins
+from ryotenkai_community.sync import sync_plugin_envs
 
 
 def _write_eval_plugin_with_required_env(
@@ -59,8 +59,8 @@ def _write_eval_plugin_with_required_env(
         manifest += "\n"
     (plugin_dir / "manifest.toml").write_text(manifest)
     plugin_source = (
-        "from src.evaluation.plugins.base import EvalResult, EvaluatorPlugin\n"
-        "from src.community.manifest import RequiredEnvSpec\n"
+        "from ryotenkai_control.evaluation.plugins.base import EvalResult, EvaluatorPlugin\n"
+        "from ryotenkai_community.manifest import RequiredEnvSpec\n"
         "\n"
         "\n"
         f"class {class_name}(EvaluatorPlugin):\n"

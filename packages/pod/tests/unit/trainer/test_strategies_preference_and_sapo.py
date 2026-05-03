@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from src.training.strategies.dpo import DPOStrategy
-from src.training.strategies.orpo import ORPOStrategy
-from src.training.strategies.sapo import SAPOStrategy
+from ryotenkai_pod.trainer.strategies.dpo import DPOStrategy
+from ryotenkai_pod.trainer.strategies.orpo import ORPOStrategy
+from ryotenkai_pod.trainer.strategies.sapo import SAPOStrategy
 
 
 @dataclass

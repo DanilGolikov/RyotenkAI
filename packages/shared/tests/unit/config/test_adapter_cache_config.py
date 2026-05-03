@@ -21,11 +21,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config.training.adapter_cache import AdapterCacheConfig
-from src.config.training.strategies.phase import StrategyPhaseConfig
-from src.config.training.strategies.transitions import validate_strategy_chain
-from src.config.validators.cross import validate_pipeline_adapter_cache_hf_config
-from src.config.validators.training import validate_strategy_phase_config
+from ryotenkai_shared.config.training.adapter_cache import AdapterCacheConfig
+from ryotenkai_shared.config.training.strategies.phase import StrategyPhaseConfig
+from ryotenkai_shared.config.training.strategies.transitions import validate_strategy_chain
+from ryotenkai_shared.config.validators.cross import validate_pipeline_adapter_cache_hf_config
+from ryotenkai_shared.config.validators.training import validate_strategy_phase_config
 
 pytestmark = pytest.mark.unit
 

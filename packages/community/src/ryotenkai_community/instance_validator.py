@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from src.community.manifest import PluginManifest
+    from ryotenkai_community.manifest import PluginManifest
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +73,7 @@ def validate_instance(
     """
     from jsonschema import Draft7Validator
 
-    from src.community.manifest import params_to_json_schema
+    from ryotenkai_community.manifest import params_to_json_schema
 
     errors: list[InstanceValidationError] = []
     for label, value, schema_dict in (

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.config.providers.template import TemplateProviderConfig
+from ryotenkai_shared.config.providers.template import TemplateProviderConfig
 
 
 def test_template_provider_config_validates_type() -> None:

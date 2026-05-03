@@ -25,13 +25,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.constants import PipelineContextKeys
-from src.pipeline.stages.model_retriever import (
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+from ryotenkai_control.pipeline.stages.model_retriever import (
     ModelRetriever,
     ModelRetrieverEventCallbacks,
 )
-from src.config import HuggingFaceHubConfig
-from src.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.config import HuggingFaceHubConfig
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 
 # ---------------------------------------------------------------------------

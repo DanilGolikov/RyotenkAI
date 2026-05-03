@@ -7,10 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
-from src.api.config import ApiSettings
-from src.api.dependencies import get_settings
-from src.api.exceptions import install_exception_handlers
-from src.api.routers import (
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.dependencies import get_settings
+from ryotenkai_control.api.exceptions import install_exception_handlers
+from ryotenkai_control.api.routers import (
     attempts,
     datasets,
     integrations,
@@ -23,11 +23,11 @@ from src.api.routers import (
     reports,
     runs,
 )
-from src.api.routers import (
+from ryotenkai_control.api.routers import (
     config as config_router,
 )
-from src.api.routers.health import router as health_router
-from src.api.ws.log_stream import router as ws_router
+from ryotenkai_control.api.routers.health import router as health_router
+from ryotenkai_control.api.ws.log_stream import router as ws_router
 
 API_V1_PREFIX = "/api/v1"
 

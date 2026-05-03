@@ -36,13 +36,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from src.community.loader import LoadedPlugin
-    from src.utils.plugin_secrets import PluginSecretsResolver
+    from ryotenkai_community.loader import LoadedPlugin
+    from ryotenkai_shared.utils.plugin_secrets import PluginSecretsResolver
 
 
 T = TypeVar("T")

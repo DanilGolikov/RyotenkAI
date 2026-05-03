@@ -11,10 +11,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.integrations.root import IntegrationsConfig
-from src.config.integrations.mlflow import MLflowConfig
-from src.config.integrations.mlflow_integration import MLflowIntegrationConfig
-from src.config.integrations.system_metrics import SystemMetricsConfig
+from ryotenkai_shared.config.integrations.root import IntegrationsConfig
+from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+from ryotenkai_shared.config.integrations.mlflow_integration import MLflowIntegrationConfig
+from ryotenkai_shared.config.integrations.system_metrics import SystemMetricsConfig
 
 # ---------------------------------------------------------------------------
 # 1. Positive — default construction

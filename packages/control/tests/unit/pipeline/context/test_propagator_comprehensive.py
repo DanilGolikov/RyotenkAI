@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.artifacts import StageArtifactCollector
-from src.pipeline.context.propagator import ContextPropagator
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
+from ryotenkai_control.pipeline.context.propagator import ContextPropagator
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 @pytest.fixture
@@ -200,7 +200,7 @@ class TestRegressions:
     def test_regression_upload_duration_shared_const(self, prop: ContextPropagator) -> None:
         """REGRESSION: `upload_duration_seconds` used to be a local literal in 3 files.
         Now it's CTX_UPLOAD_DURATION in pipeline.constants."""
-        from src.pipeline.constants import CTX_UPLOAD_DURATION
+        from ryotenkai_control.pipeline.constants import CTX_UPLOAD_DURATION
 
         assert CTX_UPLOAD_DURATION == "upload_duration_seconds"
 

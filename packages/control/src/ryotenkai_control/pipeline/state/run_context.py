@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.utils.run_naming import generate_run_name
+from ryotenkai_shared.utils.run_naming import generate_run_name
 
 if TYPE_CHECKING:
     from datetime import datetime

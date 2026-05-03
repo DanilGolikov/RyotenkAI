@@ -5,6 +5,6 @@ Public API:
 - `ExperimentReportGenerator` (main facade)
 """
 
-from src.reports.report_generator import ExperimentReportGenerator
+from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
 __all__ = ["ExperimentReportGenerator"]

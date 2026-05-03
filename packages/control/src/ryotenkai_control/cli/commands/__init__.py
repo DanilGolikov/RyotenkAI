@@ -19,37 +19,37 @@ from __future__ import annotations
 
 import typer
 
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     config as _config_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     dataset as _dataset_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     job as _job_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     plugin as _plugin_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     preset as _preset_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     project as _project_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     run as _run_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     runs as _runs_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     server as _server_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     smoke as _smoke_mod,
 )
-from src.cli.commands import (
+from ryotenkai_control.cli.commands import (
     version as _version_mod,
 )
 

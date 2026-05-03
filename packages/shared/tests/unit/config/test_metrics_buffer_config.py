@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.config.training import (
+from ryotenkai_shared.config.training import (
     DecimationWindowConfig,
     MetricsBufferConfig,
 )
@@ -143,7 +143,7 @@ class TestTrainingConfigWiring:
         # full TrainingConfig (lora.target_modules + 6 other required
         # knobs). What matters here is the schema: `metrics_buffer`
         # field exists, default factory returns lossless config.
-        from src.config.training import TrainingConfig
+        from ryotenkai_shared.config.training import TrainingConfig
 
         fields = TrainingConfig.model_fields
         assert "metrics_buffer" in fields
@@ -186,7 +186,7 @@ class TestRegressions:
         # falls through the default factory → keep_all=True. NO data
         # loss vs Phase 9 hard-coded behaviour: keep_all=True is
         # *strictly more permissive*.
-        from src.config.training import TrainingConfig
+        from ryotenkai_shared.config.training import TrainingConfig
 
         default_factory = TrainingConfig.model_fields["metrics_buffer"].default_factory
         assert default_factory is not None

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.constants import INFERENCE_DIRNAME
+from ryotenkai_shared.constants import INFERENCE_DIRNAME
 
 
 def render_readme(*, manifest_filename: str, endpoint_url: str | None) -> str:

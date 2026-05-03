@@ -76,28 +76,28 @@ _HELPER_PATH = (
     / "training" / "_concurrent_helpers.py"
 )
 _helper_spec = _importlib_util.spec_from_file_location(
-    "src.training._concurrent_helpers", _HELPER_PATH,
+    "ryotenkai_pod.trainer._concurrent_helpers", _HELPER_PATH,
 )
 assert _helper_spec is not None and _helper_spec.loader is not None
 _helper_module = _importlib_util.module_from_spec(_helper_spec)
-# Stub the parent package shell so ``from src.training._concurrent_helpers
+# Stub the parent package shell so ``from ryotenkai_pod.trainer._concurrent_helpers
 # import ...`` finds both the parent and the leaf in sys.modules
 # without running ``src.training/__init__.py``.
 #
 # IMPORTANT: set ``__path__`` so Python treats the stub as a package
 # (not a plain module). Without ``__path__`` other tests in the same
 # pytest collection — e.g. ``test_system_metrics_callback.py`` which
-# does ``from src.training.callbacks.system_metrics_callback import X``
+# does ``from ryotenkai_pod.trainer.callbacks.system_metrics_callback import X``
 # — fail because Python rejects sub-attribute lookup on a non-package
 # module shell. Pointing ``__path__`` at the real source dir lets the
 # regular import machinery still find the modules on disk.
-if "src.training" not in _sys.modules:
-    _training_shell = _types.ModuleType("src.training")
+if "ryotenkai_pod.trainer" not in _sys.modules:
+    _training_shell = _types.ModuleType("ryotenkai_pod.trainer")
     _training_shell.__path__ = [  # type: ignore[attr-defined]
         str(_pathlib.Path(__file__).resolve().parents[4] / "training"),
     ]
-    _sys.modules["src.training"] = _training_shell
-_sys.modules["src.training._concurrent_helpers"] = _helper_module
+    _sys.modules["ryotenkai_pod.trainer"] = _training_shell
+_sys.modules["ryotenkai_pod.trainer._concurrent_helpers"] = _helper_module
 _helper_spec.loader.exec_module(_helper_module)
 
 
@@ -383,7 +383,7 @@ class TestLogicSpecific:
         cancellation calls ``mlflow_manager.flush_buffer()`` exactly
         once."""
         import logging
-        caplog.set_level(logging.INFO, logger="src.training.callbacks.cancellation_callback")
+        caplog.set_level(logging.INFO, logger="ryotenkai_pod.trainer.callbacks.cancellation_callback")
 
         manager = _StubMlflowManager(flush_return=42)
         cb = CancellationCallback(
@@ -431,7 +431,7 @@ class TestLogicSpecific:
         background; we just stopped waiting.
         """
         import logging
-        caplog.set_level(logging.WARNING, logger="src.training.callbacks.cancellation_callback")
+        caplog.set_level(logging.WARNING, logger="ryotenkai_pod.trainer.callbacks.cancellation_callback")
 
         # Flush sleeps longer than the budget — guaranteed timeout.
         manager = _StubMlflowManager(flush_blocks_for=0.5)
@@ -460,7 +460,7 @@ class TestLogicSpecific:
         flow continues. Prevents a programmer bug in the manager
         surface from crashing the trainer's exit path."""
         import logging
-        caplog.set_level(logging.WARNING, logger="src.training.callbacks.cancellation_callback")
+        caplog.set_level(logging.WARNING, logger="ryotenkai_pod.trainer.callbacks.cancellation_callback")
 
         manager = _StubMlflowManager(
             flush_raises=ValueError("manager bug"),
@@ -519,7 +519,7 @@ class TestLogicSpecific:
         """
         import logging
 
-        caplog.set_level(logging.INFO, logger="src.training.callbacks.cancellation_callback")
+        caplog.set_level(logging.INFO, logger="ryotenkai_pod.trainer.callbacks.cancellation_callback")
 
         h = _StubHandler(requested=True)
         cb = CancellationCallback(shutdown_handler=h)
@@ -566,7 +566,7 @@ class TestPhase9CFinalizedEvent:
     """
 
     def test_emits_finalized_event_on_successful_flush(self) -> None:
-        from src.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+        from ryotenkai_pod.runner.cancellation_telemetry import CANCELLATION_FINALIZED
 
         publisher = _PublisherSpy()
         manager = _StubMlflowManager(flush_return=7)
@@ -589,7 +589,7 @@ class TestPhase9CFinalizedEvent:
     def test_emits_finalized_event_on_timeout_with_marker_flag(
         self, tmp_path: Any,
     ) -> None:
-        from src.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+        from ryotenkai_pod.runner.cancellation_telemetry import CANCELLATION_FINALIZED
 
         publisher = _PublisherSpy()
         # Slow flush forces timeout.

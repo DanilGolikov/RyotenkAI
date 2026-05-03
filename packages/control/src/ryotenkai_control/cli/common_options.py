@@ -9,7 +9,7 @@ diverges, and renames touch every file.
 This module pins the canonical shape of each option once. Command
 modules import the alias and use it as a type annotation:
 
-    from src.cli.common_options import ConfigOpt, RunDirArg
+    from ryotenkai_control.cli.common_options import ConfigOpt, RunDirArg
 
     @runs_app.command("inspect")
     def inspect_cmd(
@@ -35,7 +35,7 @@ from typing import Annotated, Literal
 
 import typer
 
-from src.community.constants import ALL_PLUGIN_KINDS
+from ryotenkai_community.constants import ALL_PLUGIN_KINDS
 
 # ---------------------------------------------------------------------------
 # Config / run-dir / project — most frequently shared across commands

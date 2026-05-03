@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
+from ryotenkai_control.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
 
 pytestmark = pytest.mark.unit
 

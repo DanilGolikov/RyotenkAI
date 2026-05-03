@@ -14,11 +14,11 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.providers.training.interfaces import GPUInfo
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.training.interfaces import GPUInfo
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 logger = logging.getLogger("ryotenkai")
 

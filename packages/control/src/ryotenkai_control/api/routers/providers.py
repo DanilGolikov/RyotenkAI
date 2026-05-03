@@ -5,10 +5,10 @@ from pathlib import Path
 import yaml
 from fastapi import APIRouter, Depends, HTTPException
 
-from src.api.dependencies import get_provider_registry, get_token_crypto
-from src.api.schemas.config_validate import ConfigValidationResult
-from src.api.schemas.integration import ConnectionTestResult, IntegrationTokenRequest
-from src.api.schemas.provider import (
+from ryotenkai_control.api.dependencies import get_provider_registry, get_token_crypto
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.schemas.integration import ConnectionTestResult, IntegrationTokenRequest
+from ryotenkai_control.api.schemas.provider import (
     CreateProviderRequest,
     ProviderConfigResponse,
     ProviderConfigVersionDetail,
@@ -19,11 +19,11 @@ from src.api.schemas.provider import (
     ProviderSummary,
     ProviderTypesResponse,
 )
-from src.api.services import provider_service
-from src.api.services.connection_test import test_provider
-from src.api.services.provider_service import ProviderServiceError
-from src.api.services.token_crypto import TokenCrypto, read_token_file
-from src.workspace.providers import ProviderRegistry, ProviderStore
+from ryotenkai_control.api.services import provider_service
+from ryotenkai_control.api.services.connection_test import test_provider
+from ryotenkai_control.api.services.provider_service import ProviderServiceError
+from ryotenkai_control.api.services.token_crypto import TokenCrypto, read_token_file
+from ryotenkai_control.workspace.providers import ProviderRegistry, ProviderStore
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 

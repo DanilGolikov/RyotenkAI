@@ -56,8 +56,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.evaluation.plugins.base import EvalSample
-from src.evaluation.runner import EvaluationRunner
+from ryotenkai_control.evaluation.plugins.base import EvalSample
+from ryotenkai_control.evaluation.runner import EvaluationRunner
 
 
 # ---------------------------------------------------------------------------

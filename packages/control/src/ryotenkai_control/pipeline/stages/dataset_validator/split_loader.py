@@ -18,20 +18,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-from src.pipeline.stages.dataset_validator.constants import (
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     SPLIT_TRAIN,
     VALIDATION_MAX_SAMPLES_FAST,
     VALIDATION_MODE_ATTR,
     VALIDATION_MODE_FAST,
     VALIDATIONS_ATTR,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
-    from src.data.loaders.factory import DatasetLoaderFactory
+    from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
 
 class DatasetSplitLoader:

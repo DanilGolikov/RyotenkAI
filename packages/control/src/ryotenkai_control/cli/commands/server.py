@@ -13,7 +13,7 @@ from typing import Annotated
 
 import typer
 
-from src.cli.errors import die
+from ryotenkai_control.cli.errors import die
 
 server_app = typer.Typer(
     no_args_is_help=True,
@@ -52,7 +52,7 @@ def start_cmd(
     ] = "info",
 ) -> None:
     """Run the FastAPI web backend (foreground uvicorn)."""
-    from src.api.cli import run_server
+    from ryotenkai_control.api.cli import run_server
 
     run_server(
         host=host,

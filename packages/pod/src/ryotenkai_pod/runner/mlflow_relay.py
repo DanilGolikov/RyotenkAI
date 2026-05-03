@@ -54,7 +54,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.logger import get_logger
+from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -7,14 +7,14 @@ Provides pluggable dataset loading strategies:
 - DatasetLoaderFactory: Auto-select loader by source type
 
 Usage:
-    from src.data.loaders import DatasetLoaderFactory
+    from ryotenkai_control.data.loaders import DatasetLoaderFactory
 
     # Auto-select loader based on dataset config
     factory = DatasetLoaderFactory(config)
     loader = factory.create_for_dataset(dataset_config)
 
     # Or explicitly:
-    from src.data.loaders import JsonDatasetLoader, HuggingFaceDatasetLoader
+    from ryotenkai_control.data.loaders import JsonDatasetLoader, HuggingFaceDatasetLoader
 
     # Local JSON files
     loader = JsonDatasetLoader(config)
@@ -25,11 +25,11 @@ Usage:
     result = loader.load("tatsu-lab/alpaca", split="train")
 """
 
-from src.data.loaders.base import BaseDatasetLoader
-from src.data.loaders.factory import DatasetLoaderFactory
-from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
-from src.data.loaders.json_loader import JsonDatasetLoader
-from src.data.loaders.multi_source_loader import MultiSourceDatasetLoader
+from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
+from ryotenkai_control.data.loaders.json_loader import JsonDatasetLoader
+from ryotenkai_control.data.loaders.multi_source_loader import MultiSourceDatasetLoader
 
 __all__ = [
     "BaseDatasetLoader",

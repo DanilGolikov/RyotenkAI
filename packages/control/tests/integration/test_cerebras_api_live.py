@@ -62,15 +62,15 @@ _SKIP_REASON = (
 # block on this legacy file until it's rewritten to load through
 # ``src.community.catalog``.
 try:
-    from src.evaluation.plugins.llm_judge.cerebras_judge import CerebrasProvider  # noqa: F401
+    from ryotenkai_control.evaluation.plugins.llm_judge.cerebras_judge import CerebrasProvider  # noqa: F401
     _LEGACY_MODULE_AVAILABLE = True
 except ImportError:
     _LEGACY_MODULE_AVAILABLE = False
 
 _LEGACY_SKIP_REASON = (
-    "src.evaluation.plugins.llm_judge.cerebras_judge was removed in the "
+    "ryotenkai_control.evaluation.plugins.llm_judge.cerebras_judge was removed in the "
     "community plugin migration; this suite needs a rewrite through "
-    "src.community.catalog.catalog.get('evaluation', 'cerebras_judge')."
+    "ryotenkai_community.catalog.catalog.get('evaluation', 'cerebras_judge')."
 )
 
 
@@ -85,7 +85,7 @@ class TestCerebrasProviderLive:
     """Tests against the real Cerebras API endpoint."""
 
     def _make_provider(self, model: str = "llama3.1-8b"):
-        from src.evaluation.plugins.llm_judge.cerebras_judge import CerebrasProvider
+        from ryotenkai_control.evaluation.plugins.llm_judge.cerebras_judge import CerebrasProvider
 
         assert _API_KEY is not None
         return CerebrasProvider(
@@ -137,7 +137,7 @@ class TestCerebrasProviderLive:
 
     def test_score_normalization(self):
         """Normalized score must be in [0, 1]."""
-        from src.evaluation.plugins.llm_judge.cerebras_judge import _SCORE_MIN, _SCORE_RANGE
+        from ryotenkai_control.evaluation.plugins.llm_judge.cerebras_judge import _SCORE_MIN, _SCORE_RANGE
 
         provider = self._make_provider()
         response = provider.judge(
@@ -188,7 +188,7 @@ class TestCerebrasJudgePluginLive:
     """End-to-end: plugin with injected secrets, real samples, real API."""
 
     def _make_plugin(self) -> object:
-        from src.evaluation.plugins.llm_judge.cerebras_judge import CerebrasJudgePlugin
+        from ryotenkai_control.evaluation.plugins.llm_judge.cerebras_judge import CerebrasJudgePlugin
 
         plugin = CerebrasJudgePlugin(
             params={"model": "llama3.1-8b", "max_samples": 3, "temperature": 0.0, "max_tokens": 256, "max_retries": 3},
@@ -200,7 +200,7 @@ class TestCerebrasJudgePluginLive:
         return plugin
 
     def _make_samples(self):
-        from src.evaluation.plugins.base import EvalSample
+        from ryotenkai_control.evaluation.plugins.base import EvalSample
 
         return [
             EvalSample(
@@ -235,7 +235,7 @@ class TestCerebrasJudgePluginLive:
 
     def test_evaluate_good_samples_pass(self):
         """Two perfect matches and one wrong: mean_score should exceed 0.5."""
-        from src.evaluation.plugins.base import EvalSample
+        from ryotenkai_control.evaluation.plugins.base import EvalSample
 
         plugin = self._make_plugin()
         answer = "QUERY GetUser() => N<User> RETURN N"

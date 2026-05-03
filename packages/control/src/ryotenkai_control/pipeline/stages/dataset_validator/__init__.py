@@ -8,8 +8,8 @@ to grep across ``stages/`` and a separate ``validation/`` package to
 understand the flow.
 """
 
-from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-from src.pipeline.stages.dataset_validator.stage import (
+from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+from ryotenkai_control.pipeline.stages.dataset_validator.stage import (
     DatasetValidator,
     DatasetValidatorEventCallbacks,
 )

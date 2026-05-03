@@ -22,18 +22,18 @@ Layout:
 Importing a stage class:
 
     # Lightweight — orchestrator path:
-    from src.pipeline.stages.dataset_validator import DatasetValidator
-    from src.pipeline.stages.gpu_deployer import GPUDeployer
+    from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator
+    from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer
 
     # Lightweight — anywhere that just needs the enum:
-    from src.pipeline.stages import StageNames
+    from ryotenkai_control.pipeline.stages import StageNames
 
 The heavy-import guardrail in test_architectural_guardrails enforces
-that ``from src.pipeline.stages import StageNames`` does NOT pull torch,
+that ``from ryotenkai_control.pipeline.stages import StageNames`` does NOT pull torch,
 transformers, mlflow, datasets, or src.training.* into sys.modules.
 """
 
-from src.pipeline.stages.constants import (
+from ryotenkai_control.pipeline.stages.constants import (
     CANONICAL_STAGE_ORDER,
     PipelineContextKeys,
     StageNames,

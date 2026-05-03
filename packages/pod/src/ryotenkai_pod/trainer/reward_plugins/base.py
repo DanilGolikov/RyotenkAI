@@ -3,12 +3,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from src.utils.plugin_base import BasePlugin
+from ryotenkai_shared.utils.plugin_base import BasePlugin
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
 class RewardPlugin(BasePlugin, ABC):

@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 # Re-export canonical models — see module docstring for rationale.
 # The CI gate (`make check-openapi`) ensures the front-end generated
 # types stay in sync.
-from src.community.manifest import (
+from ryotenkai_community.manifest import (
     LATEST_SCHEMA_VERSION,
     LibRequirement,
     RequiredEnvSpec,

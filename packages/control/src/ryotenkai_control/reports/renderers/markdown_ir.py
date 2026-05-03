@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.reports.document.nodes import (
+from ryotenkai_control.reports.document.nodes import (
     BlockQuote,
     BulletList,
     CodeBlock,

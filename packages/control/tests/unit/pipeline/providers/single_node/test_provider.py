@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-import src.providers.single_node.training.provider as sp
-from src.pipeline.state import RunContext
-from src.providers.single_node.training.health_check import HealthCheckResult
-from src.providers.single_node.training.provider import SingleNodeProvider
-from src.providers.training.interfaces import GPUInfo, ProviderStatus
-from src.config import Secrets
+import ryotenkai_providers.single_node.training.provider as sp
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_providers.single_node.training.health_check import HealthCheckResult
+from ryotenkai_providers.single_node.training.provider import SingleNodeProvider
+from ryotenkai_providers.training.interfaces import GPUInfo, ProviderStatus
+from ryotenkai_shared.config import Secrets
 
 
 @dataclass

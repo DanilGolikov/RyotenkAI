@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import typer
 
-from src.cli.common_options import RequiredConfigOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.common_options import RequiredConfigOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 dataset_app = typer.Typer(
     no_args_is_help=True,
@@ -40,7 +40,7 @@ def validate_cmd(
     validation plugins — the orchestrator no longer treats this as
     "everything's fine, nothing to check".
     """
-    from src.cli.errors import load_config_or_die
+    from ryotenkai_control.cli.errors import load_config_or_die
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -58,7 +58,7 @@ def validate_cmd(
             code=2,
         )
 
-    from src.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
+    from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
 
     orchestrator = PipelineOrchestrator(config=cfg)
     stage = orchestrator.stages[0]

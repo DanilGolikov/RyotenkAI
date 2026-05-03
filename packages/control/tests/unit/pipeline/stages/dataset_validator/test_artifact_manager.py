@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
 
 pytestmark = pytest.mark.unit
 

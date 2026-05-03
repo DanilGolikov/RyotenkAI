@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from src.evaluation.plugins.base import EvalResult
-from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
+from ryotenkai_control.evaluation.plugins.base import EvalResult
+from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, save_plugin_report
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,7 +74,7 @@ def _make_rows(with_expected: bool = True, with_raw_score: bool = False) -> list
 def patched_log_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Patch get_run_log_dir() to return a tmp_path so no run context is needed."""
     monkeypatch.setattr(
-        "src.evaluation.plugins.utils.get_run_log_dir",
+        "ryotenkai_control.evaluation.plugins.utils.get_run_log_dir",
         lambda: tmp_path,
     )
     return tmp_path
@@ -316,7 +316,7 @@ class TestSavePluginReportResilience:
     def test_does_not_raise_on_bad_log_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If get_run_log_dir raises, save_plugin_report must not propagate the error."""
         monkeypatch.setattr(
-            "src.evaluation.plugins.utils.get_run_log_dir",
+            "ryotenkai_control.evaluation.plugins.utils.get_run_log_dir",
             lambda: (_ for _ in ()).throw(RuntimeError("Run logging not initialized")),
         )
         save_plugin_report("p", _make_rows(), _make_result())  # must not raise

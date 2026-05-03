@@ -162,7 +162,7 @@ def mock_config():
     config.training.remote_config_path = "/workspace/config.yaml"
 
     # Default strategy
-    from src.constants import STRATEGY_SFT
+    from ryotenkai_shared.constants import STRATEGY_SFT
 
     mock_strategy = MagicMock()
     mock_strategy.strategy_type = STRATEGY_SFT
@@ -238,7 +238,7 @@ def mock_config():
 @pytest.fixture
 def mock_config_multi_phase(mock_config):
     """Create mock config with multi-phase training (CPT → SFT → CoT)."""
-    from src.constants import STRATEGY_COT, STRATEGY_CPT, STRATEGY_SFT
+    from ryotenkai_shared.constants import STRATEGY_COT, STRATEGY_CPT, STRATEGY_SFT
 
     # Create strategy phases
     cpt_phase = MagicMock()
@@ -681,7 +681,7 @@ def mock_strategy_factory():
             return strategy
 
         def list_strategies(self) -> list[str]:
-            from src.constants import ALL_STRATEGIES
+            from ryotenkai_shared.constants import ALL_STRATEGIES
 
             return list(ALL_STRATEGIES)
 
@@ -759,7 +759,7 @@ def mock_dataset():
 def mock_judge_provider():
     """MockJudgeProvider — test double for IJudgeProvider. Returns a fixed score."""
 
-    from src.evaluation.plugins.llm_judge.interface import JudgeResponse
+    from ryotenkai_control.evaluation.plugins.llm_judge.interface import JudgeResponse
 
     class MockJudgeProvider:
         def __init__(self, fixed_score: int = 4):

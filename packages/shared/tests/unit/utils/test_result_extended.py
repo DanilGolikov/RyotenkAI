@@ -12,7 +12,7 @@ Tests cover:
 
 import pytest
 
-from src.utils.result import (
+from ryotenkai_shared.utils.result import (
     AppError,
     ConfigError,
     DatasetError,

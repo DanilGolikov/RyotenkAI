@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.community.preflight import (
+from ryotenkai_community.preflight import (
     LaunchAbortedError,
     MissingEnv,
     PreflightReport,

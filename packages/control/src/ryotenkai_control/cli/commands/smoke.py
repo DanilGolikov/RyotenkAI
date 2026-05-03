@@ -90,7 +90,7 @@ def smoke_cmd(
 
     sys.argv = new_argv
     try:
-        from src.cli._smoke_runner import main as _smoke_main
+        from ryotenkai_control.cli._smoke_runner import main as _smoke_main
 
         _smoke_main()
     finally:

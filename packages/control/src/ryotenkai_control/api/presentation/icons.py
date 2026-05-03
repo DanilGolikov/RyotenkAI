@@ -13,7 +13,7 @@ indirection would buy nothing for callers that already string-compare.
 
 from __future__ import annotations
 
-from src.pipeline.state.models import StageRunState
+from ryotenkai_control.pipeline.state.models import StageRunState
 
 STATUS_ICONS: dict[str, str] = {
     StageRunState.STATUS_COMPLETED: "◉",

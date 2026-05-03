@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.pipeline.state import PipelineStateStore
-from src.pipeline.deletion import DeleteMode, RunDeleter as TuiDeleteBackend
+from ryotenkai_control.pipeline.state import PipelineStateStore
+from ryotenkai_control.pipeline.deletion import DeleteMode, RunDeleter as TuiDeleteBackend
 
 
 def _write_state(

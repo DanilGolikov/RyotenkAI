@@ -57,7 +57,7 @@ class JobSpec(_StrictModel):
         description=(
             "argv-style command the supervisor exec()s as the trainer "
             "subprocess. The Mac client typically sends "
-            "``['python', '-m', 'src.training.run_training', ...]``. "
+            "``['python', '-m', 'ryotenkai_pod.trainer.run_training', ...]``. "
             "The first element must resolve in PATH or be an "
             "absolute path; ``min_length=1`` rejects empty argv."
         ),

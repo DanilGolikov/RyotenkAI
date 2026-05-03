@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.execution import StageRegistry
-from src.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.execution import StageRegistry
+from ryotenkai_control.pipeline.stages import StageNames
 
 
 def _stage(name: str, *, has_cleanup: bool = True, cleanup_raises: Exception | None = None) -> MagicMock:
@@ -83,7 +83,7 @@ class TestPositive:
         assert order == ["C", "B", "A"]
 
     def test_maybe_early_release_fires_when_flag_true(self) -> None:
-        from src.pipeline.stages.gpu_deployer import IEarlyReleasable
+        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
 
         releasable = MagicMock(spec=IEarlyReleasable)
         releasable.stage_name = "GPU"
@@ -139,7 +139,7 @@ class TestBoundary:
         registry.cleanup_in_reverse(success=True, shutdown_signal_name=None)  # no-op
 
     def test_maybe_early_release_no_op_when_flag_false(self) -> None:
-        from src.pipeline.stages.gpu_deployer import IEarlyReleasable
+        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
 
         releasable = MagicMock(spec=IEarlyReleasable)
         releasable.stage_name = "GPU"
@@ -232,7 +232,7 @@ class TestDependencyErrors:
         gpu.cleanup.assert_called_once()
 
     def test_maybe_early_release_silent_when_config_raises(self) -> None:
-        from src.pipeline.stages.gpu_deployer import IEarlyReleasable
+        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
 
         releasable = MagicMock(spec=IEarlyReleasable)
         registry = StageRegistry(

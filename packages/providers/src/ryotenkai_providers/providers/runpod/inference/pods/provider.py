@@ -18,10 +18,10 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
-from src.inference import resolve_inference_image
-from src.providers.constants import KEY_ID, KEY_NAME, RETRY_BACKOFF_FACTOR, SHA12_LEN
-from src.providers.inference.interfaces import (
+from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
+from ryotenkai_shared.inference import resolve_inference_image
+from ryotenkai_providers.constants import KEY_ID, KEY_NAME, RETRY_BACKOFF_FACTOR, SHA12_LEN
+from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     IInferenceProvider,
     InferenceArtifacts,
@@ -30,8 +30,8 @@ from src.providers.inference.interfaces import (
     InferenceEventLogger,
     PipelineReadinessMode,
 )
-from src.utils.logger import logger
-from src.utils.result import Err, InferenceError, Ok, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
 
 from ...pod_control import RunPodInferencePodControl
 from .api_client import RunPodPodsRESTClient
@@ -56,8 +56,8 @@ _RETRY_SLEEP_CAP_SEC = 12.0
 _UNKNOWN_ERROR = "<unknown>"
 
 if TYPE_CHECKING:
-    from src.config.providers.runpod import RunPodProviderConfig
-    from src.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
+    from ryotenkai_shared.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
 
 
 def _sha12(text: str) -> str:
@@ -74,7 +74,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         self._engine_cfg: InferenceVLLMEngineConfig = self._inf_cfg.engines.vllm
 
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_RUNPOD)
-        from src.config.providers.runpod import RunPodProviderConfig
+        from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
 
         self._provider_cfg: RunPodProviderConfig = RunPodProviderConfig(**provider_cfg_raw)
 
@@ -527,8 +527,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
         params = self._build_eval_session_params()
 
-        from src.providers.runpod.inference.pods import pod_session
-        from src.utils.cancellation import PipelineCancelled
+        from ryotenkai_providers.runpod.inference.pods import pod_session
+        from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
         try:
             session_res = pod_session.activate(
@@ -605,7 +605,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
         key_path = Path(str(self._provider_cfg.connect.ssh.key_path)).expanduser()
 
-        from src.providers.runpod.inference.pods import pod_session
+        from ryotenkai_providers.runpod.inference.pods import pod_session
 
         result = pod_session.deactivate(
             api=pod_control,
@@ -1009,7 +1009,7 @@ class RunPodPodInferenceProvider(IInferenceProvider):
         the chat script on the remote machine does not need MLflow access.
         system_prompt_source carries audit metadata (origin type + name/path + version).
         """
-        from src.evaluation.system_prompt import SystemPromptLoader
+        from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader
 
         llm_cfg = self._provider_cfg.inference.llm
         mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)

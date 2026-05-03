@@ -28,8 +28,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.utils import cancellation
-from src.utils.cancellation import (
+from ryotenkai_shared.utils import cancellation
+from ryotenkai_shared.utils.cancellation import (
     PipelineCancelled,
     check_cancelled,
     get_active_orchestrator,
@@ -158,8 +158,8 @@ class TestHandlerInvariants:
         # os._exit (the second handler call hard-exits, which would kill
         # the test process if not patched).
         with (
-            patch("src.utils.cancellation.threading.Timer") as mock_timer_class,
-            patch("src.utils.cancellation.os._exit"),
+            patch("ryotenkai_shared.utils.cancellation.threading.Timer") as mock_timer_class,
+            patch("ryotenkai_shared.utils.cancellation.os._exit"),
         ):
             mock_timer = MagicMock()
             mock_timer_class.return_value = mock_timer

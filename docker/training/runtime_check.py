@@ -87,14 +87,13 @@ _OPTIONAL: list[tuple[str, str]] = [
 #   * ``src.training.run_training`` — trainer entrypoint itself.
 #   * ``src.runner.main`` — runner entrypoint (shipped via thin-image
 #     since Phase 6.6, no longer baked in the docker image).
-#   * ``src.utils.config`` — config façade re-exported from src.config.
+#   * ``src.utils.config`` — config façade re-exported from ryotenkai_shared.config.
 _REQUIRED_SRC_MODULES: list[str] = [
-    "src.workspace.integrations.loader",
-    "src.config",
-    "src.providers",
-    "src.training.run_training",
-    "src.runner.main",
-    "src.utils.config",
+    "ryotenkai_control.workspace.integrations.loader",
+    "ryotenkai_shared.config",
+    "ryotenkai_providers",
+    "ryotenkai_pod.trainer.run_training",
+    "ryotenkai_pod.runner.main",
 ]
 
 

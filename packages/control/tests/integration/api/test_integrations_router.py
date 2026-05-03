@@ -18,7 +18,7 @@ def _ephemeral_master_key(
     monkeypatch.setenv(
         "RYOTENKAI_SECRET_KEY", base64.b64encode(os.urandom(32)).decode("ascii")
     )
-    from src.api import dependencies
+    from ryotenkai_control.api import dependencies
 
     dependencies.get_token_crypto.cache_clear()
 

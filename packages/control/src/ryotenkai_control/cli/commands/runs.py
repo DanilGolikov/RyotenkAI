@@ -17,10 +17,10 @@ from typing import Annotated, Any
 
 import typer
 
-from src.cli.common_options import DryRunOpt, RunDirArg, YesOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.common_options import DryRunOpt, RunDirArg, YesOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 runs_app = typer.Typer(
     no_args_is_help=True,
@@ -49,8 +49,8 @@ def ls_cmd(
     ] = Path("runs"),
 ) -> None:
     """List all runs with status summaries."""
-    from src.cli.formatters import duration_seconds, format_duration
-    from src.pipeline.run_queries import scan_runs_dir
+    from ryotenkai_control.cli.formatters import duration_seconds, format_duration
+    from ryotenkai_control.pipeline.run_queries import scan_runs_dir
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -136,8 +136,8 @@ def inspect_cmd(
     ] = False,
 ) -> None:
     """Inspect a run — show structured info about attempts and stages."""
-    from src.cli.formatters import duration_seconds
-    from src.pipeline.run_queries import RunInspector, effective_pipeline_status
+    from ryotenkai_control.cli.formatters import duration_seconds
+    from ryotenkai_control.pipeline.run_queries import RunInspector, effective_pipeline_status
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -178,7 +178,7 @@ def inspect_cmd(
             }
         )
     else:
-        from src.cli.run_rendering import render_run_inspection_lines
+        from ryotenkai_control.cli.run_rendering import render_run_inspection_lines
 
         for line in render_run_inspection_lines(
             data,
@@ -190,7 +190,7 @@ def inspect_cmd(
 
 
 def _stage_payload(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped-def]
-    from src.cli.formatters import duration_seconds
+    from ryotenkai_control.cli.formatters import duration_seconds
 
     stage_run = attempt.stage_runs.get(stage_name)
     if stage_run is None:
@@ -231,8 +231,8 @@ def logs_cmd(
     ] = False,
 ) -> None:
     """Show pipeline log for a run attempt."""
-    from src.api.ws.live_tail import LiveLogTail
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.api.ws.live_tail import LiveLogTail
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     run_path = run_dir.expanduser().resolve()
     store = PipelineStateStore(run_path)
@@ -297,9 +297,9 @@ def status_cmd(
     ] = False,
 ) -> None:
     """Show pipeline status — one snapshot or live polling until Ctrl+C."""
-    from src.cli.formatters import duration_seconds
-    from src.cli.run_rendering import render_run_status_snapshot
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.cli.formatters import duration_seconds
+    from ryotenkai_control.cli.run_rendering import render_run_status_snapshot
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     state_ctx = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state_ctx)
@@ -385,9 +385,9 @@ def diff_cmd(
     ] = [],  # noqa: B006 — Typer requires the literal default
 ) -> None:
     """Compare config hashes between attempts."""
-    from src.cli.run_rendering import render_run_diff_lines
-    from src.pipeline.run_queries import diff_attempts
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.cli.run_rendering import render_run_diff_lines
+    from ryotenkai_control.pipeline.run_queries import diff_attempts
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
 
     state_ctx = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state_ctx)
@@ -458,8 +458,8 @@ def report_cmd(
     ] = None,
 ) -> None:
     """Generate a markdown MLflow report for a run."""
-    from src.pipeline.state import PipelineStateLoadError, PipelineStateStore
-    from src.reports.report_generator import ExperimentReportGenerator
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
 
     run_path = run_dir.expanduser().resolve()
     try:
@@ -503,7 +503,7 @@ def rm_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Delete a run's local directory and/or its MLflow record."""
-    from src.api.services import delete_service
+    from ryotenkai_control.api.services import delete_service
 
     if mode not in ("local_and_mlflow", "local_only", "mlflow_only"):
         raise die(

@@ -17,12 +17,12 @@ import re
 
 import pytest
 
-from src.runner import RUNTIME_IMAGE, create_app
-from src.runner.api import events as events_api
-from src.runner.api import internal as internal_api
-from src.runner.api import jobs as jobs_api
-from src.runner.event_bus import Event
-from src.runner.main import API_V1_PREFIX
+from ryotenkai_pod.runner import RUNTIME_IMAGE, create_app
+from ryotenkai_pod.runner.api import events as events_api
+from ryotenkai_pod.runner.api import internal as internal_api
+from ryotenkai_pod.runner.api import jobs as jobs_api
+from ryotenkai_pod.runner.event_bus import Event
+from ryotenkai_pod.runner.main import API_V1_PREFIX
 
 
 class TestPackageSurface:
@@ -42,7 +42,7 @@ class TestPackageSurface:
         """
         import importlib
 
-        from src.runner import __about__ as about_module
+        from ryotenkai_pod.runner import __about__ as about_module
 
         monkeypatch.delenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", raising=False)
         baseline = importlib.reload(about_module).RUNTIME_IMAGE

@@ -27,10 +27,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from src.runner.idle_detector import default_gpu_metrics
+from ryotenkai_pod.runner.idle_detector import default_gpu_metrics
 
 if TYPE_CHECKING:
-    from src.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.event_bus import EventBus
 
 __all__ = [
     "DEFAULT_HEALTH_INTERVAL",

@@ -6,7 +6,7 @@ from pathlib import Path  # noqa: TC003 -- runtime use in factory return type
 
 import pytest
 
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.state import (
     PipelineAttemptState,
     PipelineState,
     PipelineStateStore,

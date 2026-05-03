@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.api.schemas.plugin import (
+from ryotenkai_control.api.schemas.plugin import (
     InstanceErrorSchema,
     MissingEnvSchema,
     PluginKind,
@@ -27,8 +27,8 @@ from src.api.schemas.plugin import (
     PluginManifest,
     PreflightResponse,
 )
-from src.community.catalog import catalog
-from src.community.preflight import run_preflight
+from ryotenkai_community.catalog import catalog
+from ryotenkai_community.preflight import run_preflight
 
 
 def list_plugins(kind: PluginKind) -> PluginListResponse:
@@ -69,7 +69,7 @@ def preflight(
     ``secrets.env`` is operator-local and may diverge from the
     deployed environment, so the user must declare via project env.
     """
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
     try:
         config = PipelineConfig.model_validate(config_payload)

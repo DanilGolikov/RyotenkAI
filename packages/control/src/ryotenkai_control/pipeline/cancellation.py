@@ -6,7 +6,7 @@ Removed at the start of Phase B (monorepo packagization, see
 
 from __future__ import annotations
 
-from src.utils.cancellation import (
+from ryotenkai_shared.utils.cancellation import (
     PipelineCancelled,
     check_cancelled,
     get_active_orchestrator,

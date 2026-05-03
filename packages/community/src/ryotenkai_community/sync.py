@@ -15,17 +15,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from src.community.inference import InferredPlugin, bump_version, infer_plugin
-from src.community.libs import libs_root_for, preload_community_libs
-from src.community.loader import _import_plugin_class, _normalise_required_libs
-from src.community.manifest import (
+from ryotenkai_community.inference import InferredPlugin, bump_version, infer_plugin
+from ryotenkai_community.libs import libs_root_for, preload_community_libs
+from ryotenkai_community.loader import _import_plugin_class, _normalise_required_libs
+from ryotenkai_community.manifest import (
     LibManifest,
     LibRequirement,
     PluginManifest,
     PresetManifest,
 )
-from src.community.scaffold import build_plugin_manifest_dict
-from src.community.toml_writer import dump_manifest_toml
+from ryotenkai_community.scaffold import build_plugin_manifest_dict
+from ryotenkai_community.toml_writer import dump_manifest_toml
 
 
 def _preload_libs_for(plugin_dir: Path) -> None:

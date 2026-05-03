@@ -34,22 +34,22 @@ if TYPE_CHECKING:
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from src.community.archive import ensure_extracted, resolve_extraction_root
-from src.community.constants import (
+from ryotenkai_community.archive import ensure_extracted, resolve_extraction_root
+from ryotenkai_community.constants import (
     ALL_PLUGIN_KINDS,
     COMMUNITY_ROOT,
     MANIFEST_FILENAME,
     PLUGIN_KIND_DIRS,
     PRESET_DIR_NAME,
 )
-from src.community.manifest import (
+from ryotenkai_community.manifest import (
     LibManifest,
     LibRequirement,
     PluginKind,
     PluginManifest,
     PresetManifest,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 #: Truthy values for the ``COMMUNITY_STRICT`` env var. Anything else
 #: (unset, ``"0"``, ``""``, ``"false"``, etc.) keeps the default loose mode.

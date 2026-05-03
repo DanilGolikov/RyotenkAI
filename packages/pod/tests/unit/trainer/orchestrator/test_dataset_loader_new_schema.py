@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.orchestrator.dataset_loader import DatasetLoader
+from ryotenkai_pod.trainer.orchestrator.dataset_loader import DatasetLoader
 
 
 def _mk_config_for_local(local_train: str, local_eval: str | None = None) -> MagicMock:
@@ -55,7 +55,7 @@ def test_local_missing_train_file_returns_err() -> None:
     assert "data/sft/train.jsonl" in err
 
 
-@patch("src.training.orchestrator.dataset_loader.load_dataset")
+@patch("ryotenkai_pod.trainer.orchestrator.dataset_loader.load_dataset")
 def test_local_loads_train_from_auto_generated_path(
     mock_load_dataset: MagicMock,
     tmp_path: Path,
@@ -81,7 +81,7 @@ def test_local_loads_train_from_auto_generated_path(
     assert ev is None
 
 
-@patch("src.training.orchestrator.dataset_loader.load_dataset")
+@patch("ryotenkai_pod.trainer.orchestrator.dataset_loader.load_dataset")
 def test_local_loads_eval_when_present(
     mock_load_dataset: MagicMock,
     tmp_path: Path,
@@ -112,7 +112,7 @@ def test_local_loads_eval_when_present(
     assert ev == eval_ds
 
 
-@patch("src.training.orchestrator.dataset_loader.load_dataset")
+@patch("ryotenkai_pod.trainer.orchestrator.dataset_loader.load_dataset")
 def test_hf_loads_train_and_optional_eval(mock_load_dataset: MagicMock) -> None:
     cfg = _mk_config_for_hf("org/train", eval_id="org/eval")
     loader = DatasetLoader(cfg)

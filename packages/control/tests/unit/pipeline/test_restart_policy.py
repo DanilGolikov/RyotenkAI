@@ -5,10 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.orchestrator import PipelineOrchestrator
-from src.pipeline.state import PipelineState, StageRunState
-from src.pipeline.stages.constants import StageNames
-from src.utils.result import Ok
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
+from ryotenkai_control.pipeline.state import PipelineState, StageRunState
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_shared.utils.result import Ok
 
 
 def _build_mock_config() -> MagicMock:
@@ -36,15 +36,15 @@ def _build_orchestrator(config_path: Path, config: MagicMock) -> PipelineOrchest
     secrets = MagicMock()
     secrets.hf_token = "test-token"
     with (
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
-        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
-        patch("src.pipeline.execution.stage_registry.DatasetValidator"),
-        patch("src.pipeline.execution.stage_registry.GPUDeployer"),
-        patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
-        patch("src.pipeline.execution.stage_registry.ModelRetriever"),
-        patch("src.pipeline.execution.stage_registry.InferenceDeployer"),
-        patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=config),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+        patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.DatasetValidator"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.GPUDeployer"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.TrainingMonitor"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.ModelRetriever"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.InferenceDeployer"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.ModelEvaluator"),
     ):
         return PipelineOrchestrator(config_path)
 

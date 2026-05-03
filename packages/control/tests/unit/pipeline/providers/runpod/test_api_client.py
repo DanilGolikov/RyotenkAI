@@ -3,13 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from src.config.providers.runpod import RunPodProviderConfig
-from src.providers.runpod.training.api_client import (
+from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
+from ryotenkai_providers.runpod.training.api_client import (
     RUNPOD_DOCKER_ARGS,
     RunPodAPIClient,
     build_pod_launch_kwargs,
 )
-from src.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 if TYPE_CHECKING:
     import pytest

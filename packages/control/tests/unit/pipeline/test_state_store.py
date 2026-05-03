@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.pipeline.state import RunContext
-from src.pipeline.state import (
+from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_control.pipeline.state import (
     PipelineStateStore,
     PipelineStateLoadError,
     PipelineStateLockError,

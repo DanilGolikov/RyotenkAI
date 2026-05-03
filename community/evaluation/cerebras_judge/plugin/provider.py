@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 from .interface import JudgeResponse
 

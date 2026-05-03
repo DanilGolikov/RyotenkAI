@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from src.data.validation.base import ValidationPlugin, ValidationResult
-from src.utils.logger import logger
+from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset

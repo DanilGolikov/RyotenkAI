@@ -28,12 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
-from src.providers.runpod.inference.pods.constants import POD_MERGE_SCRIPT
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.inference.pods.constants import POD_MERGE_SCRIPT
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
+    from ryotenkai_providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
 
 # ---------------------------------------------------------------------------
 # Timeouts (hardcoded: not exposed to user config)
@@ -367,11 +367,11 @@ def _wait_for_ssh(
     """
     from dataclasses import replace
 
-    from src.providers.runpod.lifecycle import (
+    from ryotenkai_providers.runpod.lifecycle import (
         INFERENCE_PROFILE,
         PodSshWaiter,
     )
-    from src.providers.runpod.pod_control import RunPodInferencePodControl
+    from ryotenkai_providers.runpod.pod_control import RunPodInferencePodControl
 
     policy = (
         INFERENCE_PROFILE
@@ -693,7 +693,7 @@ def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> Result[
     The exception propagates up to ``activate()``'s caller, where the
     inference-provider's cleanup hook synchronously tears down the pod.
     """
-    from src.utils.cancellation import sleep_cancellable
+    from ryotenkai_shared.utils.cancellation import sleep_cancellable
 
     deadline = time.monotonic() + timeout_sec
     last_err = ""

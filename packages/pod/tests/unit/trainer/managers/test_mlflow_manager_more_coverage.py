@@ -10,9 +10,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.managers.mlflow_manager import MLflowManager
-from src.training.mlflow.resilient_transport import ResilientMLflowTransport
-from src.config import (
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_pod.trainer.mlflow.resilient_transport import ResilientMLflowTransport
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -172,7 +172,7 @@ class TestSmallBranchesAndSetup:
     def test_setup_set_experiment_failure_disables_mlflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         mgr = MLflowManager(_mk_cfg())
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
 
         # Simulate the real-world failure when the experiment is soft-deleted in MLflow backend.
         fake.set_experiment = lambda name: (_ for _ in ()).throw(  # type: ignore[attr-defined]
@@ -185,7 +185,7 @@ class TestSmallBranchesAndSetup:
     def test_setup_system_metrics_enabled_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_mlflow(monkeypatch)
         mgr = MLflowManager(_mk_cfg(system_metrics_callback_enabled=True))
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
         assert mgr.setup(disable_system_metrics=False) is True
 
     def test_setup_system_metrics_enable_failure_is_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -195,7 +195,7 @@ class TestSmallBranchesAndSetup:
         fake.enable_system_metrics_logging = lambda: (_ for _ in ()).throw(RuntimeError("boom"))  # type: ignore[attr-defined]
 
         mgr = MLflowManager(_mk_cfg(system_metrics_callback_enabled=True))
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
         assert mgr.setup(disable_system_metrics=False) is True
 
     def test_setup_sets_requests_ca_bundle_env_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,7 +203,7 @@ class TestSmallBranchesAndSetup:
         cfg = _mk_cfg()
         cfg.integrations.mlflow.ca_bundle_path = "certs/mlflow-ca.pem"
         mgr = MLflowManager(cfg)
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
         monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
         monkeypatch.delenv("SSL_CERT_FILE", raising=False)
 
@@ -220,7 +220,7 @@ class TestResilientTransportShim:
         original = fake.log_metrics
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
 
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
 
         control_plane_mgr = MLflowManager(_mk_cfg(), runtime_role="control_plane")
         assert control_plane_mgr.setup(disable_system_metrics=True) is True
@@ -237,7 +237,7 @@ class TestResilientTransportShim:
     def test_transport_failures_open_breaker_and_skip_repeated_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
 
         calls = {"count": 0}
 
@@ -272,7 +272,7 @@ class TestResilientTransportShim:
     def test_half_open_recovery_closes_breaker_again(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
 
         calls = {"count": 0}
 
@@ -306,7 +306,7 @@ class TestResilientTransportShim:
     def test_non_transport_exception_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
-        monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
+        monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)  # noqa: ARG005
 
         def bad_log_metric(*args: Any, **kwargs: Any) -> None:  # noqa: ARG001
             raise ValueError("bad metric payload")
@@ -484,7 +484,7 @@ class TestDescriptionAndConnectivityAndRuns:
         assert mgr._load_description_file() is None
 
     def test_resolve_runtime_tracking_uri_remote_falls_back_to_local(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+        from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
         monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
         resolved = resolve_mlflow_uris(
@@ -498,7 +498,7 @@ class TestDescriptionAndConnectivityAndRuns:
     def test_check_connectivity_success_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import urllib.request
 
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
         class _Resp:
             status = 200
@@ -518,7 +518,7 @@ class TestDescriptionAndConnectivityAndRuns:
         import ssl
         import urllib.request
 
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
         captured: dict[str, Any] = {}
 
@@ -551,7 +551,7 @@ class TestDescriptionAndConnectivityAndRuns:
     def test_check_connectivity_ca_bundle_missing_sets_structured_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import ssl
 
-        from src.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
 
         def fake_create_default_context(*, cafile=None, **kwargs):
             raise FileNotFoundError(cafile)
@@ -839,7 +839,7 @@ class TestBuildSubcomponentsAndSetupWiring:
     def test_subcomponents_wired_after_successful_setup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         monkeypatch.setattr(
-            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            "ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
             lambda self, timeout: True,
         )
         mgr = MLflowManager(_mk_cfg())
@@ -855,22 +855,22 @@ class TestBuildSubcomponentsAndSetupWiring:
         assert mgr._analytics._gateway is mgr._gateway
 
         # Registry created
-        from src.training.mlflow.model_registry import MLflowModelRegistry
+        from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
         assert isinstance(mgr._registry, MLflowModelRegistry)
 
         # Dataset logger recreated with mlflow module
-        from src.training.mlflow.dataset_logger import MLflowDatasetLogger
+        from ryotenkai_pod.trainer.mlflow.dataset_logger import MLflowDatasetLogger
         assert isinstance(mgr._dataset_logger, MLflowDatasetLogger)
 
         # Domain logger recreated
-        from src.training.mlflow.domain_logger import MLflowDomainLogger
+        from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
         assert isinstance(mgr._domain_logger, MLflowDomainLogger)
 
     def test_resilient_transport_skipped_for_control_plane(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)
         original_log_metrics = fake.log_metrics
         monkeypatch.setattr(
-            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            "ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
             lambda self, timeout: True,
         )
         mgr = MLflowManager(_mk_cfg(), runtime_role="control_plane")
@@ -885,7 +885,7 @@ class TestBuildSubcomponentsAndSetupWiring:
         # Use file-based tracking URI (no http prefix)
         mgr = MLflowManager(_mk_cfg(tracking_uri="file:///tmp/mlruns"), runtime_role="training")
         monkeypatch.setattr(
-            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            "ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
             lambda self, timeout: True,
         )
         # For file:// URIs, setup doesn't do connectivity check, so it should succeed
@@ -897,7 +897,7 @@ class TestBuildSubcomponentsAndSetupWiring:
     def test_connectivity_retry_exhaustion_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_fake_mlflow(monkeypatch)
         monkeypatch.setattr(
-            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            "ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
             lambda self, timeout: False,
         )
         mgr = MLflowManager(_mk_cfg())
@@ -913,7 +913,7 @@ class TestBuildSubcomponentsAndSetupWiring:
             return attempts["count"] >= 2  # Fails first, succeeds second
 
         monkeypatch.setattr(
-            "src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
+            "ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity",
             flaky_connectivity,
         )
         mgr = MLflowManager(_mk_cfg())

@@ -12,14 +12,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.workspace._registry_base import (
+from ryotenkai_control.workspace._registry_base import (
     REGISTRY_SCHEMA_VERSION,
     WorkspaceRegistry,
     WorkspaceRegistryError,
     default_workspace_root,
 )
-from src.utils.atomic_fs import utc_now_iso
-from src.workspace.providers.models import ProviderRegistryEntry
+from ryotenkai_shared.utils.atomic_fs import utc_now_iso
+from ryotenkai_control.workspace.providers.models import ProviderRegistryEntry
 
 if TYPE_CHECKING:
     from pathlib import Path

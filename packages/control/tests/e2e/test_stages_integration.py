@@ -13,8 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.stages.base import PipelineStage
-from src.utils.result import Err, Ok
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_shared.utils.result import Err, Ok
 
 # =============================================================================
 # FIXTURES

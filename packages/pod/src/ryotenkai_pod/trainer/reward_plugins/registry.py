@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.community.registry_base import PluginRegistry
+from ryotenkai_community.registry_base import PluginRegistry
 
 if TYPE_CHECKING:
-    from src.training.reward_plugins.base import RewardPlugin
+    from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
 
 
 class RewardPluginRegistry(PluginRegistry["RewardPlugin"]):

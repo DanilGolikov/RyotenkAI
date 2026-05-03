@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from src.training.managers.data_buffer import (
+from ryotenkai_pod.trainer.managers.data_buffer import (
     DataBuffer,
     PhaseState,
     PhaseStatus,
     PipelineState,
     list_available_runs,
 )
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
 # =============================================================================
 # FIXTURES
@@ -744,7 +744,7 @@ class TestDataBufferHardening:
         When: _get_sorted_checkpoints is called
         Then: Returns checkpoints sorted by step number (not lexicographically)
         """
-        from src.training.managers.data_buffer import _get_sorted_checkpoints
+        from ryotenkai_pod.trainer.managers.data_buffer import _get_sorted_checkpoints
 
         # Create checkpoints that would sort incorrectly lexicographically
         checkpoint_dir = tmp_path / "checkpoints"
@@ -768,7 +768,7 @@ class TestDataBufferHardening:
         When: _get_sorted_checkpoints is called
         Then: Only directories are returned
         """
-        from src.training.managers.data_buffer import _get_sorted_checkpoints
+        from ryotenkai_pod.trainer.managers.data_buffer import _get_sorted_checkpoints
 
         checkpoint_dir = tmp_path / "checkpoints"
         checkpoint_dir.mkdir()
@@ -865,7 +865,7 @@ class TestFaultSimulator:
         When: save_state is called
         Then: SimulatedFaultError is raised
         """
-        from src.training.managers.data_buffer import FaultSimulator, SimulatedFaultError
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator, SimulatedFaultError
 
         # Initialize without simulator (init_pipeline calls save_state)
         buffer = DataBuffer(
@@ -886,7 +886,7 @@ class TestFaultSimulator:
         When: load_state is called
         Then: SimulatedFaultError is raised
         """
-        from src.training.managers.data_buffer import FaultSimulator, SimulatedFaultError
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator, SimulatedFaultError
 
         # First create a valid state file
         buffer1 = DataBuffer(
@@ -913,7 +913,7 @@ class TestFaultSimulator:
         When: load_state is called
         Then: Returns False (simulated corruption)
         """
-        from src.training.managers.data_buffer import FaultSimulator
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator
 
         # First create a valid state file
         buffer1 = DataBuffer(
@@ -940,7 +940,7 @@ class TestFaultSimulator:
         When: get_model_path_for_phase(1) is called
         Then: Returns base_model_path (simulated missing checkpoint)
         """
-        from src.training.managers.data_buffer import FaultSimulator
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator
 
         # Complete phase 0 to have a "checkpoint"
         initialized_buffer.mark_phase_started(0)
@@ -959,7 +959,7 @@ class TestFaultSimulator:
         When: cleanup_old_checkpoints is called
         Then: SimulatedFaultError is raised
         """
-        from src.training.managers.data_buffer import FaultSimulator, SimulatedFaultError
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator, SimulatedFaultError
 
         # Create some checkpoints
         phase_dir = Path(initialized_buffer.get_phase_output_dir(0))
@@ -978,7 +978,7 @@ class TestFaultSimulator:
         When: save_state is called 3 times
         Then: First 2 succeed, 3rd raises SimulatedFaultError
         """
-        from src.training.managers.data_buffer import FaultSimulator, SimulatedFaultError
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator, SimulatedFaultError
 
         simulator = FaultSimulator(fail_after_n_saves=2)
         buffer = DataBuffer(
@@ -1003,7 +1003,7 @@ class TestFaultSimulator:
         """
         import time
 
-        from src.training.managers.data_buffer import FaultSimulator
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator
 
         simulator = FaultSimulator(slow_io_delay_ms=100)
         buffer = DataBuffer(
@@ -1026,7 +1026,7 @@ class TestFaultSimulator:
         When: Buffer is created
         Then: _fault_simulator is properly stored and accessible
         """
-        from src.training.managers.data_buffer import FaultSimulator
+        from ryotenkai_pod.trainer.managers.data_buffer import FaultSimulator
 
         simulator = FaultSimulator(
             fail_on_save=True,

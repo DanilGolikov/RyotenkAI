@@ -5,7 +5,7 @@ Backward-compatible re-export.
 Source of truth: `src/config/providers/single_node/`.
 """
 
-from src.config.providers.single_node import (
+from ryotenkai_shared.config.providers.single_node import (
     SingleNodeCleanupConfig,
     SingleNodeConfig,
     SingleNodeConnectConfig,

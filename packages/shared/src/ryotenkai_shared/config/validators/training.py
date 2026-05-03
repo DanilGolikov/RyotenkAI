@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.constants import STRATEGY_GRPO, STRATEGY_SAPO
+from ryotenkai_shared.constants import STRATEGY_GRPO, STRATEGY_SAPO
 
 if TYPE_CHECKING:
     from ..training.lora.lora import LoraConfig
@@ -59,7 +59,7 @@ def _validate_precision_consistency(cfg: TrainingOnlyConfig) -> None:
                 )
 
     if cfg.type in ("lora", "qlora", "adalora"):
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
 
         logger.warning(
             "[CFG:PRECISION] fp16=true with %s adapter is risky: TRL/SFTTrainer creates "
@@ -84,7 +84,7 @@ def validate_lora_config(cfg: LoraConfig) -> None:
         # PiSSA has its own initialization logic, not recommended with DoRA
         if cfg.init_lora_weights == "pissa" or cfg.init_lora_weights.startswith("pissa_niter_"):
             # Local import to avoid heavy side-effects at module import time.
-            from src.utils.logger import logger
+            from ryotenkai_shared.utils.logger import logger
 
             logger.warning(
                 "[CFG:LORA_WARNING] use_dora=True with init_lora_weights='pissa' is experimental. "

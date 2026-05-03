@@ -9,9 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.community.inference import InferredField, InferredPlugin, infer_plugin
-from src.community.manifest import PluginManifest, PresetManifest
-from src.community.toml_writer import dump_manifest_toml
+from ryotenkai_community.inference import InferredField, InferredPlugin, infer_plugin
+from ryotenkai_community.manifest import PluginManifest, PresetManifest
+from ryotenkai_community.toml_writer import dump_manifest_toml
 
 _PLUGIN_TODO_FIELDS = frozenset(
     {

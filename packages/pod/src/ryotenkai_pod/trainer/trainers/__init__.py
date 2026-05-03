@@ -15,7 +15,7 @@ Mapping:
     └── ORPO → ORPOTrainer (combined SFT+alignment)
 
 Example:
-    from src.training.trainers import TrainerFactory
+    from ryotenkai_pod.trainer.trainers import TrainerFactory
 
     # Create trainer for SFT strategy
     trainer = TrainerFactory().create(
@@ -28,7 +28,7 @@ Example:
     trainer.train()
 """
 
-from src.training.trainers.factory import (
+from ryotenkai_pod.trainer.trainers.factory import (
     TrainerFactory,
     TrainerType,
 )

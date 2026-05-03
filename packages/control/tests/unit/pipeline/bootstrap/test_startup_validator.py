@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.bootstrap import StartupValidationError, StartupValidator
-from src.utils.result import Err, Ok
+from ryotenkai_control.pipeline.bootstrap import StartupValidationError, StartupValidator
+from ryotenkai_shared.utils.result import Err, Ok
 
 
 def _mk_config(
@@ -58,7 +58,7 @@ class TestPositive:
         cfg = _mk_config()
         secrets = _mk_secrets()
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets",
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets",
             return_value=None,
         ):
             StartupValidator.validate(config=cfg, secrets=secrets)
@@ -83,7 +83,7 @@ class TestPositive:
         strategies = [_mk_strategy("sft"), _mk_strategy("dpo")]
         cfg = _mk_config(strategies=strategies)
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_strategy_chain",
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
             return_value=Ok(None),
         ):
             StartupValidator.check_strategy_chain(config=cfg)
@@ -111,7 +111,7 @@ class TestNegative:
         strategies = [_mk_strategy("sft"), _mk_strategy("grpo")]
         cfg = _mk_config(strategies=strategies)
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_strategy_chain",
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
             return_value=Err("incompatible chain"),
         ), pytest.raises(StartupValidationError, match="Invalid strategy chain"):
             StartupValidator.check_strategy_chain(config=cfg)
@@ -152,7 +152,7 @@ class TestInvariants:
         cfg = _mk_config(active_provider="runpod")
         secrets = _mk_secrets(runpod_api_key=None)
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets"
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets"
         ) as mock_eval:
             with pytest.raises(StartupValidationError):
                 StartupValidator.validate(config=cfg, secrets=secrets)
@@ -177,7 +177,7 @@ class TestDependencyErrors:
         cfg = _mk_config()
         secrets = _mk_secrets()
         with patch(
-            "src.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets",
+            "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets",
             side_effect=RuntimeError("missing slack token"),
         ), pytest.raises(RuntimeError, match="missing slack token"):
             StartupValidator.check_eval_plugin_secrets(config=cfg, secrets=secrets)

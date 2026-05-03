@@ -25,7 +25,7 @@ def run_server(
         os.environ["RYOTENKAI_API_CORS_ORIGINS"] = ",".join(cors_origins)
 
     uvicorn.run(
-        "src.api.main:create_app",
+        "ryotenkai_control.api.main:create_app",
         factory=True,
         host=host,
         port=port,

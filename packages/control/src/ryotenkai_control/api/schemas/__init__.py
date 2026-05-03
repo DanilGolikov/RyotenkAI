@@ -1,18 +1,18 @@
-from src.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
-from src.api.schemas.common import ErrorBody
-from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-from src.api.schemas.delete import DeleteIssueSchema, DeleteResultSchema
-from src.api.schemas.health import HealthStatus
-from src.api.schemas.launch import (
+from ryotenkai_control.api.schemas.attempt import AttemptDetail, StageRun, StagesResponse
+from ryotenkai_control.api.schemas.common import ErrorBody
+from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
+from ryotenkai_control.api.schemas.delete import DeleteIssueSchema, DeleteResultSchema
+from ryotenkai_control.api.schemas.health import HealthStatus
+from ryotenkai_control.api.schemas.launch import (
     InterruptResponse,
     LaunchRequestSchema,
     LaunchResponse,
     RestartPoint,
     RestartPointsResponse,
 )
-from src.api.schemas.log import LogChunk, LogFileInfo
-from src.api.schemas.report import ReportResponse
-from src.api.schemas.run import CreateRunRequest, LineageRefSchema, RunDetail, RunSummary, RunsListResponse
+from ryotenkai_control.api.schemas.log import LogChunk, LogFileInfo
+from ryotenkai_control.api.schemas.report import ReportResponse
+from ryotenkai_control.api.schemas.run import CreateRunRequest, LineageRefSchema, RunDetail, RunSummary, RunsListResponse
 
 __all__ = [
     "AttemptDetail",

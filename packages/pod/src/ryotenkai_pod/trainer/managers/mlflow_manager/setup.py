@@ -13,13 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.infrastructure.mlflow.environment import MLflowEnvironment
-from src.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
-from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
-from src.training.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
-from src.training.mlflow.domain_logger import MLflowDomainLogger
-from src.training.mlflow.model_registry import MLflowModelRegistry
-from src.utils.logger import get_logger
+from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
+from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
+from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+from ryotenkai_pod.trainer.constants import MLFLOW_EXPERIMENT_DEFAULT_ID
+from ryotenkai_pod.trainer.mlflow.domain_logger import MLflowDomainLogger
+from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
+from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -208,14 +208,14 @@ class MLflowSetupMixin:
         try:
             import os
 
-            from src.training.mlflow.metrics_buffer import MetricsBuffer
+            from ryotenkai_pod.trainer.mlflow.metrics_buffer import MetricsBuffer
 
             workspace = os.environ.get("WORKSPACE_PATH", "/workspace")
             buffer_config = self._resolve_metrics_buffer_config()
             buffer = MetricsBuffer(buffer_dir=workspace, config=buffer_config)
             self._resilient_transport.attach_buffer(buffer)  # type: ignore[attr-defined]
         except Exception as e:
-            from src.utils.logger import get_logger
+            from ryotenkai_shared.utils.logger import get_logger
 
             get_logger(__name__).debug("Metrics buffer not attached: %s", e)
 

@@ -17,12 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.config.inference.common import InferenceLLMConfig
-    from src.config.integrations.mlflow import MLflowConfig
-    from src.infrastructure.mlflow.gateway import IMLflowGateway
+    from ryotenkai_shared.config.inference.common import InferenceLLMConfig
+    from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
+    from ryotenkai_shared.infrastructure.mlflow.gateway import IMLflowGateway
 
 
 @dataclass
@@ -113,8 +113,8 @@ class SystemPromptLoader:
             )
 
         # Build a gateway from config (used by unit tests or callers without a pre-built gateway)
-        from src.infrastructure.mlflow.gateway import MLflowGateway
-        from src.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+        from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway
+        from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 
         resolved_uris = resolve_mlflow_uris(mlflow_cfg, runtime_role="control_plane")
         return MLflowGateway(

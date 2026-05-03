@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.community.archive import ensure_extracted, resolve_extraction_root
+from ryotenkai_community.archive import ensure_extracted, resolve_extraction_root
 
 
 def _make_zip(tmp: Path, name: str, files: dict[str, str]) -> Path:

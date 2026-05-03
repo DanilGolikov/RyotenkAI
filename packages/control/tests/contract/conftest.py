@@ -23,11 +23,11 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from src.api.config import ApiSettings
-from src.api.dependencies import get_settings
-from src.api.main import create_app
-from src.api.state_cache import clear_cache
-from src.cli.app import app as cli_app
+from ryotenkai_control.api.config import ApiSettings
+from ryotenkai_control.api.dependencies import get_settings
+from ryotenkai_control.api.main import create_app
+from ryotenkai_control.api.state_cache import clear_cache
+from ryotenkai_control.cli.app import app as cli_app
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +52,7 @@ def _clean_catalog() -> Iterator[None]:
     run. ``catalog.reload()`` is cheap (just resets internal lists +
     clears the loaded flag).
     """
-    from src.community.catalog import catalog
+    from ryotenkai_community.catalog import catalog
 
     catalog.reload()
     try:

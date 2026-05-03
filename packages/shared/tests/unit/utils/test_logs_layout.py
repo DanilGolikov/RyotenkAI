@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from src.utils.logs_layout import (
+from ryotenkai_shared.utils.logs_layout import (
     LOGS_DIR_NAME,
     PIPELINE_LOG_NAME,
     REMOTE_TRAINER_STDIO_LOG_NAME,

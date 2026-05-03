@@ -37,10 +37,10 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, Field
 
-from src.runner.api.deps import get_heartbeat
+from ryotenkai_pod.runner.api.deps import get_heartbeat
 
 if TYPE_CHECKING:
-    from src.runner.heartbeat import MacHeartbeat
+    from ryotenkai_pod.runner.heartbeat import MacHeartbeat
 
 
 __all__ = ["ControlHeartbeatRequest", "router"]
@@ -100,7 +100,7 @@ def post_heartbeat(
     """
     # Phase 14.E (V8) — module-level constant import (was re-importing
     # ``MacHeartbeat`` class for a one-off value read pre-14.E).
-    from src.runner.heartbeat import EXPLICIT_HEARTBEAT_TTL_SECONDS
+    from ryotenkai_pod.runner.heartbeat import EXPLICIT_HEARTBEAT_TTL_SECONDS
     explicit_default = EXPLICIT_HEARTBEAT_TTL_SECONDS
 
     ttl = (

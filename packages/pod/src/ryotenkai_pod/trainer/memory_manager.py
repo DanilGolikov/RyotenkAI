@@ -35,7 +35,7 @@ from enum import Enum
 from functools import wraps
 from typing import Any, ParamSpec, TypeVar
 
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 _DEVICE_CUDA = "cuda"
 FRAG_HIGH_RATIO = 0.3

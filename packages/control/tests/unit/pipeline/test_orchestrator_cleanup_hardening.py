@@ -17,9 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.orchestrator import PipelineOrchestrator
-from src.pipeline.launch.run_lock_guard import RunLockGuard
-from src.utils.result import Ok
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
+from ryotenkai_control.pipeline.launch.run_lock_guard import RunLockGuard
+from ryotenkai_shared.utils.result import Ok
 
 
 def _install_fake_lock_guard(orch: PipelineOrchestrator, tmp_path: Path) -> MagicMock:
@@ -67,15 +67,15 @@ def _build_orchestrator(config_path: Path) -> PipelineOrchestrator:
     secrets = MagicMock()
     secrets.hf_token = "test-token"
     with (
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=cfg),
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
-        patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
-        patch("src.pipeline.execution.stage_registry.DatasetValidator"),
-        patch("src.pipeline.execution.stage_registry.GPUDeployer"),
-        patch("src.pipeline.execution.stage_registry.TrainingMonitor"),
-        patch("src.pipeline.execution.stage_registry.ModelRetriever"),
-        patch("src.pipeline.execution.stage_registry.InferenceDeployer"),
-        patch("src.pipeline.execution.stage_registry.ModelEvaluator"),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_config", return_value=cfg),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+        patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain", return_value=Ok(None)),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.DatasetValidator"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.GPUDeployer"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.TrainingMonitor"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.ModelRetriever"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.InferenceDeployer"),
+        patch("ryotenkai_control.pipeline.execution.stage_registry.ModelEvaluator"),
     ):
         return PipelineOrchestrator(config_path)
 
@@ -365,7 +365,7 @@ class TestMLflowManagerPublicAPI:
     """Comprehensive set for the two new public members on MLflowManager."""
 
     def test_positive_tracking_uri_reads_gateway(self) -> None:
-        from src.training.managers.mlflow_manager.manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager
 
         mgr = MLflowManager.__new__(MLflowManager)
         mgr._mlflow = object()  # truthy is_active
@@ -374,7 +374,7 @@ class TestMLflowManagerPublicAPI:
         assert mgr.tracking_uri == "http://tracking"
 
     def test_negative_tracking_uri_none_when_not_active(self) -> None:
-        from src.training.managers.mlflow_manager.manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager
 
         mgr = MLflowManager.__new__(MLflowManager)
         mgr._mlflow = None  # setup() not called
@@ -383,7 +383,7 @@ class TestMLflowManagerPublicAPI:
         assert mgr.tracking_uri is None
 
     def test_positive_adopt_existing_run_wires_fields(self) -> None:
-        from src.training.managers.mlflow_manager.manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager
 
         mgr = MLflowManager.__new__(MLflowManager)
         mlflow_module = MagicMock()
@@ -401,7 +401,7 @@ class TestMLflowManagerPublicAPI:
         )
 
     def test_negative_adopt_returns_none_when_inactive(self) -> None:
-        from src.training.managers.mlflow_manager.manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager
 
         mgr = MLflowManager.__new__(MLflowManager)
         mgr._mlflow = None
@@ -409,7 +409,7 @@ class TestMLflowManagerPublicAPI:
 
     def test_invariant_adopt_does_not_touch_gateway(self) -> None:
         """INVARIANT: adopt_existing_run only touches run lifecycle attrs, not gateway."""
-        from src.training.managers.mlflow_manager.manager import MLflowManager
+        from ryotenkai_pod.trainer.managers.mlflow_manager.manager import MLflowManager
 
         mgr = MLflowManager.__new__(MLflowManager)
         mgr._mlflow = MagicMock()

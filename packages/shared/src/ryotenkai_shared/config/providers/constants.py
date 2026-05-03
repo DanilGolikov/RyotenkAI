@@ -1,6 +1,6 @@
 """Constants for providers (SSH, RunPod, etc.)."""
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     TRAINING_START_TIMEOUT_DEFAULT,
 )
 

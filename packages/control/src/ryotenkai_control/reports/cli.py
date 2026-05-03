@@ -20,8 +20,8 @@ from typing import cast
 
 import click
 
-from src.reports.report_generator import ExperimentReportGenerator
-from src.utils.logger import get_logger
+from ryotenkai_control.reports.report_generator import ExperimentReportGenerator
+from ryotenkai_shared.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

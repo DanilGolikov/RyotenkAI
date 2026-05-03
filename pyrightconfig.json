@@ -1,5 +1,5 @@
 {
-  "include": ["src"],
+  "include": ["packages"],
   "exclude": [
     "**/node_modules",
     "**/__pycache__",
@@ -36,7 +36,7 @@
   "stubPath": "./typings",
   "executionEnvironments": [
     {
-      "root": "src",
+      "root": "packages",
       "pythonVersion": "3.13",
       "pythonPlatform": "All",
       "extraPaths": ["."]

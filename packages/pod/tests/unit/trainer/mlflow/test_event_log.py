@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.training.mlflow.event_log import MLflowEventLog
+from ryotenkai_pod.trainer.mlflow.event_log import MLflowEventLog
 
 
 class TestMLflowEventLogBasics:

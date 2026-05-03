@@ -15,13 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.config.integrations.huggingface_integration import HuggingFaceIntegrationConfig
-from src.config.integrations.mlflow_integration import MLflowIntegrationConfig
+from ryotenkai_shared.config.integrations.huggingface_integration import HuggingFaceIntegrationConfig
+from ryotenkai_shared.config.integrations.mlflow_integration import MLflowIntegrationConfig
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
 
-    from src.config.base import StrictBaseModel
+    from ryotenkai_shared.config.base import StrictBaseModel
 
 INTEGRATION_TYPE_MLFLOW = "mlflow"
 INTEGRATION_TYPE_HUGGINGFACE = "huggingface"

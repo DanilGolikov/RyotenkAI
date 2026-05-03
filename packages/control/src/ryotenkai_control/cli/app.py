@@ -27,12 +27,12 @@ warnings.filterwarnings(
 
 import typer  # noqa: E402
 
-from src.cli import _signals  # noqa: E402
-from src.cli.commands import register_all  # noqa: E402
-from src.cli.context import CLIContext  # noqa: E402
-from src.cli.errors import die  # noqa: E402
-from src.cli.style import reconfigure as _reconfigure_style  # noqa: E402
-from src.cli.version import collect_version_info  # noqa: E402
+from ryotenkai_control.cli import _signals  # noqa: E402
+from ryotenkai_control.cli.commands import register_all  # noqa: E402
+from ryotenkai_control.cli.context import CLIContext  # noqa: E402
+from ryotenkai_control.cli.errors import die  # noqa: E402
+from ryotenkai_control.cli.style import reconfigure as _reconfigure_style  # noqa: E402
+from ryotenkai_control.cli.version import collect_version_info  # noqa: E402
 
 # Register the Ctrl-C / SIGTERM handler exactly once for the lifetime of
 # the process — long-running commands hand off their orchestrator via

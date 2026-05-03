@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
-from src.config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
+from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import FileUploader
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceHF,
@@ -25,7 +25,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -511,7 +511,7 @@ def test_upload_files_batch_ownership_warning_is_non_critical(uploader: FileUplo
     mocked_completed.stdout = ""
     mocked_completed.stderr = "tar: Cannot change ownership to uid 1000, gid 1000: Operation not permitted"
 
-    with patch("src.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
         result = uploader._upload_files_batch(
             ssh_client,
             files_to_upload=[("requirements.txt", "requirements.txt")],
@@ -537,7 +537,7 @@ def test_upload_files_batch_hard_failure_returns_err(uploader: FileUploader):
     mocked_completed.stdout = ""
     mocked_completed.stderr = "tar: real disk failure"
 
-    with patch("src.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
         result = uploader._upload_files_batch(
             ssh_client,
             files_to_upload=[("requirements.txt", "requirements.txt")],
@@ -567,7 +567,7 @@ def test_upload_files_batch_verification_missing_is_non_fatal(uploader: FileUplo
     mocked_completed.stdout = ""
     mocked_completed.stderr = ""
 
-    with patch("src.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
+    with patch("ryotenkai_control.pipeline.stages.managers.deployment.file_uploader.subprocess.run", return_value=mocked_completed):
         result = uploader._upload_files_batch(
             ssh_client,
             files_to_upload=[("requirements.txt", "requirements.txt")],

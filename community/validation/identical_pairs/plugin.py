@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.data.validation.base import ValidationPlugin, ValidationResult
+from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset

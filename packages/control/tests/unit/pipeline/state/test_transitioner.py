@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import pytest
 
-from src.pipeline.state import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
-from src.pipeline.state.lineage_manager import invalidate_from as invalidate_lineage_from
-from src.pipeline.state.lineage_manager import restore_reused as restore_reused_context
-from src.pipeline.state.transitioner import (
+from ryotenkai_control.pipeline.state import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
+from ryotenkai_control.pipeline.state.lineage_manager import invalidate_from as invalidate_lineage_from
+from ryotenkai_control.pipeline.state.lineage_manager import restore_reused as restore_reused_context
+from ryotenkai_control.pipeline.state.transitioner import (
     finalize_attempt_state,
     mark_stage_completed,
     mark_stage_failed,

@@ -75,7 +75,7 @@ def _load_rows() -> list[dict]:
 
 
 def _build_eval_config(*, cerebras_enabled: bool = False):
-    from src.config.evaluation.schema import (
+    from ryotenkai_shared.config.evaluation.schema import (
         EvaluationConfig,
         EvaluationDatasetConfig,
         EvaluatorPluginConfig,
@@ -120,13 +120,13 @@ def _run_with_dir(out_dir: Path):
     """Run EvaluationRunner with mock client, writing output to out_dir."""
     import sys
 
-    import src.utils.logger as logger_mod_real
-    logger_mod = sys.modules.get("src.utils.logger", logger_mod_real)
+    import ryotenkai_shared.utils.logger as logger_mod_real
+    logger_mod = sys.modules.get("ryotenkai_shared.utils.logger", logger_mod_real)
 
     original = getattr(logger_mod, "_run_log_dir", None)
     logger_mod._run_log_dir = out_dir
     try:
-        from src.evaluation.runner import EvaluationRunner
+        from ryotenkai_control.evaluation.runner import EvaluationRunner
         rows = _load_rows()
         client = _MockInferenceClient(rows)
         cfg = _build_eval_config(cerebras_enabled=False)
@@ -151,12 +151,12 @@ def run_result(tmp_path_factory, monkeypatch_session=None):
 def summary_and_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     import sys
 
-    from src.evaluation.runner import EvaluationRunner
+    from ryotenkai_control.evaluation.runner import EvaluationRunner
 
     # _run_log_dir is a module-level variable in src.utils.logger
-    logger_mod = sys.modules.get("src.utils.logger")
+    logger_mod = sys.modules.get("ryotenkai_shared.utils.logger")
     if logger_mod is None:
-        import src.utils.logger as logger_mod
+        import ryotenkai_shared.utils.logger as logger_mod
     monkeypatch.setattr(logger_mod, "_run_log_dir", tmp_path)
 
     rows = _load_rows()
@@ -287,13 +287,13 @@ class TestCerebrasJudgeLive:
 
         import sys
 
-        from src.config.secrets import load_secrets
-        from src.evaluation.plugins.secrets import SecretsResolver
-        from src.evaluation.runner import EvaluationRunner
+        from ryotenkai_shared.config.secrets import load_secrets
+        from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
+        from ryotenkai_control.evaluation.runner import EvaluationRunner
 
-        logger_mod = sys.modules.get("src.utils.logger")
+        logger_mod = sys.modules.get("ryotenkai_shared.utils.logger")
         if logger_mod is None:
-            import src.utils.logger as logger_mod
+            import ryotenkai_shared.utils.logger as logger_mod
         monkeypatch.setattr(logger_mod, "_run_log_dir", tmp_path)
 
         secrets = load_secrets()
@@ -331,7 +331,7 @@ def test_generate_inspect_files() -> None:
     import shutil
     import sys
 
-    import src.utils.logger as logger_mod_real
+    import ryotenkai_shared.utils.logger as logger_mod_real
 
     secrets_path = Path(__file__).resolve().parents[3] / "secrets.env"
     has_cerebras = (
@@ -345,19 +345,19 @@ def test_generate_inspect_files() -> None:
         shutil.rmtree(eval_dir)
     eval_dir.mkdir(parents=True, exist_ok=True)
 
-    logger_mod = sys.modules.get("src.utils.logger", logger_mod_real)
+    logger_mod = sys.modules.get("ryotenkai_shared.utils.logger", logger_mod_real)
     original = getattr(logger_mod, "_run_log_dir", None)
     logger_mod._run_log_dir = out_dir
 
     try:
-        from src.evaluation.runner import EvaluationRunner
+        from ryotenkai_control.evaluation.runner import EvaluationRunner
 
         rows = _load_rows()
         cfg = _build_eval_config(cerebras_enabled=has_cerebras)
 
         if has_cerebras:
-            from src.config.secrets import load_secrets
-            from src.evaluation.plugins.secrets import SecretsResolver
+            from ryotenkai_shared.config.secrets import load_secrets
+            from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
             secrets = load_secrets()
             resolver = SecretsResolver(secrets)
             # Cap cerebras at 10 samples to save quota

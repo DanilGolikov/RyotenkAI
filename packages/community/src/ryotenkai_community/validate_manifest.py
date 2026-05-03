@@ -40,8 +40,8 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from src.community.constants import MANIFEST_FILENAME
-from src.community.manifest import (
+from ryotenkai_community.constants import MANIFEST_FILENAME
+from ryotenkai_community.manifest import (
     LATEST_SCHEMA_VERSION,
     PluginManifest,
     PresetManifest,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.workspace.integrations import IntegrationStore, IntegrationStoreError
+from ryotenkai_control.workspace.integrations import IntegrationStore, IntegrationStoreError
 
 
 def test_create_and_load(tmp_path: Path) -> None:

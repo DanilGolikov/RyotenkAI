@@ -24,17 +24,17 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from src.constants import (
+from ryotenkai_shared.constants import (
     HF_UPLOAD_RETRIES,
     HF_UPLOAD_RETRY_DELAY_S,
     HF_UPLOAD_TIMEOUT_S,
     LORA_CHECKPOINT_PATTERNS,
 )
-from src.training.orchestrator.phase_executor.adapter_cache import (
+from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import (
     _call_with_timeout,
     _retry_call,
 )
-from src.training.managers.data_buffer import DataBuffer
+from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +45,7 @@ pytestmark = pytest.mark.unit
 
 
 def _mk_buffer(tmp_path: Path, n: int = 1) -> DataBuffer:
-    from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
     phases = [
         StrategyPhaseConfig(
@@ -68,7 +68,7 @@ def _mk_phase(repo_id: str = "org/cache") -> SimpleNamespace:
 
 
 def _mk_cache_manager(tmp_path: Path) -> Any:
-    from src.training.orchestrator.phase_executor.adapter_cache import AdapterCacheManager
+    from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import AdapterCacheManager
 
     config = MagicMock()
     return AdapterCacheManager(config=config)
@@ -213,7 +213,7 @@ class TestUploadLargeFolderUsage:
             api = MockApi.return_value
             if upload_side_effect:
                 api.upload_large_folder.side_effect = upload_side_effect
-            with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+            with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
                 mgr.upload(
                     phase_idx=0,
                     phase=phase,  # type: ignore[arg-type]
@@ -322,10 +322,10 @@ class TestUploadTimeoutWrapping:
         with (
             patch("huggingface_hub.HfApi"),
             patch(
-                "src.training.orchestrator.phase_executor.adapter_cache._call_with_timeout",
+                "ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache._call_with_timeout",
                 side_effect=fake_call_with_timeout,
             ),
-            patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"),
+            patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"),
         ):
             mgr.upload(
                 phase_idx=0,
@@ -354,10 +354,10 @@ class TestUploadTimeoutWrapping:
         with (
             patch("huggingface_hub.HfApi"),
             patch(
-                "src.training.orchestrator.phase_executor.adapter_cache._call_with_timeout",
+                "ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache._call_with_timeout",
                 side_effect=fake_call_with_timeout,
             ),
-            patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"),
+            patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"),
         ):
             mgr.upload(
                 phase_idx=2,
@@ -409,10 +409,10 @@ class TestTimeoutRetryCascade:
         with (
             patch("huggingface_hub.HfApi"),
             patch(
-                "src.training.orchestrator.phase_executor.adapter_cache._call_with_timeout",
+                "ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache._call_with_timeout",
                 side_effect=fake_call_with_timeout,
             ),
-            patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"),
+            patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"),
         ):
             mgr.upload(
                 phase_idx=0,
@@ -460,10 +460,10 @@ class TestTimeoutRetryCascade:
         with (
             patch("huggingface_hub.HfApi"),
             patch(
-                "src.training.orchestrator.phase_executor.adapter_cache._call_with_timeout",
+                "ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache._call_with_timeout",
                 side_effect=TimeoutError("always times out"),
             ),
-            patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"),
+            patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"),
         ):
             mgr.upload(
                 phase_idx=0,
@@ -516,10 +516,10 @@ class TestTimeoutRetryCascade:
         with (
             patch("huggingface_hub.HfApi"),
             patch(
-                "src.training.orchestrator.phase_executor.adapter_cache._call_with_timeout",
+                "ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache._call_with_timeout",
                 side_effect=fake_timeout,
             ),
-            patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"),
+            patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"),
         ):
             mgr.upload(
                 phase_idx=0,

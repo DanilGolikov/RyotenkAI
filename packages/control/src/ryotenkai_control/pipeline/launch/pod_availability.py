@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from src.pipeline.state.models import PodMetadata
+    from ryotenkai_control.pipeline.state.models import PodMetadata
 
 
 __all__ = [
@@ -217,7 +217,7 @@ class PodAvailabilityProbe:
             # training/api_client → SDK chain. This keeps slim CI
             # venvs (no ``runpod`` SDK installed) able to import
             # this module without crashing.
-            from src.providers.runpod._status_mapper import (
+            from ryotenkai_providers.runpod._status_mapper import (
                 map_runpod_desired_status_to_availability,
             )
 
@@ -521,7 +521,7 @@ def load_pod_metadata_for_run(run_dir: Path | str) -> PodMetadata | None:
     defensive, so a stale read here just means we'll do an
     optimistic SSH connect (matches legacy behaviour).
     """
-    from src.pipeline.state.store import PipelineStateStore
+    from ryotenkai_control.pipeline.state.store import PipelineStateStore
 
     try:
         store = PipelineStateStore(Path(run_dir).expanduser().resolve())

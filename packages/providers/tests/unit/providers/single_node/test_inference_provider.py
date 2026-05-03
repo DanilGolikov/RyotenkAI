@@ -12,22 +12,22 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-import src.providers.single_node.inference.provider as _mod
-from src.config.providers.single_node import (
+import ryotenkai_providers.single_node.inference.provider as _mod
+from ryotenkai_shared.config.providers.single_node import (
     SingleNodeConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
 )
-from src.config.providers.ssh import SSHConfig
-from src.providers.single_node.inference.provider import SingleNodeInferenceProvider
-from src.providers.training.interfaces import GPUInfo
-from src.config import (
+from ryotenkai_shared.config.providers.ssh import SSHConfig
+from ryotenkai_providers.single_node.inference.provider import SingleNodeInferenceProvider
+from ryotenkai_providers.training.interfaces import GPUInfo
+from ryotenkai_shared.config import (
     InferenceSingleNodeServeConfig,
     InferenceVLLMEngineConfig,
     Secrets,
 )
-from src.utils.result import Err, InferenceError, Ok
+from ryotenkai_shared.utils.result import Err, InferenceError, Ok
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ class TestProperties:
         assert provider.provider_type == "single_node"
 
     def test_get_pipeline_readiness_mode(self, provider):
-        from src.providers.inference.interfaces import PipelineReadinessMode
+        from ryotenkai_providers.inference.interfaces import PipelineReadinessMode
         assert provider.get_pipeline_readiness_mode() == PipelineReadinessMode.WAIT_FOR_HEALTHY
 
     def test_get_capabilities(self, provider):
@@ -473,7 +473,7 @@ class TestUndeploy:
     def test_undeploy_with_ssh_client_calls_docker_rm(self, provider):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
-        from src.providers.inference.interfaces import EndpointInfo
+        from ryotenkai_providers.inference.interfaces import EndpointInfo
         provider._endpoint_info = Mock(spec=EndpointInfo)
         with patch.object(_mod, "docker_rm_force") as mock_rm:
             mock_rm.return_value = Ok(None)
@@ -525,7 +525,7 @@ class TestCollectStartupLogs:
 
 class TestBuildInferenceArtifacts:
     def _mk_ctx(self, provider):
-        from src.providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext
+        from ryotenkai_providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext
         endpoint = EndpointInfo(
             endpoint_url="http://127.0.0.1:8000/v1",
             api_type="openai_compatible",
@@ -557,7 +557,7 @@ class TestBuildInferenceArtifacts:
         pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
         p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
 
-        from src.providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext
+        from ryotenkai_providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext
         endpoint = EndpointInfo(
             endpoint_url="http://127.0.0.1:8000/v1",
             api_type="openai_compatible",
@@ -592,7 +592,7 @@ class TestEvalLifecycle:
         assert "SINGLENODE_NOT_DEPLOYED" in str(result.unwrap_err())
 
     def test_activate_for_eval_returns_url(self, provider):
-        from src.providers.inference.interfaces import EndpointInfo
+        from ryotenkai_providers.inference.interfaces import EndpointInfo
         provider._endpoint_info = EndpointInfo(
             endpoint_url="http://127.0.0.1:8000/v1",
             api_type="openai_compatible",
@@ -617,7 +617,7 @@ class TestEvalLifecycle:
 
 class TestResolveLlmManifestBlock:
     def test_returns_none_on_value_error(self, provider):
-        with patch("src.evaluation.system_prompt.SystemPromptLoader.load", side_effect=ValueError("bad config")):
+        with patch("ryotenkai_control.evaluation.system_prompt.SystemPromptLoader.load", side_effect=ValueError("bad config")):
             block = provider._resolve_llm_manifest_block()
         assert block["system_prompt"] is None
         assert block["system_prompt_source"] is None
@@ -626,7 +626,7 @@ class TestResolveLlmManifestBlock:
         fake_result = Mock()
         fake_result.text = "You are a helpful assistant."
         fake_result.source = "inline"
-        with patch("src.evaluation.system_prompt.SystemPromptLoader.load", return_value=fake_result):
+        with patch("ryotenkai_control.evaluation.system_prompt.SystemPromptLoader.load", return_value=fake_result):
             block = provider._resolve_llm_manifest_block()
         assert block["system_prompt"] == "You are a helpful assistant."
         assert block["system_prompt_source"] == "inline"

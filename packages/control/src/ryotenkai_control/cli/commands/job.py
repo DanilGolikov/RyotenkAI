@@ -34,9 +34,9 @@ from typing import Annotated, Any
 
 import typer
 
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 job_app = typer.Typer(
     no_args_is_help=True,
@@ -83,7 +83,7 @@ def _resolve_attempt_dir(run_dir: Path, attempt: int | None) -> Path:
 
 def _load_submission(attempt_dir: Path) -> Any:
     """Wrap :func:`load_job_submission` with a CLI-friendly error."""
-    from src.pipeline.state.job_submission import (
+    from ryotenkai_control.pipeline.state.job_submission import (
         JobSubmissionLoadError,
         load_job_submission,
     )
@@ -111,8 +111,8 @@ async def _with_runner(submission, fn):  # type: ignore[no-untyped-def]
     Kept as an async helper so callers can ``asyncio.run(_with_runner(...))``
     once and stay sync-shaped.
     """
-    from src.utils.clients.job_client import JobClient
-    from src.utils.clients.ssh_tunnel import (
+    from ryotenkai_shared.utils.clients.job_client import JobClient
+    from ryotenkai_shared.utils.clients.ssh_tunnel import (
         SSHTunnelEndpoint,
         SSHTunnelManager,
     )

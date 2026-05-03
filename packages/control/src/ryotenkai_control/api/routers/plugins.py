@@ -3,14 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from src.api.schemas.plugin import (
+from ryotenkai_control.api.schemas.plugin import (
     PluginKind,
     PluginListResponse,
     PreflightRequest,
     PreflightResponse,
 )
-from src.api.services import plugin_service
-from src.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+from ryotenkai_control.api.services import plugin_service
+from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 

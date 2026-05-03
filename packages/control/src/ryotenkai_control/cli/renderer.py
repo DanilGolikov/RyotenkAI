@@ -27,9 +27,9 @@ from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from src.cli.context import CLIContext
-from src.cli.style import COLOR_DIM, COLOR_LABEL
-from src.cli.style import console as _default_console
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.style import COLOR_DIM, COLOR_LABEL
+from ryotenkai_control.cli.style import console as _default_console
 
 
 class Renderer(Protocol):

@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
-from src.config import (
+from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -22,7 +22,7 @@ from src.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from src.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -168,7 +168,7 @@ def test_verify_single_node_docker_runtime_no_image_returns_config_error(install
     ssh_client = MagicMock()
 
     with patch(
-        "src.pipeline.stages.managers.deployment.dependency_installer.get_single_node_training_cfg",
+        "ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer.get_single_node_training_cfg",
         return_value={"workspace_path": "/tmp/w"},
     ):
         result = installer._verify_single_node_docker_runtime(ssh_client)

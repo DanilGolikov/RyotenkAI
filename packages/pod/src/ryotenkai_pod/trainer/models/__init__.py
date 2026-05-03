@@ -7,7 +7,7 @@ Simplified architecture (v3):
 - Single function: load_model_and_tokenizer()
 
 Example:
-    from src.training.models import load_model_and_tokenizer
+    from ryotenkai_pod.trainer.models import load_model_and_tokenizer
     model, tokenizer = load_model_and_tokenizer(config)
 """
 

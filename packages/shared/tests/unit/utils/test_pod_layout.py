@@ -12,11 +12,11 @@ from pathlib import PurePosixPath
 
 import pytest
 
-from src.utils.logs_layout import (
+from ryotenkai_shared.utils.logs_layout import (
     REMOTE_RUNNER_LOG_NAME,
     REMOTE_TRAINER_STDIO_LOG_NAME,
 )
-from src.utils.pod_layout import (
+from ryotenkai_shared.utils.pod_layout import (
     COMMUNITY_DIR_NAME,
     CONFIG_DIR_NAME,
     CONFIG_FILE_NAME,

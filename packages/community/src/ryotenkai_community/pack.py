@@ -14,7 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.community.manifest import LibManifest, PluginManifest, PresetManifest
+from ryotenkai_community.manifest import LibManifest, PluginManifest, PresetManifest
 
 # Patterns inside the plugin folder that are excluded from the archive.
 _EXCLUDED_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})

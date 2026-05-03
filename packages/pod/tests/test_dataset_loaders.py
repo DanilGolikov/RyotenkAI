@@ -18,9 +18,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.data.loaders import HuggingFaceDatasetLoader, JsonDatasetLoader, MultiSourceDatasetLoader
-from src.training.orchestrator.dataset_loader import DatasetLoader
-from src.training.container import IDatasetLoader, TrainingContainer
+from ryotenkai_control.data.loaders import HuggingFaceDatasetLoader, JsonDatasetLoader, MultiSourceDatasetLoader
+from ryotenkai_pod.trainer.orchestrator.dataset_loader import DatasetLoader
+from ryotenkai_pod.trainer.container import IDatasetLoader, TrainingContainer
 
 # =============================================================================
 # FIXTURES
@@ -293,7 +293,7 @@ class TestHuggingFaceDatasetLoader:
         assert HuggingFaceDatasetLoader.is_hf_dataset_id("data/train.json") is False
         assert HuggingFaceDatasetLoader.is_hf_dataset_id("/absolute/path/data.csv") is False
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_mocked(
         self,
         mock_load_dataset: MagicMock,
@@ -311,7 +311,7 @@ class TestHuggingFaceDatasetLoader:
         mock_load_dataset.assert_called_once()
         assert dataset == mock_dataset
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_with_max_samples(
         self,
         mock_load_dataset: MagicMock,
@@ -329,7 +329,7 @@ class TestHuggingFaceDatasetLoader:
 
         mock_dataset.select.assert_called_once()
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_error(
         self,
         mock_load_dataset: MagicMock,
@@ -438,7 +438,7 @@ class TestHuggingFaceDatasetLoader:
         """Test: Paths with too many slashes are not HF IDs."""
         assert HuggingFaceDatasetLoader.is_hf_dataset_id("path/to/my/dataset") is False
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_for_phase_success(
         self,
         mock_load_dataset: MagicMock,
@@ -482,7 +482,7 @@ class TestHuggingFaceDatasetLoader:
         assert result.is_failure()
         assert "requires source_hf" in str(result.unwrap_err())
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_for_phase_dataset_not_found(
         self,
         mock_load_dataset: MagicMock,
@@ -502,7 +502,7 @@ class TestHuggingFaceDatasetLoader:
         assert result.is_failure()
         assert "not found" in str(result.unwrap_err()).lower()
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_for_phase_key_error(
         self,
         mock_load_dataset: MagicMock,
@@ -518,7 +518,7 @@ class TestHuggingFaceDatasetLoader:
         assert result.is_failure()
         assert "not found in config" in str(result.unwrap_err())
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_for_phase_general_exception(
         self,
         mock_load_dataset: MagicMock,
@@ -556,7 +556,7 @@ class TestMultiSourceDatasetLoader:
         mock_phase: MagicMock,
     ) -> None:
         """Local dataset phases should be routed to JsonDatasetLoader."""
-        from src.utils.result import Ok
+        from ryotenkai_shared.utils.result import Ok
 
         # Ensure config reports local
         dataset_config = MagicMock()
@@ -566,7 +566,7 @@ class TestMultiSourceDatasetLoader:
         mock_json_loader = MagicMock()
         mock_json_loader.load_for_phase.return_value = Ok([{"x": 1}])
 
-        with patch("src.data.loaders.json_loader.JsonDatasetLoader", return_value=mock_json_loader) as mock_cls:
+        with patch("ryotenkai_control.data.loaders.json_loader.JsonDatasetLoader", return_value=mock_json_loader) as mock_cls:
             loader = MultiSourceDatasetLoader(config=mock_config)
             result = loader.load_for_phase(mock_phase)
 
@@ -580,7 +580,7 @@ class TestMultiSourceDatasetLoader:
         mock_phase: MagicMock,
     ) -> None:
         """HuggingFace dataset phases should be routed to HuggingFaceDatasetLoader."""
-        from src.utils.result import Ok
+        from ryotenkai_shared.utils.result import Ok
 
         dataset_config = MagicMock()
         dataset_config.get_source_type = MagicMock(return_value="huggingface")
@@ -589,7 +589,7 @@ class TestMultiSourceDatasetLoader:
         mock_hf_loader = MagicMock()
         mock_hf_loader.load_for_phase.return_value = Ok([{"instruction": "x", "output": "y"}])
 
-        with patch("src.data.loaders.hf_loader.HuggingFaceDatasetLoader", return_value=mock_hf_loader) as mock_cls:
+        with patch("ryotenkai_control.data.loaders.hf_loader.HuggingFaceDatasetLoader", return_value=mock_hf_loader) as mock_cls:
             loader = MultiSourceDatasetLoader(config=mock_config)
             result = loader.load_for_phase(mock_phase)
 
@@ -612,7 +612,7 @@ class TestMultiSourceDatasetLoader:
 
         assert len(dataset) == 1
 
-    @patch("src.data.loaders.hf_loader.load_dataset")
+    @patch("ryotenkai_control.data.loaders.hf_loader.load_dataset")
     def test_load_hf_dataset(
         self,
         mock_load_dataset: MagicMock,
@@ -739,7 +739,7 @@ class MockDatasetLoader:
         return self.mock_dataset
 
     def load_for_phase(self, _phase: Any) -> Any:
-        from src.utils.result import Ok
+        from ryotenkai_shared.utils.result import Ok
 
         return Ok(self.mock_dataset)
 
@@ -789,7 +789,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_dataset_local(self, mock_config: MagicMock) -> None:
         """Test: Create loader for local dataset."""
-        from src.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
         dataset_config = MagicMock()
         dataset_config.get_source_type = MagicMock(return_value="local")
@@ -801,7 +801,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_dataset_huggingface(self, mock_config: MagicMock) -> None:
         """Test: Create loader for HuggingFace dataset."""
-        from src.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
         dataset_config = MagicMock()
         dataset_config.get_source_type = MagicMock(return_value="huggingface")
@@ -813,7 +813,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_source_type_local(self, mock_config: MagicMock) -> None:
         """Test: Create loader by source type string (local)."""
-        from src.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_for_source_type("local")
@@ -822,7 +822,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_source_type_huggingface(self, mock_config: MagicMock) -> None:
         """Test: Create loader by source type string (huggingface)."""
-        from src.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_for_source_type("huggingface")
@@ -831,7 +831,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_default(self, mock_config: MagicMock) -> None:
         """Test: Create default loader (JsonDatasetLoader)."""
-        from src.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_default()

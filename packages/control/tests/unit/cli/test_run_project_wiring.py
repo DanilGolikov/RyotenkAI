@@ -25,8 +25,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from src.cli.commands.run import run_app
-from src.workspace.projects.adapter import (
+from ryotenkai_control.cli.commands.run import run_app
+from ryotenkai_control.workspace.projects.adapter import (
     ProjectNotFoundError,
     ResolvedProject,
 )
@@ -72,7 +72,7 @@ def fake_popen(monkeypatch: pytest.MonkeyPatch) -> dict:
         def wait(self):
             return 0
 
-    monkeypatch.setattr("src.cli.commands.run.subprocess.Popen", _FakeProc)
+    monkeypatch.setattr("ryotenkai_control.cli.commands.run.subprocess.Popen", _FakeProc)
     return calls
 
 
@@ -89,7 +89,7 @@ class TestPositive:
         fake_popen: dict,
     ) -> None:
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
             return_value=stub_resolved,
         ) as resolve_mock:
             result = runner.invoke(run_app, ["start", "--project", "proj-a"])
@@ -98,7 +98,7 @@ class TestPositive:
         resolve_mock.assert_called_once()
         # Subprocess command targets the worker module.
         cmd = fake_popen["cmd"]
-        assert "src.pipeline.worker" in cmd
+        assert "ryotenkai_control.pipeline.worker" in cmd
         assert "--config" in cmd
         # Extra-env carries RYOTENKAI_PROJECT_ID + env.json keys.
         env = fake_popen["env"]
@@ -113,7 +113,7 @@ class TestPositive:
         config.write_text("# stub\n", encoding="utf-8")
 
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
         ) as resolve_mock:
             result = runner.invoke(
                 run_app, ["start", "--config", str(config)],
@@ -139,7 +139,7 @@ class TestPositive:
         override.write_text("# override\n", encoding="utf-8")
 
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
             return_value=stub_resolved,
         ) as resolve_mock:
             result = runner.invoke(
@@ -171,7 +171,7 @@ class TestNegative:
         self, runner: CliRunner,
     ) -> None:
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
             side_effect=ProjectNotFoundError("ghost"),
         ):
             result = runner.invoke(run_app, ["start", "--project", "ghost"])
@@ -198,7 +198,7 @@ class TestPrecedence:
         monkeypatch.setenv("RYOTENKAI_PROJECT", "from-env")
 
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
             return_value=stub_resolved,
         ) as resolve_mock:
             runner.invoke(
@@ -217,7 +217,7 @@ class TestPrecedence:
         monkeypatch.setenv("RYOTENKAI_PROJECT", "from-env")
 
         with patch(
-            "src.workspace.projects.adapter.resolve_project_launch_inputs",
+            "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
             return_value=stub_resolved,
         ) as resolve_mock:
             runner.invoke(run_app, ["start"])
@@ -235,11 +235,11 @@ class TestPrecedence:
 
         with (
             patch(
-                "src.cli_state.context_store.get_current_project",
+                "ryotenkai_control.cli_state.context_store.get_current_project",
                 return_value="from-context",
             ),
             patch(
-                "src.workspace.projects.adapter.resolve_project_launch_inputs",
+                "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
                 return_value=stub_resolved,
             ) as resolve_mock,
         ):
@@ -259,10 +259,10 @@ class TestDryRun:
     ) -> None:
         with (
             patch(
-                "src.workspace.projects.adapter.resolve_project_launch_inputs",
+                "ryotenkai_control.workspace.projects.adapter.resolve_project_launch_inputs",
                 return_value=stub_resolved,
             ),
-            patch("src.cli.commands.run.subprocess.Popen") as popen_cls,
+            patch("ryotenkai_control.cli.commands.run.subprocess.Popen") as popen_cls,
         ):
             result = runner.invoke(
                 run_app, ["start", "--project", "proj-a", "--dry-run"],

@@ -336,7 +336,7 @@ class EventBus:
         # module for the disk-pressure event kind. Avoid the
         # module-load cycle.
         try:
-            from src.runner.cancellation_telemetry import EVENTS_ROTATED
+            from ryotenkai_pod.runner.cancellation_telemetry import EVENTS_ROTATED
             self.publish(
                 EVENTS_ROTATED,
                 {

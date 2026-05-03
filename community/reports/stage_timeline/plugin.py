@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from src.reports.document.nodes import (
+from ryotenkai_control.reports.document.nodes import (
     DocBlock,
     Heading,
     HorizontalRule,
@@ -15,7 +15,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
+from ryotenkai_control.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 _STATUS_EMOJI: MappingProxyType[str, str] = MappingProxyType(
     {

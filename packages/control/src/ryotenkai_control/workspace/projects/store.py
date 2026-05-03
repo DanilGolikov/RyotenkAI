@@ -37,14 +37,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.utils.atomic_fs import (
+from ryotenkai_shared.utils.atomic_fs import (
     atomic_write_json,
     atomic_write_text,
     unique_snapshot_path,
     utc_now_iso,
 )
-from src.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
-from src.workspace.projects.models import ProjectConfigVersion, ProjectMetadata
+from ryotenkai_control.workspace._registry_base import WorkspaceStore, WorkspaceStoreError
+from ryotenkai_control.workspace.projects.models import ProjectConfigVersion, ProjectMetadata
 
 if TYPE_CHECKING:
     from pathlib import Path

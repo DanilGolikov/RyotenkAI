@@ -31,14 +31,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.pipeline.artifacts.base import utc_now_iso
-from src.pipeline.state.models import (
+from ryotenkai_control.pipeline.artifacts.base import utc_now_iso
+from ryotenkai_control.pipeline.state.models import (
     PipelineAttemptState,
     StageLineageRef,
     StageRunState,
 )
-from src.pipeline.state.store import update_lineage
-from src.pipeline.state.transitioner import mark_stage_skipped
+from ryotenkai_control.pipeline.state.store import update_lineage
+from ryotenkai_control.pipeline.state.transitioner import mark_stage_skipped
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -37,17 +37,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
-from src.pipeline.launch.pod_availability import (
+from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
+from ryotenkai_control.pipeline.launch.pod_availability import (
     PodAvailability,
     PodAvailabilityProbe,
     load_pod_metadata_for_run,
     resume_pod_with_retry,
 )
-from src.providers.training.interfaces import ITerminalActionProvider
+from ryotenkai_providers.training.interfaces import ITerminalActionProvider
 
 if TYPE_CHECKING:
-    from src.pipeline.state.models import PodMetadata
+    from ryotenkai_control.pipeline.state.models import PodMetadata
 
 __all__ = [
     "LaunchResumeService",
@@ -144,7 +144,7 @@ def _default_resolve_lifecycle_provider(
             return None
         # Lazy import — keeps non-resume CLI paths from importing
         # the heavy RunPod module tree at startup.
-        from src.providers.runpod.training.provider import RunPodProvider
+        from ryotenkai_providers.runpod.training.provider import RunPodProvider
         return RunPodProvider.from_resume_metadata(api_key=api_key)
     if provider_name == PROVIDER_SINGLE_NODE:
         # Single-node has no cloud lifecycle to act on.
@@ -321,7 +321,7 @@ class LaunchResumeService:
             # Defensive — production flows always have this; tests
             # using a fake provider stub need to expose
             # ``_api_client.query_pod`` too.
-            from src.pipeline.launch.pod_availability import ProbeResult
+            from ryotenkai_control.pipeline.launch.pod_availability import ProbeResult
             return ProbeResult(
                 availability=PodAvailability.PROBE_FAILED,
                 pod_id=metadata.pod_id,
@@ -372,7 +372,7 @@ class LaunchResumeService:
         # second lifecycle provider lands. For now, lazy import.
         is_capacity_error: Callable[[str], bool] | None
         if metadata.provider == PROVIDER_RUNPOD:
-            from src.providers.runpod.sdk_adapter import (
+            from ryotenkai_providers.runpod.sdk_adapter import (
                 is_capacity_error_message,
             )
             is_capacity_error = is_capacity_error_message

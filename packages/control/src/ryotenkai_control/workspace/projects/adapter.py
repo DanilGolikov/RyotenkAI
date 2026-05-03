@@ -28,11 +28,11 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from src.workspace.projects.registry import (
+from ryotenkai_control.workspace.projects.registry import (
     ProjectRegistry,
     ProjectRegistryError,
 )
-from src.workspace.projects.store import ProjectStore
+from ryotenkai_control.workspace.projects.store import ProjectStore
 
 
 class ProjectNotFoundError(LookupError):

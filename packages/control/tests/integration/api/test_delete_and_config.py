@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.api.services import delete_service
-from src.pipeline.deletion import DeleteIssue, DeleteResult, RunDeleter
+from ryotenkai_control.api.services import delete_service
+from ryotenkai_control.pipeline.deletion import DeleteIssue, DeleteResult, RunDeleter
 
 
 def test_delete_run_happy_path(client, seed_completed_run, monkeypatch) -> None:
@@ -63,8 +63,8 @@ def test_config_validate_reads_yaml(client, tmp_path: Path, monkeypatch) -> None
     config_file = tmp_path / "config.yaml"
     config_file.write_text("stub", encoding="utf-8")
 
-    from src.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-    from src.api.services import config_service
+    from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
+    from ryotenkai_control.api.services import config_service
 
     def _fake_validate(path: Path) -> ConfigValidationResult:
         return ConfigValidationResult(

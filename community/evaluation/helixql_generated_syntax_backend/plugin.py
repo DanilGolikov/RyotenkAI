@@ -10,8 +10,8 @@ from community_libs.helixql import (
     extract_schema_block,
     get_compiler,
 )
-from src.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
-from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
+from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample, EvaluatorPlugin
+from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, save_plugin_report
 
 
 class HelixQLGeneratedSyntaxBackendPlugin(EvaluatorPlugin):

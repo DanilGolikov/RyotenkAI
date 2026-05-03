@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 def build_ssh_opts(ssh_client: SSHClient) -> str:

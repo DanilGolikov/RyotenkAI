@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.providers.training.interfaces import (
+from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     IGPUProvider,
     ITerminalActionProvider,

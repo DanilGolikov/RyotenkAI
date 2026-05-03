@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from src.api.schemas.config_validate import ConfigValidationResult
+from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
 
 
 class ProjectSummary(BaseModel):

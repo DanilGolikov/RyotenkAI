@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from src.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
+from ryotenkai_control.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@ Removed at the start of Phase B (monorepo packagization, see
 
 from __future__ import annotations
 
-from src.utils.clients.job_client import (
+from ryotenkai_shared.utils.clients.job_client import (
     JobClient,
     JobClientError,
     JobNotFoundError,

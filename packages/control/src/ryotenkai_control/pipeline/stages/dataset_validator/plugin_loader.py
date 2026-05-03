@@ -22,17 +22,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.data.validation.registry import validation_registry
-from src.pipeline.stages.dataset_validator.constants import (
+from ryotenkai_control.data.validation.registry import validation_registry
+from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     SPLIT_EVAL,
     SPLIT_TRAIN,
     VALIDATIONS_ATTR,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.config.secrets.model import Secrets
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.config import PipelineConfig
 
 
 PluginTuple = tuple[str, str, Any, set[str]]
@@ -67,7 +67,7 @@ class PluginLoader:
         """Instantiate each configured plugin via the validation registry."""
         logger.info(f"[VALIDATOR] Loading {len(plugin_configs)} validation plugins")
 
-        from src.community.catalog import catalog
+        from ryotenkai_community.catalog import catalog
 
         catalog.ensure_loaded()
 
@@ -105,7 +105,7 @@ class PluginLoader:
         """Build a DTST_* SecretsResolver if secrets are available."""
         if self._secrets is None:
             return None
-        from src.data.validation.secrets import SecretsResolver
+        from ryotenkai_control.data.validation.secrets import SecretsResolver
 
         return SecretsResolver(self._secrets)
 

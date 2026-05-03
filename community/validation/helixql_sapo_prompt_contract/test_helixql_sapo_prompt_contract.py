@@ -77,16 +77,16 @@ def _run_validate(samples: list[dict[str, Any]], config: dict[str, Any] | None =
 
 class TestSAPOValidatorRegistration:
     def test_is_registered(self) -> None:
-        from src.community.catalog import catalog
-        from src.data.validation.registry import validation_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.data.validation.registry import validation_registry
 
         catalog.reload()
         assert "helixql_sapo_prompt_contract" in validation_registry.list_ids()
 
     def test_name_classvar(self) -> None:
         """``name`` is attached by the community loader from manifest.plugin.id."""
-        from src.community.catalog import catalog
-        from src.data.validation.registry import validation_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.data.validation.registry import validation_registry
 
         catalog.reload()
         registered = validation_registry.get_class("helixql_sapo_prompt_contract")

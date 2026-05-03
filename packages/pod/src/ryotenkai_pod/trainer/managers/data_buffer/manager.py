@@ -21,7 +21,7 @@ Architecture:
     TrainerFactory (uses output_dir from DataBuffer)
 
 Example:
-    from src.training.managers.data_buffer import DataBuffer
+    from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
 
     buffer = DataBuffer(
         base_output_dir="output",
@@ -54,23 +54,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from src.training.managers.constants import (
+from ryotenkai_pod.trainer.managers.constants import (
     CHECKPOINT_FINAL_DIR,
     CHECKPOINT_SIZE_ESTIMATE_MB,
     KEY_STATUS,
     KEY_PHASES,
     RUN_ID_TIMESTAMP_LEN,
 )
-from src.utils.logger import logger
+from ryotenkai_shared.utils.logger import logger
 
-from src.training.managers.data_buffer.checkpoint_utils import _get_sorted_checkpoints
-from src.training.managers.data_buffer.events import DataBufferEventCallbacks
-from src.training.managers.data_buffer.fault_simulator import FaultSimulator, SimulatedFaultError
-from src.training.managers.data_buffer.state_models import PhaseState, PhaseStatus, PipelineState
-from src.training.metrics_models import TrainingMetricsSnapshot
+from ryotenkai_pod.trainer.managers.data_buffer.checkpoint_utils import _get_sorted_checkpoints
+from ryotenkai_pod.trainer.managers.data_buffer.events import DataBufferEventCallbacks
+from ryotenkai_pod.trainer.managers.data_buffer.fault_simulator import FaultSimulator, SimulatedFaultError
+from ryotenkai_pod.trainer.managers.data_buffer.state_models import PhaseState, PhaseStatus, PipelineState
+from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
 
 if TYPE_CHECKING:
-    from src.config import StrategyPhaseConfig
+    from ryotenkai_shared.config import StrategyPhaseConfig
 
 
 class DataBuffer:
@@ -753,7 +753,7 @@ class DataBuffer:
 
         SIMULATION_POINT: fail_on_cleanup
         """
-        from src.training.managers.constants import CHECKPOINT_FINAL_DIR as _FINAL
+        from ryotenkai_pod.trainer.managers.constants import CHECKPOINT_FINAL_DIR as _FINAL
 
         logger.debug(f"[DB:CLEANUP_START] keep_last={keep_last}, dry_run={dry_run}")
         deleted: list[str] = []

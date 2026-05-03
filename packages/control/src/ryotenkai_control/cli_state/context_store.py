@@ -31,7 +31,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.utils.atomic_fs import atomic_write_json, utc_now_iso
+from ryotenkai_shared.utils.atomic_fs import atomic_write_json, utc_now_iso
 
 #: Env var that overrides ``~/.ryotenkai`` as the CLI's home directory.
 #: Mirrors what ``RYOTENKAI_RUNS_DIR`` does for runs storage; lets tests

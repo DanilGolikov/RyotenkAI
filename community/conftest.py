@@ -27,8 +27,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.community.constants import COMMUNITY_ROOT
-from src.community.libs import libs_root_for, preload_community_libs
+from ryotenkai_community.constants import COMMUNITY_ROOT
+from ryotenkai_community.libs import libs_root_for, preload_community_libs
 
 preload_community_libs(libs_root_for(COMMUNITY_ROOT))
 

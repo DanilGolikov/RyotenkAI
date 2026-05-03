@@ -20,10 +20,10 @@ from __future__ import annotations
 from abc import ABC
 from typing import TYPE_CHECKING, Any
 
-from src.training.constants import COL_PROMPT
-from src.training.strategies.base import TrainingStrategy
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, Result, StrategyError
+from ryotenkai_pod.trainer.constants import COL_PROMPT
+from ryotenkai_pod.trainer.strategies.base import TrainingStrategy
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

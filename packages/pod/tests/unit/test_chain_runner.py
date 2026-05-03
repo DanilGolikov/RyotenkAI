@@ -15,8 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.utils.result import Err, Ok
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.utils.result import Err, Ok
 
 # =============================================================================
 # HELPER: Create test strategies
@@ -50,7 +50,7 @@ class TestSinglePhaseExecution:
 
     def test_single_phase_success(self):
         """Single phase should execute and return model."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         # Mock PhaseExecutor
         mock_executor = MagicMock()
@@ -79,7 +79,7 @@ class TestSinglePhaseExecution:
 
     def test_single_phase_failure(self):
         """Single phase failure should propagate error."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_executor.execute.return_value = Err("Training failed: CUDA OOM")
@@ -108,7 +108,7 @@ class TestMultiPhaseExecution:
 
     def test_two_phase_execution(self):
         """Two phases should execute sequentially."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
 
@@ -149,7 +149,7 @@ class TestMultiPhaseExecution:
 
     def test_three_phase_execution(self):
         """Three phases should execute sequentially, passing model."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
 
@@ -176,7 +176,7 @@ class TestMultiPhaseExecution:
 
     def test_phase_failure_stops_chain(self):
         """Phase failure should stop chain execution."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
 
@@ -216,7 +216,7 @@ class TestResumeFromPhase:
 
     def test_resume_from_phase_1(self):
         """start_phase=1 should skip phase 0."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_executor.execute.return_value = Ok(MagicMock())
@@ -247,7 +247,7 @@ class TestResumeFromPhase:
 
     def test_resume_from_phase_2_of_4(self):
         """Resume from phase 2 should execute phases 2 and 3."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_executor.execute.return_value = Ok(MagicMock())
@@ -276,7 +276,7 @@ class TestResumeFromPhase:
 
     def test_resume_from_last_phase(self):
         """Resume from last phase should execute only that phase."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_executor.execute.return_value = Ok(MagicMock())
@@ -308,7 +308,7 @@ class TestEdgeCases:
 
     def test_empty_strategies_no_execution(self):
         """Empty strategies should not call executor."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_buffer = MagicMock()
@@ -324,7 +324,7 @@ class TestEdgeCases:
 
     def test_start_phase_beyond_strategies(self):
         """start_phase >= len(strategies) should not execute anything."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         mock_buffer = MagicMock()
@@ -350,7 +350,7 @@ class TestGetRemainingPhases:
 
     def test_remaining_from_start(self):
         """get_remaining_phases(0) should return all strategies."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         runner = ChainRunner(mock_executor)
@@ -368,7 +368,7 @@ class TestGetRemainingPhases:
 
     def test_remaining_from_middle(self):
         """get_remaining_phases(1) should return strategies[1:]."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         runner = ChainRunner(mock_executor)
@@ -387,7 +387,7 @@ class TestGetRemainingPhases:
 
     def test_remaining_from_last(self):
         """get_remaining_phases(len-1) should return only last strategy."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         runner = ChainRunner(mock_executor)
@@ -404,7 +404,7 @@ class TestGetRemainingPhases:
 
     def test_remaining_beyond_end(self):
         """get_remaining_phases(>len) should return empty list."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         runner = ChainRunner(mock_executor)
@@ -426,7 +426,7 @@ class TestPhaseHeaderLogging:
 
     def test_log_phase_header_format(self):
         """_log_phase_header should log phase info (test via mock)."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
         runner = ChainRunner(mock_executor)
@@ -451,7 +451,7 @@ class TestModelPropagation:
 
     def test_model_from_phase_n_goes_to_phase_n_plus_1(self):
         """Model returned by phase N should be input to phase N+1."""
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
 

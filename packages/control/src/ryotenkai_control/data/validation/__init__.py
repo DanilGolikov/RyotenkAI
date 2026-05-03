@@ -8,8 +8,8 @@ Provides pluggable architecture for dataset validation with:
 - Support for streaming datasets
 """
 
-from src.data.validation.base import ValidationPlugin, ValidationResult
-from src.data.validation.registry import ValidationPluginRegistry, validation_registry
+from ryotenkai_control.data.validation.base import ValidationPlugin, ValidationResult
+from ryotenkai_control.data.validation.registry import ValidationPluginRegistry, validation_registry
 
 __all__ = [
     "ValidationPlugin",

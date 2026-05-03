@@ -6,7 +6,7 @@ Removed at the start of Phase B (monorepo packagization, see
 
 from __future__ import annotations
 
-from src.utils.clients.ssh_tunnel import (
+from ryotenkai_shared.utils.clients.ssh_tunnel import (
     DEFAULT_LOCAL_PORT_RANGE,
     DEFAULT_REMOTE_PORT,
     SSHTunnelEndpoint,

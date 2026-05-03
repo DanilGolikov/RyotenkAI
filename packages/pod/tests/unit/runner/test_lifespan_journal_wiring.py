@@ -51,11 +51,11 @@ class TestFallback:
     ) -> None:
         from fastapi.testclient import TestClient
 
-        from src.runner.main import create_app
-        from src.tests.unit.runner.conftest import MockSupervisor
+        from ryotenkai_pod.runner.main import create_app
+        from tests.unit.runner.conftest import MockSupervisor
 
         # Force EventJournal construction to raise.
-        from src.runner import main as main_mod
+        from ryotenkai_pod.runner import main as main_mod
 
         class _BrokenJournal:
             def __init__(self, *args, **kwargs):

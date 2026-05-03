@@ -7,8 +7,8 @@ The state package owns the source of truth (StageRunState statuses,
 execution modes); this package translates those values for the UI.
 """
 
-from src.api.presentation.formatters import format_duration, format_mode_label
-from src.api.presentation.icons import STATUS_COLORS, STATUS_ICONS
+from ryotenkai_control.api.presentation.formatters import format_duration, format_mode_label
+from ryotenkai_control.api.presentation.icons import STATUS_COLORS, STATUS_ICONS
 
 __all__ = [
     "STATUS_COLORS",

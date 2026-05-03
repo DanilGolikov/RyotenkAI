@@ -16,7 +16,7 @@ import pydantic
 import pytest
 import yaml
 
-from src.utils.result import Err, Ok
+from ryotenkai_shared.utils.result import Err, Ok
 
 # =============================================================================
 # TEST CLASS: Configuration Loading
@@ -28,14 +28,14 @@ class TestConfigurationLoading:
 
     def test_nonexistent_config_raises_error(self):
         """Loading nonexistent config should raise FileNotFoundError."""
-        from src.training.run_training import run_training
+        from ryotenkai_pod.trainer.run_training import run_training
 
         with pytest.raises(FileNotFoundError):
             run_training("/nonexistent/path/config.yaml")
 
     def test_invalid_yaml_syntax_raises_error(self, tmp_path):
         """Invalid YAML syntax should raise error."""
-        from src.training.run_training import run_training
+        from ryotenkai_pod.trainer.run_training import run_training
 
         config_file = tmp_path / "invalid.yaml"
         config_file.write_text("model: {name: [unclosed")
@@ -45,7 +45,7 @@ class TestConfigurationLoading:
 
     def test_config_missing_required_field_raises_error(self, tmp_path):
         """Config missing required field should raise ValidationError."""
-        from src.training.run_training import run_training
+        from ryotenkai_pod.trainer.run_training import run_training
 
         config_file = tmp_path / "incomplete.yaml"
         config_file.write_text("""
@@ -65,12 +65,12 @@ training:
 class TestCLIEntryPoint:
     """Tests for CLI main() function."""
 
-    @patch("src.training.run_training.run_training")
+    @patch("ryotenkai_pod.trainer.run_training.run_training")
     def test_main_returns_0_on_success(self, mock_run_training):
         """main() should return 0 on success."""
         import sys
 
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_run_training.return_value = Path("/tmp/output")
 
@@ -79,12 +79,12 @@ class TestCLIEntryPoint:
 
         assert result == 0
 
-    @patch("src.training.run_training.run_training")
+    @patch("ryotenkai_pod.trainer.run_training.run_training")
     def test_main_returns_1_on_error(self, mock_run_training):
         """main() should return 1 on error."""
         import sys
 
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_run_training.side_effect = RuntimeError("Test error")
 
@@ -93,12 +93,12 @@ class TestCLIEntryPoint:
 
         assert result == 1
 
-    @patch("src.training.run_training.run_training")
+    @patch("ryotenkai_pod.trainer.run_training.run_training")
     def test_main_returns_130_on_keyboard_interrupt(self, mock_run_training):
         """main() should return 130 on KeyboardInterrupt."""
         import sys
 
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_run_training.side_effect = KeyboardInterrupt()
 
@@ -107,12 +107,12 @@ class TestCLIEntryPoint:
 
         assert result == 130
 
-    @patch("src.training.run_training.run_training")
+    @patch("ryotenkai_pod.trainer.run_training.run_training")
     def test_main_passes_resume_flag(self, mock_run_training):
         """main() should pass --resume flag to run_training."""
         import sys
 
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_run_training.return_value = Path("/tmp/output")
 
@@ -123,12 +123,12 @@ class TestCLIEntryPoint:
         call_kwargs = mock_run_training.call_args[1]
         assert call_kwargs["resume"] is True
 
-    @patch("src.training.run_training.run_training")
+    @patch("ryotenkai_pod.trainer.run_training.run_training")
     def test_main_passes_run_id(self, mock_run_training):
         """main() should pass --run-id to run_training."""
         import sys
 
-        from src.training.run_training import main
+        from ryotenkai_pod.trainer.run_training import main
 
         mock_run_training.return_value = Path("/tmp/output")
 
@@ -149,13 +149,13 @@ class TestBackwardCompatibility:
 
     def test_train_v2_alias_exists(self):
         """train_v2 should be an alias for run_training."""
-        from src.training.run_training import run_training, train_v2
+        from ryotenkai_pod.trainer.run_training import run_training, train_v2
 
         assert train_v2 is run_training
 
     def test_import_train_v2_from_training_module(self):
-        """train_v2 should be importable from src.training."""
-        from src.training import train_v2
+        """train_v2 should be importable from ryotenkai_pod.trainer."""
+        from ryotenkai_pod.trainer import train_v2
 
         assert train_v2 is not None
 
@@ -199,7 +199,7 @@ class _RunCtx:
 
 class TestRunTrainingFlow:
     def test_extract_model_size(self):
-        from src.training.run_training import _extract_model_size
+        from ryotenkai_pod.trainer.run_training import _extract_model_size
 
         assert _extract_model_size("Qwen/Qwen2.5-0.5B-Instruct") == "0.5B"
         assert _extract_model_size("meta-llama/Llama-3.2-7B") == "7B"
@@ -208,7 +208,7 @@ class TestRunTrainingFlow:
     def test_run_training_success_with_mlflow_and_container_di(self, monkeypatch, tmp_path):
         import importlib
 
-        rt = importlib.import_module("src.training.run_training")
+        rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
 
         # Fake config
         strategies = [MagicMock(strategy_type="sft"), MagicMock(strategy_type="dpo")]
@@ -276,7 +276,7 @@ class TestRunTrainingFlow:
     def test_run_training_failure_notifies_once(self, monkeypatch, tmp_path):
         import importlib
 
-        rt = importlib.import_module("src.training.run_training")
+        rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
 
         strategies = [MagicMock(strategy_type="sft")]
         cfg = MagicMock()
@@ -325,7 +325,7 @@ class TestRunTrainingFlow:
     def test_run_training_continues_when_mlflow_setup_returns_none(self, monkeypatch, tmp_path):
         import importlib
 
-        rt = importlib.import_module("src.training.run_training")
+        rt = importlib.import_module("ryotenkai_pod.trainer.run_training")
 
         strategies = [MagicMock(strategy_type="sft")]
         cfg = MagicMock()
@@ -403,7 +403,7 @@ class TestTrainingFileHandler:
     def test_attaches_filehandler_at_default_path(
         self, tmp_path, monkeypatch,
     ) -> None:
-        from src.training.run_training import _install_training_file_handler
+        from ryotenkai_pod.trainer.run_training import _install_training_file_handler
         import logging
 
         log_path = tmp_path / "workspace" / "training.log"
@@ -412,7 +412,7 @@ class TestTrainingFileHandler:
         _install_training_file_handler()
 
         # Emit something via the trainer logger; it must end up in the file.
-        from src.utils.logger import logger
+        from ryotenkai_shared.utils.logger import logger
         logger.info("hello from trainer")
 
         # Force flush and read.
@@ -426,7 +426,7 @@ class TestTrainingFileHandler:
     def test_idempotent_double_install(
         self, tmp_path, monkeypatch,
     ) -> None:
-        from src.training.run_training import _install_training_file_handler
+        from ryotenkai_pod.trainer.run_training import _install_training_file_handler
         import logging
 
         log_path = tmp_path / "training.log"
@@ -447,7 +447,7 @@ class TestTrainingFileHandler:
     def test_unwritable_path_does_not_raise(
         self, tmp_path, monkeypatch,
     ) -> None:
-        from src.training.run_training import _install_training_file_handler
+        from ryotenkai_pod.trainer.run_training import _install_training_file_handler
 
         # /dev/null/foo always fails on POSIX since /dev/null is a char device.
         monkeypatch.setenv("RYOTENKAI_TRAINING_LOG_PATH", "/dev/null/cannot-mkdir")
@@ -461,7 +461,7 @@ class TestTrainingFileHandler:
         # re-exported from the package's ``__init__``; reach the module
         # via importlib so we can introspect its constants.
         import importlib
-        run_training_module = importlib.import_module("src.training.run_training")
+        run_training_module = importlib.import_module("ryotenkai_pod.trainer.run_training")
 
         # Env var unset → falls back to /workspace/training.log default.
         monkeypatch.delenv("RYOTENKAI_TRAINING_LOG_PATH", raising=False)

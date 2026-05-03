@@ -7,7 +7,7 @@ Provides:
 - save_plugin_report()  — write runs/{run}/evaluation/{plugin_name}_report.md.
 
 Usage (aggregate_scores):
-    from src.evaluation.plugins.utils import aggregate_scores
+    from ryotenkai_control.evaluation.plugins.utils import aggregate_scores
 
     result = aggregate_scores(
         scores=[0.75, 1.0, 0.5],
@@ -20,7 +20,7 @@ Usage (aggregate_scores):
     )
 
 Usage (save_plugin_report):
-    from src.evaluation.plugins.utils import PluginReportRow, save_plugin_report
+    from ryotenkai_control.evaluation.plugins.utils import PluginReportRow, save_plugin_report
 
     rows = [
         PluginReportRow(idx=0, question="Q", model_answer="A", expected_answer="E",
@@ -36,8 +36,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.evaluation.plugins.base import EvalResult
-from src.utils.logger import get_run_log_dir, logger  # top-level import enables monkeypatching in tests
+from ryotenkai_control.evaluation.plugins.base import EvalResult
+from ryotenkai_shared.utils.logger import get_run_log_dir, logger  # top-level import enables monkeypatching in tests
 
 _SCORE_MIN = 1
 _SCORE_MAX = 5

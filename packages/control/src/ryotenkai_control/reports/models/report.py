@@ -12,7 +12,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 # Re-export domain entities to avoid duplication
-from src.reports.domain.entities import (
+from ryotenkai_control.reports.domain.entities import (
     EvaluationReport,
     MemoryEvent,
     MetricTrend,

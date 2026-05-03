@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.pipeline.artifacts.base import (
+from ryotenkai_control.pipeline.artifacts.base import (
     STATUS_FAILED,
     STATUS_INTERRUPTED,
     STATUS_PASSED,
@@ -27,7 +27,7 @@ from src.pipeline.artifacts.base import (
     save_stage_artifact,
     utc_now_iso,
 )
-from src.pipeline.artifacts.schemas import (
+from ryotenkai_control.pipeline.artifacts.schemas import (
     DeploymentArtifactData,
     EvalArtifactData,
     EvalPluginData,
@@ -315,8 +315,8 @@ class TestSaveStageArtifact:
 
     def test_inactive_mlflow_is_silent(self) -> None:
         """Inactive MLflowManager does not write artifact."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = False
@@ -330,8 +330,8 @@ class TestSaveStageArtifact:
 
     def test_no_run_id_is_silent(self) -> None:
         """MLflowManager present but run_id missing → does not write artifact."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
@@ -342,8 +342,8 @@ class TestSaveStageArtifact:
 
     def test_mlflow_write_logs_dict_payload(self, tmp_path: Path) -> None:
         """Happy path: envelope dict is written via MLflowManager.log_dict()."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         logged_args: list[tuple[Any, ...]] = []
 
@@ -370,8 +370,8 @@ class TestSaveStageArtifact:
 
     def test_exception_in_log_dict_does_not_propagate(self) -> None:
         """Dependency error: exception in log_dict is swallowed (best-effort)."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
@@ -387,8 +387,8 @@ class TestSaveStageArtifact:
 
     def test_artifact_path_passed_through(self) -> None:
         """artifact_path is prefixed into the target artifact file for log_dict."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         logged_args: list[tuple[dict[str, Any], str, str]] = []
 
@@ -408,8 +408,8 @@ class TestSaveStageArtifact:
 
     def test_empty_run_id_string_is_skipped(self) -> None:
         """Boundary: run_id == '' → does not write artifact."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         mock_mgr = MagicMock(spec=MLflowManager)
         mock_mgr.is_active = True
@@ -628,8 +628,8 @@ class TestArtifactRegressions:
 
     def test_save_stage_artifact_json_payload_matches_envelope(self) -> None:
         """Regression: payload sent to MLflow matches envelope.to_dict()."""
-        from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
+        from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
+        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
         written_payloads: list[dict[str, Any]] = []
 

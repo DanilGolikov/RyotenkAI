@@ -19,13 +19,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.utils.logger import logger
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 
 class MultiSourceDatasetLoader:
@@ -45,11 +45,11 @@ class MultiSourceDatasetLoader:
 
         loader: Any
         if source_type == SOURCE_TYPE_HUGGINGFACE:
-            from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
+            from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
             loader = HuggingFaceDatasetLoader(self.config)
         else:
-            from src.data.loaders.json_loader import JsonDatasetLoader
+            from ryotenkai_control.data.loaders.json_loader import JsonDatasetLoader
 
             loader = JsonDatasetLoader(self.config)
 
@@ -64,7 +64,7 @@ class MultiSourceDatasetLoader:
         max_samples: int | None = None,
     ) -> Dataset:
         # Heuristic routing for direct load() usage
-        from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
+        from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
         source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)
@@ -72,7 +72,7 @@ class MultiSourceDatasetLoader:
         return loader.load(source, split=split, max_samples=max_samples)
 
     def validate_source(self, source: str) -> bool:
-        from src.data.loaders.hf_loader import HuggingFaceDatasetLoader
+        from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
 
         source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)

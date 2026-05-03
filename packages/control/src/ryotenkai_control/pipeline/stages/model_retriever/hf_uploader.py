@@ -21,19 +21,19 @@ from typing import TYPE_CHECKING, Any
 
 from huggingface_hub import HfApi
 
-from src.constants import LORA_CHECKPOINT_PATTERNS
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from src.pipeline.stages.model_retriever.constants import (
+from ryotenkai_shared.constants import LORA_CHECKPOINT_PATTERNS
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
+from ryotenkai_control.pipeline.stages.model_retriever.constants import (
     HTTP_STATUS_NOT_FOUND,
     HTTP_STATUS_UNAUTHORIZED,
     MR_SHA12_LENGTH,
     MR_SSH_CMD_TIMEOUT,
     MR_UPLOAD_TIMEOUT,
 )
-from src.utils.logger import logger
-from src.utils.result import Err, ModelError, Ok, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, ModelError, Ok, Result
 
-from src.pipeline.stages.model_retriever.types import (
+from ryotenkai_control.pipeline.stages.model_retriever.types import (
     PhaseMetricsResult,
     _METRICS,
     _PHASE_IDX,
@@ -44,8 +44,8 @@ from src.pipeline.stages.model_retriever.types import (
 )
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig, Secrets
-    from src.utils.ssh_client import SSHClient
+    from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
 class HFModelUploader:
@@ -340,7 +340,7 @@ class HFModelUploader:
 
     def extract_datasets_for_readme(self, *, basename_fn: Any = None) -> list[str]:
         """Extract dataset identifiers suitable for HF model card metadata."""
-        from src.pipeline.stages.model_retriever.model_card import ModelCardGenerator
+        from ryotenkai_control.pipeline.stages.model_retriever.model_card import ModelCardGenerator
 
         _basename = basename_fn or ModelCardGenerator._basename
 

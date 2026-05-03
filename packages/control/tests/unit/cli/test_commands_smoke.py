@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from src.cli.app import app
+from ryotenkai_control.cli.app import app
 
 
 @pytest.fixture()
@@ -98,7 +98,7 @@ def test_dataset_validate_no_validation_plugins(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When the config has no validation plugins, exit 2 with a hint."""
-    from src.cli.commands import dataset as dataset_cmd_mod
+    from ryotenkai_control.cli.commands import dataset as dataset_cmd_mod
 
     class FakeDataset:
         validations = type("V", (), {"plugins": []})()
@@ -106,7 +106,7 @@ def test_dataset_validate_no_validation_plugins(
     fake_cfg = type("Cfg", (), {"datasets": {"d1": FakeDataset()}})()
 
     monkeypatch.setattr(
-        "src.workspace.integrations.loader.load_pipeline_config",
+        "ryotenkai_control.workspace.integrations.loader.load_pipeline_config",
         lambda _: fake_cfg,
         raising=True,
     )
@@ -140,7 +140,7 @@ def test_project_current_after_use_dry_run_does_not_persist(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``project use --dry-run`` must NOT touch the context file."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     monkeypatch.setenv("RYOTENKAI_HOME", str(tmp_path))
     monkeypatch.setattr(
@@ -158,7 +158,7 @@ def test_project_current_after_use_dry_run_does_not_persist(
 def test_project_use_persists_then_current_reads_it(
     runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     monkeypatch.setenv("RYOTENKAI_HOME", str(tmp_path))
     monkeypatch.setattr(
@@ -190,8 +190,8 @@ def test_plugin_validate_missing_file(runner: CliRunner, tmp_path: Path) -> None
 def test_plugin_validate_valid_manifest(
     runner: CliRunner, tmp_path: Path,
 ) -> None:
-    from src.community.constants import MANIFEST_FILENAME
-    from src.community.manifest import LATEST_SCHEMA_VERSION
+    from ryotenkai_community.constants import MANIFEST_FILENAME
+    from ryotenkai_community.manifest import LATEST_SCHEMA_VERSION
 
     folder = tmp_path / "p"
     folder.mkdir()
@@ -226,7 +226,7 @@ def test_run_start_dry_run_succeeds(
     config_path.write_text("model: {}\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        "src.workspace.integrations.loader.load_pipeline_config",
+        "ryotenkai_control.workspace.integrations.loader.load_pipeline_config",
         lambda _: type("Cfg", (), {})(),
         raising=True,
     )

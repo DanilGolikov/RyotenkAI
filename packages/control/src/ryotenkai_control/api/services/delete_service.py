@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.api.schemas.delete import DeleteIssueSchema, DeleteResultSchema
-from src.pipeline.deletion import DeleteMode, DeleteResult, RunDeleter
-from src.pipeline.launch import is_process_alive, read_lock_pid
+from ryotenkai_control.api.schemas.delete import DeleteIssueSchema, DeleteResultSchema
+from ryotenkai_control.pipeline.deletion import DeleteMode, DeleteResult, RunDeleter
+from ryotenkai_control.pipeline.launch import is_process_alive, read_lock_pid
 
 
 def _result_to_schema(result: DeleteResult) -> DeleteResultSchema:

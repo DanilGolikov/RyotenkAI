@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-from src.utils.logger import logger
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.config import DatasetConfig, PipelineConfig
-    from src.training.container import IDatasetLoader
+    from ryotenkai_shared.config import DatasetConfig, PipelineConfig
+    from ryotenkai_pod.trainer.container import IDatasetLoader
 
 
 class DatasetLoaderFactory:
@@ -84,7 +84,7 @@ class DatasetLoaderFactory:
 
     def _create_json_loader(self) -> IDatasetLoader:
         """Create JsonDatasetLoader for local files."""
-        from src.data.loaders import JsonDatasetLoader
+        from ryotenkai_control.data.loaders import JsonDatasetLoader
 
         loader = JsonDatasetLoader(self._config)
         logger.debug("[DL_FACTORY:CREATED] JsonDatasetLoader")
@@ -92,7 +92,7 @@ class DatasetLoaderFactory:
 
     def _create_huggingface_loader(self) -> IDatasetLoader:
         """Create HuggingFaceDatasetLoader for HF Hub."""
-        from src.data.loaders import HuggingFaceDatasetLoader
+        from ryotenkai_control.data.loaders import HuggingFaceDatasetLoader
 
         loader = HuggingFaceDatasetLoader(self._config)
         logger.debug("[DL_FACTORY:CREATED] HuggingFaceDatasetLoader")

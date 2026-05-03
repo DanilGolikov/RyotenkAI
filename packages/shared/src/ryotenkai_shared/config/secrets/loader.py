@@ -74,7 +74,7 @@ def load_secrets(
             optional).
     """
     # Local import to avoid heavy side-effects at module import time.
-    from src.utils.logger import logger
+    from ryotenkai_shared.utils.logger import logger
 
     # Single source-of-truth for env reads inside this call. Default
     # path (``env=None``) preserves the historical contract: BaseSettings

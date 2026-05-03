@@ -7,15 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.launch import PreparedAttempt
-from src.pipeline.orchestrator import PipelineOrchestrator, run_pipeline
-from src.pipeline.execution import StageRegistry
-from src.pipeline.stages.constants import StageNames
-from src.pipeline.state import PipelineStateStore, build_attempt_state
-from src.pipeline.state.models import PipelineState, StageRunState
-from src.pipeline.state.store import SCHEMA_VERSION
-from src.utils.logs_layout import LogLayout
-from src.utils.result import AppError, Err, Ok
+from ryotenkai_control.pipeline.launch import PreparedAttempt
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator, run_pipeline
+from ryotenkai_control.pipeline.execution import StageRegistry
+from ryotenkai_control.pipeline.stages.constants import StageNames
+from ryotenkai_control.pipeline.state import PipelineStateStore, build_attempt_state
+from ryotenkai_control.pipeline.state.models import PipelineState, StageRunState
+from ryotenkai_control.pipeline.state.store import SCHEMA_VERSION
+from ryotenkai_shared.utils.logs_layout import LogLayout
+from ryotenkai_shared.utils.result import AppError, Err, Ok
 
 
 def _mk_orchestrator(
@@ -30,7 +30,7 @@ def _mk_orchestrator(
     # helper sets it; tests stamp it on the mock here.
     config._source_path = config_path
     with (
-        patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+        patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
         patch.object(StageRegistry, "_build_stages", return_value=stages or []),
     ):
         return PipelineOrchestrator(config=config)
@@ -182,7 +182,7 @@ class TestMissingInitAndMlflowSetupLines:
         manager = MagicMock()
         manager.is_active = True
 
-        with patch("src.training.managers.mlflow_manager.MLflowManager", return_value=manager):
+        with patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", return_value=manager):
             out = orch._setup_mlflow()
 
         assert out is manager
@@ -196,7 +196,7 @@ class TestMissingInitAndMlflowSetupLines:
         )
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
 
-        with patch("src.training.managers.mlflow_manager.MLflowManager", side_effect=RuntimeError("boom")):
+        with patch("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", side_effect=RuntimeError("boom")):
             assert orch._setup_mlflow() is None
 
 
@@ -267,7 +267,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         # harmlessly (no real I/O).
         with (
             patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
-            patch("src.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
+            patch("ryotenkai_control.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             res = orch.run()
         assert res.is_ok()
@@ -328,7 +328,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         # harmlessly (no real I/O).
         with (
             patch.object(orch, "_prepare_stateful_attempt", side_effect=_fake_prepare),
-            patch("src.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
+            patch("ryotenkai_control.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             orch.run()
         # pipeline_events.json logging is removed — log_summary_artifact must NOT be called
@@ -393,7 +393,7 @@ class TestPrintSummaryCleanupAndMetricsCollectionMissingLines:
 
         # Patch console to avoid noisy output
         fake_console = MagicMock()
-        monkeypatch.setattr("src.pipeline.reporting.summary_reporter.console", fake_console)
+        monkeypatch.setattr("ryotenkai_control.pipeline.reporting.summary_reporter.console", fake_console)
 
         # Case 1: huggingface dataset with eval_id -> covers HF branch prints
         hf_ds = SimpleNamespace(
@@ -631,9 +631,9 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
 
     def test_run_pipeline_exit_codes(self) -> None:
         with (
-            patch("src.pipeline.orchestrator.PipelineOrchestrator") as MockOrch,
+            patch("ryotenkai_control.pipeline.orchestrator.PipelineOrchestrator") as MockOrch,
             patch(
-                "src.workspace.integrations.loader.load_pipeline_config",
+                "ryotenkai_control.workspace.integrations.loader.load_pipeline_config",
                 return_value=MagicMock(),
             ),
         ):
@@ -663,7 +663,7 @@ class TestFillFromContext:
 
     def test_fill_gpu_deployer(self, tmp_path: Path) -> None:
         """Positive: GPU Deployer reads upload/deps/provider/gpu/resource from context."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.GPU_DEPLOYER] = {
@@ -682,7 +682,7 @@ class TestFillFromContext:
 
     def test_fill_training_monitor(self, tmp_path: Path) -> None:
         """Positive: Training Monitor reads training_duration_seconds."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.TRAINING_MONITOR] = {"training_duration_seconds": 3600.0}
@@ -692,7 +692,7 @@ class TestFillFromContext:
 
     def test_fill_model_retriever(self, tmp_path: Path) -> None:
         """Positive: Model Retriever reads model_size_mb, hf_repo_id, upload_duration_seconds."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.MODEL_RETRIEVER] = {
@@ -707,7 +707,7 @@ class TestFillFromContext:
 
     def test_fill_inference_deployer(self, tmp_path: Path) -> None:
         """Positive: Inference Deployer reads endpoint_url, model_name, provider."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.INFERENCE_DEPLOYER] = {
@@ -722,7 +722,7 @@ class TestFillFromContext:
 
     def test_fill_model_evaluator_with_eval_summary(self, tmp_path: Path) -> None:
         """Positive: Model Evaluator expands eval_summary into data."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.MODEL_EVALUATOR] = {
@@ -735,7 +735,7 @@ class TestFillFromContext:
 
     def test_fill_missing_stage_context_is_noop(self, tmp_path: Path) -> None:
         """Boundary: missing stage_name in context → no crash, empty data."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         col = StageArtifactCollector(stage=StageNames.GPU_DEPLOYER, artifact_name="g.json")
@@ -745,7 +745,7 @@ class TestFillFromContext:
 
     def test_fill_non_dict_context_is_noop(self, tmp_path: Path) -> None:
         """Boundary: context[stage_name] not dict → no crash."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context[StageNames.TRAINING_MONITOR] = "not_a_dict"
@@ -755,7 +755,7 @@ class TestFillFromContext:
 
     def test_fill_unknown_stage_name_is_noop(self, tmp_path: Path) -> None:
         """Boundary: unknown stage_name → no crash, data unchanged."""
-        from src.pipeline.artifacts.base import StageArtifactCollector
+        from ryotenkai_control.pipeline.artifacts.base import StageArtifactCollector
 
         orch = self._mk(tmp_path)
         orch.context["Unknown Stage"] = {"x": 1}
@@ -823,7 +823,7 @@ class TestFlushPendingCollectors:
 
     def test_uses_set_started_at_if_available(self, tmp_path: Path) -> None:
         """Positive: set_started_at value is used in envelope when set."""
-        from src.pipeline.artifacts.base import STATUS_INTERRUPTED
+        from ryotenkai_control.pipeline.artifacts.base import STATUS_INTERRUPTED
 
         orch = self._mk(tmp_path)
         col = orch._collectors[StageNames.TRAINING_MONITOR]

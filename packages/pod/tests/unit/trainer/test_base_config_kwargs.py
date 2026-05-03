@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from src.training.reward_plugins.base import RewardPlugin
+from ryotenkai_pod.trainer.reward_plugins.base import RewardPlugin
 
 
 # ---------------------------------------------------------------------------

@@ -24,19 +24,19 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
-from src.runner.main import create_app
-from src.runner.state import (
+from ryotenkai_pod.runner.main import create_app
+from ryotenkai_pod.runner.state import (
     InvalidTransitionError,
     JobState,
 )
-from src.runner.supervisor import SupervisorBusy, TerminalHook
+from ryotenkai_pod.runner.supervisor import SupervisorBusy, TerminalHook
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
-    from src.runner.event_bus import EventBus
-    from src.runner.state import JobLifecycleFSM
+    from ryotenkai_pod.runner.event_bus import EventBus
+    from ryotenkai_pod.runner.state import JobLifecycleFSM
 
 
 # ---------------------------------------------------------------------------

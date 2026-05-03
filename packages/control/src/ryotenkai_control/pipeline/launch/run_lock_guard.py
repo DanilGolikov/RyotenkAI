@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.pipeline.state.store import PipelineRunLock, acquire_run_lock
-from src.utils.logger import logger
+from ryotenkai_control.pipeline.state.store import PipelineRunLock, acquire_run_lock
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from pathlib import Path

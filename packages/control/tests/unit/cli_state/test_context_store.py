@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from src.cli_state import context_store
+from ryotenkai_control.cli_state import context_store
 
 
 @pytest.fixture()

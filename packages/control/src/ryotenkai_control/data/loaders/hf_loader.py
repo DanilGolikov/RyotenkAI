@@ -16,14 +16,14 @@ from typing import TYPE_CHECKING, Any, cast
 
 from datasets import load_dataset
 
-from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-from src.data.loaders.base import BaseDatasetLoader
-from src.utils.logger import logger
+from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class HuggingFaceDatasetLoader(BaseDatasetLoader):
@@ -165,7 +165,7 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
         Returns:
             Result with loaded dataset or DataLoaderError
         """
-        from src.utils.result import DataLoaderError, Err, Ok
+        from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
 
         try:
             # Get dataset config for this phase

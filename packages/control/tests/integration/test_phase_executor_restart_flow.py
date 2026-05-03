@@ -14,11 +14,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from src.training.managers.data_buffer import DataBuffer, PhaseStatus
-from src.training.metrics_models import TrainingMetricsSnapshot
-from src.training.orchestrator.phase_executor import PhaseExecutor
-from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.utils.result import Ok
+from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, PhaseStatus
+from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
+from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
+from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.utils.result import Ok
 
 
 def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_path: Path) -> None:
@@ -175,7 +175,7 @@ def test_phase_executor_redirects_logging_through_tqdm_context(
 
     trainer.train.side_effect = _train
     monkeypatch.setattr(
-        "src.training.orchestrator.phase_executor.training_runner.logging_redirect_tqdm",
+        "ryotenkai_pod.trainer.orchestrator.phase_executor.training_runner.logging_redirect_tqdm",
         _fake_logging_redirect_tqdm,
     )
 

@@ -22,13 +22,13 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from src.training.managers.data_buffer import (
+from ryotenkai_pod.trainer.managers.data_buffer import (
     DataBuffer,
     PhaseState,
     PhaseStatus,
 )
-from src.training.orchestrator.phase_executor import PhaseExecutor
-from src.utils.result import Err, Ok, Success, Failure
+from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
+from ryotenkai_shared.utils.result import Err, Ok, Success, Failure
 
 pytestmark = pytest.mark.unit
 
@@ -79,7 +79,7 @@ def _mk_phase_ns(
 
 
 def _mk_buffer_with_phases(tmp_path: Path, n_phases: int = 2) -> DataBuffer:
-    from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
     strategies = [
         StrategyPhaseConfig(
@@ -143,7 +143,7 @@ class TestComputeDatasetFingerprint:
         hf_info = MagicMock()
         hf_info.sha = commit_sha
 
-        with patch("src.training.orchestrator.phase_executor.PhaseExecutor._compute_dataset_fingerprint") as mock_fp:
+        with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.PhaseExecutor._compute_dataset_fingerprint") as mock_fp:
             mock_fp.return_value = "abcde12345"
             fp = mock_fp(ds)
             assert len(fp) == 10
@@ -198,14 +198,14 @@ class TestRetryCall:
                 raise ConnectionError("transient")
             return "ok"
 
-        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+        with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
             result = PhaseExecutor._retry_call(fn, retries=3, delay_s=1)
         assert result == "ok"
         assert len(attempts) == 3
 
     def test_negative_raises_after_exhausting_retries(self) -> None:
         fn = MagicMock(side_effect=ValueError("always fails"))
-        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+        with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
             with pytest.raises(ValueError, match="always fails"):
                 PhaseExecutor._retry_call(fn, retries=3, delay_s=1)
         assert fn.call_count == 3
@@ -218,7 +218,7 @@ class TestRetryCall:
 
     def test_boundary_sleep_called_between_attempts(self) -> None:
         fn = MagicMock(side_effect=[Exception("err1"), Exception("err2"), "done"])
-        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep") as mock_sleep:
+        with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep") as mock_sleep:
             PhaseExecutor._retry_call(fn, retries=3, delay_s=5)
         assert mock_sleep.call_count == 2  # sleep after attempt 1 and 2 (not after 3rd success)
 
@@ -226,7 +226,7 @@ class TestRetryCall:
         """The LAST exception (not the first) is the one that propagates."""
         errors = [ValueError("first"), ValueError("last")]
         fn = MagicMock(side_effect=errors)
-        with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+        with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
             with pytest.raises(ValueError, match="last"):
                 PhaseExecutor._retry_call(fn, retries=2, delay_s=0)
 
@@ -451,7 +451,7 @@ class TestUploadAdapterToCache:
                 api_instance.upload_large_folder.return_value = None
                 api_instance.create_tag.return_value = None
 
-            with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+            with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
                 executor._upload_adapter_to_cache(
                     phase_idx=0,
                     phase=phase,  # type: ignore[arg-type]
@@ -491,7 +491,7 @@ class TestUploadAdapterToCache:
         with patch("huggingface_hub.HfApi") as MockHfApi:
             api_instance = MockHfApi.return_value
             api_instance.create_repo.side_effect = IOError("fail")
-            with patch("src.training.orchestrator.phase_executor.adapter_cache.time.sleep"):
+            with patch("ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache.time.sleep"):
                 executor._upload_adapter_to_cache(
                     phase_idx=0,
                     phase=phase,  # type: ignore[arg-type]
@@ -532,7 +532,7 @@ class TestPhaseExecutorExecuteAdapterCache:
         executor, buf = _mk_full_executor(tmp_path)
 
         with patch.object(executor, "_try_adapter_cache_hit") as mock_try:
-            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -557,8 +557,8 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit", return_value=Ok(loaded_model)),
             patch.object(executor, "_should_stop", return_value=False),
         ):
-            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-            from src.config.training.adapter_cache import AdapterCacheConfig
+            from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from ryotenkai_shared.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -586,8 +586,8 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit") as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-            from src.config.training.adapter_cache import AdapterCacheConfig
+            from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from ryotenkai_shared.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -614,8 +614,8 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit", return_value=None) as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-            from src.config.training.adapter_cache import AdapterCacheConfig
+            from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from ryotenkai_shared.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -645,8 +645,8 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit") as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-            from src.config.training.adapter_cache import AdapterCacheConfig
+            from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from ryotenkai_shared.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -672,7 +672,7 @@ class TestPhaseExecutorExecuteAdapterCache:
 
 class TestChainRunnerCascade:
     def _mk_chain_runner(self, phase_executor: Any) -> Any:
-        from src.training.orchestrator.chain_runner import ChainRunner
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         return ChainRunner(
             phase_executor=phase_executor,
@@ -680,7 +680,7 @@ class TestChainRunnerCascade:
         )
 
     def _mk_strategies(self, n: int = 2) -> list[Any]:
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         types = ["sft", "dpo", "orpo"]
         return [
@@ -738,7 +738,7 @@ class TestChainRunnerCascade:
     def test_positive_cascade_propagates_through_all_downstream(self, tmp_path: Path) -> None:
         """Phase 0 trains → phases 1, 2, 3 all get upstream_retrained=True."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=4)
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),
@@ -770,7 +770,7 @@ class TestChainRunnerCascade:
     def test_positive_all_cached_upstream_retrained_never_set(self, tmp_path: Path) -> None:
         """All phases hit cache → upstream_retrained stays False throughout."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset=f"d{i}", hyperparams=PhaseHyperparametersConfig(epochs=1))
@@ -795,14 +795,14 @@ class TestChainRunnerCascade:
     def test_negative_phase_failure_stops_chain(self, tmp_path: Path) -> None:
         """If a phase fails, chain stops and returns Err; remaining phases not executed."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),
             StrategyPhaseConfig(strategy_type="dpo", dataset="d1", hyperparams=PhaseHyperparametersConfig(epochs=1)),
             StrategyPhaseConfig(strategy_type="dpo", dataset="d2", hyperparams=PhaseHyperparametersConfig(epochs=1)),
         ]
-        from src.utils.result import TrainingError
+        from ryotenkai_shared.utils.result import TrainingError
 
         phase_executor = MagicMock()
         calls: list[int] = []
@@ -831,7 +831,7 @@ class TestChainRunnerCascade:
         Phase 2: SKIPPED (but forced)  → receives upstream_retrained=True
         """
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),

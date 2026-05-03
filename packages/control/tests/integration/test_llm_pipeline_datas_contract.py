@@ -20,9 +20,9 @@ import pytest
 
 pytestmark = pytest.mark.requires_external_data
 
-from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.config import PipelineConfig, validate_strategy_chain
-from src.utils.result import Ok
+from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
+from ryotenkai_shared.config import PipelineConfig, validate_strategy_chain
+from ryotenkai_shared.utils.result import Ok
 
 
 def _is_new_dataset_schema(path: Path) -> bool:

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from src.community.loader import load_plugins
+from ryotenkai_community.loader import load_plugins
 
 
 def _write_broken_manifest(tmp_root: Path) -> None:
@@ -126,7 +126,7 @@ def test_catalog_surfaces_failures_to_api_service(
 ) -> None:
     """The catalog stores failures so plugin_service.list_plugins can surface them."""
     _write_broken_import(tmp_path)
-    from src.community.catalog import CommunityCatalog
+    from ryotenkai_community.catalog import CommunityCatalog
 
     cat = CommunityCatalog(root=tmp_path)
     cat.reload()

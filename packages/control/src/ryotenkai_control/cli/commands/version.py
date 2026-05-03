@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import typer
 
-from src.cli.context import CLIContext
-from src.cli.renderer import get_renderer
-from src.cli.version import collect_version_info
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.renderer import get_renderer
+from ryotenkai_control.cli.version import collect_version_info
 
 
 def _version_cmd(ctx: typer.Context) -> None:

@@ -21,9 +21,9 @@ from typing import Any
 
 import pytest
 
-from src.providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
-from src.utils.result import Err, Ok
-from src.utils.result import ProviderError
+from ryotenkai_providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
+from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.utils.result import ProviderError
 
 pytestmark = pytest.mark.unit
 

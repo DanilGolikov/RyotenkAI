@@ -19,10 +19,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline.bootstrap import PipelineBootstrap
-from src.pipeline.bootstrap.startup_validator import StartupValidator
-from src.pipeline.execution import StageRegistry
-from src.pipeline.orchestrator import PipelineOrchestrator
+from ryotenkai_control.pipeline.bootstrap import PipelineBootstrap
+from ryotenkai_control.pipeline.bootstrap.startup_validator import StartupValidator
+from ryotenkai_control.pipeline.execution import StageRegistry
+from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +58,9 @@ class TestPositive:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             orch = PipelineOrchestrator(config=config)
@@ -86,9 +86,9 @@ class TestPositive:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             orch = PipelineOrchestrator(config=config)
@@ -134,7 +134,7 @@ class TestNegative:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
             pytest.raises(ValueError, match="_source_path"),
@@ -163,9 +163,9 @@ class TestBoundary:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             orch = PipelineOrchestrator(config=config)
@@ -184,9 +184,9 @@ class TestBoundary:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             orch = PipelineOrchestrator(config=config)
@@ -216,9 +216,9 @@ class TestInvariants:
         secrets = MagicMock()
 
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             orch = PipelineOrchestrator(config=config)
@@ -242,9 +242,9 @@ class TestLogicSpecific:
 
         load_secrets_mock = MagicMock(return_value=MagicMock())
         with (
-            patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets", load_secrets_mock),
+            patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", load_secrets_mock),
             patch.object(StartupValidator, "validate"),
-            patch("src.community.preflight.run_preflight", return_value=MagicMock(ok=True)),
+            patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
             run_ctx = MagicMock()

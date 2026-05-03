@@ -16,10 +16,10 @@ from typing import Annotated
 
 import typer
 
-from src.cli.common_options import DryRunOpt, YesOpt
-from src.cli.context import CLIContext
-from src.cli.errors import die
-from src.cli.renderer import get_renderer
+from ryotenkai_control.cli.common_options import DryRunOpt, YesOpt
+from ryotenkai_control.cli.context import CLIContext
+from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.renderer import get_renderer
 
 project_app = typer.Typer(
     no_args_is_help=True,
@@ -36,7 +36,7 @@ def _registry():  # type: ignore[no-untyped-def]
     Lazy-imported so ``ryotenkai project --help`` doesn't pay for the
     workspace import chain.
     """
-    from src.workspace.projects import ProjectRegistry
+    from ryotenkai_control.workspace.projects import ProjectRegistry
 
     return ProjectRegistry()
 
@@ -49,7 +49,7 @@ def _registry():  # type: ignore[no-untyped-def]
 @project_app.command("ls")
 def ls_cmd(ctx: typer.Context) -> None:
     """List registered projects."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -73,7 +73,7 @@ def show_cmd(
     project_id: Annotated[str, typer.Argument(help="Project id.")],
 ) -> None:
     """Show project details (config + metadata)."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -110,8 +110,8 @@ def use_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Persist ``project_id`` as the active project for follow-up commands."""
-    from src.api.services import project_service
-    from src.cli_state import context_store
+    from ryotenkai_control.api.services import project_service
+    from ryotenkai_control.cli_state import context_store
 
     # Verify the project exists before persisting — avoids creating a
     # ghost context that resolves to nothing.
@@ -131,7 +131,7 @@ def use_cmd(
 @project_app.command("current")
 def current_cmd(ctx: typer.Context) -> None:
     """Print the persisted current project (if any)."""
-    from src.cli_state import context_store
+    from ryotenkai_control.cli_state import context_store
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -183,7 +183,7 @@ def create_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Create a new project (registers + writes metadata file)."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     if dry_run:
         typer.echo(f"dry-run: would create project {project_id or '<derived from name>'} " f"at {path or '<default>'}")
@@ -208,7 +208,7 @@ def rm_cmd(
     dry_run: DryRunOpt = False,
 ) -> None:
     """Unregister a project (does not delete the project directory)."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     if (
         not yes
@@ -241,7 +241,7 @@ def env_cmd(
     project_id: Annotated[str, typer.Argument(help="Project id.")],
 ) -> None:
     """Print the project's persisted env vars (no secret unmasking)."""
-    from src.api.services import project_service
+    from ryotenkai_control.api.services import project_service
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -279,7 +279,7 @@ def run_cmd(
     :func:`src.workspace.projects.adapter.resolve_project_launch_inputs`,
     so env merge and metadata stamping are identical in both surfaces.
     """
-    from src.cli_state import context_store
+    from ryotenkai_control.cli_state import context_store
 
     resolved_id = project_id or context_store.get_current_project()
     if not resolved_id:
@@ -291,7 +291,7 @@ def run_cmd(
     # Delegate to the same code path as ``run start --project`` — the
     # adapter resolves the project's filesystem, integration refs, and
     # env mapping in one place. Keeps both CLI surfaces in lock-step.
-    from src.cli.commands.run import _spawn_worker
+    from ryotenkai_control.cli.commands.run import _spawn_worker
 
     _spawn_worker(
         mode="start",

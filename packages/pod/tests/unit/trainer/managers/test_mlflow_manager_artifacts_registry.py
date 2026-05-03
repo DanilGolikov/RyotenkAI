@@ -9,8 +9,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from src.training.managers.mlflow_manager import MLflowManager
-from src.config import (
+from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
+from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
@@ -205,7 +205,7 @@ def test_setup_success_enables_system_metrics(monkeypatch: pytest.MonkeyPatch) -
 
     mgr = MLflowManager(_mk_cfg())
     # speed up: avoid network check via gateway
-    monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)
+    monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: True)
 
     assert mgr.setup(disable_system_metrics=False) is True
     assert mgr.is_active is True
@@ -217,7 +217,7 @@ def test_setup_connectivity_failure_logs_event_and_disables_mlflow(monkeypatch: 
     fake_mlflow.set_experiment = lambda name: None  # type: ignore[attr-defined]
 
     mgr = MLflowManager(_mk_cfg(tracking_uri="http://127.0.0.1:5002"))
-    monkeypatch.setattr("src.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: False)
+    monkeypatch.setattr("ryotenkai_shared.infrastructure.mlflow.gateway.MLflowGateway.check_connectivity", lambda self, timeout: False)
 
     ok = mgr.setup(timeout=0.01, max_retries=2)
     assert ok is False
@@ -301,7 +301,7 @@ def test_model_registry_register_alias_tags_and_promote(monkeypatch: pytest.Monk
     mgr._gateway = mock_gateway
 
     # Build registry manually since setup() was not called
-    from src.training.mlflow.model_registry import MLflowModelRegistry
+    from ryotenkai_pod.trainer.mlflow.model_registry import MLflowModelRegistry
     mgr._registry = MLflowModelRegistry(mock_gateway, fake_mlflow, log_model_enabled=True)
 
     v = mgr.register_model("m", alias="staging", tags={"a": "b"})
@@ -340,7 +340,7 @@ def test_get_best_run_returns_first_row(monkeypatch: pytest.MonkeyPatch) -> None
     mgr = MLflowManager(_mk_cfg())
     mgr._mlflow = fake_mlflow
     # Update analytics with fake mlflow module and experiment_name
-    from src.training.mlflow.run_analytics import MLflowRunAnalytics
+    from ryotenkai_pod.trainer.mlflow.run_analytics import MLflowRunAnalytics
     mgr._analytics = MLflowRunAnalytics(mgr._gateway, fake_mlflow, experiment_name="test", event_log=mgr._event_log)
     best = mgr.get_best_run(metric="eval_loss", mode="min")
     assert best is not None

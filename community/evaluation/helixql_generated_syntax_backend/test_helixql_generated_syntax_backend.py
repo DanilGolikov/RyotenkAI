@@ -27,7 +27,7 @@ from unittest.mock import patch
 import pytest
 from plugin import HelixQLGeneratedSyntaxBackendPlugin
 
-from src.evaluation.plugins.base import EvalSample
+from ryotenkai_control.evaluation.plugins.base import EvalSample
 
 BASE_PARAMS: dict[str, Any] = {
     "timeout_seconds": 10,
@@ -79,8 +79,8 @@ def _make_plugin(
 
 class TestSyntaxBackendPluginRegistration:
     def test_is_registered(self) -> None:
-        from src.community.catalog import catalog
-        from src.evaluation.plugins.registry import evaluator_registry
+        from ryotenkai_community.catalog import catalog
+        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
 
         catalog.reload()
         assert "helixql_generated_syntax_backend" in evaluator_registry.list_ids()

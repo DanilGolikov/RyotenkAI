@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import src.utils.ssh_client as ssh_mod
-from src.utils.ssh_client import SSHClient, _mask_secrets
+import ryotenkai_shared.utils.ssh_client as ssh_mod
+from ryotenkai_shared.utils.ssh_client import SSHClient, _mask_secrets
 
 
 class _RunResult(SimpleNamespace):

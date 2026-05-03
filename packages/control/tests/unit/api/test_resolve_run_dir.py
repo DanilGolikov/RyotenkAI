@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-from src.api.dependencies import resolve_run_dir
+from ryotenkai_control.api.dependencies import resolve_run_dir
 
 
 def _make_run(runs_dir: Path, name: str) -> Path:

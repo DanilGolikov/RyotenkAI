@@ -34,38 +34,38 @@ from typing import TYPE_CHECKING, Protocol
 
 from fastapi import FastAPI
 
-from src.constants import RUNTIME_IMAGE
-from src.runner.api import control as control_api
-from src.runner.api import events as events_api
-from src.runner.api import internal as internal_api
-from src.runner.api import jobs as jobs_api
-from src.runner.cancellation_telemetry import EVENTS_DISK_PRESSURE
-from src.runner.event_bus import EventBus
-from src.runner.event_journal import (
+from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_pod.runner.api import control as control_api
+from ryotenkai_pod.runner.api import events as events_api
+from ryotenkai_pod.runner.api import internal as internal_api
+from ryotenkai_pod.runner.api import jobs as jobs_api
+from ryotenkai_pod.runner.cancellation_telemetry import EVENTS_DISK_PRESSURE
+from ryotenkai_pod.runner.event_bus import EventBus
+from ryotenkai_pod.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,
     DEFAULT_MAX_FILES,
     EventJournal,
 )
-from src.runner.health_reporter import (
+from ryotenkai_pod.runner.health_reporter import (
     DEFAULT_HEALTH_INTERVAL,
     HealthReporter,
 )
-from src.runner.mlflow_relay import (
+from ryotenkai_pod.runner.mlflow_relay import (
     MLflowRelay,
     make_mlflow_forward_fn,
 )
-from src.runner.plugin_unpacker import PluginUnpacker
-from src.runner.heartbeat import MacHeartbeat
-from src.runner.pod_terminator import PodTerminator, run_terminal_hook
-from src.runner.runtime.provider_registry import (
+from ryotenkai_pod.runner.plugin_unpacker import PluginUnpacker
+from ryotenkai_pod.runner.heartbeat import MacHeartbeat
+from ryotenkai_pod.runner.pod_terminator import PodTerminator, run_terminal_hook
+from ryotenkai_pod.runner.runtime.provider_registry import (
     resolve_keep_on_error_from_env,
     resolve_lifecycle_client_from_env,
     resolve_resource_id_from_env,
     resolve_volume_kind_from_env,
 )
-from src.runner.state import JobLifecycleFSM
-from src.runner.supervisor import Supervisor, TerminalHook
-from src.utils.pod_layout import PodLayout
+from ryotenkai_pod.runner.state import JobLifecycleFSM
+from ryotenkai_pod.runner.supervisor import Supervisor, TerminalHook
+from ryotenkai_shared.utils.pod_layout import PodLayout
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

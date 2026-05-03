@@ -26,32 +26,32 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.pipeline.bootstrap.startup_validator import StartupValidator
-from src.pipeline.config_drift import ConfigDriftValidator
-from src.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
-from src.pipeline.execution import (
+from ryotenkai_control.pipeline.bootstrap.startup_validator import StartupValidator
+from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
+from ryotenkai_control.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
+from ryotenkai_control.pipeline.execution import (
     RestartPointsInspector,
     StageExecutionLoop,
     StagePlanner,
     StageRegistry,
 )
-from src.pipeline.launch import LaunchPreparator
-from src.pipeline.mlflow_attempt import MLflowAttemptManager
-from src.pipeline.reporting import ExecutionSummaryReporter
-from src.pipeline.stages import PipelineContextKeys
-from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-from src.config import load_secrets
-from src.utils.logger import logger
+from ryotenkai_control.pipeline.launch import LaunchPreparator
+from ryotenkai_control.pipeline.mlflow_attempt import MLflowAttemptManager
+from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
+from ryotenkai_control.pipeline.stages import PipelineContextKeys
+from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
+from ryotenkai_shared.config import load_secrets
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.config.runtime import RuntimeSettings
-    from src.pipeline.artifacts import StageArtifactCollector
-    from src.pipeline.stages.base import PipelineStage
-    from src.pipeline.state import AttemptController, RunContext
-    from src.config import PipelineConfig, Secrets
+    from ryotenkai_shared.config.runtime import RuntimeSettings
+    from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
+    from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_control.pipeline.state import AttemptController, RunContext
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 # Env-var contract: launcher (CLI / API) sets these before spawning the
@@ -194,7 +194,7 @@ class PipelineBootstrap:
         # instead of at minute 4 mid-stage. Process env at this point
         # already has the project's env.json merged in (the launcher
         # merges before fork), so we don't pass project_env explicitly.
-        from src.community.preflight import LaunchAbortedError, run_preflight
+        from ryotenkai_community.preflight import LaunchAbortedError, run_preflight
 
         report = run_preflight(config, secrets=secrets)
         if not report.ok:

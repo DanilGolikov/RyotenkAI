@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.utils.plugin_secrets import PluginSecretsResolver
+from ryotenkai_shared.utils.plugin_secrets import PluginSecretsResolver
 
 if TYPE_CHECKING:
-    from src.config.secrets.model import Secrets
+    from ryotenkai_shared.config.secrets.model import Secrets
 
 RWRD_SECRET_PREFIX = "RWRD_"
 

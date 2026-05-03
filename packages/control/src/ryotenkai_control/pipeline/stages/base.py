@@ -14,11 +14,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from src.utils.logger import logger
-from src.utils.result import AppError, Err, Ok, Result
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 class PipelineStage(ABC):

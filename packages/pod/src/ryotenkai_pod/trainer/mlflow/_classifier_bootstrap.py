@@ -16,7 +16,7 @@ type set) preserves backwards compatibility for direct callers.
 
 from __future__ import annotations
 
-from src.training.mlflow.resilient_transport import (
+from ryotenkai_pod.trainer.mlflow.resilient_transport import (
     ExceptionClassifier,
     _DefaultClassifier,
     _optional_exception_types,

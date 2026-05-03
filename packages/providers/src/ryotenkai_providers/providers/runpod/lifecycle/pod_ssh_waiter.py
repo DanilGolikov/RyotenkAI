@@ -42,15 +42,15 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from src.utils.cancellation import sleep_cancellable
-from src.providers.runpod.lifecycle.policy import (
+from ryotenkai_shared.utils.cancellation import sleep_cancellable
+from ryotenkai_providers.runpod.lifecycle.policy import (
     TRAINING_PROFILE,
     WaitPolicy,
 )
-from src.providers.runpod.lifecycle.tcp_probe import default_tcp_probe
-from src.providers.runpod.models import PodSnapshot
-from src.utils.logger import logger
-from src.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_providers.runpod.lifecycle.tcp_probe import default_tcp_probe
+from ryotenkai_providers.runpod.models import PodSnapshot
+from ryotenkai_shared.utils.logger import logger
+from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 #: Codes from the underlying ``query_pod_snapshot`` that the waiter
 #: treats as terminal (no point retrying — abort fast). Anything else

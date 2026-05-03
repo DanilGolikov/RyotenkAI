@@ -21,7 +21,7 @@ the equivalence of "everything is fine, proceed".
 
 from __future__ import annotations
 
-from src.community.stale_plugins import StalePluginRef
+from ryotenkai_community.stale_plugins import StalePluginRef
 
 
 def test_stale_plugin_ref_carries_kind_and_id() -> None:

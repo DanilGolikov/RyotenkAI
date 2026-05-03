@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from src.reports.core.constants import MarkdownSymbols
-from src.reports.document.nodes import (
+from ryotenkai_control.reports.core.constants import MarkdownSymbols
+from ryotenkai_control.reports.document.nodes import (
     BulletList,
     DocBlock,
     Heading,
@@ -14,7 +14,7 @@ from src.reports.document.nodes import (
     table_rows,
     txt,
 )
-from src.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
+from ryotenkai_control.reports.plugins.interfaces import ReportBlock, ReportPlugin, ReportPluginContext
 
 
 class MemoryManagementBlockPlugin(ReportPlugin):

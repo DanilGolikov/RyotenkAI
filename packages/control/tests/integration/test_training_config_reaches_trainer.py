@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.training.trainers.factory import TrainerFactory
-from src.config import PipelineConfig
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.config import PipelineConfig
 
 
 @dataclass
@@ -159,8 +159,8 @@ datasets:
     train_dataset = MagicMock(name="train_dataset")
 
     with (
-        patch("src.training.trainers.factory.StrategyFactory", _FakeStrategyFactory),
-        patch("src.training.trainer_builder.create_peft_config", return_value=None),
+        patch("ryotenkai_pod.trainer.trainers.factory.StrategyFactory", _FakeStrategyFactory),
+        patch("ryotenkai_pod.trainer.trainer_builder.create_peft_config", return_value=None),
     ):
         trainer = tf.create_from_phase(
             phase=phase,
@@ -270,8 +270,8 @@ datasets:
 
     tf = TrainerFactory()
     with (
-        patch("src.training.trainers.factory.StrategyFactory", _FakeStrategyFactory),
-        patch("src.training.trainer_builder.create_peft_config", return_value=None),
+        patch("ryotenkai_pod.trainer.trainers.factory.StrategyFactory", _FakeStrategyFactory),
+        patch("ryotenkai_pod.trainer.trainer_builder.create_peft_config", return_value=None),
     ):
         trainer = tf.create_from_phase(
             phase=phase,
@@ -364,8 +364,8 @@ datasets:
     eval_dataset = MagicMock(name="eval_dataset")
 
     with (
-        patch("src.training.trainers.factory.StrategyFactory", _FakeStrategyFactory),
-        patch("src.training.trainer_builder.create_peft_config", return_value=None),
+        patch("ryotenkai_pod.trainer.trainers.factory.StrategyFactory", _FakeStrategyFactory),
+        patch("ryotenkai_pod.trainer.trainer_builder.create_peft_config", return_value=None),
     ):
         trainer = tf.create_from_phase(
             phase=phase,

@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from src.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
-from src.pipeline.state.store import PipelineStateStore
+from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageRunState
+from ryotenkai_control.pipeline.state.store import PipelineStateStore
 
 # Statuses that mark a stage as still owing work (never-run, in-flight, or
 # previously failed/interrupted/stale). The first match in stage_names order

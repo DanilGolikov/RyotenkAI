@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Final, Literal
 
-from src.community.manifest import LATEST_SCHEMA_VERSION
+from ryotenkai_community.manifest import LATEST_SCHEMA_VERSION
 
 #: Plugin id format. Must be ``snake_case`` for the
 #: ``manifest_id == folder_name == python_module`` invariants to hold.
@@ -27,10 +27,10 @@ ScaffoldKind = Literal["validation", "evaluation", "reward", "reports"]
 
 #: ``kind → (import-path, ABC-class)`` of the base class plugins extend.
 _KIND_BASE: Final[dict[str, tuple[str, str]]] = {
-    "validation": ("src.data.validation.base", "ValidationPlugin"),
-    "evaluation": ("src.evaluation.plugins.base", "EvaluatorPlugin"),
-    "reward":     ("src.training.reward_plugins.base", "RewardPlugin"),
-    "reports":    ("src.reports.plugins.interfaces", "ReportPlugin"),
+    "validation": ("ryotenkai_control.data.validation.base", "ValidationPlugin"),
+    "evaluation": ("ryotenkai_control.evaluation.plugins.base", "EvaluatorPlugin"),
+    "reward":     ("ryotenkai_pod.trainer.reward_plugins.base", "RewardPlugin"),
+    "reports":    ("ryotenkai_control.reports.plugins.interfaces", "ReportPlugin"),
 }
 
 
@@ -195,7 +195,7 @@ def _reward_body(class_name: str, base_module: str, base_class: str) -> str:
         "if TYPE_CHECKING:\n"
         "    from datasets import Dataset\n"
         "\n"
-        "    from src.config import PipelineConfig, StrategyPhaseConfig\n"
+        "    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig\n"
         "\n"
         "\n"
         f"class {class_name}({base_class}):\n"
@@ -225,7 +225,7 @@ def _reports_body(plugin_id: str, class_name: str, base_module: str, base_class:
         "\n"
         "from __future__ import annotations\n"
         "\n"
-        "from src.reports.document.nodes import DocBlock, Heading, Paragraph, inlines, txt\n"
+        "from ryotenkai_control.reports.document.nodes import DocBlock, Heading, Paragraph, inlines, txt\n"
         f"from {base_module} import ReportBlock, {base_class}, ReportPluginContext\n"
         "\n"
         "\n"

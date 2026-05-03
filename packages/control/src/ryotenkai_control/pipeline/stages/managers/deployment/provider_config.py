@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.constants import PROVIDER_SINGLE_NODE
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
 
 if TYPE_CHECKING:
-    from src.config import PipelineConfig
+    from ryotenkai_shared.config import PipelineConfig
 
 
 def get_active_provider_name(config: PipelineConfig) -> str:
