@@ -50,63 +50,49 @@ _IMPORT_GATE_RC_MISSING = 127
 
 
 class CodeSyncer:
-    """Push the required Python modules to the remote workspace.
+    """Push the four pod-relevant ``ryotenkai_*`` packages to the
+    remote workspace.
 
-    Strategy: one ``rsync`` invocation for all modules with shared
-    ``--exclude`` filters. If rsync fails or is missing on the remote,
-    fall back to per-module tar-over-ssh pipes. Both paths preserve
-    the project's package layout under ``<workspace>/src/...``.
+    Strategy: one ``rsync`` invocation per ``(local, dest)`` pair. If
+    rsync fails or is missing on the remote, fall back to tar-over-ssh
+    pipes. Both paths drop the local ``packages/<pkg>/src/`` prefix and
+    place each package as ``<workspace>/<name>/`` so
+    ``PYTHONPATH=<workspace>`` resolves ``ryotenkai_pod.runner.main``,
+    ``ryotenkai_shared.config``, etc. directly.
     """
 
-    # Code shipping policy: ship the entire ``src/`` tree to the pod,
-    # filtered by ``EXCLUDE_PATTERNS`` (tests, caches, docs).
+    # Code shipping policy (post Phase B uv-workspace packagization,
+    # 2026-05-03): ship the import roots of the four pod-relevant
+    # packages so ``PYTHONPATH=<workspace>`` makes them top-level
+    # importable. Each pair is ``(local_source_dir, remote_dest_name)``;
+    # the rsync wrapper uses an explicit source/dest spelling so we
+    # don't reproduce the ``packages/<pkg>/src/`` prefix on the pod.
     #
-    # Why "ship everything" rather than a hand-curated list of submodules:
+    # Why each entry is here:
+    #   * ``ryotenkai_shared`` — leaf utilities (config / Secrets /
+    #     pipeline_context / observability / lifecycle Protocol).
+    #     Imported by every other pod-side package.
+    #   * ``ryotenkai_community`` — plugin loader / catalog / manifest.
+    #     Trainer instantiates reward + dataset-validation plugins
+    #     through it.
+    #   * ``ryotenkai_providers`` — RunPod / single-node lifecycle
+    #     clients resolved at runtime via importlib by
+    #     ``ryotenkai_pod.runner.runtime.provider_registry``.
+    #   * ``ryotenkai_pod`` — the runner's FastAPI app + the trainer
+    #     subprocess code.
     #
-    #   * The selective whitelist drifts. Phase-1 had 12 explicit entries
-    #     (``src/training``, ``src/providers``, ``src/runner``, …) but
-    #     missed transitive imports — e.g. ``src/providers/runpod/training/
-    #     provider.py`` imports ``src.pipeline``, which was Mac-only and
-    #     not whitelisted, causing a ``ModuleNotFoundError`` at trainer
-    #     spawn (run_20260502_113553_r8rul, the 16th of a 16-crash chain).
-    #     Every new transitive import would re-trigger the same drift
-    #     until someone updates the list.
-    #
-    #   * Cost is negligible. Full ``src/`` is ~3.4 MB after exclusions
-    #     (vs ~5.2 MB previously — selective was actually larger because
-    #     it shipped full subdirs). rsync ships only changed bytes after
-    #     the first run; first-run cost is ~150 ms on a 25 MB/s link.
-    #
-    #   * Architectural enforcement belongs in static analysis, not in
-    #     the shipping list. Phase 3 introduces an importlinter rule that
-    #     forbids ``src.providers.* → src.pipeline.*`` (and similar
-    #     pod→Mac-only directions) at CI time — which is the right place
-    #     to catch boundary violations, not in the deploy step.
-    #
-    #   * Pod sees Mac-only code (``src/api``, ``src/cli``, ``src/pipeline``,
-    #     ``src/reports``) physically on disk but never imports it at
-    #     runtime: trainer imports start from ``src.training.run_training``
-    #     and pull only what they need. No RAM cost, no security cost
-    #     (no secrets in source), no startup cost.
-    #
-    # NOTE on ``src/community`` vs ``community/``:
-    #   * ``src/community`` is the plugin FRAMEWORK (catalog, registry,
-    #     manifest, etc.) — shipped with every run as part of the ``src/``
-    #     tree. Trainer imports it at module-load time
-    #     (``src/training/reward_plugins/factory.py`` etc).
-    #   * ``community/`` (the SIBLING dir at repo root) holds the actual
-    #     plugin CONTENT (reward / evaluation / validation plugin
-    #     packages). Delivered separately through ``PluginPacker`` so we
-    #     ship only the plugins a given run declares, not the whole
-    #     catalog.
-    REQUIRED_MODULES: ClassVar[list[str]] = ["src"]
+    # ``ryotenkai_control`` is intentionally absent — it's Mac-only and
+    # the importlinter contract forbids the pod from importing it.
+    PROVIDED_PACKAGES: ClassVar[list[tuple[str, str]]] = [
+        ("packages/shared/src/ryotenkai_shared", "ryotenkai_shared"),
+        ("packages/community/src/ryotenkai_community", "ryotenkai_community"),
+        ("packages/providers/src/ryotenkai_providers", "ryotenkai_providers"),
+        ("packages/pod/src/ryotenkai_pod", "ryotenkai_pod"),
+    ]
 
     # Patterns to exclude from sync — keep the pod-side tree lean.
     #   * tests / *.pyc / __pycache__ / .pytest_cache: dev artefacts
     #   * *.md: docs are git-only, no value on the pod
-    #   * src/tests: project tests live under ``src/tests`` not top-level
-    #     ``tests/``; the ``tests`` glob below already covers both paths
-    #     because rsync ``--exclude`` matches by basename in any depth.
     EXCLUDE_PATTERNS: ClassVar[list[str]] = [
         "__pycache__",
         "*.pyc",
@@ -133,106 +119,122 @@ class CodeSyncer:
         self._workspace = workspace_path
 
     def sync(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """Sync required source modules to remote in a single rsync call.
+        """Sync each provided package to ``<workspace>/<dest_name>/``.
 
-        Directories get ``--delete`` semantics (stale files removed);
-        single ``.py`` files are included via ``--include``/``--exclude``
-        filters. Falls back to per-module tar pipes when rsync is
-        unavailable.
+        After Phase B the local source layout is
+        ``packages/<pkg>/src/<import_name>/``; the pod expects each
+        ``<import_name>`` directly under PYTHONPATH=workspace, so the
+        sync flattens the ``packages/<pkg>/src/`` prefix per pair. Each
+        pair is rsync'd independently (no ``-R``) so the dest can be
+        renamed cleanly. Falls back to tar-over-ssh per-pair when rsync
+        is unavailable on the remote.
         """
         logger.info("📦 Syncing source code (selective)...")
 
-        existing_modules: list[str] = []
-        for module in self.REQUIRED_MODULES:
-            if Path(module).exists():
-                existing_modules.append(module)
+        existing_pairs: list[tuple[str, str]] = []
+        for local, dest in self.PROVIDED_PACKAGES:
+            if Path(local).is_dir():
+                existing_pairs.append((local, dest))
             else:
-                logger.warning(f"⚠️ Module not found: {module}")
+                logger.warning(f"⚠️ Package source not found: {local}")
 
-        if not existing_modules:
-            logger.warning("⚠️ No modules to sync")
+        if not existing_pairs:
+            logger.warning("⚠️ No packages to sync")
             return Ok(None)
 
-        remote_dirs: list[str] = []
-        for module in existing_modules:
-            if module.endswith(".py"):
-                remote_dir = f"{self._workspace}/{Path(module).parent}"
-            else:
-                remote_dir = f"{self._workspace}/{module}"
-            if remote_dir not in remote_dirs:
-                remote_dirs.append(remote_dir)
-
-        if remote_dirs:
-            mkdir_targets = " ".join(shlex.quote(d) for d in remote_dirs)
-            ssh_client.exec_command(
-                command=f"mkdir -p {mkdir_targets}",
-                background=False,
-                timeout=DEPLOYMENT_VERIFY_TIMEOUT,
-                silent=True,
-            )
+        remote_dirs = [f"{self._workspace}/{dest}" for _, dest in existing_pairs]
+        mkdir_targets = " ".join(shlex.quote(d) for d in remote_dirs)
+        ssh_client.exec_command(
+            command=f"mkdir -p {mkdir_targets}",
+            background=False,
+            timeout=DEPLOYMENT_VERIFY_TIMEOUT,
+            silent=True,
+        )
 
         ssh_opts = build_ssh_opts(ssh_client)
 
-        rsync_ok = self._sync_all_modules_rsync(ssh_client, existing_modules, ssh_opts)
+        rsync_ok = self._sync_all_modules_rsync(ssh_client, existing_pairs, ssh_opts)
         if rsync_ok:
             self._clear_pycache(ssh_client)
             gate_result = self._verify_importability(ssh_client)
             if gate_result.is_failure():
                 return gate_result
-            logger.info(f"Source code synced ({len(existing_modules)} modules) + importable")
+            logger.info(f"Source code synced ({len(existing_pairs)} packages) + importable")
             return Ok(None)
 
-        logger.warning("⚠️ Batch rsync failed, falling back to per-module tar pipes")
-        for module in existing_modules:
-            tar_result = self._sync_module_tar(ssh_client, module, ssh_opts)
+        logger.warning("⚠️ Batch rsync failed, falling back to per-package tar pipes")
+        for local, dest in existing_pairs:
+            tar_result = self._sync_module_tar(ssh_client, local, dest, ssh_opts)
             if tar_result.is_failure():
-                logger.error(f"❌ Failed to sync {module}")
+                logger.error(f"❌ Failed to sync {local}")
                 return tar_result
-            logger.debug(f"   ✓ {module}")
+            logger.debug(f"   ✓ {local} → {dest}")
 
         self._clear_pycache(ssh_client)
         gate_result = self._verify_importability(ssh_client)
         if gate_result.is_failure():
             return gate_result
-        logger.info(f"Source code synced ({len(existing_modules)} modules, tar fallback) + importable")
+        logger.info(f"Source code synced ({len(existing_pairs)} packages, tar fallback) + importable")
         return Ok(None)
 
     def _sync_all_modules_rsync(
         self,
         ssh_client: SSHClient,
-        modules: list[str],
+        pairs: list[tuple[str, str]],
         ssh_opts: str,
     ) -> bool:
-        """Single rsync invocation for all modules. Returns True on success."""
+        """One rsync invocation per (source, dest) pair.
+
+        Each pair is its own rsync call because the pod-side dest name
+        (``ryotenkai_shared``, etc.) differs from the local source path
+        (``packages/shared/src/ryotenkai_shared``), and ``rsync -R`` would
+        replicate the local prefix on the remote. Returns True iff every
+        pair rsync'd cleanly.
+        """
         excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
 
-        dirs = [m for m in modules if not m.endswith(".py")]
-        sources = " ".join(shlex.quote(m + "/" if m in dirs else m) for m in modules)
-        rsync_cmd = (
-            f"rsync -azR --no-owner --no-group --delete {excludes} "
-            f"-e 'ssh {ssh_opts}' "
-            f"{sources} {ssh_client.ssh_target}:{self._workspace}/"
-        )
-
-        try:
-            result = subprocess.run(
-                rsync_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_RSYNC_TIMEOUT
+        for local, dest in pairs:
+            # Trailing slash on source means "copy contents of dir into
+            # dest" rather than "copy dir-as-named into dest" — without
+            # it we'd get ``<workspace>/ryotenkai_pod/ryotenkai_pod/``.
+            source = shlex.quote(local.rstrip("/") + "/")
+            target = shlex.quote(f"{self._workspace}/{dest}/")
+            rsync_cmd = (
+                f"rsync -az --no-owner --no-group --delete {excludes} "
+                f"-e 'ssh {ssh_opts}' "
+                f"{source} {ssh_client.ssh_target}:{target}"
             )
-        except subprocess.TimeoutExpired:
-            logger.warning("⚠️ Batch rsync timed out")
-            return False
-
-        if result.returncode != 0:
-            logger.debug(f"Batch rsync failed (rc={result.returncode}): {result.stderr[:200] if result.stderr else ''}")
-            return False
-
-        for m in modules:
-            logger.debug(f"   ✓ {m}")
+            try:
+                result = subprocess.run(
+                    rsync_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=DEPLOYMENT_RSYNC_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning(f"⚠️ Rsync timed out for {local}")
+                return False
+            if result.returncode != 0:
+                stderr_snip = (result.stderr or "")[:200]
+                logger.debug(
+                    f"Rsync failed for {local} (rc={result.returncode}): {stderr_snip}"
+                )
+                return False
+            logger.debug(f"   ✓ {local} → {dest}")
         return True
 
     def _clear_pycache(self, ssh_client: SSHClient) -> None:
+        # Walk every dest dir we just synced; one ``find`` invocation per
+        # dest keeps the command short enough for SSH's argv limit even
+        # on a heavily-populated workspace.
+        targets = " ".join(
+            shlex.quote(f"{self._workspace}/{dest}") for _, dest in self.PROVIDED_PACKAGES
+        )
         cache_clear_cmd = (
-            f"find {self._workspace}/src -type d -name __pycache__ -exec rm -rf {{}} + 2>/dev/null || true"
+            f"for d in {targets}; do "
+            "  find \"$d\" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; "
+            "done"
         )
         ssh_client.exec_command(
             command=cache_clear_cmd, background=False, timeout=DEPLOYMENT_SSH_CMD_TIMEOUT, silent=True
@@ -242,7 +244,7 @@ class CodeSyncer:
         """Post-sync importability gate (PR-A).
 
         Runs ``/opt/helix/runtime_check.py --check-source`` on the pod with
-        the freshly synced ``src.*`` tree on PYTHONPATH. ``rsync rc=0`` does
+        the freshly synced ``ryotenkai_*`` packages on PYTHONPATH. ``rsync rc=0`` does
         not guarantee that all required modules ended up importable —
         directories can be missing locally (post-rebase, post-stash) or
         deleted on the pod by a previous ``--delete`` pass that did not
@@ -348,38 +350,41 @@ class CodeSyncer:
                     return None
         return None
 
-    def _sync_module_tar(self, ssh_client: SSHClient, module: str, ssh_opts: str) -> Result[None, AppError]:
-        """Fallback: sync module using tar pipe."""
-        local_path = Path(module)
-
-        if local_path.is_file():
-            remote_parent = f"{self._workspace}/{local_path.parent}"
-            tar_cmd = (
-                f"tar czf - --no-mac-metadata -C {local_path.parent} {local_path.name} 2>/dev/null | "
-                f"ssh {ssh_opts} {ssh_client.ssh_target} "
-                f"'mkdir -p {remote_parent} && cd {remote_parent} && tar xzf - 2>/dev/null'"
-            )
-            result = subprocess.run(
-                tar_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_TAR_TIMEOUT
-            )
-        else:
-            excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
-            tar_cmd = (
-                f"tar czf - --no-mac-metadata {excludes} -C {local_path.parent} {local_path.name} 2>/dev/null | "
-                f"ssh {ssh_opts} {ssh_client.ssh_target} "
-                f"'cd {self._workspace}/{local_path.parent} && tar xzf - 2>/dev/null'"
-            )
-            result = subprocess.run(
-                tar_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_RSYNC_TIMEOUT
-            )
+    def _sync_module_tar(
+        self,
+        ssh_client: SSHClient,
+        local: str,
+        dest: str,
+        ssh_opts: str,
+    ) -> Result[None, AppError]:
+        """Fallback path: pack ``local/`` into a tarball and stream it
+        into ``<workspace>/<dest>/`` over ssh. Mirrors the rsync layout
+        — local source basename is dropped on the remote so the dest
+        can be renamed (e.g. ``packages/pod/src/ryotenkai_pod`` →
+        ``ryotenkai_pod``) without leaking the local prefix to the pod.
+        """
+        local_path = Path(local)
+        excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
+        remote_dir = f"{self._workspace}/{dest}"
+        # tar from inside the source dir so paths in the archive are
+        # already rooted at the package contents (no leading
+        # ``packages/<pkg>/src/<name>/``).
+        tar_cmd = (
+            f"tar czf - --no-mac-metadata {excludes} -C {shlex.quote(str(local_path))} . 2>/dev/null | "
+            f"ssh {ssh_opts} {ssh_client.ssh_target} "
+            f"'mkdir -p {shlex.quote(remote_dir)} && cd {shlex.quote(remote_dir)} && tar xzf - 2>/dev/null'"
+        )
+        result = subprocess.run(
+            tar_cmd, shell=True, capture_output=True, text=True, timeout=DEPLOYMENT_RSYNC_TIMEOUT
+        )
 
         if result.returncode != 0:
-            verify_cmd = f"test -e {self._workspace}/{module} && echo '{DEPLOYMENT_MARKER_EXISTS}'"
+            verify_cmd = f"test -d {shlex.quote(remote_dir)} && echo '{DEPLOYMENT_MARKER_EXISTS}'"
             success, stdout, _ = ssh_client.exec_command(
                 command=verify_cmd, background=False, timeout=DEPLOYMENT_VERIFY_TIMEOUT
             )
             if not success or DEPLOYMENT_MARKER_EXISTS not in stdout:
-                return Err(ProviderError(message=f"Failed to sync {module}", code="FILE_SYNC_FAILED"))
+                return Err(ProviderError(message=f"Failed to sync {local}", code="FILE_SYNC_FAILED"))
 
         return Ok(None)
 
