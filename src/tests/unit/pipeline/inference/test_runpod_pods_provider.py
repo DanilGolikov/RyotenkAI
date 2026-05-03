@@ -551,7 +551,7 @@ def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
     deferred cleanup-in-reverse caught up — bad UX (user sees a billing
     pod still running after Ctrl+C).
     """
-    from src.pipeline.cancellation import PipelineCancelled
+    from src.utils.cancellation import PipelineCancelled
 
     api = StubApi(delete_pod_results=[Ok(None)])
     p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
@@ -577,7 +577,7 @@ def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
 ) -> None:
     """Best-effort delete on cancel — if delete itself fails, we still
     re-raise PipelineCancelled (don't mask the user's intent)."""
-    from src.pipeline.cancellation import PipelineCancelled
+    from src.utils.cancellation import PipelineCancelled
 
     api = StubApi(
         delete_pod_results=[Err(ProviderError(message="boom", code="DELETE_FAIL"))],

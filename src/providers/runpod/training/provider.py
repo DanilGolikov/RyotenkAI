@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from src.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
-from src.pipeline.cancellation import PipelineCancelled
+from src.utils.cancellation import PipelineCancelled
 from src.providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,

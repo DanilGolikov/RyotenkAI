@@ -527,8 +527,8 @@ class RunPodPodInferenceProvider(IInferenceProvider):
 
         params = self._build_eval_session_params()
 
-        from src.pipeline.cancellation import PipelineCancelled
         from src.providers.runpod.inference.pods import pod_session
+        from src.utils.cancellation import PipelineCancelled
 
         try:
             session_res = pod_session.activate(

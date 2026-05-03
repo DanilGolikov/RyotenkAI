@@ -119,8 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     # ``run()`` so a Ctrl+C during early stages already cooperates.
     # Pollers (PodSshWaiter, etc.) check the cancel event via
     # ``sleep_cancellable`` and raise PipelineCancelled at their own
-    # boundaries — see ``src/pipeline/cancellation.py``.
-    from src.pipeline.cancellation import (
+    # boundaries — see ``src/utils/cancellation.py``.
+    from src.utils.cancellation import (
         install_handler,
         set_active_orchestrator,
     )

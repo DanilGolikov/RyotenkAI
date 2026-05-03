@@ -42,7 +42,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from src.pipeline.cancellation import sleep_cancellable
+from src.utils.cancellation import sleep_cancellable
 from src.providers.runpod.lifecycle.policy import (
     TRAINING_PROFILE,
     WaitPolicy,

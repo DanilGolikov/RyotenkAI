@@ -693,7 +693,7 @@ def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> Result[
     The exception propagates up to ``activate()``'s caller, where the
     inference-provider's cleanup hook synchronously tears down the pod.
     """
-    from src.pipeline.cancellation import sleep_cancellable
+    from src.utils.cancellation import sleep_cancellable
 
     deadline = time.monotonic() + timeout_sec
     last_err = ""

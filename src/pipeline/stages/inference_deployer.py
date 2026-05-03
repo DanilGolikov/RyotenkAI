@@ -17,7 +17,7 @@ from src.constants import (
     INFERENCE_MANIFEST_FILENAME,
     INFERENCE_README_FILENAME,
 )
-from src.pipeline.cancellation import sleep_cancellable
+from src.utils.cancellation import sleep_cancellable
 from src.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames

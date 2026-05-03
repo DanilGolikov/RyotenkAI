@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from src.pipeline.cancellation import PipelineCancelled
+from src.utils.cancellation import PipelineCancelled
 from src.providers.runpod.lifecycle.pod_ssh_waiter import (
     PodQuery,
     PodSshWaiter,

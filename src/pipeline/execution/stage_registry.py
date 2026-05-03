@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.pipeline.artifacts import StageArtifactCollector
-from src.pipeline.cancellation import PipelineCancelled
+from src.utils.cancellation import PipelineCancelled
 from src.pipeline.stages import StageNames
 from src.pipeline.stages.dataset_validator import DatasetValidator
 from src.pipeline.stages.gpu_deployer import GPUDeployer, IEarlyReleasable

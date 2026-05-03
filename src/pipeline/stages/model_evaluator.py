@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from src.pipeline.cancellation import sleep_cancellable
+from src.utils.cancellation import sleep_cancellable
 from src.pipeline.stages.base import PipelineStage
 from src.pipeline.stages.constants import PipelineContextKeys, StageNames
 from src.utils.logger import logger
