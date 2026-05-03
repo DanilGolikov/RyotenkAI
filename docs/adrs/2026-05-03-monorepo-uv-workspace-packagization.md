@@ -82,22 +82,42 @@ Forbidden directions:
 
 ## Known violations (Phase C follow-up)
 
-`uv run lint-imports` after Phase B/C reports **6 broken contracts**.
-These are pre-existing architectural drifts the codemod surfaced but did
-not fix — each needs a small targeted refactor:
+Combined results from `uv run lint-imports` and the AST-level sentinel
+tests under `packages/<pkg>/tests/sentinel/`. **9 known boundary
+crossings** — pre-existing architectural drifts the packagization
+surfaced but did not fix. Each is one focused follow-up PR.
+
+### Top-level package boundary (importlinter contracts)
 
 | # | Direction | Cause | Fix |
 |---|---|---|---|
-| 1 | `shared.config.validators.runtime → community.catalog` | Config validators reach into community plugin catalog | Either move validator into community or extract `IPluginCatalog` Protocol into shared |
-| 2 | `shared.utils.plugin_base → community.manifest` | plugin_base is a shared base but imports community manifest | Move plugin_base to community, or split out manifest types into shared |
-| 3 | `community.catalog → control.{data,evaluation,reports}.registry` | Catalog discovers registries that live in control | Invert: registries should register *into* community, not the other way |
+| 1 | `shared.config.validators.runtime → community.catalog` | Config validator reaches into community plugin catalog | Move validator into community or extract `IPluginCatalog` Protocol into shared |
+| 2 | `shared.utils.plugin_base → community.manifest` | plugin_base is a shared base but imports community manifest | Move plugin_base to community, or split manifest types into shared |
+| 3 | `community.catalog → control.{data,evaluation,reports}.registry` | Catalog discovers registries that live in control | Invert: registries register *into* community, not the other way |
 | 4 | `community → pod.trainer.reward_plugins.registry` | Same pattern as #3 for reward plugins | Same fix |
 | 5 | `pod.trainer.container → control.data.loaders` | Trainer's DI container imports control-side data loaders | Move data loaders into shared or pod (data is consumed both sides) |
-| 6 | `pod.trainer.{cancellation_callback,completion_callback} → pod.runner.cancellation_telemetry` | Trainer writes telemetry events into runner's bus via Python import | Replace with loopback HTTP POST or extract telemetry interface into shared |
+| 6 | `pod.trainer.{cancellation,completion}_callback → pod.runner.cancellation_telemetry` | Trainer writes telemetry events into runner's bus via Python import | Replace with loopback HTTP POST or extract telemetry interface into shared |
 | 7 | `providers → pod.runner.{lifecycle_client, pod_terminator}` | Provider adapters import the runner-side Protocol + outcome enum | Extract `IPodLifecycleClient` + `LifecycleActionResult` + `PodTerminalOutcome` into `shared.infrastructure.lifecycle` |
 
-Each is one focused PR. The contracts stay BROKEN until those land —
-that's the point: importlinter is now the canonical drift detector.
+### Newly surfaced by AST sentinels (TYPE_CHECKING / lazy imports)
+
+These are not caught by importlinter (it ignores `TYPE_CHECKING`
+blocks and lazy imports inside functions) but are caught by the
+AST-level sentinel tests under `packages/*/tests/sentinel/`:
+
+| # | Direction | Cause | Fix |
+|---|---|---|---|
+| 8 | `shared.config.secrets.model → control.api.services.token_crypto` | Generic crypto utility hides behind api/services | Move `token_crypto` into `shared.utils.crypto` |
+| 9 | `providers → control.pipeline.{state,launch.pod_availability}` and `providers → control.evaluation.system_prompt` | Providers reach into control for shared types (`RunContext`, `PodAvailability`, `system_prompt` resolver) and lazy lookups | Extract these types/helpers into shared, or invert ownership |
+
+The sentinel tests under `packages/<pkg>/tests/sentinel/` use an
+expected-known allowlist so each new boundary crossing fires
+immediately, while the pre-existing list is acknowledged. As each
+follow-up PR lands, its entry is removed from the allowlist; once the
+list empties, the assertion flips to "no violations at all".
+
+The contracts stay BROKEN until those land — that's the point:
+importlinter + AST sentinels are now the canonical drift detectors.
 
 ## Open follow-ups
 

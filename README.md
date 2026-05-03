@@ -331,7 +331,7 @@ source .venv/bin/activate
 2. Copy and customize the example config:
 
 ```bash
-cp src/config/pipeline_config.yaml my_config.yaml
+cp packages/shared/src/ryotenkai_shared/config/pipeline_config.yaml my_config.yaml
 # Edit my_config.yaml with your model, dataset, and provider settings
 ```
 
@@ -390,7 +390,7 @@ mlflow:
   experiment_name: ryotenkai
 ```
 
-Full config reference: [`src/config/CONFIG_REFERENCE.md`](src/config/CONFIG_REFERENCE.md)
+Full config reference: [`packages/shared/src/ryotenkai_shared/config/CONFIG_REFERENCE.md`](packages/shared/src/ryotenkai_shared/config/CONFIG_REFERENCE.md)
 
 ---
 
@@ -443,19 +443,19 @@ RyotenkAI has three plugin systems, all following the same pattern: `@register` 
 
 Validates datasets before training starts. Plugins check format, quality, diversity, and domain-specific constraints. Runs as the first pipeline stage — training won't start if validation fails.
 
-Secrets namespace: `DTST_*` — Docs: [`src/data/validation/README.md`](src/data/validation/README.md)
+Secrets namespace: `DTST_*` — Docs: [`packages/control/src/ryotenkai_control/data/validation/README.md`](packages/control/src/ryotenkai_control/data/validation/README.md)
 
 ### Evaluation
 
 Evaluates model quality after training against a live vLLM endpoint. Plugins run deterministic checks (syntax, semantic match) and LLM-as-judge scoring. Results feed into the experiment report.
 
-Secrets namespace: `EVAL_*` — Docs: [`src/evaluation/plugins/README.md`](src/evaluation/plugins/README.md)
+Secrets namespace: `EVAL_*` — Docs: [`packages/control/src/ryotenkai_control/evaluation/plugins/README.md`](packages/control/src/ryotenkai_control/evaluation/plugins/README.md)
 
 ### Report Generation
 
 Generates experiment reports from MLflow data. Each plugin renders one section of a Markdown document (header, summary, metrics, issues, etc.). The final report is logged back to MLflow as an artifact.
 
-Docs: [`src/reports/plugins/README.md`](src/reports/plugins/README.md)
+Docs: [`packages/control/src/ryotenkai_control/reports/plugins/README.md`](packages/control/src/ryotenkai_control/reports/plugins/README.md)
 
 All plugin systems support custom plugins — implement the base class, decorate with `@register`, and the pipeline discovers them automatically.
 
@@ -650,26 +650,32 @@ make pre-commit
 
 ```
 ryotenkai/
-├── src/
-│   ├── config/          # Configuration schemas (Pydantic v2)
-│   ├── pipeline/        # Orchestration and stage implementations
-│   ├── training/        # Training strategies and orchestration
-│   ├── providers/       # GPU providers (single_node, RunPod)
-│   ├── evaluation/      # Model evaluation plugins
-│   ├── data/            # Dataset handling and validation plugins
-│   ├── reports/         # Report generation plugins
-│   ├── utils/           # Shared utilities
-│   └── tests/           # Test suite
+├── packages/                                    # 5 uv-workspace members (post 2026-05-03 packagization)
+│   ├── shared/      ryotenkai_shared            # utils, config, constants, inference, infrastructure (leaf)
+│   ├── community/   ryotenkai_community         # plugin loader / catalog / manifest framework
+│   ├── pod/         ryotenkai_pod               # runner (HTTP) + trainer (subprocess) — one image
+│   │   └── src/ryotenkai_pod/{runner,trainer}/
+│   ├── providers/   ryotenkai_providers         # runpod, single_node, inference engines
+│   └── control/     ryotenkai_control           # pipeline, api, cli, data, reports, evaluation, workspace, cli_state
+├── community/                                   # third-party plugin data (NOT a Python package)
 ├── docker/
-│   ├── training/        # Training runtime Docker image
-│   ├── inference/       # Inference Docker images
-│   └── mlflow/          # MLflow stack (docker-compose)
-├── scripts/             # Utility scripts
-├── docs/                # Documentation and diagrams
-├── setup.sh             # One-command setup
-├── Makefile             # Development commands
-└── pyproject.toml       # Package metadata and tool config
+│   ├── training/                                # Training runtime Docker image
+│   ├── inference/                               # Inference Docker images
+│   └── mlflow/                                  # MLflow stack (docker-compose)
+├── docs/                                        # Plans, ADRs, architecture diagrams
+├── scripts/                                     # Utility scripts (codemod, etc.)
+├── setup.sh                                     # One-command setup
+├── Makefile                                     # Development commands
+└── pyproject.toml                               # Workspace declaration + dev tool config
 ```
+
+Allowed dependency directions (importlinter-enforced — `uv run lint-imports`):
+shared (leaf) → community → {pod, providers, control}; control may depend on
+shared+community+providers but **never** pod; runner ↔ trainer never import
+each other (runner spawns trainer via subprocess).
+
+See [docs/adrs/2026-05-03-monorepo-uv-workspace-packagization.md](docs/adrs/2026-05-03-monorepo-uv-workspace-packagization.md)
+for the rationale.
 
 ## Community
 
@@ -682,7 +688,7 @@ Join the Discord server for support, roadmap discussion, configs, and fine-tunin
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 **Adding a new GPU provider** — see
-[`src/providers/README.md`](src/providers/README.md) for the
+[`packages/providers/src/ryotenkai_providers/README.md`](packages/providers/src/ryotenkai_providers/README.md) for the
 `IGPUProvider` Protocol contract, capability surface
 (Phase 14.A–F), the runner-side `IPodLifecycleClient` (Phase 14.B),
 and step-by-step instructions on integrating a new cloud or local

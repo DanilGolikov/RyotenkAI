@@ -44,13 +44,13 @@ make fix-all       # auto-fix all fixable issues
 
 ## Code Architecture
 
-- `src/pipeline/` — Pipeline orchestration and stages
-- `src/training/` — Training strategies and orchestration
-- `src/providers/` — GPU provider implementations (single_node, RunPod)
-- `src/config/` — Configuration schemas (Pydantic v2)
-- `src/evaluation/` — Model evaluation plugins
-- `src/data/` — Dataset handling and validation
-- `src/reports/` — Report generation plugins
+- `packages/control/src/ryotenkai_control/pipeline/` — Pipeline orchestration and stages
+- `packages/pod/src/ryotenkai_pod/trainer/` — Training strategies and orchestration
+- `packages/providers/src/ryotenkai_providers/` — GPU provider implementations (single_node, RunPod)
+- `packages/shared/src/ryotenkai_shared/config/` — Configuration schemas (Pydantic v2)
+- `packages/control/src/ryotenkai_control/evaluation/` — Model evaluation plugins
+- `packages/control/src/ryotenkai_control/data/` — Dataset handling and validation
+- `packages/control/src/ryotenkai_control/reports/` — Report generation plugins
 
 ## Reporting Issues
 
