@@ -58,7 +58,17 @@ class PluginSecretsResolver:
                     "System secrets (HF_TOKEN, RUNPOD_API_KEY, etc.) are not accessible to plugins."
                 )
 
-        extra: dict[str, str] = dict(self._secrets.model_extra or {})
+        # Case-insensitive lookup: Pydantic Settings only lowercases
+        # extras when its native dotenv source actually fires (which
+        # depends on CWD finding a ``secrets.env``). When the loader
+        # has to thread keys through manual ``init_kwargs`` instead,
+        # they stay in their original ``UPPER_CASE`` form. Normalize
+        # both sides so lookup doesn't depend on which path filled the
+        # field — discovered when worker subprocesses spawned with
+        # ``cwd=packages/control/src/`` could not resolve ``EVAL_*``
+        # plugin secrets that were present in the repo-root file.
+        extra_raw: dict[str, str] = dict(self._secrets.model_extra or {})
+        extra: dict[str, str] = {k.lower(): v for k, v in extra_raw.items()}
         result: dict[str, str] = {}
 
         for key in keys:
