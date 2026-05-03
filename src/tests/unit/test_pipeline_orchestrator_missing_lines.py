@@ -182,7 +182,7 @@ class TestMissingInitAndMlflowSetupLines:
         manager = MagicMock()
         manager.is_active = True
 
-        with patch("src.pipeline.mlflow_attempt.manager.MLflowManager", return_value=manager):
+        with patch("src.training.managers.mlflow_manager.MLflowManager", return_value=manager):
             out = orch._setup_mlflow()
 
         assert out is manager
@@ -196,7 +196,7 @@ class TestMissingInitAndMlflowSetupLines:
         )
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[])
 
-        with patch("src.pipeline.mlflow_attempt.manager.MLflowManager", side_effect=RuntimeError("boom")):
+        with patch("src.training.managers.mlflow_manager.MLflowManager", side_effect=RuntimeError("boom")):
             assert orch._setup_mlflow() is None
 
 

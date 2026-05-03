@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from src.config.pipeline.schema import PipelineConfig
     from src.pipeline.stages.base import PipelineStage
-    from src.training.managers.mlflow_manager import MLflowManager
+    from src.infrastructure.mlflow.protocol import IMLflowManager
     from src.utils.logs_layout import LogLayout
 
 # Re-export from the launch package so downstream test imports keep working
@@ -157,12 +157,12 @@ class PipelineOrchestrator:
         self._shutdown_signal_name = str(signal_name or "").upper()
 
     @property
-    def _mlflow_manager(self) -> MLflowManager | None:
+    def _mlflow_manager(self) -> IMLflowManager | None:
         """Backward-compat alias — many call sites read ``self._mlflow_manager`` directly."""
         return self._mlflow_attempt.manager
 
     @_mlflow_manager.setter
-    def _mlflow_manager(self, value: MLflowManager | None) -> None:
+    def _mlflow_manager(self, value: IMLflowManager | None) -> None:
         """Backward-compat setter — some tests assign to ``orchestrator._mlflow_manager``.
 
         Safe to call before ``_mlflow_attempt`` is initialised (tests sometimes
@@ -172,7 +172,7 @@ class PipelineOrchestrator:
         if attempt_mgr is not None:
             attempt_mgr._manager = value
 
-    def _setup_mlflow(self) -> MLflowManager | None:
+    def _setup_mlflow(self) -> IMLflowManager | None:
         """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager)."""
         return self._mlflow_attempt.bootstrap()
 

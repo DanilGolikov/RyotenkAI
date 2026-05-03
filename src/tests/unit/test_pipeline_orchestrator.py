@@ -2166,7 +2166,7 @@ class TestPipelineOrchestratorMLflowInternals:
             patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
-            patch("src.pipeline.mlflow_attempt.manager.MLflowManager", mock_mlflow_manager_class),
+            patch("src.training.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
         ):
             mock_load_secrets.return_value = mock_secrets
             mock_validate.return_value = Ok(None)
@@ -2200,7 +2200,7 @@ class TestPipelineOrchestratorMLflowInternals:
             patch("src.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
             patch("src.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
             patch.object(StageRegistry, "_build_stages") as mock_init_stages,
-            patch("src.pipeline.mlflow_attempt.manager.MLflowManager", mock_mlflow_manager_class),
+            patch("src.training.managers.mlflow_manager.MLflowManager", mock_mlflow_manager_class),
             patch.dict("sys.modules", {"mlflow": MagicMock()}),
         ):
             mock_load_secrets.return_value = mock_secrets

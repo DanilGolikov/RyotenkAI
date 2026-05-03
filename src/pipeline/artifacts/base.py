@@ -206,12 +206,15 @@ def save_stage_artifact(
     """
     try:
         from src.pipeline.stages.constants import PipelineContextKeys
-        from src.training.managers.mlflow_manager import MLflowManager
 
         mlflow_mgr: Any = context.get(PipelineContextKeys.MLFLOW_MANAGER)
         run_id: Any = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
 
-        if not isinstance(mlflow_mgr, MLflowManager) or not mlflow_mgr.is_active:
+        # Duck-typed against IMLflowManager Protocol (plan §A.5):
+        # need ``is_active`` (a bool / property) and ``log_artifact``.
+        # Avoids importing the trainer-side concrete MLflowManager into
+        # the pipeline closure.
+        if mlflow_mgr is None or not getattr(mlflow_mgr, "is_active", False):
             logger.debug(
                 "[ARTIFACT] MLflowManager not available — skipping artifact write for %s",
                 artifact_name,

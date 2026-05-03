@@ -37,7 +37,7 @@ from src.utils.logger import console, get_run_log_dir, logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.training.managers.mlflow_manager import MLflowManager
+    from src.infrastructure.mlflow.protocol import IMLflowManager
     from src.utils.config import PipelineConfig
 
 
@@ -213,7 +213,7 @@ class ExecutionSummaryReporter:
     def aggregate_training_metrics(
         self,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         collect_fn: Callable[[], list[dict[str, float]]] | None = None,
     ) -> None:
         """Aggregate training metrics from child/grandchild runs into the parent run.
@@ -272,7 +272,7 @@ class ExecutionSummaryReporter:
 
     @staticmethod
     def collect_descendant_metrics(
-        *, mlflow_manager: MLflowManager | None, max_depth: int = 2
+        *, mlflow_manager: IMLflowManager | None, max_depth: int = 2
     ) -> list[dict[str, float]]:
         """Collect metrics from all descendant runs (BFS, ``phase_*`` children only)."""
         if mlflow_manager is None:
@@ -324,7 +324,7 @@ class ExecutionSummaryReporter:
     def generate_experiment_report(
         *,
         run_id: str | None,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         sections: Sequence[str] | None = None,
     ) -> None:
         """Generate a full experiment Markdown report after pipeline completion.
@@ -349,7 +349,7 @@ class ExecutionSummaryReporter:
             logger.warning(f"[REPORT] Failed to generate report: {e}")
 
 
-def _get_run_id(mlflow_manager: MLflowManager) -> str | None:
+def _get_run_id(mlflow_manager: IMLflowManager) -> str | None:
     run_id = getattr(mlflow_manager, "run_id", None)
     if isinstance(run_id, str) and run_id:
         return run_id

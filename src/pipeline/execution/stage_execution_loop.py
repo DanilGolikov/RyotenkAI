@@ -87,7 +87,7 @@ if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
     from src.pipeline.state import AttemptController
     from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-    from src.training.managers.mlflow_manager import MLflowManager
+    from src.infrastructure.mlflow.protocol import IMLflowManager
     from src.utils.logs_layout import LogLayout
 
 _STATUS_FAILED = "failed"
@@ -151,7 +151,7 @@ class StageExecutionLoop:
         *,
         prepared: PreparedAttempt,
         context: PipelineContext,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         log_layout: LogLayout,
     ) -> Result[PipelineContext, AppError]:
         """Execute stages ``[start_idx, stop_idx)`` for the prepared attempt.
@@ -301,7 +301,7 @@ class StageExecutionLoop:
     def handle_interrupt_outside_loop(
         self,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
     ) -> None:
         """Mark the (non-started) attempt interrupted when KBI is raised
         during ``_prepare_stateful_attempt`` — i.e. before the loop gets a
@@ -320,7 +320,7 @@ class StageExecutionLoop:
         self,
         e: Exception,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
     ) -> Result[PipelineContext, AppError]:
         """Convert a non-loop exception into an UNEXPECTED_ERROR ``Err``.
 
@@ -338,7 +338,7 @@ class StageExecutionLoop:
         self,
         *,
         context: PipelineContext,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         stage_name: str,
         stage_idx: int,
         stage_err: AppError,
@@ -394,7 +394,7 @@ class StageExecutionLoop:
         self,
         *,
         context: PipelineContext,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         stage_name: str,
         stage_idx: int,
         collector: StageArtifactCollector | None,
@@ -454,7 +454,7 @@ class StageExecutionLoop:
         *,
         context: PipelineContext,
         pipeline_duration: float,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
     ) -> None:
         """Terminal happy path: mark attempt COMPLETED, emit summary + MLflow."""
         self._attempt_controller.finalize(
@@ -484,7 +484,7 @@ class StageExecutionLoop:
     def _handle_interrupt(
         self,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         current_stage_name: str | None,
         current_stage_started_at: str | None,
     ) -> None:
@@ -518,7 +518,7 @@ class StageExecutionLoop:
         self,
         e: Exception,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
     ) -> Result[PipelineContext, AppError]:
         """Mark attempt FAILED on an unexpected exception and surface UNEXPECTED_ERROR."""
         logger.exception(f"Unexpected error in pipeline: {e}")

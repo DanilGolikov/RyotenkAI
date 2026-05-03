@@ -91,7 +91,7 @@ class TestPositive:
     def test_bootstrap_returns_active_manager(self, manager: MLflowAttemptManager) -> None:
         mock_mgr = MagicMock()
         mock_mgr.is_active = True
-        with patch("src.pipeline.mlflow_attempt.manager.MLflowManager", return_value=mock_mgr):
+        with patch("src.training.managers.mlflow_manager.MLflowManager", return_value=mock_mgr):
             out = manager.bootstrap()
         assert out is mock_mgr
         assert manager.manager is mock_mgr
@@ -126,7 +126,7 @@ class TestPositive:
 class TestNegative:
     def test_bootstrap_exception_returns_none(self, manager: MLflowAttemptManager) -> None:
         with patch(
-            "src.pipeline.mlflow_attempt.manager.MLflowManager",
+            "src.training.managers.mlflow_manager.MLflowManager",
             side_effect=RuntimeError("broken"),
         ):
             assert manager.bootstrap() is None
@@ -290,7 +290,7 @@ class TestDependencyErrors:
         mgr = MagicMock()
         mgr.is_active = True
         with (
-            patch("src.pipeline.mlflow_attempt.manager.MLflowManager", return_value=mgr),
+            patch("src.training.managers.mlflow_manager.MLflowManager", return_value=mgr),
             patch.dict("sys.modules", {"mlflow": None}),
         ):
             out = manager.bootstrap()

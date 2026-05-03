@@ -24,9 +24,9 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
+from src.infrastructure.mlflow.protocol import IMLflowManager
 from src.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
 from src.pipeline.stages import PipelineContextKeys
-from src.training.managers.mlflow_manager import MLflowManager
 from src.utils.logger import logger
 from src.utils.result import AppError
 
@@ -44,7 +44,7 @@ class MLflowAttemptManager:
     def __init__(self, config: PipelineConfig, config_path: Path) -> None:
         self._config = config
         self._config_path = config_path
-        self._manager: MLflowManager | None = None
+        self._manager: IMLflowManager | None = None
         self._run_context: Any = None
         self._root_run: Any = None
         self._attempt_run: Any = None
@@ -52,7 +52,7 @@ class MLflowAttemptManager:
     # ---- public accessors ---------------------------------------------------
 
     @property
-    def manager(self) -> MLflowManager | None:
+    def manager(self) -> IMLflowManager | None:
         return self._manager
 
     @property
@@ -73,7 +73,7 @@ class MLflowAttemptManager:
 
     # ---- setup --------------------------------------------------------------
 
-    def bootstrap(self) -> MLflowManager | None:
+    def bootstrap(self) -> IMLflowManager | None:
         """Create and configure MLflowManager (control-plane, system metrics off).
 
         Control-plane / orchestrator process must NOT register the
@@ -100,6 +100,13 @@ class MLflowAttemptManager:
             if sm_block is not None:
                 sm_block.callback_enabled = False
 
+            # Lazy import: pipeline holds an IMLflowManager Protocol (plan §A.5);
+            # the concrete trainer-side class lives in src.training and is only
+            # imported at construction time. After Phase B (monorepo packagization)
+            # this construction is moved out of the control-plane package entirely
+            # — the manager is injected by the orchestrator instead.
+            from src.training.managers.mlflow_manager import MLflowManager
+
             manager = MLflowManager(self._config, runtime_role="control_plane")
             manager.setup()
             self._manager = manager
@@ -118,7 +125,7 @@ class MLflowAttemptManager:
         context: dict[str, Any],
         total_stages: int,
         run_directory: Path | None,
-        manager: MLflowManager | None = None,
+        manager: IMLflowManager | None = None,
     ) -> None:
         """Open the root + nested attempt MLflow runs and record their IDs on state.
 
@@ -156,7 +163,7 @@ class MLflowAttemptManager:
             self._cleanup_partial_runs()
             raise
 
-    def _require_manager(self) -> MLflowManager:
+    def _require_manager(self) -> IMLflowManager:
         """Return ``self._manager`` or raise a clear error instead of a bare AttributeError.
 
         Use this anywhere a method assumes bootstrap() has already put a manager

@@ -24,7 +24,7 @@ from src.pipeline.constants import (
 from src.pipeline.stages import StageNames
 
 if TYPE_CHECKING:
-    from src.training.managers.mlflow_manager import MLflowManager
+    from src.infrastructure.mlflow.protocol import IMLflowManager
 
 
 class StageInfoLogger:
@@ -33,7 +33,7 @@ class StageInfoLogger:
     def log(
         self,
         *,
-        mlflow_manager: MLflowManager | None,
+        mlflow_manager: IMLflowManager | None,
         context: dict[str, Any],
         stage_name: str,
     ) -> None:
@@ -52,7 +52,7 @@ class StageInfoLogger:
     # ---- per-stage handlers -------------------------------------------------
 
     @staticmethod
-    def _log_gpu_deployer(mlflow_manager: MLflowManager, deployer_ctx: Any) -> None:
+    def _log_gpu_deployer(mlflow_manager: IMLflowManager, deployer_ctx: Any) -> None:
         if not isinstance(deployer_ctx, dict):
             return
         mlflow_manager.log_provider_info(
@@ -81,7 +81,7 @@ class StageInfoLogger:
             )
 
     @staticmethod
-    def _log_dataset_validator(mlflow_manager: MLflowManager, validator_ctx: Any) -> None:
+    def _log_dataset_validator(mlflow_manager: IMLflowManager, validator_ctx: Any) -> None:
         if not isinstance(validator_ctx, dict):
             return
         metrics = validator_ctx.get("metrics", {})  # noqa: WPS226
@@ -108,7 +108,7 @@ class StageInfoLogger:
             )
 
     @staticmethod
-    def _log_training_monitor(mlflow_manager: MLflowManager, monitor_ctx: Any) -> None:
+    def _log_training_monitor(mlflow_manager: IMLflowManager, monitor_ctx: Any) -> None:
         if not isinstance(monitor_ctx, dict):
             return
         # NB: ``is not None`` — a converged run can have final_loss=0.0 / accuracy=0.0,
@@ -138,7 +138,7 @@ class StageInfoLogger:
             mlflow_manager.log_metrics(metrics_to_log)
 
     @staticmethod
-    def _log_model_retriever(mlflow_manager: MLflowManager, retriever_ctx: Any) -> None:
+    def _log_model_retriever(mlflow_manager: IMLflowManager, retriever_ctx: Any) -> None:
         if not isinstance(retriever_ctx, dict):
             return
         # NB: ``is not None`` — model_size_mb=0 (empty model, edge case in tests)
