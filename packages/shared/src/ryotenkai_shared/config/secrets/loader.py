@@ -94,8 +94,18 @@ def load_secrets(
     # didn't ask for. Adapters that DO want the repo file as a fallback
     # must opt in by passing it as ``env_file`` explicitly.
     if env is None:
+        # Walk up from this file looking for the workspace root —
+        # identified by a ``pyproject.toml`` whose parent ALSO contains a
+        # ``packages/`` directory (the uv workspace marker). Pinned
+        # ``parents[N]`` was fragile across the Phase B packagization
+        # move (loader.py is now 3 levels deeper than it used to be).
         try:
-            project_root = Path(__file__).resolve().parents[3]
+            here = Path(__file__).resolve()
+            project_root: Path = Path.cwd()  # fallback
+            for parent in here.parents:
+                if (parent / "pyproject.toml").is_file() and (parent / "packages").is_dir():
+                    project_root = parent
+                    break
         except Exception:
             project_root = Path.cwd()
 
