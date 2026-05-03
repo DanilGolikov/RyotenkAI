@@ -271,7 +271,7 @@ class ModelEvaluator(PipelineStage):
             return None
 
         from ryotenkai_shared.config.inference.common import InferenceLLMConfig
-        from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader
+        from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader
 
         llm_raw = provider_cfg_raw.get("inference", {}).get("llm", {})
         if not isinstance(llm_raw, dict):

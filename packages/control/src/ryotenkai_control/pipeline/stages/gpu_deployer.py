@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import LogManager, TrainingDeploymentManager
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.training.factory import GPUProviderFactory
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result

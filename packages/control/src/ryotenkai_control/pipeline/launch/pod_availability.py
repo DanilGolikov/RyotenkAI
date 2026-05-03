@@ -65,6 +65,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -74,7 +76,6 @@ if TYPE_CHECKING:
 __all__ = [
     "RESUME_BACKOFFS",
     "RESUME_RETRY_BUDGET_SECONDS",
-    "PodAvailability",
     "PodAvailabilityProbe",
     "ProbeResult",
     "ResumeResult",
@@ -106,11 +107,6 @@ RESUME_BACKOFFS: tuple[float, ...] = (10.0, 30.0, 60.0, 120.0)
 # ---------------------------------------------------------------------------
 
 
-# PodAvailability extracted to ryotenkai_shared.infrastructure.lifecycle
-# (ADR row 9). Re-exported here so existing local imports keep working —
-# the probe / resume logic below stays in control because it's
-# RunPod-aware orchestration, not a contract type.
-from ryotenkai_shared.infrastructure.lifecycle import PodAvailability  # noqa: E402, F401
 
 
 @dataclass(frozen=True)

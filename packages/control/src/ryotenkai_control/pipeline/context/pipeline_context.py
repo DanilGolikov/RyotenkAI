@@ -42,7 +42,7 @@ from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ryotenkai_control.pipeline.state.run_context import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
 
 
 class PipelineContext(dict[str, Any]):

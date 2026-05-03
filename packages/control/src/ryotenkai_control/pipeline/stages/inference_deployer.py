@@ -21,7 +21,7 @@ from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.inference.factory import InferenceProviderFactory
 from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,

@@ -71,6 +71,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_shared.infrastructure.lifecycle import PodTerminalOutcome
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -79,25 +81,10 @@ if TYPE_CHECKING:
 
 
 __all__ = [
-    "PodTerminalOutcome",
     "PodTerminator",
     "decide_terminal_outcome",
     "run_terminal_hook",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Outcome strings
-# ---------------------------------------------------------------------------
-
-
-# PodTerminalOutcome moved to
-# ``ryotenkai_shared.infrastructure.lifecycle.outcomes`` (ADR row 7,
-# Phase C drift fix). Re-exported here so existing callers keep
-# working while we sweep imports — the long-term home is shared.
-from ryotenkai_shared.infrastructure.lifecycle.outcomes import (  # noqa: E402
-    PodTerminalOutcome,
-)
 
 
 # ---------------------------------------------------------------------------
