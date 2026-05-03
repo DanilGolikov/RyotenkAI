@@ -1,23 +1,7 @@
+"""Mac-side data layer (preview / validation).
+
+Dataset *loading* lives in :mod:`ryotenkai_pod.trainer.data_loaders` —
+the loader runs on the pod next to the trainer. This package only
+hosts Mac-side concerns: dataset previews used by the Web UI and the
+validation framework that runs before the pipeline kicks off.
 """
-Data Module - Dataset Loading
-
-Simplified architecture (v3):
-- TRL SFTTrainer handles datasets natively
-- No adapters needed for standard formats (messages, text)
-- JsonDatasetLoader for file loading
-
-Supported formats:
-- `messages`: ChatML format (TRL applies chat_template automatically)
-- `text`: Plain text (TRL uses directly)
-
-Example:
-    from ryotenkai_control.data.loaders import JsonDatasetLoader
-    loader = JsonDatasetLoader(config)
-    dataset = loader.load("data/train.jsonl")
-"""
-
-from .loaders import JsonDatasetLoader
-
-__all__ = [
-    "JsonDatasetLoader",
-]

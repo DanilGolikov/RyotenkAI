@@ -6,7 +6,6 @@
 # would re-introduce the cycle — see the top of transitioner.py.
 from ryotenkai_control.pipeline.state.attempt_controller import AttemptController, AttemptControllerError
 from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState
-from ryotenkai_control.pipeline.state.run_context import RunContext
 from ryotenkai_control.pipeline.state.store import (
     SCHEMA_VERSION,
     PipelineRunLock,
@@ -24,6 +23,9 @@ from ryotenkai_control.pipeline.state.store import (
     update_lineage,
 )
 
+# RunContext lives in ryotenkai_shared.pipeline_context after Phase C
+# follow-up. Importers must use the canonical path directly.
+
 __all__ = [
     "SCHEMA_VERSION",
     "AttemptController",
@@ -35,7 +37,6 @@ __all__ = [
     "PipelineStateLoadError",
     "PipelineStateLockError",
     "PipelineStateStore",
-    "RunContext",
     "StageLineageRef",
     "StageRunState",
     "acquire_run_lock",

@@ -120,7 +120,7 @@ def _resolve_token(
 
     # Local imports keep Secrets construction free of crypto cost until a
     # caller actually asks for a token.
-    from ryotenkai_control.api.services.token_crypto import TokenCrypto, TokenCryptoError, read_token_file
+    from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto, TokenCryptoError, read_token_file
 
     path = Path.home() / ".ryotenkai" / workspace_kind / resource_id / "token.enc"
     if not path.is_file():

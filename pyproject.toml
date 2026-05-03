@@ -309,6 +309,18 @@ skip_covered = false
 # pre-existing / 121 skipped). Floor(baseline - 2 %) = 83 — leaves a 2 pp
 # buffer for harmless noise. Bump in a separate PR after a stable green
 # stretch; do not pre-emptively raise it.
+#
+# Per-package gate (plan §7): not enforced today. The packagization PR keeps
+# the single workspace-wide floor because per-package measurement currently
+# trips on ~30 pre-existing shared test failures that are orthogonal to the
+# layout split (config schema drift, contract tests for the job client). The
+# follow-up flow is:
+#   1. Land the shared test fixes (separate PR).
+#   2. Run ``pytest packages/<pkg>/tests --cov=ryotenkai_<pkg>`` for each
+#      package once green; record baselines.
+#   3. Add ``[tool.coverage.report.<pkg>] fail_under = baseline - 2`` blocks
+#      here, OR move the per-package floors into each package's pyproject.toml
+#      once uv-workspace member overrides land (open uv issue tracked).
 fail_under = 83
 exclude_lines = [
     "pragma: no cover",

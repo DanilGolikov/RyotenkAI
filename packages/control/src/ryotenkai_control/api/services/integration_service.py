@@ -17,7 +17,7 @@ from ryotenkai_control.api.schemas.integration import (
     IntegrationTypeInfo,
     IntegrationTypesResponse,
 )
-from ryotenkai_control.api.services.token_crypto import (
+from ryotenkai_shared.utils.crypto.token_crypto import (
     TokenCrypto,
     delete_token_file,
     write_token_file,

@@ -494,7 +494,7 @@ class SingleNodeInferenceProvider(IInferenceProvider):
         the chat script on the remote machine does not need MLflow access.
         system_prompt_source carries audit metadata (origin type + name/path + version).
         """
-        from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader
+        from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader
 
         llm_cfg = self._provider_cfg.inference.llm
         mlflow_cfg = getattr(getattr(self._cfg, "integrations", None), "mlflow", None)

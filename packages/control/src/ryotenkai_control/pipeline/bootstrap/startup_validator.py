@@ -28,7 +28,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from ryotenkai_shared.config.validators.runtime import validate_eval_plugin_secrets
+from ryotenkai_control.pipeline.validators.runtime import validate_eval_plugin_secrets
 from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 from ryotenkai_shared.config import validate_strategy_chain
 from ryotenkai_shared.utils.logger import logger

@@ -16,7 +16,7 @@ from ryotenkai_control.workspace.providers import ProviderRegistry
 from ryotenkai_control.pipeline.state import PipelineStateStore
 
 if TYPE_CHECKING:
-    from ryotenkai_control.api.services.token_crypto import TokenCrypto
+    from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto
     from ryotenkai_shared.config.datasets.schema import DatasetConfig
 
 
@@ -170,6 +170,6 @@ def get_token_crypto() -> TokenCrypto:
     Cached — one instance per process. The master key is auto-generated
     on first call when absent (see ``token_crypto.load_or_create_master_key``).
     """
-    from ryotenkai_control.api.services.token_crypto import TokenCrypto as _TokenCrypto
+    from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto as _TokenCrypto
 
     return _TokenCrypto()

@@ -86,7 +86,7 @@ class TestRotationBinding:
     def test_publish_rotation_event_emits_events_rotated(
         self, tmp_path: Path,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import EVENTS_ROTATED
+        from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_ROTATED
 
         journal = EventJournal(root_dir=tmp_path / "events")
         bus = EventBus(journal=journal)

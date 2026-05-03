@@ -407,7 +407,7 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
       always-on providers).
     * RUNPOD_API_KEY missing.
     """
-    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
     from ryotenkai_control.pipeline.launch.resume_service import (
         LaunchResumeService,
         ResumeProgress,

@@ -299,7 +299,7 @@ class CompletionCallback(TrainerCallback):
             )
             return
         try:
-            from ryotenkai_pod.runner.cancellation_telemetry import (
+            from ryotenkai_shared.observability.cancellation_telemetry import (
                 COMPLETION_FINALIZED,
             )
 

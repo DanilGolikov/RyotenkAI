@@ -532,7 +532,7 @@ def run_pipeline(config_path: str) -> int:
     Returns:
         Exit code (0 for success, 1 for failure)
     """
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_shared.config.loader import load_pipeline_config
 
     try:
         cfg = load_pipeline_config(config_path)

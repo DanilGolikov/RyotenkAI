@@ -22,7 +22,7 @@ import pytest
 from ryotenkai_control.pipeline.stages.constants import StageNames
 from ryotenkai_control.pipeline.stages.inference_deployer import InferenceDeployer
 from ryotenkai_control.pipeline.stages.model_evaluator import ModelEvaluator
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     InferenceCapabilities,

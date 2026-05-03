@@ -33,7 +33,14 @@ import os
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
-    from ryotenkai_community.manifest import PluginManifest, RequiredEnvSpec
+    # ADR row 2 fix: shared cannot import from ryotenkai_community
+    # (would make shared not-a-leaf). The two manifest types are referenced
+    # purely for type hints; at runtime ``_community_manifest`` carries
+    # whatever object the community loader injects. We alias them to ``Any``
+    # in the shared closure — community loader checks the concrete types
+    # itself when populating the slots.
+    PluginManifest = Any
+    RequiredEnvSpec = Any
 
 
 class BasePlugin:

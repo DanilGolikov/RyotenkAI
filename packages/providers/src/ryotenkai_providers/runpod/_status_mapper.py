@@ -24,14 +24,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
 
 
 def _build_map() -> "dict[str, PodAvailability]":
     # Local import — pod_availability.py is light (no provider chain),
     # so this is cheap; deferring keeps the module-load order
     # symmetric with the rest of the pipeline.launch package.
-    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
     return {
         "RUNNING": PodAvailability.RUNNING,
         "EXITED": PodAvailability.SLEEPING_RESUMABLE,
@@ -56,7 +56,7 @@ def map_runpod_desired_status_to_availability(
     lowercased / mixed-case status strings depending on the
     upstream SDK version.
     """
-    from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+    from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
     return _build_map().get(
         raw_status.upper(), PodAvailability.PROBE_FAILED,
     )

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.state import (
     PipelineStateStore,
     PipelineStateLoadError,

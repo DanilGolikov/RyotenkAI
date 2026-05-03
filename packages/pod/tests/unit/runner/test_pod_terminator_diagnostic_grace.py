@@ -23,7 +23,7 @@ from ryotenkai_pod.runner.pod_terminator import (
     PodTerminator,
     decide_terminal_outcome,
 )
-from ryotenkai_pod.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.infrastructure.lifecycle import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

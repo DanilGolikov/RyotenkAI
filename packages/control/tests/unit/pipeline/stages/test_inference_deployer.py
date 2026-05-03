@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
     InferenceArtifacts,

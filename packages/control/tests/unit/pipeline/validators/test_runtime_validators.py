@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ryotenkai_shared.config.validators.runtime import validate_eval_plugin_secrets
+from ryotenkai_control.pipeline.validators.runtime import validate_eval_plugin_secrets
 
 # ---------------------------------------------------------------------------
 # Helpers

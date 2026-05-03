@@ -44,7 +44,7 @@ from ryotenkai_shared.constants import (  # noqa: E402
     RUNTIME_PROVIDER_ENV_VAR,
 )
 from ryotenkai_pod.runner.main import create_app  # noqa: E402
-from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
+from ryotenkai_shared.infrastructure.lifecycle import IPodLifecycleClient  # noqa: E402
 from ryotenkai_pod.runner.runtime.provider_registry import BootstrapConfigError  # noqa: E402
 # Same-folder conftest provides MockSupervisor; load via importlib so
 # pytest's --import-mode=importlib doesn't add tests/ to sys.path.

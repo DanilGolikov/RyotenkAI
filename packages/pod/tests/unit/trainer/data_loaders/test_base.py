@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from datasets import Dataset
 
-from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_pod.trainer.data_loaders.base import BaseDatasetLoader
 
 
 class ConcreteLoader(BaseDatasetLoader):

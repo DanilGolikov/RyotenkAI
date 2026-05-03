@@ -52,7 +52,7 @@ from ryotenkai_pod.trainer.container import TrainingContainer
 from ryotenkai_shared.utils.environment import EnvironmentReporter
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.run_naming import generate_run_name
-from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+from ryotenkai_shared.config.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig

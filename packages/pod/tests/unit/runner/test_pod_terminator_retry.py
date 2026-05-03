@@ -19,8 +19,9 @@ import pytest
 
 from ryotenkai_shared.constants import PROVIDER_RUNPOD
 from ryotenkai_pod.runner.heartbeat import MacHeartbeat
-from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome, PodTerminator
-from ryotenkai_pod.runner.runtime.lifecycle_client import LifecycleActionResult
+from ryotenkai_pod.runner.pod_terminator import PodTerminator
+from ryotenkai_shared.infrastructure.lifecycle import PodTerminalOutcome
+from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
 
 
 # ---------------------------------------------------------------------------

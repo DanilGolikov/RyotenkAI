@@ -34,7 +34,7 @@ _SSH_PORT_DEFAULT = 22
 _CLEANUP_TIMEOUT = 1800
 
 if TYPE_CHECKING:
-    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_shared.config import Secrets
 
 logger = logging.getLogger("ryotenkai")

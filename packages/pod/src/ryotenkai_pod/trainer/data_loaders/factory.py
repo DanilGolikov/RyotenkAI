@@ -84,7 +84,7 @@ class DatasetLoaderFactory:
 
     def _create_json_loader(self) -> IDatasetLoader:
         """Create JsonDatasetLoader for local files."""
-        from ryotenkai_control.data.loaders import JsonDatasetLoader
+        from ryotenkai_pod.trainer.data_loaders import JsonDatasetLoader
 
         loader = JsonDatasetLoader(self._config)
         logger.debug("[DL_FACTORY:CREATED] JsonDatasetLoader")
@@ -92,7 +92,7 @@ class DatasetLoaderFactory:
 
     def _create_huggingface_loader(self) -> IDatasetLoader:
         """Create HuggingFaceDatasetLoader for HF Hub."""
-        from ryotenkai_control.data.loaders import HuggingFaceDatasetLoader
+        from ryotenkai_pod.trainer.data_loaders import HuggingFaceDatasetLoader
 
         loader = HuggingFaceDatasetLoader(self._config)
         logger.debug("[DL_FACTORY:CREATED] HuggingFaceDatasetLoader")

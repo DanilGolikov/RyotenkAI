@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_community.constants import ALL_PLUGIN_KINDS, COMMUNITY_ROOT
 from ryotenkai_community.libs import (
@@ -208,33 +208,53 @@ class CommunityCatalog:
                 len(self._presets),
             )
 
+    #: Per-kind registry locator. Each entry is the ``module:attribute``
+    #: spelling :func:`importlib.import_module` + :func:`getattr` resolve
+    #: at runtime. Keeping these as strings (rather than direct imports)
+    #: inverts the dependency direction: ``ryotenkai_community`` no longer
+    #: needs to know that ``validation_registry`` lives under
+    #: ``ryotenkai_control`` or ``reward_registry`` lives under
+    #: ``ryotenkai_pod``. The downstream package owns the registry; the
+    #: catalog only owns the abstract "push loaded plugins through this
+    #: hook" contract, satisfied by any object exposing
+    #: ``clear()`` + ``register_from_community(loaded)``.
+    #:
+    #: ADR row 3+4 (Phase C drift fix): the previous direct
+    #: ``from ryotenkai_control.… import validation_registry`` /
+    #: ``from ryotenkai_pod.… import reward_registry`` line was the only
+    #: ``community → {control, pod}`` edge in the import graph.
+    _REGISTRY_LOCATORS: ClassVar[dict[str, str]] = {
+        "validation": "ryotenkai_control.data.validation.registry:validation_registry",
+        "evaluation": "ryotenkai_control.evaluation.plugins.registry:evaluator_registry",
+        "reward": "ryotenkai_pod.trainer.reward_plugins.registry:reward_registry",
+        "reports": "ryotenkai_control.reports.plugins.registry:report_registry",
+    }
+
     def _populate_registries(self) -> None:
         """Push loaded plugins into the per-kind registries.
 
-        Imports are done lazily inside the method to keep ``src/community/``
-        free of hard dependencies on unrelated subsystems. Each kind module
-        exports a singleton registry instance — the catalog drives the
-        clear/register lifecycle through that instance, never directly
+        Registry locations are resolved by ``importlib`` at call time
+        (see :data:`_REGISTRY_LOCATORS`) so this module has no static
+        import edge to ``ryotenkai_control`` / ``ryotenkai_pod``. Each
+        kind module exports a singleton registry instance exposing
+        ``clear()`` + ``register_from_community(loaded)``; the catalog
+        drives that lifecycle through the instance, never directly
         through the class.
         """
-        from ryotenkai_control.data.validation.registry import validation_registry
-        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
-        from ryotenkai_control.reports.plugins.registry import report_registry
-        from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
+        import importlib
 
-        validation_registry.clear()
-        evaluator_registry.clear()
-        reward_registry.clear()
-        report_registry.clear()
+        registries: dict[str, Any] = {}
+        for kind, locator in self._REGISTRY_LOCATORS.items():
+            module_name, _, attr_name = locator.partition(":")
+            module = importlib.import_module(module_name)
+            registries[kind] = getattr(module, attr_name)
 
-        for loaded in self._plugins.get("validation", []):
-            validation_registry.register_from_community(loaded)
-        for loaded in self._plugins.get("evaluation", []):
-            evaluator_registry.register_from_community(loaded)
-        for loaded in self._plugins.get("reward", []):
-            reward_registry.register_from_community(loaded)
-        for loaded in self._plugins.get("reports", []):
-            report_registry.register_from_community(loaded)
+        for registry in registries.values():
+            registry.clear()
+
+        for kind, registry in registries.items():
+            for loaded in self._plugins.get(kind, []):
+                registry.register_from_community(loaded)
 
     # ----- public accessors -------------------------------------------------
 

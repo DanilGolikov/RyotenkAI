@@ -31,7 +31,7 @@ from ryotenkai_shared.utils.logger import logger
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
-    from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+    from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
 
 class DatasetSplitLoader:

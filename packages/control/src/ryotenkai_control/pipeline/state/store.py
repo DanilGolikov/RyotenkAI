@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState, utc_now_iso
 
 if TYPE_CHECKING:
-    from ryotenkai_control.pipeline.state.run_context import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
 
 SCHEMA_VERSION = 1
 

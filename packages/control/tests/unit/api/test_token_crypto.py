@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from ryotenkai_control.api.services.token_crypto import (
+from ryotenkai_shared.utils.crypto.token_crypto import (
     MASTER_KEY_BYTES,
     TokenCrypto,
     TokenCryptoError,

@@ -429,7 +429,7 @@ class TrainingContainer:
         Returns:
             IDatasetLoader: Loader for the dataset's source type
         """
-        from ryotenkai_control.data.loaders import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders import DatasetLoaderFactory
 
         # Get dataset config
         dataset_config = self.config.datasets.get(dataset_name)
@@ -611,7 +611,7 @@ class TrainingContainer:
         """
         from pathlib import Path
 
-        from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+        from ryotenkai_shared.config.loader import load_pipeline_config
 
         config = load_pipeline_config(Path(config_path))
         return cls(config=config)

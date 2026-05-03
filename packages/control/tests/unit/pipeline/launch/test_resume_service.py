@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ryotenkai_shared.constants import PROVIDER_RUNPOD
-from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
 from ryotenkai_control.pipeline.launch.resume_service import (
     LaunchResumeService,
     ResumeOutcome,

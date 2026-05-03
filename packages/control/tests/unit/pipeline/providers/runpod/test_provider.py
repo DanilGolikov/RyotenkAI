@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 import ryotenkai_providers.runpod.training.provider as rp
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
 from ryotenkai_providers.runpod.training.provider import RunPodProvider
 from ryotenkai_providers.training.interfaces import ProviderStatus

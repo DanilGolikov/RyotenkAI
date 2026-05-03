@@ -45,11 +45,11 @@ class MultiSourceDatasetLoader:
 
         loader: Any
         if source_type == SOURCE_TYPE_HUGGINGFACE:
-            from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
+            from ryotenkai_pod.trainer.data_loaders.hf_loader import HuggingFaceDatasetLoader
 
             loader = HuggingFaceDatasetLoader(self.config)
         else:
-            from ryotenkai_control.data.loaders.json_loader import JsonDatasetLoader
+            from ryotenkai_pod.trainer.data_loaders.json_loader import JsonDatasetLoader
 
             loader = JsonDatasetLoader(self.config)
 
@@ -64,7 +64,7 @@ class MultiSourceDatasetLoader:
         max_samples: int | None = None,
     ) -> Dataset:
         # Heuristic routing for direct load() usage
-        from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
+        from ryotenkai_pod.trainer.data_loaders.hf_loader import HuggingFaceDatasetLoader
 
         source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)
@@ -72,7 +72,7 @@ class MultiSourceDatasetLoader:
         return loader.load(source, split=split, max_samples=max_samples)
 
     def validate_source(self, source: str) -> bool:
-        from ryotenkai_control.data.loaders.hf_loader import HuggingFaceDatasetLoader
+        from ryotenkai_pod.trainer.data_loaders.hf_loader import HuggingFaceDatasetLoader
 
         source_type = SOURCE_TYPE_HUGGINGFACE if HuggingFaceDatasetLoader.is_hf_dataset_id(source) else SOURCE_TYPE_LOCAL
         loader = self._get_loader(source_type)

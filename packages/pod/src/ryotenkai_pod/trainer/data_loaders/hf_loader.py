@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 from datasets import load_dataset
 
 from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_pod.trainer.data_loaders.base import BaseDatasetLoader
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:

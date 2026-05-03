@@ -23,7 +23,7 @@ from ryotenkai_control.pipeline.launch.restart_rules import compute_restart_poin
 from ryotenkai_control.pipeline.stages.constants import CANONICAL_STAGE_ORDER
 from ryotenkai_control.pipeline.state import PipelineStateStore
 from ryotenkai_control.pipeline.state.queries import first_unfinished_stage
-from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+from ryotenkai_shared.config.loader import load_pipeline_config
 
 if TYPE_CHECKING:
     from pathlib import Path

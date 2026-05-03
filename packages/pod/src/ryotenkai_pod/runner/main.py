@@ -39,7 +39,7 @@ from ryotenkai_pod.runner.api import control as control_api
 from ryotenkai_pod.runner.api import events as events_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
-from ryotenkai_pod.runner.cancellation_telemetry import EVENTS_DISK_PRESSURE
+from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.event_journal import (
     DEFAULT_FILE_SIZE_CAP,

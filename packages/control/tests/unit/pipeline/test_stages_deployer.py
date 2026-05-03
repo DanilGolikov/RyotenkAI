@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
 from ryotenkai_shared.utils.result import Failure, ProviderError, Success
 

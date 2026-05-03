@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from ryotenkai_control.cli.run_rendering import RunInspectionRenderer, format_duration
 from ryotenkai_control.main import app
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.run_queries import (
     ROOT_GROUP,
     RunInspector,

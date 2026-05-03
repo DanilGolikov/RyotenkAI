@@ -34,7 +34,7 @@ from ryotenkai_shared.constants import (  # noqa: E402
     PROVIDER_SINGLE_NODE,
     RUNTIME_PROVIDER_ENV_VAR,
 )
-from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient  # noqa: E402
+from ryotenkai_shared.infrastructure.lifecycle import IPodLifecycleClient  # noqa: E402
 from ryotenkai_pod.runner.runtime.provider_registry import (  # noqa: E402
     BootstrapConfigError,
     registered_providers,

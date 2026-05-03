@@ -72,7 +72,7 @@ import pytest
 from pydantic import ValidationError
 
 from ryotenkai_shared.config.inference.common import InferenceLLMConfig
-from ryotenkai_control.evaluation.system_prompt import SystemPromptLoader, SystemPromptResult
+from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader, SystemPromptResult
 
 
 # ---------------------------------------------------------------------------

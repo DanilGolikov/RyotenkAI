@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
-PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+# File lives at packages/community/src/ryotenkai_community/constants.py.
+# parents[0]=ryotenkai_community, [1]=src, [2]=community, [3]=packages,
+# [4]=repo root (where the data-only ``community/`` plugin tree lives).
+PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[4]
 COMMUNITY_ROOT: Final[Path] = PROJECT_ROOT / "community"
 CACHE_DIR: Final[Path] = COMMUNITY_ROOT / ".cache"
 

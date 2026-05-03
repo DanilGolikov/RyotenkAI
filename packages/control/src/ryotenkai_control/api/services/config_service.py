@@ -20,7 +20,7 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
     field_errors: dict[str, list[str]] = {}
     cfg = None
     try:
-        from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+        from ryotenkai_shared.config.loader import load_pipeline_config
 
         cfg = load_pipeline_config(config_path)
         checks.append(ConfigCheck(label="YAML schema valid (Pydantic)", status="ok"))

@@ -478,7 +478,7 @@ def preflight_cmd(
 ) -> None:
     """Pre-launch gate: missing envs + instance-shape errors for a config."""
     from ryotenkai_community.preflight import run_preflight
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_shared.config.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -554,7 +554,7 @@ def stale_cmd(
 ) -> None:
     """List references to plugins absent from the catalog."""
     from ryotenkai_community.stale_plugins import find_stale_plugins
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_shared.config.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

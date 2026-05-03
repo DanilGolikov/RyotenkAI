@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome
-from ryotenkai_pod.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.infrastructure.lifecycle import PodTerminalOutcome
+from ryotenkai_shared.infrastructure.lifecycle import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

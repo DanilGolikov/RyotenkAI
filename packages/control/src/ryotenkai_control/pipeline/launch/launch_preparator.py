@@ -72,7 +72,7 @@ if TYPE_CHECKING:
     from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
     from ryotenkai_control.pipeline.execution import StagePlanner
     from ryotenkai_control.pipeline.stages.base import PipelineStage
-    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
 
 _SEPARATOR_CHAR = "="
 _SEPARATOR_LINE_WIDTH = 80

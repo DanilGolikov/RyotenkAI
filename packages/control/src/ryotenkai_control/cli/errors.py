@@ -66,7 +66,7 @@ def load_config_or_die(path: Path | str) -> PipelineConfig:
     failure modes (missing file, malformed YAML, schema mismatch) into
     one-line ``die()`` errors with field-level detail.
     """
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_shared.config.loader import load_pipeline_config
 
     path_str = str(path)
     try:

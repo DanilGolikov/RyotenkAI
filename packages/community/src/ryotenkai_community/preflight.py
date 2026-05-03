@@ -163,20 +163,22 @@ def _enabled_report_plugins(
 ) -> Iterable[_PluginRef]:
     """Enumerate report plugin ids from ``reports.sections``.
 
-    ``sections=None`` means "use the built-in default" — preflight
-    queries the registry for that default rather than re-importing the
-    constant module to keep this file decoupled. Reports take no
-    constructor kwargs, so ``params`` / ``thresholds`` are always
-    empty.
+    ``sections=None`` means "use the built-in default": resolve
+    :data:`DEFAULT_REPORT_SECTIONS` from ``ryotenkai_control`` lazily via
+    ``importlib`` to avoid a static ``community → control`` import edge
+    (ADR row 3). Reports take no constructor kwargs, so ``params`` /
+    ``thresholds`` are always empty.
     """
-    from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+    import importlib
 
     reports_cfg = getattr(config, "reports", None)
-    sections: tuple[str, ...] = (
-        tuple(reports_cfg.sections)
-        if reports_cfg is not None and reports_cfg.sections is not None
-        else DEFAULT_REPORT_SECTIONS
-    )
+    if reports_cfg is not None and reports_cfg.sections is not None:
+        sections: tuple[str, ...] = tuple(reports_cfg.sections)
+    else:
+        defaults_module = importlib.import_module(
+            "ryotenkai_control.reports.plugins.defaults"
+        )
+        sections = defaults_module.DEFAULT_REPORT_SECTIONS
     for plugin_id in sections:
         # Reports use the plugin id as the instance id — there's no
         # ``id``-vs-``plugin`` distinction (one section is one plugin).

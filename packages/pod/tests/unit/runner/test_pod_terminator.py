@@ -41,7 +41,7 @@ from ryotenkai_pod.runner.pod_terminator import (
     decide_terminal_outcome,
     run_terminal_hook,
 )
-from ryotenkai_pod.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.infrastructure.lifecycle import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

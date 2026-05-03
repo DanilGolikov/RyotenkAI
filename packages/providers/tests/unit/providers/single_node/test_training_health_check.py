@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 import ryotenkai_providers.single_node.training.provider as sp
-from ryotenkai_control.pipeline.state import RunContext
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.single_node.training.health_check import (
     HealthCheckResult,
     SingleNodeHealthCheck,
