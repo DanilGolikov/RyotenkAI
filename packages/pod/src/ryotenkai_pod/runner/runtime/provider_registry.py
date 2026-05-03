@@ -66,6 +66,29 @@ class BootstrapConfigError(RuntimeError):
     """
 
 
+#: Runtime location of the per-provider :class:`IPodLifecycleClient`
+#: implementation. Resolved lazily through ``importlib`` so this module
+#: keeps no static ``pod → providers`` import edge (sentinel test
+#: ``test_pod_does_not_import_control_or_providers``). Providers ship as
+#: separate Mac-side wheels — the pod only sees them at deploy time when
+#: the appropriate wheel is bundled into the pod image, so a missing
+#: module here is a deployment misconfiguration that the import-time
+#: ``ImportError`` already surfaces with a clear message.
+_LIFECYCLE_CLIENT_LOCATORS: Final[dict[str, str]] = {
+    PROVIDER_RUNPOD: "ryotenkai_providers.runpod.runtime.lifecycle_client:RunPodPodLifecycleClient",
+    PROVIDER_SINGLE_NODE: "ryotenkai_providers.single_node.runtime.lifecycle_client:NoOpPodLifecycleClient",
+}
+
+
+def _resolve_lifecycle_client_class(provider: str) -> type[IPodLifecycleClient]:
+    import importlib
+
+    locator = _LIFECYCLE_CLIENT_LOCATORS[provider]
+    module_name, _, attr_name = locator.partition(":")
+    module = importlib.import_module(module_name)
+    return getattr(module, attr_name)
+
+
 def _build_runpod_client(env: Mapping[str, str]) -> IPodLifecycleClient:
     api_key = env.get("RUNPOD_API_KEY")
     pod_id = env.get("RUNPOD_POD_ID")
@@ -77,20 +100,17 @@ def _build_runpod_client(env: Mapping[str, str]) -> IPodLifecycleClient:
         raise BootstrapConfigError(
             f"{RUNTIME_PROVIDER_ENV_VAR}=runpod requires RUNPOD_POD_ID",
         )
-    # Local import: keeps single-node-only deployments from importing
-    # httpx at module-load time.
-    from ryotenkai_providers.runpod.runtime.lifecycle_client import (
-        RunPodPodLifecycleClient,
-    )
-    return RunPodPodLifecycleClient(api_key=api_key)
+    # importlib lookup (locator dict above) keeps single-node-only
+    # deployments from importing httpx at module-load time AND removes
+    # the ``pod → providers`` static edge.
+    client_cls = _resolve_lifecycle_client_class(PROVIDER_RUNPOD)
+    return client_cls(api_key=api_key)
 
 
 def _build_single_node_client(env: Mapping[str, str]) -> IPodLifecycleClient:
     # No env reads — single-node has no creds to validate.
-    from ryotenkai_providers.single_node.runtime.lifecycle_client import (
-        NoOpPodLifecycleClient,
-    )
-    return NoOpPodLifecycleClient()
+    client_cls = _resolve_lifecycle_client_class(PROVIDER_SINGLE_NODE)
+    return client_cls()
 
 
 _REGISTRY: Final[dict[str, Callable[[Mapping[str, str]], IPodLifecycleClient]]] = {

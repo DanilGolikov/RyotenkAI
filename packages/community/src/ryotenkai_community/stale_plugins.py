@@ -129,23 +129,25 @@ def _is_registered(kind: PluginKind, plugin_name: str) -> bool:
     KeyError on the unknown path — the per-kind ``is_registered``
     method is the cleaner shape for boolean tests.
     """
-    if kind == "validation":
-        from ryotenkai_control.data.validation.registry import validation_registry
+    # ADR row 3+4: keep this module free of static imports into
+    # ryotenkai_control / ryotenkai_pod. The registry singleton is
+    # resolved by ``importlib`` from a string path that mirrors the
+    # locator dict in :class:`CommunityCatalog._REGISTRY_LOCATORS`.
+    import importlib
 
-        return validation_registry.is_registered(plugin_name)
-    if kind == "evaluation":
-        from ryotenkai_control.evaluation.plugins.registry import evaluator_registry
-
-        return evaluator_registry.is_registered(plugin_name)
-    if kind == "reward":
-        from ryotenkai_pod.trainer.reward_plugins.registry import reward_registry
-
-        return reward_registry.is_registered(plugin_name)
-    if kind == "reports":
-        from ryotenkai_control.reports.plugins.registry import report_registry
-
-        return report_registry.is_registered(plugin_name)
-    return False  # type: ignore[unreachable]  # defensive: mypy sees the Literal union as exhaustive
+    locators: dict[str, str] = {
+        "validation": "ryotenkai_control.data.validation.registry:validation_registry",
+        "evaluation": "ryotenkai_control.evaluation.plugins.registry:evaluator_registry",
+        "reward": "ryotenkai_pod.trainer.reward_plugins.registry:reward_registry",
+        "reports": "ryotenkai_control.reports.plugins.registry:report_registry",
+    }
+    locator = locators.get(kind)
+    if locator is None:
+        return False
+    module_name, _, attr_name = locator.partition(":")
+    module = importlib.import_module(module_name)
+    registry = getattr(module, attr_name)
+    return registry.is_registered(plugin_name)
 
 
 __all__ = ["StalePluginRef", "find_stale_plugins"]

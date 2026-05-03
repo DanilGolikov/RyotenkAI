@@ -37,7 +37,7 @@ def test_control_does_not_import_pod() -> None:
                 for alias in node.names:
                     if alias.name == "ryotenkai_pod" or alias.name.startswith("ryotenkai_pod."):
                         violations.append(f"{path.relative_to(src.parent)}: import {alias.name}")
-    # NOTE: this test is currently EXPECTED-FAIL — Phase B/C surfaced 6
+    # NOTE: this test is currently EXPECTED-FAIL — Phase B/C surfaced
     # pre-existing drifts (see ADR "Known violations" table). The list is
     # printed so that a reviewer can confirm the count hasn't grown beyond
     # the documented set; once each follow-up PR lands, the matching entry
@@ -45,11 +45,23 @@ def test_control_does_not_import_pod() -> None:
     # ``not violations``.
     expected_known = {
         # See docs/adrs/2026-05-03-monorepo-uv-workspace-packagization.md
-        # rows 5, 6 in the "Known violations" table. Each entry below names
-        # the importing module file relative to packages/control/src/.
-        "ryotenkai_control/data/loaders/factory.py: from ryotenkai_pod.trainer.container",
-        "ryotenkai_control/data/validation/standalone.py: from ryotenkai_pod.trainer.strategies.factory",
+        # rows 5, 6 in the "Known violations" table. Each entry below is a
+        # Phase D extraction follow-up:
+        #   * dataset_validator → :class:`DatasetLoaderFactory` should be
+        #     promoted to a shared/control-side data-loading package.
+        #   * mlflow_attempt → :class:`MLflowManager` is the mirror image
+        #     of A.5 (Mac side reaches into the pod runtime). Either move
+        #     manager into control or split into a Mac-side facade.
+        #   * data/__init__ → :class:`JsonDatasetLoader` re-export ships
+        #     under control for backwards compat; remove once consumers
+        #     migrate to the shared loader package.
+        #   * data/validation/standalone → :class:`StrategyFactory` is a
+        #     trainer-side concern leaking into Mac-side validation.
+        "ryotenkai_control/pipeline/stages/dataset_validator/split_loader.py: from ryotenkai_pod.trainer.data_loaders.factory",
+        "ryotenkai_control/pipeline/stages/dataset_validator/stage.py: from ryotenkai_pod.trainer.data_loaders.factory",
         "ryotenkai_control/pipeline/mlflow_attempt/manager.py: from ryotenkai_pod.trainer.managers.mlflow_manager",
+        "ryotenkai_control/data/__init__.py: from ryotenkai_pod.trainer.data_loaders",
+        "ryotenkai_control/data/validation/standalone.py: from ryotenkai_pod.trainer.strategies.factory",
     }
     unexpected = [v for v in violations if v not in expected_known]
     assert not unexpected, (
