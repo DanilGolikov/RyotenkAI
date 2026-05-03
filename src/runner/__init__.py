@@ -11,7 +11,7 @@ implementations land in Phase 1+. See ``docs/plans/harmonic-rolling-crayon.md``.
 
 from __future__ import annotations
 
-from src.runner.__about__ import RUNTIME_IMAGE
+from src.constants import RUNTIME_IMAGE
 from src.runner.main import create_app
 
 __all__ = ["RUNTIME_IMAGE", "create_app"]

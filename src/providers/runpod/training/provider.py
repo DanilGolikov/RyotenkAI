@@ -23,7 +23,7 @@ from src.providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from src.runner.__about__ import RUNTIME_IMAGE
+from src.constants import RUNTIME_IMAGE
 from src.utils.pod_layout import PodLayout
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 from src.utils.ssh_client import SSHClient

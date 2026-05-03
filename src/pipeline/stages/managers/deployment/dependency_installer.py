@@ -22,7 +22,7 @@ from src.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_STDERR_TRUNCATE,
     DEPLOYMENT_STDOUT_LINES,
 )
-from src.runner.__about__ import RUNTIME_IMAGE
+from src.constants import RUNTIME_IMAGE
 from src.utils.docker import ensure_docker_image
 from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, ProviderError, Result

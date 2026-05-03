@@ -11,6 +11,7 @@ Notes:
 
 from __future__ import annotations
 
+import os
 from types import MappingProxyType
 from typing import Final, Literal
 
@@ -184,3 +185,42 @@ LORA_CHECKPOINT_PATTERNS: Final[tuple[str, ...]] = (
     "special_tokens_map.json",
     "config.json",
 )
+
+
+# ---------------------------------------------------------------------------
+# Runtime image — single source of truth for the docker image the Mac
+# control plane provisions on RunPod / single_node hosts.
+#
+# Lived in ``src.runner.__about__`` until Phase A.4 of monorepo
+# packagization (plan §A.4); kept here so pipeline-side dependency
+# installers stop reaching across the runner boundary (root cause of
+# the ``pipeline → runner`` cycle, plan §2.4-C).
+#
+# Override via ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE`` env, intended for
+# CI smoke tests / dev iteration only — not a user-facing config.
+#
+# Image semver:
+#   * v1.x — baked-in ``src/`` baseline at ``/opt/ryotenkai``;
+#     retired but kept on Docker Hub for emergency rollback via
+#     ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``.
+#   * v2.x — thin image (env-only): no ``src/`` in the image; the
+#     Mac control plane rsyncs ``src/runner`` and its deps into the
+#     run-scoped workspace, then SSH-execs uvicorn from there.
+#     Wire-incompatible with v1.x clients.
+# ---------------------------------------------------------------------------
+
+# Bumped in lock-step with the docker image published by
+# ``docker/training/build_and_push.sh``. Repo path
+# ``${DOCKER_USERNAME}/ryotenkai-training-runtime`` resolves to the
+# doubled-prefix path below — kept as-is to match the publish script.
+_DEFAULT_RUNTIME_IMAGE: Final[str] = (
+    "ryotenkai/ryotenkai-training-runtime:v0.1.1"
+)
+
+
+def _resolve_runtime_image() -> str:
+    override = os.environ.get("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", "").strip()
+    return override or _DEFAULT_RUNTIME_IMAGE
+
+
+RUNTIME_IMAGE: Final[str] = _resolve_runtime_image()

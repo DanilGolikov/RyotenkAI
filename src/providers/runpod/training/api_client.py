@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.providers.runpod.models import PodSnapshot, read_ssh_public_key
 from src.providers.runpod.sdk_adapter import RunPodSDKClient
-from src.runner.__about__ import RUNTIME_IMAGE
+from src.constants import RUNTIME_IMAGE
 from src.utils.logger import logger
 from src.utils.result import Err, Ok, ProviderError, Result
 

@@ -1,47 +1,20 @@
-"""Pinned constants for the runner package.
+"""Backward-compat shim — canonical home moved to ``src.constants.RUNTIME_IMAGE``.
 
-``RUNTIME_IMAGE`` is the **single source of truth** for which docker
-image the Mac control plane provisions on RunPod / single_node hosts.
-Provider configs read this constant directly. Phase 6.6 removed the
-user-facing ``image_name`` / ``docker_image`` Pydantic fields —
-versions are tied to the release, not to user YAML, eliminating the
-config-vs-code drift problem.
+The shim re-evaluates :func:`_resolve_runtime_image` from
+:mod:`src.constants` at import time so an ``importlib.reload(...)`` of
+this module still picks up env-override changes (kept as a defensive
+seam for the existing reload-based override test until Phase B removes
+the shim).
 
-Override is supported only via ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``
-environment variable, intended for CI smoke tests and dev iteration —
-*not* a user-facing config.
-
-Image semver:
-    * v1.x — baked-in ``src/`` baseline at ``/opt/ryotenkai``;
-      retired but kept on Docker Hub for emergency rollback via
-      ``RYOTENKAI_RUNTIME_IMAGE_OVERRIDE``.
-    * v2.x — thin image (env-only): no ``src/`` in the image; the
-      Mac control plane rsyncs ``src/runner`` and its deps into the
-      run-scoped workspace, then SSH-execs uvicorn from there.
-      Wire-incompatible with v1.x clients (no baked baseline → no
-      fallback). See ``docs/architecture/thin-image.md``.
+Removed at the start of Phase B (monorepo packagization, see
+``docs/plans/2026-05-03-monorepo-uv-workspace-packagization.md`` §B.4).
 """
 
 from __future__ import annotations
 
-import os
 from typing import Final
 
-# Bumped in lock-step with the docker image published by
-# ``docker/training/build_and_push.sh``. The publisher names the
-# repo ``${DOCKER_USERNAME}/ryotenkai-training-runtime``; with our
-# Docker Hub user ``ryotenkai`` that resolves to the doubled-prefix
-# path below — kept as-is to match the publish script and avoid a
-# rename round-trip on Docker Hub.
-_DEFAULT_RUNTIME_IMAGE: Final[str] = (
-    "ryotenkai/ryotenkai-training-runtime:v0.1.1"
-)
-
-
-def _resolve_runtime_image() -> str:
-    override = os.environ.get("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", "").strip()
-    return override or _DEFAULT_RUNTIME_IMAGE
-
+from src.constants import _resolve_runtime_image
 
 RUNTIME_IMAGE: Final[str] = _resolve_runtime_image()
 

@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from fastapi import FastAPI
 
-from src.runner.__about__ import RUNTIME_IMAGE
+from src.constants import RUNTIME_IMAGE
 from src.runner.api import control as control_api
 from src.runner.api import events as events_api
 from src.runner.api import internal as internal_api
