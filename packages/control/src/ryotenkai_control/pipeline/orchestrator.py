@@ -31,8 +31,8 @@ from ryotenkai_control.pipeline.state import (
     PipelineState,
     PipelineStateError,
     PipelineStateStore,
-    RunContext,
 )
+from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import AppError, Err, Result
 

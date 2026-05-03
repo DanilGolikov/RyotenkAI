@@ -50,7 +50,8 @@ if TYPE_CHECKING:
     from ryotenkai_shared.config.runtime import RuntimeSettings
     from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
     from ryotenkai_control.pipeline.stages.base import PipelineStage
-    from ryotenkai_control.pipeline.state import AttemptController, RunContext
+    from ryotenkai_control.pipeline.state import AttemptController
+    from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
