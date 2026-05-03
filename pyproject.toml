@@ -81,6 +81,9 @@ dev = [
 # imports everything via ``from src.xxx import …`` and the ``ryotenkai``
 # entry point resolves to ``src.main:app`` — both require ``src`` to be a
 # top-level package visible on ``sys.path`` via its **parent** directory.
+#
+# After Phase B (monorepo packagization, plan §3.1) src/ is deleted and
+# this section is replaced with workspace-declaration metadata only.
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
@@ -88,6 +91,22 @@ namespaces = false
 
 [project.scripts]
 ryotenkai = "src.main:app"
+
+# ============================================
+# uv Workspace Declaration (Phase B onwards)
+# ============================================
+# Coexists with the legacy ``src/`` flat package for the duration of the
+# packagization migration. After Phase B.7 the legacy block above is
+# deleted and ``[project]`` becomes a thin workspace-only declaration.
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ryotenkai-shared    = { workspace = true }
+ryotenkai-community = { workspace = true }
+ryotenkai-pod       = { workspace = true }
+ryotenkai-providers = { workspace = true }
+ryotenkai-control   = { workspace = true }
 
 [project.urls]
 Homepage = "https://github.com/DanilGolikov/ryotenkai"
