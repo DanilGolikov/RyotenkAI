@@ -36,14 +36,14 @@ from src.training.orchestrator.shutdown_handler import ShutdownHandler
 from src.training.strategies.factory import StrategyFactory
 from src.training.trainers.factory import TrainerFactory
 from src.utils.logger import logger
-from src.utils.memory_manager import MemoryManager, get_memory_manager
+from src.training.memory_manager import MemoryManager, get_memory_manager
 from src.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
     from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from src.training.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
 class StrategyOrchestrator:

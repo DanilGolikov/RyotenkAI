@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from src.training.orchestrator.metrics_collector import MetricsCollector
     from src.training.orchestrator.shutdown_handler import ShutdownHandler
     from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
+    from src.training.container import IDatasetLoader, IMLflowManager, IStrategyFactory, ITrainerFactory
 
 
 # Phase 9.A: error code emitted by ``PhaseTrainingRunner.handle_graceful_shutdown``.

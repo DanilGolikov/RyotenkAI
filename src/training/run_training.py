@@ -48,7 +48,7 @@ from src.training.constants import (
     TRUNCATE_SHA_DISPLAY,
 )
 from src.training.managers.mlflow_manager import MLflowManager
-from src.utils.container import TrainingContainer
+from src.training.container import TrainingContainer
 from src.utils.environment import EnvironmentReporter
 from src.utils.logger import logger
 from src.utils.run_naming import generate_run_name

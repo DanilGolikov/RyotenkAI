@@ -35,7 +35,7 @@ from src.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
-from src.utils.container import TrainingContainer
+from src.training.container import TrainingContainer
 
 # =============================================================================
 # FIXTURES

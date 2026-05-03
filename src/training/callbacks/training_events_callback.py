@@ -26,7 +26,7 @@ from src.utils.logger import get_logger
 if TYPE_CHECKING:
     from transformers import TrainerControl, TrainerState, TrainingArguments
 
-    from src.utils.container import IMLflowManager
+    from src.training.container import IMLflowManager
 
 logger = get_logger(__name__)
 

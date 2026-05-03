@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from src.training.mlflow import IMLflowManager  # re-export; canonical home is src/training/mlflow
     from src.training.orchestrator import StrategyOrchestrator
     from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
+    from src.training.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
 
 
 # =============================================================================
@@ -294,7 +294,7 @@ class TrainingContainer:
 
         # Lazy initialization of real MemoryManager
         if self._lazy_memory_manager is None:
-            from src.utils.memory_manager import MemoryManager
+            from src.training.memory_manager import MemoryManager
 
             self._lazy_memory_manager = MemoryManager.auto_configure()
             logger.debug("[CONTAINER:MM_CREATED] MemoryManager auto-configured")
@@ -317,7 +317,7 @@ class TrainingContainer:
         Returns:
             IMemoryManager with callbacks configured
         """
-        from src.utils.memory_manager import MemoryEventCallbacks, MemoryManager
+        from src.training.memory_manager import MemoryEventCallbacks, MemoryManager
 
         # If no MLflow manager, return regular memory manager
         if mlflow_manager is None:

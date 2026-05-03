@@ -323,7 +323,7 @@ class TestMemoryManagerIntegration:
         Given: get_memory_manager called multiple times
         Then: Returns same instance (singleton)
         """
-        from src.utils.memory_manager import get_memory_manager
+        from src.training.memory_manager import get_memory_manager
 
         mm1 = get_memory_manager()
         mm2 = get_memory_manager()
@@ -336,7 +336,7 @@ class TestMemoryManagerIntegration:
         When: preset is accessed
         Then: Returns valid preset
         """
-        from src.utils.memory_manager import get_memory_manager
+        from src.training.memory_manager import get_memory_manager
 
         mm = get_memory_manager()
         # Even without CUDA, defaults are applied, but preset might be None if not auto-detected

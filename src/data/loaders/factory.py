@@ -13,7 +13,7 @@ from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from src.config import DatasetConfig, PipelineConfig
-    from src.utils.container import IDatasetLoader
+    from src.training.container import IDatasetLoader
 
 
 class DatasetLoaderFactory:

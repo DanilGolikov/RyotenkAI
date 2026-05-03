@@ -207,7 +207,7 @@ class TestDependencyInjection:
 
     def test_memory_manager_lazy_init(self, mock_config):
         """MemoryManager should be lazily initialized."""
-        with patch("src.utils.memory_manager.MemoryManager") as MockMM:
+        with patch("src.training.memory_manager.MemoryManager") as MockMM:
             mock_instance = MagicMock()
             MockMM.auto_configure.return_value = mock_instance
 
@@ -223,7 +223,7 @@ class TestDependencyInjection:
 
     def test_injected_memory_manager_bypasses_creation(self, mock_config, mock_memory_manager):
         """Injected MemoryManager should bypass auto-configuration."""
-        with patch("src.utils.memory_manager.MemoryManager") as MockMM:
+        with patch("src.training.memory_manager.MemoryManager") as MockMM:
             container = TrainingContainer(
                 mock_config,
                 _memory_manager=mock_memory_manager,

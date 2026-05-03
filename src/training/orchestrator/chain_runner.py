@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from src.training.managers.data_buffer import DataBuffer
     from src.training.orchestrator.phase_executor import PhaseExecutor
     from src.config import StrategyPhaseConfig
-    from src.utils.container import IMLflowManager
+    from src.training.container import IMLflowManager
 
 
 class ChainRunner:

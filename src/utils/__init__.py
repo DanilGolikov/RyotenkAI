@@ -1,20 +1,15 @@
+"""Generic, side-side-agnostic utilities.
+
+After Phase A.7 of monorepo packagization (plan §A.7) the trainer-only
+``container`` and ``memory_manager`` modules moved to
+:mod:`src.training` — Mac-side code (pipeline, api, cli) does not pull
+GPU-introspection / DI-container code anymore. Import them from
+``src.training.{container,memory_manager}`` directly.
+"""
+
 from src.config import PipelineConfig, Secrets, load_secrets
-from .container import (
-    IMemoryManager,
-    TrainingContainer,
-)
 from .environment import EnvironmentReporter, EnvironmentSnapshot
 from .logger import console, logger
-from .memory_manager import (
-    GPUInfo,
-    GPUPreset,
-    GPUTier,
-    MemoryManager,
-    MemoryStats,
-    OOMRecoverableError,
-    get_memory_manager,
-    reset_memory_manager,
-)
 from .result import (
     AppError,
     ConfigError,
@@ -35,43 +30,27 @@ from .result import (
 )
 
 __all__ = [
-    # Result pattern
     "AppError",
     "ConfigError",
     "DatasetError",
-    # Environment
     "EnvironmentReporter",
     "EnvironmentSnapshot",
     "Err",
     "Failure",
-    # Memory
-    "GPUInfo",
-    "GPUPreset",
-    "GPUTier",
-    # Container
-    "IMemoryManager",
     "InferenceError",
-    "MemoryManager",
-    "MemoryStats",
     "ModelError",
     "OOMError",
-    "OOMRecoverableError",
     "Ok",
-    # Config
     "PipelineConfig",
     "ProviderError",
     "Result",
     "Secrets",
     "StrategyError",
     "Success",
-    "TrainingContainer",
     "TrainingError",
-    # Utils
     "console",
     "err",
-    "get_memory_manager",
     "load_secrets",
     "logger",
     "ok",
-    "reset_memory_manager",
 ]

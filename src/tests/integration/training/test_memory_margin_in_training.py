@@ -18,7 +18,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.utils.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
+from src.training.memory_manager import MemoryManager, MemoryStats, OOMRecoverableError
 
 
 def test_safe_operation_checks_margin():

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.utils.container import TrainingContainer, _create_noop_memory_manager
+from src.training.container import TrainingContainer, _create_noop_memory_manager
 
 
 def _mk_cfg() -> MagicMock:
@@ -30,7 +30,7 @@ class TestMemoryManagerProperty:
         container = TrainingContainer(cfg, _memory_manager=injected)
 
         auto = MagicMock()
-        monkeypatch.setattr("src.utils.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
 
         assert container.memory_manager is injected
         auto.assert_not_called()
@@ -41,7 +41,7 @@ class TestMemoryManagerProperty:
 
         mm = MagicMock()
         auto = MagicMock(return_value=mm)
-        monkeypatch.setattr("src.utils.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
 
         assert container.memory_manager is mm
         assert container.memory_manager is mm
@@ -61,7 +61,7 @@ class TestMemoryManagerWithCallbacks:
 
         mlflow = MagicMock()
         auto = MagicMock(return_value=MagicMock())
-        monkeypatch.setattr("src.utils.memory_manager.MemoryManager.auto_configure", auto)
+        monkeypatch.setattr("src.training.memory_manager.MemoryManager.auto_configure", auto)
 
         _ = container.create_memory_manager_with_callbacks(mlflow_manager=mlflow)
         callbacks = auto.call_args.kwargs["callbacks"]

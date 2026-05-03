@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.utils.memory_manager import (
+from src.training.memory_manager import (
     GPUPreset,
     GPUTier,
     MemoryEventCallbacks,

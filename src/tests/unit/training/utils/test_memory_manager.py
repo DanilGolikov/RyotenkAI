@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.memory_manager import (
+from src.training.memory_manager import (
     GPUInfo,
     GPUPreset,
     GPUTier,
@@ -65,7 +65,7 @@ class TestMemoryManager:
         assert mm.memory_margin_mb == 1000
         assert mm.max_retries == 5
 
-    @patch("src.utils.memory_manager.MemoryManager.cuda_available", False)
+    @patch("src.training.memory_manager.MemoryManager.cuda_available", False)
     def test_get_memory_stats_no_cuda(self):
         """Test memory stats when CUDA unavailable."""
         mm = MemoryManager()
@@ -73,7 +73,7 @@ class TestMemoryManager:
         stats = mm.get_memory_stats()
         assert stats is None
 
-    @patch("src.utils.memory_manager.MemoryManager.cuda_available", True)
+    @patch("src.training.memory_manager.MemoryManager.cuda_available", True)
     def test_get_available_memory_no_cuda(self):
         """Test available memory returns 0 when no CUDA."""
         mm = MemoryManager()

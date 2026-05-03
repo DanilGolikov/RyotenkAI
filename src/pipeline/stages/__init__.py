@@ -2,7 +2,7 @@
 
 Stage classes (DatasetValidator, GPUDeployer, …) are deliberately NOT
 re-exported from here. Importing them eagerly used to drag the full
-training stack (data loaders → src.utils.container → torch / transformers
+training stack (data loaders → src.training.container → torch / transformers
 / mlflow) into every caller that just wanted a status enum, slowing CLI
 startup and making lazy-import patches fragile.
 

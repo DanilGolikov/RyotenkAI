@@ -20,7 +20,7 @@ import pytest
 
 from src.data.loaders import HuggingFaceDatasetLoader, JsonDatasetLoader, MultiSourceDatasetLoader
 from src.training.orchestrator.dataset_loader import DatasetLoader
-from src.utils.container import IDatasetLoader, TrainingContainer
+from src.training.container import IDatasetLoader, TrainingContainer
 
 # =============================================================================
 # FIXTURES

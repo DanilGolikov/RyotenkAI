@@ -22,7 +22,7 @@ from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.container import IMLflowManager
+    from src.training.container import IMLflowManager
 
 
 # Phase 9.B — retry-with-grace constants for ``start_nested_run``.

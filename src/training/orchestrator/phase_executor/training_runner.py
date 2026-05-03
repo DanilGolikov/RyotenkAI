@@ -27,7 +27,7 @@ from src.training.constants import (
 )
 from src.training.trainers.factory import TrainerFactory
 from src.utils.logger import logger
-from src.utils.memory_manager import MemoryManager, OOMRecoverableError
+from src.training.memory_manager import MemoryManager, OOMRecoverableError
 from src.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from src.training.managers.data_buffer import DataBuffer
     from src.training.orchestrator.shutdown_handler import ShutdownHandler
     from src.config import PipelineConfig, StrategyPhaseConfig
-    from src.utils.container import IDatasetLoader, IMLflowManager, ITrainerFactory
+    from src.training.container import IDatasetLoader, IMLflowManager, ITrainerFactory
 
 
 class PhaseTrainingRunner:

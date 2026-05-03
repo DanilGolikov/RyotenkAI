@@ -23,7 +23,7 @@ import pytest
 from src.training.metrics_models import TrainingMetricsSnapshot
 from src.training.orchestrator.phase_executor import PhaseExecutor
 from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from src.utils.memory_manager import OOMRecoverableError
+from src.training.memory_manager import OOMRecoverableError
 from src.utils.result import Err, Ok
 
 # ========================================================================
