@@ -65,8 +65,6 @@ def test_shared_does_not_import_any_internal_package() -> None:
     # disappears here. When the list is empty, drop ``unexpected`` and
     # assert ``not violations`` directly.
     expected_known = {
-        # ADR row 2: plugin_base imports community manifest
-        "ryotenkai_shared/utils/plugin_base.py: from ryotenkai_community.manifest",
         # ADR row 1: runtime validator reaches into community + control
         "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_community.catalog",
         "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_control.evaluation.plugins.registry",
