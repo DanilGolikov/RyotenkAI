@@ -401,8 +401,11 @@ class TestStatusReporting:
 
         assert len(captured) == 1
         msg, args = captured[0]
-        assert "ALIVE" in msg
-        assert "GPU" in msg and "VRAM" in msg and "CPU" in msg and "RAM" in msg
+        # PR-0.4 (2026-05-02): "ALIVE" → "running" matches FSM JobState.
+        # Status line now also carries Temp; absent in this payload → "—".
+        assert "running" in msg
+        assert "GPU" in msg and "VRAM" in msg and "Temp" in msg
+        assert "CPU" in msg and "RAM" in msg
         # Format strings substituted; verify rendered values
         rendered = msg % args
         assert "GPU: 88%" in rendered or "GPU: 87%" in rendered
@@ -474,7 +477,8 @@ class TestStatusReporting:
 
         assert seen == [{"gpu_util_percent": 50.0}]
         # Status line emitted at least once.
-        assert any("ALIVE" in msg for msg, _ in captured)
+        # PR-0.4 (2026-05-02): "ALIVE" → "running" (FSM JobState alignment).
+        assert any("running" in msg for msg, _ in captured)
 
     def test_status_line_duration_renders_from_training_start(
         self, monkeypatch: pytest.MonkeyPatch,
