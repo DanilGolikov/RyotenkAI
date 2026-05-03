@@ -1,5 +1,27 @@
 # CLAUDE.md
 
+## Layout (post Phase B packagization, 2026-05-03)
+
+The codebase has been split from `src/` into 5 uv-workspace members under
+`packages/` (per [docs/adrs/2026-05-03-monorepo-uv-workspace-packagization.md](../docs/adrs/2026-05-03-monorepo-uv-workspace-packagization.md)).
+Use the `ryotenkai_*` import names — `from src.X` no longer exists.
+
+| Package | Import name | Side | Contents |
+|---|---|---|---|
+| `packages/shared/` | `ryotenkai_shared` | both | `utils`, `config`, `constants`, `inference`, `infrastructure` (incl. `IMLflowManager`/`IPodLifecycleClient` Protocols) |
+| `packages/community/` | `ryotenkai_community` | both | plugin loader / catalog / manifest / sync framework |
+| `packages/pod/` | `ryotenkai_pod` | pod | `runner/` (HTTP server) + `trainer/` (subprocess) — one image |
+| `packages/providers/` | `ryotenkai_providers` | Mac | `runpod/`, `single_node/`, `inference/vllm/` |
+| `packages/control/` | `ryotenkai_control` | Mac | `pipeline`, `api`, `cli`, `data`, `evaluation`, `reports`, `workspace`, `cli_state`, `main.py` |
+
+Allowed dependency directions (importlinter-enforced; `uv run lint-imports`):
+shared (leaf) → community → {pod, providers, control}; control may depend on
+shared+community+providers but **never** pod; runner ↔ trainer never import
+each other (runner spawns trainer via subprocess).
+
+Console scripts: `ryotenkai` (control CLI), `ryotenkai-trainer-run` (pod
+trainer entrypoint).
+
 <!-- Add your custom instructions below. Repowise will never modify anything outside the REPOWISE markers. -->
 <!-- Examples: coding style rules, test commands, workflow preferences, constraints -->
 

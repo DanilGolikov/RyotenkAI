@@ -326,3 +326,92 @@ exclude_lines = [
 [tool.bandit]
 exclude_dirs = ["tests", ".venv", "venv"]
 skips = ["B101"]  # Skip assert_used in tests
+
+# ============================================
+# import-linter — graph-shape enforcement for the 5-package layout
+# ============================================
+# Defends the architectural boundaries documented in
+# ``docs/plans/2026-05-03-monorepo-uv-workspace-packagization.md`` §3.2:
+#
+#                shared (leaf)
+#                  │
+#               community
+#              /     |     \
+#         control  pod   providers
+#
+# What's enforced (each contract is a "forbidden" import direction):
+#   - shared has no internal deps (it's the leaf).
+#   - community depends only on shared.
+#   - pod depends only on shared + community.
+#   - providers depends only on shared (NOT community, NOT pod, NOT control).
+#   - control may depend on shared + community + providers, NOT on pod.
+#   - inside the pod package: runner subpkg ↔ trainer subpkg are forbidden
+#     (runner spawns trainer via subprocess, never imports it).
+#
+# Run with: ``uv run lint-imports``
+[tool.importlinter]
+root_packages = [
+    "ryotenkai_shared",
+    "ryotenkai_community",
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+
+[[tool.importlinter.contracts]]
+name = "shared has no internal deps (must be leaf)"
+type = "forbidden"
+source_modules = ["ryotenkai_shared"]
+forbidden_modules = [
+    "ryotenkai_community",
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+
+[[tool.importlinter.contracts]]
+name = "community depends only on shared"
+type = "forbidden"
+source_modules = ["ryotenkai_community"]
+forbidden_modules = [
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+
+[[tool.importlinter.contracts]]
+name = "pod depends only on shared and community"
+type = "forbidden"
+source_modules = ["ryotenkai_pod"]
+forbidden_modules = [
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+
+[[tool.importlinter.contracts]]
+name = "providers depend only on shared (no community, no pod, no control)"
+type = "forbidden"
+source_modules = ["ryotenkai_providers"]
+forbidden_modules = [
+    "ryotenkai_community",
+    "ryotenkai_pod",
+    "ryotenkai_control",
+]
+
+[[tool.importlinter.contracts]]
+name = "control must not import pod (Mac vs in-pod boundary)"
+type = "forbidden"
+source_modules = ["ryotenkai_control"]
+forbidden_modules = ["ryotenkai_pod"]
+
+[[tool.importlinter.contracts]]
+name = "trainer subpackage must not import runner subpackage"
+type = "forbidden"
+source_modules = ["ryotenkai_pod.trainer"]
+forbidden_modules = ["ryotenkai_pod.runner"]
+
+[[tool.importlinter.contracts]]
+name = "runner subpackage must not import trainer subpackage"
+type = "forbidden"
+source_modules = ["ryotenkai_pod.runner"]
+forbidden_modules = ["ryotenkai_pod.trainer"]

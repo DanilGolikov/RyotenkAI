@@ -123,3 +123,4 @@ docker/training/build_and_push.log
 
 # Community plugin/preset archive extraction cache
 community/.cache/
+packages/runs/
