@@ -23,7 +23,7 @@ from ryotenkai_control.api.schemas.integration import (
 from ryotenkai_control.api.services import integration_service
 from ryotenkai_control.api.services.connection_test import test_integration
 from ryotenkai_control.api.services.integration_service import IntegrationServiceError
-from ryotenkai_control.api.services.token_crypto import TokenCrypto, read_token_file
+from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto, read_token_file
 from ryotenkai_control.workspace.integrations import IntegrationRegistry, IntegrationStore
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])

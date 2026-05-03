@@ -22,7 +22,7 @@ from ryotenkai_control.api.schemas.provider import (
 from ryotenkai_control.api.services import provider_service
 from ryotenkai_control.api.services.connection_test import test_provider
 from ryotenkai_control.api.services.provider_service import ProviderServiceError
-from ryotenkai_control.api.services.token_crypto import TokenCrypto, read_token_file
+from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto, read_token_file
 from ryotenkai_control.workspace.providers import ProviderRegistry, ProviderStore
 
 router = APIRouter(prefix="/providers", tags=["providers"])

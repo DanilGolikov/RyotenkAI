@@ -71,10 +71,6 @@ def test_shared_does_not_import_any_internal_package() -> None:
         "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_community.catalog",
         "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_control.evaluation.plugins.registry",
         "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_control.evaluation.plugins.secrets",
-        # Newly surfaced by sentinel (not in original ADR list — file as
-        # 8th known violation; token_crypto is a generic crypto util that
-        # belongs in shared, not behind api/services).
-        "ryotenkai_shared/config/secrets/model.py: from ryotenkai_control.api.services.token_crypto",
     }
     unexpected = [v for v in violations if v not in expected_known]
     assert not unexpected, (
