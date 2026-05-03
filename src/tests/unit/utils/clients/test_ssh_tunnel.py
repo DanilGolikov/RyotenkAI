@@ -1,4 +1,4 @@
-"""Phase 5 — :class:`src.api.services.tunnel_service.SSHTunnelManager`.
+"""Phase 5 — :class:`src.utils.clients.ssh_tunnel.SSHTunnelManager`.
 
 Verifies the tunnel-management contract without spawning real ``ssh``
 or binding real sockets:
@@ -11,44 +11,24 @@ or binding real sockets:
 - TestSocketDirIsolation  uses a dedicated control_sockets dir, not
                           SSHClient's shared one
 
-We deliberately avoid importing :mod:`src.api.services` (heavy package
-init pulls in colorlog) and load tunnel_service via importlib instead.
-The CI image has all deps; this is a dev-environment workaround.
+The historical importlib-based loader (which sidestepped the heavy
+:mod:`src.api.services` package init) is no longer needed: tunnel_service
+moved to :mod:`src.utils.clients.ssh_tunnel` (Phase A.2 of monorepo
+packagization), whose package init has no heavy deps.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
-
-def _load_tunnel_service():
-    """Import :mod:`tunnel_service` directly, skipping the
-    :mod:`src.api.services` package init (which pulls heavy deps)."""
-    if "ryotenkai_tunnel_service" in sys.modules:
-        return sys.modules["ryotenkai_tunnel_service"]
-    repo_root = Path(__file__).resolve().parents[5]
-    src_path = repo_root / "src" / "api" / "services" / "tunnel_service.py"
-    spec = importlib.util.spec_from_file_location(
-        "ryotenkai_tunnel_service", str(src_path),
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["ryotenkai_tunnel_service"] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_tunnel_mod = _load_tunnel_service()
-SSHTunnelManager = _tunnel_mod.SSHTunnelManager
-SSHTunnelEndpoint = _tunnel_mod.SSHTunnelEndpoint
-SSHTunnelError = _tunnel_mod.SSHTunnelError
-DEFAULT_REMOTE_PORT = _tunnel_mod.DEFAULT_REMOTE_PORT
+from src.utils.clients.ssh_tunnel import (
+    DEFAULT_REMOTE_PORT,
+    SSHTunnelEndpoint,
+    SSHTunnelError,
+    SSHTunnelManager,
+)
 
 
 pytestmark = pytest.mark.asyncio
@@ -298,6 +278,8 @@ class TestReadinessProbe:
         # Probe says is_free=True (so allocation succeeds) but never
         # reports is_open=True — the readiness loop must time out
         # cleanly. Shrink the timeout so the test stays fast.
+        from src.utils.clients import ssh_tunnel as _tunnel_mod
+
         monkeypatch.setattr(
             _tunnel_mod, "_TUNNEL_READY_TIMEOUT_SECONDS", 0.05,
         )

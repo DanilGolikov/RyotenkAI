@@ -43,9 +43,9 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from src.api.clients.job_client import JobClient, JobClientError
-from src.api.services.control_plane_heartbeat import ControlPlaneHeartbeat
-from src.api.services.tunnel_service import (
+from src.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
+from src.utils.clients.job_client import JobClient, JobClientError
+from src.utils.clients.ssh_tunnel import (
     SSHTunnelEndpoint,
     SSHTunnelError,
     SSHTunnelManager,

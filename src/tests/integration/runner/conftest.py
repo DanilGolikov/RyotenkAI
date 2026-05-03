@@ -31,7 +31,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from src.api.clients.job_client import JobClient
+from src.utils.clients.job_client import JobClient
 from src.runner.main import create_app
 from src.tests.unit.runner.conftest import MockSupervisor
 

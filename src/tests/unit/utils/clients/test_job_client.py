@@ -1,4 +1,4 @@
-"""Phase 5 — :class:`src.api.clients.JobClient` contract.
+"""Phase 5 — :class:`src.utils.clients.JobClient` contract.
 
 The client is the Mac side's only interface to the runner. Coverage:
 
@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 import pytest
 
-from src.api.clients.job_client import (
+from src.utils.clients.job_client import (
     JobClient,
     JobClientError,
     JobNotFoundError,

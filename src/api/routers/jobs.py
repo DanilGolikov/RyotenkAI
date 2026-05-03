@@ -101,8 +101,8 @@ async def _with_runner(submission, fn):  # type: ignore[no-untyped-def]
     tear everything down. Mirror of the CLI's helper — duplicated
     here rather than imported to keep the API router free of CLI
     deps."""
-    from src.api.clients.job_client import JobClient
-    from src.api.services.tunnel_service import (
+    from src.utils.clients.job_client import JobClient
+    from src.utils.clients.ssh_tunnel import (
         SSHTunnelEndpoint,
         SSHTunnelManager,
     )

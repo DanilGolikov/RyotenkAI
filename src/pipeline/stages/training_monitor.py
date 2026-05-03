@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from src.api.clients.job_client import (
+from src.utils.clients.job_client import (
     JobClientError,
     JobNotFoundError,
     ReplayTruncatedError,
@@ -65,8 +65,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from src.api.clients.job_client import JobClient
-    from src.api.services.tunnel_service import SSHTunnelManager
+    from src.utils.clients.job_client import JobClient
+    from src.utils.clients.ssh_tunnel import SSHTunnelManager
     from src.config.secrets.model import Secrets
     from src.utils.config import PipelineConfig
 

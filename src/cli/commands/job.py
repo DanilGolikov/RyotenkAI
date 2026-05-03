@@ -111,8 +111,8 @@ async def _with_runner(submission, fn):  # type: ignore[no-untyped-def]
     Kept as an async helper so callers can ``asyncio.run(_with_runner(...))``
     once and stay sync-shaped.
     """
-    from src.api.clients.job_client import JobClient
-    from src.api.services.tunnel_service import (
+    from src.utils.clients.job_client import JobClient
+    from src.utils.clients.ssh_tunnel import (
         SSHTunnelEndpoint,
         SSHTunnelManager,
     )

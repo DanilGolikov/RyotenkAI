@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from src.api.services.control_plane_heartbeat import ControlPlaneHeartbeat
+from src.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
 
 
 # ---------------------------------------------------------------------------

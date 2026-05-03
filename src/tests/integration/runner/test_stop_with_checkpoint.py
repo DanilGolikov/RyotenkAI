@@ -17,7 +17,7 @@ import json
 
 import pytest
 
-from src.api.clients.job_client import JobClient
+from src.utils.clients.job_client import JobClient
 
 
 pytestmark = pytest.mark.asyncio

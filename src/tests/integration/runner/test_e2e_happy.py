@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from src.api.clients.job_client import JobClient
+    from src.utils.clients.job_client import JobClient
 
 
 # Async fixtures need pytest.mark.asyncio per-test; the sync TestClient
