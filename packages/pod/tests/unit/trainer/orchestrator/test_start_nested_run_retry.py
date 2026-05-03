@@ -59,7 +59,7 @@ _stub("ryotenkai_pod.trainer.metrics_models", {"TrainingMetricsSnapshot": object
 
 _LOGGER_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "orchestrator" / "phase_executor" / "mlflow_logger.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "orchestrator" / "phase_executor" / "mlflow_logger.py"
 )
 _spec = importlib.util.spec_from_file_location(
     "_ryotenkai_mlflow_logger_under_test", _LOGGER_PATH,

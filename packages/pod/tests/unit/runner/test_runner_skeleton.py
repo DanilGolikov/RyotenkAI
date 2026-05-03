@@ -36,26 +36,27 @@ class TestPackageSurface:
         """When the override env is unset, the resolved image matches the package default.
 
         Probes the override mechanism through its public effect — re-importing
-        ``__about__`` with the env set yields a different value, and clearing
-        the env restores the canonical pin. This guards both directions
-        without poking at the underscore-prefixed default.
+        ``ryotenkai_shared.constants`` (the canonical home as of Phase A.4) with
+        the env set yields a different value, and clearing the env restores the
+        canonical pin. This guards both directions without poking at the
+        underscore-prefixed default.
         """
         import importlib
 
-        from ryotenkai_pod.runner import __about__ as about_module
+        from ryotenkai_shared import constants as constants_module
 
         monkeypatch.delenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", raising=False)
-        baseline = importlib.reload(about_module).RUNTIME_IMAGE
+        baseline = importlib.reload(constants_module).RUNTIME_IMAGE
         assert baseline == RUNTIME_IMAGE  # current import equals fresh reload — no env in effect
 
         monkeypatch.setenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", "ghcr.io/example/dev:0.0.0")
-        overridden = importlib.reload(about_module).RUNTIME_IMAGE
+        overridden = importlib.reload(constants_module).RUNTIME_IMAGE
         assert overridden == "ghcr.io/example/dev:0.0.0"
         assert overridden != baseline
 
         # Clean up: reload again with no env so module-level state stays canonical.
         monkeypatch.delenv("RYOTENKAI_RUNTIME_IMAGE_OVERRIDE", raising=False)
-        importlib.reload(about_module)
+        importlib.reload(constants_module)
 
     def test_create_app_is_idempotent(self) -> None:
         """Two calls to the factory build independent apps."""

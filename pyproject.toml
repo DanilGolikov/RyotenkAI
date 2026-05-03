@@ -1,63 +1,20 @@
-[build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "ryotenkai"
+name = "ryotenkai-monorepo"
 version = "1.0.0"
-description = "Declarative, multi-phase LLM fine-tuning pipeline with plugin architecture"
+description = "RyotenkAI monorepo — uv workspace root for the 5 ryotenkai-* packages"
 authors = [{ name = "Golikov Daniil", email = "daniil.golikoff@gmail.com" }]
-dependencies = [
-    "torch>=2.5.0",
-    "transformers>=4.46.0,<5.0.0",
-    "peft>=0.13.0,<1.0.0",
-    "accelerate>=1.0.0",
-    "bitsandbytes>=0.42.0; sys_platform != 'darwin'",
-    "sentencepiece>=0.2.0",
-    "datasets>=4.4.1",
-    "dvc>=3.58.0,<4.0.0",
-    "prefect>=3.1.0,<4.0.0",
-    "runpod>=1.7.0,<2.0.0",
-    "huggingface-hub>=0.26.0,<1.0.0",
-    "pydantic>=2.10.0,<3.0.0",
-    "pydantic-settings>=2.6.0,<3.0.0",
-    "python-dotenv>=1.0.0,<2.0.0",
-    "pyyaml>=6.0.0,<7.0.0",
-    "requests>=2.32.0,<3.0.0",
-    "rich>=14.2.0,<15.0.0",
-    "loguru>=0.7.0,<1.0.0",
-    "dill>=0.4.0",
-    "colorlog>=6.9.0",
-    "mlflow>=3.11.1,<4.0.0",
-    "pynvml>=11.5.0",
-    "typer>=0.12.0",
-    "pandas>=2.2.0",
-    "scipy>=1.13.0",
-    "scikit-learn>=1.5.0",
-    "protobuf>=5.28.0",
-    "tensorboard>=2.18.0",
-    "paramiko>=3.5.0",
-    "cryptography>=41.0.0",
-    "trl>=0.12.0",
-    "pytest>=8.3.0",
-    "fastapi>=0.115.0,<1.0.0",
-    "uvicorn[standard]>=0.32.0,<1.0.0",
-    "websockets>=13.0.0,<14.0.0",
-]
 requires-python = ">=3.12"
 readme = "README.md"
 license = { text = "MIT" }
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Framework :: Pytest",
-    "Framework :: Pydantic",
+# All runtime deps live in their respective workspace member's pyproject.toml
+# (packages/<member>/pyproject.toml). This root project carries only the
+# workspace declaration plus the dev tooling group.
+dependencies = [
+    "ryotenkai-shared",
+    "ryotenkai-community",
+    "ryotenkai-pod",
+    "ryotenkai-providers",
+    "ryotenkai-control",
 ]
 
 [project.optional-dependencies]
@@ -72,32 +29,15 @@ dev = [
     "pyright>=1.1.350",
     "pre-commit>=4.0.0,<5.0.0",
     "bandit[toml]>=1.8.0,<2.0.0",
+    "import-linter>=2.0",
     "ipython>=8.30.0",
     "jupyter>=1.1.0",
     "jupyterlab>=4.3.0",
 ]
 
-# Treat ``src`` as a regular package (not as an sr-layout root). The codebase
-# imports everything via ``from src.xxx import …`` and the ``ryotenkai``
-# entry point resolves to ``src.main:app`` — both require ``src`` to be a
-# top-level package visible on ``sys.path`` via its **parent** directory.
-#
-# After Phase B (monorepo packagization, plan §3.1) src/ is deleted and
-# this section is replaced with workspace-declaration metadata only.
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
-namespaces = false
-
-[project.scripts]
-ryotenkai = "src.main:app"
-
 # ============================================
-# uv Workspace Declaration (Phase B onwards)
+# uv Workspace Declaration
 # ============================================
-# Coexists with the legacy ``src/`` flat package for the duration of the
-# packagization migration. After Phase B.7 the legacy block above is
-# deleted and ``[project]`` becomes a thin workspace-only declaration.
 [tool.uv.workspace]
 members = ["packages/*"]
 
@@ -198,7 +138,7 @@ external = ["WPS", "DAR"]
     "S101",    # Use of assert
     "RUF012",  # Mutable class attributes (test classes)
 ]
-"src/tests/**/*.py" = [
+"packages/*/tests/**/*.py" = [
     "ARG001",  # Unused function argument
     "ARG002",  # Unused method argument
     "S101",    # Use of assert
@@ -216,10 +156,10 @@ external = ["WPS", "DAR"]
 "community/**/*.py" = ["TC003"]
 # Loader/catalog use Path both as default arg value and as annotation.
 # inference.py also imports PluginKind for a runtime-visible annotation.
-"src/community/**/*.py" = ["TC001", "TC003"]
+"packages/community/src/ryotenkai_community/**/*.py" = ["TC001", "TC003"]
 # CLI modules use Path / typer / Protocol types at runtime for typer
 # defaults, renderer method signatures, and Console instantiation.
-"src/cli/**/*.py" = ["TC001", "TC002", "TC003"]
+"packages/control/src/ryotenkai_control/cli/**/*.py" = ["TC001", "TC002", "TC003"]
 
 [tool.ruff.format]
 # Use Black-compatible formatting
@@ -230,7 +170,7 @@ line-ending = "auto"
 
 [tool.ruff.lint.isort]
 # isort configuration
-known-first-party = ["src"]
+known-first-party = ["ryotenkai_shared", "ryotenkai_community", "ryotenkai_pod", "ryotenkai_providers", "ryotenkai_control"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
 [tool.ruff.lint.mccabe]
@@ -329,7 +269,7 @@ ignore_missing_imports = true
 # Pytest Configuration
 # ============================================
 [tool.pytest.ini_options]
-testpaths = ["src"]
+testpaths = ["packages"]
 python_files = ["test_*.py"]
 python_classes = "Test*"
 python_functions = "test_*"
@@ -351,8 +291,8 @@ markers = [
 # Coverage Configuration
 # ============================================
 [tool.coverage.run]
-data_file = "src/tests/coverage/.coverage"
-source = ["src"]
+data_file = "tests/coverage/.coverage"
+source = ["packages"]
 omit = [
     "*/tests/*",
     "*/test_*.py",
