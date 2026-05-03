@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-def _workspace_root() -> Path:
+def workspace_root() -> Path:
     """Walk up from this file to the uv workspace root.
 
     Identified by an ancestor that has both ``pyproject.toml`` and a
@@ -46,7 +46,7 @@ def _resolve_runs_base_dir(raw: str) -> Path:
     candidate = Path(raw)
     if candidate.is_absolute():
         return candidate
-    return _workspace_root() / candidate
+    return workspace_root() / candidate
 
 
 @dataclass(frozen=True, slots=True)

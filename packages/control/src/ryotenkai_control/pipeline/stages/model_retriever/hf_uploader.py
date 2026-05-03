@@ -576,7 +576,11 @@ class HFModelUploader:
                     )
                 )
 
-            local_model_dir = Path("models") / f"model_{int(time.time())}"
+            # Anchor at the workspace root, not the worker's CWD —
+            # otherwise downloaded checkpoints land under
+            # ``packages/control/src/models/`` (post-Phase-B spawn cwd).
+            from ryotenkai_shared.config.runtime import workspace_root
+            local_model_dir = workspace_root() / "models" / f"model_{int(time.time())}"
             local_model_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Local model directory: {local_model_dir}")
 

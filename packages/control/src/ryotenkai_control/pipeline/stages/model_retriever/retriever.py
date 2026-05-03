@@ -514,7 +514,8 @@ class ModelRetriever(PipelineStage):
         logger.info(f"[MOCK] Downloading model from {self._provider_name}: {resource_id}")
         time.sleep(1)
 
-        mock_model_path = Path("outputs/models/mock-model-checkpoint")
+        from ryotenkai_shared.config.runtime import workspace_root
+        mock_model_path = workspace_root() / "outputs/models/mock-model-checkpoint"
         mock_model_path.mkdir(parents=True, exist_ok=True)
 
         logger.info(f"[MOCK] Model downloaded to: {mock_model_path}")
