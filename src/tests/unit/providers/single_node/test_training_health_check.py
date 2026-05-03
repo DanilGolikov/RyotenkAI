@@ -24,7 +24,7 @@ from src.providers.single_node.training.health_check import (
 )
 from src.providers.single_node.training.provider import SingleNodeProvider
 from src.providers.training.interfaces import GPUInfo, ProviderCapabilities, ProviderStatus
-from src.utils.config import Secrets
+from src.config import Secrets
 from src.utils.result import Err, Ok
 
 

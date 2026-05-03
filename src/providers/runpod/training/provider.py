@@ -72,7 +72,7 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 if TYPE_CHECKING:
     from src.pipeline.state import RunContext
     from src.providers.runpod.models import PodSnapshot
-    from src.utils.config import Secrets
+    from src.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 

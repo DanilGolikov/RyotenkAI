@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
     from src.training.strategies.base import TrainingStrategy
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 logger = get_logger(__name__)
 
@@ -120,7 +120,7 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
 
     # AdaLoRA: Adaptive Low-Rank Adaptation
     if training_type == "adalora":
-        from src.utils.config import AdaLoraConfig as AdaLoraConfigType
+        from src.config import AdaLoraConfig as AdaLoraConfigType
 
         if not isinstance(adapter_cfg, AdaLoraConfigType):
             raise ValueError("type='adalora' requires 'adalora:' section in config")
@@ -146,7 +146,7 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
         )
 
     # LoRA / QLoRA (both use LoraConfig, difference is in model quantization)
-    from src.utils.config import LoraConfig as LoraConfigType
+    from src.config import LoraConfig as LoraConfigType
 
     if not isinstance(adapter_cfg, LoraConfigType):
         raise ValueError(f"type='{training_type}' requires 'lora:' section in config")

@@ -16,7 +16,7 @@ from src.pipeline.stages.managers.deployment.provider_config import (
     get_single_node_training_cfg,
     is_single_node_provider,
 )
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

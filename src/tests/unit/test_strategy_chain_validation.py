@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.config import (
+from src.config import (
     VALID_START_STRATEGIES,
     VALID_STRATEGY_TRANSITIONS,
     PhaseHyperparametersConfig,

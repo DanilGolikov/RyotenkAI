@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.config.secrets.model import Secrets
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 # =============================================================================

@@ -35,7 +35,7 @@ _CLEANUP_TIMEOUT = 1800
 
 if TYPE_CHECKING:
     from src.pipeline.state import RunContext
-    from src.utils.config import Secrets
+    from src.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 

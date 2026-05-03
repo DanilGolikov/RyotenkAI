@@ -17,7 +17,7 @@ from src.utils.result import AppError
 
 if TYPE_CHECKING:
     from src.pipeline.stages.base import PipelineStage
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 _HTTP_OK_MIN = 200

@@ -21,7 +21,7 @@ from src.providers.single_node.training.config import (
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
 )
-from src.utils.config import (
+from src.config import (
     InferenceSingleNodeServeConfig,
     InferenceVLLMEngineConfig,
     PipelineConfig,

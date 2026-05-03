@@ -22,7 +22,7 @@ from src.training.managers.data_buffer import (
     PhaseState,
     PhaseStatus,
 )
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
 pytestmark = pytest.mark.unit
 

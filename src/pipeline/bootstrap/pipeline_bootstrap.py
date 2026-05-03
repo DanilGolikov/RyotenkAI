@@ -40,7 +40,7 @@ from src.pipeline.mlflow_attempt import MLflowAttemptManager
 from src.pipeline.reporting import ExecutionSummaryReporter
 from src.pipeline.stages import PipelineContextKeys
 from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-from src.utils.config import load_secrets
+from src.config import load_secrets
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from src.pipeline.artifacts import StageArtifactCollector
     from src.pipeline.stages.base import PipelineStage
     from src.pipeline.state import AttemptController, RunContext
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 # Env-var contract: launcher (CLI / API) sets these before spawning the

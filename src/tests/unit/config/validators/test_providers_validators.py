@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.config.validators.providers import validate_ssh
-from src.utils.config import SSHConfig
+from src.config import SSHConfig
 
 pytestmark = pytest.mark.unit
 

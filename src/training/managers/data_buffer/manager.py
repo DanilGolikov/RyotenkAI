@@ -70,7 +70,7 @@ from src.training.managers.data_buffer.state_models import PhaseState, PhaseStat
 from src.training.metrics_models import TrainingMetricsSnapshot
 
 if TYPE_CHECKING:
-    from src.utils.config import StrategyPhaseConfig
+    from src.config import StrategyPhaseConfig
 
 
 class DataBuffer:

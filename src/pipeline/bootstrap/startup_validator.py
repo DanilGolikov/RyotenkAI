@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from src.config.validators.runtime import validate_eval_plugin_secrets
 from src.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
-from src.utils.config import validate_strategy_chain
+from src.config import validate_strategy_chain
 from src.utils.logger import logger
 
 
@@ -56,7 +56,7 @@ def _resolve_required_secrets_for_provider(
     return ()
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 class StartupValidationError(ValueError):

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from src.pipeline.context import PipelineContext
     from src.pipeline.stages.base import PipelineStage
     from src.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 class StageRegistry:

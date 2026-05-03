@@ -26,7 +26,7 @@ from src.utils.logger import get_logger
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 logger = get_logger(__name__)
 

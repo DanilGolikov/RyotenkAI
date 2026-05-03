@@ -15,7 +15,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.pipeline.stages.dataset_validator import DatasetValidator
-from src.utils.config import DatasetConfig, PipelineConfig
+from src.config import DatasetConfig, PipelineConfig
 
 
 def _mk_local_dataset_config(

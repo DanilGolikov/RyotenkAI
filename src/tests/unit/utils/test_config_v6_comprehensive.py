@@ -20,7 +20,7 @@ Config v6.0 Breaking Changes:
 import pytest
 from pydantic import ValidationError
 
-from src.utils.config import (
+from src.config import (
     AdaLoraConfig,
     DatasetLocalPaths,
     GlobalHyperparametersConfig,

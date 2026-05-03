@@ -32,7 +32,7 @@ from src.utils.logger import get_logger
 if TYPE_CHECKING:
     from src.training.mlflow.event_log import MLflowEventLog
     from src.training.mlflow.primitives import IMLflowPrimitives
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 logger = get_logger(__name__)
 

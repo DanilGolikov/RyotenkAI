@@ -45,7 +45,7 @@ pytestmark = pytest.mark.unit
 
 
 def _mk_buffer(tmp_path: Path, n: int = 1) -> DataBuffer:
-    from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+    from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
     phases = [
         StrategyPhaseConfig(

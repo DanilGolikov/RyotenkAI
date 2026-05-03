@@ -437,7 +437,7 @@ def _try_build_pipeline_config(parsed: dict[str, Any]):
     returns None — the format check is then skipped with a soft
     warning, but the plugin pass still runs (it doesn't need it)."""
     try:
-        from src.utils.config import PipelineConfig
+        from src.config import PipelineConfig
 
         return PipelineConfig.model_validate(parsed)
     except Exception as exc:

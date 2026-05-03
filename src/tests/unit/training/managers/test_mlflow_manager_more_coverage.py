@@ -12,7 +12,7 @@ import pytest
 
 from src.training.managers.mlflow_manager import MLflowManager
 from src.training.mlflow.resilient_transport import ResilientMLflowTransport
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

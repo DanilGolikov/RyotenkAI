@@ -21,7 +21,7 @@ from src.utils.logger import logger
 from src.utils.result import DataLoaderError, Err, Ok, Result
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 
 class DatasetLoader:

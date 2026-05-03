@@ -8,7 +8,7 @@ from src.utils.plugin_base import BasePlugin
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 
 class RewardPlugin(BasePlugin, ABC):

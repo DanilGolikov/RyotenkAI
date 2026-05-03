@@ -18,7 +18,7 @@ from src.utils.result import AppError, DatasetError, Err, Ok, Result
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
 
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 class FormatChecker:

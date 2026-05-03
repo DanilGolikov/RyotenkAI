@@ -11,7 +11,7 @@ from src.pipeline.state import RunContext
 from src.providers.runpod.models import PodSnapshot, SshEndpoint
 from src.providers.runpod.training.provider import RunPodProvider
 from src.providers.training.interfaces import ProviderStatus
-from src.utils.config import Secrets
+from src.config import Secrets
 from src.utils.result import Err, Ok, ProviderError, Result
 
 _SSH_OK = SshEndpoint(host="1.2.3.4", port=2222)

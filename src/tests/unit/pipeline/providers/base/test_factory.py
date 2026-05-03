@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.providers.training.factory import GPUProviderFactory
-from src.utils.config import Secrets
+from src.config import Secrets
 from src.utils.result import ProviderError
 
 

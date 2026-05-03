@@ -28,7 +28,7 @@ from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
     from src.utils.ssh_client import SSHClient
 
 

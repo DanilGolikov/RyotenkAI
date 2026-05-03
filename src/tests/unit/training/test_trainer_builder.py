@@ -8,8 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.training.trainer_builder as tb
-from src.utils.config import AdaLoraConfig as AdaLoraConfigType
-from src.utils.config import LoraConfig as LoraConfigType
+from src.config import AdaLoraConfig as AdaLoraConfigType
+from src.config import LoraConfig as LoraConfigType
 
 
 @dataclass

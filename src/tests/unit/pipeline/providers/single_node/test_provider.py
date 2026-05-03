@@ -11,7 +11,7 @@ from src.pipeline.state import RunContext
 from src.providers.single_node.training.health_check import HealthCheckResult
 from src.providers.single_node.training.provider import SingleNodeProvider
 from src.providers.training.interfaces import GPUInfo, ProviderStatus
-from src.utils.config import Secrets
+from src.config import Secrets
 
 
 @dataclass

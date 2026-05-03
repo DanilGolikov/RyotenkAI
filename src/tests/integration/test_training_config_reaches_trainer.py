@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.training.trainers.factory import TrainerFactory
-from src.utils.config import PipelineConfig
+from src.config import PipelineConfig
 
 
 @dataclass

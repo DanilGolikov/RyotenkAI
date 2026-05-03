@@ -195,7 +195,7 @@ def _reward_body(class_name: str, base_module: str, base_class: str) -> str:
         "if TYPE_CHECKING:\n"
         "    from datasets import Dataset\n"
         "\n"
-        "    from src.utils.config import PipelineConfig, StrategyPhaseConfig\n"
+        "    from src.config import PipelineConfig, StrategyPhaseConfig\n"
         "\n"
         "\n"
         f"class {class_name}({base_class}):\n"

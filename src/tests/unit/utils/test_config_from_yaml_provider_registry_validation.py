@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.config import PipelineConfig
+from src.config import PipelineConfig
 
 
 def _write_yaml(path: Path, text: str) -> None:

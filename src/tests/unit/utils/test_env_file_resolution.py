@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.utils.config import load_secrets
+from src.config import load_secrets
 
 
 def _write_env(path: Path, text: str) -> None:

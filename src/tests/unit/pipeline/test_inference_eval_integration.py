@@ -27,7 +27,7 @@ from src.providers.inference.interfaces import (
     EndpointInfo,
     InferenceCapabilities,
 )
-from src.utils.config import Secrets
+from src.config import Secrets
 from src.utils.result import Failure, InferenceError, Ok, Success
 
 

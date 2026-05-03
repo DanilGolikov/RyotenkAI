@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.pipeline.state import PipelineState
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)

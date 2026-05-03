@@ -20,7 +20,7 @@ from src.pipeline.stages.managers.deployment.dependency_installer import Depende
 from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
 from src.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
 from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

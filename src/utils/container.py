@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from src.training.mlflow import IMLflowManager  # re-export; canonical home is src/training/mlflow
     from src.training.orchestrator import StrategyOrchestrator
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
     from src.utils.memory_manager import GPUInfo, GPUPreset, MemoryManager, MemoryStats
 
 

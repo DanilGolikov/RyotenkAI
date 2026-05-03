@@ -69,7 +69,7 @@ def preflight(
     ``secrets.env`` is operator-local and may diverge from the
     deployed environment, so the user must declare via project env.
     """
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
     try:
         config = PipelineConfig.model_validate(config_payload)

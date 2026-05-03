@@ -18,7 +18,7 @@ from src.training.managers.data_buffer import (
     PipelineState,
     list_available_runs,
 )
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
 # =============================================================================
 # FIXTURES

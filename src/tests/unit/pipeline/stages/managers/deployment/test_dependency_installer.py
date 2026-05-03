@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

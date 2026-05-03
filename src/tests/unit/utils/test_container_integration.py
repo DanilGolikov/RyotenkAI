@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.config.integrations.mlflow import MLflowConfig
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

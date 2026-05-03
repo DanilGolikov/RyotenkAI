@@ -11,7 +11,7 @@ import pytest
 
 from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
 from src.pipeline.stages.managers.deployment.file_uploader import FileUploader
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceHF,

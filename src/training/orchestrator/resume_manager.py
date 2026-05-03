@@ -16,7 +16,7 @@ from src.utils.result import Err, Ok, Result, TrainingError
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 
 class ResumeManager:

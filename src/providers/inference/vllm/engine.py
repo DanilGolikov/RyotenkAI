@@ -10,7 +10,7 @@ import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.utils.config import InferenceVLLMEngineConfig
+    from src.config import InferenceVLLMEngineConfig
 
 
 class VLLMEngine:

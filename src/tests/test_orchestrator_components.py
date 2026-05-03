@@ -20,7 +20,7 @@ from src.training.orchestrator import (
     ResumeManager,
     StrategyOrchestrator,
 )
-from src.utils.config import StrategyPhaseConfig
+from src.config import StrategyPhaseConfig
 
 
 class TestDatasetLoader:

@@ -10,7 +10,7 @@ import src.training.trainers.factory as tf
 from src.training.callbacks.system_metrics_callback import SystemMetricsCallback
 from src.training.callbacks.training_events_callback import TrainingEventsCallback
 from src.training.trainers.factory import TrainerFactory
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

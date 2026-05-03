@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.config.integrations.mlflow import MLflowConfig
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

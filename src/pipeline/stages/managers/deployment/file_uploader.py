@@ -28,7 +28,7 @@ from src.utils.result import AppError, ConfigError, Err, Failure, Ok, ProviderEr
 
 if TYPE_CHECKING:
     from src.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
     from src.utils.ssh_client import SSHClient
 
 

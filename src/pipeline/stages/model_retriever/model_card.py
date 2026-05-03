@@ -20,7 +20,7 @@ from src.pipeline.stages.model_retriever.types import (
 )
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 class ModelCardGenerator:

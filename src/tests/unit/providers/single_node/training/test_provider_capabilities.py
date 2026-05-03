@@ -23,7 +23,7 @@ from src.providers.training.interfaces import (
     ProviderCapabilities,
     VolumeKind,
 )
-from src.utils.config import Secrets
+from src.config import Secrets
 
 
 def _mk_provider(**overrides: Any) -> SingleNodeProvider:

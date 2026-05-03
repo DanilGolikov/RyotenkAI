@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.utils.config import PipelineConfig
+from src.config import PipelineConfig
 from src.utils.container import TrainingContainer
 from src.utils.result import Ok
 

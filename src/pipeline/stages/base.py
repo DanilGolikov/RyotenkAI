@@ -18,7 +18,7 @@ from src.utils.logger import logger
 from src.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 class PipelineStage(ABC):

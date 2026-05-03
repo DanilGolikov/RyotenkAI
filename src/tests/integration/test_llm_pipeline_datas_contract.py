@@ -21,7 +21,7 @@ import pytest
 pytestmark = pytest.mark.requires_external_data
 
 from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.utils.config import PipelineConfig, validate_strategy_chain
+from src.config import PipelineConfig, validate_strategy_chain
 from src.utils.result import Ok
 
 

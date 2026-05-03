@@ -79,7 +79,7 @@ def _mk_phase_ns(
 
 
 def _mk_buffer_with_phases(tmp_path: Path, n_phases: int = 2) -> DataBuffer:
-    from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+    from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
     strategies = [
         StrategyPhaseConfig(
@@ -532,7 +532,7 @@ class TestPhaseExecutorExecuteAdapterCache:
         executor, buf = _mk_full_executor(tmp_path)
 
         with patch.object(executor, "_try_adapter_cache_hit") as mock_try:
-            from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
             phase = StrategyPhaseConfig(
                 strategy_type="sft",
@@ -557,7 +557,7 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit", return_value=Ok(loaded_model)),
             patch.object(executor, "_should_stop", return_value=False),
         ):
-            from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
             from src.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
@@ -586,7 +586,7 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit") as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
             from src.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
@@ -614,7 +614,7 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit", return_value=None) as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
             from src.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
@@ -645,7 +645,7 @@ class TestPhaseExecutorExecuteAdapterCache:
             patch.object(executor, "_try_adapter_cache_hit") as mock_try,
             patch.object(executor, "_should_stop", side_effect=[False, True]),
         ):
-            from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+            from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
             from src.config.training.adapter_cache import AdapterCacheConfig
 
             phase = StrategyPhaseConfig(
@@ -680,7 +680,7 @@ class TestChainRunnerCascade:
         )
 
     def _mk_strategies(self, n: int = 2) -> list[Any]:
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         types = ["sft", "dpo", "orpo"]
         return [
@@ -738,7 +738,7 @@ class TestChainRunnerCascade:
     def test_positive_cascade_propagates_through_all_downstream(self, tmp_path: Path) -> None:
         """Phase 0 trains → phases 1, 2, 3 all get upstream_retrained=True."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=4)
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),
@@ -770,7 +770,7 @@ class TestChainRunnerCascade:
     def test_positive_all_cached_upstream_retrained_never_set(self, tmp_path: Path) -> None:
         """All phases hit cache → upstream_retrained stays False throughout."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset=f"d{i}", hyperparams=PhaseHyperparametersConfig(epochs=1))
@@ -795,7 +795,7 @@ class TestChainRunnerCascade:
     def test_negative_phase_failure_stops_chain(self, tmp_path: Path) -> None:
         """If a phase fails, chain stops and returns Err; remaining phases not executed."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),
@@ -831,7 +831,7 @@ class TestChainRunnerCascade:
         Phase 2: SKIPPED (but forced)  → receives upstream_retrained=True
         """
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         strategies = [
             StrategyPhaseConfig(strategy_type="sft", dataset="d0", hyperparams=PhaseHyperparametersConfig(epochs=1)),

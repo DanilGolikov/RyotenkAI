@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from src.config.secrets.model import Secrets
     from src.training.reward_plugins.base import RewardPlugin
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 
 class RewardPluginResult(NamedTuple):

@@ -1,4 +1,4 @@
-from .config import PipelineConfig, Secrets, load_secrets
+from src.config import PipelineConfig, Secrets, load_secrets
 from .container import (
     IMemoryManager,
     TrainingContainer,

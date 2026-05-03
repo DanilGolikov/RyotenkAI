@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel
 
     from src.training.managers.data_buffer import DataBuffer
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
 
 
 def _retry_call(fn: Any, retries: int = HF_UPLOAD_RETRIES, delay_s: int = HF_UPLOAD_RETRY_DELAY_S, label: str = "") -> Any:

@@ -25,7 +25,7 @@ from src.utils.logger import logger
 if TYPE_CHECKING:
     from datasets import Dataset
 
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
     from src.utils.result import Result, StrategyError
 
 

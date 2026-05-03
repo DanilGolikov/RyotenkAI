@@ -31,14 +31,14 @@ from src.pipeline.constants import (
 )
 from src.pipeline.stages import StageNames
 from src.reports import ExperimentReportGenerator
-from src.utils.config import AdaLoraConfig
+from src.config import AdaLoraConfig
 from src.utils.logger import console, get_run_log_dir, logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.infrastructure.mlflow.protocol import IMLflowManager
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 class ExecutionSummaryReporter:

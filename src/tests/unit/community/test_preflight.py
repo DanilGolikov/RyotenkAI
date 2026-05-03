@@ -31,7 +31,7 @@ def _minimal_pipeline_config_yaml() -> str:
 
 
 def _load_pipeline_config(yaml_text: str):
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
     return PipelineConfig.model_validate(yaml.safe_load(yaml_text))
 

@@ -50,7 +50,7 @@ from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
 
 if TYPE_CHECKING:
-    from src.utils.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from src.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
 
 PULL_TIMEOUT = 1200
 MERGE_TIMEOUT = 3600

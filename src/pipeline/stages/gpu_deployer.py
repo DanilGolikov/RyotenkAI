@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from src.providers.training.interfaces import IGPUProvider, SSHConnectionInfo
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
     from src.utils.pod_layout import PodLayout
 
 

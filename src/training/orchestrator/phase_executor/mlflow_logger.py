@@ -21,7 +21,7 @@ from src.training.metrics_models import TrainingMetricsSnapshot
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
     from src.utils.container import IMLflowManager
 
 

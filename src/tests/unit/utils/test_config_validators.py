@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from unittest.mock import patch
 
 from src.config.integrations.mlflow import MLflowConfig
-from src.utils.config import (
+from src.config import (
     AdaLoraConfig,
     DatasetConfig,
     DatasetLocalPaths,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
-from src.utils.config import DatasetConfig, PipelineConfig
+from src.config import DatasetConfig, PipelineConfig
 
 pytestmark = pytest.mark.unit
 

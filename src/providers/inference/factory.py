@@ -17,7 +17,7 @@ from src.utils.result import Failure, ProviderError, Success, err
 
 if TYPE_CHECKING:
     from src.providers.inference.interfaces import IInferenceProvider
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 class InferenceProviderFactory:

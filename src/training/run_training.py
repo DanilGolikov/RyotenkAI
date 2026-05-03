@@ -55,7 +55,7 @@ from src.utils.run_naming import generate_run_name
 from src.workspace.integrations.loader import load_pipeline_config
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 def _extract_model_size(model_name: str) -> str:
@@ -165,7 +165,7 @@ def run_training(
         # =====================================================================
         # DEBUG: Check config consistency on remote
         try:
-            from src.utils import config as config_module
+            from src import config as config_module
 
             logger.info(f"DEBUG: Config module: {config_module.__file__}")
             if hasattr(config_module, "VALID_START_STRATEGIES"):

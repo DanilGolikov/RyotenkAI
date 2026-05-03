@@ -57,7 +57,7 @@ _UNKNOWN_ERROR = "<unknown>"
 
 if TYPE_CHECKING:
     from src.config.providers.runpod import RunPodProviderConfig
-    from src.utils.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from src.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
 
 
 def _sha12(text: str) -> str:

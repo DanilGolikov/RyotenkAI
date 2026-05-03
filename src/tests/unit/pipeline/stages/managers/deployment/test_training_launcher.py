@@ -23,7 +23,7 @@ import pytest
 
 from src.config.integrations.mlflow import MLflowConfig
 from src.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

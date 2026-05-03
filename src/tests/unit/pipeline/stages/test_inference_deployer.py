@@ -17,7 +17,7 @@ from src.providers.inference.interfaces import (
 )
 from src.pipeline.stages.constants import StageNames
 from src.pipeline.stages.inference_deployer import InferenceDeployer
-from src.utils.config import PipelineConfig, Secrets
+from src.config import PipelineConfig, Secrets
 from src.utils.result import Err, Ok, Success
 
 

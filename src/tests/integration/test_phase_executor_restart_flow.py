@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 from src.training.managers.data_buffer import DataBuffer, PhaseStatus
 from src.training.metrics_models import TrainingMetricsSnapshot
 from src.training.orchestrator.phase_executor import PhaseExecutor
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.result import Ok
 
 

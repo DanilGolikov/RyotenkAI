@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
     from src.community.manifest import PluginKind, PluginManifest
     from src.config.secrets.model import Secrets
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 class _PluginRef(NamedTuple):

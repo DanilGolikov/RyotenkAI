@@ -232,7 +232,7 @@ def _collect_stale_plugins(parsed: dict | None) -> list[StalePluginEntry]:
     from pydantic import ValidationError
 
     from src.community.stale_plugins import find_stale_plugins
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
     # ``find_stale_plugins`` walks plugin lists; it does NOT touch
     # ``integrations``. Drop the ``integrations`` block before

@@ -68,7 +68,7 @@ if TYPE_CHECKING:
     from src.utils.clients.job_client import JobClient
     from src.utils.clients.ssh_tunnel import SSHTunnelManager
     from src.config.secrets.model import Secrets
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 # ---------------------------------------------------------------------------

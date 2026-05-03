@@ -32,7 +32,7 @@ from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from src.config.secrets.model import Secrets
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 PluginTuple = tuple[str, str, Any, set[str]]

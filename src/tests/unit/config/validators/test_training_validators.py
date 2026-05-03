@@ -11,7 +11,7 @@ from src.config.validators.training import (
     validate_strategy_phase_config,
     validate_training_adapter_requires_block,
 )
-from src.utils.config import (
+from src.config import (
     AdaLoraConfig,
     GlobalHyperparametersConfig,
     LoraConfig,

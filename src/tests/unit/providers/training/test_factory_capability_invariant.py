@@ -44,7 +44,7 @@ from src.providers.training.interfaces import (  # noqa: E402
     ITerminalActionProvider,
     ProviderStatus,
 )
-from src.utils.config import Secrets  # noqa: E402
+from src.config import Secrets  # noqa: E402
 
 
 def _mk_runpod() -> RunPodProvider:

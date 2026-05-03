@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from src.training.managers.mlflow_manager import MLflowManager
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

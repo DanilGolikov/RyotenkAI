@@ -34,7 +34,7 @@ from src.pipeline.stages.model_retriever.types import (
 )
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 class ModelRetriever(PipelineStage):

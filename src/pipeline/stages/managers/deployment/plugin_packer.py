@@ -56,7 +56,7 @@ from src.community.validate_manifest import validate_manifest_dir
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 __all__ = [
     "LibRef",

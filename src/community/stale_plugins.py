@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.community.manifest import PluginKind
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 @dataclass(frozen=True, slots=True)

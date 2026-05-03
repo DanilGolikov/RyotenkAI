@@ -139,7 +139,7 @@ def schema_cmd(
     indent: Annotated[int, typer.Option("--indent", help="JSON indent (text mode only).")] = 2,
 ) -> None:
     """Print the JSON Schema for ``PipelineConfig``."""
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

@@ -22,7 +22,7 @@ from src.config.providers.single_node import (
 from src.config.providers.ssh import SSHConfig
 from src.providers.single_node.inference.provider import SingleNodeInferenceProvider
 from src.providers.training.interfaces import GPUInfo
-from src.utils.config import (
+from src.config import (
     InferenceSingleNodeServeConfig,
     InferenceVLLMEngineConfig,
     Secrets,

@@ -28,7 +28,7 @@ from src.pipeline.stages.managers.deployment.code_syncer import (
     RUNTIME_CHECK_SCRIPT,
     CodeSyncer,
 )
-from src.utils.config import (
+from src.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,

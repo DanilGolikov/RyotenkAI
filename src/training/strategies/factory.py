@@ -51,7 +51,7 @@ from src.training.constants import (
     STRATEGY_VERSION_DEFAULT,
 )
 from src.training.strategies.base import StrategyMetadata, TrainingStrategy
-from src.utils.config import PipelineConfig, StrategyPhaseConfig
+from src.config import PipelineConfig, StrategyPhaseConfig
 from src.utils.logger import logger
 
 _DEP_TRL = "trl"

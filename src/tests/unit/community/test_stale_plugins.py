@@ -43,7 +43,7 @@ def _load_pipeline_config(yaml_text: str):
     explicitly.
     """
     from src.config.reports.schema import ReportsConfig
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
     config = PipelineConfig.model_validate(yaml.safe_load(yaml_text))
     config.reports = ReportsConfig(sections=[])

@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 from src.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
-from src.utils.config import DatasetConfig, PipelineConfig
+from src.config import DatasetConfig, PipelineConfig
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> Mock:

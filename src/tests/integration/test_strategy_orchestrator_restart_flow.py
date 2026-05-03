@@ -20,7 +20,7 @@ import pytest
 from src.training.managers.data_buffer import DataBuffer
 from src.training.orchestrator.resume_manager import ResumeManager
 from src.training.orchestrator.strategy_orchestrator import StrategyOrchestrator
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.result import Ok
 
 

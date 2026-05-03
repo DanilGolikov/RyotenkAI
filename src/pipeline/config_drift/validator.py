@@ -26,7 +26,7 @@ from src.utils.result import AppError, ConfigDriftError
 
 if TYPE_CHECKING:
     from src.pipeline.state import PipelineState
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:

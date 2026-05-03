@@ -6,7 +6,7 @@ Tests that phase-specific hyperparameters correctly override global defaults.
 import pytest
 
 from src.training.trainers.factory import TrainerFactory
-from src.utils.config import (
+from src.config import (
     GlobalHyperparametersConfig,
     PhaseHyperparametersConfig,
     QLoRAConfig,

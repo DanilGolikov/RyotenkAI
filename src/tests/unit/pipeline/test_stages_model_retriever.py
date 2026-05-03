@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.pipeline.stages.model_retriever import ModelCardContext, ModelRetriever, PhaseMetricsResult
-from src.utils.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.result import Err, Ok
 
 

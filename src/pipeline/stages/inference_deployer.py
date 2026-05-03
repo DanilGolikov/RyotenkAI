@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from src.providers.inference.interfaces import IInferenceProvider
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
 
 
 # Phrases RunPod REST API returns when there is no GPU capacity.

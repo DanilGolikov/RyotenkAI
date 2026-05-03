@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from src.utils.config import InferenceConfig, InferenceEnginesConfig, InferenceVLLMEngineConfig
+from src.config import InferenceConfig, InferenceEnginesConfig, InferenceVLLMEngineConfig
 
 pytestmark = pytest.mark.unit
 

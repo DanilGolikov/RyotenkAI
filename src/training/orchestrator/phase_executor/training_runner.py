@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
     from src.training.managers.data_buffer import DataBuffer
     from src.training.orchestrator.shutdown_handler import ShutdownHandler
-    from src.utils.config import PipelineConfig, StrategyPhaseConfig
+    from src.config import PipelineConfig, StrategyPhaseConfig
     from src.utils.container import IDatasetLoader, IMLflowManager, ITrainerFactory
 
 

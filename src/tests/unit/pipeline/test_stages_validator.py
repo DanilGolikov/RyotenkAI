@@ -15,7 +15,7 @@ import pytest
 
 from src.data.validation.base import ValidationResult
 from src.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
-from src.utils.config import DatasetConfig, PipelineConfig
+from src.config import DatasetConfig, PipelineConfig
 from src.utils.result import DatasetError, Err, Ok
 
 

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 from src.utils.result import Err, Ok
 
 # =============================================================================

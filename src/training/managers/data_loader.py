@@ -27,7 +27,7 @@ from src.utils.result import DataLoaderError, Err, Ok, Result
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 # =============================================================================

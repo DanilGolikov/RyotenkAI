@@ -12,7 +12,7 @@ from src.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from src.utils.logger import logger
 
 if TYPE_CHECKING:
-    from src.utils.config import DatasetConfig, PipelineConfig
+    from src.config import DatasetConfig, PipelineConfig
     from src.utils.container import IDatasetLoader
 
 

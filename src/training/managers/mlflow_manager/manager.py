@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from src.infrastructure.mlflow.environment import MLflowEnvironment
     from src.infrastructure.mlflow.uri_resolver import MLflowRuntimeRole, ResolvedMLflowUris
     from src.training.mlflow.model_registry import MLflowModelRegistry
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 logger = get_logger(__name__)
 

@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from src.constants import PROVIDER_SINGLE_NODE
 
 if TYPE_CHECKING:
-    from src.utils.config import PipelineConfig
+    from src.config import PipelineConfig
 
 
 def get_active_provider_name(config: PipelineConfig) -> str:

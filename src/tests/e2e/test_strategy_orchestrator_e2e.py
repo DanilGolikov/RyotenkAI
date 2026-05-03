@@ -32,7 +32,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used (required fixture for context)
-        from src.utils.config import validate_strategy_chain
+        from src.config import validate_strategy_chain
 
         # Create invalid chain: DPO first
         dpo_phase = MagicMock()
@@ -48,7 +48,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.utils.config import validate_strategy_chain
+        from src.config import validate_strategy_chain
 
         # Create valid chain
         sft_phase = MagicMock()
@@ -67,7 +67,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.utils.config import validate_strategy_chain
+        from src.config import validate_strategy_chain
 
         # Create valid chain
         cpt_phase = MagicMock()
@@ -89,7 +89,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.utils.config import validate_strategy_chain
+        from src.config import validate_strategy_chain
 
         sft_phase = MagicMock()
         sft_phase.strategy_type = "sft"
@@ -103,7 +103,7 @@ class TestStrategyChainValidation:
         Then: Validation passes
         """
         _ = mock_config  # Mark as used
-        from src.utils.config import validate_strategy_chain
+        from src.config import validate_strategy_chain
 
         cpt_phase = MagicMock()
         cpt_phase.strategy_type = "cpt"
@@ -177,7 +177,7 @@ class TestDataBufferIntegration:
         Then: State updates correctly
         """
         from src.training.managers.data_buffer import DataBuffer
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         # Create strategies
         strategies = [
@@ -215,7 +215,7 @@ class TestDataBufferIntegration:
         Then: Returns failed phase index
         """
         from src.training.managers.data_buffer import DataBuffer
-        from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+        from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
         # Create strategies
         strategies = [

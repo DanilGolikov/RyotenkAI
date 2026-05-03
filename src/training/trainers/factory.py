@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
     from src.training.mlflow import IMLflowManager
-    from src.utils.config import (
+    from src.config import (
         GlobalHyperparametersConfig,
         PhaseHyperparametersConfig,
         PipelineConfig,

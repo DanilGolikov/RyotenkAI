@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.training.strategies.factory import StrategyFactory
-from src.utils.config import PhaseHyperparametersConfig, StrategyPhaseConfig
+from src.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
 
 def test_create_from_phase_does_not_access_legacy_flat_hyperparams_fields() -> None:

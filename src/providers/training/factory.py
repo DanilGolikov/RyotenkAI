@@ -15,7 +15,7 @@ from src.utils.result import Failure, ProviderError, Success, err
 
 if TYPE_CHECKING:
     from src.providers.training.interfaces import IGPUProvider
-    from src.utils.config import Secrets
+    from src.config import Secrets
 
 logger = logging.getLogger("ryotenkai")
 

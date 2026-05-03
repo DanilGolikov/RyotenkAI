@@ -16,7 +16,7 @@ Config v6.0 Breaking Changes tested here:
 import pytest
 from pydantic import ValidationError
 
-from src.utils.config import (
+from src.config import (
     AdaLoraConfig,
     DatasetLocalPaths,
     GlobalHyperparametersConfig,
@@ -378,7 +378,7 @@ def test_adapter_strategy_combinations(adapter, strategy):
 )
 def test_model_config_dtype_trust_combinations(torch_dtype, trust_remote_code):
     """Combinatorial: all torch_dtype × trust_remote_code pairs."""
-    from src.utils.config import ModelConfig
+    from src.config import ModelConfig
 
     config = ModelConfig(
         name="test/model", torch_dtype=torch_dtype, trust_remote_code=trust_remote_code

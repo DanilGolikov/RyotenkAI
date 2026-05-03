@@ -722,7 +722,7 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
     # HF_TOKEN is now part of the validator's readiness check; provide it so
     # the "valid-config" branch doesn't trip on a missing token in CI.
     with (
-        patch("src.utils.config.load_config", return_value=mock_cfg),
+        patch("src.config.load_config", return_value=mock_cfg),
         patch.dict("os.environ", {"HF_TOKEN": "hf_test_token"}, clear=False),
     ):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
@@ -745,7 +745,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
-    with patch("src.utils.config.load_config", return_value=mock_cfg), \
+    with patch("src.config.load_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
 

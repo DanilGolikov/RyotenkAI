@@ -30,7 +30,7 @@ from src.pipeline.stages.model_retriever import (
     ModelRetriever,
     ModelRetrieverEventCallbacks,
 )
-from src.utils.config import HuggingFaceHubConfig
+from src.config import HuggingFaceHubConfig
 from src.utils.result import Err, Ok, ProviderError
 
 

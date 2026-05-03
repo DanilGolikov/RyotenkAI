@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import src.training.models.loader as loader
-from src.utils.config import QLoRAConfig as QLoRAConfigType
+from src.config import QLoRAConfig as QLoRAConfigType
 
 
 class _Model:

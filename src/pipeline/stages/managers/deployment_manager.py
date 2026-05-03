@@ -29,7 +29,7 @@ from src.utils.logger import logger
 
 if TYPE_CHECKING:
     from src.providers.training.interfaces import IGPUProvider
-    from src.utils.config import PipelineConfig, Secrets
+    from src.config import PipelineConfig, Secrets
     from src.utils.result import AppError, Result
     from src.utils.ssh_client import SSHClient
 
