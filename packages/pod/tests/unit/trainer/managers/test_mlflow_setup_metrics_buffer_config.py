@@ -44,7 +44,7 @@ def _resolve_via_walk(holder: Any) -> Any:
 
 _SETUP_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "managers" / "mlflow_manager" / "setup.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "managers" / "mlflow_manager" / "setup.py"
 )
 
 

@@ -35,7 +35,7 @@ import pytest
 # Slim-venv loader — pre-populate src.training package shell + helpers
 # ---------------------------------------------------------------------------
 
-_TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "training"
+_TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "src" / "ryotenkai_pod" / "trainer"
 
 if "ryotenkai_pod.trainer" not in _sys.modules:
     _shell = _types.ModuleType("ryotenkai_pod.trainer")

@@ -45,8 +45,8 @@ def _load_monitor():
     pipeline.stages package init."""
     if "ryotenkai_monitor_test" in sys.modules:
         return sys.modules["ryotenkai_monitor_test"]
-    repo_root = Path(__file__).resolve().parents[4]
-    src_path = repo_root / "src" / "pipeline" / "stages" / "training_monitor.py"
+    repo_root = Path(__file__).resolve().parents[5]
+    src_path = repo_root / "packages" / "control" / "src" / "ryotenkai_control" / "pipeline" / "stages" / "training_monitor.py"
     spec = importlib.util.spec_from_file_location(
         "ryotenkai_monitor_test", str(src_path),
     )

@@ -44,7 +44,7 @@ import pytest
 # ``src.training/__init__`` which pulls in the full ML stack.
 _TRANSPORT_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "mlflow" / "resilient_transport.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "mlflow" / "resilient_transport.py"
 )
 _spec = importlib.util.spec_from_file_location(
     "_ryotenkai_transport_under_test", _TRANSPORT_PATH,

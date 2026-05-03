@@ -37,7 +37,7 @@ import pytest
 
 _EXECUTOR_PATH = (
     Path(__file__).resolve().parents[4]
-    / "training" / "orchestrator" / "phase_executor" / "executor.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "orchestrator" / "phase_executor" / "executor.py"
 )
 
 

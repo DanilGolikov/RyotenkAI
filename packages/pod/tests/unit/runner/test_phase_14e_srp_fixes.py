@@ -46,7 +46,17 @@ from ryotenkai_pod.runner.heartbeat import (  # noqa: E402
     MacHeartbeat,
 )
 from ryotenkai_pod.runner.main import create_app  # noqa: E402
-from tests.unit.runner.conftest import MockSupervisor  # noqa: E402
+# Same-folder conftest provides MockSupervisor; load via importlib (see
+# test_main_lifespan_bootstrap for rationale).
+import importlib.util as _ilu  # noqa: E402
+import pathlib as _pathlib  # noqa: E402
+
+_conftest_path = _pathlib.Path(__file__).resolve().parent / "conftest.py"
+_spec = _ilu.spec_from_file_location("_pod_runner_conftest_for_phase_14e", str(_conftest_path))
+assert _spec is not None and _spec.loader is not None
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+MockSupervisor = _mod.MockSupervisor  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

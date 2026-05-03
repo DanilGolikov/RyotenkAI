@@ -67,7 +67,7 @@ _stub("transformers", {"TrainerCallback": _TrainerCallback})
 _stub("colorlog", {"ColoredFormatter": type})
 
 
-_TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "training"
+_TRAINING_PKG = _pathlib.Path(__file__).resolve().parents[4] / "src" / "ryotenkai_pod" / "trainer"
 
 # Make src.training a real package shell so other tests in the same
 # session can still import sibling modules.

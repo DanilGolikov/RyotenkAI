@@ -33,10 +33,10 @@ def _load_launcher():
     package init (mirror :file:`test_training_launcher_v2.py`)."""
     if "ryotenkai_launcher_test" in sys.modules:
         return sys.modules["ryotenkai_launcher_test"]
-    repo_root = Path(__file__).resolve().parents[7]
+    repo_root = Path(__file__).resolve().parents[8]
     src_path = (
         repo_root
-        / "src" / "pipeline" / "stages" / "managers"
+        / "packages" / "control" / "src" / "ryotenkai_control" / "pipeline" / "stages" / "managers"
         / "deployment" / "training_launcher.py"
     )
     spec = importlib.util.spec_from_file_location(

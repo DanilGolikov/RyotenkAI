@@ -39,7 +39,7 @@ import pytest
 # same trick used by ``test_cancellation_callback.py``.
 _HELPER_PATH = (
     pathlib.Path(__file__).resolve().parents[3]
-    / "training" / "_concurrent_helpers.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "_concurrent_helpers.py"
 )
 _spec = importlib.util.spec_from_file_location(
     "_ryotenkai_concurrent_helpers_under_test", _HELPER_PATH,

@@ -25,7 +25,7 @@ import pytest
 # ``src.training/__init__`` heavyweights.
 _BUFFER_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "mlflow" / "metrics_buffer.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "mlflow" / "metrics_buffer.py"
 )
 _spec = importlib.util.spec_from_file_location(
     "_ryotenkai_metrics_buffer_under_test", _BUFFER_PATH,

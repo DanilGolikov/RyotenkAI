@@ -73,7 +73,7 @@ _stub("colorlog", {"ColoredFormatter": type})
 # chain and fails in the slim dev venv).
 _HELPER_PATH = (
     _pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "_concurrent_helpers.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "_concurrent_helpers.py"
 )
 _helper_spec = _importlib_util.spec_from_file_location(
     "ryotenkai_pod.trainer._concurrent_helpers", _HELPER_PATH,
@@ -94,7 +94,7 @@ _helper_module = _importlib_util.module_from_spec(_helper_spec)
 if "ryotenkai_pod.trainer" not in _sys.modules:
     _training_shell = _types.ModuleType("ryotenkai_pod.trainer")
     _training_shell.__path__ = [  # type: ignore[attr-defined]
-        str(_pathlib.Path(__file__).resolve().parents[4] / "training"),
+        str(_pathlib.Path(__file__).resolve().parents[4] / "src" / "ryotenkai_pod" / "trainer"),
     ]
     _sys.modules["ryotenkai_pod.trainer"] = _training_shell
 _sys.modules["ryotenkai_pod.trainer._concurrent_helpers"] = _helper_module
@@ -103,7 +103,7 @@ _helper_spec.loader.exec_module(_helper_module)
 
 _CALLBACK_PATH = (
     _pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "callbacks" / "cancellation_callback.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "callbacks" / "cancellation_callback.py"
 )
 _spec = _importlib_util.spec_from_file_location(
     "_ryotenkai_cancellation_callback_under_test", _CALLBACK_PATH,

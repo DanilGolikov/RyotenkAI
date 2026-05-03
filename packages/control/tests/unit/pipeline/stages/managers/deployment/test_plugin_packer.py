@@ -33,10 +33,10 @@ def _load_plugin_packer():
     available in CI; this workaround keeps the dev loop fast."""
     if "ryotenkai_plugin_packer_test" in sys.modules:
         return sys.modules["ryotenkai_plugin_packer_test"]
-    repo_root = Path(__file__).resolve().parents[7]
+    repo_root = Path(__file__).resolve().parents[8]
     src_path = (
         repo_root
-        / "src" / "pipeline" / "stages" / "managers"
+        / "packages" / "control" / "src" / "ryotenkai_control" / "pipeline" / "stages" / "managers"
         / "deployment" / "plugin_packer.py"
     )
     spec = importlib.util.spec_from_file_location(

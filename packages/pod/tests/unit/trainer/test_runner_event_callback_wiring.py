@@ -46,7 +46,7 @@ def _factory_source() -> str:
     from pathlib import Path
 
     here = Path(__file__).resolve().parents[4]
-    target = here / "src" / "training" / "trainers" / "factory.py"
+    target = here / "src" / "ryotenkai_pod" / "trainer" / "trainers" / "factory.py"
     return target.read_text(encoding="utf-8")
 
 

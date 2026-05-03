@@ -64,7 +64,7 @@ _stub("colorlog", {"ColoredFormatter": type})
 
 _CALLBACK_PATH = (
     _pathlib.Path(__file__).resolve().parents[4]
-    / "training" / "callbacks" / "runner_event_callback.py"
+    / "src" / "ryotenkai_pod" / "trainer" / "callbacks" / "runner_event_callback.py"
 )
 _spec = _importlib_util.spec_from_file_location(
     "_ryotenkai_runner_event_callback_under_test", _CALLBACK_PATH,

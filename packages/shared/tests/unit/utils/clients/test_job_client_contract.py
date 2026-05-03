@@ -26,7 +26,22 @@ import pytest_asyncio
 
 from ryotenkai_shared.utils.clients.job_client import JobClient, JobNotFoundError
 from ryotenkai_pod.runner.main import create_app
-from tests.unit.runner.conftest import MockSupervisor
+
+# Phase B follow-up: see packages/control/tests/integration/runner/conftest.py
+import importlib.util as _ilu
+import pathlib as _pathlib
+
+_pod_runner_conftest_path = (
+    _pathlib.Path(__file__).resolve().parents[5]
+    / "pod" / "tests" / "unit" / "runner" / "conftest.py"
+)
+_spec = _ilu.spec_from_file_location(
+    "_pod_runner_conftest_for_contract_tests", str(_pod_runner_conftest_path),
+)
+assert _spec is not None and _spec.loader is not None
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+MockSupervisor = _mod.MockSupervisor
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
