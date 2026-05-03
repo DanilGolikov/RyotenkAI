@@ -566,7 +566,7 @@ class TestPhase9CFinalizedEvent:
     """
 
     def test_emits_finalized_event_on_successful_flush(self) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+        from ryotenkai_shared.observability.cancellation_telemetry import CANCELLATION_FINALIZED
 
         publisher = _PublisherSpy()
         manager = _StubMlflowManager(flush_return=7)
@@ -589,7 +589,7 @@ class TestPhase9CFinalizedEvent:
     def test_emits_finalized_event_on_timeout_with_marker_flag(
         self, tmp_path: Any,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import CANCELLATION_FINALIZED
+        from ryotenkai_shared.observability.cancellation_telemetry import CANCELLATION_FINALIZED
 
         publisher = _PublisherSpy()
         # Slow flush forces timeout.

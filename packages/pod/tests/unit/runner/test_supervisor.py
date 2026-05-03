@@ -518,7 +518,7 @@ class TestCancellationTelemetry:
     async def test_request_stop_emits_cancellation_started(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_STARTED,
         )
 
@@ -563,7 +563,7 @@ class TestCancellationTelemetry:
     async def test_request_stop_emits_cancellation_completed(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_COMPLETED,
             CANCELLATION_STARTED,
         )
@@ -603,7 +603,7 @@ class TestCancellationTelemetry:
     async def test_natural_exit_does_not_emit_cancellation_completed(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_COMPLETED,
             CANCELLATION_STARTED,
         )
@@ -620,7 +620,7 @@ class TestCancellationTelemetry:
     async def test_native_crash_does_not_emit_cancellation_completed(
         self, supervisor: Supervisor, fsm: JobLifecycleFSM, bus: EventBus,
     ) -> None:
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_COMPLETED,
             CANCELLATION_STARTED,
         )
@@ -644,7 +644,7 @@ class TestCancellationTelemetry:
         # stop, even if escalated). ``terminal_state`` is "cancelled"
         # because the supervisor honors the stop request even for
         # SIGKILL exits.
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_COMPLETED,
         )
 
@@ -680,7 +680,7 @@ class TestCancellationTelemetry:
     ) -> None:
         # Invariant: even if the test runs on a clock-skewed CI box,
         # ``total_latency_ms`` is clamped at 0 by ``latency_ms_since``.
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_COMPLETED,
         )
 

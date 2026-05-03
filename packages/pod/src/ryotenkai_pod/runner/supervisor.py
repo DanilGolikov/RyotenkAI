@@ -353,7 +353,7 @@ class Supervisor:
         # Phase 9.C — anchor for the cancellation chain's latency
         # bookkeeping. Stamped BEFORE bus publishes so the event
         # payload carries the same anchor downstream consumers see.
-        from ryotenkai_pod.runner.cancellation_telemetry import (
+        from ryotenkai_shared.observability.cancellation_telemetry import (
             CANCELLATION_STARTED,
             now_ms,
         )
@@ -589,7 +589,7 @@ class Supervisor:
             self._cancellation_requested
             and self._cancellation_started_at_ms is not None
         ):
-            from ryotenkai_pod.runner.cancellation_telemetry import (
+            from ryotenkai_shared.observability.cancellation_telemetry import (
                 CANCELLATION_COMPLETED,
                 latency_ms_since,
             )

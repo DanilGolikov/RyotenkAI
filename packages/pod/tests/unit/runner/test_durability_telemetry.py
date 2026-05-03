@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ryotenkai_pod.runner.cancellation_telemetry import (
+from ryotenkai_shared.observability.cancellation_telemetry import (
     CANCELLATION_EVENT_KINDS,
     DURABILITY_EVENT_KINDS,
     EVENTS_DISK_PRESSURE,
