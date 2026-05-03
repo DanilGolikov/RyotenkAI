@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.data.loaders import HuggingFaceDatasetLoader, JsonDatasetLoader, MultiSourceDatasetLoader
+from ryotenkai_pod.trainer.data_loaders import HuggingFaceDatasetLoader, JsonDatasetLoader, MultiSourceDatasetLoader
 from ryotenkai_pod.trainer.orchestrator.dataset_loader import DatasetLoader
 from ryotenkai_pod.trainer.container import IDatasetLoader, TrainingContainer
 
@@ -789,7 +789,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_dataset_local(self, mock_config: MagicMock) -> None:
         """Test: Create loader for local dataset."""
-        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
         dataset_config = MagicMock()
         dataset_config.get_source_type = MagicMock(return_value="local")
@@ -801,7 +801,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_dataset_huggingface(self, mock_config: MagicMock) -> None:
         """Test: Create loader for HuggingFace dataset."""
-        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
         dataset_config = MagicMock()
         dataset_config.get_source_type = MagicMock(return_value="huggingface")
@@ -813,7 +813,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_source_type_local(self, mock_config: MagicMock) -> None:
         """Test: Create loader by source type string (local)."""
-        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_for_source_type("local")
@@ -822,7 +822,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_for_source_type_huggingface(self, mock_config: MagicMock) -> None:
         """Test: Create loader by source type string (huggingface)."""
-        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_for_source_type("huggingface")
@@ -831,7 +831,7 @@ class TestDatasetLoaderFactory:
 
     def test_create_default(self, mock_config: MagicMock) -> None:
         """Test: Create default loader (JsonDatasetLoader)."""
-        from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+        from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 
         factory = DatasetLoaderFactory(mock_config)
         loader = factory.create_default()

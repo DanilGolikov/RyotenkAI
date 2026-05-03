@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 
 from datasets import load_dataset
 
-from ryotenkai_control.data.loaders.base import BaseDatasetLoader
+from ryotenkai_pod.trainer.data_loaders.base import BaseDatasetLoader
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:

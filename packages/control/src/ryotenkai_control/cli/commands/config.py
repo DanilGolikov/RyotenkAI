@@ -77,7 +77,7 @@ def show_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Print the parsed pipeline config (model_dump)."""
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_shared.config.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)
@@ -93,7 +93,7 @@ def explain_cmd(
 ) -> None:
     """Show a short human-readable summary of model / dataset / training."""
     from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config as load_config
+    from ryotenkai_shared.config.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
     renderer = get_renderer(state)

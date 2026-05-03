@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_control.data.loaders.factory import DatasetLoaderFactory
+from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import StageNames
 from ryotenkai_control.pipeline.stages.dataset_validator.constants import (

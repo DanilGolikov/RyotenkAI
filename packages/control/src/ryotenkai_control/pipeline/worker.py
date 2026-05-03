@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     # Heavy imports stay lazy so ``--help`` doesn't pay torch/mlflow costs.
     from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
     from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
-    from ryotenkai_control.workspace.integrations.loader import load_pipeline_config
+    from ryotenkai_shared.config.loader import load_pipeline_config
 
     run_dir: Path | None = args.run_dir.expanduser().resolve() if args.run_dir else None
     if args.config is not None:
