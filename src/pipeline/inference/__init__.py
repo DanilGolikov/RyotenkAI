@@ -1,22 +1,14 @@
-"""
-Inference deployment domain (Provider × Engine).
+"""Inference deployment domain (Provider × Engine).
 
-This package is intentionally separate from training GPU providers:
-- training providers manage training infrastructure lifecycle
-- inference providers manage serving/inference lifecycle
-
-Source of truth for all providers: `src/providers/`
-- training: `src/providers/<provider>/training`
-- inference: `src/providers/<provider>/inference`
-
-Engine modules (vllm.py, ...) carry runtime-specific start/stop commands and
-health-check strategies. Currently only vLLM exists; sibling engines (sglang,
-lmdeploy, TGI) can land here as flat modules without re-introducing a sub-package.
+After Phase A.3 (monorepo packagization, plan §A.3) this package only
+re-exports from :mod:`src.providers.inference` — engine helpers (vLLM,
+…) and provider factory both live under ``src.providers.inference``.
+The shim is removed at the start of Phase B as part of the codemod.
 """
 
-from src.pipeline.inference.vllm import VLLMEngine
 from src.providers.inference.factory import InferenceProviderFactory
 from src.providers.inference.interfaces import EndpointInfo, IInferenceProvider, InferenceCapabilities
+from src.providers.inference.vllm.engine import VLLMEngine
 
 __all__ = [
     "EndpointInfo",
