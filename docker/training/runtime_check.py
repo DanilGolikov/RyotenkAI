@@ -89,8 +89,9 @@ _OPTIONAL: list[tuple[str, str]] = [
 #     since Phase 6.6, no longer baked in the docker image).
 #   * ``src.utils.config`` — config façade re-exported from ryotenkai_shared.config.
 _REQUIRED_SRC_MODULES: list[str] = [
-    "ryotenkai_control.workspace.integrations.loader",
     "ryotenkai_shared.config",
+    "ryotenkai_shared.config.loader",
+    "ryotenkai_community.catalog",
     "ryotenkai_providers",
     "ryotenkai_pod.trainer.run_training",
     "ryotenkai_pod.runner.main",

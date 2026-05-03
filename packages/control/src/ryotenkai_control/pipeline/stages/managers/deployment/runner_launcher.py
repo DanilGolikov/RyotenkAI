@@ -178,7 +178,7 @@ def _build_launch_command(
         f"PYTHONPATH={quoted_workspace}:${{PYTHONPATH:-}} "
         f"    {env_assignments}"
         "    stdbuf -oL -eL "
-        "    /usr/local/bin/python3 -m uvicorn src.runner.main:app "
+        "    /usr/local/bin/python3 -m uvicorn ryotenkai_pod.runner.main:app "
         f"      --host {RUNNER_HOST} --port {RUNNER_PORT} --no-access-log "
         f"    >> {quoted_runner_log} 2>&1 < /dev/null & "
         "  disown; "
