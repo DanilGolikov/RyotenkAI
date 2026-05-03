@@ -26,8 +26,8 @@ from ryotenkai_providers.runpod.runtime.lifecycle_client import (
     DEFAULT_RUNPOD_GRAPHQL_URL,
     RunPodPodLifecycleClient,
 )
-from ryotenkai_pod.runner.pod_terminator import PodTerminalOutcome
-from ryotenkai_pod.runner.runtime.lifecycle_client import (
+from ryotenkai_shared.infrastructure.lifecycle import PodTerminalOutcome
+from ryotenkai_shared.infrastructure.lifecycle import (
     IPodLifecycleClient,
     LifecycleActionResult,
 )

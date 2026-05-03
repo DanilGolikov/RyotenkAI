@@ -47,18 +47,11 @@ def test_providers_does_not_import_pod_or_control() -> None:
 
     # ADR row 7: providers→pod.runner.{lifecycle_client, pod_terminator}
     # — provider adapters import the runner-side Protocol + outcome enum.
-    # Fix is "extract IPodLifecycleClient + LifecycleActionResult +
-    # PodTerminalOutcome into shared.infrastructure.lifecycle". Until then,
-    # these four imports are documented and tracked here.
+    # ADR row 9: providers reach into control for cross-cutting types
+    # (RunContext, PodAvailability, system_prompt resolver) via TYPE_CHECKING
+    # / lazy imports. Each entry is a focused follow-up PR — extract the
+    # type into shared or invert ownership.
     expected_known = {
-        # ADR row 7: pod.runner.{lifecycle_client, pod_terminator} types
-        "ryotenkai_providers/runpod/runtime/lifecycle_client.py: from ryotenkai_pod.runner.pod_terminator",
-        "ryotenkai_providers/runpod/runtime/lifecycle_client.py: from ryotenkai_pod.runner.runtime.lifecycle_client",
-        "ryotenkai_providers/single_node/runtime/lifecycle_client.py: from ryotenkai_pod.runner.pod_terminator",
-        "ryotenkai_providers/single_node/runtime/lifecycle_client.py: from ryotenkai_pod.runner.runtime.lifecycle_client",
-        # Newly surfaced — providers reach into control for shared types/state.
-        # Fix: extract RunContext / PodAvailability / system_prompt resolver
-        # into shared (or invert ownership).
         "ryotenkai_providers/training/interfaces.py: from ryotenkai_control.pipeline.state",
         "ryotenkai_providers/runpod/_status_mapper.py: from ryotenkai_control.pipeline.launch.pod_availability",
         "ryotenkai_providers/single_node/training/provider.py: from ryotenkai_control.pipeline.state",

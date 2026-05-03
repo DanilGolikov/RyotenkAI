@@ -44,7 +44,7 @@ from ryotenkai_shared.constants import (
     PROVIDER_SINGLE_NODE,
     RUNTIME_PROVIDER_ENV_VAR,
 )
-from ryotenkai_pod.runner.runtime.lifecycle_client import IPodLifecycleClient
+from ryotenkai_shared.infrastructure.lifecycle import IPodLifecycleClient
 
 __all__ = [
     "BootstrapConfigError",
