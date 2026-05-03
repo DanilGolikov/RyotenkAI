@@ -102,6 +102,23 @@ class CodeSyncer:
         "*.md",
     ]
 
+    @staticmethod
+    def _repo_root() -> Path:
+        """Walk up from this file to the workspace root.
+
+        Identified by an ancestor that has both ``pyproject.toml`` and a
+        ``packages/`` directory — the uv workspace marker. Mirrors the
+        same shape :func:`ryotenkai_shared.config.secrets.loader.load_secrets`
+        uses for repo-root discovery; pinned ``parents[N]`` arithmetic was
+        the regression class that broke ``COMMUNITY_ROOT`` and
+        ``secrets.env`` lookup post Phase B.
+        """
+        here = Path(__file__).resolve()
+        for parent in here.parents:
+            if (parent / "pyproject.toml").is_file() and (parent / "packages").is_dir():
+                return parent
+        return Path.cwd()
+
     def __init__(self, config: PipelineConfig, secrets: Secrets) -> None:
         # config/secrets are accepted to keep the constructor uniform with
         # the other deployment components, even though CodeSyncer does not
@@ -131,12 +148,19 @@ class CodeSyncer:
         """
         logger.info("📦 Syncing source code (selective)...")
 
+        # ``PROVIDED_PACKAGES`` paths are relative to the repo root, but
+        # the pipeline worker subprocess runs with ``cwd=packages/control/src/``.
+        # Resolve each pair against the workspace root (walk up from this
+        # file looking for the ``packages/`` + ``pyproject.toml`` marker)
+        # so the rsync source spelling works regardless of CWD.
+        repo_root = self._repo_root()
         existing_pairs: list[tuple[str, str]] = []
         for local, dest in self.PROVIDED_PACKAGES:
-            if Path(local).is_dir():
-                existing_pairs.append((local, dest))
+            local_abs = (repo_root / local) if not Path(local).is_absolute() else Path(local)
+            if local_abs.is_dir():
+                existing_pairs.append((str(local_abs), dest))
             else:
-                logger.warning(f"⚠️ Package source not found: {local}")
+                logger.warning(f"⚠️ Package source not found: {local_abs}")
 
         if not existing_pairs:
             logger.warning("⚠️ No packages to sync")
