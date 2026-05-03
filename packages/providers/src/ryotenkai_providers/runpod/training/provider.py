@@ -70,7 +70,7 @@ _GONE_ERROR_MARKERS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
-    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_providers.runpod.models import PodSnapshot
     from ryotenkai_shared.config import Secrets
 
@@ -720,7 +720,7 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         # vocabulary; the shared probe (:class:`PodAvailabilityProbe`)
         # now consumes ``map_runpod_desired_status_to_availability``
         # instead of importing the raw dict.
-        from ryotenkai_control.pipeline.launch.pod_availability import PodAvailability
+        from ryotenkai_shared.infrastructure.lifecycle import PodAvailability
 
         raw_status = str(pod_data.get("desiredStatus") or "").upper()
         if not raw_status:

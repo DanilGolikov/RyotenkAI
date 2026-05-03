@@ -45,24 +45,11 @@ def test_providers_does_not_import_pod_or_control() -> None:
                         if alias.name == forbidden or alias.name.startswith(f"{forbidden}."):
                             violations.append(f"{path.relative_to(src.parent)}: import {alias.name}")
 
-    # ADR row 7: providers→pod.runner.{lifecycle_client, pod_terminator}
-    # — provider adapters import the runner-side Protocol + outcome enum.
-    # ADR row 9: providers reach into control for cross-cutting types
-    # (RunContext, PodAvailability, system_prompt resolver) via TYPE_CHECKING
-    # / lazy imports. Each entry is a focused follow-up PR — extract the
-    # type into shared or invert ownership.
-    expected_known = {
-        "ryotenkai_providers/training/interfaces.py: from ryotenkai_control.pipeline.state",
-        "ryotenkai_providers/runpod/_status_mapper.py: from ryotenkai_control.pipeline.launch.pod_availability",
-        "ryotenkai_providers/single_node/training/provider.py: from ryotenkai_control.pipeline.state",
-        "ryotenkai_providers/single_node/inference/provider.py: from ryotenkai_control.evaluation.system_prompt",
-        "ryotenkai_providers/runpod/training/provider.py: from ryotenkai_control.pipeline.state",
-        "ryotenkai_providers/runpod/training/provider.py: from ryotenkai_control.pipeline.launch.pod_availability",
-        "ryotenkai_providers/runpod/inference/pods/provider.py: from ryotenkai_control.evaluation.system_prompt",
-    }
-    unexpected = [v for v in violations if v not in expected_known]
-    assert not unexpected, (
-        "NEW providers→{pod,control,community} import detected:\n  "
-        + "\n  ".join(unexpected)
-        + "\nIf intentional, document in ADR and add to expected_known."
+    # ADR rows 7 & 9 closed (lifecycle Protocol + RunContext +
+    # PodAvailability + system_prompt all moved to shared). The boundary
+    # is now strictly clean — any new provider→{pod,control,community}
+    # import fails this assertion immediately.
+    assert not violations, (
+        "providers must depend only on shared — new internal import detected:\n  "
+        + "\n  ".join(violations)
     )

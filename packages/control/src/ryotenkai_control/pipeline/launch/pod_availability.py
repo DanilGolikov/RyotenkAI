@@ -62,7 +62,6 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -107,36 +106,11 @@ RESUME_BACKOFFS: tuple[float, ...] = (10.0, 30.0, 60.0, 120.0)
 # ---------------------------------------------------------------------------
 
 
-class PodAvailability(StrEnum):
-    """Coarse availability states the probe maps RunPod statuses into.
-
-    The values are stable strings — operator dashboards and Web UI
-    badges grep on them, so renaming is a contract change.
-    """
-
-    RUNNING = "running"
-    SLEEPING_RESUMABLE = "sleeping_resumable"
-    SLEEPING_RESUME_FAILED = "sleeping_resume_failed"
-    GONE = "gone"
-    PROBE_FAILED = "probe_failed"
-
-    @property
-    def is_resume_needed(self) -> bool:
-        """True iff the caller should call :func:`resume_pod_with_retry`."""
-        return self == PodAvailability.SLEEPING_RESUMABLE
-
-    @property
-    def is_recoverable(self) -> bool:
-        """True iff the caller can usefully proceed with the pipeline.
-
-        RUNNING ⇒ no action needed; ModelRetriever can SSH right away.
-        SLEEPING_RESUMABLE ⇒ resume first, then proceed.
-        Other states ⇒ user intervention required.
-        """
-        return self in (
-            PodAvailability.RUNNING,
-            PodAvailability.SLEEPING_RESUMABLE,
-        )
+# PodAvailability extracted to ryotenkai_shared.infrastructure.lifecycle
+# (ADR row 9). Re-exported here so existing local imports keep working —
+# the probe / resume logic below stays in control because it's
+# RunPod-aware orchestration, not a contract type.
+from ryotenkai_shared.infrastructure.lifecycle import PodAvailability  # noqa: E402, F401
 
 
 @dataclass(frozen=True)

@@ -16,7 +16,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from ryotenkai_control.pipeline.state import RunContext
+    from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_providers.runpod.models import PodResourceInfo
     from ryotenkai_shared.utils.pod_layout import PodLayout
     from ryotenkai_shared.utils.result import AppError, ProviderError, Result
