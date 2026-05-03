@@ -57,22 +57,11 @@ def test_shared_does_not_import_any_internal_package() -> None:
                     for forbidden in _FORBIDDEN:
                         if alias.name == forbidden or alias.name.startswith(f"{forbidden}."):
                             violations.append(f"{path.relative_to(src.parent)}: import {alias.name}")
-    # NOTE: this test is currently EXPECTED-KNOWN-FAIL — Phase B/C surfaced
-    # pre-existing drifts that violate the leaf contract (see ADR
-    # "Known violations" table, rows 1-2 + extra). The known list below is
-    # printed for reviewers to confirm count hasn't grown beyond the
-    # documented set. Once each follow-up PR lands, the matching entry
-    # disappears here. When the list is empty, drop ``unexpected`` and
-    # assert ``not violations`` directly.
-    expected_known = {
-        # ADR row 1: runtime validator reaches into community + control
-        "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_community.catalog",
-        "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_control.evaluation.plugins.registry",
-        "ryotenkai_shared/config/validators/runtime.py: from ryotenkai_control.evaluation.plugins.secrets",
-    }
-    unexpected = [v for v in violations if v not in expected_known]
-    assert not unexpected, (
-        "NEW shared→internal-package import detected (not in known-violations list):\n  "
-        + "\n  ".join(unexpected)
-        + "\nIf intentional, document it in the ADR and add to expected_known."
+    # All historic shared→{community,pod,providers,control} drifts have
+    # been closed (ADR rows 1, 2, 8 fixed). The leaf invariant is now
+    # enforceable directly — any new violation fails this assertion.
+    assert not violations, (
+        "shared must be a graph leaf — new internal import detected:\n  "
+        + "\n  ".join(violations)
+        + "\nMove the dependency the other way (downstream depends on shared)."
     )
