@@ -127,54 +127,23 @@ class RunPodProvider(
         4. disconnect(): Terminate pod (if cleanup.auto_delete_pod)
     """
 
-    def __init__(
-        self,
-        ctx_or_config: "ProviderContext | dict[str, Any]",
-        secrets: Secrets | None = None,
-    ):
-        """Initialize RunPod provider.
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize RunPod provider from a :class:`ProviderContext`.
 
-        Accepts two signatures during the migration window between
-        PR-1.6 and PR-1.10:
-
-        * **New (preferred)**: ``RunPodProvider(ctx)`` — single
-          ``ProviderContext`` argument, populated by
-          :class:`ProviderRegistry`. ``ctx.provider_block`` is a typed
-          :class:`RunPodProviderConfig` instance.
-
-        * **Legacy**: ``RunPodProvider(config_dict, secrets)`` — the
-          two-arg shape used by the old ``GPUProviderFactory`` and
-          tests that bypass the registry. Internally promoted to a
-          minimal ``ProviderContext`` so the rest of the class only
-          deals with one shape.
-
-        The legacy branch is removed in PR-1.11 (alongside the deletion
-        of ``training/factory.py``); after that ``__init__`` accepts
-        only ``ProviderContext``.
+        ``ctx.provider_block`` is the typed
+        :class:`RunPodProviderConfig` instance (PipelineConfig validator
+        normalizes the YAML block). For test harnesses that fabricate
+        a context with a raw dict, the dict is auto-promoted via
+        ``RunPodProviderConfig.from_dict``.
         """
-        # Lazy import to avoid registry → providers circular at import
-        # time; this runs at instance construction, well after both
-        # modules are imported.
-        from ryotenkai_providers.registry import ProviderContext
-
-        if isinstance(ctx_or_config, ProviderContext):
-            ctx = ctx_or_config
-            secrets = ctx.secrets
-            block = ctx.provider_block
-            if isinstance(block, RunPodProviderConfig):
-                self._config = block
-            else:
-                # Tolerate dict too — manifest discovery + PipelineConfig
-                # validator will normalize to typed model in PR-1.9, but
-                # tests that fabricate ProviderContext may pass a raw dict.
-                self._config = RunPodProviderConfig.from_dict(block)
+        secrets = ctx.secrets
+        block = ctx.provider_block
+        if isinstance(block, RunPodProviderConfig):
+            self._config = block
         else:
-            # Legacy dual-arg path — deleted in PR-1.11.
-            assert secrets is not None, (
-                "RunPodProvider legacy signature requires (config, secrets); "
-                "got secrets=None. Use ProviderRegistry.create_training instead."
-            )
-            self._config = RunPodProviderConfig.from_dict(ctx_or_config)
+            # Test harness fallback — fabricated ctx with raw dict.
+            # Production path always passes a typed instance.
+            self._config = RunPodProviderConfig.from_dict(block)
         self._secrets = secrets
         self._status = ProviderStatus.AVAILABLE
         self._pod_id: str | None = None

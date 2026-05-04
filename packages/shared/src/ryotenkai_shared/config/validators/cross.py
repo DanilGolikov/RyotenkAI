@@ -120,11 +120,16 @@ def validate_pipeline_providers_config(cfg: PipelineConfig) -> Result[None, Conf
 
 def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Result[None, ConfigError]:
     """
-    Validate that `training.provider` is a registered provider in GPUProviderFactory.
+    Validate that `training.provider` is registered in the manifest-driven
+    :class:`ProviderRegistry`.
 
-    This validation is intentionally dynamic:
-    - It queries GPUProviderFactory.get_available_providers() (no hardcoded names).
-    - It is best-effort: some runtimes may not ship `src.providers`.
+    Replaces the legacy ``GPUProviderFactory.get_available_providers()``
+    query (Phase 14.D+F refactor). The registry walks ``provider.toml``
+    manifests from disk; the list of "available providers" is exactly
+    :meth:`ProviderRegistry.list`.
+
+    Best-effort: modular runtimes that don't ship the ``ryotenkai_providers``
+    package skip this check via the ``ModuleNotFoundError`` branch.
     """
 
     # Local import to avoid heavy side-effects at module import time.
@@ -141,18 +146,17 @@ def validate_pipeline_active_provider_is_registered(cfg: PipelineConfig) -> Resu
         return providers_validation
 
     try:
-        # Importing src.providers.training triggers provider auto-registration
-        # (the package's __init__ imports each provider module). The
-        # importlib indirection lets modular runtimes that don't ship the
-        # providers tree skip this check via the ModuleNotFoundError branch.
-        providers_mod = importlib.import_module("ryotenkai_providers.training")
-        gpu_provider_factory = providers_mod.GPUProviderFactory
-        available = gpu_provider_factory.get_available_providers()
+        # Pull the manifest-driven registry. importlib indirection lets
+        # modular runtimes that don't ship ``ryotenkai_providers`` skip
+        # this check via the ModuleNotFoundError branch.
+        registry_mod = importlib.import_module("ryotenkai_providers.registry")
+        registry = registry_mod.get_registry()
+        available = list(registry.list(role="training"))
     except ModuleNotFoundError as e:
         missing = getattr(e, "name", "") or ""
         if missing.startswith("ryotenkai_providers"):
             logger.debug(
-                "[CFG:PROVIDER_REGISTRY] Skipping provider factory validation: "
+                "[CFG:PROVIDER_REGISTRY] Skipping provider registry validation: "
                 "ryotenkai_providers is not available in this runtime"
             )
             return Ok(None)

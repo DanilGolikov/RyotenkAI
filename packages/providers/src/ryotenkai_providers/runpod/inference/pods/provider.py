@@ -77,34 +77,14 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
     role's :class:`ProviderCapabilities`.
     """
 
-    def __init__(
-        self,
-        ctx_or_config: "ProviderContext | PipelineConfig",
-        *,
-        secrets: Secrets | None = None,
-    ):
-        """Initialize.
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize from a :class:`ProviderContext`.
 
-        Dual-signature transitional path between PR-1.8 and PR-1.10:
-
-        * **New**: ``RunPodPodInferenceProvider(ctx)`` — single
-          :class:`ProviderContext` argument from the registry.
-        * **Legacy**: ``RunPodPodInferenceProvider(config=..., secrets=...)``
-          — keyword-only call shape from the old
-          :class:`InferenceProviderFactory`. Removed in PR-1.11.
+        ``ctx.pipeline_config`` provides the full PipelineConfig
+        (inference impls need ``config.inference.engines.vllm.*``).
         """
-        from ryotenkai_providers.registry import ProviderContext
-
-        if isinstance(ctx_or_config, ProviderContext):
-            ctx = ctx_or_config
-            config = ctx.pipeline_config
-            secrets = ctx.secrets
-        else:
-            config = ctx_or_config
-            assert secrets is not None, (
-                "RunPodPodInferenceProvider legacy signature requires "
-                "secrets= keyword arg. Use ProviderRegistry.create_inference instead."
-            )
+        config = ctx.pipeline_config
+        secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
         self._inf_cfg = config.inference

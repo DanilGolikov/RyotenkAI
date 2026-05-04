@@ -36,18 +36,15 @@ Usage:
     provider.disconnect()  # Terminates pod
 """
 
-# Auto-register with factory
-from ryotenkai_shared.constants import PROVIDER_RUNPOD
-from ryotenkai_providers.training.factory import GPUProviderFactory
-
+# Registration is manifest-driven (provider.toml next to this package);
+# the ProviderRegistry's ``from_filesystem`` walk picks up the entry
+# points lazily. No factory.register() needed — the legacy factory was
+# removed in PR-1.11.
 from .api_client import RunPodAPIClient
 from .cleanup_manager import RunPodCleanupManager, create_cleanup_manager
 from .config import RunPodProviderConfig
 from .lifecycle_manager import PodLifecycleManager
 from .provider import RunPodProvider
-
-if not GPUProviderFactory.is_registered(PROVIDER_RUNPOD):
-    GPUProviderFactory.register(PROVIDER_RUNPOD, RunPodProvider)
 
 __all__ = [
     "PodLifecycleManager",

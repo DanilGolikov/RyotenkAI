@@ -80,25 +80,10 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
     _CONTAINER_NAME = VLLM_INFERENCE_CONTAINER_NAME
 
-    def __init__(
-        self,
-        ctx_or_config: "ProviderContext | PipelineConfig",
-        *,
-        secrets: Secrets | None = None,
-    ):
-        """Dual-signature transitional path. See RunPodPodInferenceProvider."""
-        from ryotenkai_providers.registry import ProviderContext
-
-        if isinstance(ctx_or_config, ProviderContext):
-            ctx = ctx_or_config
-            config = ctx.pipeline_config
-            secrets = ctx.secrets
-        else:
-            config = ctx_or_config
-            assert secrets is not None, (
-                "SingleNodeInferenceProvider legacy signature requires "
-                "secrets= keyword arg."
-            )
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize from a :class:`ProviderContext`."""
+        config = ctx.pipeline_config
+        secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
 

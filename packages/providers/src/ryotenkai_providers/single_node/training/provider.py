@@ -65,34 +65,15 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         4. disconnect(): Cleanup workspace (optional)
     """
 
-    def __init__(
-        self,
-        ctx_or_config: "ProviderContext | dict[str, Any]",
-        secrets: Secrets | None = None,
-    ):
-        """Initialize SingleNode provider.
-
-        Dual-signature transitional path (mirrors RunPodProvider) —
-        legacy ``(config_dict, secrets)`` from the old factory and new
-        ``ProviderContext`` from the registry both work. Legacy path
-        deleted in PR-1.11.
-        """
-        from ryotenkai_providers.registry import ProviderContext
-
-        if isinstance(ctx_or_config, ProviderContext):
-            ctx = ctx_or_config
-            secrets = ctx.secrets
-            block = ctx.provider_block
-            if isinstance(block, SingleNodeConfig):
-                self._config = block
-            else:
-                self._config = SingleNodeConfig.from_dict(block)
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize SingleNode provider from a :class:`ProviderContext`."""
+        secrets = ctx.secrets
+        block = ctx.provider_block
+        if isinstance(block, SingleNodeConfig):
+            self._config = block
         else:
-            assert secrets is not None, (
-                "SingleNodeProvider legacy signature requires (config, secrets); "
-                "use ProviderRegistry.create_training instead."
-            )
-            self._config = SingleNodeConfig.from_dict(ctx_or_config)
+            # Test harness fallback (raw dict).
+            self._config = SingleNodeConfig.from_dict(block)
         self._secrets = secrets
         self._status = ProviderStatus.AVAILABLE
         self._ssh_client: SSHClient | None = None

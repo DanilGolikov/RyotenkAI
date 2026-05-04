@@ -1,19 +1,15 @@
-"""
-Inference providers (infrastructure layer).
+"""Inference-side provider Protocols.
 
-Provider responsibilities:
-- connect to target infrastructure (SSH / cloud API)
-- prepare runtime workspace
-- start/stop inference runtime (delegating engine-specific commands to `engines/*`)
-- implement health checks and best-effort cleanup
+The :class:`InferenceProviderFactory` was removed in the manifest-driven
+registry migration (PR-1.11). Use
+:meth:`ryotenkai_providers.registry.ProviderRegistry.create_inference`
+instead.
 """
 
-from .factory import InferenceProviderFactory
 from .interfaces import EndpointInfo, IInferenceProvider, InferenceCapabilities
 
 __all__ = [
     "EndpointInfo",
     "IInferenceProvider",
     "InferenceCapabilities",
-    "InferenceProviderFactory",
 ]
