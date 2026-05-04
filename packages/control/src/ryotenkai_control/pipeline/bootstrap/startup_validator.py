@@ -37,23 +37,25 @@ from ryotenkai_shared.utils.logger import logger
 def _resolve_required_secrets_for_provider(
     provider_name: str,
 ) -> tuple[str, ...]:
-    """Phase 14.D+F — provider-driven secret requirements.
+    """Manifest-driven secret requirements (Phase 14.D+F final form).
 
-    Returns the tuple of operator-environment secret names the
-    given provider needs at startup. Closed registry of two
-    providers today — matches
-    :mod:`src.runner.runtime.provider_registry`. Adding a third
-    provider = update both modules.
+    Delegates to :meth:`ProviderRegistry.required_secrets` — the
+    provider's ``provider.toml`` is the single source of truth.
+    Replaces the legacy hardcoded ``if provider_name == PROVIDER_RUNPOD``
+    string-dispatch chain. Adding a third provider = drop a
+    ``provider.toml`` next to the new package; no code change here.
 
-    Lazy imports so this module stays importable without the
-    provider package loading its full dependency chain (the
-    runpod SDK in particular).
+    Returns ``()`` for unknown ids — the validator surfaces a "not
+    registered" error elsewhere with a clearer message.
     """
-    if provider_name == PROVIDER_RUNPOD:
-        return ("RUNPOD_API_KEY",)
-    if provider_name == PROVIDER_SINGLE_NODE:
+    from ryotenkai_providers.registry import get_registry
+
+    try:
+        return get_registry().required_secrets(
+            provider_name, role="training",
+        )
+    except KeyError:
         return ()
-    return ()
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets

@@ -118,7 +118,28 @@ class InferenceDeployer(PipelineStage):
         run_name = run.name
         base_model_id = self.config.model.name
 
-        create_result = InferenceProviderFactory.create(config=self.config, secrets=self.secrets)
+        # Manifest-driven registry replaces the legacy
+        # ``InferenceProviderFactory.create(config, secrets)`` if/elif
+        # chain. Same surface — Result-based, ``Err`` on unknown
+        # provider id or role mismatch.
+        from ryotenkai_providers.registry import ProviderContext, get_registry
+
+        provider_id = self.config.inference.provider or ""
+        provider_block: object = None
+        if provider_id:
+            try:
+                provider_block = self.config.get_provider_config(provider_id)
+            except (KeyError, ValueError):
+                # Surface as Err below — registry will produce a clean
+                # PROVIDER_NOT_REGISTERED with the right error message.
+                provider_block = None
+        ctx = ProviderContext(
+            provider_id=provider_id,
+            pipeline_config=self.config,
+            provider_block=provider_block,
+            secrets=self.secrets,
+        )
+        create_result = get_registry().create_inference(provider_id, ctx)
         if create_result.is_failure():
             return Err(
                 InferenceError(

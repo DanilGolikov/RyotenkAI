@@ -64,10 +64,47 @@ def _sha12(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:SHA12_LEN]
 
 
-class RunPodPodInferenceProvider(IInferenceProvider):
-    """Provision a RunPod Pod + Network Volume and keep it stopped by default."""
+from ryotenkai_providers.training.interfaces import ProviderBase
 
-    def __init__(self, *, config: PipelineConfig, secrets: Secrets):
+
+class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
+    """Provision a RunPod Pod + Network Volume and keep it stopped by default.
+
+    Identity (provider_id / provider_name / provider_type) comes from
+    ``provider.toml`` via :class:`ProviderBase`. Inference-specific
+    capabilities returned by :meth:`get_capabilities` are an
+    :class:`InferenceCapabilities` shape — distinct from the training
+    role's :class:`ProviderCapabilities`.
+    """
+
+    def __init__(
+        self,
+        ctx_or_config: "ProviderContext | PipelineConfig",
+        *,
+        secrets: Secrets | None = None,
+    ):
+        """Initialize.
+
+        Dual-signature transitional path between PR-1.8 and PR-1.10:
+
+        * **New**: ``RunPodPodInferenceProvider(ctx)`` — single
+          :class:`ProviderContext` argument from the registry.
+        * **Legacy**: ``RunPodPodInferenceProvider(config=..., secrets=...)``
+          — keyword-only call shape from the old
+          :class:`InferenceProviderFactory`. Removed in PR-1.11.
+        """
+        from ryotenkai_providers.registry import ProviderContext
+
+        if isinstance(ctx_or_config, ProviderContext):
+            ctx = ctx_or_config
+            config = ctx.pipeline_config
+            secrets = ctx.secrets
+        else:
+            config = ctx_or_config
+            assert secrets is not None, (
+                "RunPodPodInferenceProvider legacy signature requires "
+                "secrets= keyword arg. Use ProviderRegistry.create_inference instead."
+            )
         self._cfg = config
         self._secrets = secrets
         self._inf_cfg = config.inference
@@ -109,13 +146,10 @@ class RunPodPodInferenceProvider(IInferenceProvider):
     # Interface properties
     # ---------------------------------------------------------------------
 
-    @property
-    def provider_name(self) -> str:
-        return PROVIDER_RUNPOD
-
-    @property
-    def provider_type(self) -> str:
-        return PROVIDER_RUNPOD
+    # provider_name / provider_type / provider_id default impls live on
+    # ProviderBase — manifest-derived. Note: this class shares the
+    # ``provider_id="runpod"`` namespace with RunPodProvider (training);
+    # the registry attaches the SAME manifest metadata to both classes.
 
     # ---------------------------------------------------------------------
     # Public API
