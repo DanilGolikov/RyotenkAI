@@ -62,7 +62,14 @@ def get_provider_training_cfg(config: PipelineConfig, provider_name: str) -> dic
     Defensive: unit tests inject MagicMock configs; provider config may
     be absent. Falls back to the default provider config when the named
     provider is not found.
+
+    Supports both legacy raw-dict blocks and the typed Pydantic models
+    produced by ``PipelineConfig._validate_provider_blocks_against_manifests``;
+    in the typed case the ``training`` sub-block is flattened via
+    ``model_dump`` so callers continue to see a plain mapping.
     """
+    from pydantic import BaseModel
+
     provider_cfg_obj: Any
     try:
         provider_cfg_obj = config.get_provider_config(provider_name)
@@ -72,9 +79,17 @@ def get_provider_training_cfg(config: PipelineConfig, provider_name: str) -> dic
         except (AttributeError, KeyError, ValueError, TypeError):
             provider_cfg_obj = {}
 
-    provider_cfg = provider_cfg_obj if isinstance(provider_cfg_obj, dict) else {}
-    training_cfg = provider_cfg.get("training")
-    return training_cfg if isinstance(training_cfg, dict) else {}
+    if isinstance(provider_cfg_obj, BaseModel):
+        training_obj = getattr(provider_cfg_obj, "training", None)
+        if isinstance(training_obj, BaseModel):
+            return training_obj.model_dump(mode="json")
+        return {}
+
+    if isinstance(provider_cfg_obj, dict):
+        training_cfg = provider_cfg_obj.get("training")
+        return training_cfg if isinstance(training_cfg, dict) else {}
+
+    return {}
 
 
 def get_single_node_training_cfg(config: PipelineConfig) -> dict[str, Any]:

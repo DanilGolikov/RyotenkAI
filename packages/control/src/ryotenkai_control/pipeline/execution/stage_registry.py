@@ -22,7 +22,9 @@ with a direct :class:`StageRegistry` instead of orchestrator mocks.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
 
 from ryotenkai_control.pipeline.artifacts import StageArtifactCollector
 from ryotenkai_shared.utils.cancellation import PipelineCancelled
@@ -282,10 +284,9 @@ class StageRegistry:
         """
         try:
             provider_cfg = self._config.get_provider_config()
-            cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-            if not (isinstance(cleanup_cfg, dict) and cleanup_cfg.get("terminate_after_retrieval") is True):
-                return
         except Exception:
+            return
+        if not _read_provider_cleanup_flag(provider_cfg, "terminate_after_retrieval", default=False):
             return
 
         for stage in self._stages:
@@ -311,14 +312,32 @@ class StageRegistry:
             provider_cfg = self._config.get_provider_config()
         except Exception:
             return False
-        cleanup_cfg = provider_cfg.get("cleanup") if isinstance(provider_cfg, dict) else None
-        if isinstance(cleanup_cfg, dict) and cleanup_cfg.get("on_interrupt") is False:
+        on_interrupt = _read_provider_cleanup_flag(provider_cfg, "on_interrupt", default=True)
+        if on_interrupt is False:
             logger.warning(
                 f"[CLEANUP] Skipping GPU provider disconnect on SIGINT "
                 f"(providers.{provider_name}.cleanup.on_interrupt=false)"
             )
             return True
         return False
+
+
+def _read_provider_cleanup_flag(provider_cfg: Any, flag_name: str, *, default: bool) -> bool:
+    """Read ``providers.<id>.cleanup.<flag_name>`` from either typed
+    Pydantic schema or raw dict block.
+
+    Returns ``default`` if the cleanup section is absent or malformed.
+    """
+    if isinstance(provider_cfg, BaseModel):
+        cleanup_obj = getattr(provider_cfg, "cleanup", None)
+        if cleanup_obj is None:
+            return default
+        return bool(getattr(cleanup_obj, flag_name, default))
+    if isinstance(provider_cfg, dict):
+        cleanup_cfg = provider_cfg.get("cleanup")
+        if isinstance(cleanup_cfg, dict):
+            return bool(cleanup_cfg.get(flag_name, default))
+    return default
 
 
 __all__ = ["StageRegistry"]

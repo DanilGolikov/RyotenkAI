@@ -93,7 +93,13 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_RUNPOD)
         from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
 
-        self._provider_cfg: RunPodProviderConfig = RunPodProviderConfig(**provider_cfg_raw)
+        # PipelineConfig validator promotes the YAML block to a typed
+        # RunPodProviderConfig; modular runtimes / tests may still pass
+        # raw dicts. Accept both.
+        if isinstance(provider_cfg_raw, RunPodProviderConfig):
+            self._provider_cfg: RunPodProviderConfig = provider_cfg_raw
+        else:
+            self._provider_cfg = RunPodProviderConfig(**provider_cfg_raw)
 
         # Inference (Pods) config is stored under providers.runpod.inference.*
         pods_cfg = self._provider_cfg.inference

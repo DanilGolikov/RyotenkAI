@@ -93,7 +93,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_SINGLE_NODE)
         from ryotenkai_shared.config.providers.single_node import SingleNodeProviderConfig
 
-        self._provider_cfg = SingleNodeProviderConfig(**provider_cfg_raw)
+        # PipelineConfig validator promotes the YAML block to a typed
+        # SingleNodeProviderConfig; modular runtimes / tests may still
+        # pass raw dicts. Accept both.
+        if isinstance(provider_cfg_raw, SingleNodeProviderConfig):
+            self._provider_cfg = provider_cfg_raw
+        else:
+            self._provider_cfg = SingleNodeProviderConfig(**provider_cfg_raw)
 
         # Access inference-specific settings via .inference
         self._serve_cfg = self._provider_cfg.inference.serve

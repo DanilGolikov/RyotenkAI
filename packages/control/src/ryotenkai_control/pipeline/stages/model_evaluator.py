@@ -266,17 +266,33 @@ class ModelEvaluator(PipelineStage):
             System prompt text, or None if not configured / not resolvable.
         """
         try:
-            provider_cfg_raw: dict = self.config.get_provider_config()
+            provider_cfg_raw = self.config.get_provider_config()
         except (KeyError, ValueError):
             return None
+
+        from pydantic import BaseModel
 
         from ryotenkai_shared.config.inference.common import InferenceLLMConfig
         from ryotenkai_shared.infrastructure.mlflow.system_prompt import SystemPromptLoader
 
-        llm_raw = provider_cfg_raw.get("inference", {}).get("llm", {})
-        if not isinstance(llm_raw, dict):
+        # Provider block may be a typed Pydantic schema (post validator)
+        # or a raw dict (modular runtime / tests).
+        if isinstance(provider_cfg_raw, BaseModel):
+            inference_obj = getattr(provider_cfg_raw, "inference", None)
+            llm_obj = getattr(inference_obj, "llm", None) if inference_obj else None
+            if isinstance(llm_obj, InferenceLLMConfig):
+                llm_cfg = llm_obj
+            elif isinstance(llm_obj, BaseModel):
+                llm_cfg = InferenceLLMConfig.model_validate(llm_obj.model_dump(mode="json"))
+            else:
+                return None
+        elif isinstance(provider_cfg_raw, dict):
+            llm_raw = provider_cfg_raw.get("inference", {}).get("llm", {})
+            if not isinstance(llm_raw, dict):
+                return None
+            llm_cfg = InferenceLLMConfig.model_validate(llm_raw)
+        else:
             return None
-        llm_cfg = InferenceLLMConfig.model_validate(llm_raw)
 
         mlflow_cfg = getattr(getattr(self.config, "integrations", None), "mlflow", None)
 

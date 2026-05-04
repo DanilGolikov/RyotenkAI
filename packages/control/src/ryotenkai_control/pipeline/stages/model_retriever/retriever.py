@@ -58,19 +58,36 @@ class ModelRetriever(PipelineStage):
         self._provider_name = config.get_active_provider_name()
         self._provider_config = config.get_provider_config()
 
-        training_cfg_obj = None
+        # Mock mode lookup tolerates both the typed Pydantic schema
+        # (post PipelineConfig validator) and legacy dict blocks.
+        from pydantic import BaseModel
+
+        training_cfg_obj: Any = None
         get_train_cfg = getattr(config, "get_provider_training_config", None)
         if callable(get_train_cfg):
             try:
                 training_cfg_obj = get_train_cfg()
             except Exception:
                 training_cfg_obj = None
-        if not isinstance(training_cfg_obj, dict):
+        if training_cfg_obj is None:
             training_cfg_obj = self._provider_config
-        self._provider_training_cfg: dict[str, Any] = (
-            training_cfg_obj if isinstance(training_cfg_obj, dict) else {}
-        )
-        self.mock_mode = bool(self._provider_training_cfg.get("mock_mode", False))
+
+        mock_mode = False
+        if isinstance(training_cfg_obj, BaseModel):
+            mock_mode = bool(getattr(training_cfg_obj, "mock_mode", False))
+        elif isinstance(training_cfg_obj, dict):
+            mock_mode = bool(training_cfg_obj.get("mock_mode", False))
+        self.mock_mode = mock_mode
+
+        # Kept for stages that still want the raw dict view; preserves
+        # the legacy public attribute even when training_cfg_obj is a
+        # typed schema.
+        if isinstance(training_cfg_obj, BaseModel):
+            self._provider_training_cfg: dict[str, Any] = training_cfg_obj.model_dump(mode="json")
+        elif isinstance(training_cfg_obj, dict):
+            self._provider_training_cfg = training_cfg_obj
+        else:
+            self._provider_training_cfg = {}
 
         # Sub-components
         self._uploader = HFModelUploader(config, secrets)
