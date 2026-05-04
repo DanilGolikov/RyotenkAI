@@ -804,47 +804,77 @@ class TrainingMonitor(PipelineStage):
                 tail_lines=30,
             )
 
-        # --- Source 3: live SSH probes (kernel + GPU) ---
-        if self._ssh_client is None:
+        # --- Source 3: live HTTP diagnostics (kernel + GPU) ---
+        # Phase 2 transport-unification-v2: replaced 3 SSH ``dmesg`` /
+        # ``nvidia-smi`` probes with a single typed HTTP call. Per-block
+        # failures (CAP_SYSLOG missing, ``nvidia-smi`` not installed)
+        # surface inside ``response.<block>.error`` instead of silently
+        # being swallowed by the old loop.
+        self._dump_http_diagnostics()
+
+    def _dump_http_diagnostics(self) -> None:
+        """Postmortem diagnostics via ``GET /api/v1/diagnostics``.
+
+        Best-effort — any transport failure or missing JobClient is
+        logged at INFO and the postmortem continues without it.
+        """
+        client = getattr(self, "_client", None)
+        if client is None:
             logger.info(
-                "[MONITOR:POSTMORTEM] (no SSH client wired — kernel/GPU probes skipped)",
+                "[MONITOR:POSTMORTEM] (no JobClient wired — HTTP diagnostics skipped)",
             )
             return
 
-        # Kernel signals + GPU state. These cannot come from local
-        # log files — they are environment-level.
-        probes: list[tuple[str, str, int]] = [
-            (
-                "dmesg_kernel_signals",
-                "dmesg 2>/dev/null | grep -iE 'oom|kill|memory|nvrm|xid|nvidia' | tail -n 30",
-                10,
-            ),
-            ("dmesg_tail", "dmesg 2>/dev/null | tail -n 30", 10),
-            (
-                "nvidia_smi",
-                "nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total"
-                " --format=csv,noheader",
-                10,
-            ),
-        ]
-        for label, command, timeout in probes:
-            try:
-                ok, stdout, stderr = self._ssh_client.exec_command(
-                    command=command,
-                    silent=True,
-                    timeout=timeout,
-                )
-            except Exception as exc:  # noqa: BLE001 — defensive
-                logger.debug(f"[MONITOR:POSTMORTEM] {label} raised: {exc}")
-                continue
-            text = (stdout or "").strip()
-            if ok and text:
-                for line in text.splitlines():
-                    logger.info(f"[MONITOR:POSTMORTEM] {label}: {line}")
-            elif ok and not text:
+        import asyncio
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsBlockError,
+        )
+
+        try:
+            response = asyncio.run(client.get_diagnostics())
+        except Exception as exc:  # noqa: BLE001 — defensive postmortem path
+            logger.info(
+                f"[MONITOR:POSTMORTEM] diagnostics HTTP call failed: {exc!r}",
+            )
+            return
+
+        def _emit_lines(label: str, lines: list[str]) -> None:
+            if not lines:
                 logger.info(f"[MONITOR:POSTMORTEM] {label}: <<EMPTY>>")
-            elif stderr:
-                logger.debug(f"[MONITOR:POSTMORTEM] {label} stderr: {stderr.strip()}")
+                return
+            for line in lines:
+                logger.info(f"[MONITOR:POSTMORTEM] {label}: {line}")
+
+        if response.dmesg is not None:
+            if response.dmesg.error is not None:
+                logger.info(
+                    f"[MONITOR:POSTMORTEM] dmesg: <<{response.dmesg.error.value.upper()}>>",
+                )
+            else:
+                _emit_lines("dmesg_tail", response.dmesg.lines)
+        if response.kernel_signals is not None:
+            if response.kernel_signals.error is not None:
+                logger.info(
+                    f"[MONITOR:POSTMORTEM] dmesg_kernel_signals: "
+                    f"<<{response.kernel_signals.error.value.upper()}>>",
+                )
+            else:
+                _emit_lines("dmesg_kernel_signals", response.kernel_signals.matches)
+        if response.gpu is not None:
+            if response.gpu.error is not None:
+                logger.info(
+                    f"[MONITOR:POSTMORTEM] nvidia_smi: <<{response.gpu.error.value.upper()}>>",
+                )
+            elif not response.gpu.rows:
+                logger.info("[MONITOR:POSTMORTEM] nvidia_smi: <<EMPTY>>")
+            else:
+                for row in response.gpu.rows:
+                    logger.info(
+                        f"[MONITOR:POSTMORTEM] nvidia_smi: {row.name}, "
+                        f"{row.utilization_gpu_percent} %, "
+                        f"{row.memory_used_mib} MiB, "
+                        f"{row.memory_total_mib} MiB",
+                    )
 
     def _dump_local_log_tail(
         self,

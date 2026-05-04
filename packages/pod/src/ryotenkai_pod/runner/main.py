@@ -36,6 +36,7 @@ from fastapi import FastAPI
 
 from ryotenkai_shared.constants import RUNTIME_IMAGE
 from ryotenkai_pod.runner.api import control as control_api
+from ryotenkai_pod.runner.api import diagnostics as diagnostics_api
 from ryotenkai_pod.runner.api import events as events_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
@@ -449,6 +450,9 @@ def create_app(
     app.include_router(events_api.router, prefix=API_V1_PREFIX)
     # Phase 11.E — control-plane heartbeat surface
     app.include_router(control_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 transport-unification-v2 — diagnostics surface
+    # (replaces SSH dmesg/nvidia-smi probes from training_monitor).
+    app.include_router(diagnostics_api.router, prefix=API_V1_PREFIX)
 
     return app
 

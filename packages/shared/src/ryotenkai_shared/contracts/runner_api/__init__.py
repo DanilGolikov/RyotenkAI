@@ -10,6 +10,15 @@ Re-exports the full surface so callers can do
 """
 
 from .control import ControlHeartbeatRequest, ControlHeartbeatResponse
+from .diagnostics import (
+    DiagnosticsBlockError,
+    DiagnosticsInclude,
+    DiagnosticsResponse,
+    DmesgReport,
+    GpuReport,
+    GpuRow,
+    KernelSignalsReport,
+)
 from .events import (
     WS_CLOSE_GONE,
     WS_CLOSE_INVALID,
@@ -27,12 +36,19 @@ from .jobs import (
 __all__ = [
     "ControlHeartbeatRequest",
     "ControlHeartbeatResponse",
+    "DiagnosticsBlockError",
+    "DiagnosticsInclude",
+    "DiagnosticsResponse",
+    "DmesgReport",
     "EventResponse",
+    "GpuReport",
+    "GpuRow",
     "InternalEventRequest",
     "JobSnapshotResponse",
     "JobSpec",
     "JobStopAcceptedResponse",
     "JobSubmittedResponse",
+    "KernelSignalsReport",
     "WS_CLOSE_GONE",
     "WS_CLOSE_INVALID",
     "WS_CLOSE_NOT_FOUND",

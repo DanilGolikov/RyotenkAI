@@ -384,6 +384,62 @@ class JobClient:
             )
         return response.json() if response.content else {}  # type: ignore[no-any-return]
 
+    # --- Diagnostics surface (Phase 2 PR-2.1) ----------------------------
+
+    async def get_diagnostics(
+        self,
+        *,
+        include: list[str] | None = None,
+    ) -> "DiagnosticsResponse":
+        """``GET /api/v1/diagnostics`` — kernel + GPU postmortem snapshot.
+
+        Replaces the SSH ``dmesg`` / ``nvidia-smi`` probes that
+        ``training_monitor._postmortem_diagnostics`` used to issue.
+        The response is the typed
+        :class:`DiagnosticsResponse` from
+        :mod:`ryotenkai_shared.contracts.runner_api.diagnostics`;
+        per-block failures (CAP_SYSLOG missing, ``nvidia-smi`` not
+        installed) surface inside the response without an HTTP
+        error.
+
+        Args:
+            include: optional include list (``["dmesg", "gpu",
+                "kernel_signals"]``). ``None`` (default) requests
+                all blocks.
+
+        Raises:
+            APIException: any non-2xx response — typed via
+                :func:`parse_problem_details`.
+            JobClientError: transport-level failure where the
+                connection itself died (no httpx.Response to parse).
+        """
+        # Lazy import — keep contracts package optional in slim envs
+        # that don't pull DiagnosticsResponse types.
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsResponse,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        params: list[tuple[str, str]] = []
+        if include:
+            params = [("include", v) for v in include]
+
+        try:
+            response = await self._client.get(
+                "/api/v1/diagnostics", params=params,
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_diagnostics transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+
+        return DiagnosticsResponse.model_validate(response.json())
+
     # --- WebSocket event stream -------------------------------------------
 
     async def subscribe_events(
