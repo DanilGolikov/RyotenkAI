@@ -35,7 +35,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, Field
+
+# Phase 0 (transport-unification-v2): canonical DTO definitions live
+# in ``ryotenkai_shared.contracts.runner_api.control``. This module
+# re-exports them so existing import sites in this package keep
+# working; PR-0b migrates them to the canonical location.
+from ryotenkai_shared.contracts.runner_api.control import (
+    ControlHeartbeatRequest,
+    ControlHeartbeatResponse,
+)
 
 from ryotenkai_pod.runner.api.deps import get_heartbeat
 
@@ -43,42 +51,10 @@ if TYPE_CHECKING:
     from ryotenkai_pod.runner.heartbeat import MacHeartbeat
 
 
-__all__ = ["ControlHeartbeatRequest", "router"]
+__all__ = ["ControlHeartbeatRequest", "ControlHeartbeatResponse", "router"]
 
 
 router = APIRouter(prefix="/control", tags=["control"])
-
-
-class ControlHeartbeatRequest(BaseModel):
-    """Optional request body for ``POST /control/heartbeat``.
-
-    Mac orchestrators that ping at the recommended 30 s interval can
-    omit the body entirely — the runner falls back to the default
-    explicit TTL (:attr:`MacHeartbeat.EXPLICIT_HEARTBEAT_TTL_SECONDS`,
-    120 s). Operators experimenting with shorter / longer ping
-    cadences can override.
-    """
-
-    ttl_seconds: float | None = Field(
-        default=None,
-        gt=0.0,
-        description=(
-            "How long the heartbeat remains 'fresh' from this beat. "
-            "None ⇒ runner uses 120 s (Phase 11.E default, 2× the "
-            "recommended client ping interval)."
-        ),
-    )
-
-
-class ControlHeartbeatResponse(BaseModel):
-    """Acknowledgement returned to the Mac orchestrator.
-
-    Exposes the actual TTL applied + the current heartbeat alive
-    status so the client can sanity-check the round-trip.
-    """
-
-    ok: bool
-    ttl_seconds_applied: float
 
 
 @router.post("/heartbeat", response_model=ControlHeartbeatResponse)

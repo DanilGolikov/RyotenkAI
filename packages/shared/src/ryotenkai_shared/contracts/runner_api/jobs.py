@@ -1,37 +1,10 @@
-"""Wire schemas for the runner HTTP / WebSocket surface.
-
-Kept in one module so the OpenAPI shape is easy to scan from a
-single file. Phase 1 deliberately keeps schemas minimal — every
-field has a justification documented in its description so adding
-fields later requires explicit reasoning, not "felt obvious at the
-time".
-"""
+"""Job lifecycle DTOs — multipart submit + status snapshot + stop."""
 
 from __future__ import annotations
 
-from typing import Any
+from pydantic import Field
 
-from pydantic import BaseModel, ConfigDict, Field
-
-__all__ = [
-    "EventResponse",
-    "InternalEventRequest",
-    "JobSnapshotResponse",
-    "JobSpec",
-    "JobStopAcceptedResponse",
-    "JobSubmittedResponse",
-]
-
-
-class _StrictModel(BaseModel):
-    """Base — forbid extras so contract drift surfaces at parse time."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
-# ---------------------------------------------------------------------------
-# Submit / status
-# ---------------------------------------------------------------------------
+from ._strict import _StrictModel
 
 
 class JobSpec(_StrictModel):
@@ -136,27 +109,9 @@ class JobStopAcceptedResponse(_StrictModel):
     sequence: int
 
 
-# ---------------------------------------------------------------------------
-# Events
-# ---------------------------------------------------------------------------
-
-
-class EventResponse(_StrictModel):
-    """Single event as broadcast over WebSocket / replayed via REST."""
-
-    offset: int
-    timestamp: str
-    kind: str
-    payload: dict[str, Any]
-
-
-class InternalEventRequest(_StrictModel):
-    """Body of ``POST /internal/events`` — published by the trainer
-    subprocess via a HuggingFace ``TrainerCallback`` (Phase 3).
-
-    Loopback only — ``server.run`` binds to ``127.0.0.1`` so the
-    pod's SSH side cannot reach this endpoint.
-    """
-
-    kind: str = Field(min_length=1, max_length=64)
-    payload: dict[str, Any] = Field(default_factory=dict)
+__all__ = [
+    "JobSnapshotResponse",
+    "JobSpec",
+    "JobStopAcceptedResponse",
+    "JobSubmittedResponse",
+]

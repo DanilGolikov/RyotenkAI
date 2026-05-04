@@ -271,7 +271,7 @@ class JobClient:
 
         Args:
             job_spec: JSON-serialisable dict matching
-                :class:`src.runner.api.schemas.JobSpec` (the runner
+                :class:`ryotenkai_shared.contracts.runner_api.JobSpec` (the runner
                 validates with ``extra="forbid"``, so unknown fields
                 blow up at submit time, not at first event).
             plugins_payload: optional ZIP bytes — the packed
@@ -383,6 +383,244 @@ class JobClient:
                 f"stop failed: {response.status_code} {response.text[:300]}",
             )
         return response.json() if response.content else {}  # type: ignore[no-any-return]
+
+    # --- Diagnostics surface (Phase 2 PR-2.1) ----------------------------
+
+    async def get_diagnostics(
+        self,
+        *,
+        include: list[str] | None = None,
+    ) -> "DiagnosticsResponse":
+        """``GET /api/v1/diagnostics`` — kernel + GPU postmortem snapshot.
+
+        Replaces the SSH ``dmesg`` / ``nvidia-smi`` probes that
+        ``training_monitor._postmortem_diagnostics`` used to issue.
+        The response is the typed
+        :class:`DiagnosticsResponse` from
+        :mod:`ryotenkai_shared.contracts.runner_api.diagnostics`;
+        per-block failures (CAP_SYSLOG missing, ``nvidia-smi`` not
+        installed) surface inside the response without an HTTP
+        error.
+
+        Args:
+            include: optional include list (``["dmesg", "gpu",
+                "kernel_signals"]``). ``None`` (default) requests
+                all blocks.
+
+        Raises:
+            APIException: any non-2xx response — typed via
+                :func:`parse_problem_details`.
+            JobClientError: transport-level failure where the
+                connection itself died (no httpx.Response to parse).
+        """
+        # Lazy import — keep contracts package optional in slim envs
+        # that don't pull DiagnosticsResponse types.
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsResponse,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        params: list[tuple[str, str]] = []
+        if include:
+            params = [("include", v) for v in include]
+
+        try:
+            response = await self._client.get(
+                "/api/v1/diagnostics", params=params,
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_diagnostics transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+
+        return DiagnosticsResponse.model_validate(response.json())
+
+    async def check_imports(self, modules: list[str]) -> "ImportCheckReport":
+        """``POST /api/v1/runtime/import-check`` — per-module
+        verification with subprocess isolation. Replaces the SSH
+        ``runtime_check.py --check-source`` invocation in code_syncer.
+
+        Per-module failures surface as ``ImportResult.importable=False``
+        within a 200 response — the caller (CodeSyncer) decides what
+        to do with the failed list.
+
+        Raises:
+            APIException: 422 if the module list violates the regex
+                or size cap.
+            JobClientError: tunnel/network failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.runtime import (
+            ImportCheckReport,
+            ImportCheckRequest,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        body = ImportCheckRequest(modules=modules).model_dump(mode="json")
+        try:
+            response = await self._client.post(
+                "/api/v1/runtime/import-check", json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"check_imports transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return ImportCheckReport.model_validate(response.json())
+
+    async def upload_file(
+        self,
+        target: str,
+        local_path: "Path",
+        *,
+        timeout: float | None = None,
+    ) -> "FileUploadResponse":
+        """``POST /api/v1/files/upload`` — multipart streaming upload.
+
+        Replaces the legacy tar-pipe + SCP path the Mac-side
+        :class:`FileUploader` used. Memory-bounded: httpx streams
+        the multipart body in chunks rather than loading the file
+        whole. Retries are intentionally OUT of scope — failures
+        are surfaced typed and the caller decides.
+
+        Args:
+            target: ``FileUploadTarget`` enum value as a string
+                (``"config"``, ``"dataset"``, ``"community-plugins-zip"``).
+            local_path: source file on the Mac.
+            timeout: per-call override; large datasets may need
+                more than the default 30 s.
+
+        Raises:
+            APIException: typed via :func:`parse_problem_details`
+                — ``FILE_TOO_LARGE``, ``FILE_TARGET_INVALID``,
+                ``FILE_WRITE_FAILED``.
+            JobClientError: tunnel/network failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.files import FileUploadResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        path = local_path
+        if not path.is_file():
+            raise JobClientError(f"upload_file: {path} is not a file")
+
+        try:
+            with path.open("rb") as fh:
+                files = {
+                    "file": (path.name, fh, "application/octet-stream"),
+                }
+                data = {"target": target}
+                kwargs: dict[str, Any] = {"data": data, "files": files}
+                if timeout is not None:
+                    kwargs["timeout"] = timeout
+                response = await self._client.post(
+                    "/api/v1/files/upload", **kwargs,
+                )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"upload_file transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return FileUploadResponse.model_validate(response.json())
+
+    async def read_log(
+        self, name: str, *, offset: int = 0, limit_bytes: int = 8192,
+    ) -> "LogChunkResponse":
+        """``GET /api/v1/logs/{name}?offset=N&limit_bytes=M`` —
+        range read of a pod-side log file. Replaces the SSH ``stat``
+        + ``tail -c`` protocol from the legacy LogManager.
+
+        Args:
+            name: ``LogName`` enum value (``"trainer_stdio"`` or
+                ``"runner"``). Caller passes the string so the
+                client doesn't have to import the enum every time.
+            offset: starting byte position (0 for first read).
+            limit_bytes: cap on returned content size (default 8 KB,
+                runner enforces 10 MB max).
+
+        Raises:
+            APIException: typed via :func:`parse_problem_details` —
+                ``LOG_NOT_AVAILABLE``, ``LOG_NAME_INVALID``,
+                ``LOG_OFFSET_OUT_OF_RANGE``.
+            JobClientError: transport-level failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.logs import LogChunkResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get(
+                f"/api/v1/logs/{name}",
+                params={"offset": offset, "limit_bytes": limit_bytes},
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"read_log transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return LogChunkResponse.model_validate(response.json())
+
+    async def get_log_size(self, name: str) -> "LogSizeResponse":
+        """``GET /api/v1/logs/{name}/size`` — lightweight tail-poll
+        check. Cheaper than a zero-byte read."""
+        from ryotenkai_shared.contracts.runner_api.logs import LogSizeResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get(f"/api/v1/logs/{name}/size")
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_log_size transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return LogSizeResponse.model_validate(response.json())
+
+    async def get_resources(self) -> "ResourceSnapshot":
+        """``GET /api/v1/resources`` — instant GPU/CPU/RAM snapshot.
+
+        Pure HTTP poll — separate from the WS ``health_snapshot``
+        event so the Mac status line can render ``running | …``
+        deterministically every 15 s, even when the trainer dies in
+        the first 30 s before any WS event fires.
+
+        Raises:
+            APIException: any non-2xx response (typed via
+                :func:`parse_problem_details`).
+            JobClientError: transport-level failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.resources import (
+            ResourceSnapshot,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get("/api/v1/resources")
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_resources transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+
+        return ResourceSnapshot.model_validate(response.json())
 
     # --- WebSocket event stream -------------------------------------------
 

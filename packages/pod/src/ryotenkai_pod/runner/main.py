@@ -36,9 +36,15 @@ from fastapi import FastAPI
 
 from ryotenkai_shared.constants import RUNTIME_IMAGE
 from ryotenkai_pod.runner.api import control as control_api
+from ryotenkai_pod.runner.api import diagnostics as diagnostics_api
 from ryotenkai_pod.runner.api import events as events_api
+from ryotenkai_pod.runner.api import files as files_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
+from ryotenkai_pod.runner.api import logs as logs_api
+from ryotenkai_pod.runner.api import resources as resources_api
+from ryotenkai_pod.runner.api import runtime as runtime_api
+from ryotenkai_pod.runner.api.errors import EXCEPTION_HANDLERS
 from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.event_journal import (
@@ -278,6 +284,10 @@ def _make_lifespan(supervisor_factory: _SupervisorFactory):  # type: ignore[no-u
         app.state.supervisor = supervisor
         app.state.mlflow_relay = mlflow_relay
         app.state.health_reporter = health_reporter
+        # Phase 2 PR-2.3 (transport-unification-v2) — pod_layout
+        # stored so the /api/v1/logs/{name} endpoint can resolve
+        # LogName → pod-side path without re-deriving from cwd.
+        app.state.pod_layout = pod_layout
 
         # Phase 12.C — periodic journal health check. Emits
         # ``events_disk_pressure`` when the journal footprint passes
@@ -405,6 +415,11 @@ def create_app(
     semantics.
     """
     factory: _SupervisorFactory = supervisor_factory or Supervisor
+    # RP20 (transport-unification-v2): register exception handlers
+    # SYNCHRONOUSLY at construction time. If we deferred to lifespan
+    # startup the very first request after boot could race the
+    # registration and return a bare HTTPException body — defeating
+    # the whole point of the unified problem+json contract.
     app = FastAPI(
         title="RyotenkAI Runner",
         version=RUNTIME_IMAGE,
@@ -414,6 +429,7 @@ def create_app(
             "ssh -L tunnel."
         ),
         lifespan=_make_lifespan(factory),
+        exception_handlers=EXCEPTION_HANDLERS,
     )
 
     @app.get("/healthz", tags=["meta"])
@@ -442,6 +458,17 @@ def create_app(
     app.include_router(events_api.router, prefix=API_V1_PREFIX)
     # Phase 11.E — control-plane heartbeat surface
     app.include_router(control_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 transport-unification-v2 — diagnostics surface
+    # (replaces SSH dmesg/nvidia-smi probes from training_monitor).
+    app.include_router(diagnostics_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.2 — resource snapshot (poll-driven status line).
+    app.include_router(resources_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.3 — log range read (replaces SSH stat / tail -c).
+    app.include_router(logs_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.4 — multipart file upload (replaces tar-pipe SCP).
+    app.include_router(files_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.5 — runtime import-check (replaces SSH runtime_check.py).
+    app.include_router(runtime_api.router, prefix=API_V1_PREFIX)
 
     return app
 
