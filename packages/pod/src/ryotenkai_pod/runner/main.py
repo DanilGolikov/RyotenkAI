@@ -38,6 +38,7 @@ from ryotenkai_shared.constants import RUNTIME_IMAGE
 from ryotenkai_pod.runner.api import control as control_api
 from ryotenkai_pod.runner.api import diagnostics as diagnostics_api
 from ryotenkai_pod.runner.api import events as events_api
+from ryotenkai_pod.runner.api import files as files_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
 from ryotenkai_pod.runner.api import logs as logs_api
@@ -463,6 +464,8 @@ def create_app(
     app.include_router(resources_api.router, prefix=API_V1_PREFIX)
     # Phase 2 PR-2.3 — log range read (replaces SSH stat / tail -c).
     app.include_router(logs_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.4 — multipart file upload (replaces tar-pipe SCP).
+    app.include_router(files_api.router, prefix=API_V1_PREFIX)
 
     return app
 

@@ -25,6 +25,7 @@ from .events import (
     WS_CLOSE_NOT_FOUND,
     EventResponse,
 )
+from .files import FileUploadResponse, FileUploadTarget
 from .internal import InternalEventRequest
 from .logs import LogChunkResponse, LogName, LogSizeResponse
 from .resources import ResourceSnapshot
@@ -43,6 +44,8 @@ __all__ = [
     "DiagnosticsResponse",
     "DmesgReport",
     "EventResponse",
+    "FileUploadResponse",
+    "FileUploadTarget",
     "GpuReport",
     "GpuRow",
     "InternalEventRequest",

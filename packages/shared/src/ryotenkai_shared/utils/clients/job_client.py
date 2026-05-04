@@ -440,6 +440,64 @@ class JobClient:
 
         return DiagnosticsResponse.model_validate(response.json())
 
+    async def upload_file(
+        self,
+        target: str,
+        local_path: "Path",
+        *,
+        timeout: float | None = None,
+    ) -> "FileUploadResponse":
+        """``POST /api/v1/files/upload`` — multipart streaming upload.
+
+        Replaces the legacy tar-pipe + SCP path the Mac-side
+        :class:`FileUploader` used. Memory-bounded: httpx streams
+        the multipart body in chunks rather than loading the file
+        whole. Retries are intentionally OUT of scope — failures
+        are surfaced typed and the caller decides.
+
+        Args:
+            target: ``FileUploadTarget`` enum value as a string
+                (``"config"``, ``"dataset"``, ``"community-plugins-zip"``).
+            local_path: source file on the Mac.
+            timeout: per-call override; large datasets may need
+                more than the default 30 s.
+
+        Raises:
+            APIException: typed via :func:`parse_problem_details`
+                — ``FILE_TOO_LARGE``, ``FILE_TARGET_INVALID``,
+                ``FILE_WRITE_FAILED``.
+            JobClientError: tunnel/network failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.files import FileUploadResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        path = local_path
+        if not path.is_file():
+            raise JobClientError(f"upload_file: {path} is not a file")
+
+        try:
+            with path.open("rb") as fh:
+                files = {
+                    "file": (path.name, fh, "application/octet-stream"),
+                }
+                data = {"target": target}
+                kwargs: dict[str, Any] = {"data": data, "files": files}
+                if timeout is not None:
+                    kwargs["timeout"] = timeout
+                response = await self._client.post(
+                    "/api/v1/files/upload", **kwargs,
+                )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"upload_file transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return FileUploadResponse.model_validate(response.json())
+
     async def read_log(
         self, name: str, *, offset: int = 0, limit_bytes: int = 8192,
     ) -> "LogChunkResponse":
