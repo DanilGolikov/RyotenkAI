@@ -1,0 +1,82 @@
+# RunPod cloud GPU provider manifest.
+#
+# Single source of truth for the registry (see
+# packages/providers/src/ryotenkai_providers/registry.py). Capability
+# flags here MUST match the ``IPauseResumeProvider`` /
+# ``IRecoveryProbeProvider`` / ``ICapacityErrorClassifier`` /
+# ``ITerminalActionProvider`` Protocol membership of RunPodProvider —
+# enforced by the ``check_manifests.py`` drift detector (PR-2) plus
+# the pytest invariant suite.
+#
+# When changing a flag here you almost always need to update the Python
+# side too. Most common: adding a new capability requires (a) a new
+# Protocol declaration in interfaces.py, (b) the cap flag here, (c)
+# the matching method override on RunPodProvider, (d) a parametrized
+# row in test_factory_capability_invariant.py.
+
+schema_version = 1
+
+[provider]
+id          = "runpod"
+name        = "RunPod"
+version     = "1.0.0"
+roles       = ["training", "inference"]
+description = "Cloud GPU pods via RunPod GraphQL API."
+author      = "RyotenkAI Core"
+stability   = "stable"
+
+[capabilities]
+provider_type                     = "cloud"
+is_local                          = false
+supports_multi_gpu                = true
+supports_spot_instances           = false
+supports_lifecycle_actions        = true
+has_pause_resume                  = true
+supports_recovery_probe           = true   # RunPod can probe + resume on lost runner connection
+supports_capacity_error_detection = true   # is_capacity_error() classifies GraphQL errors
+supports_log_download             = true   # SCP-based log fetch via RunPodAPIClient
+volume_kind                       = "persistent"
+runner_workspace_root             = "/workspace"
+# max_runtime_hours = null  (unlimited)
+
+# Mac-side training-role IGPUProvider implementation.
+[entry_points.training]
+module = "ryotenkai_providers.runpod.training.provider"
+class  = "RunPodProvider"
+
+# Mac-side inference-role IInferenceProvider implementation.
+[entry_points.inference]
+module = "ryotenkai_providers.runpod.inference.pods.provider"
+class  = "RunPodPodInferenceProvider"
+
+# In-pod IPodLifecycleClient — required because
+# capabilities.supports_lifecycle_actions = true. Manifest schema
+# validator enforces parity (catches the audit's "two sources of truth"
+# risk where a Mac-side flag drifts from the pod-side dict).
+[entry_points.pod_lifecycle_client]
+module = "ryotenkai_providers.runpod.runtime.lifecycle_client"
+class  = "RunPodPodLifecycleClient"
+
+# Cheap-bypass classmethod for the resume service — avoids parsing the
+# full provider config block when only lifecycle methods are needed.
+[entry_points.resume_factory]
+module       = "ryotenkai_providers.runpod.training.provider"
+classmethod  = "RunPodProvider.from_resume_metadata"
+
+# Per-provider Pydantic config schema. The PipelineConfig validator
+# runs ``RunPodProviderConfig.model_validate(providers.runpod)`` at
+# config load time so YAML typos surface BEFORE any pipeline stage.
+[entry_points.config_schema]
+module = "ryotenkai_providers.runpod.config"
+class  = "RunPodProviderConfig"
+
+# Pre-factory secret declaration. The startup validator iterates over
+# this list (via registry.required_secrets) — replaces the legacy
+# ``if provider == PROVIDER_RUNPOD: return ("RUNPOD_API_KEY",)``
+# string-dispatch helper.
+[[required_env]]
+name               = "RUNPOD_API_KEY"
+description        = "RunPod GraphQL API key. Required for pod create/terminate/probe."
+optional           = false
+secret             = true
+required_when_role = "training"
