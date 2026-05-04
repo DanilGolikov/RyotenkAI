@@ -369,6 +369,13 @@ root_packages = [
     "ryotenkai_providers",
     "ryotenkai_control",
 ]
+# Phase 3 PR-3.2 (transport-unification-v2): exclude
+# ``if TYPE_CHECKING: import …`` from the import graph. Otherwise
+# ``ryotenkai_providers.training.interfaces`` types-only-imports
+# ``SSHClient`` for Protocol annotations and ANY runtime caller of
+# the Protocol picks up that edge transitively, defeating the
+# RUNTIME-only contract.
+exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
 name = "shared has no internal deps (must be leaf)"
@@ -427,3 +434,30 @@ name = "runner subpackage must not import trainer subpackage"
 type = "forbidden"
 source_modules = ["ryotenkai_pod.runner"]
 forbidden_modules = ["ryotenkai_pod.trainer"]
+
+# ----------------------------------------------------------------------
+# Transport-unification-v2 (Phase 3 PR-3.2): SSHClient import boundary.
+#
+# After Phase 2 added the runtime HTTP endpoints (/diagnostics,
+# /resources, /logs, /files/upload, /runtime/import-check) the
+# Mac-side runtime path no longer needs SSH. Bootstrap modules
+# (runner_launcher, code_syncer, dependency_installer, file_uploader,
+# connection_test) AND pod→Mac data-pull modules (hf_uploader,
+# metrics_buffer_retriever) are out of scope per plan §10 — see
+# docs/architecture/SSH_SURFACE.md for the canonical allowlist.
+#
+# This contract forbids ssh_client imports from the RUNTIME-only
+# modules that have been migrated to HTTP. Adding more runtime
+# modules to ``source_modules`` as future migrations land tightens
+# the boundary one notch at a time.
+#
+# RP13 mitigation companion: this contract catches imports;
+# packages/control/tests/sentinel/test_no_runtime_ssh_exec_command.py
+# catches runtime call expressions importlinter cannot see.
+[[tool.importlinter.contracts]]
+name = "runtime-only modules must not import SSHClient"
+type = "forbidden"
+source_modules = [
+    "ryotenkai_control.pipeline.stages.training_monitor",
+]
+forbidden_modules = ["ryotenkai_shared.utils.ssh_client"]

@@ -46,7 +46,13 @@ from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, Sta
 from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, Result, TrainingError
-from ryotenkai_shared.utils.ssh_client import SSHClient
+# Phase 3 PR-3.2 (transport-unification-v2): SSHClient removed from
+# this module. Training monitor's runtime path is HTTP-only after
+# PR-2.3 migrated LogManager → LogFetcher; the third tuple slot of
+# ``_build_log_manager_from_context`` is always None, so the
+# ``self._ssh_client`` field below holds None too. Kept as a typed
+# attribute for shape compatibility with downstream cleanup code
+# until that branch is also removed in PR-3.3.
 
 # Final-flush deadline. Pod-side training.log can be hundreds of KB
 # even for short runs; 60 s mirrors LogManager's per-command timeout.
@@ -179,7 +185,12 @@ class TrainingMonitor(PipelineStage):
         # Periodic log download — captured here so :meth:`cleanup`
         # can close the raw pod-SSH connection alongside the tunnel.
         # Single-node / mock flows keep both as ``None``.
-        self._ssh_client: SSHClient | None = None
+        # ``object | None`` (not ``SSHClient | None``) because the
+        # SSHClient import is gone from this module after Phase 3
+        # PR-3.2. The slot is reserved for the deployer context's
+        # third tuple element (legacy bootstrap SSH handle) — but
+        # after PR-2.3 the third element is always None.
+        self._ssh_client: object | None = None
         self._log_manager: LogFetcher | None = None
         # PR-B — second LogManager for runner.log (uvicorn / pre-import
         # crashes). Shares the SSH ControlMaster with ``_log_manager``.
@@ -512,7 +523,7 @@ class TrainingMonitor(PipelineStage):
     def _build_log_manager_from_context(
         self,
         deployer_context: dict[str, Any],
-    ) -> tuple[LogFetcher | None, LogFetcher | None, "SSHClient | None"]:
+    ) -> tuple[LogFetcher | None, LogFetcher | None, object | None]:
         """Construct HTTP-backed :class:`LogFetcher` instances for both
         ``trainer.stdio.log`` and ``runner.log``.
 
