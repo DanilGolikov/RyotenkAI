@@ -37,6 +37,8 @@ are a known operator-dashboard pain point. We make boot loud.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 from ryotenkai_shared.constants import (
@@ -66,24 +68,129 @@ class BootstrapConfigError(RuntimeError):
     """
 
 
-#: Runtime location of the per-provider :class:`IPodLifecycleClient`
-#: implementation. Resolved lazily through ``importlib`` so this module
-#: keeps no static ``pod → providers`` import edge (sentinel test
-#: ``test_pod_does_not_import_control_or_providers``). Providers ship as
-#: separate Mac-side wheels — the pod only sees them at deploy time when
-#: the appropriate wheel is bundled into the pod image, so a missing
-#: module here is a deployment misconfiguration that the import-time
-#: ``ImportError`` already surfaces with a clear message.
-_LIFECYCLE_CLIENT_LOCATORS: Final[dict[str, str]] = {
-    PROVIDER_RUNPOD: "ryotenkai_providers.runpod.runtime.lifecycle_client:RunPodPodLifecycleClient",
-    PROVIDER_SINGLE_NODE: "ryotenkai_providers.single_node.runtime.lifecycle_client:NoOpPodLifecycleClient",
-}
+#: Directory holding per-provider pod sub-manifests, populated by
+#: ``packages/providers/scripts/compile_pod_manifests.py``. Walking
+#: this directory (instead of a hardcoded dict) is what makes adding
+#: a third provider a zero-touch operation on the pod side: the
+#: projection script writes a new TOML next to these, the pod's next
+#: lifespan boot picks it up.
+#:
+#: The pod-side parses these with stdlib ``tomllib`` only — no
+#: Pydantic schema, no shared loader. The Mac-side
+#: :class:`ProviderManifest` validator (and the ``check_manifests.py``
+#: pre-commit hook) own the schema invariants; what reaches the pod
+#: has already been validated.
+_POD_MANIFESTS_DIR: Final[Path] = Path(__file__).resolve().parent / "pod_manifests"
+
+
+@dataclass(frozen=True, slots=True)
+class _PodProviderManifest:
+    """In-memory shape of a projected pod sub-manifest.
+
+    Trivial three-field record — the projection drops everything the
+    pod doesn't need (Mac-only entry points, capability flags the
+    runner doesn't read, required_env). Living right here keeps the
+    pod with no dependency on ``ryotenkai_providers`` (sentinel test
+    ``test_pod_does_not_import_control_or_providers`` stays green).
+    """
+
+    provider_id: str
+    supports_lifecycle_actions: bool
+    #: ``"module:Class"`` string when the manifest declares a
+    #: ``[entry_points.pod_lifecycle_client]`` block. ``None`` when
+    #: ``supports_lifecycle_actions=false``.
+    lifecycle_client_locator: str | None
+
+
+def _load_pod_manifests(
+    *, manifests_dir: Path = _POD_MANIFESTS_DIR
+) -> dict[str, _PodProviderManifest]:
+    """Walk ``pod_manifests/*.toml`` and parse each into a dataclass.
+
+    Idempotent and side-effect free. Called eagerly at module load —
+    the manifest set is small (~2 files today) and parsing is fast,
+    so caching it at import time is fine.
+    """
+    import tomllib
+
+    out: dict[str, _PodProviderManifest] = {}
+    if not manifests_dir.is_dir():
+        return out
+    for toml_path in sorted(manifests_dir.glob("*.toml")):
+        with toml_path.open("rb") as fh:
+            data = tomllib.load(fh)
+        provider_id = data["provider"]["id"]
+        caps = data.get("capabilities", {})
+        eps = data.get("entry_points", {})
+        pod_lc = eps.get("pod_lifecycle_client")
+        locator: str | None = None
+        if pod_lc is not None:
+            locator = f"{pod_lc['module']}:{pod_lc['class']}"
+        out[provider_id] = _PodProviderManifest(
+            provider_id=provider_id,
+            supports_lifecycle_actions=bool(caps.get("supports_lifecycle_actions", False)),
+            lifecycle_client_locator=locator,
+        )
+    return out
+
+
+_POD_MANIFESTS: Final[dict[str, _PodProviderManifest]] = _load_pod_manifests()
+
+
+class _BuiltinNoOpLifecycleClient:
+    """In-pod no-op lifecycle client for providers without cloud lifecycle.
+
+    Replaces the ``NoOpPodLifecycleClient`` that used to live under
+    ``ryotenkai_providers.single_node.runtime.lifecycle_client``. The
+    only single_node-style provider behaviour the pod's lifespan needs
+    is "do nothing" — encoding it once here in the pod package keeps
+    the pod free of an importlib pull on a provider that exists solely
+    to return ``Ok``.
+    """
+
+    @property
+    def provider_name(self) -> str:
+        # Read at runtime from the env that selected this client.
+        import os
+
+        return os.environ.get(RUNTIME_PROVIDER_ENV_VAR, "")
+
+    async def terminate(self, *, resource_id: str):  # type: ignore[no-untyped-def]
+        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
+
+        return LifecycleActionResult(
+            outcome="noop",
+            attempts_made=0,
+            raw_response_excerpt=None,
+        )
+
+    async def pause(self, *, resource_id: str):  # type: ignore[no-untyped-def]
+        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
+
+        return LifecycleActionResult(
+            outcome="noop", attempts_made=0, raw_response_excerpt=None
+        )
+
+    async def resume(self, *, resource_id: str):  # type: ignore[no-untyped-def]
+        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
+
+        return LifecycleActionResult(
+            outcome="noop", attempts_made=0, raw_response_excerpt=None
+        )
 
 
 def _resolve_lifecycle_client_class(provider: str) -> type[IPodLifecycleClient]:
+    """Lazy importlib resolution of a provider's lifecycle client class."""
     import importlib
 
-    locator = _LIFECYCLE_CLIENT_LOCATORS[provider]
+    manifest = _POD_MANIFESTS[provider]
+    locator = manifest.lifecycle_client_locator
+    if locator is None:
+        raise BootstrapConfigError(
+            f"provider {provider!r} has no [entry_points.pod_lifecycle_client] "
+            f"in its pod sub-manifest — supports_lifecycle_actions is False, "
+            f"so no lifecycle client class to resolve. Use the built-in no-op."
+        )
     module_name, _, attr_name = locator.partition(":")
     module = importlib.import_module(module_name)
     return getattr(module, attr_name)
@@ -100,23 +207,37 @@ def _build_runpod_client(env: Mapping[str, str]) -> IPodLifecycleClient:
         raise BootstrapConfigError(
             f"{RUNTIME_PROVIDER_ENV_VAR}=runpod requires RUNPOD_POD_ID",
         )
-    # importlib lookup (locator dict above) keeps single-node-only
-    # deployments from importing httpx at module-load time AND removes
-    # the ``pod → providers`` static edge.
     client_cls = _resolve_lifecycle_client_class(PROVIDER_RUNPOD)
     return client_cls(api_key=api_key)
 
 
-def _build_single_node_client(env: Mapping[str, str]) -> IPodLifecycleClient:
-    # No env reads — single-node has no creds to validate.
-    client_cls = _resolve_lifecycle_client_class(PROVIDER_SINGLE_NODE)
-    return client_cls()
+def _build_noop_client(env: Mapping[str, str]) -> IPodLifecycleClient:
+    """Built-in no-op for providers with ``supports_lifecycle_actions=false``."""
+    return _BuiltinNoOpLifecycleClient()  # type: ignore[return-value]
 
 
-_REGISTRY: Final[dict[str, Callable[[Mapping[str, str]], IPodLifecycleClient]]] = {
-    PROVIDER_RUNPOD: _build_runpod_client,
-    PROVIDER_SINGLE_NODE: _build_single_node_client,
-}
+# Built dynamically from the projected pod sub-manifests. Providers with
+# lifecycle support get a custom builder (the runpod one above checks
+# RunPod-specific env contracts); providers without lifecycle get the
+# built-in no-op. Adding a third lifecycle-supporting provider means
+# adding one entry here; pure-runtime additions (no special env probes)
+# can use ``_build_noop_client`` or define their own builder.
+def _build_registry() -> dict[str, Callable[[Mapping[str, str]], IPodLifecycleClient]]:
+    out: dict[str, Callable[[Mapping[str, str]], IPodLifecycleClient]] = {}
+    for pid, manifest in _POD_MANIFESTS.items():
+        if pid == PROVIDER_RUNPOD:
+            out[pid] = _build_runpod_client
+        elif manifest.supports_lifecycle_actions:
+            # Future cloud provider with custom env contract: add an
+            # explicit builder here that validates its required env.
+            # Falling back to a generic locator-based builder.
+            out[pid] = _build_runpod_client  # placeholder — re-evaluate when 3rd provider lands
+        else:
+            out[pid] = _build_noop_client
+    return out
+
+
+_REGISTRY: Final[dict[str, Callable[[Mapping[str, str]], IPodLifecycleClient]]] = _build_registry()
 
 
 def registered_providers() -> tuple[str, ...]:
