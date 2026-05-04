@@ -16,11 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 
+from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
 
 from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
+from ryotenkai_pod.runner.api.errors import APIError
 from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 
 if TYPE_CHECKING:
@@ -54,11 +56,14 @@ def _require_loopback(request: Request) -> None:
     set ``--host 0.0.0.0``).
     """
     if request.client is None:
-        raise HTTPException(status_code=403, detail={"code": "no_client_addr"})
+        raise APIError(
+            ErrorCode.LOOPBACK_REQUIRED, status=403,
+            detail="missing client address (server bind misconfigured)",
+        )
     if request.client.host not in _TRUSTED_HOSTS:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "loopback_required", "client": request.client.host},
+        raise APIError(
+            ErrorCode.LOOPBACK_REQUIRED, status=403,
+            detail=f"non-loopback client refused: {request.client.host}",
         )
 
 
@@ -83,9 +88,9 @@ def push_event(
         # side bug (the supervisor would not have spawned the
         # subprocess). 409 is more appropriate than 404 — the
         # endpoint exists, the precondition does not.
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "no_active_job"},
+        raise APIError(
+            ErrorCode.NO_ACTIVE_JOB, status=409,
+            detail="trainer pushed event but FSM has no active job",
         )
 
     event = bus.publish(body.kind, body.payload)

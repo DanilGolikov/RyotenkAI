@@ -30,9 +30,10 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import ValidationError
 
+from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api import (
     JobSnapshotResponse,
     JobSpec,
@@ -46,6 +47,7 @@ from ryotenkai_pod.runner.api.deps import (
     get_plugin_unpacker,
     get_supervisor,
 )
+from ryotenkai_pod.runner.api.errors import APIError
 from ryotenkai_pod.runner.plugin_unpacker import PluginUnpackError
 from ryotenkai_pod.runner.state import (
     JobState,
@@ -95,9 +97,9 @@ def _get_active_or_404(fsm: JobLifecycleFSM, job_id: str) -> None:
     """Raise 404 if the FSM is empty or holds a different job."""
     snap = fsm.current()
     if snap is None or snap.job_id != job_id:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "job_not_found", "job_id": job_id},
+        raise APIError(
+            ErrorCode.JOB_NOT_FOUND, status=404,
+            detail=f"job_id={job_id!r} is not the active job",
         )
 
 
@@ -134,9 +136,9 @@ async def submit_job(
     try:
         spec = JobSpec.model_validate(json.loads(job_spec))
     except (ValidationError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_job_spec", "errors": str(exc)},
+        raise APIError(
+            ErrorCode.JOB_SPEC_INVALID, status=422,
+            detail=f"job_spec failed validation: {exc}",
         ) from exc
 
     # Read + extract the plugins payload BEFORE spawning the trainer:
@@ -149,9 +151,9 @@ async def submit_job(
     try:
         unpack_result = plugin_unpacker.unpack(payload_bytes)
     except PluginUnpackError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "plugin_unpack_failed", "message": str(exc)},
+        raise APIError(
+            ErrorCode.PLUGIN_UNPACK_FAILED, status=422,
+            detail=str(exc),
         ) from exc
 
     bus.publish(
@@ -184,23 +186,17 @@ async def submit_job(
         # Either a trainer is still running, or the FSM holds an
         # active non-terminal job.
         current = fsm.current()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "job_in_progress",
-                "current_state": current.state.value if current else "unknown",
-                "message": str(exc),
-            },
+        state_label = current.state.value if current else "unknown"
+        raise APIError(
+            ErrorCode.JOB_IN_PROGRESS, status=409,
+            detail=f"current_state={state_label}: {exc}",
         ) from exc
     except (FileNotFoundError, OSError) as exc:
         # The command can't be exec()'d. ``submit_and_spawn`` already
         # rolled the FSM to ``failed`` and emitted ``spawn_failed``.
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "spawn_failed",
-                "message": str(exc),
-            },
+        raise APIError(
+            ErrorCode.SPAWN_FAILED, status=422,
+            detail=str(exc),
         ) from exc
 
     snap = fsm.current()
@@ -270,13 +266,13 @@ async def stop_job(
     # 202 that secretly did nothing.
     snap = fsm.current()
     if snap is None or snap.state != JobState.RUNNING:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "stop_not_allowed",
-                "current_state": snap.state.value if snap is not None else "unknown",
-                "message": "stop only valid from running state",
-            },
+        state_label = snap.state.value if snap is not None else "unknown"
+        raise APIError(
+            ErrorCode.STOP_NOT_ALLOWED, status=409,
+            detail=(
+                f"stop only valid from running state, "
+                f"current_state={state_label}"
+            ),
         )
 
     # ``request_stop`` is split: the FSM transition + SIGTERM happen
