@@ -114,7 +114,26 @@ class InferenceArtifacts:
 
 @runtime_checkable
 class IInferenceProvider(Protocol):
-    """Unified interface for inference providers."""
+    """Unified interface for inference providers.
+
+    Provider implementations inherit
+    :class:`ryotenkai_providers.training.interfaces.ProviderBase` for the
+    default impl of identity accessors (``provider_id``,
+    ``provider_name``, ``provider_type``); they structurally conform to
+    this Protocol via the inference-specific methods below.
+
+    Note: the :meth:`get_capabilities` method on this Protocol returns an
+    :class:`InferenceCapabilities` (inference-specific surface), distinct
+    from :class:`ProviderCapabilities` returned by
+    :meth:`IGPUProvider.get_capabilities`. A provider that fulfils both
+    roles has separate inference and training classes — each with its
+    own ``get_capabilities`` impl returning the role-specific shape.
+    """
+
+    @property
+    def provider_id(self) -> str:
+        """Canonical id from manifest (e.g. ``"runpod"``)."""
+        ...
 
     @property
     def provider_name(self) -> str: ...

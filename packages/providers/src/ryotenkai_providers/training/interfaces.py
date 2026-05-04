@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ryotenkai_shared.pipeline_context import RunContext
@@ -239,6 +239,21 @@ class ProviderCapabilities:
     :class:`GPUDeployer`. Single_node = False (logs already on
     host filesystem); RunPod = True."""
 
+    supports_recovery_probe: bool = False
+    """True iff the provider can probe + recover an existing resource
+    after the runner connection was lost. Pairs 1:1 with
+    :class:`IRecoveryProbeProvider` membership. Replaces the hardcoded
+    ``self._provider_name != "runpod"`` skip in
+    :mod:`ryotenkai_control.pipeline.stages.training_monitor` —
+    callers gate on this flag instead of comparing names."""
+
+    supports_capacity_error_detection: bool = False
+    """True iff the provider can classify backend error messages as
+    transient capacity exhaustion vs hard failures. Pairs 1:1 with
+    :class:`ICapacityErrorClassifier` membership. Replaces the
+    ``if metadata.provider == PROVIDER_RUNPOD: is_capacity_error_message``
+    branch in :mod:`ryotenkai_control.pipeline.launch.resume_service`."""
+
 
 @dataclass(frozen=True)
 class TrainingScriptHooks:
@@ -266,6 +281,166 @@ class TrainingScriptHooks:
         return cls()
 
 
+class ProviderBase:
+    """Concrete base class that holds manifest-derived identity + capabilities.
+
+    Provider implementations (``RunPodProvider``, ``SingleNodeProvider``,
+    inference-side equivalents) inherit this base for the **default
+    implementation** of the four shared accessors — ``provider_id``,
+    ``provider_name``, ``provider_type``, ``get_capabilities()`` — so the
+    same identity+capability data does not have to be hand-coded in every
+    provider class. The `ProviderRegistry` sets the four ``_manifest_*``
+    ``ClassVar`` slots when it loads ``provider.toml``; the properties
+    read from them.
+
+    Why a base class (not a Protocol) for the shared bits:
+
+    * The four accessors have an obvious **default implementation**
+      (read the manifest-set ClassVar). A Protocol can only declare; a
+      concrete base can also implement. Removing the duplicated stubs
+      across :class:`IGPUProvider`, :class:`IInferenceProvider`,
+      :class:`IPodLifecycleClient` is a DRY win — Phase B's audit found
+      `provider_name` declared three times in three Protocols.
+
+    * Protocols stay (see :class:`IGPUProvider` /
+      :class:`IInferenceProvider` below) — they describe the role
+      contract for ``isinstance`` checks and mypy structural typing.
+      Provider classes inherit ``ProviderBase`` AND structurally
+      conform to the Protocol of their role. The two responsibilities
+      (default impl vs declarative interface) are kept separate.
+
+    The four ``_manifest_*`` slots are ``ClassVar`` so a provider class
+    has the right identity even before any instance is constructed — the
+    registry validators need to compare ``cls.provider_id`` to manifest
+    id without spinning up a real provider.
+
+    Test fixtures may set the ClassVars directly to bypass the registry
+    (mirrors the ``object.__new__()`` pattern in
+    ``test_factory_capability_invariant.py``).
+    """
+
+    #: Canonical id from manifest's ``[provider].id``. Set by the
+    #: registry at load time. Empty string = "not registered" (fail loud
+    #: in :meth:`get_capabilities` if accessed in that state).
+    _manifest_provider_id: ClassVar[str] = ""
+
+    #: Display name from manifest's ``[provider].name``.
+    _manifest_provider_name: ClassVar[str] = ""
+
+    #: ``"local"`` or ``"cloud"`` from manifest's ``[capabilities].provider_type``.
+    _manifest_provider_type: ClassVar[str] = ""
+
+    #: Frozen ProviderCapabilities derived from the manifest's
+    #: ``[capabilities]`` block, set by the registry. ``None`` means the
+    #: provider was constructed outside the registry (test fixture, scaffold);
+    #: :meth:`get_capabilities` raises with an actionable error in that case.
+    _manifest_capabilities: ClassVar["ProviderCapabilities | None"] = None
+
+    @property
+    def provider_id(self) -> str:
+        """Canonical id from manifest. Empty string = unregistered."""
+        return type(self)._manifest_provider_id
+
+    @property
+    def provider_name(self) -> str:
+        """Display name from manifest's ``[provider].name``."""
+        return type(self)._manifest_provider_name
+
+    @property
+    def provider_type(self) -> str:
+        """``"local"`` or ``"cloud"`` from manifest's ``[capabilities].provider_type``."""
+        return type(self)._manifest_provider_type
+
+    def get_capabilities(self) -> "ProviderCapabilities":
+        """Return the manifest-derived capabilities snapshot.
+
+        The registry attaches this at load time. Hand-overriding is
+        forbidden by the invariant test (single source of truth =
+        manifest, not Python). Test fixtures that bypass the registry
+        must set ``_manifest_capabilities`` on the class explicitly.
+        """
+        caps = type(self)._manifest_capabilities
+        if caps is None:
+            raise RuntimeError(
+                f"{type(self).__name__} has no manifest capabilities attached. "
+                f"Provider classes must be registered through ProviderRegistry "
+                f"before construction (it sets _manifest_capabilities from the "
+                f"provider.toml). Test fixtures may set the ClassVar directly."
+            )
+        return caps
+
+
+@runtime_checkable
+class IRecoveryProbeProvider(Protocol):
+    """Capability-gated Protocol: provider can probe + recover after runner-connection loss.
+
+    Phase 14.D+F. Replaces the hardcoded ``self._provider_name != "runpod"``
+    skip in
+    :mod:`ryotenkai_control.pipeline.stages.training_monitor` (line 682
+    pre-refactor). The training monitor gates the recovery loop on
+    ``isinstance(provider, IRecoveryProbeProvider)`` instead of comparing
+    names — a third cloud provider with similar GraphQL-probe semantics
+    just inherits this Protocol and the recovery path lights up
+    automatically.
+
+    Two-source-of-truth invariant (mirrors :class:`ITerminalActionProvider`):
+        :attr:`ProviderCapabilities.supports_recovery_probe` MUST equal
+        ``isinstance(provider, IRecoveryProbeProvider)``. Verified by the
+        check_manifests script and the pytest invariant suite.
+
+    Recovery semantics: a successful ``attempt_recovery`` returns the
+    fresh :class:`ProviderStatus` (typically ``CONNECTED`` after the pod
+    woke up). Caller resumes the runner SSH session against the recovered
+    resource.
+    """
+
+    def attempt_recovery(
+        self, *, resource_id: str,
+    ) -> Result[ProviderStatus, ProviderError]:
+        """Probe the resource and try to bring it back online.
+
+        Idempotent — already-running resources return ``Ok(CONNECTED)``
+        without side effects. Caller is responsible for the retry budget;
+        this method is ONE attempt.
+
+        Args:
+            resource_id: Provider-specific resource identifier
+                (e.g. RunPod ``pod_id``).
+        """
+        ...
+
+
+@runtime_checkable
+class ICapacityErrorClassifier(Protocol):
+    """Capability-gated Protocol: provider can classify backend error messages.
+
+    Phase 14.D+F. Replaces the
+    ``if metadata.provider == PROVIDER_RUNPOD: is_capacity_error_message``
+    branch in :mod:`ryotenkai_control.pipeline.launch.resume_service`
+    (line 374 pre-refactor). The resume service asks the provider to
+    classify a backend error message; the provider returns ``True`` if
+    it's transient capacity exhaustion (retry-worthy) vs a hard failure.
+
+    Two-source-of-truth invariant:
+        :attr:`ProviderCapabilities.supports_capacity_error_detection`
+        MUST equal ``isinstance(provider, ICapacityErrorClassifier)``.
+        Verified by the same suite as the other capability Protocols.
+
+    Capacity errors are a cloud-fleet concept; the manifest schema
+    rejects ``supports_capacity_error_detection=true`` for
+    ``provider_type="local"``. Local hosts never run out of "capacity"
+    (their GPU is dedicated).
+    """
+
+    def is_capacity_error(self, message: str) -> bool:
+        """Return True iff the message indicates transient capacity exhaustion.
+
+        Caller (resume service) treats True as a retry-worthy signal
+        and returns ``False`` from anything else (hard failure → stop).
+        """
+        ...
+
+
 @runtime_checkable
 class IGPUProvider(Protocol):
     """
@@ -281,10 +456,16 @@ class IGPUProvider(Protocol):
         3. ... deploy training via SSH ...
         4. disconnect() → cleanup
 
-    Example:
-        provider = GPUProviderFactory.create(config, secrets)
+    Provider implementations inherit :class:`ProviderBase` for the
+    default impl of identity/capability accessors (``provider_id``,
+    ``provider_name``, ``provider_type``, ``get_capabilities``); they
+    structurally conform to this Protocol via their role-specific
+    methods (``connect``, ``check_gpu``, etc.).
 
-        result = provider.connect()
+    Example:
+        provider = registry.create_training("runpod", ctx).unwrap()
+
+        result = provider.connect(run=run_ctx)
         if result.is_err():
             logger.error(f"Connection failed: {result.unwrap_err()}")
             return
@@ -296,9 +477,19 @@ class IGPUProvider(Protocol):
         provider.disconnect()
     """
 
+    # Identity + capability accessors — provided as default impl by
+    # ``ProviderBase`` (which provider classes inherit). Listed here so
+    # ``runtime_checkable`` ``isinstance(p, IGPUProvider)`` checks see
+    # them on the protocol surface.
+
+    @property
+    def provider_id(self) -> str:
+        """Canonical id from manifest (e.g. ``"runpod"``, ``"single_node"``)."""
+        ...
+
     @property
     def provider_name(self) -> str:
-        """Human-readable provider name (e.g., 'single_node', 'runpod')."""
+        """Display name from manifest (e.g. ``"RunPod"``)."""
         ...
 
     @property
@@ -621,8 +812,11 @@ ProviderFactory = type[IGPUProvider]
 __all__ = [
     "AvailabilityVerdict",
     "GPUInfo",
+    "ICapacityErrorClassifier",
     "IGPUProvider",
+    "IRecoveryProbeProvider",
     "ITerminalActionProvider",
+    "ProviderBase",
     "ProviderCapabilities",
     "ProviderFactory",
     "ProviderStatus",
