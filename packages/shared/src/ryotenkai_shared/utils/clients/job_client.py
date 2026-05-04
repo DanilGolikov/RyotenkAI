@@ -440,6 +440,38 @@ class JobClient:
 
         return DiagnosticsResponse.model_validate(response.json())
 
+    async def get_resources(self) -> "ResourceSnapshot":
+        """``GET /api/v1/resources`` — instant GPU/CPU/RAM snapshot.
+
+        Pure HTTP poll — separate from the WS ``health_snapshot``
+        event so the Mac status line can render ``running | …``
+        deterministically every 15 s, even when the trainer dies in
+        the first 30 s before any WS event fires.
+
+        Raises:
+            APIException: any non-2xx response (typed via
+                :func:`parse_problem_details`).
+            JobClientError: transport-level failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.resources import (
+            ResourceSnapshot,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get("/api/v1/resources")
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_resources transport error: {exc!r}",
+            ) from exc
+
+        if not response.is_success:
+            raise parse_problem_details(response)
+
+        return ResourceSnapshot.model_validate(response.json())
+
     # --- WebSocket event stream -------------------------------------------
 
     async def subscribe_events(

@@ -40,6 +40,7 @@ from ryotenkai_pod.runner.api import diagnostics as diagnostics_api
 from ryotenkai_pod.runner.api import events as events_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
+from ryotenkai_pod.runner.api import resources as resources_api
 from ryotenkai_pod.runner.api.errors import EXCEPTION_HANDLERS
 from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
@@ -453,6 +454,8 @@ def create_app(
     # Phase 2 transport-unification-v2 — diagnostics surface
     # (replaces SSH dmesg/nvidia-smi probes from training_monitor).
     app.include_router(diagnostics_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.2 — resource snapshot (poll-driven status line).
+    app.include_router(resources_api.router, prefix=API_V1_PREFIX)
 
     return app
 
