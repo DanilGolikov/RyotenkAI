@@ -17,6 +17,7 @@ from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
     IGPUProvider,
+    ProviderBase,
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
@@ -40,9 +41,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("ryotenkai")
 
 
-class SingleNodeProvider(IGPUProvider):
+class SingleNodeProvider(ProviderBase, IGPUProvider):
     """
     GPU provider for local PC via SSH.
+
+    No cloud lifecycle (always-on host) → does NOT inherit
+    :class:`ITerminalActionProvider`, :class:`IRecoveryProbeProvider`,
+    or :class:`ICapacityErrorClassifier`. Identity + capabilities come
+    from ``provider.toml`` via :class:`ProviderBase`.
 
     Features:
         - Direct SSH connection (no cloud API)
@@ -57,27 +63,36 @@ class SingleNodeProvider(IGPUProvider):
         2. connect(): Establish SSH, create run directory, run health checks
         3. check_gpu(): Get GPU info (optional, done in connect)
         4. disconnect(): Cleanup workspace (optional)
-
-    Workspace structure:
-        /home/user/ryotenkai_training/              <- workspace_path (base)
-        ├── runs/
-        │   ├── run_20260120_123456_abc12/      <- run directory (isolated)
-        │   ├── data/
-        │   ├── config/
-        │   ├── src/
-        │   └── output/
-        └── runs/run_20260120_124010_k9p0z/     <- another run
     """
 
-    def __init__(self, config: dict[str, Any], secrets: Secrets):
-        """
-        Initialize SingleNode provider.
+    def __init__(
+        self,
+        ctx_or_config: "ProviderContext | dict[str, Any]",
+        secrets: Secrets | None = None,
+    ):
+        """Initialize SingleNode provider.
 
-        Args:
-            config: Provider configuration dict
-            secrets: Secrets with credentials
+        Dual-signature transitional path (mirrors RunPodProvider) —
+        legacy ``(config_dict, secrets)`` from the old factory and new
+        ``ProviderContext`` from the registry both work. Legacy path
+        deleted in PR-1.11.
         """
-        self._config = SingleNodeConfig.from_dict(config)
+        from ryotenkai_providers.registry import ProviderContext
+
+        if isinstance(ctx_or_config, ProviderContext):
+            ctx = ctx_or_config
+            secrets = ctx.secrets
+            block = ctx.provider_block
+            if isinstance(block, SingleNodeConfig):
+                self._config = block
+            else:
+                self._config = SingleNodeConfig.from_dict(block)
+        else:
+            assert secrets is not None, (
+                "SingleNodeProvider legacy signature requires (config, secrets); "
+                "use ProviderRegistry.create_training instead."
+            )
+            self._config = SingleNodeConfig.from_dict(ctx_or_config)
         self._secrets = secrets
         self._status = ProviderStatus.AVAILABLE
         self._ssh_client: SSHClient | None = None
@@ -96,15 +111,9 @@ class SingleNodeProvider(IGPUProvider):
                 f"{self._config.ssh.user}@{self._config.ssh.host}:{self._config.ssh.port}"
             )
 
-    @property
-    def provider_name(self) -> str:
-        """Human-readable provider name."""
-        return PROVIDER_SINGLE_NODE
-
-    @property
-    def provider_type(self) -> str:
-        """Provider type: local."""
-        return "local"
+    # provider_name / provider_type / provider_id default impls live on
+    # ProviderBase — manifest-derived. See RunPodProvider for the same
+    # pattern.
 
     def connect(self, *, run: RunContext) -> Result[SSHConnectionInfo, ProviderError]:
         """
@@ -558,45 +567,25 @@ class SingleNodeProvider(IGPUProvider):
         return health_checker.check_gpu()
 
     def get_capabilities(self) -> ProviderCapabilities:
+        """Manifest-derived capabilities + runtime ``gpu_name``/``gpu_vram_gb``.
+
+        Static cap flags come from ``ProviderBase.get_capabilities`` (read
+        from ``provider.toml`` at registry-load time). This override only
+        augments with runtime GPU info detected via ``check_gpu()``. The
+        capability-flag values themselves are NOT modified — invariant
+        test enforces parity with the manifest.
         """
-        Get provider capabilities.
+        from dataclasses import replace
 
-        Returns capabilities based on:
-            - Static config (provider type)
-            - Detected GPU info (if connected)
-
-        Phase 14.A: capability fields populated to declare that
-        single_node has NO cloud lifecycle semantics — host is
-        always-on, no pause / resume / terminate. The class
-        intentionally does NOT inherit :class:`ITerminalActionProvider`,
-        so the type checker rejects ``provider.pause()`` at the
-        callsite when the provider is a SingleNodeProvider.
-        """
-        gpu_name = None
-        gpu_vram_gb = None
-
+        base = super().get_capabilities()  # manifest-derived
+        gpu_name: str | None = None
+        gpu_vram_gb: float | None = None
         if self._gpu_info:
             gpu_name = self._gpu_info.name
             gpu_vram_gb = self._gpu_info.vram_total_gb
-        elif self._config.gpu_type:
+        elif self._config is not None and self._config.gpu_type:
             gpu_name = self._config.gpu_type
-
-        return ProviderCapabilities(
-            provider_type="local",
-            supports_multi_gpu=False,  # Single node = single GPU typically
-            supports_spot_instances=False,  # Not cloud
-            max_runtime_hours=None,  # Unlimited for local
-            gpu_name=gpu_name,
-            gpu_vram_gb=gpu_vram_gb,
-            # Phase 14.A capability fields:
-            supports_lifecycle_actions=False,  # No cloud terminate / pause / resume
-            volume_kind=VolumeKind.LOCAL_DISK,  # Workspace lives on user's host disk
-            has_pause_resume=False,
-            runner_workspace_root="/workspace",
-            # Phase 14.D+F capability fields:
-            is_local=True,  # always-on host
-            supports_log_download=False,  # logs already on host filesystem
-        )
+        return replace(base, gpu_name=gpu_name, gpu_vram_gb=gpu_vram_gb)
 
     def required_secrets(self) -> tuple[str, ...]:
         """Phase 14.D+F — single_node has no provider-managed secrets.
