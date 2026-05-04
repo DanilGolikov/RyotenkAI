@@ -31,16 +31,12 @@ Usage:
     result = provider.connect()
 """
 
-# Auto-register with factory
-from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
-from ryotenkai_providers.training.factory import GPUProviderFactory
-
+# Registration is manifest-driven (provider.toml). PR-1.11 removed the
+# legacy GPUProviderFactory.register call; the ProviderRegistry walks
+# the on-disk manifests at process start.
 from .config import SingleNodeConfig
 from .health_check import SingleNodeHealthCheck
 from .provider import SingleNodeProvider
-
-if not GPUProviderFactory.is_registered(PROVIDER_SINGLE_NODE):
-    GPUProviderFactory.register(PROVIDER_SINGLE_NODE, SingleNodeProvider)
 
 __all__ = [
     "SingleNodeConfig",

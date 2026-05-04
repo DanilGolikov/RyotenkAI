@@ -1,34 +1,31 @@
-"""
-Training provider contracts and factory.
+"""Training-side provider Protocols + base class.
 
-Canonical locations:
-- Interfaces: `src.providers.training.interfaces`
-- Factory: `src.providers.training.factory`
-- SSH client: `src.utils.ssh_client`
+The :class:`GPUProviderFactory` and ``auto_register_providers`` were
+removed in the manifest-driven registry migration (PR-1.11). Use
+:class:`ryotenkai_providers.registry.ProviderRegistry` instead — auto-
+discovers providers from ``provider.toml`` manifests on disk.
 """
 
-from .factory import GPUProviderFactory, auto_register_providers
 from .interfaces import (
     GPUInfo,
+    ICapacityErrorClassifier,
     IGPUProvider,
+    IRecoveryProbeProvider,
+    ITerminalActionProvider,
+    ProviderBase,
     ProviderCapabilities,
-    ProviderFactory,
     ProviderStatus,
     SSHConnectionInfo,
 )
 
-# Importing this package triggers best-effort auto-registration of built-in
-# providers — that's why the cross-validator imports it dynamically when
-# checking that the YAML's `training.provider` is a known name.
-auto_register_providers()
-
 __all__ = [
     "GPUInfo",
-    "GPUProviderFactory",
+    "ICapacityErrorClassifier",
     "IGPUProvider",
+    "IRecoveryProbeProvider",
+    "ITerminalActionProvider",
+    "ProviderBase",
     "ProviderCapabilities",
-    "ProviderFactory",
     "ProviderStatus",
     "SSHConnectionInfo",
-    "auto_register_providers",
 ]

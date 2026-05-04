@@ -69,12 +69,21 @@ _QUICK_CMD_TIMEOUT_S = 30  # fast one-liners (container start probe, cleanup)
 _DIR_LISTING_MAX_CHARS = 800
 
 
-class SingleNodeInferenceProvider(IInferenceProvider):
-    """Deploy vLLM inference endpoint on a single SSH-accessible node."""
+from ryotenkai_providers.training.interfaces import ProviderBase
+
+
+class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
+    """Deploy vLLM inference endpoint on a single SSH-accessible node.
+
+    Identity comes from ``provider.toml`` via :class:`ProviderBase`.
+    """
 
     _CONTAINER_NAME = VLLM_INFERENCE_CONTAINER_NAME
 
-    def __init__(self, *, config: PipelineConfig, secrets: Secrets):
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize from a :class:`ProviderContext`."""
+        config = ctx.pipeline_config
+        secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
 
@@ -104,13 +113,8 @@ class SingleNodeInferenceProvider(IInferenceProvider):
     # Interface properties
     # ---------------------------------------------------------------------
 
-    @property
-    def provider_name(self) -> str:
-        return PROVIDER_SINGLE_NODE
-
-    @property
-    def provider_type(self) -> str:
-        return PROVIDER_SINGLE_NODE
+    # provider_name / provider_type / provider_id default impls live on
+    # ProviderBase — manifest-derived.
 
     # ---------------------------------------------------------------------
     # Public API

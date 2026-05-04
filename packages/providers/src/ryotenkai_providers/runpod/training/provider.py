@@ -15,8 +15,11 @@ from ryotenkai_shared.utils.cancellation import PipelineCancelled
 from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
     GPUInfo,
+    ICapacityErrorClassifier,
     IGPUProvider,
+    IRecoveryProbeProvider,
     ITerminalActionProvider,
+    ProviderBase,
     ProviderCapabilities,
     ProviderStatus,
     SSHConnectionInfo,
@@ -88,7 +91,13 @@ from ryotenkai_providers.runpod._status_mapper import (
 )
 
 
-class RunPodProvider(IGPUProvider, ITerminalActionProvider):
+class RunPodProvider(
+    ProviderBase,
+    IGPUProvider,
+    ITerminalActionProvider,
+    IRecoveryProbeProvider,
+    ICapacityErrorClassifier,
+):
     """
     GPU provider for RunPod cloud.
 
@@ -99,6 +108,17 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         - Automatic cleanup on disconnect
         - Phase 14.A: implements :class:`ITerminalActionProvider`
           (terminate / pause / resume) — single_node does NOT.
+        - Phase 14.D+F (provider-abstraction refactor): implements
+          :class:`IRecoveryProbeProvider` (the training monitor's
+          recovery loop gates on ``isinstance``) and
+          :class:`ICapacityErrorClassifier` (resume service uses it
+          to classify GraphQL error messages).
+
+    Identity (provider_id / provider_name / provider_type) and the
+    capability surface come from ``provider.toml`` via
+    :class:`ProviderBase` — set by :class:`ProviderRegistry` at load
+    time. ``get_capabilities`` is overridden here ONLY to augment with
+    runtime ``gpu_name`` / ``gpu_vram_gb`` after a probe.
 
     Lifecycle:
         1. __init__: Parse config, initialize API client
@@ -107,15 +127,23 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         4. disconnect(): Terminate pod (if cleanup.auto_delete_pod)
     """
 
-    def __init__(self, config: dict[str, Any], secrets: Secrets):
-        """
-        Initialize RunPod provider.
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize RunPod provider from a :class:`ProviderContext`.
 
-        Args:
-            config: Provider configuration dict
-            secrets: Secrets with RunPod API key
+        ``ctx.provider_block`` is the typed
+        :class:`RunPodProviderConfig` instance (PipelineConfig validator
+        normalizes the YAML block). For test harnesses that fabricate
+        a context with a raw dict, the dict is auto-promoted via
+        ``RunPodProviderConfig.from_dict``.
         """
-        self._config = RunPodProviderConfig.from_dict(config)
+        secrets = ctx.secrets
+        block = ctx.provider_block
+        if isinstance(block, RunPodProviderConfig):
+            self._config = block
+        else:
+            # Test harness fallback — fabricated ctx with raw dict.
+            # Production path always passes a typed instance.
+            self._config = RunPodProviderConfig.from_dict(block)
         self._secrets = secrets
         self._status = ProviderStatus.AVAILABLE
         self._pod_id: str | None = None
@@ -189,15 +217,11 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         )
         return provider
 
-    @property
-    def provider_name(self) -> str:
-        """Human-readable provider name."""
-        return PROVIDER_RUNPOD
-
-    @property
-    def provider_type(self) -> str:
-        """Provider type: cloud."""
-        return "cloud"
+    # provider_name / provider_type / provider_id default impls live on
+    # ProviderBase — read from manifest-set ClassVars. The registry's
+    # ``_attach_manifest_metadata`` populates the slots when this class
+    # is first resolved. Hand-overriding is forbidden by an invariant
+    # test (single source of truth = manifest).
 
     def connect(self, *, run: RunContext) -> Result[SSHConnectionInfo, ProviderError]:
         """
@@ -559,55 +583,136 @@ class RunPodProvider(IGPUProvider, ITerminalActionProvider):
         return Ok(self._gpu_info)
 
     def get_capabilities(self) -> ProviderCapabilities:
-        """Get provider capabilities.
+        """Manifest-derived capabilities + runtime ``gpu_name``/``gpu_vram_gb``.
 
-        Phase 14.A: populates the capability surface
-        (``supports_lifecycle_actions``, ``volume_kind``,
-        ``has_pause_resume``, ``runner_workspace_root``) so callers
-        can avoid string-checks like ``provider == "runpod"``.
-
-        Two-source-of-truth invariant: ``supports_lifecycle_actions``
-        ↔ ``isinstance(self, ITerminalActionProvider)``. RunPod
-        sets True and DOES inherit from the Protocol.
+        The static cap flags (provider_type, supports_lifecycle_actions,
+        is_local, etc.) come from ``ProviderBase.get_capabilities`` —
+        read from the manifest at registry-load time. This override only
+        augments the result with runtime GPU info captured by
+        :meth:`check_gpu`. Capability flag values themselves are NOT
+        modified — an invariant test enforces parity with the manifest.
         """
-        gpu_name = self._config.training.gpu_type
-        gpu_vram_gb = None
+        from dataclasses import replace
 
+        base = super().get_capabilities()  # manifest-derived
+        gpu_name: str | None = self._config.training.gpu_type if self._config is not None else None
+        gpu_vram_gb: float | None = None
         if self._gpu_info:
             gpu_name = self._gpu_info.name
             gpu_vram_gb = self._gpu_info.vram_total_gb
-
-        # Today RunPod training pods always use a persistent volume
-        # (config has ``volume_disk_gb``, no network volume support).
-        # If/when network-volume training lands, this should read the
-        # provider config — keeping VolumeKind.PERSISTENT pinned for now.
-        volume_kind = VolumeKind.PERSISTENT
-
-        return ProviderCapabilities(
-            provider_type="cloud",
-            supports_multi_gpu=True,
-            supports_spot_instances=True,
-            max_runtime_hours=None,
-            gpu_name=gpu_name,
-            gpu_vram_gb=gpu_vram_gb,
-            # Phase 14.A capability fields:
-            supports_lifecycle_actions=True,
-            volume_kind=volume_kind,
-            has_pause_resume=True,  # podStop + podResume both supported
-            runner_workspace_root="/workspace",  # RunPod pod mount path
-            # Phase 14.D+F capability fields:
-            is_local=False,  # cloud provider
-            supports_log_download=True,  # SCP-based log fetch via RunPodAPIClient
-        )
+        return replace(base, gpu_name=gpu_name, gpu_vram_gb=gpu_vram_gb)
 
     def required_secrets(self) -> tuple[str, ...]:
-        """Phase 14.D+F — RunPod requires the API key in the operator
-        environment.
+        """Manifest-derived secret declarations.
 
-        Replaces the pre-14.D ``PROVIDER_RUNPOD`` secret-presence
-        branch in :mod:`src.pipeline.bootstrap.startup_validator`.
+        Falls back to the legacy hardcoded tuple for the transitional
+        period before PR-1.10 routes everything through
+        :meth:`ProviderRegistry.required_secrets`. The Protocol still
+        declares the method, so we keep the impl until the call sites
+        migrate.
         """
         return ("RUNPOD_API_KEY",)
+
+    # ------------------------------------------------------------------
+    # IRecoveryProbeProvider — pod recovery after runner connection loss
+    # ------------------------------------------------------------------
+
+    def attempt_recovery(
+        self, *, resource_id: str,
+    ) -> Result[ProviderStatus, ProviderError]:
+        """Probe + wake a pod whose runner connection was lost.
+
+        Replaces the inline RunPod-specific recovery logic in the
+        legacy ``training_monitor._recover_pod_if_needed``. Caller
+        (training_monitor) gates on
+        ``isinstance(provider, IRecoveryProbeProvider)`` and invokes
+        this method; cloud providers with similar GraphQL-probe
+        semantics inherit the Protocol and the recovery path lights up
+        for free.
+
+        Idempotent semantics:
+        * Pod RUNNING (not actually stopped) → ``Ok(CONNECTED)`` —
+          caller should investigate the WS failure separately.
+        * Pod STOPPED / starting → request ``start_pod`` and return
+          ``Ok(AVAILABLE)`` — the pipeline must be restarted.
+        * Pod terminal → ``Err("POD_TERMINAL")``.
+        * Probe failure → ``Err("POD_PROBE_FAILED")``.
+        * Wake-up failure → ``Err("POD_WAKE_FAILED")``.
+        """
+        from ryotenkai_providers.runpod.models import PodSnapshot
+        from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
+
+        sdk = RunPodSDKClient(api_key=self._api_key)
+        snap_result = sdk.get_pod(pod_id=resource_id)
+        if snap_result.is_err():
+            return Err(
+                ProviderError(
+                    message=(
+                        f"runner connection lost and pod probe failed: "
+                        f"{snap_result.unwrap_err()}"
+                    ),
+                    code="POD_PROBE_FAILED",
+                    details={"pod_id": resource_id},
+                )
+            )
+        snapshot = PodSnapshot.from_graphql(snap_result.unwrap())
+        if snapshot.is_terminal:
+            return Err(
+                ProviderError(
+                    message=(
+                        f"pod {resource_id} reached terminal state "
+                        f"({snapshot.status}); cannot resume"
+                    ),
+                    code="POD_TERMINAL",
+                    details={"pod_id": resource_id, "status": snapshot.status},
+                )
+            )
+        if snapshot.is_ready:
+            logger.info(
+                "[PROVIDER:RECOVERY] pod %s is RUNNING — WS failure unrelated",
+                resource_id,
+            )
+            return Ok(ProviderStatus.CONNECTED)
+        # Stopped / starting — wake.
+        logger.warning(
+            "[PROVIDER:RECOVERY] pod %s is %s — requesting SDK wake-up",
+            resource_id,
+            snapshot.status or "unknown",
+        )
+        start_result = sdk.start_pod(pod_id=resource_id)
+        if start_result.is_err():
+            return Err(
+                ProviderError(
+                    message=(
+                        f"pod {resource_id} was stopped and wake-up failed: "
+                        f"{start_result.unwrap_err()}"
+                    ),
+                    code="POD_WAKE_FAILED",
+                    details={"pod_id": resource_id},
+                )
+            )
+        return Ok(ProviderStatus.AVAILABLE)
+
+    # ------------------------------------------------------------------
+    # ICapacityErrorClassifier — message-based error categorisation
+    # ------------------------------------------------------------------
+
+    def is_capacity_error(self, message: str) -> bool:
+        """True iff ``message`` indicates RunPod capacity exhaustion.
+
+        Thin wrapper over the existing
+        :func:`ryotenkai_providers.runpod.sdk_adapter.is_capacity_error_message`
+        helper so the resume service can call through the Protocol
+        rather than importing the helper directly. Replaces the
+        ``if metadata.provider == PROVIDER_RUNPOD: ...`` string-dispatch
+        in ``resume_service.py``.
+        """
+        # Lazy import — the message classifier lives in the SDK adapter
+        # which pulls httpx; gating it inside the method keeps the
+        # import out of single_node-only environments.
+        from ryotenkai_providers.runpod.sdk_adapter import is_capacity_error_message
+
+        return is_capacity_error_message(message)
 
     def pod_layout_for_run(self, run_id: str) -> PodLayout:
         """RunPod-rooted pod layout: ``/workspace/runs/<run_id>/...``.

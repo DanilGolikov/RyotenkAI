@@ -35,7 +35,25 @@ def get_active_provider_name(config: PipelineConfig) -> str:
 
 
 def is_single_node_provider(config: PipelineConfig) -> bool:
-    return get_active_provider_name(config) == PROVIDER_SINGLE_NODE
+    """Capability-driven local-host check.
+
+    Manifest's ``capabilities.is_local`` flag is the source of truth.
+    Replaces the legacy ``provider_name == PROVIDER_SINGLE_NODE``
+    string-check (Phase 14.D+F) — a future ``my_local_workstation``
+    provider just declares ``is_local=true`` in its ``provider.toml``
+    and every ``is_single_node_provider(...)`` callsite picks it up.
+
+    Unit-test fallback: when the registry doesn't know the provider
+    (e.g. MagicMock config in unit tests), fall back to the legacy
+    string compare so existing tests stay green.
+    """
+    from ryotenkai_providers.registry import get_registry
+
+    name = get_active_provider_name(config)
+    try:
+        return get_registry().capabilities(name).is_local
+    except KeyError:
+        return name == PROVIDER_SINGLE_NODE
 
 
 def get_provider_training_cfg(config: PipelineConfig, provider_name: str) -> dict[str, Any]:

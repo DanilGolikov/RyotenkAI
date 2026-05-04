@@ -64,10 +64,27 @@ def _sha12(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:SHA12_LEN]
 
 
-class RunPodPodInferenceProvider(IInferenceProvider):
-    """Provision a RunPod Pod + Network Volume and keep it stopped by default."""
+from ryotenkai_providers.training.interfaces import ProviderBase
 
-    def __init__(self, *, config: PipelineConfig, secrets: Secrets):
+
+class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
+    """Provision a RunPod Pod + Network Volume and keep it stopped by default.
+
+    Identity (provider_id / provider_name / provider_type) comes from
+    ``provider.toml`` via :class:`ProviderBase`. Inference-specific
+    capabilities returned by :meth:`get_capabilities` are an
+    :class:`InferenceCapabilities` shape — distinct from the training
+    role's :class:`ProviderCapabilities`.
+    """
+
+    def __init__(self, ctx: "ProviderContext") -> None:
+        """Initialize from a :class:`ProviderContext`.
+
+        ``ctx.pipeline_config`` provides the full PipelineConfig
+        (inference impls need ``config.inference.engines.vllm.*``).
+        """
+        config = ctx.pipeline_config
+        secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
         self._inf_cfg = config.inference
@@ -109,13 +126,10 @@ class RunPodPodInferenceProvider(IInferenceProvider):
     # Interface properties
     # ---------------------------------------------------------------------
 
-    @property
-    def provider_name(self) -> str:
-        return PROVIDER_RUNPOD
-
-    @property
-    def provider_type(self) -> str:
-        return PROVIDER_RUNPOD
+    # provider_name / provider_type / provider_id default impls live on
+    # ProviderBase — manifest-derived. Note: this class shares the
+    # ``provider_id="runpod"`` namespace with RunPodProvider (training);
+    # the registry attaches the SAME manifest metadata to both classes.
 
     # ---------------------------------------------------------------------
     # Public API

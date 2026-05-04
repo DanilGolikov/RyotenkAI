@@ -15,7 +15,6 @@ from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import LogManager, TrainingDeploymentManager
 from ryotenkai_shared.pipeline_context import RunContext
-from ryotenkai_providers.training.factory import GPUProviderFactory
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -181,12 +180,21 @@ class GPUDeployer(PipelineStage):
                 )
             )
 
-        # Step 1: Create provider by name
-        create_result = GPUProviderFactory.create(
-            provider_name=self._provider_name,
-            provider_config=self._provider_config,
+        # Step 1: Create provider via the manifest-driven registry.
+        # Replaces the legacy ``GPUProviderFactory.create(provider_name,
+        # provider_config: dict, secrets)`` call — the registry resolves
+        # the class via the provider's manifest entry point and hands
+        # it a ``ProviderContext``. Same contract for any provider with
+        # a ``provider.toml`` declaring ``training`` in its roles.
+        from ryotenkai_providers.registry import ProviderContext, get_registry
+
+        ctx = ProviderContext(
+            provider_id=self._provider_name,
+            pipeline_config=self.config,
+            provider_block=self._provider_config,
             secrets=self.secrets,
         )
+        create_result = get_registry().create_training(self._provider_name, ctx)
         if create_result.is_failure():
             provider_err = create_result.unwrap_err()
             if self._callbacks.on_error:
@@ -325,6 +333,10 @@ class GPUDeployer(PipelineStage):
                     # Provider info
                     "provider_name": self._provider_name,
                     "provider_type": self._provider.provider_type,  # "local" or "cloud"
+                    # Provider instance — TrainingMonitor uses it for the
+                    # capability-Protocol gated recovery loop (Phase 14.D+F:
+                    # ``isinstance(provider, IRecoveryProbeProvider)``).
+                    "provider": self._provider,
                     "resource_id": ssh_info.resource_id,  # pod_id or run_dir
                     # SSH connection info (for TrainingMonitor)
                     "ssh_host": ssh_info.host,

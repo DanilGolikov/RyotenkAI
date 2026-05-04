@@ -185,8 +185,11 @@ class TrainingMonitor(PipelineStage):
         # crashes). Shares the SSH ControlMaster with ``_log_manager``.
         self._runner_log_manager: LogManager | None = None
         # Pod recovery (laptop-sleep): captured from deployer context
-        # so :meth:`_recover_pod_if_needed` can probe the RunPod SDK
-        # without re-reading the orchestrator state.
+        # so :meth:`_recover_pod_if_needed` can call the provider's
+        # IRecoveryProbeProvider impl. The instance is propagated by
+        # GPUDeployer (Phase 14.D+F refactor) — replaces the previous
+        # ``provider_name == "runpod"`` string-check + inline SDK access.
+        self._provider: Any | None = None
         self._provider_name: str | None = None
         self._resource_id: str | None = None
         # Bound recovery attempts so a flapping pod can't trap the
@@ -257,9 +260,11 @@ class TrainingMonitor(PipelineStage):
             self._runner_log_manager,
             self._ssh_client,
         ) = self._build_log_manager_from_context(deployer_context)
-        # Pod-recovery preconditions (Phase 11.E follow-up): record
-        # provider + resource so a transient WS error can trigger an
-        # SDK wake-up without losing terminal-state semantics.
+        # Pod-recovery preconditions: record provider instance + name +
+        # resource so a transient WS error can trigger
+        # provider.attempt_recovery() through the IRecoveryProbeProvider
+        # capability. The provider instance is set by GPUDeployer.
+        self._provider = deployer_context.get("provider")
         self._provider_name = deployer_context.get("provider_name")
         self._resource_id = deployer_context.get("resource_id")
         self._recovery_attempts = 0
@@ -679,10 +684,21 @@ class TrainingMonitor(PipelineStage):
         Capped at :data:`_RECOVERY_ATTEMPT_CAP` per stage execution to
         prevent a flapping pod from trapping us in a tight loop.
         """
-        if self._provider_name != "runpod" or not self._resource_id:
+        # Capability-Protocol gate: only providers that declare
+        # ``IRecoveryProbeProvider`` (and have ``supports_recovery_probe=
+        # true`` in their manifest) participate in the recovery loop.
+        # Replaces the hardcoded ``self._provider_name != "runpod"``
+        # skip — a third cloud provider with similar GraphQL-probe
+        # semantics inherits the Protocol and the recovery path lights
+        # up automatically.
+        from ryotenkai_providers.training.interfaces import (
+            IRecoveryProbeProvider,
+            ProviderStatus,
+        )
+
+        if self._provider is None or not self._resource_id:
             return None
-        api_key = getattr(self._secrets, "runpod_api_key", None)
-        if not api_key:
+        if not isinstance(self._provider, IRecoveryProbeProvider):
             return None
         if self._recovery_attempts >= self._RECOVERY_ATTEMPT_CAP:
             return Err(
@@ -697,63 +713,36 @@ class TrainingMonitor(PipelineStage):
             )
         self._recovery_attempts += 1
 
-        try:
-            from ryotenkai_providers.runpod.models import PodSnapshot
-            from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
-        except ImportError as imp_exc:
-            logger.debug(f"[MONITOR] RunPod SDK not importable: {imp_exc}")
-            return None
-
         logger.warning(
-            "[MONITOR] runner connection lost (%s) — probing pod %s via RunPod SDK",
+            "[MONITOR] runner connection lost (%s) — invoking provider "
+            "recovery for resource %s",
             exc,
             self._resource_id,
         )
-        sdk = RunPodSDKClient(api_key=api_key)
-        snap_result = sdk.get_pod(pod_id=self._resource_id)
-        if snap_result.is_err():
-            return Err(
-                TrainingError(
-                    message=(f"runner connection lost and pod probe failed: " f"{snap_result.unwrap_err()}"),
-                    code="MONITOR_POD_PROBE_FAILED",
-                ),
-            )
-        snapshot = PodSnapshot.from_graphql(snap_result.unwrap())
-        if snapshot.is_terminal:
-            return Err(
-                TrainingError(
-                    message=(f"pod {self._resource_id} reached terminal state " f"({snapshot.status}); cannot resume"),
-                    code="MONITOR_POD_TERMINATED",
-                ),
-            )
-        if snapshot.is_ready:
-            # Pod is up, the WS error was something else (network
-            # blip, transient SSH failure). Caller surfaces the
-            # original error so the operator can investigate.
-            logger.info(
-                "[MONITOR] pod %s is RUNNING — WS failure was not " "caused by pod sleep",
-                self._resource_id,
-            )
-            return None
-
-        # Stopped / starting — request a wake-up. This makes the
-        # operator's next attempt usable instead of failing on a
-        # cold pod.
-        logger.warning(
-            "[MONITOR] pod %s is %s — requesting SDK wake-up",
-            self._resource_id,
-            snapshot.status or "unknown",
+        recovery_result = self._provider.attempt_recovery(
+            resource_id=self._resource_id,
         )
-        start_result = sdk.start_pod(pod_id=self._resource_id)
-        if start_result.is_err():
+        if recovery_result.is_err():
+            err = recovery_result.unwrap_err()
+            # Map provider error codes to monitor codes for backwards
+            # compatibility of operator-facing error vocabulary.
+            code_map = {
+                "POD_PROBE_FAILED": "MONITOR_POD_PROBE_FAILED",
+                "POD_TERMINAL": "MONITOR_POD_TERMINATED",
+                "POD_WAKE_FAILED": "MONITOR_POD_WAKE_FAILED",
+            }
             return Err(
                 TrainingError(
-                    message=(
-                        f"pod {self._resource_id} was stopped and " f"wake-up failed: {start_result.unwrap_err()}"
-                    ),
-                    code="MONITOR_POD_WAKE_FAILED",
+                    message=err.message,
+                    code=code_map.get(err.code or "", "MONITOR_RECOVERY_FAILED"),
                 ),
             )
+        status = recovery_result.unwrap()
+        if status == ProviderStatus.CONNECTED:
+            # Pod was already running; WS failure unrelated. Caller
+            # surfaces the original error.
+            return None
+        # Pod was stopped, woke back up — pipeline restart needed.
         return Err(
             TrainingError(
                 message=(

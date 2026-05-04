@@ -138,18 +138,22 @@ def _default_resolve_lifecycle_provider(
     them by re-checking env / provider_name to compose the right
     user-facing message.
     """
-    if provider_name == PROVIDER_RUNPOD:
-        api_key = os.environ.get("RUNPOD_API_KEY")
-        if not api_key:
-            return None
-        # Lazy import — keeps non-resume CLI paths from importing
-        # the heavy RunPod module tree at startup.
-        from ryotenkai_providers.runpod.training.provider import RunPodProvider
-        return RunPodProvider.from_resume_metadata(api_key=api_key)
-    if provider_name == PROVIDER_SINGLE_NODE:
-        # Single-node has no cloud lifecycle to act on.
-        return None
-    # Unknown provider — service surfaces "skipped: unknown provider".
+    # Manifest-driven dispatch: provider declares ``entry_points.resume_factory``
+    # in its ``provider.toml``; registry resolves it lazily. Replaces the
+    # ``if PROVIDER_RUNPOD: from ... import RunPodProvider`` string-dispatch.
+    # ``RUNPOD_API_KEY`` is still pulled from the operator env here — the
+    # registry passes it through to ``from_resume_metadata`` as the
+    # ``api_key`` kwarg; providers that don't need a cred just ignore it.
+    from ryotenkai_providers.registry import get_registry
+
+    api_key = os.environ.get("RUNPOD_API_KEY")
+    result = get_registry().create_resume_provider(
+        provider_name, api_key=api_key
+    )
+    if result.is_success():
+        return result.unwrap()
+    # Unknown provider / unavailable resume / missing creds — service
+    # surfaces the right "skipped" message based on outcome elsewhere.
     return None
 
 
@@ -367,17 +371,19 @@ class LaunchResumeService:
                 raise RuntimeError(result.unwrap_err().message)
             return True
 
-        # is_capacity_error stays a RunPod concern — Phase 14.D will
-        # generalize via provider.is_capacity_error(message) if a
-        # second lifecycle provider lands. For now, lazy import.
-        is_capacity_error: Callable[[str], bool] | None
-        if metadata.provider == PROVIDER_RUNPOD:
-            from ryotenkai_providers.runpod.sdk_adapter import (
-                is_capacity_error_message,
-            )
-            is_capacity_error = is_capacity_error_message
-        else:
-            is_capacity_error = None  # other providers: no retry classifier
+        # Capacity-error classification via capability Protocol — replaces
+        # the ``if metadata.provider == PROVIDER_RUNPOD: import
+        # is_capacity_error_message`` string-dispatch. Providers that
+        # implement :class:`ICapacityErrorClassifier` expose
+        # ``is_capacity_error(message)``; others get ``None`` (no retry
+        # classifier) for clean fall-through.
+        from ryotenkai_providers.training.interfaces import ICapacityErrorClassifier
+
+        is_capacity_error: Callable[[str], bool] | None = (
+            provider.is_capacity_error  # type: ignore[attr-defined]
+            if isinstance(provider, ICapacityErrorClassifier)
+            else None
+        )
 
         outcome = asyncio.run(
             resume_pod_with_retry(
@@ -427,32 +433,55 @@ class LaunchResumeService:
 
     @staticmethod
     def _build_skipped_outcome(provider_name: str) -> ResumeOutcome:
-        """Compose the right ``message`` for the skipped path based
-        on which fork of :func:`_default_resolve_lifecycle_provider`
-        produced ``None``.
+        """Compose the right ``message`` for the skipped path based on
+        what the registry says about the provider's capabilities.
+
+        Decision tree (capability-flag driven; replaces the legacy
+        string-check on ``PROVIDER_RUNPOD`` / ``PROVIDER_SINGLE_NODE``):
+
+        1. Provider unknown ⇒ "no in-pod resume mechanism".
+        2. Provider has lifecycle support but resume_factory missing
+           required env (e.g. ``RUNPOD_API_KEY`` unset) ⇒ name the env.
+        3. Provider has no lifecycle support (single_node) ⇒ explicit
+           "no in-pod resume mechanism" message.
         """
-        if provider_name == PROVIDER_RUNPOD:
-            # Resolver returned None for runpod ⇒ missing API key.
-            return ResumeOutcome(
-                availability="skipped",
-                ok=True,
-                message="RUNPOD_API_KEY not in environment",
-            )
-        if provider_name == PROVIDER_SINGLE_NODE:
+        from ryotenkai_providers.registry import get_registry
+
+        registry = get_registry()
+        try:
+            manifest = registry.get_manifest(provider_name)
+        except KeyError:
             return ResumeOutcome(
                 availability="skipped",
                 ok=True,
                 message=(
-                    "Provider 'single_node' has no in-pod resume "
-                    "mechanism; continue with normal flow."
+                    f"Provider {provider_name!r} is not registered; "
+                    "continue with normal flow."
                 ),
             )
+        if manifest.capabilities.supports_lifecycle_actions:
+            # Provider supports lifecycle but resolver still returned
+            # None — most likely missing required env. Surface the
+            # first missing required secret name.
+            missing = [
+                spec.name
+                for spec in manifest.required_env
+                if spec.secret and not spec.optional
+                and not os.environ.get(spec.name)
+            ]
+            if missing:
+                return ResumeOutcome(
+                    availability="skipped",
+                    ok=True,
+                    message=f"{missing[0]} not in environment",
+                )
+        # No lifecycle — single_node and equivalents.
         return ResumeOutcome(
             availability="skipped",
             ok=True,
             message=(
-                f"Provider {provider_name!r} doesn't have an in-pod "
-                "resume mechanism; continue with normal flow."
+                f"Provider {provider_name!r} has no in-pod resume "
+                "mechanism; continue with normal flow."
             ),
         )
 
