@@ -78,9 +78,16 @@ class  = "RunPodProviderConfig"
 # this list (via registry.required_secrets) — replaces the legacy
 # ``if provider == PROVIDER_RUNPOD: return ("RUNPOD_API_KEY",)``
 # string-dispatch helper.
+#
+# RunPod GraphQL API key is needed for BOTH roles: training uses it for
+# pod create / terminate / probe; inference uses it for the Pods REST API
+# that brings up the vLLM endpoint. Listed explicitly for both roles —
+# leaving ``required_for_roles = []`` would carry the same semantics
+# ("required for any role this provider fulfils") but explicit is more
+# discoverable for the Web UI catalogue.
 [[required_env]]
 name               = "RUNPOD_API_KEY"
-description        = "RunPod GraphQL API key. Required for pod create/terminate/probe."
+description        = "RunPod GraphQL / REST API key. Required for pod create / terminate / probe and the inference Pods REST API."
 optional           = false
 secret             = true
-required_when_role = "training"
+required_for_roles = ["training", "inference"]

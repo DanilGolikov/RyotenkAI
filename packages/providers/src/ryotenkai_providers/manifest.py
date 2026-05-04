@@ -372,13 +372,17 @@ class RequiredEnvSpec(BaseModel):
     ``RequiredEnvSpec`` for operator-UX consistency.
 
     Fields:
-      name              — UPPER_SNAKE_CASE env var.
-      description       — what the value is used for.
-      optional          — when True, provider runs even if unset.
-      secret            — when True, UI renders password-style input.
-      required_when_role — limit the requirement to a specific role
-                          (e.g. RUNPOD_API_KEY only when 'training' in roles).
-                          Empty string = required for any declared role.
+      name               — UPPER_SNAKE_CASE env var.
+      description        — what the value is used for.
+      optional           — when True, provider runs even if unset.
+      secret             — when True, UI renders password-style input.
+      required_for_roles — list of roles for which this env is required.
+                          Empty list ``[]`` means "required for ANY role
+                          this provider fulfils" (e.g. ``RUNPOD_API_KEY``
+                          is needed both for training pod creation AND
+                          inference REST API — list both, or leave the
+                          list empty as a shorthand). When non-empty,
+                          only the listed roles trigger the requirement.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -387,13 +391,24 @@ class RequiredEnvSpec(BaseModel):
     description: str = Field(default="", description="Operator-facing description.")
     optional: bool = Field(default=False)
     secret: bool = Field(default=True)
-    required_when_role: ProviderRole | Literal[""] = Field(
-        default="",
+    required_for_roles: list[ProviderRole] = Field(
+        default_factory=list,
         description=(
-            "Restrict the requirement to a specific role; empty means "
-            "required for any role this provider fulfils."
+            "Roles for which this env is required. Empty list = required "
+            "for any role this provider fulfils. Listing all roles "
+            "explicitly is also valid (and more discoverable for the UI)."
         ),
     )
+
+    @model_validator(mode="after")
+    def _check_unique_roles(self) -> RequiredEnvSpec:
+        if len(set(self.required_for_roles)) != len(self.required_for_roles):
+            raise ValueError(
+                f"required_env entry {self.name!r} has duplicate values in "
+                f"required_for_roles: {self.required_for_roles!r}. Each role "
+                f"may appear at most once."
+            )
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -508,15 +523,19 @@ class ProviderManifest(BaseModel):
 
     @model_validator(mode="after")
     def _check_required_env_role_scopes(self) -> ProviderManifest:
-        # ``required_when_role`` MUST point at a declared role.
+        # Every role in ``required_for_roles`` MUST be one the provider
+        # actually declares. Empty list = "any role" — no constraint.
+        declared = set(self.provider.roles)
         for spec in self.required_env:
-            if spec.required_when_role and spec.required_when_role not in self.provider.roles:
+            extra = set(spec.required_for_roles) - declared
+            if extra:
                 raise ValueError(
                     f"provider {self.provider.id!r} required_env entry "
-                    f"{spec.name!r} has required_when_role="
-                    f"{spec.required_when_role!r}, but that role is not in "
-                    f"provider.roles={self.provider.roles!r}. Either add the "
-                    f"role or remove the scope."
+                    f"{spec.name!r} lists required_for_roles="
+                    f"{spec.required_for_roles!r} but provider.roles="
+                    f"{list(self.provider.roles)!r} does not declare "
+                    f"{sorted(extra)!r}. Either add the role to "
+                    f"provider.roles or remove it from required_for_roles."
                 )
         return self
 
@@ -527,19 +546,28 @@ class ProviderManifest(BaseModel):
     ) -> tuple[str, ...]:
         """Return env names this provider requires for the given role.
 
-        ``role=None`` returns the union across all declared roles.
-        Used by :class:`ProviderRegistry.required_secrets` for the
-        pre-factory startup-validator path (no instantiation needed).
+        ``role=None`` returns the union across all declared roles. Used
+        by :class:`ProviderRegistry.required_secrets` for the pre-factory
+        startup-validator path (no provider instantiation needed).
+
+        Filtering rules:
+          * ``optional=true`` → never returned.
+          * ``secret=false`` → never returned (non-secret envs are
+            advisory; the UI surfaces them but startup doesn't block).
+          * ``required_for_roles=[]`` → required for every role this
+            provider declares (the "shared credential" shorthand).
+          * ``required_for_roles=[X, Y]`` → required only when ``role``
+            ∈ {X, Y}. ``role=None`` matches any non-empty list.
         """
         out: list[str] = []
         for spec in self.required_env:
-            if spec.optional:
+            if spec.optional or not spec.secret:
                 continue
-            if not spec.secret:
-                # Non-secret env vars are advisory — the validator surfaces
-                # them in the UI but doesn't block startup.
-                continue
-            if spec.required_when_role and role is not None and spec.required_when_role != role:
+            if (
+                spec.required_for_roles
+                and role is not None
+                and role not in spec.required_for_roles
+            ):
                 continue
             out.append(spec.name)
         return tuple(out)
