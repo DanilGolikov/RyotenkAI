@@ -66,8 +66,12 @@ classmethod  = "RunPodProvider.from_resume_metadata"
 # Per-provider Pydantic config schema. The PipelineConfig validator
 # runs ``RunPodProviderConfig.model_validate(providers.runpod)`` at
 # config load time so YAML typos surface BEFORE any pipeline stage.
+# The schema is declared in the shared package because both control
+# plane (Mac) and the trainer subprocess (pod) need to read typed
+# config — keeping it in shared avoids forcing pod to import the
+# whole providers package.
 [entry_points.config_schema]
-module = "ryotenkai_providers.runpod.config"
+module = "ryotenkai_shared.config.providers.runpod"
 class  = "RunPodProviderConfig"
 
 # Pre-factory secret declaration. The startup validator iterates over

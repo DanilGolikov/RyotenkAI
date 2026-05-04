@@ -40,9 +40,13 @@ module = "ryotenkai_providers.single_node.inference.provider"
 class  = "SingleNodeInferenceProvider"
 
 # Per-provider Pydantic config schema for ``providers.single_node``.
+# Schema lives in the shared package (see runpod manifest comment).
+# Class is named ``SingleNodeConfig`` (legacy name; rename to
+# ``SingleNodeProviderConfig`` for symmetry with RunPod is a future
+# clean-up — many call sites still reference the legacy name).
 [entry_points.config_schema]
-module = "ryotenkai_providers.single_node.config"
-class  = "SingleNodeProviderConfig"
+module = "ryotenkai_shared.config.providers.single_node"
+class  = "SingleNodeConfig"
 
 # No [[required_env]] entries — single_node has no operator-supplied
 # secrets (ssh.alias and workspace_path are config, not secrets).
