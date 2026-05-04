@@ -106,7 +106,7 @@ def mock_deployment_manager():
     manager = MagicMock()
 
     # Default: successful operations
-    manager.deploy_files.return_value = Success(None)
+    manager.deploy_code.return_value = Success(None)
     manager.install_dependencies.return_value = Success(None)
     manager.start_training.return_value = Success({"mode": "venv"})
 
@@ -186,7 +186,7 @@ def test_execute_successful_deployment(
     mock_factory.create.assert_called_once()
     mock_provider.connect.assert_called_once_with(run=run_ctx)
     mock_deployment_manager.set_workspace.assert_called_once()
-    mock_deployment_manager.deploy_files.assert_called_once()
+    mock_deployment_manager.deploy_code.assert_called_once()
     mock_deployment_manager.install_dependencies.assert_called_once()
     mock_deployment_manager.start_training.assert_called_once()
 
@@ -326,7 +326,7 @@ def test_execute_upload_failure(
     mock_factory.create.return_value = Success(mock_provider)
 
     # Mock upload failure
-    mock_deployment_manager.deploy_files.return_value = Failure("Upload failed: disk full")
+    mock_deployment_manager.deploy_code.return_value = Failure("Upload failed: disk full")
     mock_tdm_class.return_value = mock_deployment_manager
 
     deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets, callbacks=mock_callbacks)

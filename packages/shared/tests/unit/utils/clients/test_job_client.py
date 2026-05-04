@@ -25,6 +25,7 @@ from ryotenkai_shared.utils.clients.job_client import (
     JobNotFoundError,
     ReplayTruncatedError,
 )
+from ryotenkai_shared.utils.clients.problem_details import APIException
 
 # Each async class opts in below via @pytest.mark.asyncio. The
 # synchronous URL-scheme tests stay unmarked.
@@ -183,12 +184,15 @@ class TestSubmitJob:
         assert b"plugins_payload" in captured["body"]
         assert b"PK\x03\x04fake-zip-bytes" in captured["body"]
 
-    async def test_non_2xx_raises_job_client_error(self) -> None:
+    async def test_non_2xx_raises_problem_details(self) -> None:
+        # Phase 3 PR-3.3: non-2xx responses are parsed via
+        # ``parse_problem_details``. Plain-text bodies surface as
+        # ``TransportError`` (subclass of ``APIException``).
         client = _client_with_handler(
             lambda r: httpx.Response(409, text="busy"),
         )
         try:
-            with pytest.raises(JobClientError, match="409"):
+            with pytest.raises(APIException, match="409"):
                 await client.submit_job({"job_id": "x", "command": ["x"]})
         finally:
             await client.aclose()
@@ -233,10 +237,12 @@ class TestGetStatus:
         finally:
             await client.aclose()
 
-    async def test_500_raises_generic(self) -> None:
+    async def test_500_raises_problem_details(self) -> None:
+        # Phase 3 PR-3.3: non-2xx → parse_problem_details. Text body
+        # → TransportError (APIException subclass).
         client = _client_with_handler(lambda r: httpx.Response(500, text="boom"))
         try:
-            with pytest.raises(JobClientError, match="500"):
+            with pytest.raises(APIException, match="500"):
                 await client.get_status("j-1")
         finally:
             await client.aclose()

@@ -7,8 +7,8 @@ All pipeline textual logs live under ``<attempt_dir>/logs/``:
     ├── logs/
     │   ├── pipeline.log              # aggregated stream (all stages)
     │   ├── <stage_name>.log          # per-stage stream
-    │   ├── trainer.stdio.log         # remote trainer subprocess stdout/stderr (pulled by LogManager)
-    │   └── runner.log                # remote uvicorn / runner stdout (pulled by LogManager)
+    │   ├── trainer.stdio.log         # remote trainer subprocess stdout/stderr (pulled by LogFetcher (HTTP))
+    │   └── runner.log                # remote uvicorn / runner stdout (pulled by LogFetcher (HTTP))
     ├── evaluation/                   # stage artifacts (not logs)
     └── inference/                    # stage artifacts (not logs)
 
@@ -25,7 +25,7 @@ Two remote logs, two channels:
   runner before /healthz answered".
 
 Pod↔Mac symmetry: the pod-side filenames (see :mod:`src.utils.pod_layout`)
-match the Mac-side filenames here exactly. LogManager scp does a 1:1 mapping.
+match the Mac-side filenames here exactly. LogFetcher HTTP read does a 1:1 mapping.
 
 Consumers (orchestrator, logger, log_manager, log_service) MUST go through
 this class — no module is allowed to construct log paths from raw string
@@ -49,7 +49,7 @@ LOGS_DIR_NAME = "logs"
 # Re-export filename constants under their LogLayout-historical names so
 # existing consumers of this module keep working. Single source of truth
 # is :mod:`src.utils.log_filenames` — pod-side and Mac-side share the
-# same literals because LogManager scp does a 1:1 by-filename mapping.
+# same literals because LogFetcher HTTP read does a 1:1 by-filename mapping.
 PIPELINE_LOG_NAME = PIPELINE_LOG
 REMOTE_TRAINER_STDIO_LOG_NAME = TRAINER_STDIO_LOG
 REMOTE_RUNNER_LOG_NAME = RUNNER_LOG

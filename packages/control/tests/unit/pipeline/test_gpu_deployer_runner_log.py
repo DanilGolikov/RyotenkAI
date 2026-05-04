@@ -1,18 +1,17 @@
-"""
-GPUDeployer — runner.log download alongside training.log.
+"""GPUDeployer — on-failure SCP pull of pod-side logs.
 
-Tests for the second log channel introduced to capture uvicorn /
-runner stdout (including pre-import crashes that the trainer-log
-channel misses). The training.log path stays unchanged and must keep
-working independently.
+Phase 3 PR-3.3 (transport-unification-v2): the LogManager-based
+download path is gone. The deployer now uses
+``self._ssh_client.download_file(remote, local)`` directly for the
+on-failure log channel — same intent (best-effort recovery of
+runner.log + trainer.stdio.log when deployment fails before
+TrainingMonitor takes over) but with a much smaller surface.
 
 Categories:
-* Positive — runner.log download is invoked with correct LogManager args
-* Negative — runner.log failure does NOT skip training.log download
-* Negative — training.log failure does NOT skip runner.log download
-* Boundary — no SSH client → both downloads skipped silently
-* Invariant — both downloads attempted in order: runner first, training next
-* Regression — existing _download_remote_logs signature unchanged
+* Positive — both channels are attempted (SCP, not LogManager)
+* Negative — first-channel failure does not skip the second
+* Boundary — no SSH client → both skipped silently
+* Invariant — runner.log fetched first
 """
 
 from __future__ import annotations
@@ -27,11 +26,7 @@ from ryotenkai_shared.utils.logs_layout import LogLayout
 
 @pytest.fixture
 def deployer_with_ssh(tmp_path, monkeypatch):
-    """A GPUDeployer instance with a mocked SSH client and deployment ctx.
-
-    All collaborators that aren't under test (provider, factory,
-    deployment_manager) are pre-mocked.
-    """
+    """A GPUDeployer instance with a mocked SSH client + injected layout."""
     layout = LogLayout(tmp_path)
     layout.ensure_logs_dir()
     monkeypatch.setattr(
@@ -53,81 +48,48 @@ def deployer_with_ssh(tmp_path, monkeypatch):
         )
 
     deployer._ssh_client = MagicMock()
-    deployer._ssh_client.exec_command.return_value = (False, "", "")  # default: cat fails
+    deployer._ssh_client.download_file.return_value = (True, "")
     deployer.deployment.workspace = "/workspace"
     return deployer
 
 
 # ---------------------------------------------------------------------------
-# Positive — runner.log call shape
+# Positive — both channels SCP'd via download_file
 # ---------------------------------------------------------------------------
 
 
-def test_runner_log_download_invoked_with_canonical_paths(deployer_with_ssh, tmp_path):
-    """_download_runner_log instantiates LogManager with /workspace/runner.log
-    and the layout's remote_runner_log local destination."""
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        lm_inst = MagicMock()
-        lm_inst.download.return_value = True
-        lm_cls.return_value = lm_inst
-
-        deployer_with_ssh._download_runner_log(reason="test")
-
-        lm_cls.assert_called_once()
-        kwargs = lm_cls.call_args.kwargs
-        # remote_path keyword
-        assert kwargs.get("remote_path") == "/workspace/runner.log"
-        # local_path keyword: must point at <attempt>/logs/runner.log
-        local_path = kwargs.get("local_path")
-        assert local_path is not None
-        assert local_path.name == "runner.log"
-        assert local_path.parent == tmp_path / "logs"
+def test_both_channels_scp_via_download_file(deployer_with_ssh) -> None:
+    deployer_with_ssh._download_remote_logs(reason="test")
+    calls = deployer_with_ssh._ssh_client.download_file.call_args_list
+    assert len(calls) == 2
+    remote_paths = [call.kwargs["remote_path"] for call in calls]
+    # PodLayout writes both files under <workspace>/logs/.
+    assert any(p.endswith("runner.log") for p in remote_paths)
+    assert any(p.endswith("trainer.stdio.log") for p in remote_paths)
 
 
 # ---------------------------------------------------------------------------
-# Negative — runner.log failure must not break training.log download
+# Negative — first failure does not skip the second
 # ---------------------------------------------------------------------------
 
 
-def test_runner_log_exception_does_not_break_training_download(deployer_with_ssh):
-    """Exception inside _download_runner_log is swallowed at debug level;
-    _download_remote_logs continues on to training.log."""
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        runner_mgr = MagicMock()
-        runner_mgr.download.side_effect = RuntimeError("ssh dead during runner.log")
-        # Subsequent LogManager() calls (training.log) succeed.
-        training_mgr = MagicMock()
-        training_mgr.download.return_value = True
-        lm_cls.side_effect = [runner_mgr, training_mgr]
-
-        # Should NOT raise; logs the runner failure at debug, proceeds.
-        deployer_with_ssh._download_remote_logs("test")
-
-        # Both LogManager constructions happened.
-        assert lm_cls.call_count >= 2
+def test_runner_log_failure_does_not_skip_trainer_log(deployer_with_ssh) -> None:
+    deployer_with_ssh._ssh_client.download_file.side_effect = [
+        (False, "boom"),  # runner.log fails
+        (True, ""),       # trainer.stdio.log succeeds
+    ]
+    deployer_with_ssh._download_remote_logs(reason="test")
+    assert deployer_with_ssh._ssh_client.download_file.call_count == 2
 
 
-def test_training_log_exception_does_not_skip_runner_download(deployer_with_ssh):
-    """Runner.log download runs FIRST so an exception in training.log
-    doesn't matter — but verify the ordering invariant holds."""
-    call_order = []
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        def make_lm(*a, **kw):
-            mgr = MagicMock()
-            remote = kw.get("remote_path", "")
-            if "runner.log" in remote:
-                call_order.append("runner")
-            else:
-                call_order.append("training")
-            mgr.download.return_value = True
-            return mgr
-        lm_cls.side_effect = make_lm
-
-        deployer_with_ssh._download_remote_logs("test")
-
-        # Runner must have been the first LogManager built.
-        assert call_order, "no LogManager calls"
-        assert call_order[0] == "runner"
+def test_runner_log_exception_does_not_skip_trainer_log(deployer_with_ssh) -> None:
+    deployer_with_ssh._ssh_client.download_file.side_effect = [
+        RuntimeError("ssh dead"),
+        (True, ""),
+    ]
+    deployer_with_ssh._download_remote_logs(reason="test")
+    # Both calls were attempted despite the first raising.
+    assert deployer_with_ssh._ssh_client.download_file.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -135,48 +97,18 @@ def test_training_log_exception_does_not_skip_runner_download(deployer_with_ssh)
 # ---------------------------------------------------------------------------
 
 
-def test_no_ssh_client_skips_both_downloads_silently(deployer_with_ssh):
-    """When ssh_client is None, _download_remote_logs is a no-op."""
+def test_no_ssh_client_skips_both_downloads_silently(deployer_with_ssh) -> None:
     deployer_with_ssh._ssh_client = None
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        deployer_with_ssh._download_remote_logs("test")
-        assert lm_cls.call_count == 0
-
-
-def test_no_ssh_client_skips_runner_log_silently(deployer_with_ssh):
-    """_download_runner_log on its own returns immediately when SSH is gone."""
-    deployer_with_ssh._ssh_client = None
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        deployer_with_ssh._download_runner_log(reason="test")
-        assert lm_cls.call_count == 0
+    deployer_with_ssh._download_remote_logs("test")  # must not raise
 
 
 # ---------------------------------------------------------------------------
-# Invariant — runner runs BEFORE training in _download_remote_logs
+# Invariant — runner.log fetched first
 # ---------------------------------------------------------------------------
 
 
-def test_runner_log_attempted_before_training_log(deployer_with_ssh):
-    """The chain is: 1) runner.log, 2) training.log. This protects the
-    case where uvicorn died before trainer started — runner.log holds
-    the only diagnostic and must be fetched even if training.log path
-    short-circuits early."""
-    seen = []
-    with patch("ryotenkai_control.pipeline.stages.gpu_deployer.LogManager") as lm_cls:
-        def make_lm(*a, **kw):
-            remote = kw.get("remote_path", a[1] if len(a) > 1 else "")
-            mgr = MagicMock()
-            mgr.download.return_value = True
-
-            def _record(*_a, **_kw):
-                seen.append(remote)
-                return True
-
-            mgr.download.side_effect = _record
-            return mgr
-        lm_cls.side_effect = make_lm
-
-        deployer_with_ssh._download_remote_logs("test")
-
-        assert seen[0] == "/workspace/runner.log", \
-            f"Expected runner.log first, got order: {seen}"
+def test_runner_log_attempted_first(deployer_with_ssh) -> None:
+    deployer_with_ssh._download_remote_logs(reason="test")
+    calls = deployer_with_ssh._ssh_client.download_file.call_args_list
+    assert calls
+    assert calls[0].kwargs["remote_path"].endswith("runner.log")

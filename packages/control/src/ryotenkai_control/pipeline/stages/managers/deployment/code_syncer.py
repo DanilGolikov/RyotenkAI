@@ -16,11 +16,8 @@ from typing import TYPE_CHECKING, ClassVar
 from ryotenkai_control.pipeline.stages.managers.deployment.ssh_helpers import build_ssh_opts
 from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_MARKER_EXISTS,
-    DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
     DEPLOYMENT_RSYNC_TIMEOUT,
     DEPLOYMENT_SSH_CMD_TIMEOUT,
-    DEPLOYMENT_STDERR_TRUNCATE,
-    DEPLOYMENT_STDOUT_LINES,
     DEPLOYMENT_TAR_TIMEOUT,
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
@@ -34,19 +31,20 @@ if TYPE_CHECKING:
 
 DEFAULT_WORKSPACE = "/workspace"
 
-# Path to the runtime contract checker baked into the training image.
-# Same path used by :class:`DependencyInstaller` for pip-package mode;
-# CodeSyncer invokes the same script with ``--check-source`` to verify
-# the synced ``src.*`` modules are importable on the pod (PR-A gate).
-RUNTIME_CHECK_SCRIPT = "/opt/helix/runtime_check.py"
-
-# rc=2 from runtime_check.py --check-source means "synced source broken"
-# (one or more required src.* modules failed to import). Distinct from
-# rc=1 which means "image broken / pip packages missing". rc=127 is the
-# shell's "command not found" — emitted when /opt/helix/runtime_check.py
-# is missing entirely (image too old to support the gate).
-_IMPORT_GATE_RC_FAILED = 2
-_IMPORT_GATE_RC_MISSING = 127
+# Phase 3 PR-3.3 (transport-unification-v2): the legacy on-pod
+# import gate (``runtime_check.py --check-source`` invoked via SSH)
+# is gone. The same modules are now checked over HTTP via
+# :meth:`JobClient.check_imports` after ``/healthz`` is green —
+# see :data:`REQUIRED_SRC_MODULES` below for the canonical list
+# the launcher sends.
+REQUIRED_SRC_MODULES: list[str] = [
+    "ryotenkai_shared.config",
+    "ryotenkai_shared.config.loader",
+    "ryotenkai_community.catalog",
+    "ryotenkai_providers",
+    "ryotenkai_pod.trainer.run_training",
+    "ryotenkai_pod.runner.main",
+]
 
 
 class CodeSyncer:
@@ -180,10 +178,14 @@ class CodeSyncer:
         rsync_ok = self._sync_all_modules_rsync(ssh_client, existing_pairs, ssh_opts)
         if rsync_ok:
             self._clear_pycache(ssh_client)
-            gate_result = self._verify_importability(ssh_client)
-            if gate_result.is_failure():
-                return gate_result
-            logger.info(f"Source code synced ({len(existing_pairs)} packages) + importable")
+            # Phase 3 PR-3.3 (transport-unification-v2): post-sync
+            # importability gate moved out of CodeSyncer. The runner
+            # isn't running yet, so the SSH ``runtime_check.py``
+            # invocation is gone. ``TrainingLauncher`` now calls
+            # ``JobClient.check_imports`` AFTER ``/healthz`` returns
+            # green, which validates the SAME synced source AND the
+            # runner image — single check covers both.
+            logger.info(f"Source code synced ({len(existing_pairs)} packages, rsync)")
             return Ok(None)
 
         logger.warning("⚠️ Batch rsync failed, falling back to per-package tar pipes")
@@ -195,10 +197,7 @@ class CodeSyncer:
             logger.debug(f"   ✓ {local} → {dest}")
 
         self._clear_pycache(ssh_client)
-        gate_result = self._verify_importability(ssh_client)
-        if gate_result.is_failure():
-            return gate_result
-        logger.info(f"Source code synced ({len(existing_pairs)} packages, tar fallback) + importable")
+        logger.info(f"Source code synced ({len(existing_pairs)} packages, tar fallback)")
         return Ok(None)
 
     def _sync_all_modules_rsync(
@@ -264,115 +263,13 @@ class CodeSyncer:
             command=cache_clear_cmd, background=False, timeout=DEPLOYMENT_SSH_CMD_TIMEOUT, silent=True
         )
 
-    def _verify_importability(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """Post-sync importability gate (PR-A).
-
-        Runs ``/opt/helix/runtime_check.py --check-source`` on the pod with
-        the freshly synced ``ryotenkai_*`` packages on PYTHONPATH. ``rsync rc=0`` does
-        not guarantee that all required modules ended up importable —
-        directories can be missing locally (post-rebase, post-stash) or
-        deleted on the pod by a previous ``--delete`` pass that did not
-        list the same module set. This gate validates the **same import
-        path that the trainer will exercise** before we spawn it.
-
-        Failure modes:
-
-        * rc=2 + ``<mod>=NOT_IMPORTABLE`` lines → named modules failed to
-          import. Pipeline halts at Stage 1 with the offending list.
-        * rc=127 → ``/opt/helix/runtime_check.py`` does not exist on the
-          image. Surfaced as an actionable "rebuild image" error.
-        * SSH timeout / non-zero unrelated rc → returned as a generic
-          gate failure with the raw output for forensics.
-        """
-        cmd = (
-            f"cd {shlex.quote(self._workspace)} && "
-            f"PYTHONPATH={shlex.quote(self._workspace)} "
-            f"python3 {RUNTIME_CHECK_SCRIPT} --check-source 2>&1 || echo \"GATE_RC=$?\""
-        )
-        success, stdout, stderr = ssh_client.exec_command(
-            command=cmd,
-            background=False,
-            timeout=DEPLOYMENT_PYTHON_VERIFY_TIMEOUT,
-            silent=True,
-        )
-
-        output = (stdout or "").strip()
-        gate_rc = self._extract_gate_rc(output)
-
-        if success and output.startswith("OK") and gate_rc is None:
-            logger.info("✅ Post-sync import check passed:")
-            for line in output.split("\n")[:DEPLOYMENT_STDOUT_LINES]:
-                logger.info(f"   {line}")
-            return Ok(None)
-
-        if gate_rc == _IMPORT_GATE_RC_MISSING:
-            error_msg = (
-                f"Post-sync import check unavailable: {RUNTIME_CHECK_SCRIPT} "
-                "missing on pod. The training image is too old to support the "
-                "import gate — rebuild the runtime image (docker/training/) so "
-                "it ships the updated runtime_check.py."
-            )
-            logger.error(f"❌ {error_msg}")
-            return Err(
-                AppError(
-                    message=error_msg,
-                    code="IMPORT_GATE_UNAVAILABLE",
-                    details={"output": output[:DEPLOYMENT_STDERR_TRUNCATE]},
-                )
-            )
-
-        if gate_rc == _IMPORT_GATE_RC_FAILED:
-            failed_modules = [
-                line.split("=", 1)[0]
-                for line in output.split("\n")
-                if "=NOT_IMPORTABLE" in line
-            ]
-            error_msg = (
-                f"Post-sync import check failed. Modules not importable on "
-                f"pod: {failed_modules or '<unknown>'}. Action: ensure these "
-                f"modules exist in your local checkout before deploy. Full "
-                f"pod output:\n{output[:DEPLOYMENT_STDERR_TRUNCATE]}"
-            )
-            logger.error(f"❌ {error_msg}")
-            return Err(
-                AppError(
-                    message=error_msg,
-                    code="IMPORT_GATE_FAILED",
-                    details={"failed_modules": failed_modules, "output": output[:DEPLOYMENT_STDERR_TRUNCATE]},
-                )
-            )
-
-        # SSH-level failure, timeout, or unexpected rc — surface raw output.
-        details = (stderr or output or "<no output>").strip()[:DEPLOYMENT_STDERR_TRUNCATE]
-        error_msg = (
-            f"Post-sync import check returned an unexpected result "
-            f"(success={success}, gate_rc={gate_rc}). Raw: {details}"
-        )
-        logger.error(f"❌ {error_msg}")
-        return Err(
-            AppError(
-                message=error_msg,
-                code="IMPORT_GATE_ERROR",
-                details={"output": details, "gate_rc": gate_rc},
-            )
-        )
-
-    @staticmethod
-    def _extract_gate_rc(output: str) -> int | None:
-        """Parse ``GATE_RC=<n>`` trailer emitted by the SSH wrapper.
-
-        The wrapper appends ``GATE_RC=$?`` only when ``runtime_check.py``
-        exits non-zero (the ``|| echo ...`` short-circuit). Absent trailer
-        means the script exited 0 — no failure to report.
-        """
-        for line in reversed(output.splitlines()):
-            stripped = line.strip()
-            if stripped.startswith("GATE_RC="):
-                try:
-                    return int(stripped.split("=", 1)[1])
-                except ValueError:
-                    return None
-        return None
+    # Phase 3 PR-3.3 (transport-unification-v2): the legacy
+    # ``_verify_importability`` SSH gate is gone. The same modules
+    # are now checked via ``JobClient.check_imports`` after
+    # ``/healthz`` returns green — see :class:`TrainingLauncher`.
+    # The list of canonical modules to check is :data:`REQUIRED_SRC_MODULES`
+    # below; runtime_check.py keeps a copy too for image-baked
+    # standalone use, but the runtime path goes through HTTP.
 
     def _sync_module_tar(
         self,

@@ -26,7 +26,7 @@ single_node's is ``<config.workspace_path>/runs/<run_id>``, etc.
 
 Parallel structure to :class:`src.utils.logs_layout.LogLayout` (Mac
 side). The ``runner.log`` / ``trainer.stdio.log`` filenames match on
-both sides — LogManager scp does a 1:1 mapping.
+both sides — LogFetcher HTTP read does a 1:1 mapping.
 
 Consumers (orchestrator, supervisor, runner main, log_manager,
 gpu_deployer, code_syncer, file_uploader) MUST go through this class

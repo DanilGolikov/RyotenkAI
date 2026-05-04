@@ -111,10 +111,12 @@ def test_manager_constructs_all_four_components(manager: TrainingDeploymentManag
     assert isinstance(manager._file_uploader, FileUploader)
     assert isinstance(manager._deps_installer, DependencyInstaller)
     assert isinstance(manager._launcher, TrainingLauncher)
-    # FileUploader must have received the same CodeSyncer (cross-component DI).
-    assert manager._file_uploader._code_syncer is manager._code_syncer
-    # TrainingLauncher must have received the same DependencyInstaller (cross-component DI).
+    # Phase 3 PR-3.3 (transport-unification-v2): the cross-component
+    # FileUploader↔CodeSyncer DI is gone — file upload is HTTP and
+    # has no SSH-side companion. The launcher now receives the
+    # FileUploader and the deps_installer.
     assert manager._launcher._deps_installer is manager._deps_installer
+    assert manager._launcher._file_uploader is manager._file_uploader
 
 
 def test_set_workspace_propagates_to_every_component(manager: TrainingDeploymentManager):
@@ -136,13 +138,16 @@ def test_workspace_property_reflects_current_value(manager: TrainingDeploymentMa
     assert manager.workspace == "/workspace/custom"
 
 
-def test_deploy_files_delegates_to_file_uploader(manager: TrainingDeploymentManager):
+def test_deploy_code_delegates_to_code_syncer(manager: TrainingDeploymentManager):
+    """Phase 3 PR-3.3: the legacy ``deploy_files`` (chain of file
+    upload + code sync) is replaced with ``deploy_code`` — pure
+    rsync, pre-launch. File upload is HTTP, called from
+    ``start_training`` after /healthz."""
     ssh = MagicMock()
-    ctx = {"config_path": "x"}
-    with patch.object(manager._file_uploader, "deploy_files", return_value=Ok(None)) as mock:
-        result = manager.deploy_files(ssh, ctx)
+    with patch.object(manager._code_syncer, "sync", return_value=Ok(None)) as mock:
+        result = manager.deploy_code(ssh)
     assert result.is_ok()
-    mock.assert_called_once_with(ssh, ctx)
+    mock.assert_called_once_with(ssh)
 
 
 def test_install_dependencies_delegates_to_deps_installer(manager: TrainingDeploymentManager):

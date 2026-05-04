@@ -1,20 +1,30 @@
 """Facade composing the four deployment components.
 
-After Wave 3 decomposition the GPU-training deployment concern lives in
-four single-responsibility components under
-:mod:`src.pipeline.stages.managers.deployment`:
+After Wave 3 decomposition + Phase 3 PR-3.3 (transport-unification-v2)
+the deployment concern lives in four single-responsibility components:
 
-* :class:`CodeSyncer` — rsync of project source modules.
-* :class:`FileUploader` — config + dataset upload, chains code-sync.
-* :class:`DependencyInstaller` — Docker runtime contract checks.
-* :class:`TrainingLauncher` — env file + Docker / cloud spawn + probe.
+* :class:`CodeSyncer`         — rsync of project source modules (SSH).
+* :class:`FileUploader`       — config + dataset HTTP upload.
+* :class:`DependencyInstaller` — Docker runtime contract checks (SSH).
+* :class:`TrainingLauncher`   — runner uvicorn launch + tunnel +
+                                  HTTP file upload + HTTP job submit.
 
-This module exposes a thin facade ``TrainingDeploymentManager`` whose
-public API (``deploy_files``, ``install_dependencies``,
-``start_training``, ``set_workspace`` + ``workspace`` property) is
-preserved bit-for-bit so external callers (``gpu_deployer``,
-``test_stages_deployer`` mocks, integration / e2e tests) keep working
-without changes.
+Bootstrap flow (post Phase 2):
+
+    gpu_deployer:
+      1. provider.connect()          → ssh_info
+      2. deploy_code(ssh)            → SSH rsync packages/        (pre-launch)
+      3. install_dependencies(ssh)   → SSH runtime image verify   (pre-launch)
+      4. start_training(ssh, ctx)    → orchestrates:
+           - launch_runner (SSH nohup uvicorn)
+           - open SSH tunnel + wait /healthz
+           - upload_files via HTTP    (NEW — replaces SSH tar-pipe)
+           - submit_job via HTTP
+
+The public API change vs the legacy facade: ``deploy_files`` is split
+into two methods — ``deploy_code`` (pre-launch SSH rsync) and the
+HTTP file upload that now lives inside ``start_training``. Callers
+update their step ordering accordingly.
 """
 
 from __future__ import annotations
@@ -37,17 +47,17 @@ if TYPE_CHECKING:
 class TrainingDeploymentManager:
     """Facade composing CodeSyncer, FileUploader, DependencyInstaller, TrainingLauncher.
 
-    Public API (stable contract for ``gpu_deployer`` and tests):
-
-    * ``__init__(config, secrets)``
-    * ``set_workspace(workspace_path)`` / ``workspace`` property
-    * ``deploy_files(ssh_client, context)``
-    * ``install_dependencies(ssh_client)``
-    * ``start_training(ssh_client, context, provider=None)``
+    Public API:
+      * ``__init__(config, secrets)``
+      * ``set_workspace(workspace_path)`` / ``workspace`` property
+      * ``deploy_code(ssh_client)``         — SSH rsync (pre-launch).
+      * ``install_dependencies(ssh_client)`` — SSH runtime verify.
+      * ``start_training(ssh_client, context, provider=None)`` —
+        runner launch + tunnel + HTTP file upload + HTTP job submit.
 
     Components are reachable as ``_code_syncer``, ``_file_uploader``,
-    ``_deps_installer``, ``_launcher`` for tests that need to patch
-    component internals; not part of the external contract.
+    ``_deps_installer``, ``_launcher`` for tests; not part of the
+    external contract.
     """
 
     DEFAULT_WORKSPACE = "/workspace"
@@ -57,31 +67,40 @@ class TrainingDeploymentManager:
         self.secrets = secrets
         self._workspace = self.DEFAULT_WORKSPACE
         self._code_syncer = CodeSyncer(config=config, secrets=secrets)
-        self._file_uploader = FileUploader(config=config, secrets=secrets, code_syncer=self._code_syncer)
+        self._file_uploader = FileUploader(config=config, secrets=secrets)
         self._deps_installer = DependencyInstaller(config=config, secrets=secrets)
-        self._launcher = TrainingLauncher(config=config, secrets=secrets, deps_installer=self._deps_installer)
+        # TrainingLauncher orchestrates HTTP file upload too — inject
+        # the file uploader so the launcher can call ``upload_via_http``
+        # between the /healthz wait and the POST /jobs.
+        self._launcher = TrainingLauncher(
+            config=config, secrets=secrets,
+            deps_installer=self._deps_installer,
+            file_uploader=self._file_uploader,
+        )
         for component in (self._code_syncer, self._file_uploader, self._deps_installer, self._launcher):
             component.set_workspace(self._workspace)
         logger.debug("🚀 TrainingDeploymentManager initialized")
 
     @property
     def workspace(self) -> str:
-        """Remote workspace path where code/configs are deployed."""
         return self._workspace
 
     def set_workspace(self, workspace_path: str) -> None:
-        """Propagate the workspace path into every component."""
         self._workspace = workspace_path
         for component in (self._code_syncer, self._file_uploader, self._deps_installer, self._launcher):
             component.set_workspace(workspace_path)
         logger.debug(f"[DEPLOY] Workspace: {self._workspace}")
 
-    def deploy_files(self, ssh_client: SSHClient, context: dict[str, Any]) -> Result[None, AppError]:
-        """Upload config + datasets, then sync source modules. Delegates to FileUploader."""
-        return self._file_uploader.deploy_files(ssh_client, context)
+    def deploy_code(self, ssh_client: SSHClient) -> Result[None, AppError]:
+        """Pre-launch SSH rsync of the four pod-relevant
+        ``ryotenkai_*`` packages. Replaces the legacy ``deploy_files``
+        step that used to chain config/dataset upload before code
+        sync — files now upload via HTTP after uvicorn is up
+        (``start_training`` orchestrates that)."""
+        return self._code_syncer.sync(ssh_client)
 
     def install_dependencies(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """Verify training-runtime dependencies on the remote target. Delegates to DependencyInstaller."""
+        """Verify training-runtime dependencies on the remote target."""
         return self._deps_installer.install(ssh_client)
 
     def start_training(
@@ -90,7 +109,11 @@ class TrainingDeploymentManager:
         context: dict[str, Any],
         provider: IGPUProvider | None = None,
     ) -> Result[dict[str, Any], AppError]:
-        """Spawn the training process on the remote target. Delegates to TrainingLauncher."""
+        """Spawn the training process on the remote target.
+
+        Now also performs HTTP file upload between the /healthz wait
+        and POST /jobs (Phase 3 PR-3.3). Delegates to TrainingLauncher.
+        """
         return self._launcher.start_training(ssh_client, context, provider)
 
 
