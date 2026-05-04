@@ -43,6 +43,7 @@ from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
 from ryotenkai_pod.runner.api import logs as logs_api
 from ryotenkai_pod.runner.api import resources as resources_api
+from ryotenkai_pod.runner.api import runtime as runtime_api
 from ryotenkai_pod.runner.api.errors import EXCEPTION_HANDLERS
 from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
@@ -466,6 +467,8 @@ def create_app(
     app.include_router(logs_api.router, prefix=API_V1_PREFIX)
     # Phase 2 PR-2.4 — multipart file upload (replaces tar-pipe SCP).
     app.include_router(files_api.router, prefix=API_V1_PREFIX)
+    # Phase 2 PR-2.5 — runtime import-check (replaces SSH runtime_check.py).
+    app.include_router(runtime_api.router, prefix=API_V1_PREFIX)
 
     return app
 

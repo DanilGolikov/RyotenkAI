@@ -440,6 +440,41 @@ class JobClient:
 
         return DiagnosticsResponse.model_validate(response.json())
 
+    async def check_imports(self, modules: list[str]) -> "ImportCheckReport":
+        """``POST /api/v1/runtime/import-check`` — per-module
+        verification with subprocess isolation. Replaces the SSH
+        ``runtime_check.py --check-source`` invocation in code_syncer.
+
+        Per-module failures surface as ``ImportResult.importable=False``
+        within a 200 response — the caller (CodeSyncer) decides what
+        to do with the failed list.
+
+        Raises:
+            APIException: 422 if the module list violates the regex
+                or size cap.
+            JobClientError: tunnel/network failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.runtime import (
+            ImportCheckReport,
+            ImportCheckRequest,
+        )
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        body = ImportCheckRequest(modules=modules).model_dump(mode="json")
+        try:
+            response = await self._client.post(
+                "/api/v1/runtime/import-check", json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"check_imports transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return ImportCheckReport.model_validate(response.json())
+
     async def upload_file(
         self,
         target: str,
