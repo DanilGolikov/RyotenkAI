@@ -1,0 +1,52 @@
+# Single-node (local Linux host via SSH) provider manifest.
+#
+# Local always-on host — no cloud lifecycle, no capacity-fleet
+# concept, no pod-side lifecycle client. The manifest schema's
+# ``is_local=true`` invariants enforce these constraints
+# automatically (see ProviderManifest._check_invariants).
+
+schema_version = 1
+
+[provider]
+id          = "single_node"
+name        = "Single Node (Local SSH)"
+version     = "1.0.0"
+roles       = ["training", "inference"]
+description = "Local Linux host with NVIDIA GPU, accessed via SSH."
+author      = "RyotenkAI Core"
+stability   = "stable"
+
+[capabilities]
+provider_type                     = "local"
+is_local                          = true
+supports_multi_gpu                = false
+supports_spot_instances           = false
+supports_lifecycle_actions        = false  # nothing to terminate / pause / resume
+has_pause_resume                  = false
+supports_recovery_probe           = false  # local host doesn't go away mid-run
+supports_capacity_error_detection = false  # no fleet → no capacity errors
+supports_log_download             = false  # logs already on host filesystem
+volume_kind                       = "local_disk"
+runner_workspace_root             = "/workspace"
+
+# Mac-side training-role IGPUProvider implementation.
+[entry_points.training]
+module = "ryotenkai_providers.single_node.training.provider"
+class  = "SingleNodeProvider"
+
+# Mac-side inference-role IInferenceProvider implementation.
+[entry_points.inference]
+module = "ryotenkai_providers.single_node.inference.provider"
+class  = "SingleNodeInferenceProvider"
+
+# Per-provider Pydantic config schema for ``providers.single_node``.
+# Schema lives in the shared package (see runpod manifest comment).
+# Class is named ``SingleNodeConfig`` (legacy name; rename to
+# ``SingleNodeProviderConfig`` for symmetry with RunPod is a future
+# clean-up — many call sites still reference the legacy name).
+[entry_points.config_schema]
+module = "ryotenkai_shared.config.providers.single_node"
+class  = "SingleNodeConfig"
+
+# No [[required_env]] entries — single_node has no operator-supplied
+# secrets (ssh.alias and workspace_path are config, not secrets).
