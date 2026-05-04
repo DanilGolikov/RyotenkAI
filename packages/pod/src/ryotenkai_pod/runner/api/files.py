@@ -24,10 +24,11 @@ see ``docs/plans/2026-05-04-transport-unification-http-runtime-v2.md``
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from pathlib import Path
+from typing import IO
 
-import aiofiles
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from starlette.requests import ClientDisconnect
 
@@ -144,23 +145,27 @@ async def upload_file(
     hasher = hashlib.sha256()
     total = 0
 
+    # The runtime image does not ship ``aiofiles`` — fall back to
+    # ``open()`` + ``asyncio.to_thread`` for the blocking write.
+    # Streaming + per-chunk cap semantics are preserved.
+    fh: IO[bytes] | None = None
     try:
-        async with aiofiles.open(partial_path, "wb") as fh:
-            while True:
-                chunk = await file.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_FILE_SIZE:
-                    raise APIError(
-                        ErrorCode.FILE_TOO_LARGE, status=413,
-                        detail=(
-                            f"upload exceeded MAX_FILE_SIZE={MAX_FILE_SIZE} "
-                            f"(target={target.value!r})"
-                        ),
-                    )
-                await fh.write(chunk)
-                hasher.update(chunk)
+        fh = await asyncio.to_thread(open, partial_path, "wb")
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_FILE_SIZE:
+                raise APIError(
+                    ErrorCode.FILE_TOO_LARGE, status=413,
+                    detail=(
+                        f"upload exceeded MAX_FILE_SIZE={MAX_FILE_SIZE} "
+                        f"(target={target.value!r})"
+                    ),
+                )
+            await asyncio.to_thread(fh.write, chunk)
+            hasher.update(chunk)
     except APIError:
         # ``except APIError`` MUST come before ``except Exception`` —
         # otherwise our own 413 gets remapped to FILE_WRITE_FAILED.
@@ -181,6 +186,9 @@ async def upload_file(
             ErrorCode.FILE_WRITE_FAILED, status=502,
             detail=f"disk write failed: {exc}",
         ) from exc
+    finally:
+        if fh is not None:
+            await asyncio.to_thread(fh.close)
 
     # Atomic rename — only after the full body landed cleanly.
     try:

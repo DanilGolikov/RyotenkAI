@@ -42,8 +42,8 @@ class FileUploadResponse(_StrictModel):
     Mac client checks ``sha256`` against its own pre-upload hash
     when ``checksum`` was provided in the request, and uses
     ``bytes_written`` to confirm the streaming did not silently
-    drop tail bytes (``aiofiles`` chunked write is faithful but
-    confirming on the wire keeps the contract honest).
+    drop tail bytes (chunked write is faithful but confirming on
+    the wire keeps the contract honest).
     """
 
     target: FileUploadTarget
