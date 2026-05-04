@@ -257,7 +257,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         )
         err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_SINGLE_NODE_PROVIDER_INVALID")  # type: ignore[arg-type]
         assert "single_node" in err
-        assert "invalid for SingleNodeConfig" in err
+        assert "invalid for SingleNodeProviderConfig" in err
 
     def test_negative_single_node_generic_exception(self) -> None:
         from ryotenkai_shared.config.providers.registry import PROVIDER_TYPES
@@ -269,7 +269,7 @@ class TestValidatePipelineProvidersConfigValidationErrors:
         )
         with patch.object(PROVIDER_TYPES["single_node"], "schema", MagicMock(side_effect=OSError("disk error"))):
             err = _assert_err(validate_pipeline_providers_config(cfg), code="CONFIG_SINGLE_NODE_PROVIDER_INVALID")  # type: ignore[arg-type]
-        assert "invalid for SingleNodeConfig" in err
+        assert "invalid for SingleNodeProviderConfig" in err
         assert "disk error" in err
 
     def test_negative_runpod_invalid_schema_triggers_validation_error(self) -> None:
@@ -379,7 +379,7 @@ class TestValidatePipelineInferenceProviderConfig:
             inference=DummyInferenceConfig(enabled=True, provider="single_node"),
         )
         err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_SINGLE_NODE_INVALID")  # type: ignore[arg-type]
-        assert "invalid for SingleNodeConfig" in err
+        assert "invalid for SingleNodeProviderConfig" in err
 
     def test_negative_single_node_generic_exception(self) -> None:
         cfg = DummyExtendedPipelineCfg(
@@ -389,10 +389,10 @@ class TestValidatePipelineInferenceProviderConfig:
             inference=DummyInferenceConfig(enabled=True, provider="single_node"),
         )
         mock_sn = MagicMock()
-        mock_sn.SingleNodeConfig.side_effect = OSError("disk error")
+        mock_sn.SingleNodeProviderConfig.side_effect = OSError("disk error")
         with patch.dict(sys.modules, {"ryotenkai_shared.config.providers.single_node": mock_sn}):
             err = _assert_err(validate_pipeline_inference_provider_config(cfg), code="CONFIG_INFERENCE_SINGLE_NODE_INVALID")  # type: ignore[arg-type]
-        assert "invalid for SingleNodeConfig" in err
+        assert "invalid for SingleNodeProviderConfig" in err
 
     def test_positive_single_node_valid_config(self) -> None:
         cfg = DummyExtendedPipelineCfg(

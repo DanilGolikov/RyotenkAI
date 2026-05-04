@@ -26,7 +26,7 @@ from pydantic import ValidationError
 
 from ryotenkai_providers.single_node.training.config import (
     SingleNodeCleanupConfig,
-    SingleNodeConfig,
+    SingleNodeProviderConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
@@ -97,8 +97,8 @@ def valid_inference_config():
 
 @pytest.fixture
 def valid_full_config(valid_connect_config, valid_cleanup_config, valid_training_config, valid_inference_config):
-    """Valid full SingleNodeConfig."""
-    return SingleNodeConfig(
+    """Valid full SingleNodeProviderConfig."""
+    return SingleNodeProviderConfig(
         connect=valid_connect_config,
         cleanup=valid_cleanup_config,
         training=valid_training_config,
@@ -115,7 +115,7 @@ class TestPositiveCases:
 
     def test_minimal_config_with_alias(self):
         """Test minimal valid config with SSH alias."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -127,7 +127,7 @@ class TestPositiveCases:
 
     def test_minimal_config_with_explicit_ssh(self):
         """Test minimal valid config with explicit SSH."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(host="localhost", user="test")
             ),
@@ -161,7 +161,7 @@ class TestPositiveCases:
 
     def test_config_with_custom_ssh_settings(self):
         """Test config with custom SSH connect settings."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(
                     alias="pc",
@@ -191,7 +191,7 @@ class TestNegativeCases:
     def test_missing_connect_field(self):
         """Test that missing 'connect' field raises validation error."""
         with pytest.raises(ValidationError) as exc_info:
-            SingleNodeConfig(
+            SingleNodeProviderConfig(
                 # connect missing!
                 training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
                 inference=SingleNodeInferenceConfig(),
@@ -203,7 +203,7 @@ class TestNegativeCases:
     def test_missing_training_field(self):
         """Test that missing 'training' field raises validation error."""
         with pytest.raises(ValidationError) as exc_info:
-            SingleNodeConfig(
+            SingleNodeProviderConfig(
                 connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
                 # training missing!
                 inference=SingleNodeInferenceConfig(),
@@ -364,7 +364,7 @@ class TestInvariants:
     def test_is_alias_mode_invariant(self):
         """Test that is_alias_mode matches ssh.alias presence."""
         # Alias mode
-        config_alias = SingleNodeConfig(
+        config_alias = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -373,7 +373,7 @@ class TestInvariants:
         assert config_alias.connect.ssh.alias is not None
 
         # Explicit mode
-        config_explicit = SingleNodeConfig(
+        config_explicit = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(host="localhost", user="test")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -391,7 +391,7 @@ class TestDependencyErrors:
 
     def test_ssh_key_path_not_found(self):
         """Test that non-existent SSH key path raises error when resolved."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(
                     host="localhost",
@@ -409,7 +409,7 @@ class TestDependencyErrors:
 
     def test_ssh_key_env_not_set(self):
         """Test that missing env var for SSH key raises error."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(
                     host="localhost",
@@ -435,7 +435,7 @@ class TestRegressions:
 
     def test_ssh_not_duplicated_v3(self):
         """REGRESSION: v2 had SSH duplicated in providers and inference.providers."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -471,7 +471,7 @@ class TestLogicSpecific:
 
     def test_ssh_mode_detection_alias(self):
         """Test SSH mode detection for alias mode."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -483,7 +483,7 @@ class TestLogicSpecific:
 
     def test_ssh_mode_detection_explicit(self):
         """Test SSH mode detection for explicit mode."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(host="192.168.1.100", user="testuser", port=2222)
             ),
@@ -503,7 +503,7 @@ class TestLogicSpecific:
         key_file.write_text("fake key")
 
         # key_path takes precedence
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(
                 ssh=SSHConfig(
                     host="localhost",
@@ -521,7 +521,7 @@ class TestLogicSpecific:
 
     def test_ssh_key_resolution_alias_mode_returns_none(self):
         """Test that alias mode returns None for key path (handled by ~/.ssh/config)."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(),
@@ -546,7 +546,7 @@ class TestCombinatorial:
     ])
     def test_lifecycle_combinations(self, cleanup, keep_on_error):
         """Test all combinations of lifecycle settings."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             cleanup=SingleNodeCleanupConfig(cleanup_workspace=cleanup, keep_on_error=keep_on_error),
             training=SingleNodeTrainingConfig(
@@ -566,7 +566,7 @@ class TestCombinatorial:
     ])
     def test_inference_server_combinations(self, host, port):
         """Test various inference server host/port combinations."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(workspace_path="/workspace", docker_image="test/runtime:latest"),
             inference=SingleNodeInferenceConfig(
@@ -584,7 +584,7 @@ class TestCombinatorial:
     @pytest.mark.parametrize("timeout", [10, 30, 60, 120, 300, 600])
     def test_training_timeout_values(self, timeout):
         """Test various valid training timeout values."""
-        config = SingleNodeConfig(
+        config = SingleNodeProviderConfig(
             connect=SingleNodeConnectConfig(ssh=SSHConfig(alias="pc")),
             training=SingleNodeTrainingConfig(
                 workspace_path="/workspace",

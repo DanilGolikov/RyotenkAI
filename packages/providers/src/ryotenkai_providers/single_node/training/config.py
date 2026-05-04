@@ -7,7 +7,7 @@ Source of truth: `src/config/providers/single_node/`.
 
 from ryotenkai_shared.config.providers.single_node import (
     SingleNodeCleanupConfig,
-    SingleNodeConfig,
+    SingleNodeProviderConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
@@ -15,7 +15,7 @@ from ryotenkai_shared.config.providers.single_node import (
 
 __all__ = [
     "SingleNodeCleanupConfig",
-    "SingleNodeConfig",
+    "SingleNodeProviderConfig",
     "SingleNodeConnectConfig",
     "SingleNodeInferenceConfig",
     "SingleNodeTrainingConfig",

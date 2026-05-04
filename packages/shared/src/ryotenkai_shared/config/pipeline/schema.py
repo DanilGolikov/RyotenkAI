@@ -53,7 +53,13 @@ class PipelineConfig(
     # =========================================================================
     # PROVIDERS REGISTRY (NEW!)
     # =========================================================================
-    providers: dict[str, dict[str, Any]] = Field(
+    # NOTE: declared as ``dict[str, Any]`` because each block is post-
+    # validated into the provider-specific Pydantic schema declared in
+    # ``provider.toml`` (see ``_validate_provider_blocks_against_manifests``).
+    # YAML loads as raw dict; the validator promotes each entry to the
+    # provider's typed config class (RunPodProviderConfig /
+    # SingleNodeProviderConfig). Downstream code reads typed attributes.
+    providers: dict[str, Any] = Field(
         default_factory=dict,
         description="Named providers registry. Each provider has 'type' field.",
     )
@@ -131,16 +137,18 @@ class PipelineConfig(
         return self
 
     def _validate_provider_blocks_against_manifests(self) -> None:
-        """Validate every ``providers.<id>`` block against the manifest's
-        Pydantic schema (Phase 14.D+F follow-up — concurrent-gathering-hippo
-        plan §4.4).
+        """Validate-and-typify every ``providers.<id>`` block against the
+        manifest's Pydantic schema (Phase 14.D+F follow-up — concurrent-
+        gathering-hippo plan §4.4).
 
         Each provider declares a ``[entry_points.config_schema]`` Pydantic
         class in its ``provider.toml``; this validator runs
-        ``ConfigCls.model_validate(<provider_block>)`` so YAML typos
+        ``ConfigCls.model_validate(<block>)`` so YAML typos
         ("cloud_typo: ALL" instead of "cloud_type: ALL") surface AT
-        CONFIG LOAD, not 30 seconds into the pipeline when the provider
-        instance starts touching the dict.
+        CONFIG LOAD, not 30 seconds into the pipeline. The validated
+        instance REPLACES the raw dict in ``self.providers[id]`` —
+        downstream code reads typed attributes (``block.training.gpu_type``)
+        with full mypy coverage.
 
         Best-effort: when the registry hasn't loaded a provider's
         manifest (e.g. modular runtimes that don't ship the providers
@@ -159,7 +167,13 @@ class PipelineConfig(
         except ImportError:
             return
 
-        for provider_id, raw_block in self.providers.items():
+        from pydantic import BaseModel
+
+        for provider_id, raw_block in list(self.providers.items()):
+            if isinstance(raw_block, BaseModel):
+                # Already typed (e.g. tests construct PipelineConfig
+                # programmatically with typed blocks).
+                continue
             if provider_id not in registry.list():
                 # Unknown provider — surfaced by another validator.
                 continue
@@ -168,12 +182,13 @@ class PipelineConfig(
             except Exception:  # noqa: BLE001 — ignore registry plumbing errors here
                 continue
             try:
-                config_cls.model_validate(raw_block)
+                typed_block = config_cls.model_validate(raw_block)
             except Exception as exc:
                 raise ValueError(
                     f"providers.{provider_id} block failed validation against "
                     f"{config_cls.__name__}: {exc}"
                 ) from exc
+            self.providers[provider_id] = typed_block  # type: ignore[assignment]
 
 
 __all__ = [

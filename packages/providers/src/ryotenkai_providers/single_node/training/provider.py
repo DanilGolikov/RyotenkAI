@@ -28,7 +28,7 @@ from ryotenkai_shared.utils.pod_layout import PodLayout
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
-from .config import SingleNodeConfig
+from .config import SingleNodeProviderConfig
 from .health_check import SingleNodeHealthCheck
 
 _SSH_PORT_DEFAULT = 22
@@ -69,11 +69,11 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         """Initialize SingleNode provider from a :class:`ProviderContext`."""
         secrets = ctx.secrets
         block = ctx.provider_block
-        if isinstance(block, SingleNodeConfig):
+        if isinstance(block, SingleNodeProviderConfig):
             self._config = block
         else:
             # Test harness fallback (raw dict).
-            self._config = SingleNodeConfig.from_dict(block)
+            self._config = SingleNodeProviderConfig.from_dict(block)
         self._secrets = secrets
         self._status = ProviderStatus.AVAILABLE
         self._ssh_client: SSHClient | None = None

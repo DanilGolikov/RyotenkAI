@@ -52,10 +52,13 @@ def compute_config_hashes(config: PipelineConfig) -> dict[str, str]:
         "training": config.training.model_dump(mode="json"),
         "datasets": {name: cfg.model_dump(mode="json") for name, cfg in config.datasets.items()},
     }
+    # The provider block is post-validator: typed Pydantic for known
+    # providers, raw dict otherwise. Hash a JSON-serialisable dict so
+    # both branches produce identical hashes for identical YAML.
     training_payload = {
         **model_dataset_payload,
         "provider_name": config.get_active_provider_name(),
-        "provider": config.get_provider_config(),
+        "provider": config.get_provider_config_as_dict(),
     }
     late_payload = {
         "inference": config.inference.model_dump(mode="json"),

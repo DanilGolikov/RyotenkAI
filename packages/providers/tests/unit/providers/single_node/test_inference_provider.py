@@ -14,7 +14,7 @@ import pytest
 
 import ryotenkai_providers.single_node.inference.provider as _mod
 from ryotenkai_shared.config.providers.single_node import (
-    SingleNodeConfig,
+    SingleNodeProviderConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
@@ -41,7 +41,7 @@ def ssh_cfg():
 
 @pytest.fixture()
 def provider_cfg(ssh_cfg):
-    return SingleNodeConfig(
+    return SingleNodeProviderConfig(
         connect=SingleNodeConnectConfig(ssh=ssh_cfg),
         training=SingleNodeTrainingConfig(
             workspace_path="/home/user/workspace",

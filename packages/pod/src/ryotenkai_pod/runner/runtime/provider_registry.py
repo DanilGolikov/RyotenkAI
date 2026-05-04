@@ -146,6 +146,12 @@ class _BuiltinNoOpLifecycleClient:
     is "do nothing" — encoding it once here in the pod package keeps
     the pod free of an importlib pull on a provider that exists solely
     to return ``Ok``.
+
+    All three methods return the same shared ``_SKIPPED_RESULT`` sentinel
+    — the wire string is ``"skipped"`` (lowercase) per Phase 9.A / 11.B
+    operator-dashboard convention. Reusing one frozen instance is also a
+    micro-optimisation: GC pressure stays at zero on a pod that hits
+    ``terminate`` once at shutdown.
     """
 
     @property
@@ -156,27 +162,36 @@ class _BuiltinNoOpLifecycleClient:
         return os.environ.get(RUNTIME_PROVIDER_ENV_VAR, "")
 
     async def terminate(self, *, resource_id: str):  # type: ignore[no-untyped-def]
-        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
-
-        return LifecycleActionResult(
-            outcome="noop",
-            attempts_made=0,
-            raw_response_excerpt=None,
-        )
+        return _SKIPPED_RESULT
 
     async def pause(self, *, resource_id: str):  # type: ignore[no-untyped-def]
-        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
-
-        return LifecycleActionResult(
-            outcome="noop", attempts_made=0, raw_response_excerpt=None
-        )
+        return _SKIPPED_RESULT
 
     async def resume(self, *, resource_id: str):  # type: ignore[no-untyped-def]
-        from ryotenkai_shared.infrastructure.lifecycle import LifecycleActionResult
+        return _SKIPPED_RESULT
 
-        return LifecycleActionResult(
-            outcome="noop", attempts_made=0, raw_response_excerpt=None
-        )
+
+def _make_skipped_result():  # type: ignore[no-untyped-def]
+    """Build the shared SKIPPED LifecycleActionResult.
+
+    Module-load-time helper — keeps the heavy lifecycle imports out of
+    the function bodies above (those are awaited often during shutdown
+    and shouldn't pay an importlib hit each time).
+    """
+    from ryotenkai_shared.infrastructure.lifecycle import (
+        LifecycleActionResult,
+        PodTerminalOutcome,
+    )
+
+    return LifecycleActionResult(
+        outcome=PodTerminalOutcome.SKIPPED,
+        attempts_made=0,
+        last_error=None,
+        raw_response_excerpt=None,
+    )
+
+
+_SKIPPED_RESULT = _make_skipped_result()
 
 
 def _resolve_lifecycle_client_class(provider: str) -> type[IPodLifecycleClient]:
