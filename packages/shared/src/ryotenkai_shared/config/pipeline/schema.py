@@ -127,7 +127,53 @@ class PipelineConfig(
         from ..validators.pipeline import validate_pipeline_config_references
 
         validate_pipeline_config_references(self)
+        self._validate_provider_blocks_against_manifests()
         return self
+
+    def _validate_provider_blocks_against_manifests(self) -> None:
+        """Validate every ``providers.<id>`` block against the manifest's
+        Pydantic schema (Phase 14.D+F follow-up — concurrent-gathering-hippo
+        plan §4.4).
+
+        Each provider declares a ``[entry_points.config_schema]`` Pydantic
+        class in its ``provider.toml``; this validator runs
+        ``ConfigCls.model_validate(<provider_block>)`` so YAML typos
+        ("cloud_typo: ALL" instead of "cloud_type: ALL") surface AT
+        CONFIG LOAD, not 30 seconds into the pipeline when the provider
+        instance starts touching the dict.
+
+        Best-effort: when the registry hasn't loaded a provider's
+        manifest (e.g. modular runtimes that don't ship the providers
+        package, or unit tests with MagicMock configs) the block is
+        left as-is. The cross-validator
+        ``validate_pipeline_active_provider_is_registered`` already
+        rejects unknown provider names earlier in the chain.
+        """
+        try:
+            # Import lazily — modular runtimes (slim CLI without the
+            # providers package) skip this whole branch via ImportError.
+            import importlib
+
+            registry_mod = importlib.import_module("ryotenkai_providers.registry")
+            registry = registry_mod.get_registry()
+        except ImportError:
+            return
+
+        for provider_id, raw_block in self.providers.items():
+            if provider_id not in registry.list():
+                # Unknown provider — surfaced by another validator.
+                continue
+            try:
+                config_cls = registry.get_config_class(provider_id)
+            except Exception:  # noqa: BLE001 — ignore registry plumbing errors here
+                continue
+            try:
+                config_cls.model_validate(raw_block)
+            except Exception as exc:
+                raise ValueError(
+                    f"providers.{provider_id} block failed validation against "
+                    f"{config_cls.__name__}: {exc}"
+                ) from exc
 
 
 __all__ = [
