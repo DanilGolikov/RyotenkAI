@@ -300,6 +300,15 @@ class JobClient:
             ),
         }
 
+        # Phase 3 PR-3.3 (transport-unification-v2): every non-2xx
+        # is parsed as RFC 9457 problem+json via
+        # :func:`parse_problem_details`. ``JobClientError`` (and
+        # ``JobNotFoundError``) only surface on actual TRANSPORT
+        # failure where there is no server response body to parse.
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
         try:
             response = await self._client.post(
                 "/api/v1/jobs",
@@ -315,9 +324,7 @@ class JobClient:
         # decorator — we'd rather succeed than break on a harmless
         # spec change.
         if response.status_code not in (200, 202):
-            raise JobClientError(
-                f"submit failed: {response.status_code} {response.text[:300]}",
-            )
+            raise parse_problem_details(response)
 
         return response.json()  # type: ignore[no-any-return]
 
@@ -325,20 +332,32 @@ class JobClient:
         """``GET /api/v1/jobs/{id}`` — current snapshot for ``job_id``.
 
         Raises:
-            JobNotFoundError: 404 from the runner.
-            JobClientError: any other non-2xx, or a transport error.
+            JobNotFoundError: subclass of APIException kept as a typed
+                marker for the very common "is the runner aware of
+                this job" decision.
+            APIException: any other 4xx/5xx, typed via
+                :func:`parse_problem_details`. Switch on
+                ``exc.code == ErrorCode.JOB_STATE_INVALID`` etc.
+            JobClientError: pure transport failure (no server response).
         """
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
         try:
             response = await self._client.get(f"/api/v1/jobs/{job_id}")
         except httpx.HTTPError as exc:
             raise JobClientError(f"get_status transport error: {exc!r}") from exc
 
         if response.status_code == 404:
-            raise JobNotFoundError(f"unknown job_id: {job_id!r}")
-        if response.status_code != 200:
-            raise JobClientError(
-                f"get_status failed: {response.status_code} {response.text[:300]}",
-            )
+            # Typed shape — but kept as JobNotFoundError subclass so
+            # legacy ``except JobNotFoundError`` callers keep working.
+            problem = parse_problem_details(response)
+            raise JobNotFoundError(
+                f"unknown job_id: {job_id!r}",
+            ) from problem
+        if not response.is_success:
+            raise parse_problem_details(response)
         return response.json()  # type: ignore[no-any-return]
 
     async def request_stop(
@@ -349,21 +368,14 @@ class JobClient:
     ) -> dict[str, Any]:
         """``POST /api/v1/jobs/{id}/stop`` — request graceful stop.
 
-        The runner returns 202 the moment SIGTERM is in flight (see
-        :meth:`src.runner.supervisor.Supervisor.request_stop`); the
-        FSM transitions to ``cancelled`` once the trainer reaps. Use
-        :meth:`subscribe_events` or :meth:`get_status` to wait for
-        the terminal state.
-
-        Args:
-            grace_seconds: optional override of the supervisor's
-                default 30 s SIGTERM-to-SIGKILL window. Pass ``None``
-                to use the server-side default.
-
-        Raises:
-            JobNotFoundError / JobClientError: same shape as
-                :meth:`get_status`.
+        Phase 3 PR-3.3 — error path mirrors :meth:`get_status` (typed
+        via problem+json for non-2xx, ``JobNotFoundError`` for 404,
+        ``JobClientError`` for transport).
         """
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
         body: dict[str, Any] = {}
         if grace_seconds is not None:
             body["grace_seconds"] = grace_seconds
@@ -377,11 +389,12 @@ class JobClient:
             raise JobClientError(f"stop transport error: {exc!r}") from exc
 
         if response.status_code == 404:
-            raise JobNotFoundError(f"unknown job_id: {job_id!r}")
+            problem = parse_problem_details(response)
+            raise JobNotFoundError(
+                f"unknown job_id: {job_id!r}",
+            ) from problem
         if response.status_code not in (200, 202):
-            raise JobClientError(
-                f"stop failed: {response.status_code} {response.text[:300]}",
-            )
+            raise parse_problem_details(response)
         return response.json() if response.content else {}  # type: ignore[no-any-return]
 
     # --- Diagnostics surface (Phase 2 PR-2.1) ----------------------------

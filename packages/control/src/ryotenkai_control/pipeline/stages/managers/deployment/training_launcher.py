@@ -72,6 +72,9 @@ if TYPE_CHECKING:
     from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import (
         DependencyInstaller,
     )
+    from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import (
+        FileUploader,
+    )
     from ryotenkai_providers.training.interfaces import IGPUProvider
     from ryotenkai_shared.config import PipelineConfig, Secrets
     from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -83,6 +86,28 @@ if TYPE_CHECKING:
 
 
 DEFAULT_WORKSPACE = "/workspace"
+
+
+class _FileUploadFailed(Exception):
+    """Internal — propagates an HTTP file-upload :class:`AppError`
+    out of the async island in :meth:`_submit_via_tunnel` so the
+    sync caller can map it back to a typed ``Err`` without losing
+    the original error code/details.
+    """
+
+    def __init__(self, app_error: "AppError") -> None:
+        super().__init__(app_error.message)
+        self.app_error = app_error
+
+
+class _ImportCheckFailed(Exception):
+    """Internal — same role as :class:`_FileUploadFailed` for the
+    HTTP import-check gate (PR-2.5 endpoint, PR-3.3 migration).
+    """
+
+    def __init__(self, app_error: "AppError") -> None:
+        super().__init__(app_error.message)
+        self.app_error = app_error
 
 # How long we wait for the runner's /healthz to start returning 200
 # after the SSH tunnel comes up. The runner boots with sshd in
@@ -124,10 +149,16 @@ class TrainingLauncher:
         secrets: Secrets,
         *,
         deps_installer: DependencyInstaller,
+        file_uploader: "FileUploader | None" = None,
     ) -> None:
         self.config = config
         self.secrets = secrets
         self._deps_installer = deps_installer  # reserved
+        # Phase 3 PR-3.3: HTTP file upload moved into start_training,
+        # between /healthz wait and POST /jobs. The deployment-manager
+        # facade injects the FileUploader here. Optional for tests
+        # that exercise the launcher in isolation.
+        self._file_uploader = file_uploader
         self._workspace = DEFAULT_WORKSPACE
 
     # --- workspace --------------------------------------------------------
@@ -288,10 +319,24 @@ class TrainingLauncher:
             "workdir": self.workspace,
         }
 
+        # Phase 3 PR-3.3: HTTP file upload context — passed through
+        # to ``_submit_via_tunnel`` so it can call ``upload_via_http``
+        # between /healthz and POST /jobs.
+        upload_context = dict(context)
+
         try:
             tunnel, client = asyncio.run(
-                self._submit_via_tunnel(ssh_client, job_spec, plugins_payload),
+                self._submit_via_tunnel(
+                    ssh_client, job_spec, plugins_payload,
+                    upload_context=upload_context,
+                ),
             )
+        except _ImportCheckFailed as exc:
+            logger.error("[LAUNCHER] HTTP import-check failed: %s", exc.app_error.message)
+            return Err(exc.app_error)
+        except _FileUploadFailed as exc:
+            logger.error("[LAUNCHER] HTTP file upload failed: %s", exc.app_error.message)
+            return Err(exc.app_error)
         except SSHTunnelError as exc:
             logger.exception("[LAUNCHER] SSH tunnel open failed")
             return Err(
@@ -582,8 +627,15 @@ class TrainingLauncher:
         ssh_client: SSHClient,
         job_spec: dict[str, Any],
         plugins_payload: bytes,
+        upload_context: dict[str, Any] | None = None,
     ) -> tuple[SSHTunnelManager, JobClient]:
-        """Open the SSH tunnel, probe ``/healthz``, ``POST /jobs``.
+        """Open the SSH tunnel, probe ``/healthz``, upload files via
+        HTTP, ``POST /jobs``.
+
+        Phase 3 PR-3.3 (transport-unification-v2): config + dataset
+        upload now happens via ``JobClient.upload_file`` between the
+        ``/healthz`` wait and the ``POST /jobs``. The tar-pipe + SCP
+        path the legacy ``deploy_files`` ran pre-launch is gone.
 
         Returns the live tunnel + client so the monitor can re-use
         them. On ANY failure mid-flight the tunnel is closed before
@@ -603,6 +655,18 @@ class TrainingLauncher:
         try:
             client = JobClient(tunnel.base_url)
             await self._wait_for_runner_ready(client)
+            # Phase 3 PR-3.3 (transport-unification-v2): post-sync
+            # importability gate moved off SSH. Validates the SAME
+            # synced source the trainer will exercise; failure halts
+            # before files upload.
+            await self._verify_imports_async(client)
+            # HTTP file upload between /healthz and submit.
+            if self._file_uploader is not None and upload_context is not None:
+                upload_result = await self._upload_files_async(
+                    client, upload_context,
+                )
+                if upload_result.is_failure():
+                    raise _FileUploadFailed(upload_result.unwrap_err())
             await client.submit_job(job_spec, plugins_payload=plugins_payload or None)
             return tunnel, client
         except BaseException:
@@ -612,6 +676,113 @@ class TrainingLauncher:
                 await client.aclose()
             await tunnel.close()
             raise
+
+    async def _verify_imports_async(self, client: JobClient) -> None:
+        """Phase 3 PR-3.3 — call ``POST /api/v1/runtime/import-check``
+        for the canonical pod-relevant module set.
+
+        Replaces the SSH ``runtime_check.py --check-source`` gate that
+        used to live at the tail of ``CodeSyncer.sync``. Same intent
+        — validate the synced source is importable on the runner's
+        PYTHONPATH; new mechanism — HTTP, structured per-module
+        report, no shell-output parsing.
+
+        Raises :class:`_ImportCheckFailed` carrying an :class:`AppError`
+        when one or more modules fail. The sync caller maps it back
+        to ``Err`` outside the async island.
+        """
+        from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import (
+            REQUIRED_SRC_MODULES,
+        )
+
+        try:
+            report = await client.check_imports(REQUIRED_SRC_MODULES)
+        except Exception as exc:  # noqa: BLE001 — propagate upstream
+            raise _ImportCheckFailed(
+                AppError(
+                    message=f"runner import-check call failed: {exc}",
+                    code="IMPORT_GATE_ERROR",
+                )
+            ) from exc
+        if report.all_importable:
+            logger.info(
+                f"✅ Post-sync HTTP import-check passed "
+                f"({len(report.results)} modules)",
+            )
+            return
+        failed = report.failed
+        details = {r.module: r.error for r in report.results if not r.importable}
+        raise _ImportCheckFailed(
+            AppError(
+                message=(
+                    f"Post-sync import check failed. Modules not importable "
+                    f"on pod: {failed}. Action: ensure these modules exist "
+                    f"in your local checkout before deploy."
+                ),
+                code="IMPORT_GATE_FAILED",
+                details={"failed_modules": failed, "errors": details},
+            ),
+        )
+
+    async def _upload_files_async(
+        self,
+        client: JobClient,
+        upload_context: dict[str, Any],
+    ) -> Result[None, AppError]:
+        """Async wrapper around the FileUploader's HTTP upload core.
+
+        Called from inside ``_submit_via_tunnel`` — already on an
+        event loop, so we cannot call the sync facade
+        ``upload_via_http`` (which itself does ``asyncio.run``).
+        Instead, replicate the validation step here and delegate to
+        the async core ``_upload_all`` directly so the same JobClient
+        (and its loop-bound httpx pool) is used end-to-end.
+        """
+        assert self._file_uploader is not None
+        from pathlib import Path
+        from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
+            DEPLOYMENT_CONFIG_PATH,
+        )
+
+        config_path = Path(upload_context.get("config_path", DEPLOYMENT_CONFIG_PATH))
+        if not config_path.exists():
+            return Err(
+                ProviderError(
+                    message=f"Config file not found: {config_path}",
+                    code="CONFIG_FILE_NOT_FOUND",
+                ),
+            )
+
+        dataset_files, missing = self._file_uploader._collect_local_datasets()
+        if missing and not dataset_files:
+            return Err(
+                ProviderError(
+                    message=(
+                        "Dataset files referenced but not found: "
+                        + ", ".join(missing)
+                    ),
+                    code="DATASET_FILE_NOT_FOUND",
+                    details={"missing": missing},
+                ),
+            )
+
+        logger.info(
+            f"📤 HTTP upload (post-healthz): 1 config + "
+            f"{len(dataset_files)} dataset(s)",
+        )
+        try:
+            await self._file_uploader._upload_all(
+                client, config_path, dataset_files,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return Err(
+                ProviderError(
+                    message=f"HTTP upload failed: {exc}",
+                    code="HTTP_FILE_UPLOAD_FAILED",
+                ),
+            )
+        logger.info("✅ HTTP file upload complete")
+        return Ok(None)
 
     async def _wait_for_runner_ready(self, client: JobClient) -> None:
         """Poll ``/healthz`` until the runner returns 200 or we

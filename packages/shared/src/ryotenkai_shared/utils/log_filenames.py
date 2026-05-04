@@ -3,7 +3,7 @@
 This module owns the **string literals** for every log file the pipeline
 produces. Both pod-side (:mod:`src.utils.pod_layout`) and Mac-side
 (:mod:`src.utils.logs_layout`) layouts import their filenames from
-here, so a rename happens in exactly one place and the LogManager scp
+here, so a rename happens in exactly one place and the LogFetcher HTTP read
 mapping (1:1 by filename) cannot drift.
 
 Why a separate module: ``pod_layout`` and ``logs_layout`` describe
@@ -29,7 +29,7 @@ from __future__ import annotations
 #: regular Python tracebacks AND native faulthandler dumps (the
 #: trainer activates ``faulthandler.enable()`` which writes to stderr,
 #: which the pump tees into this file).
-#: Pulled by ``LogManager`` to ``<attempt>/logs/<this name>`` on Mac.
+#: Pulled by ``LogFetcher`` (HTTP) to ``<attempt>/logs/<this name>`` on Mac.
 TRAINER_STDIO_LOG = "trainer.stdio.log"
 
 #: Pod-side uvicorn / FastAPI runner stdout. Captured by the

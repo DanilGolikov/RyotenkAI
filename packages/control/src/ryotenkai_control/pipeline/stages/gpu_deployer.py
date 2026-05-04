@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
-from ryotenkai_control.pipeline.stages.managers import LogManager, TrainingDeploymentManager
+from ryotenkai_control.pipeline.stages.managers import TrainingDeploymentManager
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -248,23 +248,26 @@ class GPUDeployer(PipelineStage):
         )
         self._ssh_client = ssh_client  # Save for log download on error
 
-        # Step 5: Upload files
-        logger.info("Uploading files...")
+        # Step 5: Sync source modules via rsync (pre-launch SSH).
+        # Phase 3 PR-3.3 (transport-unification-v2): split from the
+        # legacy ``deploy_files`` — config/dataset upload moved into
+        # ``start_training`` (post-launch, HTTP). The rsync still
+        # happens here because uvicorn cannot start without the
+        # synced ``ryotenkai_*`` packages on disk.
+        logger.info("Syncing source code (rsync)...")
         upload_start = time.time()
-        upload_context = dict(context)
-        upload_context["resource_id"] = ssh_info.resource_id
-        upload_result = self.deployment.deploy_files(ssh_client, upload_context)
+        sync_result = self.deployment.deploy_code(ssh_client)
         upload_duration = time.time() - upload_start
 
-        if upload_result.is_failure():
-            logger.error("File upload failed, disconnecting...")
-            self._handle_error_and_disconnect("File upload failed")
-            upload_err = upload_result.unwrap_err()  # AppError from deployment_manager
+        if sync_result.is_failure():
+            logger.error("Code sync failed, disconnecting...")
+            self._handle_error_and_disconnect("Code sync failed")
+            sync_err = sync_result.unwrap_err()
             if self._callbacks.on_error:
-                self._callbacks.on_error("upload", str(upload_err))
-            return Err(upload_err)
+                self._callbacks.on_error("upload", str(sync_err))
+            return Err(sync_err)
 
-        logger.info(f"Files uploaded! ({upload_duration:.1f}s)")
+        logger.info(f"Code synced! ({upload_duration:.1f}s)")
         if self._callbacks.on_files_uploaded:
             self._callbacks.on_files_uploaded(upload_duration)
 
@@ -409,42 +412,22 @@ class GPUDeployer(PipelineStage):
             self._provider.disconnect()
 
     def _download_remote_logs(self, reason: str) -> None:
-        """
-        Download remote pod logs through PodLayout.
+        """Best-effort SCP pull of pod-side logs on deployment failure.
 
-        Two independent per-run files pulled via LogManager scp:
-
-        1. ``<workspace>/logs/runner.log`` — uvicorn / runner stdout
-           captured by ``runner_launcher`` from the very first byte
-           of Python boot. **Survives uvicorn pre-import crashes**
-           (ImportError, SyntaxError) that would otherwise leave us
-           with no diagnostic. Downloaded best-effort: failure here
-           does not break trainer-log download below.
-        2. ``<workspace>/logs/trainer.stdio.log`` — trainer subprocess
-           stdout/stderr captured by the runner's Supervisor pump.
-           This is the ground-truth artefact for trainer crashes
-           (including native faulthandler dumps via stderr capture).
-
-        Why two channels: when the runner crashes at boot,
-        ``trainer.stdio.log`` does not exist yet — only ``runner.log``
-        has the trace. When the trainer crashes during a real run,
-        ``trainer.stdio.log`` has the full output. Either file alone
-        leaves a blind spot.
-
-        Both files share PodLayout's per-run isolation so sequential
-        runs on the same pod never overwrite each other.
-
-        Args:
-            reason: Error context for logging.
+        Phase 3 PR-3.3 (transport-unification-v2): post-PR-2.3 the
+        legacy ``LogManager`` is gone, but this on-failure path still
+        needs raw SCP because it runs BEFORE uvicorn is confirmed
+        green — JobClient (HTTP) wouldn't be reachable. Falls back
+        to the same two PodLayout files (``runner.log`` and
+        ``trainer.stdio.log``); the SCP API on :class:`SSHClient`
+        does not call ``exec_command`` so it's outside the AST
+        sentinel's scope and stays a legitimate bootstrap-failure
+        diagnostic path.
         """
         if not self._ssh_client:
             return
 
-        # Build PodLayout from the per-run workspace path the provider
-        # established in connect(). Single source of truth — no more
-        # ad-hoc f-string concat.
         from pathlib import PurePosixPath
-
         from ryotenkai_shared.utils.pod_layout import PodLayout
 
         try:
@@ -457,85 +440,49 @@ class GPUDeployer(PipelineStage):
             )
             return
 
-        # Channel 1 — runner.log. Best-effort, isolated try/except so
-        # failures here do not skip the trainer log below.
-        self._download_runner_log(reason=reason, pod_layout=pod_layout)
+        mac_layout = get_run_log_layout()
+        # Channel 1 — runner.log (pre-trainer crashes).
+        self._scp_log_best_effort(
+            label="runner.log",
+            remote=str(pod_layout.runner_log),
+            local=mac_layout.remote_runner_log,
+            reason=reason,
+        )
+        # Channel 2 — trainer.stdio.log (trainer crashes mid-run).
+        self._scp_log_best_effort(
+            label="trainer.stdio.log",
+            remote=str(pod_layout.trainer_stdio_log),
+            local=mac_layout.remote_trainer_stdio_log,
+            reason=reason,
+        )
 
-        # Channel 2 — trainer.stdio.log. This is the ground-truth
-        # artefact written by the runner's Supervisor pump; pulled to
-        # ``<attempt>/logs/trainer.stdio.log`` on Mac via LogLayout.
-        try:
-            mac_layout = get_run_log_layout()
-            log_manager = LogManager(
-                self._ssh_client,
-                remote_path=str(pod_layout.trainer_stdio_log),
-                local_path=mac_layout.remote_trainer_stdio_log,
-            )
-            if log_manager.download(silent=False):
-                return
-
-            # File missing or empty on remote. Surface explicitly so
-            # the operator sees what we looked for. Previously every
-            # path failed silently and the run-level log only showed
-            # "Pod terminated".
-            logger.warning(
-                f"[DEPLOYER] No trainer stdio log found on remote "
-                f"(reason='{reason}'); tried: {pod_layout.trainer_stdio_log}. "
-                f"The trainer may have crashed before any output flushed, "
-                f"or the pod was evicted by the platform before download "
-                f"— check the postmortem section above and the RunPod console."
-            )
-
-        except Exception as e:
-            logger.warning(
-                f"[DEPLOYER] trainer.stdio.log download failed "
-                f"(reason='{reason}'): {type(e).__name__}: {e}; "
-                f"tried: {pod_layout.trainer_stdio_log}"
-            )
-
-    def _download_runner_log(self, *, reason: str, pod_layout: "PodLayout") -> None:
-        """
-        Pull per-run ``runner.log`` from ``<workspace>/logs/`` to the
-        Mac attempt's logs/ dir.
-
-        Captures uvicorn stdout/stderr from the very first byte of
-        Python boot — including pre-import errors (ImportError,
-        SyntaxError) that kill the runner before trainer.stdio.log
-        even gets created. Primary diagnostic for ``/healthz did not
-        return 200`` timeouts.
-
-        Failure modes are non-fatal: missing file (trainer-only legacy
-        images without entrypoint redirect), unreachable SSH, or any
-        exception are swallowed at debug level so they do not mask
-        the bigger error context that triggered this download.
-
-        Args:
-            reason: error context propagated to the log message.
-            pod_layout: per-run PodLayout owning the canonical paths
-                (``pod_layout.runner_log`` is the source).
-        """
+    def _scp_log_best_effort(
+        self,
+        *,
+        label: str,
+        remote: str,
+        local: Any,
+        reason: str,
+    ) -> None:
+        """One SCP pull, all failures swallowed at debug level."""
         if not self._ssh_client:
             return
-
         try:
-            mac_layout = get_run_log_layout()
-            log_manager = LogManager(
-                self._ssh_client,
-                remote_path=str(pod_layout.runner_log),
-                local_path=mac_layout.remote_runner_log,
+            ok, err = self._ssh_client.download_file(
+                remote_path=remote,
+                local_path=str(local),
             )
-            if log_manager.download(silent=False):
-                return
+            if ok:
+                logger.info(f"[DEPLOYER] Downloaded {label} → {local}")
+            else:
+                logger.debug(
+                    f"[DEPLOYER] {label} not retrieved (reason='{reason}'): {err}",
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort
             logger.debug(
-                "[DEPLOYER] runner.log not present on pod (path=%s)"
-                " — context: %s",
-                pod_layout.runner_log, reason,
+                f"[DEPLOYER] {label} SCP raised (reason='{reason}'): "
+                f"{type(exc).__name__}: {exc}",
             )
-        except Exception as e:
-            # Not warning: runner.log is best-effort. The trainer.stdio.log
-            # channel below is what carries the primary error trace
-            # when the trainer DID run. Logging at debug avoids noise.
-            logger.debug(f"[DEPLOYER] Failed to download runner.log: {e}")
 
     def notify_pipeline_failure(self) -> None:
         """Inform the deployer that the pipeline ended with an error.
