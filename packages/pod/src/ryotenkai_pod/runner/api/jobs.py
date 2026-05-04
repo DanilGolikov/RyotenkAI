@@ -33,17 +33,18 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
 
+from ryotenkai_shared.contracts.runner_api import (
+    JobSnapshotResponse,
+    JobSpec,
+    JobStopAcceptedResponse,
+    JobSubmittedResponse,
+)
+
 from ryotenkai_pod.runner.api.deps import (
     get_bus,
     get_fsm,
     get_plugin_unpacker,
     get_supervisor,
-)
-from ryotenkai_pod.runner.api.schemas import (
-    JobSnapshotResponse,
-    JobSpec,
-    JobStopAcceptedResponse,
-    JobSubmittedResponse,
 )
 from ryotenkai_pod.runner.plugin_unpacker import PluginUnpackError
 from ryotenkai_pod.runner.state import (

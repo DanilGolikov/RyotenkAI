@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
+
 from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
-from ryotenkai_pod.runner.api.schemas import EventResponse, InternalEventRequest
 from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 
 if TYPE_CHECKING:

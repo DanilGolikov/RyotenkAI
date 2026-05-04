@@ -271,7 +271,7 @@ class JobClient:
 
         Args:
             job_spec: JSON-serialisable dict matching
-                :class:`src.runner.api.schemas.JobSpec` (the runner
+                :class:`ryotenkai_shared.contracts.runner_api.JobSpec` (the runner
                 validates with ``extra="forbid"``, so unknown fields
                 blow up at submit time, not at first event).
             plugins_payload: optional ZIP bytes — the packed
