@@ -34,12 +34,12 @@ Usage:
 # Registration is manifest-driven (provider.toml). PR-1.11 removed the
 # legacy GPUProviderFactory.register call; the ProviderRegistry walks
 # the on-disk manifests at process start.
-from .config import SingleNodeConfig
+from .config import SingleNodeProviderConfig
 from .health_check import SingleNodeHealthCheck
 from .provider import SingleNodeProvider
 
 __all__ = [
-    "SingleNodeConfig",
+    "SingleNodeProviderConfig",
     "SingleNodeHealthCheck",
     "SingleNodeProvider",
 ]

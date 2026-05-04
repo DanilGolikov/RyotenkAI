@@ -215,7 +215,7 @@ class TestValidateInferenceProviderConfig:
             _ = _mk_cfg(
                 providers={
                     "runpod": RUNPOD_PROVIDER_CFG,
-                    # invalid: missing required training block (SingleNodeConfig expects training.workspace_path + docker_image)
+                    # invalid: missing required training block (SingleNodeProviderConfig expects training.workspace_path + docker_image)
                     "single_node": {"connect": {"ssh": {"alias": "pc"}}},
                 },
                 training_provider="runpod",

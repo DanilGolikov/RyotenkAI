@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
-from ryotenkai_shared.config.providers.single_node import SingleNodeConfig
+from ryotenkai_shared.config.providers.single_node import SingleNodeProviderConfig
 from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 
 if TYPE_CHECKING:
@@ -40,8 +40,8 @@ PROVIDER_TYPES: dict[str, ProviderType] = {
     PROVIDER_SINGLE_NODE: ProviderType(
         id=PROVIDER_SINGLE_NODE,
         label="Single node (local GPU)",
-        schema=SingleNodeConfig,
-        schema_name=SingleNodeConfig.__name__,
+        schema=SingleNodeProviderConfig,
+        schema_name=SingleNodeProviderConfig.__name__,
         training_error_code="CONFIG_SINGLE_NODE_PROVIDER_INVALID",
         inference_error_code="CONFIG_INFERENCE_SINGLE_NODE_INVALID",
     ),

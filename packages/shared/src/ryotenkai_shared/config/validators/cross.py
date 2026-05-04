@@ -227,7 +227,7 @@ def validate_pipeline_inference_provider_config(cfg: PipelineConfig) -> Result[N
     Checks:
     - When inference.enabled=true and inference.provider=='single_node':
       - `providers.single_node` exists
-      - `providers.single_node` is a valid `SingleNodeConfig` (schema validation only)
+      - `providers.single_node` is a valid `SingleNodeProviderConfig` (schema validation only)
     """
 
     from ryotenkai_shared.utils.result import Ok

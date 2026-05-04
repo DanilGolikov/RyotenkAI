@@ -91,9 +91,9 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
         # NEW (v3): Get providers.single_node config
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_SINGLE_NODE)
-        from ryotenkai_shared.config.providers.single_node import SingleNodeConfig
+        from ryotenkai_shared.config.providers.single_node import SingleNodeProviderConfig
 
-        self._provider_cfg = SingleNodeConfig(**provider_cfg_raw)
+        self._provider_cfg = SingleNodeProviderConfig(**provider_cfg_raw)
 
         # Access inference-specific settings via .inference
         self._serve_cfg = self._provider_cfg.inference.serve

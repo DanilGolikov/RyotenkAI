@@ -20,7 +20,7 @@ from .runpod import (
 )
 from .single_node import (
     SingleNodeCleanupConfig,
-    SingleNodeConfig,
+    SingleNodeProviderConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
@@ -41,7 +41,7 @@ __all__ = [
     "SSHConfig",
     "SSHConnectSettings",
     "SingleNodeCleanupConfig",
-    "SingleNodeConfig",
+    "SingleNodeProviderConfig",
     "SingleNodeConnectConfig",
     "SingleNodeInferenceConfig",
     "SingleNodeTrainingConfig",

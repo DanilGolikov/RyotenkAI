@@ -16,7 +16,7 @@ from .inference import SingleNodeInferenceConfig
 from .training import SingleNodeTrainingConfig  # noqa: TC001
 
 
-class SingleNodeConfig(StrictBaseModel):
+class SingleNodeProviderConfig(StrictBaseModel):
     """
     Unified single_node provider config (training + inference).
 
@@ -151,7 +151,7 @@ class SingleNodeConfig(StrictBaseModel):
         return None
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SingleNodeConfig:
+    def from_dict(cls, data: dict[str, Any]) -> SingleNodeProviderConfig:
         """Create config from dictionary."""
         return cls(**data)
 
@@ -161,5 +161,5 @@ class SingleNodeConfig(StrictBaseModel):
 
 
 __all__ = [
-    "SingleNodeConfig",
+    "SingleNodeProviderConfig",
 ]

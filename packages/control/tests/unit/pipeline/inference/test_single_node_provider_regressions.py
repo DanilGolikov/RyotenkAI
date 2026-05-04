@@ -16,7 +16,7 @@ import pytest
 
 from ryotenkai_providers.single_node.inference.provider import SingleNodeInferenceProvider
 from ryotenkai_providers.single_node.training.config import (
-    SingleNodeConfig,
+    SingleNodeProviderConfig,
     SingleNodeConnectConfig,
     SingleNodeInferenceConfig,
     SingleNodeTrainingConfig,
@@ -91,7 +91,7 @@ def mock_ssh_config():
 @pytest.fixture
 def mock_config(mock_ssh_config):
     """Mock provider configuration (NEW v3 structure)."""
-    return SingleNodeConfig(
+    return SingleNodeProviderConfig(
         connect=SingleNodeConnectConfig(ssh=mock_ssh_config),
         training=SingleNodeTrainingConfig(
             workspace_path="/home/testuser/workspace",

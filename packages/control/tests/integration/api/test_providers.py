@@ -116,7 +116,7 @@ def test_validate_ok_when_valid(client: TestClient) -> None:
     resp = client.post("/api/v1/providers/sn/config/validate", json={"yaml": valid})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # ok or fail depends on whether SingleNodeConfig requires nested fields;
+    # ok or fail depends on whether SingleNodeProviderConfig requires nested fields;
     # at minimum the response shape must be present
     assert "checks" in body
 
