@@ -49,7 +49,12 @@ class TestSubmit:
         kw = _multipart({"job_id": ""})
         r = runner_client.post(JOBS, **kw)
         assert r.status_code == 422
-        assert r.json()["detail"]["code"] == "invalid_job_spec"
+        # Phase 1 transport-unification-v2: wire shape is now RFC 9457
+        # problem+json. Legacy `detail.code` was adapted via the
+        # universal handler; PR-3.3 will rewrite raise sites to use
+        # APIError directly.
+        assert r.headers["content-type"].startswith("application/problem+json")
+        assert r.json()["code"] == "JOB_SPEC_INVALID"
 
     def test_malformed_json_returns_422(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         kw = {
@@ -75,7 +80,7 @@ class TestSubmit:
         kw2 = _multipart({"job_id": "j-2", "command": ["python", "-c", "pass"]})
         r = runner_client.post(JOBS, **kw2)
         assert r.status_code == 409
-        assert r.json()["detail"]["code"] == "job_in_progress"
+        assert r.json()["code"] == "JOB_IN_PROGRESS"
 
     def test_resubmit_after_terminal_state_succeeds(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         # Drive the first job to a terminal state via the mock's
@@ -165,7 +170,7 @@ class TestGet:
         runner_client.post(JOBS, **kw)
         r = runner_client.get(f"{JOBS}/j-other")
         assert r.status_code == 404
-        assert r.json()["detail"]["code"] == "job_not_found"
+        assert r.json()["code"] == "JOB_NOT_FOUND"
 
     def test_404_when_no_job_submitted(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         r = runner_client.get(f"{JOBS}/anything")
@@ -196,8 +201,11 @@ class TestStop:
         runner_client.app.state.supervisor.finish(exit_code=0)
         r = runner_client.post(f"{JOBS}/j-1/stop")
         assert r.status_code == 409
-        assert r.json()["detail"]["code"] == "stop_not_allowed"
-        assert r.json()["detail"]["current_state"] == "completed"
+        # Phase 1: STOP_NOT_ALLOWED maps via the universal HTTPException
+        # adapter; legacy ``current_state`` extra is currently dropped
+        # (only ``code`` and ``message`` survive the adapter). PR-3.3
+        # will restore the field via APIError ``extras``.
+        assert r.json()["code"] == "STOP_NOT_ALLOWED"
 
     def test_stop_unknown_job_returns_404(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         runner_client.post(JOBS, **_multipart({"job_id": "j-1", "command": ["python", "-c", "pass"]}))
@@ -252,4 +260,4 @@ class TestPluginsPayload:
         )
         r = runner_client.post(JOBS, **kw)
         assert r.status_code == 422
-        assert r.json()["detail"]["code"] == "plugin_unpack_failed"
+        assert r.json()["code"] == "PLUGIN_UNPACK_FAILED"

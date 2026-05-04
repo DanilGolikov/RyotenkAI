@@ -54,7 +54,7 @@ class TestPushEvent:
             json={"kind": "step", "payload": {}},
         )
         assert r.status_code == 409
-        assert r.json()["detail"]["code"] == "no_active_job"
+        assert r.json()["code"] == "NO_ACTIVE_JOB"
 
     def test_missing_kind_returns_422(self, runner_client) -> None:  # type: ignore[no-untyped-def]
         _submit(runner_client)
@@ -108,4 +108,4 @@ class TestLoopbackGate:
         finally:
             internal_module._TRUSTED_HOSTS = original
         assert r.status_code == 403
-        assert r.json()["detail"]["code"] == "loopback_required"
+        assert r.json()["code"] == "LOOPBACK_REQUIRED"

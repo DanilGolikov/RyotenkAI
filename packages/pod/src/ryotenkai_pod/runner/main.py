@@ -39,6 +39,7 @@ from ryotenkai_pod.runner.api import control as control_api
 from ryotenkai_pod.runner.api import events as events_api
 from ryotenkai_pod.runner.api import internal as internal_api
 from ryotenkai_pod.runner.api import jobs as jobs_api
+from ryotenkai_pod.runner.api.errors import EXCEPTION_HANDLERS
 from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.event_journal import (
@@ -405,6 +406,11 @@ def create_app(
     semantics.
     """
     factory: _SupervisorFactory = supervisor_factory or Supervisor
+    # RP20 (transport-unification-v2): register exception handlers
+    # SYNCHRONOUSLY at construction time. If we deferred to lifespan
+    # startup the very first request after boot could race the
+    # registration and return a bare HTTPException body — defeating
+    # the whole point of the unified problem+json contract.
     app = FastAPI(
         title="RyotenkAI Runner",
         version=RUNTIME_IMAGE,
@@ -414,6 +420,7 @@ def create_app(
             "ssh -L tunnel."
         ),
         lifespan=_make_lifespan(factory),
+        exception_handlers=EXCEPTION_HANDLERS,
     )
 
     @app.get("/healthz", tags=["meta"])
