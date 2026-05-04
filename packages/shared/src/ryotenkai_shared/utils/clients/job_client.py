@@ -440,6 +440,63 @@ class JobClient:
 
         return DiagnosticsResponse.model_validate(response.json())
 
+    async def read_log(
+        self, name: str, *, offset: int = 0, limit_bytes: int = 8192,
+    ) -> "LogChunkResponse":
+        """``GET /api/v1/logs/{name}?offset=N&limit_bytes=M`` —
+        range read of a pod-side log file. Replaces the SSH ``stat``
+        + ``tail -c`` protocol from the legacy LogManager.
+
+        Args:
+            name: ``LogName`` enum value (``"trainer_stdio"`` or
+                ``"runner"``). Caller passes the string so the
+                client doesn't have to import the enum every time.
+            offset: starting byte position (0 for first read).
+            limit_bytes: cap on returned content size (default 8 KB,
+                runner enforces 10 MB max).
+
+        Raises:
+            APIException: typed via :func:`parse_problem_details` —
+                ``LOG_NOT_AVAILABLE``, ``LOG_NAME_INVALID``,
+                ``LOG_OFFSET_OUT_OF_RANGE``.
+            JobClientError: transport-level failure.
+        """
+        from ryotenkai_shared.contracts.runner_api.logs import LogChunkResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get(
+                f"/api/v1/logs/{name}",
+                params={"offset": offset, "limit_bytes": limit_bytes},
+            )
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"read_log transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return LogChunkResponse.model_validate(response.json())
+
+    async def get_log_size(self, name: str) -> "LogSizeResponse":
+        """``GET /api/v1/logs/{name}/size`` — lightweight tail-poll
+        check. Cheaper than a zero-byte read."""
+        from ryotenkai_shared.contracts.runner_api.logs import LogSizeResponse
+        from ryotenkai_shared.utils.clients.problem_details import (
+            parse_problem_details,
+        )
+
+        try:
+            response = await self._client.get(f"/api/v1/logs/{name}/size")
+        except httpx.HTTPError as exc:
+            raise JobClientError(
+                f"get_log_size transport error: {exc!r}",
+            ) from exc
+        if not response.is_success:
+            raise parse_problem_details(response)
+        return LogSizeResponse.model_validate(response.json())
+
     async def get_resources(self) -> "ResourceSnapshot":
         """``GET /api/v1/resources`` — instant GPU/CPU/RAM snapshot.
 

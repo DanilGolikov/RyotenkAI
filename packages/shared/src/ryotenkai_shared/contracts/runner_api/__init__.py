@@ -26,6 +26,7 @@ from .events import (
     EventResponse,
 )
 from .internal import InternalEventRequest
+from .logs import LogChunkResponse, LogName, LogSizeResponse
 from .resources import ResourceSnapshot
 from .jobs import (
     JobSnapshotResponse,
@@ -50,6 +51,9 @@ __all__ = [
     "JobStopAcceptedResponse",
     "JobSubmittedResponse",
     "KernelSignalsReport",
+    "LogChunkResponse",
+    "LogName",
+    "LogSizeResponse",
     "ResourceSnapshot",
     "WS_CLOSE_GONE",
     "WS_CLOSE_INVALID",

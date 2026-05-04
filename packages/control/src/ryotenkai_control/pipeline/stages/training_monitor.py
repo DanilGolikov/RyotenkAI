@@ -43,7 +43,7 @@ from ryotenkai_shared.constants import (
 )
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
-from ryotenkai_control.pipeline.stages.managers.log_manager import LogManager
+from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, Result, TrainingError
 from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -180,10 +180,10 @@ class TrainingMonitor(PipelineStage):
         # can close the raw pod-SSH connection alongside the tunnel.
         # Single-node / mock flows keep both as ``None``.
         self._ssh_client: SSHClient | None = None
-        self._log_manager: LogManager | None = None
+        self._log_manager: LogFetcher | None = None
         # PR-B — second LogManager for runner.log (uvicorn / pre-import
         # crashes). Shares the SSH ControlMaster with ``_log_manager``.
-        self._runner_log_manager: LogManager | None = None
+        self._runner_log_manager: LogFetcher | None = None
         # Pod recovery (laptop-sleep): captured from deployer context
         # so :meth:`_recover_pod_if_needed` can call the provider's
         # IRecoveryProbeProvider impl. The instance is propagated by
@@ -512,101 +512,61 @@ class TrainingMonitor(PipelineStage):
     def _build_log_manager_from_context(
         self,
         deployer_context: dict[str, Any],
-    ) -> tuple[LogManager | None, LogManager | None, SSHClient | None]:
-        """Construct SSH-backed :class:`LogManager` instances for both
-        ``trainer.stdio.log`` and ``runner.log`` from gpu_deployer
-        context, or ``(None, None, None)`` when the active flow doesn't
-        need one (single_node / mock / missing handles).
+    ) -> tuple[LogFetcher | None, LogFetcher | None, "SSHClient | None"]:
+        """Construct HTTP-backed :class:`LogFetcher` instances for both
+        ``trainer.stdio.log`` and ``runner.log``.
 
-        Returns ``(trainer_lm, runner_lm, ssh_client)``. Both managers
-        share a single SSH ControlMaster connection — RP6 (5s polling)
-        is cheap because each tick is just a ``stat -c%s`` round-trip
-        on the existing connection.
+        Phase 2 PR-2.3 (transport-unification-v2): replaced the SSH
+        ``stat -c %s`` + ``tail -c <delta>`` polling pair with a
+        single :class:`JobClient.read_log` per tick. The legacy
+        ``SSHClient`` ControlMaster is no longer constructed here —
+        both fetchers share the existing :attr:`self._client`
+        :class:`JobClient` that the stage already holds for jobs/
+        events. PodLayout resolution moved pod-side: the LogName
+        enum is mapped to a concrete file path inside the runner
+        from ``app.state.pod_layout``.
 
-        The legacy SSH-polling monitor did the periodic
-        ``log_manager.download(silent=True)`` itself; restoring that
-        keeps ``runs/<id>/attempts/<n>/logs/{trainer.stdio,runner}.log``
-        populated as the run progresses, which the web UI's
-        :class:`LogDock` already tails.
+        Return shape kept as ``(trainer, runner, ssh)`` for the
+        orchestrator's existing teardown contract; the third slot
+        is now always ``None`` and will be deleted in PR-3.2 when
+        the SSHClient import contract lands.
         """
+        from ryotenkai_shared.contracts.runner_api.logs import LogName
+
         provider_type = deployer_context.get("provider_type")
-        ssh_host = deployer_context.get("ssh_host")
         # Cloud-only: local providers ship the trainer on the same
-        # host so the log file is already available; nothing to scp.
-        if provider_type != "cloud" or not ssh_host:
+        # host so the log file is already available locally.
+        if provider_type != "cloud":
             return None, None, None
 
-        workspace_path = deployer_context.get("workspace_path")
-        if not workspace_path:
+        client = self._client
+        if client is None:
             logger.debug(
-                "[MONITOR] deployer_context missing workspace_path — "
-                "periodic log download disabled",
+                "[MONITOR] no JobClient on stage — periodic log download disabled",
             )
-            return None, None, None
-
-        try:
-            ssh_port = int(deployer_context.get("ssh_port") or SSH_PORT_DEFAULT)
-        except (TypeError, ValueError):
-            ssh_port = SSH_PORT_DEFAULT
-
-        is_alias_mode = bool(deployer_context.get("is_alias_mode"))
-        ssh_user = deployer_context.get("ssh_user")
-        ssh_key_path = deployer_context.get("ssh_key_path")
-        try:
-            ssh_client = SSHClient(
-                host=ssh_host,
-                port=ssh_port,
-                username=None if is_alias_mode else ssh_user,
-                key_path=None if is_alias_mode else ssh_key_path,
-            )
-        except Exception as exc:
-            logger.debug(f"[MONITOR] SSH client construction failed: {exc}")
-            return None, None, None
-
-        # Build PodLayout from the deployer's workspace_path so we
-        # pull the canonical per-run trainer.stdio.log. Pre-PodLayout
-        # this code used a global LogManager.DEFAULT_REMOTE_PATH —
-        # which silently downloaded from the wrong path and made
-        # the periodic-tail feature a no-op. PodLayout closes that.
-        from pathlib import PurePosixPath
-
-        from ryotenkai_shared.utils.pod_layout import PodLayout
-
-        try:
-            pod_layout = PodLayout.from_root(PurePosixPath(workspace_path))
-        except ValueError as exc:
-            logger.debug(f"[MONITOR] Cannot build PodLayout: {exc}")
-            with contextlib.suppress(Exception):
-                ssh_client.close_master()
             return None, None, None
 
         try:
             mac_layout = get_run_log_layout()
-            trainer_lm = LogManager(
-                ssh_client,
-                remote_path=str(pod_layout.trainer_stdio_log),
+            trainer_lm = LogFetcher(
+                client,
+                name=LogName.TRAINER_STDIO,
                 local_path=mac_layout.remote_trainer_stdio_log,
             )
-            # PR-B — second LogManager for runner.log. Without it,
-            # uvicorn pre-import crashes (e.g. ImportError before the
-            # FastAPI app even binds 8080) never hit Mac until the
-            # postmortem fires — and by then the pod might be evicted.
-            runner_lm = LogManager(
-                ssh_client,
-                remote_path=str(pod_layout.runner_log),
+            runner_lm = LogFetcher(
+                client,
+                name=LogName.RUNNER,
                 local_path=mac_layout.remote_runner_log,
             )
         except Exception as exc:
-            logger.debug(f"[MONITOR] LogManager init failed: {exc}")
-            with contextlib.suppress(Exception):
-                ssh_client.close_master()
+            logger.debug(f"[MONITOR] LogFetcher init failed: {exc}")
             return None, None, None
-        return trainer_lm, runner_lm, ssh_client
+        return trainer_lm, runner_lm, None
 
     async def _log_downloader_loop(
         self,
-        trainer_log_manager: LogManager,
-        runner_log_manager: LogManager | None = None,
+        trainer_log_manager: LogFetcher,
+        runner_log_manager: LogFetcher | None = None,
     ) -> None:
         """Pull ``trainer.stdio.log`` (and optionally ``runner.log``)
         every :data:`TRAINING_MONITOR_LOG_DOWNLOAD_INTERVAL` seconds.
@@ -932,8 +892,8 @@ class TrainingMonitor(PipelineStage):
         self,
         client: JobClient,
         job_id: str,
-        log_manager: LogManager | None,
-        runner_log_manager: LogManager | None = None,
+        log_manager: LogFetcher | None,
+        runner_log_manager: LogFetcher | None = None,
     ) -> Result[dict[str, Any], AppError]:
         """Run :meth:`_watch` with a parallel periodic-download task.
 
