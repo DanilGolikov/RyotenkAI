@@ -210,7 +210,6 @@ class TestTrainingOnlyConfig:
         else:
             cfg = _training_cfg(type=kind)  # legacy-compat helper handles lora/qlora
         assert cfg.adapter.kind == kind
-        assert cfg.type == kind  # backward-compat property
 
     def test_kind_invalid_rejected(self) -> None:
         with pytest.raises(ValidationError):

@@ -23,11 +23,11 @@ from ryotenkai_providers.single_node.training.config import (
 )
 from ryotenkai_shared.config import (
     InferenceSingleNodeServeConfig,
-    InferenceVLLMEngineConfig,
     PipelineConfig,
     Secrets,
     SSHConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 
 def _create_merge_mock_responses(
@@ -109,7 +109,7 @@ def mock_config(mock_ssh_config):
 @pytest.fixture
 def mock_engine_config():
     """Mock engine configuration."""
-    return InferenceVLLMEngineConfig(
+    return VLLMEngineConfig(
         tensor_parallel_size=1,
         max_model_len=4096,
         gpu_memory_utilization=0.90,
@@ -651,7 +651,7 @@ class TestHealthCheckBugFix:
 
         full_config.inference = Mock()
         full_config.inference.engines = Mock()
-        full_config.inference.engines.vllm = InferenceVLLMEngineConfig(
+        full_config.inference.engines.vllm = VLLMEngineConfig(
         )
         full_config.inference.common = Mock()
         full_config.inference.common.lora = Mock()

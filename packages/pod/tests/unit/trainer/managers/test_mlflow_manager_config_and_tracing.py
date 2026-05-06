@@ -17,8 +17,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     QLoRAConfig,
     ModelConfig,
@@ -27,6 +25,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 
 pytestmark = pytest.mark.skip(
@@ -74,7 +73,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
     return InferenceConfig(
         enabled=False,
         provider="single_node",
-        engine=InferenceVLLMEngineConfig(),
+        engine=VLLMEngineConfig(),
     )
 
 

@@ -14,7 +14,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ryotenkai_shared.config import InferenceConfig, InferenceVLLMEngineConfig
+from ryotenkai_shared.config import InferenceConfig
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 pytestmark = pytest.mark.unit
 
@@ -29,7 +30,7 @@ class TestInferenceConfigValidators:
             _ = InferenceConfig(
                 enabled=True,
                 provider="unknown_provider",
-                engine=InferenceVLLMEngineConfig(),
+                engine=VLLMEngineConfig(),
             )
         assert any((err.get("loc") or ("",))[0] == "provider" for err in e.value.errors())
 
@@ -46,18 +47,9 @@ class TestInferenceConfigValidators:
         cfg = InferenceConfig(
             enabled=True,
             provider="single_node",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         )
         assert cfg.engine.kind == "vllm"
-
-    def test_engines_proxy_property(self) -> None:
-        """Backward-compat ``engines.vllm`` proxy works."""
-        cfg = InferenceConfig(
-            enabled=True,
-            provider="single_node",
-            engine=InferenceVLLMEngineConfig(max_model_len=8192),
-        )
-        assert cfg.engines.vllm.max_model_len == 8192
 
     def test_positive_enabled_runpod_allows_missing_images(self) -> None:
         """Images auto-derive via convention; no manifest tweaking needed."""

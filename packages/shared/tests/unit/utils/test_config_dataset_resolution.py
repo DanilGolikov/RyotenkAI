@@ -21,8 +21,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     QLoRAConfig,
     ModelConfig,
@@ -30,6 +28,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 
 def _model_cfg() -> ModelConfig:
@@ -75,7 +74,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
     return InferenceConfig(
         enabled=False,
         provider="single_node",
-        engine=InferenceVLLMEngineConfig(),
+        engine=VLLMEngineConfig(),
     )
 
 
@@ -244,14 +243,14 @@ class TestValidateDatasets:
 
 
 class TestDatasetConfigHelpers:
-    def test_get_source_type_local(self) -> None:
+    def test_source_kind_local(self) -> None:
         ds = _local_ds("data/train.jsonl")
-        assert ds.get_source_type() == "local"
+        assert ds.source.kind == "local"
         assert ds.is_huggingface() is False
 
-    def test_get_source_type_hf(self) -> None:
+    def test_source_kind_hf(self) -> None:
         ds = _hf_ds("tatsu-lab/alpaca")
-        assert ds.get_source_type() == "huggingface"
+        assert ds.source.kind == "huggingface"
         assert ds.is_huggingface() is True
 
     def test_get_source_uri_local_is_absolute(self) -> None:

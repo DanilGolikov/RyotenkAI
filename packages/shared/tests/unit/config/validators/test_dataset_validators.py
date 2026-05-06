@@ -26,7 +26,6 @@ class TestDiscriminatedSource:
         })
         assert cfg.source.kind == "local"
         assert cfg.is_huggingface() is False
-        assert cfg.source_type == "local"  # backward-compat property
 
     def test_positive_huggingface_source(self) -> None:
         cfg = DatasetConfig.model_validate({
@@ -69,22 +68,14 @@ class TestDiscriminatedSource:
                 "source_local": {"local_paths": {"train": "data.jsonl"}},
             })
 
-    def test_get_source_type_returns_kind(self) -> None:
+    def test_source_kind_returns_local(self) -> None:
         cfg = DatasetConfig.model_validate({
             "source": {"kind": "local", "local_paths": {"train": "x.jsonl"}},
         })
-        assert cfg.get_source_type() == "local"
+        assert cfg.source.kind == "local"
 
-    def test_source_local_property_returns_local_when_kind_matches(self) -> None:
-        cfg = DatasetConfig.model_validate({
-            "source": {"kind": "local", "local_paths": {"train": "x.jsonl"}},
-        })
-        assert cfg.source_local is not None
-        assert cfg.source_hf is None
-
-    def test_source_hf_property_returns_hf_when_kind_matches(self) -> None:
+    def test_source_kind_returns_huggingface(self) -> None:
         cfg = DatasetConfig.model_validate({
             "source": {"kind": "huggingface", "train_id": "x"},
         })
-        assert cfg.source_hf is not None
-        assert cfg.source_local is None
+        assert cfg.source.kind == "huggingface"

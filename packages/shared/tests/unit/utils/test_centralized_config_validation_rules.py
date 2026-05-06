@@ -10,8 +10,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     QLoRAConfig,
     ModelConfig,
@@ -19,6 +17,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 
 def _model_cfg() -> ModelConfig:
@@ -67,7 +66,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
     return InferenceConfig(
         enabled=False,
         provider="single_node",
-        engine=InferenceVLLMEngineConfig(),
+        engine=VLLMEngineConfig(),
     )
 
 
@@ -162,7 +161,7 @@ def test_rule_5_inference_enabled_requires_supported_provider_engine() -> None:
         _ = InferenceConfig(
             enabled=True,
             provider="unknown_provider",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         )
     assert any((err.get("loc") or ("",))[0] == "provider" for err in e.value.errors())
 

@@ -1,7 +1,7 @@
 """``VLLMEngineConfig`` — Pydantic validation.
 
 Categories: positive, negative, boundary, invariant, regression
-(porting from legacy ``InferenceVLLMEngineConfig``).
+(porting from legacy ``VLLMEngineConfig``).
 """
 
 from __future__ import annotations

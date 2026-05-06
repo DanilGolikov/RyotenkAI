@@ -48,8 +48,8 @@ class TestTrainingPathsRemoval:
             ),
         )
 
-        assert dataset.source_local.local_paths.train == str(train_file)
-        assert not hasattr(dataset.source_local, "training_paths")
+        assert dataset.source.local_paths.train == str(train_file)
+        assert not hasattr(dataset.source, "training_paths")
 
     def test_get_source_uri_uses_local_paths_not_training_paths(self, tmp_path):
         """get_source_uri() should use local_paths.train (v6.0)."""

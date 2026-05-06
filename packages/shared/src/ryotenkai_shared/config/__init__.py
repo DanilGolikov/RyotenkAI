@@ -19,11 +19,9 @@ from .inference import (
     InferenceChatUIConfig,
     InferenceCommonConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
     InferenceHealthCheckConfig,
     InferenceLoRAConfig,
     InferenceSingleNodeServeConfig,
-    InferenceVLLMEngineConfig,
 )
 from .integrations import (
     IntegrationsConfig,
@@ -73,11 +71,9 @@ __all__ = [
     "InferenceChatUIConfig",
     "InferenceCommonConfig",
     "InferenceConfig",
-    "InferenceEnginesConfig",
     "InferenceHealthCheckConfig",
     "InferenceLoRAConfig",
     "InferenceSingleNodeServeConfig",
-    "InferenceVLLMEngineConfig",
     "LoRAConfig",
     "LoraConfig",
     "MLflowConfig",

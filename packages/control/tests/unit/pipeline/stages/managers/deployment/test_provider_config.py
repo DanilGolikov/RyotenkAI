@@ -22,13 +22,12 @@ from ryotenkai_shared.config import (
     DatasetSourceLocal,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 pytestmark = pytest.mark.unit
 
@@ -77,7 +76,7 @@ def _make_config(provider: str = "single_node") -> PipelineConfig:
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         ),
     )
 
