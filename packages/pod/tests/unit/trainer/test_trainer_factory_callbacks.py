@@ -66,6 +66,10 @@ class StubStrategy:
     def post_build_config_hook(self, config, **context):
         pass
 
+    def prepare_prompts_for_chat_template(self, train_dataset, eval_dataset, tokenizer):
+        # No-op stub mirroring TrainingStrategy default.
+        return train_dataset, eval_dataset
+
 
 class StubStrategyFactory:
     def is_registered(self, strategy_type: str) -> bool:

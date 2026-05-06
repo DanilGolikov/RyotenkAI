@@ -19,27 +19,10 @@ Example:
 
 from __future__ import annotations
 
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from peft import AdaLoraConfig, LoraConfig, TaskType
-from trl import DPOConfig, DPOTrainer, GRPOConfig, GRPOTrainer, ORPOConfig, ORPOTrainer, SFTConfig, SFTTrainer
 
-from ryotenkai_shared.constants import (
-    DEFAULT_LEARNING_RATES,
-    STRATEGY_COT,
-    STRATEGY_CPT,
-    STRATEGY_DPO,
-    STRATEGY_GRPO,
-    STRATEGY_ORPO,
-    STRATEGY_SAPO,
-    STRATEGY_SFT,
-)
-from ryotenkai_pod.trainer.constants import (
-    DEFAULT_MAX_COMPLETION_LENGTH,
-    HP_MAX_COMPLETION_LENGTH,
-    HP_MAX_LENGTH,
-)
 from ryotenkai_pod.trainer.reward_plugins import build_reward_plugin_result
 from ryotenkai_shared.utils.logger import get_logger
 
@@ -51,39 +34,6 @@ if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
 
 logger = get_logger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Strategy → Trainer / Config lookup tables
-#
-# These mappings are kept for backward-compatibility and informational use.
-# New call-sites should use strategy.get_trainer_class() / strategy.get_config_class()
-# and strategy.build_config_kwargs(hp) instead of reaching into these dicts.
-# ---------------------------------------------------------------------------
-
-STRATEGY_TRAINERS: MappingProxyType[str, type] = MappingProxyType(
-    {
-        STRATEGY_CPT: SFTTrainer,
-        STRATEGY_SFT: SFTTrainer,
-        STRATEGY_COT: SFTTrainer,
-        STRATEGY_DPO: DPOTrainer,
-        STRATEGY_ORPO: ORPOTrainer,
-        STRATEGY_GRPO: GRPOTrainer,
-        STRATEGY_SAPO: GRPOTrainer,
-    }
-)
-
-STRATEGY_CONFIGS: MappingProxyType[str, type] = MappingProxyType(
-    {
-        STRATEGY_CPT: SFTConfig,
-        STRATEGY_SFT: SFTConfig,
-        STRATEGY_COT: SFTConfig,
-        STRATEGY_DPO: DPOConfig,
-        STRATEGY_ORPO: ORPOConfig,
-        STRATEGY_GRPO: GRPOConfig,
-        STRATEGY_SAPO: GRPOConfig,
-    }
-)
 
 
 def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
@@ -208,17 +158,17 @@ def create_training_args(
     - Phase-specific (strategy.hyperparams) overrides Global (config.training.hyperparams)
     - Merge priority: Phase > Global
 
-    When ``strategy_instance`` is provided, strategy-specific config kwargs are built
-    by delegating to ``strategy_instance.build_config_kwargs(hp)`` — no if-chains.
-    When omitted, falls back to the legacy STRATEGY_CONFIGS lookup + if-chains.
+    Strategy-specific config kwargs are built by delegating to
+    ``strategy_instance.build_config_kwargs(hp)`` — no string-equality dispatch.
+    When ``strategy_instance`` is omitted, the strategy is auto-resolved from
+    :class:`StrategyFactory` using ``strategy.strategy_type``.
 
     Args:
         config: Pipeline configuration
         strategy: Current strategy phase config
         output_dir: Override output directory (defaults to ``output/phase_0_{type}``)
-        strategy_instance: Optional pre-created TrainingStrategy instance. When present,
-            used for config class lookup and strategy-specific kwargs instead of the
-            static STRATEGY_CONFIGS / if-chains fallback path.
+        strategy_instance: Optional pre-created TrainingStrategy instance. When
+            ``None``, resolved automatically from StrategyFactory.
 
     Returns:
         TRL training config (SFTConfig, DPOConfig, ORPOConfig, GRPOConfig, or any
@@ -272,42 +222,27 @@ def create_training_args(
         "logging_nan_inf_filter": False,
     }
 
-    if strategy_instance is not None:
-        # Clean path: delegate strategy-specific kwargs to the strategy object.
-        config_class = strategy_instance.get_config_class()
+    # Polymorphic dispatch only — auto-resolve strategy_instance from the registry
+    # when caller didn't pass one. Legacy if/elif fallback deleted.
+    if strategy_instance is None:
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
-        # Synthesise a lightweight hp proxy from get_hp so build_config_kwargs works
-        # with the same phase-priority semantics.
-        class _HpProxy:
-            def __getattr__(self, name: str) -> Any:
-                return get_hp(name)
+        strategy_instance = StrategyFactory().create(strategy_type, config)
 
-        strategy_specific = strategy_instance.build_config_kwargs(_HpProxy())
-        # Remove duplicates: base args take precedence for the common fields;
-        # strategy_specific fills in strategy-only fields.
-        for k, v in strategy_specific.items():
-            if k not in args or v is not None:
-                args[k] = v
-    else:
-        # Legacy fallback: static lookup + if-chains.
-        config_class = STRATEGY_CONFIGS[strategy_type]
+    config_class = strategy_instance.get_config_class()
 
-        if strategy_type in (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_COT):
-            args["packing"] = get_hp("packing")
-            args[HP_MAX_LENGTH] = get_hp(HP_MAX_LENGTH)
+    # Synthesise a lightweight hp proxy from get_hp so build_config_kwargs works
+    # with the same phase-priority semantics.
+    class _HpProxy:
+        def __getattr__(self, name: str) -> Any:
+            return get_hp(name)
 
-        if strategy_type in (STRATEGY_DPO, STRATEGY_ORPO):
-            args["beta"] = get_hp("beta", 0.1)
-            args[HP_MAX_LENGTH] = get_hp(HP_MAX_LENGTH)
-
-        if strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO):
-            args["loss_type"] = strategy_type
-            args["num_generations"] = get_hp("num_generations", 4)
-            args["max_prompt_length"] = get_hp("max_prompt_length")
-            args[HP_MAX_COMPLETION_LENGTH] = get_hp(HP_MAX_COMPLETION_LENGTH, DEFAULT_MAX_COMPLETION_LENGTH)
-            if strategy_type == STRATEGY_SAPO:
-                args["sapo_temperature_pos"] = get_hp("sapo_temperature_pos", 1.0)
-                args["sapo_temperature_neg"] = get_hp("sapo_temperature_neg", 1.0)
+    strategy_specific = strategy_instance.build_config_kwargs(_HpProxy())
+    # Remove duplicates: base args take precedence for the common fields;
+    # strategy_specific fills in strategy-only fields.
+    for k, v in strategy_specific.items():
+        if k not in args or v is not None:
+            args[k] = v
 
     if extra_config_kwargs:
         args.update(extra_config_kwargs)
@@ -342,9 +277,9 @@ def create_trainer(
 
     TRL automatically applies PEFT adapters when peft_config is provided.
 
-    When ``strategy_instance`` is provided, trainer class resolution and
-    reward-plugin detection are delegated to the strategy object — no if-chains.
-    When omitted, falls back to the legacy STRATEGY_TRAINERS lookup.
+    Trainer class, reward-plugin detection, and prompt preprocessing are
+    delegated to the strategy object via polymorphic dispatch — no
+    string-equality dispatch on ``strategy_type``.
 
     Args:
         config: Pipeline configuration
@@ -354,25 +289,21 @@ def create_trainer(
         train_dataset: Training dataset
         peft_config: Optional PEFT config (LoRA / QLoRA / AdaLoRA)
         eval_dataset: Optional evaluation dataset
-        strategy_instance: Optional pre-created TrainingStrategy. When present,
-            ``get_trainer_class()`` and ``requires_reward_plugin`` are used
-            instead of the static STRATEGY_TRAINERS / if-chains fallback.
+        strategy_instance: Optional pre-created TrainingStrategy. When
+            ``None``, resolved automatically from StrategyFactory.
 
     Returns:
         Configured TRL trainer
     """
     strategy_type = strategy.strategy_type.lower()
 
-    if strategy_instance is not None:
-        trainer_class = strategy_instance.get_trainer_class()
-    else:
-        trainer_class = STRATEGY_TRAINERS[strategy_type]
+    if strategy_instance is None:
+        from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 
-    needs_reward_plugin = (
-        strategy_instance.requires_reward_plugin
-        if strategy_instance is not None
-        else strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO)
-    )
+        strategy_instance = StrategyFactory().create(strategy_type, config)
+
+    trainer_class = strategy_instance.get_trainer_class()
+    needs_reward_plugin = strategy_instance.requires_reward_plugin
 
     reward_result = None
     if needs_reward_plugin:
@@ -391,24 +322,10 @@ def create_trainer(
     )
 
     # Convert string prompts to conversational format so TRL applies chat template.
-    # Without this, models fine-tuned with chat template (e.g. Qwen2.5) generate EOS
-    # immediately because the raw text prompt lacks the expected template tokens.
-    if (
-        strategy_type in (STRATEGY_GRPO, STRATEGY_SAPO)
-        and "prompt" in train_dataset.column_names
-        and isinstance(train_dataset[0]["prompt"], str)
-        and getattr(tokenizer, "chat_template", None)
-    ):
-        train_dataset = train_dataset.map(
-            lambda x: {"prompt": [{"role": "user", "content": x["prompt"]}]},
-            desc="Converting prompts to conversational format",
-        )
-        if eval_dataset is not None and "prompt" in eval_dataset.column_names:
-            eval_dataset = eval_dataset.map(
-                lambda x: {"prompt": [{"role": "user", "content": x["prompt"]}]},
-                desc="Converting eval prompts to conversational format",
-            )
-        logger.info("[TRAINER:%s] Converted string prompts to conversational format for chat template", strategy_type.upper())
+    # Polymorphic dispatch — strategy decides whether (and how) to convert.
+    train_dataset, eval_dataset = strategy_instance.prepare_prompts_for_chat_template(
+        train_dataset, eval_dataset, tokenizer,
+    )
 
     trainer_kwargs: dict[str, Any] = {
         "model": model,
@@ -436,9 +353,6 @@ def create_trainer(
 
 
 __all__ = [
-    "DEFAULT_LEARNING_RATES",
-    "STRATEGY_CONFIGS",
-    "STRATEGY_TRAINERS",
     "create_peft_config",
     "create_trainer",
     "create_training_args",

@@ -58,8 +58,10 @@ def test_create_peft_config_adalora_requires_adalora_section(monkeypatch: pytest
     monkeypatch.setattr(tb, "TaskType", SimpleNamespace(CAUSAL_LM="CAUSAL"))
 
     cfg = MagicMock()
-    cfg.training.type = "adalora"
-    cfg.get_adapter_config.return_value = MagicMock()  # wrong type
+    # adapter.kind="adalora" + non-AdaLoraConfig instance ⇒ create_peft_config rejects.
+    bad_adapter = MagicMock()
+    bad_adapter.kind = "adalora"
+    cfg.get_adapter_config.return_value = bad_adapter
 
     with pytest.raises(ValueError, match="requires 'adalora:' section"):
         _ = tb.create_peft_config(cfg)
@@ -93,13 +95,7 @@ def test_create_peft_config_adalora(monkeypatch: pytest.MonkeyPatch) -> None:
     assert peft_cfg.kwargs["deltaT"] == 10
 
 
-def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.MonkeyPatch) -> None:
-    from ryotenkai_shared.constants import STRATEGY_SFT
-
-    new_configs = dict(tb.STRATEGY_CONFIGS)
-    new_configs[STRATEGY_SFT] = lambda **kw: DummyTrainConfig(kw)  # type: ignore[assignment]
-    monkeypatch.setattr(tb, "STRATEGY_CONFIGS", new_configs)
-
+def test_create_training_args_merges_phase_over_global() -> None:
     cfg = MagicMock()
     cfg.training.get_effective_optimizer.return_value = "adamw_torch"
     cfg.integrations.get_report_to.return_value = ["mlflow"]
@@ -109,7 +105,13 @@ def test_create_training_args_merges_phase_over_global(monkeypatch: pytest.Monke
     strategy.strategy_type = "sft"
     strategy.hyperparams = SimpleNamespace(epochs=1, learning_rate=1e-4, per_device_train_batch_size=4)
 
-    args = tb.create_training_args(cfg, strategy)
+    # Polymorphic dispatch — caller provides strategy_instance whose
+    # ``get_config_class`` returns the test double. No registry monkey-patching.
+    strategy_instance = MagicMock()
+    strategy_instance.get_config_class.return_value = lambda **kw: DummyTrainConfig(kw)
+    strategy_instance.build_config_kwargs.return_value = {}
+
+    args = tb.create_training_args(cfg, strategy, strategy_instance=strategy_instance)
     assert isinstance(args, DummyTrainConfig)
     assert args.kwargs["num_train_epochs"] == 1
     assert args.kwargs["learning_rate"] == 1e-4
@@ -144,12 +146,11 @@ def test_create_trainer_uses_reward_plugin_for_sapo(monkeypatch: pytest.MonkeyPa
     strategy_instance.get_config_class.return_value = lambda **kw: DummyTrainConfig(kw)
     strategy_instance.build_config_kwargs.return_value = {}
 
-    # GRPO/SAPO trainer builder inspects ``train_dataset.column_names`` now to
-    # convert plain-text prompts to conversational format; provide a dataset
-    # without a ``prompt`` column so that branch is skipped safely.
+    # Polymorphic prompt prep is a no-op for this test — return datasets unchanged.
     dataset = MagicMock()
     dataset.column_names = []
     tokenizer = MagicMock(chat_template=None)
+    strategy_instance.prepare_prompts_for_chat_template.return_value = (dataset, None)
 
     trainer = tb.create_trainer(
         config=cfg,
