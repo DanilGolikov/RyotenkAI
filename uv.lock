@@ -14,6 +14,7 @@ resolution-markers = [
 members = [
     "ryotenkai-community",
     "ryotenkai-control",
+    "ryotenkai-engines",
     "ryotenkai-monorepo",
     "ryotenkai-pod",
     "ryotenkai-providers",
@@ -5660,12 +5661,28 @@ requires-dist = [
 ]
 
 [[package]]
+name = "ryotenkai-engines"
+version = "1.0.0"
+source = { editable = "packages/engines" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "ryotenkai-shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pydantic", specifier = ">=2.10.0,<3.0.0" },
+    { name = "ryotenkai-shared", editable = "packages/shared" },
+]
+
+[[package]]
 name = "ryotenkai-monorepo"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "ryotenkai-community" },
     { name = "ryotenkai-control" },
+    { name = "ryotenkai-engines" },
     { name = "ryotenkai-pod" },
     { name = "ryotenkai-providers" },
     { name = "ryotenkai-shared" },
@@ -5707,6 +5724,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0,<1.0.0" },
     { name = "ryotenkai-community", editable = "packages/community" },
     { name = "ryotenkai-control", editable = "packages/control" },
+    { name = "ryotenkai-engines", editable = "packages/engines" },
     { name = "ryotenkai-pod", editable = "packages/pod" },
     { name = "ryotenkai-providers", editable = "packages/providers" },
     { name = "ryotenkai-shared", editable = "packages/shared" },
