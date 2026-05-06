@@ -147,7 +147,9 @@ class ModelEvaluator(PipelineStage):
             inference_ctx.get("inference_model_name") or context.get("inference_model_name") or self.config.model.name
         )
         model_name = self._resolve_model_name(endpoint_url=endpoint_url, fallback=static_model_name)
-        engine: str = getattr(self.config.inference, "engine", "vllm")
+        # Engine kind comes from the discriminated union — no fallback
+        # default. ``cfg.inference.engine.kind`` is the single source of truth.
+        engine: str = self.config.inference.engine.kind
 
         logger.info(f"[EVAL] Starting evaluation — endpoint: {endpoint_url}, " f"model: {model_name}, engine: {engine}")
         start_time = time.time()

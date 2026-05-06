@@ -1,10 +1,12 @@
-"""Pinned constants and helpers for inference engines.
+"""DEPRECATED — superseded by ``ryotenkai_engines``.
 
-Mirrors the :mod:`src.runner` package's ``__about__`` pattern: the
-single source of truth for which docker image is used per inference
-engine lives in code, not in user YAML. Adding a new engine (TGI,
-Triton, etc.) is one new entry in :data:`INFERENCE_IMAGES` plus the
-engine-specific config class.
+The legacy single-engine setup pinned image names + supported-engines
+list in this package. After the discriminated-union refactor, image
+resolution lives in ``ryotenkai_engines.get_registry().get_image()``
+and the supported-engines list is ``EngineRegistry.list()``.
+
+The exports below are KEPT as deprecated shims for any external scripts
+that still reference them. New code MUST go through ``ryotenkai_engines``.
 """
 
 from __future__ import annotations

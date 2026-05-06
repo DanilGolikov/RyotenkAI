@@ -19,7 +19,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
-from ryotenkai_shared.inference import resolve_inference_image
+def _resolve_engine_image(engine_kind: str) -> str:
+    """Resolve container image for ``engine_kind`` via the engine registry.
+
+    Wraps ``ryotenkai_engines.get_registry().get_image(...)`` with the
+    convention default + override chain. Lazy local import.
+    """
+    from ryotenkai_engines import get_registry
+
+    return get_registry().get_image(engine_kind)
 from ryotenkai_providers.constants import KEY_ID, KEY_NAME, RETRY_BACKOFF_FACTOR, SHA12_LEN
 from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
@@ -347,7 +355,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             "pod": {
                 KEY_ID: pod_id,
                 KEY_NAME: pod_name,
-                "image_name": resolve_inference_image(self._inf_cfg.engine),
+                "image_name": _resolve_engine_image(self._engine_cfg.kind),
                 "gpu_type_ids": self._pod_cfg.gpu_type_ids,
                 "gpu_count": self._pod_cfg.gpu_count,
                 "allowed_cuda_versions": self._pod_cfg.allowed_cuda_versions,
@@ -858,7 +866,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         pod_cfg = self._pod_cfg
         # Image is pinned per engine (Phase 6.6); compute it once
         # so the create-pod payload and the log line stay in sync.
-        pod_image = resolve_inference_image(self._inf_cfg.engine)
+        pod_image = _resolve_engine_image(self._engine_cfg.kind)
 
         # Deterministic name: with volume — bound to volume (one pod per volume); without — fixed ephemeral suffix.
         if network_volume_id:

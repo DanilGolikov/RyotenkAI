@@ -19,7 +19,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
-from ryotenkai_shared.inference import resolve_inference_image
+def _resolve_engine_image(engine_kind: str) -> str:
+    """Resolve container image for ``engine_kind`` via the engine registry.
+
+    Wraps ``ryotenkai_engines.get_registry().get_image(...)`` — uses the
+    convention default + override chain (env / provider / manifest).
+    Lazy local import to avoid the shared→engines→shared circular at
+    package import time.
+    """
+    from ryotenkai_engines import get_registry
+
+    return get_registry().get_image(engine_kind)
 from ryotenkai_providers.inference.vllm.engine import VLLMEngine
 from ryotenkai_providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
 from ryotenkai_providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
@@ -319,7 +329,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 "container_name": self._CONTAINER_NAME,
                 # Same unified image is used for both merge & serve;
                 # see docker/inference/README.md.
-                "image": resolve_inference_image(self._inf_cfg.engine),
+                "image": _resolve_engine_image(self._engine_cfg.kind),
                 "host_bind": self._serve_cfg.host,
                 "port": port,
                 "workspace": workspace,
@@ -395,7 +405,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             "docker": {
                 # Same unified image is used for both merge & serve;
                 # see docker/inference/README.md.
-                "image": resolve_inference_image(self._inf_cfg.engine),
+                "image": _resolve_engine_image(self._engine_cfg.kind),
                 "container_name": VLLM_INFERENCE_CONTAINER_NAME,
                 "host_bind": self._serve_cfg.host,
                 "port": port,
@@ -763,7 +773,7 @@ PY
         # Image is pinned in :data:`INFERENCE_IMAGES` — the unified
         # docker/inference image covers both merge and serve, so this
         # is the same image used downstream by ``_serve_vllm``.
-        merge_image = resolve_inference_image(self._inf_cfg.engine)
+        merge_image = _resolve_engine_image(self._engine_cfg.kind)
 
         # 1. Ensure merge image is available
         ensure_res = self._ensure_docker_image(
@@ -1074,7 +1084,7 @@ PY
 
         # Same unified inference image as the merge step — pinned in
         # :data:`INFERENCE_IMAGES`.
-        serve_image = resolve_inference_image(self._inf_cfg.engine)
+        serve_image = _resolve_engine_image(self._engine_cfg.kind)
 
         # Ensure serve image is available
         ensure_res = self._ensure_docker_image(
