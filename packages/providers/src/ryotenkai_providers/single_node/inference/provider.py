@@ -344,7 +344,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 _KEY_ENGINE: "vllm",
                 "container_name": self._CONTAINER_NAME,
                 # Same unified image is used for both merge & serve;
-                # see docker/inference/README.md.
+                # see packages/engines/src/ryotenkai_engines/vllm/IMAGE_README.md.
                 "image": _resolve_engine_image(self._engine_cfg.kind),
                 "host_bind": self._serve_cfg.host,
                 "port": port,
@@ -420,7 +420,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             "ssh": ssh_block,
             "docker": {
                 # Same unified image is used for both merge & serve;
-                # see docker/inference/README.md.
+                # see packages/engines/src/ryotenkai_engines/vllm/IMAGE_README.md.
                 "image": _resolve_engine_image(self._engine_cfg.kind),
                 "container_name": VLLM_INFERENCE_CONTAINER_NAME,
                 "host_bind": self._serve_cfg.host,

@@ -28,10 +28,10 @@ import os
 from typing import Final
 
 # Bumped in lock-step with the docker image published by
-# ``docker/inference/build_and_push.sh``. The unified vLLM image
-# covers both the LoRA merge step and the vLLM serve step (per
-# docker/inference/README.md) — there is no longer a two-container
-# strategy.
+# ``packages/engines/scripts/build_and_push_engines.sh``. The unified
+# vLLM image covers both the LoRA merge step and the vLLM serve step
+# (per packages/engines/src/ryotenkai_engines/vllm/IMAGE_README.md) —
+# there is no longer a two-container strategy.
 _DEFAULT_INFERENCE_IMAGES: Final[dict[str, str]] = {
     "vllm": "ryotenkai/inference-vllm:v1.0.0",
 }
