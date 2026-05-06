@@ -126,5 +126,46 @@ class BaseRLStrategy(TrainingStrategy, ABC):
         logger.debug("[BaseRL] Dataset format validated: '%s' column present", COL_PROMPT)
         return Ok(True)
 
+    # ------------------------------------------------------------------
+    # Prompt preparation — RL strategies drive the LLM from prompts, so
+    # canonical TRL chat-template input requires conversational format.
+    # ------------------------------------------------------------------
+
+    def prepare_prompts_for_chat_template(
+        self,
+        train_dataset: Dataset,
+        eval_dataset: Dataset | None,
+        tokenizer: Any,
+    ) -> tuple[Dataset, Dataset | None]:
+        """Convert string prompts to ``[{"role": "user", "content": ...}]`` form.
+
+        TRL's GRPOTrainer applies the tokenizer's chat template only when prompts
+        are conversational. Without this conversion, models trained with chat
+        templates (e.g. Qwen2.5) emit EOS immediately because the raw text lacks
+        the expected boundary tokens. The check is gated on tokenizer support so
+        that base models without chat_template are unaffected.
+        """
+        if not getattr(tokenizer, "chat_template", None):
+            return train_dataset, eval_dataset
+        if COL_PROMPT not in (train_dataset.column_names or []):
+            return train_dataset, eval_dataset
+        if not isinstance(train_dataset[0][COL_PROMPT], str):
+            return train_dataset, eval_dataset
+
+        train_dataset = train_dataset.map(
+            lambda x: {COL_PROMPT: [{"role": "user", "content": x[COL_PROMPT]}]},
+            desc="Converting prompts to conversational format",
+        )
+        if eval_dataset is not None and COL_PROMPT in (eval_dataset.column_names or []):
+            eval_dataset = eval_dataset.map(
+                lambda x: {COL_PROMPT: [{"role": "user", "content": x[COL_PROMPT]}]},
+                desc="Converting eval prompts to conversational format",
+            )
+        logger.info(
+            "[%s] Converted string prompts to conversational format for chat template",
+            self.__class__.__name__,
+        )
+        return train_dataset, eval_dataset
+
 
 __all__ = ["BaseRLStrategy"]

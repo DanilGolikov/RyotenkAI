@@ -159,6 +159,32 @@ class TrainingStrategy(ABC):
         """
         return False
 
+    def prepare_prompts_for_chat_template(
+        self,
+        train_dataset: Dataset,
+        eval_dataset: Dataset | None,
+        tokenizer: Any,
+    ) -> tuple[Dataset, Dataset | None]:
+        """Convert string prompts to conversational format if this strategy needs it.
+
+        Default: no-op — strategies that consume already-templated prompts (SFT/CPT/CoT/DPO/ORPO)
+        return datasets unchanged. Strategies that drive an LLM-from-prompt loop
+        (GRPO/SAPO and any future on-policy variant) override to map ``prompt: str``
+        rows into ``[{"role": "user", "content": ...}]`` messages so TRL's chat
+        template applies. Replaces the historical
+        ``if strategy_type in ("grpo", "sapo")`` dispatch in trainer factories.
+
+        Args:
+            train_dataset: Training dataset (post load)
+            eval_dataset: Optional evaluation dataset (post load)
+            tokenizer: Tokenizer (used to detect chat_template availability)
+
+        Returns:
+            Tuple of (train, eval) datasets — possibly the same instances when no
+            conversion is needed.
+        """
+        return train_dataset, eval_dataset
+
     def build_config_kwargs(self, hp: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ARG002
         """
         Build strategy-specific config arguments.

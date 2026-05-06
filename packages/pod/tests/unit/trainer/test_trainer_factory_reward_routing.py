@@ -95,6 +95,13 @@ class _StubStrategy:
     def post_build_config_hook(self, config: Any, **context: Any) -> None:
         pass
 
+    def prepare_prompts_for_chat_template(
+        self, train_dataset: Any, eval_dataset: Any, tokenizer: Any
+    ) -> tuple[Any, Any]:
+        # No-op stub — datasets pass through unchanged. Mirrors the default in
+        # TrainingStrategy.prepare_prompts_for_chat_template.
+        return train_dataset, eval_dataset
+
 
 class _StubStrategyFactory:
     def __init__(self, strategy: _StubStrategy) -> None:
