@@ -9,15 +9,20 @@ from ..constants import LORA_RANK_MAX
 
 
 class LoraConfig(StrictBaseModel):
-    """Plain LoRA adapter configuration (used when ``training.type == 'lora'``).
+    """Plain LoRA adapter configuration (used when ``training.adapter.kind == 'lora'``).
 
     Carries only fields that apply to full-precision LoRA. QLoRA-specific
     quantization knobs (``bnb_4bit_*``) live on :class:`QloraConfig`, which
-    subclasses this model. Splitting the two means a ``training.lora:`` block
-    cannot accidentally accept 4-bit settings (strict base model), and the
-    generated JSON Schema for the Web form only exposes quantization fields
-    under the ``qlora:`` branch.
+    subclasses this model. Splitting the two means a ``training.adapter`` block
+    of kind=lora cannot accidentally accept 4-bit settings (strict base model),
+    and the generated JSON Schema for the Web form only exposes quantization
+    fields under the ``kind=qlora`` variant.
+
+    Discriminator: ``kind: Literal["lora"]`` (``adapter.py:_AdapterUnion`` Tag-based
+    union). Subclasses MUST override ``kind``.
     """
+
+    kind: Literal["lora"] = "lora"
 
     r: int = Field(
         ...,
@@ -78,12 +83,16 @@ class LoraConfig(StrictBaseModel):
 
 
 class QloraConfig(LoraConfig):
-    """QLoRA adapter configuration (used when ``training.type == 'qlora'``).
+    """QLoRA adapter configuration (used when ``training.adapter.kind == 'qlora'``).
 
     Adds 4-bit quantization knobs on top of the base :class:`LoraConfig`.
     Defaults reflect the recommended setup (``nf4`` + bfloat16 compute + nested
     double quantization), so users rarely need to touch these.
+
+    Discriminator override: ``kind: Literal["qlora"]``.
     """
+
+    kind: Literal["qlora"] = "qlora"  # type: ignore[assignment]
 
     bnb_4bit_quant_type: str = Field(
         default="nf4",

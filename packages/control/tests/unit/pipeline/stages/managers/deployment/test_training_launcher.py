@@ -86,8 +86,7 @@ def base_config() -> PipelineConfig:
         providers={"single_node": SINGLE_NODE_PROVIDER_CFG},
         training=TrainingOnlyConfig(
             provider="single_node",
-            type="qlora",
-            qlora=QLoRAConfig(
+            adapter=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

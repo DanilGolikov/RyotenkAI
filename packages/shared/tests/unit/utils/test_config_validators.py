@@ -85,23 +85,26 @@ def _hp_global_cfg(**overrides) -> GlobalHyperparametersConfig:
 
 
 def _training_cfg(**overrides) -> TrainingOnlyConfig:
+    """Build a TrainingOnlyConfig with the discriminated-union shape.
+
+    Default: ``adapter = QloraConfig`` (kind=qlora).
+    Override with ``type="lora"`` etc. for legacy-style call sites — we
+    map the old selector to a matching adapter instance.
+    """
     data = {
-        "type": "qlora",
-        "qlora": _qlora_cfg(),
+        "adapter": _qlora_cfg(),
         "hyperparams": _hp_global_cfg(),
         "strategies": [StrategyPhaseConfig(strategy_type="sft")],
     }
+    # Legacy compat: callers passing ``type="lora"`` etc. still work.
+    legacy_type = overrides.pop("type", None)
+    if legacy_type == "lora":
+        data["adapter"] = _lora_cfg()
+    elif legacy_type == "qlora":
+        data["adapter"] = _qlora_cfg()
+    # legacy_type == "adalora" or other — caller is expected to pass
+    # ``adapter=...`` explicitly via overrides.
     data.update(overrides)
-    training_type = data.get("type")
-    if training_type == "lora":
-        data.setdefault("lora", _lora_cfg())
-        data.pop("qlora", None)
-    elif training_type == "qlora":
-        data.setdefault("qlora", _qlora_cfg())
-        data.pop("lora", None)
-    elif training_type == "adalora":
-        data.pop("lora", None)
-        data.pop("qlora", None)
     return TrainingOnlyConfig(**data)
 
 
@@ -190,12 +193,12 @@ class TestStrategyPhaseConfig:
 
 
 class TestTrainingOnlyConfig:
-    @pytest.mark.parametrize("training_type", ["qlora", "lora", "adalora"])
-    def test_type_valid(self, training_type: str) -> None:
-        if training_type == "adalora":
+    @pytest.mark.parametrize("kind", ["qlora", "lora", "adalora"])
+    def test_kind_valid(self, kind: str) -> None:
+        """Each adapter kind builds successfully via the discriminated union."""
+        if kind == "adalora":
             cfg = _training_cfg(
-                type="adalora",
-                adalora=AdaLoraConfig(
+                adapter=AdaLoraConfig(
                     init_r=16,
                     target_r=8,
                     total_step=100,
@@ -205,20 +208,18 @@ class TestTrainingOnlyConfig:
                     target_modules="all-linear",
                 ),
             )
-            assert cfg.type == "adalora"
-            assert cfg.adalora is not None
-            return
+        else:
+            cfg = _training_cfg(type=kind)  # legacy-compat helper handles lora/qlora
+        assert cfg.adapter.kind == kind
+        assert cfg.type == kind  # backward-compat property
 
-        cfg = _training_cfg(type=training_type)
-        assert cfg.type == training_type
-
-    def test_type_invalid_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="Training type must be one of"):
-            _ = _training_cfg(type="full_ft")
-
-    def test_adalora_requires_block(self) -> None:
-        with pytest.raises(ValidationError, match="requires 'training\\.adalora:'"):
-            _ = _training_cfg(type="adalora", adalora=None)
+    def test_kind_invalid_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TrainingOnlyConfig.model_validate({
+                "adapter": {"kind": "full_ft"},
+                "hyperparams": _hp_global_cfg().model_dump(),
+                "strategies": [{"strategy_type": "sft"}],
+            })
 
     def test_invalid_strategy_chain_warns_but_builds(self) -> None:
         with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
@@ -243,6 +244,7 @@ class TestTrainingOnlyConfig:
     def test_pipeline_get_adapter_config_uses_matching_block(self) -> None:
         cfg = _pipeline_cfg(type="qlora")
         adapter = cfg.get_adapter_config()
+        # QloraConfig subclasses LoraConfig — isinstance check still holds.
         assert isinstance(adapter, LoraConfig)
         assert adapter.r == 8
 

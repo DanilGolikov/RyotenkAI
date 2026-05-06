@@ -65,8 +65,7 @@ def _lora_cfg() -> QLoRAConfig:
 
 def _training_cfg(strategies: list[StrategyPhaseConfig]) -> TrainingOnlyConfig:
     return TrainingOnlyConfig(
-        type="qlora",
-        qlora=_lora_cfg(),
+        adapter=_lora_cfg(),
         hyperparams=_hp_cfg(),
         strategies=strategies,
     )

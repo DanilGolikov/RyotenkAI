@@ -52,8 +52,7 @@ def full_config():
             trust_remote_code=False,
         ),
         training=TrainingOnlyConfig(
-            type="qlora",
-            qlora=QLoRAConfig(
+            adapter=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,

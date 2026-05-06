@@ -58,9 +58,8 @@ def _mk_cfg(
         model=ModelConfig(name="test-model", torch_dtype="bfloat16", trust_remote_code=False),
         providers=providers,
         training=TrainingOnlyConfig(
-            type="qlora",
             provider=training_provider,
-            qlora=QLoRAConfig(
+            adapter=QLoRAConfig(
                 r=8,
                 lora_alpha=16,
                 lora_dropout=0.05,
