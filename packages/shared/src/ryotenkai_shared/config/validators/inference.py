@@ -2,46 +2,50 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ryotenkai_shared.constants import (
-    SUPPORTED_INFERENCE_ENGINES,
-    SUPPORTED_INFERENCE_PROVIDERS,
-)
-from ryotenkai_shared.inference import SUPPORTED_INFERENCE_ENGINES as _ENGINES_WITH_IMAGES
+from ryotenkai_shared.constants import SUPPORTED_INFERENCE_PROVIDERS
 
 if TYPE_CHECKING:
     from ..inference.schema import InferenceConfig
 
 
 def validate_inference_enabled_is_supported(cfg: InferenceConfig) -> None:
-    """
-    Fail-fast guard: inference stage is feature-flagged, but not all combinations
-    are implemented in the runtime code yet.
-    """
+    """Fail-fast guard: inference stage is feature-flagged, but not all
+    combinations are implemented in the runtime code yet.
 
+    Post-discriminated-unions: the engine kind comes from
+    ``cfg.engine.kind`` (the discriminator). The engine registry is the
+    single source of truth for which kinds are supported (replaces the
+    legacy ``SUPPORTED_INFERENCE_ENGINES`` constant).
+    """
     if not cfg.enabled:
         return
 
-    # Current supported providers:
-    # - single_node (MVP)
-    # - runpod (Pods + Network Volume: persistent HF cache + stop/resume)
+    # Provider check (unchanged).
     if cfg.provider not in SUPPORTED_INFERENCE_PROVIDERS:
         raise ValueError(
             f"inference.enabled=true but inference.provider='{cfg.provider}' is not supported yet. "
             f"Supported: {', '.join(repr(p) for p in SUPPORTED_INFERENCE_PROVIDERS)}."
         )
-    if cfg.engine not in SUPPORTED_INFERENCE_ENGINES:
+
+    # Engine kind check — engine.kind must be in the registry.
+    from ryotenkai_engines import get_registry
+
+    registry = get_registry()
+    engine_kind = cfg.engine.kind
+    if engine_kind not in registry.list():
         raise ValueError(
-            f"inference.enabled=true but inference.engine='{cfg.engine}' is not supported yet. "
-            f"Supported engine for now: {', '.join(repr(e) for e in SUPPORTED_INFERENCE_ENGINES)}."
+            f"inference.enabled=true but inference.engine.kind={engine_kind!r} "
+            f"is not registered in EngineRegistry. "
+            f"Known engines: {sorted(registry.list())}."
         )
-    # Belt-and-braces: an engine listed in SUPPORTED_INFERENCE_ENGINES
-    # but missing from :data:`INFERENCE_IMAGES` would crash later
-    # at provision time. Surface the gap here instead.
-    if cfg.engine not in _ENGINES_WITH_IMAGES:
+
+    # Belt-and-braces: registered engine MUST resolve to a runtime class
+    # without LoadFailure (catches manifest/runtime drift at config load).
+    failures = {f.engine_id: f.reason for f in registry.failures()}
+    if engine_kind in failures:
         raise ValueError(
-            f"inference.engine='{cfg.engine}' has no pinned docker image "
-            f"in src.inference.__about__.INFERENCE_IMAGES — "
-            f"add it there before enabling. Available: {sorted(_ENGINES_WITH_IMAGES)}."
+            f"inference.engine.kind={engine_kind!r} has a manifest/runtime load "
+            f"failure: {failures[engine_kind]}"
         )
 
 

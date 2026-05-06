@@ -78,11 +78,7 @@ def base_config() -> PipelineConfig:
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine="vllm",
-            engines=InferenceEnginesConfig(
-                vllm=InferenceVLLMEngineConfig(
-                )
-            ),
+            engine=InferenceVLLMEngineConfig(),
         ),
     )
 

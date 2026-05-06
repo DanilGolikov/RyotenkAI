@@ -75,11 +75,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
     return InferenceConfig(
         enabled=False,
         provider="single_node",
-        engine="vllm",
-        engines=InferenceEnginesConfig(
-            vllm=InferenceVLLMEngineConfig(
-            )
-        ),
+        engine=InferenceVLLMEngineConfig(),
     )
 
 

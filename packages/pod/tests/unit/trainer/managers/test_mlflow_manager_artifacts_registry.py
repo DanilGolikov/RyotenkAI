@@ -65,11 +65,7 @@ def _mk_cfg(
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine="vllm",
-            engines=InferenceEnginesConfig(
-                vllm=InferenceVLLMEngineConfig(
-                )
-            ),
+            engine=InferenceVLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
             mlflow=MLflowConfig(

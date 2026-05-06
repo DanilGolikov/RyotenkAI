@@ -86,11 +86,7 @@ def _mk_cfg(
         inference=InferenceConfig(
             enabled=inference_enabled,
             provider=inference_provider,  # type: ignore[arg-type]
-            engine="vllm",
-            engines=InferenceEnginesConfig(
-                vllm=InferenceVLLMEngineConfig(
-                )
-            ),
+            engine=InferenceVLLMEngineConfig(),
         ),
         integrations=_integrations_cfg(),
     )
