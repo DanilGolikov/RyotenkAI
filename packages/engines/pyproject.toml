@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ryotenkai-engines"
+version = "1.0.0"
+description = "Inference engine plugin system — IInferenceEngine Protocol, manifest schema, filesystem-discovered registry, and shipped engine implementations (vLLM, ...)."
+authors = [{ name = "Golikov Daniil", email = "daniil.golikoff@gmail.com" }]
+requires-python = ">=3.12"
+# Engines is a leaf workspace member: depends only on stdlib + pydantic
+# (config/manifest schemas) and ryotenkai_shared (Result/AppError types).
+# Importlinter contract `engines is leaf` enforces this.
+dependencies = [
+    "pydantic>=2.10.0,<3.0.0",
+    "ryotenkai-shared",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false

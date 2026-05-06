@@ -15,6 +15,7 @@ dependencies = [
     "ryotenkai-pod",
     "ryotenkai-providers",
     "ryotenkai-control",
+    "ryotenkai-engines",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +48,7 @@ ryotenkai-community = { workspace = true }
 ryotenkai-pod       = { workspace = true }
 ryotenkai-providers = { workspace = true }
 ryotenkai-control   = { workspace = true }
+ryotenkai-engines   = { workspace = true }
 
 [project.urls]
 Homepage = "https://github.com/DanilGolikov/ryotenkai"
@@ -368,6 +370,7 @@ root_packages = [
     "ryotenkai_pod",
     "ryotenkai_providers",
     "ryotenkai_control",
+    "ryotenkai_engines",
 ]
 # Phase 3 PR-3.2 (transport-unification-v2): exclude
 # ``if TYPE_CHECKING: import …`` from the import graph. Otherwise
@@ -461,3 +464,37 @@ source_modules = [
     "ryotenkai_control.pipeline.stages.training_monitor",
 ]
 forbidden_modules = ["ryotenkai_shared.utils.ssh_client"]
+
+# ----------------------------------------------------------------------
+# Engine plugin system (ADR purring-sleeping-hartmanis, PR-1):
+# ``packages/engines/`` is the new home of engine runtimes (vLLM, SGLang,
+# …). Engines is a leaf workspace member: depends only on stdlib +
+# pydantic + ryotenkai_shared (Result/AppError types). NEVER on
+# providers/control/pod/community — the dependency direction is providers
+# → engines, never engines → providers.
+[[tool.importlinter.contracts]]
+name = "engines is a leaf (depends only on shared)"
+type = "forbidden"
+source_modules = ["ryotenkai_engines"]
+forbidden_modules = [
+    "ryotenkai_community",
+    "ryotenkai_pod",
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+
+# Generic code (providers + control) must talk to engines via the public
+# Protocol/registry surface — never import a concrete engine
+# implementation (e.g. ``ryotenkai_engines.vllm.runtime``). Engines are
+# resolved through ``EngineRegistry.get_runtime(kind)``; direct imports
+# would defeat the abstraction and re-introduce the leak the plan removes.
+[[tool.importlinter.contracts]]
+name = "generic code must not import concrete engine modules"
+type = "forbidden"
+source_modules = [
+    "ryotenkai_providers",
+    "ryotenkai_control",
+]
+forbidden_modules = [
+    "ryotenkai_engines.vllm",
+]
