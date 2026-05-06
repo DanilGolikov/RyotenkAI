@@ -1,3 +1,11 @@
+"""Dataset config validators (post-discriminated-unions).
+
+The legacy ``validate_dataset_source_blocks`` rule (source_type=X requires
+source_X block) is gone — Pydantic's Tag-based discriminated union
+enforces structural correctness at YAML load. Module preserved as a
+placeholder for future cross-field rules; today there are none.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -7,23 +15,13 @@ if TYPE_CHECKING:
 
 
 def validate_dataset_source_blocks(cfg: DatasetConfig) -> None:
-    """Validate source_* blocks against source_type and enforce required fields."""
+    """No-op (kept by name for any external callers until PR-9).
 
-    st = cfg.get_source_type()
-    if st == "huggingface":
-        # If source_type == 'huggingface' → require source_hf block.
-        if cfg.source_hf is None:
-            raise ValueError("source_type='huggingface' requires 'source_hf:' block")
-        return
-
-    # local
-    if st == "local":
-        # If source_type == 'local' → require source_local block.
-        if cfg.source_local is None:
-            raise ValueError("source_type='local' requires 'source_local:' block")
-        return
-
-    raise ValueError(f"non supported source_type='{st}'")
+    The legacy "source_type=X requires source_X block" rules are
+    redundant — Pydantic's discriminated union enforces structurally
+    at YAML load time.
+    """
+    _ = cfg  # silence linter
 
 
 __all__ = ["validate_dataset_source_blocks"]

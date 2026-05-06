@@ -18,8 +18,7 @@ def _mk_primary_only_config(ds: DatasetConfig) -> Mock:
 
 def _mk_local_ds(train_path: str, *, plugins: list[dict] | None = None, critical_failures: int = 1) -> DatasetConfig:
     return DatasetConfig(
-        source_type="local",
-        source_local={"local_paths": {"train": train_path, "eval": None}},
+        source={"kind": "local", "local_paths": {"train": train_path, "eval": None}},
         validations={
             "critical_failures": critical_failures,
             "mode": "fast",

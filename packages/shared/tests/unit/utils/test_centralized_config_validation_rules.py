@@ -54,8 +54,7 @@ def _hp_cfg() -> GlobalHyperparametersConfig:
 
 def _dataset_cfg_local() -> DatasetConfig:
     return DatasetConfig(
-        source_type="local",
-        source_local=DatasetSourceLocal(
+        source=DatasetSourceLocal(
             local_paths=DatasetLocalPaths(
                 train="data/train.jsonl",
                 eval=None,

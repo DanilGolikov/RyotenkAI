@@ -84,20 +84,16 @@ def _inference_cfg_disabled() -> InferenceConfig:
 
 
 def _local_ds(local_path: str) -> DatasetConfig:
-    """Convenience: create a local DatasetConfig (v6.0, without training_paths)."""
+    """Convenience: create a local DatasetConfig (discriminated union)."""
     return DatasetConfig(
-        source_type="local",
-        source_local={
-            "local_paths": {"train": local_path, "eval": None},
-        },
+        source={"kind": "local", "local_paths": {"train": local_path, "eval": None}},
     )
 
 
 def _hf_ds(train_id: str, *, eval_id: str | None = None) -> DatasetConfig:
     """Convenience: create a HuggingFace DatasetConfig."""
     return DatasetConfig(
-        source_type="huggingface",
-        source_hf={"train_id": train_id, "eval_id": eval_id},
+        source={"kind": "huggingface", "train_id": train_id, "eval_id": eval_id},
     )
 
 

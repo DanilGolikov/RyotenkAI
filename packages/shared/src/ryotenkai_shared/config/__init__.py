@@ -11,6 +11,7 @@ from .datasets import (
     DatasetLocalPaths,
     DatasetSourceHF,
     DatasetSourceLocal,
+    DatasetSourceUnion,
     DatasetValidationPluginConfig,
     DatasetValidationsConfig,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "DatasetLocalPaths",
     "DatasetSourceHF",
     "DatasetSourceLocal",
+    "DatasetSourceUnion",
     "DatasetValidationPluginConfig",
     "DatasetValidationsConfig",
     "IntegrationsConfig",

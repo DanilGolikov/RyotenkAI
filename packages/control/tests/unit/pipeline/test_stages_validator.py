@@ -29,16 +29,14 @@ def _mk_primary_only_config(ds: DatasetConfig) -> MagicMock:
 
 def _local_ds(path: str, *, plugins: list[dict] | None = None, critical_failures: int = 1) -> DatasetConfig:
     return DatasetConfig(
-        source_type="local",
-        source_local={"local_paths": {"train": path, "eval": None}},
+        source={"kind": "local", "local_paths": {"train": path, "eval": None}},
         validations={"plugins": plugins or [], "mode": "fast", "critical_failures": critical_failures},
     )
 
 
 def _hf_ds(train_id: str, *, plugins: list[dict] | None = None, critical_failures: int = 1) -> DatasetConfig:
     return DatasetConfig(
-        source_type="huggingface",
-        source_hf={"train_id": train_id, "eval_id": None},
+        source={"kind": "huggingface", "train_id": train_id, "eval_id": None},
         validations={"plugins": plugins or [], "mode": "fast", "critical_failures": critical_failures},
     )
 

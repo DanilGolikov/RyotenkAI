@@ -84,8 +84,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
 
 def _ds_local(train_path: str) -> DatasetConfig:
     return DatasetConfig(
-        source_type="local",
-        source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=train_path, eval=None)),
+        source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=train_path, eval=None)),
     )
 
 
@@ -195,8 +194,7 @@ class TestConfigLogging:
 
         cfg.datasets.clear()
         cfg.datasets["sft_data"] = DatasetConfig(
-            source_type="huggingface",
-            source_hf={"train_id": "org/ds", "eval_id": "org/ds_eval"},
+            source={"kind": "huggingface", "train_id": "org/ds", "eval_id": "org/ds_eval"},
             max_samples=123,
         )
 
