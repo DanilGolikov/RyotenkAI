@@ -67,11 +67,7 @@ def _inference_cfg_disabled() -> InferenceConfig:
     return InferenceConfig(
         enabled=False,
         provider="single_node",
-        engine="vllm",
-        engines=InferenceEnginesConfig(
-            vllm=InferenceVLLMEngineConfig(
-            )
-        ),
+        engine=InferenceVLLMEngineConfig(),
     )
 
 
@@ -166,11 +162,7 @@ def test_rule_5_inference_enabled_requires_supported_provider_engine() -> None:
         _ = InferenceConfig(
             enabled=True,
             provider="unknown_provider",
-            engine="vllm",
-            engines=InferenceEnginesConfig(
-                vllm=InferenceVLLMEngineConfig(
-                )
-            ),
+            engine=InferenceVLLMEngineConfig(),
         )
     assert any((err.get("loc") or ("",))[0] == "provider" for err in e.value.errors())
 

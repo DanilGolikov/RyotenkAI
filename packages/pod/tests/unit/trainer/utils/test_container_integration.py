@@ -81,11 +81,7 @@ def full_config():
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine="vllm",
-            engines=InferenceEnginesConfig(
-                vllm=InferenceVLLMEngineConfig(
-                )
-            ),
+            engine=InferenceVLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
             mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")
