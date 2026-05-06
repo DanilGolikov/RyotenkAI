@@ -728,54 +728,51 @@ class TrainingMonitor(PipelineStage):
     # --- post-mortem diagnostics ---------------------------------------
 
     def _collect_death_diagnostics(self) -> None:
-        """Render a self-contained autopsy when the trainer dies
-        non-zero. Three sources, in priority order:
+        """Render a compact autopsy when the trainer dies non-zero.
 
-        1. **Local ``trainer.stdio.log``** — pulled by LogManager
-           periodically + on cleanup. Contains the full
-           stdout/stderr of the trainer subprocess including Python
-           tracebacks AND native faulthandler dumps (SEGV/ABRT/CUDA).
-           This is the ground-truth for application-level death.
-        2. **Local ``runner.log``** — pulled the same way. Captures
-           uvicorn boot output: surfaces ImportError / SyntaxError
-           that fired BEFORE the trainer ever spawned (when
-           trainer.stdio.log is empty by definition).
-        3. **Live SSH probes** — kernel signals (OOM, NVRM/Xid)
-           and current GPU state. These cannot come from local files
+        Two sources, in priority order:
+
+        1. **Local log file pointers** — ``trainer.stdio.log`` and
+           ``runner.log`` are pulled by LogManager periodically + on
+           cleanup. We do NOT re-stream their content into the
+           pipeline log: each line in those files already has its own
+           timestamp + module + level prefix from the trainer's
+           logger, and re-prefixing it through control-plane logger
+           creates double-timestamped, hard-to-read output. Operators
+           open those files directly when diagnosing.
+        2. **Live HTTP probes** — kernel signals (OOM, NVRM/Xid) and
+           current GPU state. These cannot come from local files
            because they are environment-level, not subprocess output.
 
-        Each source gets ``<<MISSING>>`` / ``<<EMPTY>>`` tokens when
-        appropriate so an operator can distinguish "file does not
-        exist" from "file exists but empty" from "file has data" —
-        no more "0/6 probes empty" black-box.
+        Each pointer reports state explicitly (``<<MISSING>>``,
+        ``<<EMPTY>>``, ``size=N bytes``) so an operator can decide
+        whether to ``cat`` the file or skip it.
 
-        Skipped silently if no SSH client AND no log layout are wired
-        (test / mock paths); per-probe failures are also swallowed so
-        one broken command doesn't suppress the rest.
+        Skipped silently if no log layout is wired (test paths); per-
+        probe failures are swallowed so one broken command doesn't
+        suppress the rest.
         """
         logger.info(
             "[MONITOR:POSTMORTEM] non-zero exit detected — collecting diagnostics",
         )
 
-        # --- Source 1+2: local files pulled by LogManager ---
+        # --- Source 1: log file pointers (no inline content dump) ---
         try:
             log_layout = get_run_log_layout()
         except Exception:  # noqa: BLE001 — defensive (test paths)
             log_layout = None
 
         if log_layout is not None:
-            self._dump_local_log_tail(
-                label="trainer",
+            self._emit_log_pointer(
+                label="trainer.stdio.log",
                 path=log_layout.remote_trainer_stdio_log,
-                tail_lines=30,
             )
-            self._dump_local_log_tail(
-                label="runner",
+            self._emit_log_pointer(
+                label="runner.log",
                 path=log_layout.remote_runner_log,
-                tail_lines=30,
             )
 
-        # --- Source 3: live HTTP diagnostics (kernel + GPU) ---
+        # --- Source 2: live HTTP diagnostics (kernel + GPU) ---
         # Phase 2 transport-unification-v2: replaced 3 SSH ``dmesg`` /
         # ``nvidia-smi`` probes with a single typed HTTP call. Per-block
         # failures (CAP_SYSLOG missing, ``nvidia-smi`` not installed)
@@ -788,6 +785,16 @@ class TrainingMonitor(PipelineStage):
 
         Best-effort — any transport failure or missing JobClient is
         logged at INFO and the postmortem continues without it.
+
+        Implementation note: this method is synchronous but
+        ``client.get_diagnostics()`` is an async coroutine. We get
+        called from within the WS-driven ``_watch_and_download`` chain
+        whose event loop is already running, so a naive
+        ``asyncio.run(...)`` raises ``RuntimeError: asyncio.run() cannot
+        be called from a running event loop`` and the diagnostics
+        silently disappear. Bridge through a fresh worker thread that
+        spins up its own loop with ``asyncio.run`` — works whether the
+        caller is sync OR has a running loop.
         """
         client = getattr(self, "_client", None)
         if client is None:
@@ -797,17 +804,39 @@ class TrainingMonitor(PipelineStage):
             return
 
         import asyncio
-        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+        import threading
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (  # noqa: F401  -- imported for downstream rendering
             DiagnosticsBlockError,
         )
 
-        try:
-            response = asyncio.run(client.get_diagnostics())
-        except Exception as exc:  # noqa: BLE001 — defensive postmortem path
+        response_holder: list = []
+        error_holder: list = []
+
+        def _run_in_fresh_loop() -> None:
+            try:
+                response_holder.append(asyncio.run(client.get_diagnostics()))
+            except Exception as exc:  # noqa: BLE001 — postmortem must survive
+                error_holder.append(exc)
+
+        worker = threading.Thread(target=_run_in_fresh_loop, daemon=True)
+        worker.start()
+        worker.join(timeout=15.0)
+        if worker.is_alive():
             logger.info(
-                f"[MONITOR:POSTMORTEM] diagnostics HTTP call failed: {exc!r}",
+                "[MONITOR:POSTMORTEM] diagnostics HTTP call timed out after 15s",
             )
             return
+        if error_holder:
+            logger.info(
+                f"[MONITOR:POSTMORTEM] diagnostics HTTP call failed: "
+                f"{error_holder[0]!r}",
+            )
+            return
+        if not response_holder:
+            # Worker exited without populating either holder — defensive,
+            # would only happen on threading-level corruption.
+            return
+        response = response_holder[0]
 
         def _emit_lines(label: str, lines: list[str]) -> None:
             if not lines:
@@ -847,56 +876,43 @@ class TrainingMonitor(PipelineStage):
                         f"{row.memory_total_mib} MiB",
                     )
 
-    def _dump_local_log_tail(
+    def _emit_log_pointer(
         self,
         *,
         label: str,
         path: "Path",
-        tail_lines: int,
     ) -> None:
-        """Read the tail of a local log file and emit it under the
-        ``[MONITOR:POSTMORTEM:<label>]`` prefix.
+        """Emit a one-line pointer to a local log file (no content dump).
 
-        Distinguishes three states explicitly so the operator can
-        tell missing-file from empty-file from has-content. The
-        ``trainer.stdio.log`` / ``runner.log`` paths come from
-        :class:`LogLayout` so the layout drift between writer (pod
-        Supervisor / runner_launcher) and reader (this code) is
-        physically impossible — both go through the same source of
-        truth.
+        Operators got annoyed by the previous behavior — re-streaming 30
+        lines of trainer log through the control-plane logger produced
+        double-timestamped, hard-to-read output (each trainer line already
+        carried its own ``YYYY-MM-DD HH:MM:SS module:line LEVEL`` prefix,
+        which got wrapped in another control-plane prefix). We now log
+        a single line per file with size + path so the operator can
+        ``cat`` or ``tail`` directly when needed.
 
-        Pod-side ``trainer.stdio.log`` is written by Supervisor with
-        ``[OUT] ``/``[ERR] `` per-line prefixes (single-file merge of
-        stdout+stderr for atomic ordering on disk). The prefix is an
-        on-disk serialization detail, NOT operator-facing — strip it
-        when emitting to ``pipeline.log``. Operators see clean trainer
-        output without protocol noise.
+        Three states surface explicitly so the operator knows whether
+        the file is worth opening:
+          * ``<<MISSING>>``  — file does not exist (most likely the
+            corresponding subprocess never produced output before death)
+          * ``<<EMPTY>>``    — file exists but has zero bytes
+          * ``size=N bytes`` — file has content; open the path
         """
         try:
             if not path.exists():
-                logger.info(f"[MONITOR:POSTMORTEM:{label}] <<MISSING>>")
+                logger.info(f"[MONITOR:POSTMORTEM] {label}: <<MISSING>>")
                 return
             size = path.stat().st_size
             if size == 0:
-                logger.info(f"[MONITOR:POSTMORTEM:{label}] <<EMPTY>>")
+                logger.info(f"[MONITOR:POSTMORTEM] {label}: <<EMPTY>>")
                 return
-            with path.open(encoding="utf-8", errors="replace") as fh:
-                lines = fh.readlines()
-            tail = lines[-tail_lines:] if len(lines) > tail_lines else lines
-            for raw_line in tail:
-                line = raw_line.rstrip()
-                # Strip Supervisor-internal channel prefix. Both 6-char
-                # markers ("[OUT] " / "[ERR] ") map to plain operator
-                # output — severity routing through logger.error would
-                # alarm-spam on every trainer Python traceback, which
-                # is "expected trainer-side error" not "control-plane
-                # error". Keep everything at INFO.
-                if line.startswith("[OUT] ") or line.startswith("[ERR] "):
-                    line = line[6:]
-                logger.info(f"[MONITOR:POSTMORTEM:{label}] {line}")
+            logger.info(
+                f"[MONITOR:POSTMORTEM] {label}: size={size:,} bytes — {path}"
+            )
         except OSError as exc:  # noqa: BLE001 — defensive
             logger.warning(
-                f"[MONITOR:POSTMORTEM:{label}] read failed: {exc}",
+                f"[MONITOR:POSTMORTEM] {label}: stat failed: {exc}",
             )
 
     async def _watch_and_download(
