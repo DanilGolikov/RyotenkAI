@@ -235,6 +235,18 @@ class CapabilitiesSpec(BaseModel):
         default=None,
         description="Hard wall-clock cap; ``null`` means unlimited.",
     )
+    supported_engines: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Optional whitelist of engine kinds this provider can launch. "
+            "Empty tuple (default) means 'no constraint' — the provider "
+            "accepts any engine the registry knows about. Populated, the "
+            "PipelineConfig cross-validator rejects "
+            "(provider, engine) pairs not in this list. Required when "
+            "the provider declares the ``inference`` role and ships a "
+            "specialized container build."
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_invariants(self) -> CapabilitiesSpec:
