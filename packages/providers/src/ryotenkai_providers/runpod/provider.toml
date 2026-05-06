@@ -37,6 +37,7 @@ supports_capacity_error_detection = true   # is_capacity_error() classifies Grap
 supports_log_download             = true   # SCP-based log fetch via RunPodAPIClient
 volume_kind                       = "persistent"
 runner_workspace_root             = "/workspace"
+supported_engines                 = ["vllm"]   # inference engines this provider can launch
 # max_runtime_hours = null  (unlimited)
 
 # Mac-side training-role IGPUProvider implementation.

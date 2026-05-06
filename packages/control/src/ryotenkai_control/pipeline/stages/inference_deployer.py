@@ -152,16 +152,23 @@ class InferenceDeployer(PipelineStage):
         # Explicit interface: no provider-private attribute injection
         provider.set_event_logger(event_logger)
 
-        logger.info(f"🚀 Deploying inference: provider={inf_cfg.provider} engine={inf_cfg.engine}")
+        logger.info(
+            "🚀 Deploying inference: provider=%s engine=%s",
+            inf_cfg.provider,
+            inf_cfg.engine.kind,
+        )
         eval_cfg = getattr(self.config, "evaluation", None)
         eval_enabled = getattr(eval_cfg, "enabled", False) is True
+        # Engine-specific tuning (quantization, max_model_len, etc.) is
+        # read by the provider directly from cfg.inference.engine — no
+        # longer plumbed through the generic deploy() API. The provider
+        # knows the typed engine config via the registry.
         deploy_res = provider.deploy(
             model_source=model_source,
             run_id=run_name,  # Canonical run name (single source of truth)
             base_model_id=base_model_id,
             trust_remote_code=self.config.model.trust_remote_code,
             lora_path=None if inf_cfg.common.lora.adapter_path == "auto" else inf_cfg.common.lora.adapter_path,
-            quantization=inf_cfg.engines.vllm.quantization,
             # Skip the stop-after-provisioning if eval will activate the pod right after.
             keep_running=eval_enabled,
         )

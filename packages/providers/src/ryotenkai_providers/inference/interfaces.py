@@ -149,7 +149,6 @@ class IInferenceProvider(Protocol):
         base_model_id: str,
         trust_remote_code: bool = False,
         lora_path: str | None = None,
-        quantization: str | None = None,
         keep_running: bool = False,
     ) -> Result[EndpointInfo, InferenceError]: ...
 

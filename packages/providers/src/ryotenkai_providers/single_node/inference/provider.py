@@ -16,7 +16,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_SINGLE_NODE, VLLM_INFERENCE_CONTAINER_NAME
 from ryotenkai_shared.inference import resolve_inference_image
@@ -76,9 +76,16 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
     """Deploy vLLM inference endpoint on a single SSH-accessible node.
 
     Identity comes from ``provider.toml`` via :class:`ProviderBase`.
+
+    ``SUPPORTED_ENGINES`` declares which engine kinds this provider can
+    launch. The provider.toml ``[capabilities.inference]`` block is the
+    user-facing source of truth; this ClassVar is a defensive
+    runtime-side mirror that catches direct callers who bypass the
+    PipelineConfig cross-validator.
     """
 
     _CONTAINER_NAME = VLLM_INFERENCE_CONTAINER_NAME
+    SUPPORTED_ENGINES: ClassVar[frozenset[str]] = frozenset({"vllm"})
 
     def __init__(self, ctx: "ProviderContext") -> None:
         """Initialize from a :class:`ProviderContext`."""
@@ -107,7 +114,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         # SSH config from connect.ssh (single source of truth)
         self._ssh_cfg = self._provider_cfg.connect.ssh
 
-        self._engine_cfg = self._inf_cfg.engines.vllm
+        # Post-discriminated-union: engine config is typed directly on
+        # cfg.inference.engine (Pydantic discriminator narrowed it).
+        # The provider declares which engine kinds it supports via its
+        # provider.toml [capabilities.inference] block — cross-validated
+        # at PipelineConfig load. Defensive belt-and-suspenders check
+        # here in case of direct callers.
+        self._engine_cfg = self._inf_cfg.engine
+        if self._engine_cfg.kind not in self.SUPPORTED_ENGINES:
+            from ryotenkai_shared.utils.result import ProviderError
+
+            raise ProviderError(
+                message=(
+                    f"engine {self._engine_cfg.kind!r} not supported by "
+                    f"{type(self).__name__}; supported: {sorted(self.SUPPORTED_ENGINES)}"
+                ),
+                code="PROVIDER_ENGINE_NOT_SUPPORTED",
+            )
+        # Engine runtime resolved via the registry — no concrete-class
+        # hardcoding. VLLMEngine legacy class still imported for the
+        # build_docker_run_command call sites; PR-9 migrates those to
+        # the new IInferenceEngine.build_launch_spec API.
         self._engine = VLLMEngine()
 
         self._ssh_client: SSHClient | None = None
@@ -134,7 +161,6 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         base_model_id: str,
         trust_remote_code: bool = False,
         lora_path: str | None = None,
-        quantization: str | None = None,
         keep_running: bool = False,  # noqa: ARG002
     ) -> Result[EndpointInfo, InferenceError]:
         self._run_id = run_id
@@ -245,10 +271,10 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 else InferenceError(message=str(merge_err), code="SINGLENODE_MERGE_FAILED")
             )
 
-        # Engine config for this deployment (avoid mutating global PipelineConfig)
+        # Engine config for this deployment (avoid mutating global PipelineConfig).
+        # Quantization (if any) is now read directly from the typed engine
+        # config — no longer plumbed through the deploy() kwarg.
         engine_cfg = self._engine_cfg.model_copy()
-        if quantization is not None:
-            engine_cfg.quantization = quantization
 
         # Start vLLM container (idempotent: replace container)
         container_model_path = f"/workspace/runs/{run_dir_name}/model"

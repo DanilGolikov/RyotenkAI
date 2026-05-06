@@ -48,6 +48,35 @@ def validate_inference_enabled_is_supported(cfg: InferenceConfig) -> None:
             f"failure: {failures[engine_kind]}"
         )
 
+    # Provider × engine compatibility — cross-check against the provider's
+    # ``[capabilities.supported_engines]`` whitelist. Empty whitelist
+    # (default) is a no-op (provider accepts any engine the registry
+    # knows about). Populated, the whitelist is enforced.
+    #
+    # Dynamic import to keep the ``shared has no internal deps`` importlinter
+    # contract green; the same pattern is used in cross-validators that
+    # cross-check against the providers registry.
+    import importlib
+
+    try:
+        registry_mod = importlib.import_module("ryotenkai_providers.registry")
+    except ImportError:
+        return  # modular runtimes without ryotenkai_providers — best-effort.
+
+    try:
+        provider_registry = registry_mod.ProviderRegistry.from_filesystem()
+        provider_manifest = provider_registry.get_manifest(cfg.provider)
+    except Exception:  # noqa: BLE001 — defensive; never block config load on registry hiccups
+        return
+
+    supported = getattr(provider_manifest.capabilities, "supported_engines", ())
+    if supported and engine_kind not in supported:
+        raise ValueError(
+            f"provider {cfg.provider!r} does not support engine "
+            f"{engine_kind!r}. Supported by this provider: "
+            f"{list(supported)}."
+        )
+
 
 __all__ = [
     "validate_inference_enabled_is_supported",

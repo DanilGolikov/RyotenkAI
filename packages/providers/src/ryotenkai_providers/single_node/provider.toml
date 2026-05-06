@@ -28,6 +28,7 @@ supports_capacity_error_detection = false  # no fleet → no capacity errors
 supports_log_download             = false  # logs already on host filesystem
 volume_kind                       = "local_disk"
 runner_workspace_root             = "/workspace"
+supported_engines                 = ["vllm"]   # inference engines this provider can launch
 
 # Mac-side training-role IGPUProvider implementation.
 [entry_points.training]

@@ -16,7 +16,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ryotenkai_shared.constants import INFERENCE_MANIFEST_FILENAME, PROVIDER_RUNPOD
 from ryotenkai_shared.inference import resolve_inference_image
@@ -75,20 +75,37 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
     capabilities returned by :meth:`get_capabilities` are an
     :class:`InferenceCapabilities` shape — distinct from the training
     role's :class:`ProviderCapabilities`.
+
+    ``SUPPORTED_ENGINES`` declares which engine kinds this provider can
+    launch. Cross-validated against ``cfg.inference.engine.kind`` at
+    PipelineConfig load via the inference-validator.
     """
+
+    SUPPORTED_ENGINES: ClassVar[frozenset[str]] = frozenset({"vllm"})
 
     def __init__(self, ctx: "ProviderContext") -> None:
         """Initialize from a :class:`ProviderContext`.
 
-        ``ctx.pipeline_config`` provides the full PipelineConfig
-        (inference impls need ``config.inference.engines.vllm.*``).
+        ``ctx.pipeline_config`` provides the full PipelineConfig.
+        Engine-specific tuning is read directly from
+        ``config.inference.engine`` (Pydantic discriminator narrowed).
         """
         config = ctx.pipeline_config
         secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
         self._inf_cfg = config.inference
-        self._engine_cfg: InferenceVLLMEngineConfig = self._inf_cfg.engines.vllm
+        self._engine_cfg = self._inf_cfg.engine
+        if self._engine_cfg.kind not in self.SUPPORTED_ENGINES:
+            from ryotenkai_shared.utils.result import ProviderError
+
+            raise ProviderError(
+                message=(
+                    f"engine {self._engine_cfg.kind!r} not supported by "
+                    f"{type(self).__name__}; supported: {sorted(self.SUPPORTED_ENGINES)}"
+                ),
+                code="PROVIDER_ENGINE_NOT_SUPPORTED",
+            )
 
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_RUNPOD)
         from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
@@ -149,7 +166,6 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         base_model_id: str,
         trust_remote_code: bool = False,
         lora_path: str | None = None,
-        quantization: str | None = None,
         keep_running: bool = False,
     ) -> Result[EndpointInfo, InferenceError]:
         """
@@ -160,9 +176,13 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         - Readiness and runtime actions are handled by generated scripts (chat/stop).
         - If keep_running=True (e.g. evaluation is about to start), the pod is NOT stopped
           after provisioning to avoid a wasteful stop/start cycle.
+
+        Engine-specific tuning (quantization, max_model_len, etc.) is read
+        directly from ``self._engine_cfg`` (the typed engine config from
+        the discriminated union) — no longer plumbed through deploy().
         """
 
-        _ = (run_id, trust_remote_code, quantization)  # reserved for deterministic naming later
+        _ = (run_id, trust_remote_code)  # reserved for deterministic naming later
 
         adapter_ref = (lora_path or model_source or "").strip()
         if adapter_ref.startswith(("/", "~", ".", "file:")):
