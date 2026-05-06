@@ -30,7 +30,6 @@ def _resolve_engine_image(engine_kind: str) -> str:
     from ryotenkai_engines import get_registry
 
     return get_registry().get_image(engine_kind)
-from ryotenkai_providers.inference.vllm.engine import VLLMEngine
 from ryotenkai_providers.constants import CATEGORY_INFERENCE as _KEY_INFERENCE
 from ryotenkai_providers.constants import ENCODING_UTF8 as _ENCODING_UTF8
 from ryotenkai_providers.constants import SHA12_LEN
@@ -142,10 +141,26 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 code="PROVIDER_ENGINE_NOT_SUPPORTED",
             )
         # Engine runtime resolved via the registry — no concrete-class
-        # hardcoding. VLLMEngine legacy class still imported for the
-        # build_docker_run_command call sites; PR-9 migrates those to
-        # the new IInferenceEngine.build_launch_spec API.
-        self._engine = VLLMEngine()
+        # hardcoding. Returns an IInferenceEngine implementation that
+        # builds structured LaunchSpec values; this provider then formats
+        # the spec into a docker shell command (k8s providers would map
+        # the same spec to a ContainerSpec instead).
+        from ryotenkai_engines import get_registry
+
+        runtime_cls = get_registry().get_runtime(self._engine_cfg.kind)
+        self._engine = runtime_cls()
+
+        # Engine validates its own invariants (replaces inline gating in
+        # the old __init__: e.g. merge_before_deploy=True for vLLM).
+        validate_result = self._engine.validate_config(self._engine_cfg)
+        if validate_result.is_err():
+            from ryotenkai_shared.utils.result import ProviderError
+
+            err = validate_result.unwrap_err()
+            raise ProviderError(
+                message=err.message,
+                code=err.code or "PROVIDER_ENGINE_CONFIG_INVALID",
+            )
 
         self._ssh_client: SSHClient | None = None
         self._endpoint_info: EndpointInfo | None = None
@@ -1100,15 +1115,20 @@ PY
                 )
             )
 
-        run_cmd = self._engine.build_docker_run_command(
+        # Engine returns a structured LaunchSpec; provider formats it into a
+        # docker shell command. A k8s provider would translate the same spec
+        # into a ContainerSpec instead — engines stay docker-agnostic.
+        from ryotenkai_providers.inference.launch import format_docker_run
+
+        spec = self._engine.build_launch_spec(
             cfg=engine_cfg,
             image=serve_image,
             container_name=self._CONTAINER_NAME,
-            host_bind=host_bind,
             port=port,
             workspace_host_path=workspace_host_path,
             model_path_in_container=model_path_in_container,
         )
+        run_cmd = format_docker_run(spec, host_bind=host_bind)
 
         # Stop old container (if exists) and start new one
         _ = docker_rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
