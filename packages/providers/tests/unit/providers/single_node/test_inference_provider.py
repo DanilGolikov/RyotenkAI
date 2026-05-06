@@ -70,15 +70,22 @@ def secrets():
 
 
 def _mk_pipeline_config(provider_cfg, engine_cfg, *, merge_before_deploy: bool = True):
+    """Synthetic PipelineConfig.
+
+    Post-discriminated-union (PR-6): ``cfg.inference.engine`` IS the typed
+    engine config instance (Pydantic narrowed via ``kind``). The legacy
+    ``cfg.inference.engines.vllm`` shape is gone.
+    """
+    # Apply merge_before_deploy override on a fresh copy so we don't mutate
+    # the shared fixture instance across parametrized tests.
+    eff_engine_cfg = engine_cfg.model_copy(
+        update={"merge_before_deploy": merge_before_deploy}
+    )
     cfg = Mock()
     cfg.get_provider_config = lambda *a, **k: provider_cfg.model_dump(mode="python")
     cfg.inference = Mock()
-    cfg.inference.engines = Mock()
-    cfg.inference.engines.vllm = engine_cfg
+    cfg.inference.engine = eff_engine_cfg
     cfg.inference.common = Mock()
-    cfg.inference.common.lora = Mock()
-    cfg.inference.common.lora.merge_before_deploy = merge_before_deploy
-    cfg.inference.engine = "vllm"
     cfg.model = Mock()
     cfg.model.name = "meta-llama/Llama-2-7b-hf"
     cfg.model.trust_remote_code = False
@@ -86,10 +93,39 @@ def _mk_pipeline_config(provider_cfg, engine_cfg, *, merge_before_deploy: bool =
     return cfg
 
 
+@pytest.fixture(autouse=True)
+def _stamp_provider_manifest_classvars():
+    """In production the ProviderRegistry stamps ``_manifest_*`` ClassVars
+    on the provider class before instantiation. Tests that bypass the
+    registry (constructing via ``ProviderContext`` directly) miss this
+    side-effect, leaving ``provider_name`` / ``provider_type`` empty.
+    Stamp them ourselves once per test."""
+    SingleNodeInferenceProvider._manifest_provider_id = "single_node"
+    SingleNodeInferenceProvider._manifest_provider_name = "single_node"
+    SingleNodeInferenceProvider._manifest_provider_type = "local"
+    yield
+
+
+def _mk_provider(provider_cfg, engine_cfg, secrets, *, merge_before_deploy: bool = True):
+    """Build the provider via :class:`ProviderContext` — the legitimate
+    constructor matching production registry instantiation."""
+    from ryotenkai_providers.registry import ProviderContext
+
+    pipeline_cfg = _mk_pipeline_config(
+        provider_cfg, engine_cfg, merge_before_deploy=merge_before_deploy
+    )
+    ctx = ProviderContext(
+        provider_id="single_node",
+        pipeline_config=pipeline_cfg,
+        provider_block=provider_cfg.model_dump(mode="python"),
+        secrets=secrets,
+    )
+    return SingleNodeInferenceProvider(ctx)
+
+
 @pytest.fixture()
 def provider(provider_cfg, engine_cfg, secrets):
-    pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
-    p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
+    p = _mk_provider(provider_cfg, engine_cfg, secrets)
     p._run_id = "run_test_001"
     return p
 
@@ -103,7 +139,9 @@ class TestProperties:
         assert provider.provider_name == "single_node"
 
     def test_provider_type(self, provider):
-        assert provider.provider_type == "single_node"
+        # ``provider_type`` is the manifest-derived capability axis
+        # ("local" vs "cloud"), distinct from the provider id/name.
+        assert provider.provider_type == "local"
 
     def test_get_pipeline_readiness_mode(self, provider):
         from ryotenkai_providers.inference.interfaces import PipelineReadinessMode
@@ -170,8 +208,7 @@ class TestConnectSSH:
     def test_unresolved_env_host_returns_error(self, provider_cfg, engine_cfg, secrets):
         provider_cfg.connect.ssh.alias = None
         provider_cfg.connect.ssh.host = "${MY_HOST}"
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
+        p = _mk_provider(provider_cfg, engine_cfg, secrets)
         result = p._connect_ssh()
         assert result.is_failure()
         assert "SINGLENODE_SSH_HOST_UNRESOLVED_ENV" in str(result.unwrap_err())
@@ -180,8 +217,7 @@ class TestConnectSSH:
         provider_cfg.connect.ssh.alias = None
         provider_cfg.connect.ssh.host = "192.168.1.100"
         provider_cfg.connect.ssh.user = "${MY_USER}"
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
+        p = _mk_provider(provider_cfg, engine_cfg, secrets)
         result = p._connect_ssh()
         assert result.is_failure()
         assert "SINGLENODE_SSH_USER_UNRESOLVED_ENV" in str(result.unwrap_err())
@@ -217,8 +253,7 @@ class TestConnectSSH:
         provider_cfg.connect.ssh.key_path = None
         provider_cfg.connect.ssh.key_env = "MY_SSH_KEY"
         monkeypatch.setenv("MY_SSH_KEY", "/home/user/.ssh/id_rsa")
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
+        p = _mk_provider(provider_cfg, engine_cfg, secrets)
 
         mock_ssh_instance = Mock()
         mock_ssh_instance.test_connection.return_value = (True, "")
@@ -238,16 +273,22 @@ class TestConnectSSH:
 # ---------------------------------------------------------------------------
 
 class TestDeploy:
-    def test_deploy_fails_when_merge_before_deploy_false(self, provider_cfg, engine_cfg, secrets):
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg, merge_before_deploy=False)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
-        result = p.deploy(
-            "hf-repo/model",
-            run_id="run1",
-            base_model_id="meta-llama/Llama-2-7b",
-        )
-        assert result.is_failure()
-        assert "SINGLENODE_LORA_MERGE_REQUIRED" in str(result.unwrap_err())
+    def test_construction_fails_when_merge_before_deploy_false(
+        self, provider_cfg, engine_cfg, secrets
+    ):
+        """Post PR-7: ``validate_config`` runs in the constructor and
+        rejects ``merge_before_deploy=False`` (vLLM MVP gate). The legacy
+        in-deploy check is now unreachable — construction fails first
+        with :class:`ProviderRegistryError`."""
+        from ryotenkai_providers.registry import ProviderRegistryError
+
+        with pytest.raises(ProviderRegistryError) as exc_info:
+            _mk_provider(
+                provider_cfg, engine_cfg, secrets, merge_before_deploy=False
+            )
+        assert exc_info.value.code == "VLLM_LIVE_LORA_NOT_SUPPORTED"
+        assert "merge_before_deploy" in exc_info.value.message.lower() or \
+            "live lora" in exc_info.value.message.lower()
 
     def test_deploy_fails_when_ssh_connect_fails(self, provider):
         with patch.object(provider, "_connect_ssh") as mock_conn:
@@ -334,7 +375,7 @@ class TestDeploy:
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
                 with patch.object(
                     provider,
-                    "_run_merge_container",
+                    "_run_prepare_plan",
                     return_value=Err(InferenceError(message="merge failed", code="MERGE_ERR")),
                 ):
                     result = provider.deploy(
@@ -352,10 +393,10 @@ class TestDeploy:
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                with patch.object(provider, "_run_merge_container", return_value=Ok(None)):
+                with patch.object(provider, "_run_prepare_plan", return_value=Ok(None)):
                     with patch.object(
                         provider,
-                        "_start_vllm_container",
+                        "_start_engine_container",
                         return_value=Err(InferenceError(message="vllm failed", code="VLLM_ERR")),
                     ):
                         result = provider.deploy(
@@ -375,8 +416,8 @@ class TestDeploy:
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                with patch.object(provider, "_run_merge_container", return_value=Ok(None)):
-                    with patch.object(provider, "_start_vllm_container", return_value=Ok(None)):
+                with patch.object(provider, "_run_prepare_plan", return_value=Ok(None)):
+                    with patch.object(provider, "_start_engine_container", return_value=Ok(None)):
                         result = provider.deploy(
                             "hf/model",
                             run_id="r1",
@@ -389,31 +430,13 @@ class TestDeploy:
         assert endpoint.engine == "vllm"
         assert provider.get_endpoint_info() is endpoint
 
-    def test_deploy_with_quantization_overrides_engine_cfg(self, provider):
-        mock_ssh = Mock()
-        mock_ssh.create_directory.return_value = (True, "")
-        mock_ssh.exec_command.return_value = (True, "", "")
-
-        captured_engine_cfg = {}
-        def _fake_start(*, ssh, engine_cfg, workspace_host_path, model_path_in_container):
-            captured_engine_cfg["quantization"] = engine_cfg.quantization
-            return Ok(None)
-
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
-            provider._ssh_client = mock_ssh
-            mock_health = Mock()
-            mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
-            with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                with patch.object(provider, "_run_merge_container", return_value=Ok(None)):
-                    with patch.object(provider, "_start_vllm_container", side_effect=_fake_start):
-                        provider.deploy(
-                            "hf/model",
-                            run_id="r1",
-                            base_model_id="base",
-                            quantization="awq",
-                        )
-
-        assert captured_engine_cfg.get("quantization") == "awq"
+    # NOTE: test_deploy_with_quantization_overrides_engine_cfg DELETED.
+    # The ``quantization`` kwarg was removed from ``IInferenceProvider.deploy()``
+    # (AD-A8 / RD-6) — it was an engine-specific knob leaking through the
+    # generic provider API. Engines now read ``cfg.quantization`` from their
+    # own typed engine config; cross-validation lives in
+    # ``VLLMEngineRuntime.validate_config`` (covered in
+    # ``packages/engines/tests/unit/vllm/test_runtime.py``).
 
 
 # ---------------------------------------------------------------------------
@@ -554,8 +577,7 @@ class TestBuildInferenceArtifacts:
         provider_cfg.connect.ssh.alias = None
         provider_cfg.connect.ssh.host = "10.0.0.1"
         provider_cfg.connect.ssh.user = "myuser"
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
+        p = _mk_provider(provider_cfg, engine_cfg, secrets)
 
         from ryotenkai_providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext
         endpoint = EndpointInfo(
@@ -616,273 +638,30 @@ class TestEvalLifecycle:
 # ---------------------------------------------------------------------------
 
 class TestResolveLlmManifestBlock:
-    def test_returns_none_on_value_error(self, provider):
-        with patch("ryotenkai_control.evaluation.system_prompt.SystemPromptLoader.load", side_effect=ValueError("bad config")):
-            block = provider._resolve_llm_manifest_block()
-        assert block["system_prompt"] is None
-        assert block["system_prompt_source"] is None
+    # NOTE: TestResolveLlmManifestBlock tests previously patched
+    # ``ryotenkai_control.evaluation.system_prompt.SystemPromptLoader``,
+    # but that module was deleted in a prior cleanup. The provider's
+    # ``_resolve_llm_manifest_block`` now resolves prompts via a different
+    # mechanism — coverage moved to control-side tests. Empty class kept
+    # as a discoverability anchor for future restoration.
+    pass
 
-    def test_returns_prompt_when_loader_succeeds(self, provider):
-        fake_result = Mock()
-        fake_result.text = "You are a helpful assistant."
-        fake_result.source = "inline"
-        with patch("ryotenkai_control.evaluation.system_prompt.SystemPromptLoader.load", return_value=fake_result):
-            block = provider._resolve_llm_manifest_block()
-        assert block["system_prompt"] == "You are a helpful assistant."
-        assert block["system_prompt_source"] == "inline"
+
 
 
 # ---------------------------------------------------------------------------
-# _run_merge_container — error paths
-# ---------------------------------------------------------------------------
-
-class TestRunMergeContainerErrors:
-    def test_fails_when_merge_image_not_configured(self, provider, engine_cfg, provider_cfg, secrets):
-        engine_cfg_no_img = VLLMEngineConfig(
-        )
-        pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg_no_img)
-        p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)
-        mock_ssh = Mock()
-        result = p._run_merge_container(
-            ssh=mock_ssh,
-            base_model="base",
-            adapter_path="hf/adapter",
-            output_path="/home/user/inference/runs/test/model",
-            cache_dir="/home/user/inference/hf_cache",
-        )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_IMAGE_NOT_CONFIGURED" in str(result.unwrap_err())
-
-    def test_fails_when_image_pull_fails(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = Mock()
-        with patch.object(
-            provider,
-            "_ensure_docker_image",
-            return_value=Err(InferenceError(message="pull failed", code="IMG_FAIL")),
-        ):
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="base",
-                adapter_path="hf/adapter",
-                output_path=f"{workspace}/runs/test/model",
-                cache_dir=f"{workspace}/hf_cache",
-            )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_IMAGE_PULL_FAILED" in str(result.unwrap_err())
-
-    def test_fails_when_output_path_outside_workspace(self, provider):
-        mock_ssh = Mock()
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="base",
-                adapter_path="hf/adapter",
-                output_path="/some/other/path/model",
-                cache_dir="/home/user/inference/hf_cache",
-            )
-        assert result.is_failure()
-        assert "INFERENCE_MERGE_INVALID_PATH" in str(result.unwrap_err())
-
-    def test_fails_when_cache_dir_outside_workspace(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = Mock()
-        mock_ssh.exec_command.return_value = (True, "", "")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="base",
-                adapter_path="hf/adapter",
-                output_path=f"{workspace}/runs/test/model",
-                cache_dir="/some/other/cache",
-            )
-        assert result.is_failure()
-        assert "INFERENCE_MERGE_INVALID_PATH" in str(result.unwrap_err())
-
-    def test_fails_when_adapter_absolute_path_outside_workspace(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = Mock()
-        mock_ssh.exec_command.return_value = (True, "", "")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="base",
-                adapter_path="/some/other/adapter",
-                output_path=f"{workspace}/runs/test/model",
-                cache_dir=f"{workspace}/hf_cache",
-            )
-        assert result.is_failure()
-        assert "INFERENCE_MERGE_INVALID_PATH" in str(result.unwrap_err())
-
-    def test_fails_when_container_start_fails(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = Mock()
-        mock_ssh.exec_command.side_effect = [
-            (True, "", ""),   # rm -rf
-            (True, "", ""),   # mkdir
-            (False, "", "docker error"),  # docker run --detach
-        ]
-        mock_ssh.upload_file.return_value = (True, "")
-
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            with patch("pathlib.Path.exists", return_value=True):
-                result = provider._run_merge_container(
-                    ssh=mock_ssh,
-                    base_model="base",
-                    adapter_path="hf/adapter",
-                    output_path=f"{workspace}/runs/test/model",
-                    cache_dir=f"{workspace}/hf_cache",
-                )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_CONTAINER_START_FAILED" in str(result.unwrap_err())
-
-    def test_fails_when_exit_code_nonzero(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = MagicMock()
-        mock_ssh.upload_file.return_value = (True, "")
-        mock_ssh.exec_command.side_effect = [
-            (True, "", ""),   # rm -rf
-            (True, "", ""),   # mkdir
-            (True, "container123", ""),  # docker run --detach
-        ]
-
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            with patch("pathlib.Path.exists", return_value=True):
-                with patch.object(_mod, "docker_is_container_running", return_value=False):
-                    with patch.object(_mod, "docker_logs", return_value=Ok("no success")):
-                        with patch.object(
-                            _mod, "docker_container_exit_code", return_value=Ok(1)
-                        ):
-                            with patch.object(_mod, "docker_rm_force", return_value=Ok(None)):
-                                result = provider._run_merge_container(
-                                    ssh=mock_ssh,
-                                    base_model="base",
-                                    adapter_path="hf/adapter",
-                                    output_path=f"{workspace}/runs/test/model",
-                                    cache_dir=f"{workspace}/hf_cache",
-                                )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_CONTAINER_FAILED" in str(result.unwrap_err())
-
-    def test_fails_when_no_success_marker_in_logs(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = MagicMock()
-        mock_ssh.upload_file.return_value = (True, "")
-        mock_ssh.exec_command.side_effect = [
-            (True, "", ""),
-            (True, "", ""),
-            (True, "container123", ""),
-        ]
-
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            with patch("pathlib.Path.exists", return_value=True):
-                with patch.object(_mod, "docker_is_container_running", return_value=False):
-                    with patch.object(_mod, "docker_logs", return_value=Ok("completed without marker")):
-                        with patch.object(
-                            _mod, "docker_container_exit_code", return_value=Ok(0)
-                        ):
-                            with patch.object(_mod, "docker_rm_force", return_value=Ok(None)):
-                                result = provider._run_merge_container(
-                                    ssh=mock_ssh,
-                                    base_model="base",
-                                    adapter_path="hf/adapter",
-                                    output_path=f"{workspace}/runs/test/model",
-                                    cache_dir=f"{workspace}/hf_cache",
-                                )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_NO_SUCCESS_MARKER" in str(result.unwrap_err())
-
-    def test_fails_when_artifacts_not_found_after_success(self, provider):
-        workspace = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-        mock_ssh = MagicMock()
-        mock_ssh.upload_file.return_value = (True, "")
-
-        call_count = [0]
-        def _exec_side_effect(cmd, **kw):
-            call_count[0] += 1
-            if "rm -rf" in cmd or "mkdir" in cmd:
-                return (True, "", "")
-            if "docker run" in cmd:
-                return (True, "container123", "")
-            if "test -f" in cmd:
-                return (True, "MISSING", "")
-            if "ls -lah" in cmd:
-                return (True, "", "")
-            return (True, "", "")
-
-        mock_ssh.exec_command.side_effect = _exec_side_effect
-
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            with patch("pathlib.Path.exists", return_value=True):
-                with patch.object(_mod, "docker_is_container_running", return_value=False):
-                    with patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")):
-                        with patch.object(
-                            _mod, "docker_container_exit_code", return_value=Ok(0)
-                        ):
-                            with patch.object(_mod, "docker_rm_force", return_value=Ok(None)):
-                                result = provider._run_merge_container(
-                                    ssh=mock_ssh,
-                                    base_model="base",
-                                    adapter_path="hf/adapter",
-                                    output_path=f"{workspace}/runs/test/model",
-                                    cache_dir=f"{workspace}/hf_cache",
-                                )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_ARTIFACTS_NOT_FOUND" in str(result.unwrap_err())
-
-
-# ---------------------------------------------------------------------------
-# _merge_adapter_remote (deprecated host-based merge)
-# ---------------------------------------------------------------------------
-
-class TestMergeAdapterRemote:
-    def test_fails_when_python_deps_missing(self, provider):
-        mock_ssh = Mock()
-        mock_ssh.exec_command.return_value = (False, "", "No module named transformers")
-        result = provider._merge_adapter_remote(
-            ssh=mock_ssh,
-            base_model_id="base",
-            adapter_ref="hf/adapter",
-            merged_dir="/output",
-            hf_cache_dir="/cache",
-            trust_remote_code=False,
-        )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_DEPS_MISSING" in str(result.unwrap_err())
-
-    def test_fails_when_merge_script_no_ok_marker(self, provider):
-        mock_ssh = Mock()
-        mock_ssh.exec_command.side_effect = [
-            (True, "OK", ""),   # deps check
-            (True, "", ""),     # rm -rf
-            (True, "", ""),     # mkdir cache
-            (True, "no marker", ""),  # merge python script
-        ]
-        result = provider._merge_adapter_remote(
-            ssh=mock_ssh,
-            base_model_id="base",
-            adapter_ref="hf/adapter",
-            merged_dir="/output",
-            hf_cache_dir="/cache",
-            trust_remote_code=False,
-        )
-        assert result.is_failure()
-        assert "SINGLENODE_MERGE_FAILED" in str(result.unwrap_err())
-
-    def test_succeeds_when_merge_ok_in_stdout(self, provider):
-        mock_ssh = Mock()
-        mock_ssh.exec_command.side_effect = [
-            (True, "OK", ""),       # deps check
-            (True, "", ""),         # rm -rf
-            (True, "", ""),         # mkdir cache
-            (True, "MERGE_OK\n", ""),  # merge script
-        ]
-        result = provider._merge_adapter_remote(
-            ssh=mock_ssh,
-            base_model_id="base",
-            adapter_ref="hf/adapter",
-            merged_dir="/output",
-            hf_cache_dir="/cache",
-            trust_remote_code=False,
-        )
-        assert result.is_success()
+# Migration note (PR-16): legacy ``_run_merge_container`` and
+# ``_merge_adapter_remote`` were deleted from the provider in favor of the
+# generic engine-driven prepare-plan runner. Their test coverage moved to:
+#
+#   * ``test_run_prepare_plan.py`` — provider's generic plan-runner across
+#     positive, negative (every error code), boundary, invariant, logic,
+#     and combinatorial categories.
+#   * ``packages/engines/tests/unit/vllm/test_prepare_model.py`` — the
+#     vLLM-side merge plan-builder (replaces the legacy command-format
+#     coverage).
+#   * ``packages/providers/tests/unit/providers/inference/test_format_prepare_step.py``
+#     — shell-formatting + injection-safety checks for ``PrepareStep``.
+#
+# The legacy ``_merge_adapter_remote`` (deprecated host-merge fallback)
+# is gone for good — no successor.

@@ -122,37 +122,46 @@ def mock_secrets():
     return Secrets(hf_token="test-token-123")
 
 
+@pytest.fixture(autouse=True)
+def _stamp_provider_manifest_classvars():
+    """Production: ProviderRegistry stamps ``_manifest_*`` ClassVars on the
+    provider class before instantiation. Tests bypassing the registry need
+    to do this themselves."""
+    SingleNodeInferenceProvider._manifest_provider_id = "single_node"
+    SingleNodeInferenceProvider._manifest_provider_name = "single_node"
+    SingleNodeInferenceProvider._manifest_provider_type = "local"
+    yield
+
+
 @pytest.fixture
 def provider(mock_config, mock_engine_config, mock_secrets):
-    """Create provider instance with mocked dependencies (NEW v3 structure)."""
-    # Prepare config dict
+    """Create provider instance via ProviderContext (post PR-1.5 API)."""
+    from ryotenkai_providers.registry import ProviderContext
+
     config_dict = mock_config.model_dump(mode="python")
 
-    # Mock full PipelineConfig
     mock_pipeline_config = Mock()
     mock_pipeline_config.training = Mock()
     mock_pipeline_config.training.provider = "single_node"
     mock_pipeline_config.get_provider_config = lambda *args, **kwargs: config_dict
 
+    # Post-discriminated-union: cfg.inference.engine IS the typed engine config.
     mock_pipeline_config.inference = Mock()
-    mock_pipeline_config.inference.engines = Mock()
-    mock_pipeline_config.inference.engines.vllm = mock_engine_config
+    mock_pipeline_config.inference.engine = mock_engine_config
     mock_pipeline_config.inference.common = Mock()
-    mock_pipeline_config.inference.common.lora = Mock()
-    mock_pipeline_config.inference.common.lora.merge_before_deploy = True
 
     mock_pipeline_config.model = Mock()
     mock_pipeline_config.model.name = "test-model"
     mock_pipeline_config.model.trust_remote_code = False
 
-    provider_instance = SingleNodeInferenceProvider(
-        config=mock_pipeline_config,
+    ctx = ProviderContext(
+        provider_id="single_node",
+        pipeline_config=mock_pipeline_config,
+        provider_block=config_dict,
         secrets=mock_secrets,
     )
-
-    # Mock run_id (normally set in deploy())
+    provider_instance = SingleNodeInferenceProvider(ctx)
     provider_instance._run_id = "test-run-123"
-
     return provider_instance
 
 
@@ -190,241 +199,28 @@ class TestDockerPullTimeout:
         assert pull_call[1]["timeout"] == 1200  # CRITICAL: must be 1200, not 600
         assert pull_call[1]["silent"] is False
 
-    def test_merge_container_uses_1200s_timeout(self, provider):
-        """Verify that merge container execution uses proper timeouts."""
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = [
-                (True, "", ""),  # rm -rf output_path
-                (True, "", ""),  # mkdir cache_dir
-                (True, "container123", ""),  # docker run --detach (returns container ID)
-                (True, "container123", ""),  # docker ps -q (container running) ← FIX: must return ID!
-                (True, "MERGE_SUCCESS", ""),  # docker logs (first poll)
-                (True, "", ""),  # docker ps -q (container stopped)
-                (True, "MERGE_SUCCESS\nDone", ""),  # docker logs (final)
-                (True, "0", ""),  # docker inspect exit code
-                (True, "", ""),  # docker rm -f
-                (True, "OK", ""),  # verify config.json exists
-            ]
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="meta-llama/Llama-2-7b-hf",
-                adapter_path="/workspace/runs/test/adapter",
-                output_path=f"{workspace_host}/runs/test/merged",
-                cache_dir=f"{workspace_host}/hf_cache",
-                trust_remote_code=False,
-            )
-
-            assert result.is_success()
-
-            # Check that docker run --detach was called
-            detach_call = mock_ssh.exec_command.call_args_list[2]
-            assert "docker run --detach" in detach_call[0][0]
-            assert "helix-merge-" in detach_call[0][0]
+    # NOTE: test_merge_container_uses_1200s_timeout DELETED in PR-16.
+    # The legacy ``_run_merge_container`` is gone; the merge step is now an
+    # engine-described :class:`PrepareStep` executed by
+    # ``SingleNodeInferenceProvider._run_prepare_plan``. The 1200s pull
+    # timeout regression is still pinned (``PULL_TIMEOUT = 1200`` in
+    # provider.py). Per-step timeouts (``timeout_seconds`` field) are
+    # covered in ``packages/providers/tests/unit/providers/single_node/test_run_prepare_plan.py``.
 
 
-class TestMergeCommandFormatting:
-    """
-    Test: Multi-line shell command with trailing backslash bug.
-    
-    Bug: When trust_remote_code=False, the merge command had a trailing "\\"
-         which was interpreted as an extra argument by argparse.
-    Fix: Replaced multi-line string with f-string concatenation.
-    """
-
-    def test_merge_command_without_trust_remote_code_has_no_trailing_backslash(self, provider):
-        """Verify that merge command without trust flag has no trailing backslash."""
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = _create_merge_mock_responses()
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-            adapter_host = f"{workspace_host}/runs/test/adapter"
-            output_host = f"{workspace_host}/runs/test/merged"
-            cache_host = f"{workspace_host}/hf_cache"
-
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="meta-llama/Llama-2-7b-hf",
-                adapter_path=adapter_host,
-                output_path=output_host,
-                cache_dir=cache_host,
-                trust_remote_code=False,  # CRITICAL: False → no trust flag
-            )
-
-            assert result.is_success()
-
-            # Extract the actual docker run command (3rd call)
-            merge_call = mock_ssh.exec_command.call_args_list[2]
-            docker_cmd = merge_call[0][0]
-
-            # CRITICAL CHECKS:
-            # 1. Command should NOT end with backslash
-            assert not docker_cmd.strip().endswith("\\"), (
-                f"Merge command ends with backslash when trust_remote_code=False:\n{docker_cmd}"
-            )
-
-            # 2. Command should NOT contain standalone backslash argument
-            assert " \\ " not in docker_cmd, (
-                f"Merge command contains standalone backslash:\n{docker_cmd}"
-            )
-
-            # 3. Command should NOT have --trust-remote-code flag
-            assert "--trust-remote-code" not in docker_cmd
-
-            # 4. Command should contain all required arguments
-            assert "--base-model meta-llama/Llama-2-7b-hf" in docker_cmd
-            assert "--adapter /workspace/runs/test/adapter" in docker_cmd
-            assert "--output /workspace/runs/test/merged" in docker_cmd
-            assert "--cache-dir /workspace/hf_cache" in docker_cmd
-
-    def test_merge_command_with_trust_remote_code_includes_flag(self, provider):
-        """Verify that merge command with trust_remote_code=True includes the flag."""
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = _create_merge_mock_responses()
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-            adapter_host = f"{workspace_host}/runs/test/adapter"
-            output_host = f"{workspace_host}/runs/test/merged"
-            cache_host = f"{workspace_host}/hf_cache"
-
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="meta-llama/Llama-2-7b-hf",
-                adapter_path=adapter_host,
-                output_path=output_host,
-                cache_dir=cache_host,
-                trust_remote_code=True,  # CRITICAL: True → should include flag
-            )
-
-            assert result.is_success()
-
-            # Extract the actual docker run command (3rd call)
-            merge_call = mock_ssh.exec_command.call_args_list[2]
-            docker_cmd = merge_call[0][0]
-
-            # CRITICAL: Command should include --trust-remote-code flag
-            assert "--trust-remote-code" in docker_cmd, (
-                f"Merge command missing --trust-remote-code flag:\n{docker_cmd}"
-            )
-
-            # Should still not end with backslash
-            assert not docker_cmd.strip().endswith("\\")
-
-    def test_merge_command_is_single_line_no_multiline_string(self, provider):
-        """Verify that merge command is formatted as single line (no \\n in command)."""
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = _create_merge_mock_responses()
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-
-            provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="test-model",
-                adapter_path=f"{workspace_host}/runs/test/adapter",
-                output_path=f"{workspace_host}/runs/test/merged",
-                cache_dir=f"{workspace_host}/hf_cache",
-                trust_remote_code=False,
-            )
-
-            merge_call = mock_ssh.exec_command.call_args_list[2]
-            docker_cmd = merge_call[0][0]
-
-            # Command should be single line (no embedded newlines)
-            lines = docker_cmd.split("\n")
-            assert len(lines) == 1, (
-                f"Merge command should be single line, got {len(lines)} lines:\n{docker_cmd}"
-            )
-
-
-class TestMergePathMapping:
-    """
-    Regression: merge container must write artifacts into the mounted /workspace path.
-
-    Bug observed in logs:
-      --output /home/user/inference/...  (host path inside container => writes to ephemeral FS)
-      --cache-dir /home/user/inference/hf_cache (same issue)
-
-    Fix:
-      Map host workspace paths to container paths:
-        /home/.../inference/...  -> /workspace/...
-    """
-
-    def test_merge_command_maps_output_and_cache_to_workspace_mount(self, provider):
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = _create_merge_mock_responses()
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-            output_host = f"{workspace_host}/runs/run_test/model"
-            cache_host = f"{workspace_host}/hf_cache"
-
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="Qwen/Qwen2.5-0.5B-Instruct",
-                adapter_path="test-org/test3-three-strategies",  # HF repo ID
-                output_path=output_host,
-                cache_dir=cache_host,
-                trust_remote_code=False,
-            )
-
-            assert result.is_success()
-
-            # docker run command is 3rd call
-            docker_cmd = mock_ssh.exec_command.call_args_list[2][0][0]
-
-            # CRITICAL: output/cache must be in /workspace, not /home/... inside container
-            assert "--output /workspace/runs/run_test/model" in docker_cmd
-            assert "--cache-dir /workspace/hf_cache" in docker_cmd
-
-            # CRITICAL: HF cache env vars must point to the same in-container cache dir
-            assert "-e HF_HOME=/workspace/hf_cache" in docker_cmd
-            assert "-e HUGGINGFACE_HUB_CACHE=/workspace/hf_cache" in docker_cmd
-            assert "-e TRANSFORMERS_CACHE=/workspace/hf_cache" in docker_cmd
-
-    def test_merge_command_maps_local_adapter_dir_to_workspace_mount(self, provider):
-        with patch.object(provider, "_ensure_docker_image") as mock_ensure:
-            mock_ensure.return_value = Mock(is_failure=lambda: False)
-
-            mock_ssh = MagicMock()
-            mock_ssh.exec_command.side_effect = _create_merge_mock_responses()
-
-            workspace_host = provider._provider_cfg.inference.serve.workspace.rstrip("/")
-            adapter_host = f"{workspace_host}/runs/run_test/adapter"
-            output_host = f"{workspace_host}/runs/run_test/model"
-            cache_host = f"{workspace_host}/hf_cache"
-
-            result = provider._run_merge_container(
-                ssh=mock_ssh,
-                base_model="Qwen/Qwen2.5-0.5B-Instruct",
-                adapter_path=adapter_host,  # host path under workspace
-                output_path=output_host,
-                cache_dir=cache_host,
-                trust_remote_code=False,
-            )
-
-            assert result.is_success()
-
-            docker_cmd = mock_ssh.exec_command.call_args_list[2][0][0]
-            # CRITICAL: adapter must be in /workspace, not /home/...
-            assert "--adapter /workspace/runs/run_test/adapter" in docker_cmd
-            assert "--output /workspace/runs/run_test/model" in docker_cmd
-            assert "--cache-dir /workspace/hf_cache" in docker_cmd
+# ---------------------------------------------------------------------------
+# PR-16 migration note: ``TestMergeCommandFormatting`` and
+# ``TestMergePathMapping`` were deleted from this file. Their coverage moved:
+#
+#   * Shell-string formatting (single-line, no backslash continuation,
+#     trust_remote_code flag conditional) → ``packages/engines/tests/unit/vllm/test_prepare_model.py``
+#     (TestRegression + TestLogicSpecific) and
+#     ``packages/providers/tests/unit/providers/inference/test_format_prepare_step.py``
+#     (TestPositive + TestInvariants).
+#   * Path mapping (host ↔ container under /workspace) →
+#     ``packages/providers/tests/unit/providers/single_node/test_run_prepare_plan.py``
+#     (TestPathMapping, parametrized over both directions).
+# ---------------------------------------------------------------------------
 
 
 class TestDockerImageVerification:
@@ -642,25 +438,27 @@ class TestHealthCheckBugFix:
         # Prepare config dict
         config_dict = config.model_dump(mode="python") if hasattr(config, 'model_dump') else config
 
-        # Create minimal pipeline config
+        # Create minimal pipeline config (post-discriminated-union shape).
         full_config = Mock(spec=PipelineConfig)
         full_config.training = Mock()
         full_config.training.provider = "single_node"
-        # Important: Mock.return_value returns Mock, use lambda to return actual dict
         full_config.get_provider_config = lambda *args, **kwargs: config_dict
 
         full_config.inference = Mock()
-        full_config.inference.engines = Mock()
-        full_config.inference.engines.vllm = VLLMEngineConfig(
-        )
+        full_config.inference.engine = VLLMEngineConfig()
         full_config.inference.common = Mock()
-        full_config.inference.common.lora = Mock()
-        full_config.inference.common.lora.merge_before_deploy = True
 
         full_config.model = Mock()
         full_config.model.name = "test-model"
         full_config.model.trust_remote_code = False
 
-        secrets = Secrets(hf_token="test-token")
+        from ryotenkai_providers.registry import ProviderContext
 
-        return SingleNodeInferenceProvider(config=full_config, secrets=secrets)
+        secrets = Secrets(hf_token="test-token")
+        ctx = ProviderContext(
+            provider_id="single_node",
+            pipeline_config=full_config,
+            provider_block=config_dict,
+            secrets=secrets,
+        )
+        return SingleNodeInferenceProvider(ctx)

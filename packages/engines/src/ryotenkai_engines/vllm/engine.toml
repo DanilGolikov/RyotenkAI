@@ -33,6 +33,7 @@ supports_tensor_parallel = true
 supported_quantizations  = ["awq", "gptq", "fp8", "bitsandbytes"]
 supported_dtypes         = ["bfloat16", "float16", "float32"]
 default_port             = 8000
+requires_prepare         = true   # LoRA merge before serve (PR-16)
 
 [entry_points.runtime]
 module = "ryotenkai_engines.vllm.runtime"

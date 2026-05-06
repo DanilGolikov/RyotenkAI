@@ -27,9 +27,30 @@ from ryotenkai_engines.interfaces import (
     BaseEngineConfig,
     IInferenceEngine,  # noqa: F401  — runtime-checkable Protocol; isinstance check uses it
     LaunchSpec,
+    PreparePlan,
+    PrepareStep,
 )
 from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_shared.utils.result import AppError, Err, Ok, Result
+
+# ---------------------------------------------------------------------------
+# Module-level prepare constants — engine concerns (lifted out of the
+# legacy SingleNodeInferenceProvider during PR-16).
+# ---------------------------------------------------------------------------
+
+#: Hard wall-clock timeout for the LoRA merge container.
+_MERGE_TIMEOUT_S = 3600
+
+#: stdout marker that ``merge_lora.py`` prints on success. Provider checks
+#: for this substring as defense-in-depth on top of exit-code-only.
+_MERGE_SUCCESS_MARKER = "MERGE_SUCCESS"
+
+#: Path inside the vLLM image where ``merge_lora.py`` is baked
+#: (PR-15 Dockerfile: ``COPY merge_lora.py /opt/helix/merge_lora.py``).
+_MERGE_SCRIPT_IN_CONTAINER = "/opt/helix/merge_lora.py"
+
+#: Container path for HF model cache (shared by merge + serve).
+_HF_CACHE_DIR_IN_CONTAINER = "/workspace/hf_cache"
 
 
 class VLLMEngineRuntime:
@@ -54,6 +75,7 @@ class VLLMEngineRuntime:
             supported_quantizations=("awq", "gptq", "fp8", "bitsandbytes"),
             supported_dtypes=("bfloat16", "float16", "float32"),
             default_port=8000,
+            requires_prepare=True,
         )
 
     # ---- launch spec ----
@@ -131,6 +153,94 @@ class VLLMEngineRuntime:
     def build_default_endpoint_url(self, *, host: str, port: int) -> str:
         """OpenAI-compatible base URL — what ModelClientFactory dials."""
         return f"http://{host}:{port}/v1"
+
+    # ---- prepare_model (PR-16) ----
+
+    def prepare_model(
+        self,
+        *,
+        cfg: BaseEngineConfig,
+        base_model: str,
+        adapter_path_in_container: str | None,
+        workspace_host_path: str,
+        run_id: str,
+        trust_remote_code: bool,
+    ) -> Result[PreparePlan, AppError]:
+        """Build a 1-step LoRA-merge plan, or an empty plan if no merge needed.
+
+        Three branches:
+
+        1. ``cfg.merge_before_deploy=False`` — engine is configured to load
+           LoRA on the fly (post-MVP). Returns ``Ok(PreparePlan.empty())``.
+           ``validate_config`` rejects this today; the branch is here for
+           when the MVP gate is lifted.
+
+        2. ``adapter_path_in_container is None`` — no adapter was supplied;
+           serve the base model directly. Returns ``Ok(PreparePlan.empty())``.
+
+        3. Adapter present + merge required — return a single ``merge_lora``
+           step that runs ``/opt/helix/merge_lora.py`` (baked into the
+           image at PR-15) inside the same vLLM image, writing to
+           ``/workspace/runs/{run_id}/model``.
+
+        The provider:
+          * formats this step into ``docker run …`` via ``format_prepare_step``
+          * polls logs for ``MERGE_SUCCESS``
+          * verifies ``{output}/config.json`` exists
+          * passes ``plan.final_model_path`` to ``build_launch_spec``
+        """
+        if not isinstance(cfg, VLLMEngineConfig):
+            return Err(
+                AppError(
+                    message=(
+                        f"VLLMEngineRuntime.prepare_model expected "
+                        f"VLLMEngineConfig, got {type(cfg).__name__}"
+                    ),
+                    code="VLLM_CONFIG_TYPE_MISMATCH",
+                )
+            )
+
+        # Branch 1 + 2 — empty plan, no merge.
+        if not cfg.merge_before_deploy or adapter_path_in_container is None:
+            return Ok(PreparePlan.empty())
+
+        # Branch 3 — single merge step.
+        output_in_container = f"/workspace/runs/{run_id}/model"
+
+        args: list[str] = [
+            _MERGE_SCRIPT_IN_CONTAINER,
+            "--base-model", base_model,
+            "--adapter", adapter_path_in_container,
+            "--output", output_in_container,
+            "--cache-dir", _HF_CACHE_DIR_IN_CONTAINER,
+        ]
+        if trust_remote_code:
+            args.append("--trust-remote-code")
+
+        merge_step = PrepareStep(
+            name="merge_lora",
+            image=None,  # provider falls through to serve image
+            entrypoint=("python3",),
+            args=tuple(args),
+            env={
+                "HF_HOME": _HF_CACHE_DIR_IN_CONTAINER,
+                "HUGGINGFACE_HUB_CACHE": _HF_CACHE_DIR_IN_CONTAINER,
+                "TRANSFORMERS_CACHE": _HF_CACHE_DIR_IN_CONTAINER,
+            },
+            volumes=((workspace_host_path, "/workspace"),),
+            inputs=(adapter_path_in_container,),
+            outputs=(output_in_container,),
+            success_marker=_MERGE_SUCCESS_MARKER,
+            success_artifact=f"{output_in_container}/config.json",
+            timeout_seconds=_MERGE_TIMEOUT_S,
+        )
+
+        return Ok(
+            PreparePlan(
+                steps=(merge_step,),
+                final_model_path=output_in_container,
+            )
+        )
 
     # ---- validate_config ----
 
