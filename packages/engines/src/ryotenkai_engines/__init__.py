@@ -41,6 +41,9 @@ from ryotenkai_engines.interfaces import (
     BaseEngineConfig,
     IInferenceEngine,
     LaunchSpec,
+    NoPrepareMixin,
+    PreparePlan,
+    PrepareStep,
 )
 from ryotenkai_engines.manifest import (
     LATEST_ENGINE_SCHEMA_VERSION,
@@ -60,6 +63,9 @@ __all__ = (
     "IInferenceEngine",
     "BaseEngineConfig",
     "LaunchSpec",
+    "PrepareStep",
+    "PreparePlan",
+    "NoPrepareMixin",
     # Capabilities
     "ApiDialect",
     "EngineCapabilities",

@@ -293,6 +293,9 @@ class FakeRuntime:
     def validate_config(self, cfg):  # type: ignore[no-untyped-def]
         return None
 
+    def prepare_model(self, **kwargs):  # type: ignore[no-untyped-def]
+        return None
+
 
 class FakeConfig(BaseEngineConfig):
     kind: Literal["alpha"] = "alpha"
@@ -316,6 +319,8 @@ class DriftingRuntime:
     def build_default_endpoint_url(self, **kwargs):  # type: ignore[no-untyped-def]
         return ""
     def validate_config(self, cfg):  # type: ignore[no-untyped-def]
+        return None
+    def prepare_model(self, **kwargs):  # type: ignore[no-untyped-def]
         return None
 
 

@@ -1,21 +1,26 @@
-"""``LaunchSpec`` → docker shell command formatting.
+"""``LaunchSpec`` / ``PrepareStep`` → docker shell command formatting.
 
-Engines build a structured :class:`ryotenkai_engines.LaunchSpec` describing
-*what* to run (image, args, env, port, volumes). Providers know *how* to
-run things in their own runtime (Docker, Kubernetes, systemd, …). This
-module contains the docker-specific formatter used by SSH-based providers.
+Engines build structured specs describing *what* to run; providers know
+*how* to run things in their own runtime (Docker, Kubernetes, systemd, …).
+This module is the docker-specific formatter — two siblings:
 
-A future Kubernetes provider would replace this layer with a translator
-to ``ContainerSpec`` / ``PodSpec`` — engines and configs are unchanged.
+  * :func:`format_docker_run` — long-running inference server (``LaunchSpec``)
+  * :func:`format_prepare_step` — one-shot preparation container (``PrepareStep``)
+
+The two specs differ enough that polymorphism would obscure the
+intent (port publishing vs none; default entrypoint vs override).
+A future Kubernetes provider replaces this module with a ``ContainerSpec``
+/ ``PodSpec`` translator — engines and configs are unchanged.
 """
 
 from __future__ import annotations
 
 import shlex
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ryotenkai_engines.interfaces import LaunchSpec
+    from ryotenkai_engines.interfaces import LaunchSpec, PrepareStep
 
 
 def format_docker_run(
@@ -57,4 +62,67 @@ def format_docker_run(
     return " ".join(parts)
 
 
-__all__ = ["format_docker_run"]
+def format_prepare_step(
+    step: PrepareStep,
+    *,
+    image: str,
+    container_name: str,
+    extra_env: Mapping[str, str] | None = None,
+    gpus_all: bool = True,
+) -> str:
+    """Format a :class:`PrepareStep` as a single ``docker run …`` command.
+
+    Sibling of :func:`format_docker_run` for ephemeral one-shot containers.
+    Differences vs :func:`format_docker_run`:
+
+      * No ``-p host:port:port`` — prepare steps don't expose ports.
+      * ``--detach`` is always set so the provider can poll logs and
+        collect exit code; provider does ``docker rm -f`` after.
+      * ``--entrypoint`` is set when the engine overrides it (e.g.
+        vLLM merge step uses ``python3`` to run ``merge_lora.py`` inside
+        the same image whose default ENTRYPOINT is the inference server).
+      * ``extra_env`` is overlay-merged on top of ``step.env``; on key
+        collision provider wins. This is the secrets-injection boundary
+        (``HF_TOKEN`` flows through here, not from the engine).
+
+    Args:
+        step: Engine-described preparation step.
+        image: Resolved image (``step.image`` or the engine's serve image
+            when ``step.image is None`` — provider does the fall-through).
+        container_name: Provider-chosen container name (e.g.
+            ``f"helix-prepare-{run_id}-{step.name}"``).
+        extra_env: Provider-injected env (HF_TOKEN, etc.). Merged on top
+            of ``step.env``; provider keys override engine keys.
+        gpus_all: Pass ``--gpus all``. Set ``False`` only for CPU-only prep.
+
+    Returns:
+        A shell-safe ``docker run --detach …`` command. Every shell-meta
+        value (image, container name, paths, env values, args) is quoted
+        via :func:`shlex.quote`.
+    """
+    parts: list[str] = ["docker run", "--detach"]
+    parts.append(f"--name {shlex.quote(container_name)}")
+    if gpus_all:
+        parts.append("--gpus all")
+    for host_path, container_path in step.volumes:
+        parts.append(f"-v {shlex.quote(host_path)}:{shlex.quote(container_path)}")
+    # Engine env first, then provider extra_env — extra_env wins on collision.
+    merged_env: dict[str, str] = {**step.env, **(dict(extra_env) if extra_env else {})}
+    for key, value in merged_env.items():
+        parts.append(f"-e {shlex.quote(f'{key}={value}')}")
+    if step.entrypoint:
+        # Docker --entrypoint takes a single token; if the engine's tuple has
+        # more than one element, the rest is prepended to args. (Today's vLLM
+        # merge uses ``("python3",)`` only; tuple is forward-compat.)
+        head, *rest = step.entrypoint
+        parts.append(f"--entrypoint {shlex.quote(head)}")
+        parts.append(shlex.quote(image))
+        parts.extend(shlex.quote(a) for a in rest)
+        parts.extend(shlex.quote(a) for a in step.args)
+    else:
+        parts.append(shlex.quote(image))
+        parts.extend(shlex.quote(a) for a in step.args)
+    return " ".join(parts)
+
+
+__all__ = ["format_docker_run", "format_prepare_step"]

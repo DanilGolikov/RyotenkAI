@@ -1342,4 +1342,576 @@ scripts/migrate_config_to_discriminated_unions.py. Boy scout cleanup eliminates
 
 ---
 
+# Addendum: PR-16 — `prepare_model()` lifecycle hook
+
+**Date added:** 2026-05-06 (post PR-15 merge)
+**Owner:** daniil
+**Status:** PLANNED — awaiting approval.
+**Strategy:** Single PR (user choice). Multi-step return shape from day 1 (user choice).
+
+---
+
+## A1. Context
+
+PR-1..15 made the inference engine a clean plugin (engine.toml + IInferenceEngine + LaunchSpec). But **one concern leaked**: the LoRA-merge step still lives inside `SingleNodeInferenceProvider._run_merge_container()` (~330 lines, `provider.py:760-1088`). That's a SOLID violation:
+
+1. The provider is **not** engine-agnostic — it hardcodes vLLM-specific knowledge: which Docker image, what CLI flags (`--base-model`, `--adapter`, `--output`, `--cache-dir`, `--trust-remote-code`), what success marker (`MERGE_SUCCESS`), what artifact must exist (`config.json`), what timeout (3600s).
+2. **Two reasons to change** a single class: infrastructure changes (SSH, k8s) **and** vLLM merge-script changes. Classic SRP violation.
+3. **Adding any second engine with non-trivial preparation** (llama.cpp GGUF conversion, TensorRT-LLM compilation, MLX conversion, AWQ pre-quantization) cannot be done by "drop a folder" — it requires editing the provider. **This breaks the plug-in promise** PR-1..15 made.
+
+The fix: a new **`prepare_model()` hook** on `IInferenceEngine` that returns a structured `PreparePlan`. The engine declares **WHAT** to prepare; the provider executes **HOW** on its fabric (Docker today, k8s tomorrow). Same split that already worked for `build_launch_spec` / `LaunchSpec` / `format_docker_run`.
+
+---
+
+## A2. Industry validation
+
+The pattern matches established practice (web research 2026-05):
+
+- **KServe `ServingRuntime`** — predict containers + init containers, one PreLaunch lifecycle phase per runtime.
+- **TensorRT-LLM + Triton** — Alibaba Cloud reference: `command: /mnt/models/trtllm-llama-2-7b.sh` runs as init script before serve.
+- **Open Model Engine (OME, NVIDIA)** — Kubernetes operator unifying SGLang/vLLM/TensorRT-LLM via shared lifecycle hooks.
+- **Pluggy / Wan2GP plugin lifecycles** — multi-phase plugin systems with named hook points (`register_data_hook`, `on_tab_select`).
+- **Kubernetes container lifecycle hooks** — `PostStart` / `PreStop` are the conceptual analogue.
+
+Our `prepare_model()` is the **engine-author-side declaration** of a PreLaunch hook. None of the references invented a richer abstraction; we're consistent with the field.
+
+---
+
+## A3. Design decisions (codified)
+
+| ID | Decision | Rationale |
+|---|---|---|
+| **AD-A1** | `prepare_model() -> Result[PreparePlan, AppError]` returns a `PreparePlan(steps=tuple[PrepareStep, ...])`, not a flat spec | User choice: multi-step support from day 1. The return *shape* is the most expensive thing to change later. tuple of 1 step today; tuple of 3 tomorrow (e.g., GGUF→Q4→optimize). No breaking change when 2nd engine ships. |
+| **AD-A2** | Engine is pure description; provider executes | Hard invariant from PR-1..15. Engine has NO IO (no SSH, no subprocess, no fs). It declares image, args, env, volumes, success_marker, success_artifact, timeout. Provider runs the spec. |
+| **AD-A3** | `merge_lora.py` lives **inside the image** (`/opt/helix/merge_lora.py`) | Already true post-PR-15 (Dockerfile `COPY merge_lora.py /opt/helix/merge_lora.py`). Engine spec just emits `args=("/opt/helix/merge_lora.py", ...)`. **No `files_to_upload` field** — kills an extension point we don't need; the legacy filesystem-walk hack is deleted. |
+| **AD-A4** | `image: str | None = None` on `PrepareStep`; None ⇒ provider uses serve image | TensorRT-LLM future case wants different image. vLLM today wants same. None as default keeps current case clean. |
+| **AD-A5** | `outputs: tuple[str, ...]` (multi-output from day 1) | TensorRT produces `.engine` + calibration cache. Tuple of 1 today is ergonomic. |
+| **AD-A6** | `success_marker: str | None` and `success_artifact: str | None` as plain fields on PrepareStep | Today this covers vLLM (marker="MERGE_SUCCESS", artifact="…/config.json"). For 2nd engine with different success contract — promote to discriminated union (`PrepareValidation = MarkerInLogs | FileExists | ExitCodeOnly`). YAGNI today: 2 plain fields. |
+| **AD-A7** | `entrypoint: tuple[str, ...] | None` on `PrepareStep` | vLLM merge needs `--entrypoint python3` (image's default ENTRYPOINT is vLLM serve). Future engines may need `bash`, `node`, `bin/convert`. Optional, None = use image default. |
+| **AD-A8** | `EngineCapabilities.requires_prepare: bool` declared in `engine.toml [capabilities]` | Static visibility for operators + drift-detector enforcement (manifest ↔ runtime parity). vLLM=True, future SGLang=False. |
+| **AD-A9** | `NoPrepareMixin` ships in `interfaces.py` | Engines without prep get `return Ok(PreparePlan.empty())` for free. vLLM does NOT use the mixin (it overrides). |
+| **AD-A10** | `PreparePlan.spec_version: int = 1` | Forward-compat: provider rejects unknown versions with explicit error code. Today free-of-charge insurance. |
+| **AD-A11** | `merge_before_deploy=False` rejection stays in `validate_config` (vLLM today's MVP gate) | Single canonical validation point. `prepare_model` is contractually only called when `validate_config()` returned Ok. |
+| **AD-A12** | All `SINGLENODE_MERGE_*` error codes renamed to `SINGLENODE_PREPARE_*` | Per user constraint #1 (no backward compat). `INFERENCE_MERGE_INVALID_PATH` → `SINGLENODE_PREPARE_INVALID_PATH`. |
+| **AD-A13** | MLflow event messages change "Merge…" → "Prepare…" | Per user constraint #1. Structure (kwargs, category, source) preserved; only message string changes. |
+| **AD-A14** | New importlinter contract `engines do not import providers/control/pod/community` | Pins the boundary that's currently only by convention. Cheap insurance against drift. |
+| **AD-A15** | Single PR (no split, no feature flag) | User choice. Mitigated by golden-parity tests captured as fixture files. |
+
+---
+
+## A4. Data shape (load-bearing)
+
+```python
+# packages/engines/src/ryotenkai_engines/interfaces.py — additions
+
+class PrepareStep(BaseModel):
+    """One ordered preparation step (e.g., 'merge_lora', 'convert_gguf').
+
+    Pure data. Engine describes; provider executes via format_prepare_step().
+    """
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str = Field(description="Stable id within plan; used in logs/MLflow tags.")
+    image: str | None = Field(
+        default=None,
+        description="Container image. None = provider uses engine's serve image.",
+    )
+    entrypoint: tuple[str, ...] | None = Field(
+        default=None,
+        description="Override image ENTRYPOINT (e.g., ('python3',)). None = image default.",
+    )
+    args: tuple[str, ...] = Field(description="CLI args, pre-split (no shell quoting).")
+    env: dict[str, str] = Field(default_factory=dict)
+    volumes: tuple[tuple[str, str], ...] = Field(
+        default=(),
+        description="(host_path, container_path) bind mounts.",
+    )
+    inputs: tuple[str, ...] = Field(
+        default=(),
+        description="Container paths this step READS. PreparePlan validator checks "
+                    "they appear in earlier steps' outputs OR are engine inputs.",
+    )
+    outputs: tuple[str, ...] = Field(
+        description="Container paths this step PRODUCES. Provider verifies post-step.",
+    )
+    success_marker: str | None = Field(
+        default=None,
+        description="Optional substring that must appear in stdout. None = exit-code-only check.",
+    )
+    success_artifact: str | None = Field(
+        default=None,
+        description="Optional container path that must exist after success. None = skip check.",
+    )
+    timeout_seconds: int = Field(default=3600, ge=1)
+
+
+class PreparePlan(BaseModel):
+    """Engine's preparation plan. Empty plan = no work needed."""
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    spec_version: int = Field(default=1, description="Bumped when shape changes.")
+    steps: tuple[PrepareStep, ...] = Field(default=())
+    final_model_path: str | None = Field(
+        default=None,
+        description="Container path the provider mounts as model for serve. "
+                    "When steps non-empty, MUST be set (usually steps[-1].outputs[0]).",
+    )
+
+    @model_validator(mode="after")
+    def _validate(self) -> "PreparePlan":
+        if self.steps and self.final_model_path is None:
+            raise ValueError("PreparePlan with steps must set final_model_path")
+        names = [s.name for s in self.steps]
+        if len(names) != len(set(names)):
+            raise ValueError(f"step names must be unique: {names}")
+        # Cross-step: every input must be produced by an earlier step OR be an
+        # explicit engine input (provider-supplied). Defer cross-input check
+        # to the provider (it knows what's external).
+        return self
+
+    @classmethod
+    def empty(cls) -> "PreparePlan":
+        return cls()
+
+
+# Protocol method addition:
+
+class IInferenceEngine(Protocol):
+    ...
+    def prepare_model(
+        self,
+        *,
+        cfg: BaseEngineConfig,
+        base_model: str,
+        adapter_path_in_container: str | None,
+        workspace_host_path: str,
+        run_id: str,
+        trust_remote_code: bool,
+    ) -> Result[PreparePlan, AppError]: ...
+
+
+class NoPrepareMixin:
+    """Default for engines with no prep step (SGLang, future LiveLoRA-vLLM)."""
+    def prepare_model(self, **_: Any) -> Result[PreparePlan, AppError]:
+        return Ok(PreparePlan.empty())
+```
+
+`EngineCapabilities` adds one field:
+```python
+requires_prepare: bool = Field(
+    default=False,
+    description="True if this engine returns a non-empty PreparePlan. Mirrors engine.toml.",
+)
+```
+
+---
+
+## A5. vLLM implementation (content)
+
+`packages/engines/src/ryotenkai_engines/vllm/runtime.py`:
+
+```python
+# Module-level constants — engine concerns
+_MERGE_TIMEOUT_S = 3600
+_MERGE_SUCCESS_MARKER = "MERGE_SUCCESS"
+_MERGE_SCRIPT_PATH = "/opt/helix/merge_lora.py"  # baked in image (Dockerfile COPY)
+
+
+class VLLMEngineRuntime:
+    ...
+    def prepare_model(
+        self,
+        *,
+        cfg: BaseEngineConfig,
+        base_model: str,
+        adapter_path_in_container: str | None,
+        workspace_host_path: str,
+        run_id: str,
+        trust_remote_code: bool,
+    ) -> Result[PreparePlan, AppError]:
+        if not isinstance(cfg, VLLMEngineConfig):
+            return Err(AppError(
+                message=f"prepare_model expected VLLMEngineConfig, got {type(cfg).__name__}",
+                code="VLLM_CONFIG_TYPE_MISMATCH",
+            ))
+
+        # No adapter ⇒ nothing to merge. Provider serves base model directly.
+        if adapter_path_in_container is None or not cfg.merge_before_deploy:
+            return Ok(PreparePlan.empty())
+
+        output_in_container = f"/workspace/runs/{run_id}/model"
+        cache_in_container = "/workspace/hf_cache"
+
+        args: list[str] = [
+            _MERGE_SCRIPT_PATH,
+            "--base-model", base_model,
+            "--adapter", adapter_path_in_container,
+            "--output", output_in_container,
+            "--cache-dir", cache_in_container,
+        ]
+        if trust_remote_code:
+            args.append("--trust-remote-code")
+
+        merge_step = PrepareStep(
+            name="merge_lora",
+            image=None,  # use serve image (provider resolves)
+            entrypoint=("python3",),
+            args=tuple(args),
+            env={
+                "HF_HOME": cache_in_container,
+                "HUGGINGFACE_HUB_CACHE": cache_in_container,
+                "TRANSFORMERS_CACHE": cache_in_container,
+            },
+            volumes=((workspace_host_path, "/workspace"),),
+            inputs=(adapter_path_in_container,),  # adapter must exist
+            outputs=(output_in_container,),
+            success_marker=_MERGE_SUCCESS_MARKER,
+            success_artifact=f"{output_in_container}/config.json",
+            timeout_seconds=_MERGE_TIMEOUT_S,
+        )
+
+        return Ok(PreparePlan(
+            steps=(merge_step,),
+            final_model_path=output_in_container,
+        ))
+```
+
+---
+
+## A6. Provider refactor
+
+`packages/providers/src/ryotenkai_providers/inference/launch.py`:
+
+Add sibling helper (mirror of `format_docker_run`):
+
+```python
+def format_prepare_step(
+    step: PrepareStep,
+    *,
+    image: str,                       # provider resolves (None on step ⇒ serve image)
+    container_name: str,
+    extra_env: Mapping[str, str] | None = None,  # HF_TOKEN injected by provider
+    gpus_all: bool = True,
+) -> str:
+    """LaunchSpec sibling for ephemeral PrepareStep → docker run …"""
+    parts: list[str] = ["docker run", "--detach"]
+    parts.append(f"--name {shlex.quote(container_name)}")
+    if gpus_all:
+        parts.append("--gpus all")
+    for h, c in step.volumes:
+        parts.append(f"-v {shlex.quote(h)}:{shlex.quote(c)}")
+    merged_env = {**step.env, **(extra_env or {})}
+    for k, v in merged_env.items():
+        parts.append(f"-e {shlex.quote(f'{k}={v}')}")
+    if step.entrypoint:
+        ep = " ".join(shlex.quote(a) for a in step.entrypoint)
+        parts.append(f"--entrypoint {shlex.quote(step.entrypoint[0])}")
+        # Note: docker --entrypoint takes single token; multi-token entrypoints
+        # are handled by prepending the rest of entrypoint to args. (KISS: for
+        # now we only support 1-token entrypoint per AD-A7. tuple-typed for
+        # forward compat.)
+    parts.append(shlex.quote(image))
+    parts.extend(shlex.quote(a) for a in step.args)
+    return " ".join(parts)
+```
+
+`packages/providers/src/ryotenkai_providers/single_node/inference/provider.py`:
+
+- **Delete** `_run_merge_container` (lines ~760-1088, ~330 lines).
+- **Delete** `_merge_adapter_remote` (deprecated host-merge fallback, ~95 lines).
+- **Delete** `MERGE_TIMEOUT` constant (moves to engine).
+- **Delete** `here.parents` filesystem walk for `merge_lora.py` (script is in image).
+- **Add** `_run_prepare_plan(ssh, plan, run_id, workspace_host_path) -> Result[None, InferenceError]`:
+  - Iterates `plan.steps` sequentially.
+  - For each step: resolve `image := step.image or self._engine_serve_image`; call `format_prepare_step(step, image=..., container_name=f"helix-prepare-{run_id}-{step.name}", extra_env={"HF_TOKEN": ...})`; ensure docker image; clean output dirs (`rm -rf` then `mkdir -p` host-side for each output via volume mapping); `docker run`; poll logs (interval 2s, timeout from step); on timeout `docker rm -f`; check exit code; check `success_marker` in logs; check `success_artifact` exists on host.
+  - On any failure: emit MLflow `prepare_step_failed` event, return `Err` with one of: `SINGLENODE_PREPARE_IMAGE_PULL_FAILED`, `SINGLENODE_PREPARE_CONTAINER_START_FAILED`, `SINGLENODE_PREPARE_CONTAINER_FAILED`, `SINGLENODE_PREPARE_NO_SUCCESS_MARKER`, `SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND`, `SINGLENODE_PREPARE_TIMEOUT`, `SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED`.
+  - On success of a step: `docker rm -f` cleanup, MLflow `prepare_step_complete`, proceed.
+- **Add** `_host_to_container(host_path, workspace_host_path)` helper (extracted from existing inline `_to_container_path`) — provider keeps path validation; engine never sees host paths.
+- **Refactor** `deploy()`:
+
+```python
+# (existing: SSH connect, healthchecks, dir setup, adapter upload — unchanged)
+
+# Reserve SHA-stable run dir; provider concern.
+run_dir_name = f"run_{run_id}"
+adapter_path_in_container = self._host_to_container(adapter_path_on_host, workspace)
+
+prep_result = self._engine.prepare_model(
+    cfg=self._engine_cfg,
+    base_model=base_model_id,
+    adapter_path_in_container=adapter_path_in_container,
+    workspace_host_path=workspace,
+    run_id=run_id,
+    trust_remote_code=trust_remote_code,
+)
+if prep_result.is_err():
+    return Err(InferenceError.from_app_error(prep_result.unwrap_err()))
+plan = prep_result.unwrap()
+
+# Reject unknown future spec versions with a loud error
+if plan.spec_version != 1:
+    return Err(InferenceError(
+        message=f"Provider does not support PreparePlan spec_version={plan.spec_version}",
+        code="SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED",
+    ))
+
+if plan.steps:
+    run_res = self._run_prepare_plan(
+        ssh=ssh, plan=plan, run_id=run_id, workspace_host_path=workspace,
+    )
+    if run_res.is_err():
+        return run_res
+    model_path_in_container = plan.final_model_path
+else:
+    # No prep — serve original model_source path (translated to container)
+    model_path_in_container = self._host_to_container(model_source, workspace)
+
+# Cross-validation A4: if engine declared final_model_path, build_launch_spec
+# MUST consume it. Belt-and-suspenders.
+launch = self._engine.build_launch_spec(
+    cfg=self._engine_cfg,
+    image=self._engine_serve_image,
+    container_name=self._CONTAINER_NAME,
+    port=port,
+    workspace_host_path=workspace,
+    model_path_in_container=model_path_in_container,
+)
+# (existing: format_docker_run(launch) → ssh.exec_command — unchanged)
+```
+
+- **Rename** `_start_vllm_container` → `_start_engine_container` (already engine-agnostic; "vllm" was vestigial).
+
+---
+
+## A7. File-by-file changes
+
+### Create
+- `packages/engines/tests/unit/test_prepare_plan_invariants.py` — `PreparePlan` validators (unique names, final_model_path consistency, spec_version=1).
+- `packages/engines/tests/unit/vllm/test_prepare_model.py` — vLLM `prepare_model()` tests (positive, negative, boundary, invariant, logic, regression, combinatorial).
+- `packages/providers/tests/unit/providers/inference/test_format_prepare_step.py` — shell-formatter tests (incl. shell-injection safety).
+- `packages/providers/tests/unit/providers/single_node/test_run_prepare_plan.py` — provider's plan-runner tests (positive, all error paths preserved, multi-step combinatorial).
+- `packages/control/tests/golden/merge_cmd_v1.txt` — captured pre-PR docker-run command for byte-equal parity.
+- `packages/control/tests/golden/mlflow_events_v1.json` — captured pre-PR MLflow event sequence.
+- `packages/engines/tests/sentinel/test_no_io_in_engine_prepare.py` — sentinel: AST-scan that engine `prepare_model` doesn't import paramiko / subprocess / os.system / Path.write_text.
+- `packages/engines/tests/contract/test_prepare_model_signature_uniformity.py` — sentinel: every registered engine has `prepare_model` with the exact signature.
+
+### Modify
+- `packages/engines/src/ryotenkai_engines/interfaces.py` — add `PrepareStep`, `PreparePlan`, `NoPrepareMixin`, `prepare_model` to `IInferenceEngine` Protocol; export.
+- `packages/engines/src/ryotenkai_engines/__init__.py` — export `PrepareStep`, `PreparePlan`.
+- `packages/engines/src/ryotenkai_engines/capabilities.py` — add `requires_prepare: bool` field.
+- `packages/engines/src/ryotenkai_engines/manifest.py` — accept new `requires_prepare` in `[capabilities]` block; drift-detector validates manifest ↔ runtime parity.
+- `packages/engines/src/ryotenkai_engines/vllm/engine.toml` — add `requires_prepare = true` in `[capabilities]`.
+- `packages/engines/src/ryotenkai_engines/vllm/runtime.py` — implement `prepare_model()`; add module-level constants; `get_capabilities()` returns `requires_prepare=True`.
+- `packages/engines/scripts/check_engine_manifests.py` — extend drift detector with `requires_prepare` field.
+- `packages/providers/src/ryotenkai_providers/inference/launch.py` — add `format_prepare_step()`.
+- `packages/providers/src/ryotenkai_providers/single_node/inference/provider.py` — DELETE `_run_merge_container`, `_merge_adapter_remote`, `MERGE_TIMEOUT`, filesystem walk; ADD `_run_prepare_plan`, `_host_to_container`; rename `_start_vllm_container` → `_start_engine_container`; refactor `deploy()` per §A6; rename all `SINGLENODE_MERGE_*` codes to `SINGLENODE_PREPARE_*`.
+- `pyproject.toml` (importlinter section) — add contract: `engines do not import providers/control/pod/community`.
+- `packages/providers/tests/unit/providers/single_node/test_inference_provider.py::TestRunMergeContainerErrors` → rename `TestRunPreparePlanErrors`; update to drive `_run_prepare_plan(plan)` with synthetic `PreparePlan` fixture; assert renamed error codes; **delete** `TestMergeAdapterRemote` (the deprecated method is gone).
+- `packages/control/tests/unit/pipeline/inference/test_single_node_provider_regressions.py` — `TestDockerPullTimeout` keeps assertion (timeout=1200 still on provider side); `TestMergeCommandFormatting` (3 tests) move to `test_format_prepare_step.py` + engine `test_prepare_model.py` per shell-string vs args-tuple split; `TestMergePathMapping` (2 tests) stay (provider concern).
+
+### Delete
+- `_run_merge_container` method (~330 lines in `provider.py`)
+- `_merge_adapter_remote` method (~95 lines in `provider.py`)
+- `MERGE_TIMEOUT = 3600` constant in `provider.py`
+- `here.parents` script-discovery walk
+- `TestMergeAdapterRemote` (3 tests, deprecated path)
+- `test_fails_when_merge_image_not_configured` (impossible after registry resolution)
+
+---
+
+## A8. Error code mapping
+
+All renames per AD-A12 (no backward compat per user constraint):
+
+| Old | New |
+|---|---|
+| `SINGLENODE_MERGE_IMAGE_PULL_FAILED` | `SINGLENODE_PREPARE_IMAGE_PULL_FAILED` |
+| `SINGLENODE_MERGE_CONTAINER_START_FAILED` | `SINGLENODE_PREPARE_CONTAINER_START_FAILED` |
+| `SINGLENODE_MERGE_CONTAINER_FAILED` | `SINGLENODE_PREPARE_CONTAINER_FAILED` |
+| `SINGLENODE_MERGE_NO_SUCCESS_MARKER` | `SINGLENODE_PREPARE_NO_SUCCESS_MARKER` |
+| `SINGLENODE_MERGE_ARTIFACTS_NOT_FOUND` | `SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND` |
+| `SINGLENODE_MERGE_SCRIPT_UPLOAD_FAILED` | DELETED (script in image, no upload) |
+| `SINGLENODE_MERGE_SCRIPT_NOT_FOUND` | DELETED (filesystem walk gone) |
+| `INFERENCE_MERGE_INVALID_PATH` | `SINGLENODE_PREPARE_INVALID_PATH` |
+| `SINGLENODE_LORA_MERGE_REQUIRED` | unchanged (vLLM MVP gate, fires from `validate_config`) |
+| — (new) | `SINGLENODE_PREPARE_TIMEOUT` |
+| — (new) | `SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED` |
+
+MLflow events: `"Merge started"` → `"Prepare started"` (and analogues). Structure (kwargs, category, source) preserved. CHANGELOG note.
+
+---
+
+## A9. Tests (all 8 categories)
+
+### `packages/engines/tests/unit/vllm/test_prepare_model.py`
+
+| Category | Cases |
+|---|---|
+| **Positive** | `merge_before_deploy=True` + adapter present → `Ok(PreparePlan(steps=(merge_step,), final_model_path=...))`. Args contain `--base-model`, `--adapter`, `--output`, `--cache-dir` in order. `outputs[0] == final_model_path`. `entrypoint == ("python3",)`. `image is None`. HF env vars present. `volumes` correct. |
+| **Negative** | wrong cfg type → `Err(VLLM_CONFIG_TYPE_MISMATCH)`. |
+| **Boundary** | `merge_before_deploy=False` → `Ok(PreparePlan.empty())`. `adapter_path_in_container=None` → `Ok(PreparePlan.empty())`. |
+| **Invariant** | `success_marker == "MERGE_SUCCESS"` always. `success_artifact` ends with `/config.json`. `timeout_seconds == 3600`. PreparePlan validators reject inconsistent shapes (steps without final_model_path, duplicate names). spec_version=1. |
+| **Dependency-error** | `prepare_model` doesn't import `paramiko`, `subprocess`, `pathlib.Path.write_text` (sentinel test). |
+| **Regression** | `--trust-remote-code` flag conditional on kwarg (absorbed from `test_merge_command_with_trust_remote_code_includes_flag`). args is flat tuple, no embedded `\n`, no embedded `\\` (absorbs single-line / no-trailing-backslash regression). |
+| **Logic-specific** | output_path computed as `/workspace/runs/{run_id}/model`. Cache path always `/workspace/hf_cache`. |
+| **Combinatorial** | `(merge_before_deploy, adapter_present, trust_remote_code) ∈ {True, False}³` → 8 cases produce expected plan shape. |
+
+### `packages/providers/tests/unit/providers/inference/test_format_prepare_step.py`
+
+| Category | Cases |
+|---|---|
+| **Positive** | full step → `docker run --detach --name X --gpus all -v ... -e HF_HOME=... --entrypoint python3 IMAGE arg1 arg2`. |
+| **Shell safety** | image with spaces quoted; args with `;rm -rf /` quoted; env values with `$` / `;` quoted; volume paths with spaces quoted. |
+| **Boundary** | empty `env` → no `-e`. empty `volumes` → no `-v`. empty `args` → image is last token. `entrypoint=None` → no `--entrypoint`. |
+| **Invariant** | image always after all flags. arg order preserved. |
+| **Logic-specific** | `gpus_all=False` → no `--gpus all`. `extra_env` overrides step env on key collision (HF_TOKEN injection contract). |
+
+### `packages/providers/tests/unit/providers/single_node/test_run_prepare_plan.py` (new)
+
+| Category | Cases |
+|---|---|
+| **Positive** | 1-step plan succeeds → returns Ok, calls `format_prepare_step` once, exit code 0 + marker present + artifact exists. |
+| **Negative** | image pull fails → `SINGLENODE_PREPARE_IMAGE_PULL_FAILED`. container start fails → `SINGLENODE_PREPARE_CONTAINER_START_FAILED`. exit code != 0 → `SINGLENODE_PREPARE_CONTAINER_FAILED`. marker missing → `SINGLENODE_PREPARE_NO_SUCCESS_MARKER`. artifact missing → `SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND`. timeout → `SINGLENODE_PREPARE_TIMEOUT`. unknown spec_version → `SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED`. |
+| **Boundary** | empty plan → returns Ok immediately, no docker calls. step with no `success_marker` and no `success_artifact` → exit-code-only check works. |
+| **Invariant** | output dirs cleaned (`rm -rf` then `mkdir -p`) BEFORE container run. Container `docker rm -f` AFTER run regardless of success/failure. log file `prepare.log` written. |
+| **Dependency-error** | SSH disconnects mid-poll → graceful error (not hang). |
+| **Regression** | docker pull timeout=1200 (preserved from `TestDockerPullTimeout`). poll interval=2s. /workspace path mapping correct (preserved from `TestMergePathMapping`). |
+| **Logic-specific** | per-step MLflow events: `prepare_step_started`, `prepare_step_complete` / `prepare_step_failed`, `prepare_complete`. step.image=None → uses `engine_serve_image`. |
+| **Combinatorial** | 2-step plan: first succeeds, second fails → first step's outputs remain on disk (no rollback per AD); second's error returned. 3-step plan: all succeed → all 3 events emitted in order. |
+
+### Golden / parity tests
+
+- `test_merge_cmd_byte_equal_v1_fixture` — captures the pre-PR-16 docker-run command for the merge step into `tests/golden/merge_cmd_v1.txt` (a snapshot). Post-refactor: `format_prepare_step(vllm_engine.prepare_model(...).unwrap().steps[0], image="ryotenkai/inference-vllm:1.0.0", container_name="helix-prepare-test_run-merge_lora", extra_env={"HF_TOKEN": "TEST"})` must produce a string differing from the snapshot ONLY by the container-name suffix (`merge` → `prepare-merge_lora`). All other tokens byte-equal. The diff is committed in the PR.
+- `test_mlflow_events_byte_equal_v1_fixture` — captures the pre-PR sequence of MLflow `log_event_*` calls (with kwargs) into `tests/golden/mlflow_events_v1.json`. Post-refactor: events MUST keep the same `category`, `source`, kwargs structure; only message strings change (`"Merge"` → `"Prepare"`).
+
+### Sentinel tests
+
+- `test_no_io_in_engine_prepare.py` — AST-scan: `import paramiko`, `subprocess`, `os.system`, `pathlib.Path.write_text` MUST NOT appear in the engine `prepare_model` call graph.
+- `test_prepare_model_signature_uniformity.py` — `inspect.signature(EngineCls().prepare_model)` matches the Protocol signature for every registered engine.
+- `test_engines_do_not_import_providers.py` — already covered by importlinter contract; assert importlinter passes.
+
+---
+
+## A10. Risk analysis (3 iterations consolidated)
+
+### Iteration 1 — architectural
+
+| # | Risk | Severity | Mitigation |
+|---|---|---|---|
+| AR1 | Engine forced to do IO breaks the "pure description" contract | HIGH | `prepare_model` returns `PreparePlan`; provider executes. Sentinel test enforces. |
+| AR2 | success-detection contract straddles boundary | HIGH | `success_marker` + `success_artifact` are engine-declared FIELDS on PrepareStep; provider executes the checks. |
+| AR3 | path-mapping leaks into engine | MEDIUM | Provider does host→container mapping BEFORE calling `prepare_model`. Engine sees only container paths. |
+| AR4 | `final_model_path` ≠ `build_launch_spec.model_path_in_container` | HIGH | PreparePlan validator + provider passes `plan.final_model_path` directly into `build_launch_spec`. |
+| AR5 | docker-run shell formatting drift | MEDIUM | Single sibling helper `format_prepare_step()`. Golden parity test captures byte-equal pre/post. |
+| AR6 | Engine vs provider error layering | MEDIUM | Engine returns `Result[..., AppError]` with `VLLM_*` codes; provider wraps into `SINGLENODE_PREPARE_*` for wire-level error codes. |
+| AR7 | Log-path ownership | LOW | Provider keeps `prepare.log` writes. Engine never touches fs. |
+| AR8 | `requires_prepare` capability/manifest drift | MEDIUM | Drift detector enforces manifest ↔ runtime parity. |
+
+### Iteration 2 — migration & operational
+
+| # | Risk | Severity | Mitigation |
+|---|---|---|---|
+| MR1 | Single-PR rollback burden | HIGH | Golden parity tests (docker-cmd snapshot, MLflow event snapshot) so any deviation visible in `git diff`. `git revert <sha>` is the rollback. |
+| MR2 | Test fragility on docker-cmd strings | HIGH | Golden snapshot files (`tests/golden/`) — diffs visible at PR review. shlex-quote contract pinned by tests. |
+| MR3 | Engine tests must stay IO-free | HIGH | Sentinel `test_no_io_in_engine_prepare.py`. Engine tests use synthetic configs, no SSH/docker mocks. |
+| MR4 | MLflow event drift (silent telemetry breakage) | HIGH | `mlflow_events_v1.json` snapshot test. Approved diffs only. |
+| MR5 | Performance/timeouts drift | MEDIUM | Constants in engine module (`_MERGE_TIMEOUT_S`); provider asserts via spec field. Regression test asserts pull_timeout=1200, poll=2s. |
+| MR6 | Cross-validation prep_path == launch_path | HIGH | PreparePlan validator + integration test `test_prepare_launch_path_consistency`. |
+| MR7 | `validate_config` vs `prepare_model` validation overlap | LOW | `validate_config` is the only gate for config-level errors; `prepare_model` only fails on type-mismatch (raises) or returns `Empty`. |
+| MR8 | `merge_lora.py` CLI flag drift | MEDIUM | CI smoke test: `python -m ryotenkai_engines.vllm.merge_lora --help` asserts expected flag names. Lives in `packages/engines/tests/`. |
+
+### Iteration 3 — conformance & future-proofing
+
+| # | Risk | Severity | Mitigation |
+|---|---|---|---|
+| CR1 | 2nd engine has different success contract | MEDIUM | Today: `success_marker` + `success_artifact` as plain fields (covers MarkerInLogs + FileExists). When 3rd contract arrives → promote to discriminated union. Additive evolution. |
+| CR2 | engines→providers boundary unpinned | HIGH | New importlinter contract `engines is leaf`. Already passes; this just locks it. |
+| CR3 | Protocol signature drift | HIGH | Sentinel `test_prepare_model_signature_uniformity.py`. Calls every registered engine's `prepare_model` with required kwargs. |
+| CR4 | spec_version skew between engine and provider | MEDIUM | `PreparePlan.spec_version: int = 1`; provider rejects unknown with `SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED`. |
+| CR5 | Future engine adds 3-step plan; provider's runner not tested for chains | MEDIUM | Combinatorial test of provider's `_run_prepare_plan` with 0/1/2/3 step synthetic plans. |
+| CR6 | `requires_prepare` ↔ runtime parity | LOW | Drift detector + capability declared in `engine.toml`. |
+| CR7 | Cache reuse across engine versions | LOW | Defer (.merge_metadata.json marker). Today: every prepare run fresh-merges (current behaviour preserved). |
+| CR8 | Calibration dataset future param | LOW | Add `calibration_dataset: CalibrationDatasetRef \| None = None` to `prepare_model` kwargs when AWQ/GPTQ engine ships. Optional kwarg = additive evolution. |
+
+---
+
+## A11. Open questions / deferred items
+
+| Item | Trigger to add | Why deferred today |
+|---|---|---|
+| `PrepareStep.cache_key: str | None` | 2nd engine + user request for cross-run reuse | Speculative. Today's behavior `rm -rf` before each merge is correct. |
+| `prepare_model(..., calibration_dataset=...)` | AWQ/GPTQ engine ships | No engine consumes it; param shape unclear without concrete need. |
+| `PrepareStep.depends_on: tuple[str, ...]` | Engine wants parallel steps | Linear sequencing covers vLLM + llama.cpp + TRT-LLM cases. |
+| `PrepareStep.cleanup_on_failure: tuple[str, ...]` | Step where partial output is corrupting | Today partial outputs are observable + `rm -rf` cleans them on rerun. |
+| `PrepareStep.resource_requirements` | Engine needs constraint provider can't infer (GPU class, VRAM min) | No use case yet; k8s-future. |
+| `PrepareValidation` discriminated union | 3rd engine with success contract not covered by marker+artifact | YAGNI; 2 fields cover today. |
+| Async `prepare_model` | Engine genuinely needs IO at plan-construction time | Probably never; would expose `probe_model()` instead. |
+| `.merge_metadata.json` provenance marker | Operator rolls back engine but keeps merged artifacts | Not a current pain point. |
+
+---
+
+## A12. Verification plan
+
+### Static
+```bash
+uv run lint-imports                                              # 10 contracts (9 prior + 1 new "engines is leaf to providers/control/pod/community")
+uv run python packages/engines/scripts/check_engine_manifests.py # drift detector incl. requires_prepare parity
+uv run mypy packages/engines/ packages/providers/ packages/shared/ packages/control/
+uv run ruff check .
+```
+
+### Unit + sentinel
+```bash
+uv run pytest packages/engines/tests/                                    # incl. test_prepare_plan_invariants, test_prepare_model, sentinels
+uv run pytest packages/providers/tests/unit/providers/inference/         # incl. test_format_prepare_step
+uv run pytest packages/providers/tests/unit/providers/single_node/       # incl. test_run_prepare_plan, renamed TestRunPreparePlanErrors
+```
+
+### Golden parity (the load-bearing tests)
+```bash
+uv run pytest packages/control/tests/golden/test_merge_cmd_v1_byte_equal.py
+uv run pytest packages/control/tests/golden/test_mlflow_events_v1.py
+```
+
+### Acceptance criteria
+- [ ] Adding a stub 2nd engine with `requires_prepare=True` (e.g., a dummy `gguf` engine returning a 1-step PreparePlan) takes ≤ 4 file edits: `engine.toml`, `runtime.py`, `config.py`, optional `Dockerfile`.
+- [ ] Adding a stub 2nd engine with `requires_prepare=False` (SGLang-shape) takes ≤ 3 file edits — `prepare_model` inherits `NoPrepareMixin`.
+- [ ] `grep -rn "_run_merge_container\|_merge_adapter_remote\|MERGE_SCRIPT_NOT_FOUND" packages/` returns **0 hits**.
+- [ ] `grep -rn "SINGLENODE_MERGE_" packages/` returns **0 hits** (all renamed to `_PREPARE_`).
+- [ ] `grep -rn "MERGE_SUCCESS" packages/` returns hits **only** in `engines/vllm/runtime.py` and `engines/vllm/merge_lora.py` and `tests/`.
+- [ ] importlinter passes with the new "engines is leaf to providers/control/pod/community" contract added.
+- [ ] golden parity test for docker-run cmd: only the container-name token differs (`merge_*` → `helix-prepare-*-merge_lora`); all other tokens identical.
+- [ ] golden parity test for MLflow events: structure (kwargs, category, source) byte-equal; messages renamed `Merge*` → `Prepare*` per AD-A13.
+- [ ] No net new test failures vs PR-15 baseline.
+
+---
+
+## A13. Helixir memory updates (post-approval)
+
+```python
+add_memory("RyotenkAI 2026-05-06 PR-16: prepare_model() lifecycle hook on
+IInferenceEngine. Engine returns Result[PreparePlan, AppError]; PreparePlan
+carries tuple[PrepareStep, ...] (multi-step from day 1) + final_model_path +
+spec_version. PrepareStep fields: name, image (None=use serve), entrypoint,
+args, env, volumes, inputs, outputs, success_marker, success_artifact,
+timeout_seconds. vLLM merge moves out of single_node provider into
+VLLMEngineRuntime.prepare_model() returning 1-step plan. merge_lora.py stays
+baked in image at /opt/helix/merge_lora.py (PR-15 already did COPY). Provider
+gets sibling format_prepare_step() (mirror of format_docker_run) and
+_run_prepare_plan() generic runner. NoPrepareMixin for engines without prep.
+EngineCapabilities.requires_prepare:bool added; drift detector enforces
+manifest↔runtime parity. New importlinter contract: engines do not import
+providers/control/pod/community. All SINGLENODE_MERGE_* error codes renamed
+to SINGLENODE_PREPARE_*. MLflow events 'Merge*' → 'Prepare*'. _run_merge_container
+(330 lines) and _merge_adapter_remote (95 lines) DELETED. Single PR strategy
+with golden parity tests as snapshot fixtures. No feature flag, no
+backward compat. Industry alignment: KServe ServingRuntime, TensorRT-LLM init
+script, OME unified lifecycle, Pluggy hooks. Deferred: cache_key (trigger:
+2nd engine), calibration_dataset (trigger: AWQ/GPTQ), depends_on (trigger:
+parallel steps), cleanup_on_failure, resource_requirements,
+PrepareValidation discriminated union, async prepare_model.")
+```
+
+---
+
 **End of plan.**

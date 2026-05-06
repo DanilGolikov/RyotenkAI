@@ -59,12 +59,16 @@ from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
 
 if TYPE_CHECKING:
+    from ryotenkai_engines.interfaces import PreparePlan
     from ryotenkai_engines.vllm.config import VLLMEngineConfig
     from ryotenkai_shared.config import PipelineConfig, Secrets
 
 PULL_TIMEOUT = 1200
-MERGE_TIMEOUT = 3600
 SOURCE_SINGLE_NODE_INFERENCE = "SingleNodeInferenceProvider"
+
+# Polling cadence for ephemeral prepare containers (seconds). Engine-agnostic
+# fabric concern; engine declares step-level timeout via PrepareStep.
+_PREPARE_POLL_INTERVAL_S = 2
 
 # JSON dict keys used in >3 places (WPS226)
 _KEY_ENGINE = "engine"
@@ -132,9 +136,9 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         # here in case of direct callers.
         self._engine_cfg = self._inf_cfg.engine
         if self._engine_cfg.kind not in self.SUPPORTED_ENGINES:
-            from ryotenkai_shared.utils.result import ProviderError
+            from ryotenkai_providers.registry import ProviderRegistryError
 
-            raise ProviderError(
+            raise ProviderRegistryError(
                 message=(
                     f"engine {self._engine_cfg.kind!r} not supported by "
                     f"{type(self).__name__}; supported: {sorted(self.SUPPORTED_ENGINES)}"
@@ -155,12 +159,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         # the old __init__: e.g. merge_before_deploy=True for vLLM).
         validate_result = self._engine.validate_config(self._engine_cfg)
         if validate_result.is_err():
-            from ryotenkai_shared.utils.result import ProviderError
+            from ryotenkai_providers.registry import ProviderRegistryError
 
             err = validate_result.unwrap_err()
-            raise ProviderError(
+            raise ProviderRegistryError(
                 message=err.message,
                 code=err.code or "PROVIDER_ENGINE_CONFIG_INVALID",
+                details=err.details,
             )
 
         self._ssh_client: SSHClient | None = None
@@ -279,33 +284,60 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 )
             adapter_ref_for_merge = adapter_dir
 
-        # Merge adapter into base model on inference node (two-container strategy).
-        # Uses ephemeral merge container with transformers+peft.
-        merge_res = self._run_merge_container(
-            ssh=ssh,
+        # PR-16: ask the engine what preparation work it needs (LoRA merge,
+        # GGUF conversion, TensorRT compile, …). The engine returns a
+        # structured PreparePlan; the provider executes it via the generic
+        # _run_prepare_plan runner. Empty plan ⇒ skip prep entirely.
+        adapter_path_in_container: str | None = None
+        if adapter_ref_for_merge != adapter_ref or local_adapter.exists():
+            # We have a real on-disk adapter (uploaded above). Map host → container.
+            adapter_path_in_container = self._host_to_container(
+                adapter_ref_for_merge, workspace_host_path=workspace
+            )
+        elif adapter_ref_for_merge:
+            # Adapter ref is an HF repo id (or other engine-resolvable string);
+            # pass through unchanged. Engine decides whether to merge.
+            adapter_path_in_container = adapter_ref_for_merge
+
+        prep_result = self._engine.prepare_model(
+            cfg=self._engine_cfg,
             base_model=base_model_id,
-            adapter_path=adapter_ref_for_merge,
-            output_path=merged_dir,
-            cache_dir=hf_cache,
+            adapter_path_in_container=adapter_path_in_container,
+            workspace_host_path=workspace,
+            run_id=run_id,
             trust_remote_code=trust_remote_code,
         )
-        if merge_res.is_failure():
-            merge_err = merge_res.unwrap_err()
+        if prep_result.is_err():
+            err = prep_result.unwrap_err()
             return Err(
-                merge_err
-                if isinstance(merge_err, InferenceError)
-                else InferenceError(message=str(merge_err), code="SINGLENODE_MERGE_FAILED")
+                InferenceError(
+                    message=err.message,
+                    code=err.code or "SINGLENODE_PREPARE_PLAN_BUILD_FAILED",
+                )
             )
+        plan = prep_result.unwrap()
+
+        run_res = self._run_prepare_plan(
+            ssh=ssh, plan=plan, run_id=run_id, workspace_host_path=workspace
+        )
+        if run_res.is_failure():
+            return Err(run_res.unwrap_err())
 
         # Engine config for this deployment (avoid mutating global PipelineConfig).
-        # Quantization (if any) is now read directly from the typed engine
-        # config — no longer plumbed through the deploy() kwarg.
         engine_cfg = self._engine_cfg.model_copy()
 
-        # Start vLLM container (idempotent: replace container)
-        container_model_path = f"/workspace/runs/{run_dir_name}/model"
+        # Choose the model path the engine should serve. When the prep plan
+        # produced artifacts, use plan.final_model_path; otherwise fall back
+        # to the original model_source mapped into the container (engines
+        # that need no prep — SGLang, future LiveLoRA-vLLM).
+        if plan.final_model_path is not None:
+            container_model_path = plan.final_model_path
+        else:
+            container_model_path = self._host_to_container(
+                model_source, workspace_host_path=workspace
+            )
 
-        start_res = self._start_vllm_container(
+        start_res = self._start_engine_container(
             ssh=ssh,
             engine_cfg=engine_cfg,
             workspace_host_path=workspace,
@@ -660,434 +692,338 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             return Err(InferenceError(message=str(err), code="SINGLENODE_DOCKER_IMAGE_FAILED"))
         return Ok(None)
 
-    def _merge_adapter_remote(
+    @staticmethod
+    def _host_to_container(
+        host_or_container_path: str,
+        *,
+        workspace_host_path: str,
+        workspace_container_path: str = "/workspace",
+    ) -> str:
+        """Map a host path inside the workspace mount to its in-container path.
+
+        If the path already looks container-side (starts with
+        ``workspace_container_path``), returns it unchanged. If it's a host
+        path inside ``workspace_host_path``, rewrites the prefix. Otherwise
+        returns the path unchanged (for HF repo IDs, etc.).
+
+        Provider concern — engines never see host paths, only container ones.
+        """
+        p = host_or_container_path.rstrip("/")
+        if p == workspace_container_path or p.startswith(workspace_container_path + "/"):
+            return p
+        if p == workspace_host_path or p.startswith(workspace_host_path + "/"):
+            return workspace_container_path + p[len(workspace_host_path) :]
+        return host_or_container_path
+
+    def _run_prepare_plan(
         self,
         *,
         ssh: SSHClient,
-        base_model_id: str,
-        adapter_ref: str,
-        merged_dir: str,
-        hf_cache_dir: str,
-        trust_remote_code: bool,
+        plan: "PreparePlan",
+        run_id: str,
+        workspace_host_path: str,
     ) -> Result[None, InferenceError]:
-        """
-        DEPRECATED: Host-based merge (requires transformers+peft on inference node).
+        """Execute every :class:`PrepareStep` in ``plan`` sequentially.
 
-        This method is kept for reference but should NOT be used in production.
-        Use _run_merge_container() instead for two-container strategy.
+        For each step:
+          1. Resolve image (``step.image`` or fall through to engine serve image)
+          2. Ensure image is pulled (``_ensure_docker_image``)
+          3. Clean output dirs on host (``rm -rf`` then ``mkdir -p``) so reruns
+             are idempotent — same behavior as the legacy ``_run_merge_container``.
+          4. Format the step into a docker shell command and start it detached.
+          5. Poll logs every ``_PREPARE_POLL_INTERVAL_S`` seconds until the
+             container stops or ``step.timeout_seconds`` elapses.
+          6. Validate: exit code 0; ``success_marker`` substring present (when
+             declared); ``success_artifact`` exists on host (when declared).
+          7. ``docker rm -f`` cleanup regardless of success/failure.
+
+        Fails fast: a step failure aborts subsequent steps. Partial outputs
+        are LEFT on disk for operator inspection (no rollback).
+
+        All preparation events flow through the optional MLflow event logger
+        with stable kwargs (``step_name``, ``step_index``, ``step_count``,
+        ``duration_seconds``) — operator dashboards filter on these.
         """
-        # Ensure dependencies exist (fail-fast with actionable hint)
-        deps_cmd = "python3 -c \"import transformers, peft; print('OK')\""
-        ok, _stdout, stderr = ssh.exec_command(deps_cmd, timeout=60, silent=True)
-        if not ok:
+        from ryotenkai_engines.interfaces import PrepareStep
+        from ryotenkai_providers.inference.launch import format_prepare_step
+
+        if not plan.steps:
+            return Ok(None)
+
+        if plan.spec_version != 1:
             return Err(
                 InferenceError(
                     message=(
-                        "LoRA merge requires python deps on inference node: 'transformers' and 'peft'. "
-                        f"Install them or switch to a custom inference image. stderr={stderr[:LOG_OUTPUT_SHORT_CHARS]}"
+                        f"Provider does not support PreparePlan spec_version="
+                        f"{plan.spec_version}. Upgrade ryotenkai_providers."
                     ),
-                    code="SINGLENODE_MERGE_DEPS_MISSING",
+                    code="SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED",
                 )
             )
 
-        # Clean merged_dir
-        ssh.exec_command(f"rm -rf {merged_dir} && mkdir -p {merged_dir}", timeout=_SETUP_CMD_TIMEOUT_S, silent=True)
-        ssh.exec_command(f"mkdir -p {hf_cache_dir}", timeout=_QUICK_CMD_TIMEOUT_S, silent=True)
-
-        payload = {
-            _KEY_BASE_MODEL_ID: base_model_id,
-            _KEY_ADAPTER_REF: adapter_ref,
-            "merged_dir": merged_dir,
-            "hf_cache_dir": hf_cache_dir,
-            "trust_remote_code": trust_remote_code,
-        }
-        payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
-
-        # NOTE: avoid leaking secrets into generated scripts/manifest; here we do pass HF_TOKEN to remote env.
-        # SSHClient masks HF_TOKEN in logs.
-        hf_token = str(self._secrets.hf_token)
-        cmd = f"""
-HF_TOKEN="{hf_token}" python3 - <<'PY'
-import base64
-import json
-import os
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PeftModel
-
-cfg = json.loads(base64.b64decode("{payload_b64}").decode("utf-8"))
-base_model_id = cfg["base_model_id"]
-adapter_ref = cfg["adapter_ref"]
-merged_dir = cfg["merged_dir"]
-cache_dir = cfg["hf_cache_dir"]
-trust_remote_code = bool(cfg.get("trust_remote_code", False))
-
-os.makedirs(cache_dir, exist_ok=True)
-os.makedirs(merged_dir, exist_ok=True)
-
-# Tokenizer from base model (adapter may not include it)
-tok = AutoTokenizer.from_pretrained(
-    base_model_id,
-    trust_remote_code=trust_remote_code,
-    cache_dir=cache_dir,
-)
-
-base = AutoModelForCausalLM.from_pretrained(
-    base_model_id,
-    trust_remote_code=trust_remote_code,
-    cache_dir=cache_dir,
-    low_cpu_mem_usage=True,
-    device_map="auto",
-)
-
-model = PeftModel.from_pretrained(base, adapter_ref)
-merged = model.merge_and_unload()
-merged.save_pretrained(merged_dir, safe_serialization=True)
-tok.save_pretrained(merged_dir)
-print("MERGE_OK")
-PY
-""".strip()
-
-        ok, stdout, stderr = ssh.exec_command(cmd, timeout=MERGE_TIMEOUT, silent=False)
-        if not ok or "MERGE_OK" not in stdout:
-            return Err(
-                InferenceError(
-                    message=f"LoRA merge failed: {stderr[:LOG_OUTPUT_LONG_CHARS] if stderr else stdout[:LOG_OUTPUT_LONG_CHARS]}",
-                    code="SINGLENODE_MERGE_FAILED",
-                )
-            )
-        return Ok(None)
-
-    def _run_merge_container(
-        self,
-        *,
-        ssh: SSHClient,
-        base_model: str,
-        adapter_path: str,
-        output_path: str,
-        cache_dir: str,
-        trust_remote_code: bool = False,
-    ) -> Result[None, InferenceError]:
-        """
-        Run ephemeral merge job in Docker container (two-container strategy).
-
-        Args:
-            ssh: SSH client for remote execution
-            base_model: Base model ID (HuggingFace repo) or local path
-            adapter_path: Either a HF repo ID (e.g. "org/adapter") OR a remote *host* path
-                inside the inference workspace (e.g. "/home/user/inference/runs/X/adapter").
-                If host path is provided, it will be mapped into the container via /workspace mount.
-            output_path: Remote *host* output directory for merged model (must be inside workspace_host_path).
-                Will be mapped into the container via /workspace mount.
-            cache_dir: Remote *host* HuggingFace cache directory (must be inside workspace_host_path).
-                Will be mapped into the container via /workspace mount.
-            trust_remote_code: Trust remote code when loading model
-
-        Returns:
-            Ok(None) if merge succeeded
-            Err(str) if merge failed
-        """
-        # Image is pinned in :data:`INFERENCE_IMAGES` — the unified
-        # docker/inference image covers both merge and serve, so this
-        # is the same image used downstream by ``_serve_vllm``.
-        merge_image = _resolve_engine_image(self._engine_cfg.kind)
-
-        # 1. Ensure merge image is available
-        ensure_res = self._ensure_docker_image(
-            ssh=ssh,
-            image=merge_image,
-        )
-        if ensure_res.is_failure():
-            ensure_err = ensure_res.unwrap_err()
-            return Err(
-                InferenceError(
-                    message=f"Merge image not available: {ensure_err}",
-                    code="SINGLENODE_MERGE_IMAGE_PULL_FAILED",
-                )
-            )
-
-        # 2. Clean output directory
-        ssh.exec_command(f"rm -rf {output_path} && mkdir -p {output_path}", timeout=_SETUP_CMD_TIMEOUT_S, silent=True)
-        ssh.exec_command(f"mkdir -p {cache_dir}", timeout=_QUICK_CMD_TIMEOUT_S, silent=True)
-
-        # 3. Build Docker command for merge job
-        workspace_host_path = self._provider_cfg.inference.serve.workspace.rstrip("/")
+        engine_serve_image = _resolve_engine_image(self._engine_cfg.kind)
         hf_token = str(self._secrets.hf_token)
 
-        workspace_container_path = "/workspace"
-
-        def _to_container_path(host_or_container_path: str) -> str:
-            """
-            Map a remote host path inside workspace_host_path to a container path inside /workspace.
-            If the value already looks like a container path (/workspace/...), returns it as-is.
-            """
-            p = host_or_container_path.rstrip("/")
-            if p == workspace_container_path or p.startswith(workspace_container_path + "/"):
-                return p
-            if p == workspace_host_path or p.startswith(workspace_host_path + "/"):
-                return workspace_container_path + p[len(workspace_host_path) :]
-            return host_or_container_path
-
-        # Validate that host paths are actually inside the mounted workspace
-        if not (output_path == workspace_host_path or output_path.startswith(workspace_host_path + "/")):
-            return Err(
-                InferenceError(
-                    message="Merge output_path must be inside inference workspace. "
-                    f"output_path={output_path!r}, workspace={workspace_host_path!r}",
-                    code="INFERENCE_MERGE_INVALID_PATH",
-                )
-            )
-        if not (cache_dir == workspace_host_path or cache_dir.startswith(workspace_host_path + "/")):
-            return Err(
-                InferenceError(
-                    message="Merge cache_dir must be inside inference workspace. "
-                    f"cache_dir={cache_dir!r}, workspace={workspace_host_path!r}",
-                    code="INFERENCE_MERGE_INVALID_PATH",
-                )
-            )
-
-        # Map host paths to in-container paths (critical: otherwise artifacts are written to ephemeral FS)
-        output_path_in_container = _to_container_path(output_path)
-        cache_dir_in_container = _to_container_path(cache_dir)
-
-        # Adapter: if it's a host path, map it; otherwise treat as HF repo ID.
-        adapter_arg = adapter_path
-        if adapter_path.startswith("/"):
-            if adapter_path.startswith(workspace_container_path + "/"):
-                adapter_arg = adapter_path
-            elif adapter_path.startswith(workspace_host_path + "/") or adapter_path == workspace_host_path:
-                adapter_arg = _to_container_path(adapter_path)
-            else:
-                return Err(
-                    InferenceError(
-                        message="Merge adapter_path (when absolute path) must be inside inference workspace. "
-                        f"adapter_path={adapter_path!r}, workspace={workspace_host_path!r}",
-                        code="INFERENCE_MERGE_INVALID_PATH",
-                    )
-                )
-
-        # Build merge command (conditional trust_flag)
-        trust_arg = "--trust-remote-code" if trust_remote_code else ""
-        container_name = f"helix-merge-{self._run_id}"
-
-        # ------------------------------------------------------------------
-        # IMPORTANT: keep HF token name unified (HF_TOKEN only).
-        #
-        # Instead of relying on library-specific env var discovery in the merge image,
-        # we upload our merge script and run it explicitly inside the container.
-        # The script reads HF_TOKEN and passes it as `token=...` (with legacy fallback).
-        # ------------------------------------------------------------------
-        # NOTE: Do NOT rely on a fixed `.parents[N]` depth here.
-        # This provider module can be moved during refactors (e.g. pipeline/ → providers/).
-        # We locate the merge script by walking up until we find the expected repo layout.
-        local_merge_script: Path | None = None
-        here = Path(__file__).resolve()
-        for p in (here, *here.parents):
-            candidate = p / "docker" / "inference" / "merge_lora.py"
-            if candidate.exists():
-                local_merge_script = candidate
-                break
-
-        if local_merge_script is None:
-            # Best-effort fallback path for error message.
-            local_merge_script = here.parent / "docker" / "inference" / "merge_lora.py"
-        remote_merge_script_host = f"{Path(output_path).parent}/merge_lora.py"
-        merge_script_in_container = _to_container_path(remote_merge_script_host)
-
-        if local_merge_script.exists():
-            try:
-                up_res = ssh.upload_file(str(local_merge_script), remote_merge_script_host, verify=False)
-                # Real SSHClient returns (bool, str). In tests, this may be a MagicMock.
-                ok_up = True
-                err_up = ""
-                if isinstance(up_res, tuple) and len(up_res) == 2:
-                    ok_up, err_up = bool(up_res[0]), str(up_res[1])
-                if not ok_up:
-                    return Err(
-                        InferenceError(
-                            message=f"Failed to upload merge script to inference node: {err_up}",
-                            code="SINGLENODE_MERGE_SCRIPT_UPLOAD_FAILED",
-                        )
-                    )
-            except Exception as e:
-                return Err(
-                    InferenceError(
-                        message=f"Failed to upload merge script to inference node: {e!s}",
-                        code="SINGLENODE_MERGE_SCRIPT_UPLOAD_FAILED",
-                    )
-                )
-        else:
-            return Err(
-                InferenceError(
-                    message=f"Merge script not found locally: {local_merge_script}",
-                    code="SINGLENODE_MERGE_SCRIPT_NOT_FOUND",
-                )
-            )
-
-        merge_cmd = (
-            f"docker run --detach "  # Changed from --rm to --detach (no auto-remove for log collection)
-            f"--name {container_name} "
-            f"--gpus all "
-            f"-v {workspace_host_path}:/workspace "
-            f'-e HF_TOKEN="{hf_token}" '
-            f"-e HF_HOME={cache_dir_in_container} "
-            f"-e HUGGINGFACE_HUB_CACHE={cache_dir_in_container} "
-            f"-e TRANSFORMERS_CACHE={cache_dir_in_container} "
-            f"--entrypoint python3 "
-            f"{merge_image} "
-            f"{merge_script_in_container} "
-            f"--base-model {base_model} "
-            f"--adapter {adapter_arg} "
-            f"--output {output_path_in_container} "
-            f"--cache-dir {cache_dir_in_container} "
-            f"{trust_arg}"
-        ).strip()
-
-        logger.info(f"Starting merge job: {base_model} + {adapter_path} → {output_path}")
-        logger.info(f"Merge container: {merge_image}")
-
-        # Log merge start event
-        merge_start_time = time.time()
-        if self._mlflow_manager:
-            self._mlflow_manager.log_event_start(
-                f"Merge started: {base_model} + adapter",
-                category=_KEY_INFERENCE,
-                source=SOURCE_SINGLE_NODE_INFERENCE,
-                base_model=base_model,
-            )
-
-        # 4. Start merge container in background
-        ok, _container_id, stderr = ssh.exec_command(merge_cmd, timeout=_QUICK_CMD_TIMEOUT_S, silent=False)
-        if not ok:
-            logger.error(f"Failed to start merge container: {stderr[:LOG_OUTPUT_LONG_CHARS]}")
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_error(
-                    f"Merge failed to start: {stderr[:LOG_OUTPUT_SHORT_CHARS]}",
-                    category=_KEY_INFERENCE,
-                    source=SOURCE_SINGLE_NODE_INFERENCE,
-                )
-            return Err(
-                InferenceError(
-                    message=f"Merge container start failed: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
-                    code="SINGLENODE_MERGE_CONTAINER_START_FAILED",
-                )
-            )
-
-        # 5. Poll logs while container is running
-        poll_interval = 2  # Merge log collection interval (seconds)
+        # Determine log path once (provider concern — operators expect a
+        # stable file). Same fallback as legacy: tests run without
+        # PipelineOrchestrator.init_run_logging() and we don't want to
+        # crash. ``prepare.log`` (renamed from ``merge.log``).
         try:
             log_dir = get_run_log_dir()
         except RuntimeError:
-            # Unit tests may run without PipelineOrchestrator init_run_logging().
             log_dir = Path("/tmp/helix_logs")
-        merge_log_path = log_dir / "inference" / "merge.log"
-        merge_log_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_log_path = log_dir / "inference" / "prepare.log"
+        prepare_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"📝 Collecting merge logs → {merge_log_path}")
-
-        merge_success = False
-        exit_code = None
-
-        while True:
-            # Check if container is still running
-            is_running = docker_is_container_running(ssh, name_filter=container_name, timeout_seconds=5)
-
-            # Collect current logs
-            logs_res = docker_logs(ssh, container_name=container_name, timeout_seconds=10)
-            if logs_res.is_ok():
-                logs_content = logs_res.unwrap()
-                if logs_content:
-                    # Best-effort: local FS issues must not break merge job.
-                    try:
-                        merge_log_path.parent.mkdir(parents=True, exist_ok=True)
-                        merge_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
-                    except OSError as e:
-                        logger.warning(f"Failed to write merge logs to {merge_log_path}: {e}")
-                    # Check for success marker in logs
-                    if "MERGE_SUCCESS" in logs_content:
-                        merge_success = True
-
-            # If container stopped, get exit code and break
-            if not is_running:
-                exit_res = docker_container_exit_code(ssh, container_name=container_name, timeout_seconds=5)
-                if exit_res.is_ok():
-                    exit_code = exit_res.unwrap()
-                break
-
-            # Wait before next poll
-            time.sleep(poll_interval)
-
-        # 6. Cleanup container
-        _ = docker_rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
-
-        # 7. Validate result
-        logger.info(f"📥 Merge logs saved: {merge_log_path}")
-
-        merge_duration = time.time() - merge_start_time
-
-        if exit_code != 0:
-            logger.error(f"Merge job failed with exit code {exit_code}")
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_error(
-                    f"Merge failed with exit code {exit_code}",
-                    category=_KEY_INFERENCE,
-                    source=SOURCE_SINGLE_NODE_INFERENCE,
-                    duration_seconds=merge_duration,
-                    exit_code=exit_code,
-                )
-            return Err(
-                InferenceError(
-                    message=f"Merge container failed with exit code {exit_code}. Check {merge_log_path}",
-                    code="SINGLENODE_MERGE_CONTAINER_FAILED",
-                )
-            )
-
-        if not merge_success:
-            logger.error("Merge job completed but no success marker found")
-            if self._mlflow_manager:
-                self._mlflow_manager.log_event_error(
-                    "Merge completed without success marker",
-                    category=_KEY_INFERENCE,
-                    source=SOURCE_SINGLE_NODE_INFERENCE,
-                    duration_seconds=merge_duration,
-                )
-            return Err(
-                InferenceError(
-                    message=f"Merge job did not complete successfully (missing MERGE_SUCCESS marker). Check {merge_log_path}",
-                    code="SINGLENODE_MERGE_NO_SUCCESS_MARKER",
-                )
-            )
-
-        # 8. Verify output artifacts exist on HOST (guardrail against wrong path mapping)
-        verify_cmd = f"test -f {output_path}/config.json && echo OK || echo MISSING"
-        _ok_v, v_stdout, _v_stderr = ssh.exec_command(verify_cmd, timeout=10, silent=True)
-        if "OK" not in v_stdout:
-            _ok_ls, ls_stdout, _ls_stderr = ssh.exec_command(f"ls -lah {output_path} || true", timeout=10, silent=True)
-            return Err(
-                InferenceError(
-                    message=(
-                        "Merge container reported success but merged model artifacts were not found on host. "
-                        f"Expected config.json at: {output_path}/config.json. "
-                        f"Directory listing:\n{ls_stdout[:_DIR_LISTING_MAX_CHARS]}"
-                    ),
-                    code="SINGLENODE_MERGE_ARTIFACTS_NOT_FOUND",
-                )
-            )
-
-        logger.info(f"✅ LoRA merge completed successfully: {output_path}")
-
-        # Log merge completion event
+        plan_started_at = time.time()
         if self._mlflow_manager:
-            self._mlflow_manager.log_event_complete(
-                f"Merge completed successfully ({merge_duration:.1f}s)",
+            self._mlflow_manager.log_event_start(
+                f"Prepare started: {len(plan.steps)} step(s)",
                 category=_KEY_INFERENCE,
                 source=SOURCE_SINGLE_NODE_INFERENCE,
-                duration_seconds=merge_duration,
-                base_model=base_model,
+                step_count=len(plan.steps),
             )
 
+        step: PrepareStep
+        for index, step in enumerate(plan.steps):
+            step_started_at = time.time()
+            container_name = f"helix-prepare-{run_id}-{step.name}"
+            image = step.image if step.image else engine_serve_image
+
+            if self._mlflow_manager:
+                self._mlflow_manager.log_event_start(
+                    f"Prepare step started: {step.name}",
+                    category=_KEY_INFERENCE,
+                    source=SOURCE_SINGLE_NODE_INFERENCE,
+                    step_name=step.name,
+                    step_index=index,
+                    step_count=len(plan.steps),
+                )
+
+            # 1. Pull image (idempotent — docker layer cache makes this cheap).
+            ensure_res = self._ensure_docker_image(ssh=ssh, image=image)
+            if ensure_res.is_failure():
+                err_msg = str(ensure_res.unwrap_err())
+                if self._mlflow_manager:
+                    self._mlflow_manager.log_event_error(
+                        f"Prepare step failed (image pull): {step.name}",
+                        category=_KEY_INFERENCE,
+                        source=SOURCE_SINGLE_NODE_INFERENCE,
+                        step_name=step.name,
+                        step_index=index,
+                    )
+                return Err(
+                    InferenceError(
+                        message=f"Prepare step {step.name!r} image not available: {err_msg}",
+                        code="SINGLENODE_PREPARE_IMAGE_PULL_FAILED",
+                    )
+                )
+
+            # 2. Clean each declared output (host-side, via volume mapping).
+            for container_output in step.outputs:
+                host_output = self._container_to_host(
+                    container_output, workspace_host_path=workspace_host_path
+                )
+                ssh.exec_command(
+                    f"rm -rf {host_output} && mkdir -p {host_output}",
+                    timeout=_SETUP_CMD_TIMEOUT_S,
+                    silent=True,
+                )
+
+            # 3. Build + start the container.
+            cmd = format_prepare_step(
+                step,
+                image=image,
+                container_name=container_name,
+                extra_env={"HF_TOKEN": hf_token},
+            )
+            logger.info(f"Starting prepare step '{step.name}': {image}")
+            ok, _stdout, stderr = ssh.exec_command(cmd, timeout=_QUICK_CMD_TIMEOUT_S, silent=False)
+            if not ok:
+                logger.error(f"Failed to start prepare container: {stderr[:LOG_OUTPUT_LONG_CHARS]}")
+                if self._mlflow_manager:
+                    self._mlflow_manager.log_event_error(
+                        f"Prepare step failed to start: {step.name}",
+                        category=_KEY_INFERENCE,
+                        source=SOURCE_SINGLE_NODE_INFERENCE,
+                        step_name=step.name,
+                        step_index=index,
+                    )
+                return Err(
+                    InferenceError(
+                        message=f"Prepare container start failed for {step.name!r}: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
+                        code="SINGLENODE_PREPARE_CONTAINER_START_FAILED",
+                    )
+                )
+
+            # 4. Poll: collect logs, watch exit, enforce timeout.
+            marker_seen = step.success_marker is None  # no marker required ⇒ already "seen"
+            exit_code: int | None = None
+            started_polling = time.time()
+            while True:
+                if time.time() - started_polling > step.timeout_seconds:
+                    _ = docker_rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+                    if self._mlflow_manager:
+                        self._mlflow_manager.log_event_error(
+                            f"Prepare step timed out: {step.name}",
+                            category=_KEY_INFERENCE,
+                            source=SOURCE_SINGLE_NODE_INFERENCE,
+                            step_name=step.name,
+                            step_index=index,
+                            timeout_seconds=step.timeout_seconds,
+                        )
+                    return Err(
+                        InferenceError(
+                            message=f"Prepare step {step.name!r} timed out after {step.timeout_seconds}s",
+                            code="SINGLENODE_PREPARE_TIMEOUT",
+                        )
+                    )
+                is_running = docker_is_container_running(
+                    ssh, name_filter=container_name, timeout_seconds=5
+                )
+                logs_res = docker_logs(ssh, container_name=container_name, timeout_seconds=10)
+                if logs_res.is_ok():
+                    logs_content = logs_res.unwrap()
+                    if logs_content:
+                        try:
+                            prepare_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
+                        except OSError as e:
+                            logger.warning(f"Failed to write prepare logs to {prepare_log_path}: {e}")
+                        if step.success_marker and step.success_marker in logs_content:
+                            marker_seen = True
+                if not is_running:
+                    exit_res = docker_container_exit_code(
+                        ssh, container_name=container_name, timeout_seconds=5
+                    )
+                    if exit_res.is_ok():
+                        exit_code = exit_res.unwrap()
+                    break
+                time.sleep(_PREPARE_POLL_INTERVAL_S)
+
+            # 5. Cleanup container regardless of outcome.
+            _ = docker_rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+
+            step_duration = time.time() - step_started_at
+
+            # 6. Validate exit code.
+            if exit_code != 0:
+                if self._mlflow_manager:
+                    self._mlflow_manager.log_event_error(
+                        f"Prepare step failed: {step.name} (exit code {exit_code})",
+                        category=_KEY_INFERENCE,
+                        source=SOURCE_SINGLE_NODE_INFERENCE,
+                        step_name=step.name,
+                        step_index=index,
+                        duration_seconds=step_duration,
+                        exit_code=exit_code,
+                    )
+                return Err(
+                    InferenceError(
+                        message=(
+                            f"Prepare step {step.name!r} failed with exit code "
+                            f"{exit_code}. Check {prepare_log_path}"
+                        ),
+                        code="SINGLENODE_PREPARE_CONTAINER_FAILED",
+                    )
+                )
+
+            # 7. Validate success marker (when declared).
+            if not marker_seen:
+                if self._mlflow_manager:
+                    self._mlflow_manager.log_event_error(
+                        f"Prepare step missing success marker: {step.name}",
+                        category=_KEY_INFERENCE,
+                        source=SOURCE_SINGLE_NODE_INFERENCE,
+                        step_name=step.name,
+                        step_index=index,
+                        duration_seconds=step_duration,
+                    )
+                return Err(
+                    InferenceError(
+                        message=(
+                            f"Prepare step {step.name!r} did not emit success "
+                            f"marker {step.success_marker!r}. Check {prepare_log_path}"
+                        ),
+                        code="SINGLENODE_PREPARE_NO_SUCCESS_MARKER",
+                    )
+                )
+
+            # 8. Validate success artifact (when declared).
+            if step.success_artifact:
+                host_artifact = self._container_to_host(
+                    step.success_artifact, workspace_host_path=workspace_host_path
+                )
+                verify_cmd = f"test -f {host_artifact} && echo OK || echo MISSING"
+                _ok_v, v_stdout, _v_stderr = ssh.exec_command(
+                    verify_cmd, timeout=10, silent=True
+                )
+                if "OK" not in v_stdout:
+                    host_dir = str(Path(host_artifact).parent)
+                    _ok_ls, ls_stdout, _ls_stderr = ssh.exec_command(
+                        f"ls -lah {host_dir} || true", timeout=10, silent=True
+                    )
+                    if self._mlflow_manager:
+                        self._mlflow_manager.log_event_error(
+                            f"Prepare step artifact missing: {step.name}",
+                            category=_KEY_INFERENCE,
+                            source=SOURCE_SINGLE_NODE_INFERENCE,
+                            step_name=step.name,
+                            step_index=index,
+                            duration_seconds=step_duration,
+                        )
+                    return Err(
+                        InferenceError(
+                            message=(
+                                f"Prepare step {step.name!r} reported success but artifact "
+                                f"was not found on host. Expected: {host_artifact}. "
+                                f"Directory:\n{ls_stdout[:_DIR_LISTING_MAX_CHARS]}"
+                            ),
+                            code="SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND",
+                        )
+                    )
+
+            if self._mlflow_manager:
+                self._mlflow_manager.log_event_complete(
+                    f"Prepare step completed: {step.name} ({step_duration:.1f}s)",
+                    category=_KEY_INFERENCE,
+                    source=SOURCE_SINGLE_NODE_INFERENCE,
+                    step_name=step.name,
+                    step_index=index,
+                    duration_seconds=step_duration,
+                )
+            logger.info(f"✅ Prepare step '{step.name}' completed in {step_duration:.1f}s")
+
+        plan_duration = time.time() - plan_started_at
+        if self._mlflow_manager:
+            self._mlflow_manager.log_event_complete(
+                f"Prepare completed ({plan_duration:.1f}s)",
+                category=_KEY_INFERENCE,
+                source=SOURCE_SINGLE_NODE_INFERENCE,
+                duration_seconds=plan_duration,
+                step_count=len(plan.steps),
+            )
         return Ok(None)
 
-    def _start_vllm_container(
+    @staticmethod
+    def _container_to_host(
+        container_path: str,
+        *,
+        workspace_host_path: str,
+        workspace_container_path: str = "/workspace",
+    ) -> str:
+        """Inverse of :meth:`_host_to_container` — map a container path to host.
+
+        Used by the prepare-plan runner to clean output dirs and verify
+        artifacts on the host filesystem.
+        """
+        p = container_path.rstrip("/")
+        if p == workspace_container_path:
+            return workspace_host_path
+        if p.startswith(workspace_container_path + "/"):
+            return workspace_host_path + p[len(workspace_container_path) :]
+        return container_path
+
+    def _start_engine_container(
         self,
         *,
         ssh: SSHClient,

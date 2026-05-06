@@ -89,6 +89,17 @@ class EngineCapabilities(BaseModel):
             "natural choice (vLLM defaults to 8000, TGI to 80, etc.)."
         ),
     )
+    requires_prepare: bool = Field(
+        default=False,
+        description=(
+            "True iff the engine's ``prepare_model()`` returns a non-empty "
+            "PreparePlan for any standard call. Static visibility for "
+            "operators (UI / dashboards) and a drift-detector hook: when "
+            "``requires_prepare=True`` the runtime MUST NOT inherit "
+            "``NoPrepareMixin`` (defaults to no-op). vLLM today: True "
+            "(LoRA merge before serve). SGLang / future LiveLoRA-vLLM: False."
+        ),
+    )
 
     # ---- cross-field invariants ----
 
