@@ -145,30 +145,42 @@ class DatasetLoader:
 
     @staticmethod
     def _load_local_datasets(
-        source: DatasetSourceLocal, strategy_type: str = STRATEGY_SFT
+        source: DatasetSourceLocal,
+        strategy_type: str = STRATEGY_SFT,  # noqa: ARG004 — kept for API stability
     ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
         """
-        Load local datasets from training_paths (auto-generated if missing).
+        Load local datasets from the pod-side ``data/`` directory.
 
         Args:
             source: Local dataset source configuration (typed via discriminator)
-            strategy_type: Current strategy type (used for auto-generating paths if needed)
+            strategy_type: Current strategy type (UNUSED — see note). Kept in
+                the signature so existing callers don't churn.
 
         Returns:
             Result with (train_dataset, eval_dataset) or error
 
-        Note (v6.0):
-            training_paths removed from config - auto-generated as:
-                data/{strategy_type}/{basename(local_paths.train)}
+        Path resolution contract (post-bugfix 2026-05-07):
+            The Mac-side :class:`FileUploader` uploads dataset files via
+            ``POST /api/v1/files/upload`` with ``target=DATASET``. The pod's
+            handler (:func:`ryotenkai_pod.runner.api.files.upload_file`)
+            stores them at ``<run_dir>/data/<basename>`` — basename only,
+            no strategy-type subdirectory. So the trainer reads from the
+            same flat layout: ``data/<basename(local_paths.*)>``.
+
+            Earlier code looked at ``data/{strategy_type}/<basename>``,
+            which never matched the actual upload layout — that mismatch
+            shipped silently because nobody ran a multi-strategy chain
+            against a fresh pod after the upload contract was finalised.
+            The ``strategy_type`` parameter is kept for backward signature
+            compatibility but is no longer used in path construction.
         """
-        # Auto-generate training path from local_paths
-        # Pattern: data/{strategy_type}/{basename}
+        # Pod-side flat layout: data/<basename>. Match upload contract.
         local_train = source.local_paths.train
         train_basename = Path(local_train).name
-        train_rel = f"data/{strategy_type}/{train_basename}"
+        train_rel = f"data/{train_basename}"
 
         train_path = Path(train_rel)
-        logger.debug(f"[DL:LOADING] train_path={train_path} (auto-generated from local_paths)")
+        logger.debug(f"[DL:LOADING] train_path={train_path} (resolved from local_paths basename)")
         if not train_path.exists():
             error_msg = f"Dataset file not found: {train_path}"
             logger.error(f"[DL:ERROR] {error_msg}")
@@ -184,7 +196,7 @@ class DatasetLoader:
         local_eval = source.local_paths.eval
         if local_eval:
             eval_basename = Path(local_eval).name
-            eval_rel = f"data/{strategy_type}/{eval_basename}"
+            eval_rel = f"data/{eval_basename}"
             eval_path = Path(eval_rel)
             if eval_path.exists():
                 logger.info(f"   Loading eval dataset: {eval_path}")

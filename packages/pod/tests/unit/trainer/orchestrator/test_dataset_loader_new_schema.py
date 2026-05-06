@@ -2,10 +2,16 @@
 Unit tests for src/training/orchestrator/dataset_loader.py (NEW schema).
 
 Focus:
-- local runtime loads from auto-generated data/{strategy_type}/{basename(local_paths.*)}
-- errors when auto-generated train file is missing
+- local runtime loads from data/{basename(local_paths.*)} (flat layout —
+  matches the FileUploader → POST /api/v1/files/upload contract)
+- errors when expected train file is missing
 - optional eval loading
 - HF loads use source_hf.train_id/eval_id (mocked)
+
+Path-resolution contract (post 2026-05-07 bugfix):
+  Pod-side dataset files live at ``<run_dir>/data/<basename>`` — flat
+  layout, no strategy-type prefix. The previous ``data/{strategy}/...``
+  layout never matched the actual upload location.
 """
 
 from __future__ import annotations
@@ -49,17 +55,19 @@ def test_local_missing_train_file_returns_err() -> None:
     assert res.is_failure()
     err = str(res.unwrap_err())
     assert "Dataset file not found" in err
-    assert "data/sft/train.jsonl" in err
+    # Flat layout: data/<basename>, NOT data/{strategy}/<basename>.
+    assert "data/train.jsonl" in err
 
 
 @patch("ryotenkai_pod.trainer.orchestrator.dataset_loader.load_dataset")
-def test_local_loads_train_from_auto_generated_path(
+def test_local_loads_train_from_flat_path(
     mock_load_dataset: MagicMock,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (tmp_path / "data" / "sft").mkdir(parents=True)
-    (tmp_path / "data" / "sft" / "train.jsonl").write_text('{"text":"x"}\n', encoding="utf-8")
+    # Flat layout — NO strategy subdir.
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / "data" / "train.jsonl").write_text('{"text":"x"}\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     cfg = _mk_config_for_local(local_train="/any/train.jsonl")
@@ -84,9 +92,10 @@ def test_local_loads_eval_when_present(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    (tmp_path / "data" / "sft").mkdir(parents=True)
-    (tmp_path / "data" / "sft" / "train.jsonl").write_text('{"text":"x"}\n', encoding="utf-8")
-    (tmp_path / "data" / "sft" / "eval.jsonl").write_text('{"text":"y"}\n', encoding="utf-8")
+    # Flat layout — NO strategy subdir.
+    (tmp_path / "data").mkdir(parents=True)
+    (tmp_path / "data" / "train.jsonl").write_text('{"text":"x"}\n', encoding="utf-8")
+    (tmp_path / "data" / "eval.jsonl").write_text('{"text":"y"}\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
     cfg = _mk_config_for_local(local_train="/any/train.jsonl", local_eval="/any/eval.jsonl")

@@ -75,13 +75,15 @@ class DataLoaderManager:
         self._callbacks = callbacks or DataLoaderEventCallbacks()
 
     def load_datasets(
-        self, strategy_type: str = STRATEGY_SFT
+        self, strategy_type: str = STRATEGY_SFT  # noqa: ARG002 — kept for API stability
     ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
         """
         Load training and evaluation datasets.
 
         Args:
-            strategy_type: Strategy type for auto-generating training paths (default: SFT)
+            strategy_type: Strategy type tag (kept for API stability; no longer
+                used in path construction — see the in-method comment for
+                the path-resolution contract). Defaults to SFT.
 
         Returns:
             Result[Tuple[Dataset, Optional[Dataset]], str]: (train, eval) datasets or error
@@ -118,13 +120,18 @@ class DataLoaderManager:
                         ),
                     )
             elif isinstance(source, DatasetSourceLocal):
-                # Auto-generate training path from local_paths (v6.0)
-                # Pattern: data/{strategy_type}/{basename}
+                # Pod-side flat layout: data/<basename>. The Mac-side
+                # FileUploader → pod's POST /api/v1/files/upload contract
+                # places dataset files at ``<run_dir>/data/<basename>``;
+                # the previous ``data/{strategy_type}/<basename>`` lookup
+                # never matched the actual upload layout.
+                # See orchestrator/dataset_loader._load_local_datasets for
+                # the canonical contract documentation.
                 local_train = source.local_paths.train
                 train_basename = Path(local_train).name
-                train_path = f"data/{strategy_type}/{train_basename}"
+                train_path = f"data/{train_basename}"
 
-                logger.info(f"Loading training data: {train_path} (auto-generated)")
+                logger.info(f"Loading training data: {train_path}")
                 train_dataset = cast(
                     "Dataset",
                     load_dataset("json", data_files=train_path, split=HF_SPLIT_TRAIN),
@@ -133,8 +140,8 @@ class DataLoaderManager:
                 local_eval = source.local_paths.eval
                 if local_eval:
                     eval_basename = Path(local_eval).name
-                    eval_path = f"data/{strategy_type}/{eval_basename}"
-                    logger.info(f"Loading evaluation data: {eval_path} (auto-generated)")
+                    eval_path = f"data/{eval_basename}"
+                    logger.info(f"Loading evaluation data: {eval_path}")
                     eval_dataset = cast(
                         "Dataset",
                         load_dataset("json", data_files=eval_path, split=HF_SPLIT_TRAIN),

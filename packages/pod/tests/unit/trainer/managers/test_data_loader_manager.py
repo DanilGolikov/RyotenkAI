@@ -41,11 +41,14 @@ def test_load_datasets_local_happy_path_with_max_samples_and_callbacks(monkeypat
     dataset_cfg.max_samples = 10
     cfg.get_primary_dataset.return_value = dataset_cfg
 
-    # Patch load_dataset to return deterministic Datasets
+    # Patch load_dataset to return deterministic Datasets.
+    # Pod-side flat layout (post 2026-05-07 fix): data/<basename>, no
+    # strategy-type subdir — matches FileUploader → POST /files/upload
+    # contract.
     def fake_load_dataset(kind, data_files=None, split=None, trust_remote_code=None):
-        if data_files == "data/sft/train.jsonl":
+        if data_files == "data/train.jsonl":
             return _ds(20)
-        if data_files == "data/sft/eval.jsonl":
+        if data_files == "data/eval.jsonl":
             return _ds(5)
         raise AssertionError(f"unexpected data_files={data_files}")
 
