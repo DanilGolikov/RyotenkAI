@@ -73,7 +73,7 @@ class ModelCardGenerator:
             return str(v)
 
         tags: list[str] = []
-        for t in ("fine-tuned", "adapter", "peft", "lora", cfg.training.type, "trl", "ryotenkai"):
+        for t in ("fine-tuned", "adapter", "peft", "lora", cfg.training.adapter.kind, "trl", "ryotenkai"):
             if isinstance(t, str) and t and t not in tags:
                 tags.append(t)
 
@@ -156,7 +156,7 @@ class ModelCardGenerator:
                 "|---|---|",
                 f"| **Base model** | `{base_model}` |",
                 f"| **Adapter repo** | `{repo_id}` |",
-                f"| **Training type** | `{cfg.training.type}` |",
+                f"| **Training type** | `{cfg.training.adapter.kind}` |",
                 f"| **Strategy chain** | {self._format_strategies(cfg)} |",
                 f"| **Dataset source** | `{_fmt(ctx.dataset_source_type)}` |",
                 f"| **Datasets** | {datasets_md} |",

@@ -92,7 +92,7 @@ def explain_cmd(
     config: RequiredConfigOpt,
 ) -> None:
     """Show a short human-readable summary of model / dataset / training."""
-    from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
+    from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
     from ryotenkai_shared.config.loader import load_pipeline_config as load_config
 
     state = ctx.ensure_object(CLIContext)
@@ -104,15 +104,16 @@ def explain_cmd(
     strategies = [s.strategy_type for s in training_cfg.get_strategy_chain()]
     default_ds = cfg.get_primary_dataset()
     train_ref = default_ds.get_display_train_ref()
-    if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
-        assert default_ds.source_hf is not None
-        eval_ref = default_ds.source_hf.eval_id or None
+    source = default_ds.source
+    if isinstance(source, DatasetSourceHF):
+        eval_ref = source.eval_id or None
+    elif isinstance(source, DatasetSourceLocal):
+        eval_ref = source.local_paths.eval or None
     else:
-        assert default_ds.source_local is not None
-        eval_ref = default_ds.source_local.local_paths.eval or None
+        eval_ref = None
 
     payload = {
-        "model": {"name": model_cfg.name, "training_type": training_cfg.type},
+        "model": {"name": model_cfg.name, "training_type": training_cfg.adapter.kind},
         "strategies": strategies,
         "dataset": {"train": train_ref, "eval": eval_ref},
     }
@@ -123,7 +124,7 @@ def explain_cmd(
         renderer.kv(
             {
                 "Model": model_cfg.name,
-                "Training": training_cfg.type,
+                "Training": training_cfg.adapter.kind,
                 "Strategies": " → ".join(s.upper() for s in strategies) if strategies else "-",
             },
             title="Model",

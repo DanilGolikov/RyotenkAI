@@ -50,12 +50,17 @@ class DatasetLoaderFactory:
         Returns:
             IDatasetLoader instance
         """
-        source_type = dataset_config.get_source_type()
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
 
-        if source_type == SOURCE_TYPE_HUGGINGFACE:
+        source = dataset_config.source
+        if isinstance(source, DatasetSourceHF):
             return self._create_huggingface_loader()
-        else:  # local
+        if isinstance(source, DatasetSourceLocal):
             return self._create_json_loader()
+        # Discriminator covers all kinds today; defensive for future variants.
+        raise ValueError(
+            f"No loader registered for dataset source kind: {source.kind!r}"
+        )
 
     def create_for_source_type(self, source_type: str) -> IDatasetLoader:
         """

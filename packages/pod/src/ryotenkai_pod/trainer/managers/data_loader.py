@@ -88,51 +88,39 @@ class DataLoaderManager:
         """
         try:
             # Get default dataset config from registry
+            from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
             dataset_config = self.config.get_primary_dataset()
+            source = dataset_config.source
 
-            source_type = dataset_config.get_source_type()
-
-            # Load training dataset
+            # Load training dataset — discriminator-narrowed dispatch.
+            # ``source`` is already typed via the union; isinstance below
+            # gives both runtime safety AND type-narrowing for the IDE.
             eval_dataset = None
-            if source_type == SOURCE_TYPE_HUGGINGFACE:
-                if dataset_config.source_hf is None:
-                    return Err(
-                        DataLoaderError(
-                            message=f"Dataset source_type='{SOURCE_TYPE_HUGGINGFACE}' requires source_hf",
-                            code="DATA_LOADER_HF_SOURCE_MISSING",
-                        )
-                    )
-                logger.info(f"Loading HF training data: {dataset_config.source_hf.train_id}")
+            if isinstance(source, DatasetSourceHF):
+                logger.info(f"Loading HF training data: {source.train_id}")
                 train_dataset = cast(
                     "Dataset",  # noqa: WPS226
                     load_dataset(
-                        dataset_config.source_hf.train_id,
+                        source.train_id,
                         split=HF_SPLIT_TRAIN,
                         trust_remote_code=True,
                     ),
                 )
-                if dataset_config.source_hf.eval_id:
-                    logger.info(f"Loading HF evaluation data: {dataset_config.source_hf.eval_id}")
+                if source.eval_id:
+                    logger.info(f"Loading HF evaluation data: {source.eval_id}")
                     eval_dataset = cast(
                         "Dataset",
                         load_dataset(
-                            dataset_config.source_hf.eval_id,
+                            source.eval_id,
                             split=HF_SPLIT_TRAIN,
                             trust_remote_code=True,
                         ),
                     )
-            else:
-                if dataset_config.source_local is None:
-                    return Err(
-                        DataLoaderError(
-                            message=f"Dataset source_type='{SOURCE_TYPE_LOCAL}' requires source_local",
-                            code="DATA_LOADER_LOCAL_SOURCE_MISSING",
-                        )
-                    )
-
+            elif isinstance(source, DatasetSourceLocal):
                 # Auto-generate training path from local_paths (v6.0)
                 # Pattern: data/{strategy_type}/{basename}
-                local_train = dataset_config.source_local.local_paths.train
+                local_train = source.local_paths.train
                 train_basename = Path(local_train).name
                 train_path = f"data/{strategy_type}/{train_basename}"
 
@@ -142,7 +130,7 @@ class DataLoaderManager:
                     load_dataset("json", data_files=train_path, split=HF_SPLIT_TRAIN),
                 )
 
-                local_eval = dataset_config.source_local.local_paths.eval
+                local_eval = source.local_paths.eval
                 if local_eval:
                     eval_basename = Path(local_eval).name
                     eval_path = f"data/{strategy_type}/{eval_basename}"
@@ -151,6 +139,13 @@ class DataLoaderManager:
                         "Dataset",
                         load_dataset("json", data_files=eval_path, split=HF_SPLIT_TRAIN),
                     )
+            else:
+                return Err(
+                    DataLoaderError(
+                        message=f"Unknown dataset source kind: {source.kind!r}",
+                        code="DATA_LOADER_UNKNOWN_SOURCE_KIND",
+                    )
+                )
 
             # Limit samples if specified
             if dataset_config.max_samples:

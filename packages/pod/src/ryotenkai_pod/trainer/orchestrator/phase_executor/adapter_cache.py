@@ -16,7 +16,6 @@ from contextvars import copy_context
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
 from ryotenkai_shared.constants import (
     HF_UPLOAD_RETRIES,
     HF_UPLOAD_RETRY_DELAY_S,
@@ -96,16 +95,18 @@ class AdapterCacheManager:
         Local file:  sha256(resolved_path + mtime + size)[:10]
         HF dataset:  sha256(train_id + commit_sha)[:10]  (one network call)
         """
-        source_type = dataset_config.get_source_type()
-        if source_type == SOURCE_TYPE_LOCAL:
-            train_path = Path(dataset_config.source_local.local_paths.train).resolve()
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
+        source = dataset_config.source
+        if isinstance(source, DatasetSourceLocal):
+            train_path = Path(source.local_paths.train).resolve()
             if train_path.exists():
                 stat = train_path.stat()
                 raw = f"{train_path}\x00{stat.st_mtime}\x00{stat.st_size}"
             else:
                 raw = str(train_path)
-        else:
-            train_id = dataset_config.source_hf.train_id
+        elif isinstance(source, DatasetSourceHF):
+            train_id = source.train_id
             try:
                 from huggingface_hub import dataset_info as hf_dataset_info
 
@@ -117,6 +118,8 @@ class AdapterCacheManager:
                 )
                 commit_sha = ""
             raw = f"{train_id}\x00{commit_sha}"
+        else:
+            raw = f"unknown:{source.kind}"
 
         return hashlib.sha256(raw.encode()).hexdigest()[:10]
 

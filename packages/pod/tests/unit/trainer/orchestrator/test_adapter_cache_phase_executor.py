@@ -49,16 +49,19 @@ def _mk_executor(config: Any = None) -> PhaseExecutor:
 
 
 def _mk_local_dataset_config(path: str, *, mtime: float = 1000.0, size: int = 512) -> MagicMock:
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     ds = MagicMock()
-    ds.get_source_type.return_value = "local"
-    ds.source_local.local_paths.train = path
+    ds.source = DatasetSourceLocal(local_paths=DatasetLocalPaths(train=path))
     return ds
 
 
 def _mk_hf_dataset_config(train_id: str = "org/dataset", commit_sha: str = "abc123") -> MagicMock:
+    from ryotenkai_shared.config import DatasetSourceHF
+
     ds = MagicMock()
-    ds.get_source_type.return_value = "huggingface"
-    ds.source_hf.train_id = train_id
+    ds.source = DatasetSourceHF(train_id=train_id)
     return ds, commit_sha
 
 

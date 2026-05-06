@@ -59,12 +59,14 @@ class TestBaseDatasetLoader:
 
     def test_load_for_phase_general_exception(self) -> None:
         """Test: load_for_phase handles general exceptions."""
+        from ryotenkai_shared.config import DatasetSourceLocal
+        from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
         config = MagicMock()
         dataset_config = MagicMock()
-        dataset_config.get_source_type = MagicMock(return_value="local")
-        dataset_config.source_local = MagicMock()
-        dataset_config.source_local.local_paths = MagicMock()
-        dataset_config.source_local.local_paths.train = "data/train.jsonl"
+        dataset_config.source = DatasetSourceLocal(
+            local_paths=DatasetLocalPaths(train="data/train.jsonl"),
+        )
         dataset_config.max_samples = None
         config.get_dataset_for_strategy.return_value = dataset_config
         config.resolve_path = lambda p: Path("valid_source")  # type: ignore[assignment]

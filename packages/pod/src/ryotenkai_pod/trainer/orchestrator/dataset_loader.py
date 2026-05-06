@@ -10,18 +10,22 @@ Supports:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from datasets import Dataset, load_dataset
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from ryotenkai_shared.constants import STRATEGY_SFT
 from ryotenkai_pod.trainer.managers.constants import HF_SPLIT_TRAIN
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok, Result
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
+    from ryotenkai_shared.config import (
+        DatasetSourceHF,
+        DatasetSourceLocal,
+        PipelineConfig,
+        StrategyPhaseConfig,
+    )
 
 
 class DatasetLoader:
@@ -66,17 +70,25 @@ class DatasetLoader:
         Returns:
             Result with loaded dataset or error message
         """
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
         try:
             dataset_config = self.config.get_dataset_for_strategy(phase)
+            source = dataset_config.source
 
-            # New schema supports: local (training_paths auto-generated) and HuggingFace (train_id/eval_id)
-            source_type = dataset_config.get_source_type()
-
-            if source_type == SOURCE_TYPE_HUGGINGFACE:
-                loaded_result = self._load_hf_datasets(dataset_config)
-            else:
+            # Discriminated dispatch — typed source binds via isinstance, no string match.
+            if isinstance(source, DatasetSourceHF):
+                loaded_result = self._load_hf_datasets(source)
+            elif isinstance(source, DatasetSourceLocal):
                 # Pass strategy_type for auto-generating training paths
-                loaded_result = self._load_local_datasets(dataset_config, strategy_type=phase.strategy_type)
+                loaded_result = self._load_local_datasets(source, strategy_type=phase.strategy_type)
+            else:
+                return Err(
+                    DataLoaderError(
+                        message=f"Unsupported dataset source kind: {source.kind!r}",
+                        code="DATA_LOADER_UNKNOWN_SOURCE",
+                    )
+                )
 
             if loaded_result.is_failure():
                 return loaded_result
@@ -111,18 +123,10 @@ class DatasetLoader:
             return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_LOAD_FAILED"))
 
     @staticmethod
-    def _load_hf_datasets(dataset_config: Any) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
+    def _load_hf_datasets(source: DatasetSourceHF) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
         """Load HuggingFace datasets (train + optional eval)."""
-        if dataset_config.source_hf is None:
-            return Err(
-                DataLoaderError(
-                    message=f"Dataset source_type='{SOURCE_TYPE_HUGGINGFACE}' requires source_hf",
-                    code="DATA_LOADER_HF_SOURCE_MISSING",
-                )
-            )
-
-        train_id = dataset_config.source_hf.train_id
-        eval_id = dataset_config.source_hf.eval_id
+        train_id = source.train_id
+        eval_id = source.eval_id
 
         logger.info(f"   Loading HF train dataset: {train_id}")
         train_dataset = cast(
@@ -141,13 +145,13 @@ class DatasetLoader:
 
     @staticmethod
     def _load_local_datasets(
-        dataset_config: Any, strategy_type: str = STRATEGY_SFT
+        source: DatasetSourceLocal, strategy_type: str = STRATEGY_SFT
     ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
         """
         Load local datasets from training_paths (auto-generated if missing).
 
         Args:
-            dataset_config: Dataset configuration
+            source: Local dataset source configuration (typed via discriminator)
             strategy_type: Current strategy type (used for auto-generating paths if needed)
 
         Returns:
@@ -157,17 +161,9 @@ class DatasetLoader:
             training_paths removed from config - auto-generated as:
                 data/{strategy_type}/{basename(local_paths.train)}
         """
-        if dataset_config.source_local is None:
-            return Err(
-                DataLoaderError(
-                    message=f"Dataset source_type='{SOURCE_TYPE_LOCAL}' requires source_local",
-                    code="DATA_LOADER_LOCAL_SOURCE_MISSING",
-                )
-            )
-
         # Auto-generate training path from local_paths
         # Pattern: data/{strategy_type}/{basename}
-        local_train = dataset_config.source_local.local_paths.train
+        local_train = source.local_paths.train
         train_basename = Path(local_train).name
         train_rel = f"data/{strategy_type}/{train_basename}"
 
@@ -185,7 +181,7 @@ class DatasetLoader:
         )
 
         eval_dataset: Dataset | None = None
-        local_eval = dataset_config.source_local.local_paths.eval
+        local_eval = source.local_paths.eval
         if local_eval:
             eval_basename = Path(local_eval).name
             eval_rel = f"data/{strategy_type}/{eval_basename}"

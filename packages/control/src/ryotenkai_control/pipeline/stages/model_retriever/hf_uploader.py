@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 from huggingface_hub import HfApi
 
 from ryotenkai_shared.constants import LORA_CHECKPOINT_PATTERNS
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
 from ryotenkai_control.pipeline.stages.model_retriever.constants import (
     HTTP_STATUS_NOT_FOUND,
     HTTP_STATUS_UNAUTHORIZED,
@@ -330,13 +329,13 @@ class HFModelUploader:
             return None
 
         try:
-            source_type = default_ds.get_source_type()
-        except (AttributeError, TypeError):
+            source_kind = default_ds.source.kind
+        except AttributeError:
             return None
 
-        if not (isinstance(source_type, str) and source_type.strip()):
+        if not (isinstance(source_kind, str) and source_kind.strip()):
             return None
-        return source_type.strip()
+        return source_kind.strip()
 
     def extract_datasets_for_readme(self, *, basename_fn: Any = None) -> list[str]:
         """Extract dataset identifiers suitable for HF model card metadata."""
@@ -349,20 +348,22 @@ class HFModelUploader:
         except (AttributeError, KeyError, ValueError):
             return []
 
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
         try:
-            source_type = default_ds.get_source_type()
+            source = default_ds.source
             out: list[str] = []
 
-            if source_type == SOURCE_TYPE_HUGGINGFACE and default_ds.source_hf is not None:
-                train_id = getattr(default_ds.source_hf, "train_id", None)
-                eval_id = getattr(default_ds.source_hf, "eval_id", None)
+            if isinstance(source, DatasetSourceHF):
+                train_id = getattr(source, "train_id", None)
+                eval_id = getattr(source, "eval_id", None)
                 if isinstance(train_id, str) and train_id.strip():
                     out.append(train_id.strip())
                 if isinstance(eval_id, str) and eval_id.strip() and eval_id.strip() not in out:
                     out.append(eval_id.strip())
 
-            elif source_type == SOURCE_TYPE_LOCAL and default_ds.source_local is not None:
-                local_paths = getattr(default_ds.source_local, "local_paths", None)
+            elif isinstance(source, DatasetSourceLocal):
+                local_paths = getattr(source, "local_paths", None)
                 train_path = getattr(local_paths, "train", None) if local_paths is not None else None
                 eval_path = getattr(local_paths, "eval", None) if local_paths is not None else None
 

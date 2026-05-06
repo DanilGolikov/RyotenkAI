@@ -144,7 +144,9 @@ def mock_config():
     config.model.flash_attention = False
 
     # Training config
-    config.training.type = "qlora"
+    config.training.type = "qlora"  # legacy shim still used by some tests
+    config.training.adapter = MagicMock()
+    config.training.adapter.kind = "qlora"
     config.training.get_effective_load_in_4bit = MagicMock(return_value=True)
 
     # Mock hyperparams
@@ -191,14 +193,19 @@ def mock_config():
     config.training.lora = config.qlora
     config.training.adalora = None
 
-    # Dataset config
+    # Dataset config — typed source (discriminated union) so isinstance checks pass.
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     mock_dataset = MagicMock()
-    mock_dataset.get_source_type = MagicMock(return_value="local")
-    mock_dataset.source_local = MagicMock()
-    mock_dataset.source_local.local_paths = MagicMock()
-    mock_dataset.source_local.local_paths.train = "data/datasets/train.jsonl"
-    mock_dataset.source_local.local_paths.eval = "data/datasets/validation.jsonl"
-    # training_paths removed in v6.0 - no longer in config
+    mock_dataset.source = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(
+            train="data/datasets/train.jsonl",
+            eval="data/datasets/validation.jsonl",
+        ),
+    )
+    mock_dataset.get_source_type = MagicMock(return_value="local")  # legacy shim
+    mock_dataset.source_local = mock_dataset.source  # legacy shim
     mock_dataset.source_hf = None
     mock_dataset.max_samples = None
     mock_dataset.adapter_type = "instruction"

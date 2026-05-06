@@ -64,10 +64,12 @@ class MLflowDomainLogger:
     def log_training_config(self, config: PipelineConfig) -> None:
         """Log training configuration as parameters and tags."""
         hp = config.training.hyperparams
+        adapter = config.training.adapter
+        adapter_kind = adapter.kind
 
         params: dict[str, Any] = {
             "model_name": config.model.name,
-            "training_type": config.training.type,
+            "training_type": adapter_kind,
             "batch_size": hp.per_device_train_batch_size,
             "gradient_accumulation": hp.gradient_accumulation_steps,
             "bf16": hp.bf16,
@@ -77,27 +79,25 @@ class MLflowDomainLogger:
             "weight_decay": hp.weight_decay,
         }
 
+        # Post-discriminator narrowing — isinstance dispatch directly on
+        # the typed adapter. No string equality. AdaLoraConfig is also a
+        # LoraConfig-shape carrier of r/alpha/dropout, so the check
+        # would expand naturally if we add it to the tuple later.
         from ryotenkai_shared.config.training.lora import LoraConfig, QloraConfig
 
-        lora: LoraConfig | QloraConfig | None = None
-        if config.training.type in ("lora", "qlora"):
-            with contextlib.suppress(ValueError):
-                cfg_obj = config.training.get_adapter_config()
-                if isinstance(cfg_obj, (LoraConfig, QloraConfig)):
-                    lora = cfg_obj
-        if lora is not None:
+        if isinstance(adapter, (LoraConfig, QloraConfig)):
             params.update(
                 {
-                    "lora_r": lora.r,
-                    "lora_alpha": lora.lora_alpha,
-                    "lora_dropout": lora.lora_dropout,
-                    "lora_target_modules": str(lora.target_modules),
+                    "lora_r": adapter.r,
+                    "lora_alpha": adapter.lora_alpha,
+                    "lora_dropout": adapter.lora_dropout,
+                    "lora_target_modules": str(adapter.target_modules),
                 }
             )
 
         params.update(
             {
-                "training_type": config.training.type,
+                "training_type": adapter_kind,
                 "load_in_4bit": config.training.get_effective_load_in_4bit(),
             }
         )
@@ -110,7 +110,7 @@ class MLflowDomainLogger:
             {
                 "model_base": config.model.name.split("/")[-1],
                 "model_full": config.model.name,
-                "training_type": config.training.type,
+                "training_type": adapter_kind,
                 "strategy_chain": strategy_chain,
                 "num_phases": str(len(strategies)) if strategies else "0",
             }
@@ -120,11 +120,12 @@ class MLflowDomainLogger:
         """Log full pipeline configuration as parameters and tags."""
         strategies = config.training.get_strategy_chain()
         strategy_chain = "→".join(s.strategy_type for s in strategies) if strategies else "none"
+        adapter_kind = config.training.adapter.kind
 
         tags: dict[str, str] = {
             "model.name": config.model.name,
             "model.base": config.model.name.split("/")[-1],
-            "training.type": config.training.type,
+            "training.type": adapter_kind,
             "training.strategy_chain": strategy_chain,
             "training.num_phases": str(len(strategies)) if strategies else "0",
         }
@@ -153,7 +154,7 @@ class MLflowDomainLogger:
             "config.model.name": config.model.name,
             "config.model.device_map": config.model.device_map or "auto",
             "config.model.flash_attention": config.model.flash_attention,
-            "config.training.type": config.training.type,
+            "config.training.type": adapter_kind,
             "config.training.output_dir": "output",
         }
 
@@ -162,23 +163,18 @@ class MLflowDomainLogger:
             params[f"training.hyperparams.{field}"] = value
         params["training.hyperparams.load_in_4bit"] = config.training.get_effective_load_in_4bit()
 
+        # Discriminator-narrowed isinstance — same logic as
+        # log_training_config above. No string equality.
         from ryotenkai_shared.config.training.lora import LoraConfig, QloraConfig
 
-        lora2: LoraConfig | QloraConfig | None = None
-        if config.training.type in ("lora", "qlora"):
-            with contextlib.suppress(ValueError):
-                cfg_obj = config.training.get_adapter_config()
-                if isinstance(cfg_obj, (LoraConfig, QloraConfig)):
-                    lora2 = cfg_obj
-        if lora2 is not None:
-            params["config.lora.r"] = lora2.r
-            params["config.lora.alpha"] = lora2.lora_alpha
-            params["config.lora.dropout"] = lora2.lora_dropout
-            params["config.lora.target_modules"] = str(lora2.target_modules)
-            if hasattr(lora2, "use_dora"):
-                params["config.lora.use_dora"] = lora2.use_dora
-            if hasattr(lora2, "use_rslora"):
-                params["config.lora.use_rslora"] = lora2.use_rslora
+        adapter2 = config.training.adapter
+        if isinstance(adapter2, (LoraConfig, QloraConfig)):
+            params["config.lora.r"] = adapter2.r
+            params["config.lora.alpha"] = adapter2.lora_alpha
+            params["config.lora.dropout"] = adapter2.lora_dropout
+            params["config.lora.target_modules"] = str(adapter2.target_modules)
+            params["config.lora.use_dora"] = adapter2.use_dora
+            params["config.lora.use_rslora"] = adapter2.use_rslora
 
         if strategies:
             for i, strategy in enumerate(strategies):
@@ -208,29 +204,34 @@ class MLflowDomainLogger:
                 logger.warning("[MLFLOW:DOMAIN] No valid datasets found in strategies")
                 return
 
+            from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
             params: dict[str, Any] = {}
             for ds_name in sorted(dataset_names):
                 ds_cfg = config.datasets[ds_name]
+                source = ds_cfg.source
 
-                if ds_cfg.get_source_type() == SOURCE_TYPE_HUGGINGFACE and ds_cfg.source_hf is not None:
-                    display_name = Path(ds_cfg.source_hf.train_id).name
-                elif ds_cfg.source_local is not None:
-                    display_name = Path(ds_cfg.source_local.local_paths.train).stem
-                else:
+                # Discriminator-narrowed: isinstance dispatch directly on
+                # the typed source. No string equality, no property cascades.
+                if isinstance(source, DatasetSourceHF):
+                    display_name = Path(source.train_id).name
+                elif isinstance(source, DatasetSourceLocal):
+                    display_name = Path(source.local_paths.train).stem
+                else:  # pragma: no cover — discriminator covers all kinds
                     display_name = ds_name
 
                 params[f"dataset.{ds_name}.name"] = display_name
-                params[f"dataset.{ds_name}.source_type"] = ds_cfg.get_source_type()
+                params[f"dataset.{ds_name}.source_type"] = source.kind
                 params[f"dataset.{ds_name}.adapter_type"] = ds_cfg.adapter_type or "auto"
 
-                if ds_cfg.get_source_type() == SOURCE_TYPE_HUGGINGFACE and ds_cfg.source_hf is not None:
-                    params[f"dataset.{ds_name}.hf.train_id"] = ds_cfg.source_hf.train_id
-                    if ds_cfg.source_hf.eval_id:
-                        params[f"dataset.{ds_name}.hf.eval_id"] = ds_cfg.source_hf.eval_id
-                elif ds_cfg.source_local is not None:
-                    params[f"dataset.{ds_name}.local.train_path"] = ds_cfg.source_local.local_paths.train
-                    if ds_cfg.source_local.local_paths.eval:
-                        params[f"dataset.{ds_name}.local.eval_path"] = ds_cfg.source_local.local_paths.eval
+                if isinstance(source, DatasetSourceHF):
+                    params[f"dataset.{ds_name}.hf.train_id"] = source.train_id
+                    if source.eval_id:
+                        params[f"dataset.{ds_name}.hf.eval_id"] = source.eval_id
+                elif isinstance(source, DatasetSourceLocal):
+                    params[f"dataset.{ds_name}.local.train_path"] = source.local_paths.train
+                    if source.local_paths.eval:
+                        params[f"dataset.{ds_name}.local.eval_path"] = source.local_paths.eval
 
                 if ds_cfg.max_samples:
                     params[f"dataset.{ds_name}.max_samples"] = str(ds_cfg.max_samples)

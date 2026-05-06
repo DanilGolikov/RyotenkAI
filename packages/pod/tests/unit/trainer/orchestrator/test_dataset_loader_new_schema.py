@@ -16,17 +16,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ryotenkai_pod.trainer.orchestrator.dataset_loader import DatasetLoader
+from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
 
 
 def _mk_config_for_local(local_train: str, local_eval: str | None = None) -> MagicMock:
     cfg = MagicMock()
     ds = MagicMock()
-    ds.get_source_type.return_value = "local"
     ds.max_samples = None
-    ds.source_local = MagicMock()
-    ds.source_local.local_paths = MagicMock()
-    ds.source_local.local_paths.train = local_train
-    ds.source_local.local_paths.eval = local_eval
+    ds.source = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(train=local_train, eval=local_eval),
+    )
     cfg.get_dataset_for_strategy.return_value = ds
     return cfg
 
@@ -34,11 +34,8 @@ def _mk_config_for_local(local_train: str, local_eval: str | None = None) -> Mag
 def _mk_config_for_hf(train_id: str, eval_id: str | None = None) -> MagicMock:
     cfg = MagicMock()
     ds = MagicMock()
-    ds.get_source_type.return_value = "huggingface"
     ds.max_samples = None
-    ds.source_hf = MagicMock()
-    ds.source_hf.train_id = train_id
-    ds.source_hf.eval_id = eval_id
+    ds.source = DatasetSourceHF(train_id=train_id, eval_id=eval_id)
     cfg.get_dataset_for_strategy.return_value = ds
     return cfg
 

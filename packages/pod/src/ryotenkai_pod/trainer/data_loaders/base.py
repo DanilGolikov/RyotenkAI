@@ -130,26 +130,24 @@ class BaseDatasetLoader(ABC):
         """
         from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
 
+        from ryotenkai_shared.config import DatasetSourceLocal
+
         try:
             # Get dataset config for this phase
             dataset_config = self.config.get_dataset_for_strategy(phase)
-            if dataset_config.get_source_type() != SOURCE_TYPE_LOCAL:
+            source = dataset_config.source
+            if not isinstance(source, DatasetSourceLocal):
                 return Err(
                     DataLoaderError(
-                        message="BaseDatasetLoader.load_for_phase supports only local datasets (use MultiSourceDatasetLoader)",
+                        message=(
+                            "BaseDatasetLoader.load_for_phase supports only local datasets "
+                            f"(got source.kind={source.kind!r}); use MultiSourceDatasetLoader"
+                        ),
                         code="DATA_LOADER_LOCAL_ONLY",
                     )
                 )
 
-            if dataset_config.source_local is None:
-                return Err(
-                    DataLoaderError(
-                        message=f"source_type='{SOURCE_TYPE_LOCAL}' requires source_local",
-                        code="DATA_LOADER_LOCAL_SOURCE_MISSING",
-                    )
-                )
-
-            train_path = dataset_config.source_local.local_paths.train
+            train_path = source.local_paths.train
             resolved_train_path = self.config.resolve_path(train_path)
             assert resolved_train_path is not None
             train_path_str = str(resolved_train_path)

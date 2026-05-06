@@ -440,7 +440,7 @@ class TrainingContainer:
         # Create loader via factory
         factory = DatasetLoaderFactory(config=self.config)
         loader = factory.create_for_dataset(dataset_config)
-        logger.debug(f"[CONTAINER:DL] Created loader for '{dataset_name}' (source={dataset_config.get_source_type()})")
+        logger.debug(f"[CONTAINER:DL] Created loader for '{dataset_name}' (source={dataset_config.source.kind})")
         return loader
 
     # =========================================================================
@@ -544,7 +544,7 @@ class TrainingContainer:
         logger.info(f"📦 Loading model: {self.config.model.name}")
         logger.debug(
             f"[CONTAINER:MODEL_LOADING] model={self.config.model.name}, "
-            f"training_type={self.config.training.type}, "
+            f"training_type={self.config.training.adapter.kind}, "
             f"4bit={self.config.training.get_effective_load_in_4bit()}"
         )
 

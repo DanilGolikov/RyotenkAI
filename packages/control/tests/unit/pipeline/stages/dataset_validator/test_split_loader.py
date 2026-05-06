@@ -99,13 +99,17 @@ def test_load_train_local_file_not_exists_returns_none(split_loader, loader_fact
 
 
 def test_load_train_local_fast_mode_samples_when_over_threshold(split_loader, loader_factory, tmp_path):
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     file_path = tmp_path / "train.jsonl"
     file_path.write_text("{}", encoding="utf-8")
 
     ds_cfg = MagicMock()
-    ds_cfg.get_source_type.return_value = "local"
     ds_cfg.validations = MagicMock(mode="fast")
-    ds_cfg.source_local = MagicMock(local_paths=MagicMock(train=str(file_path), eval=None))
+    ds_cfg.source = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(train=str(file_path), eval=None)
+    )
 
     big_ds = MagicMock()
     big_ds.__len__.return_value = 20000
@@ -133,24 +137,29 @@ def test_get_train_ref_returns_unknown_on_error(split_loader):
 
 
 def test_get_train_ref_returns_hf_train_id(split_loader):
+    from ryotenkai_shared.config import DatasetSourceHF
+
     hf = MagicMock()
-    hf.get_source_type.return_value = "huggingface"
-    hf.source_hf = MagicMock(train_id="org/ds-train")
+    hf.source = DatasetSourceHF(train_id="org/ds-train")
     assert split_loader.get_train_ref(hf) == "org/ds-train"
 
 
 def test_get_train_ref_returns_local_path(split_loader):
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     local = MagicMock()
-    local.get_source_type.return_value = "local"
-    local.source_hf = None
-    local.source_local = MagicMock(local_paths=MagicMock(train="/abs/data/train.jsonl"))
+    local.source = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(train="/abs/data/train.jsonl")
+    )
     assert split_loader.get_train_ref(local) == "/abs/data/train.jsonl"
 
 
 def test_try_load_eval_hf_branch(split_loader, loader_factory, monkeypatch):
+    from ryotenkai_shared.config import DatasetSourceHF
+
     hf = MagicMock()
-    hf.get_source_type.return_value = "huggingface"
-    hf.source_hf = MagicMock(eval_id="org/ds", train_id="org/ds-train")
+    hf.source = DatasetSourceHF(train_id="org/ds-train", eval_id="org/ds")
     hf.validations = MagicMock(mode="fast")
     hf.max_samples = None
     loader_factory.create_for_dataset.return_value = MagicMock()
