@@ -40,8 +40,7 @@ class TestTrainingPathsRemoval:
         train_file.write_text('{"text": "sample"}')
 
         dataset = DatasetConfig(
-            source_type="local",
-            source_local=DatasetSourceLocal(
+            source=DatasetSourceLocal(
                 local_paths=DatasetLocalPaths(
                     train=str(train_file),
                     eval=None
@@ -58,8 +57,7 @@ class TestTrainingPathsRemoval:
         train_file.write_text('{"text": "sample"}')
 
         dataset = DatasetConfig(
-            source_type="local",
-            source_local=DatasetSourceLocal(
+            source=DatasetSourceLocal(
                 local_paths=DatasetLocalPaths(
                     train=str(train_file),
                     eval=None
@@ -77,8 +75,7 @@ class TestTrainingPathsRemoval:
         train_file.write_text('{"text": "sample"}')
 
         dataset = DatasetConfig(
-            source_type="local",
-            source_local=DatasetSourceLocal(
+            source=DatasetSourceLocal(
                 local_paths=DatasetLocalPaths(
                     train=str(train_file),
                     eval=None

@@ -71,8 +71,7 @@ def _make_config(provider: str = "single_node") -> PipelineConfig:
         ),
         datasets={
             "default": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=DATASET_CHAT_FIXTURE, eval=None)),
+                source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=DATASET_CHAT_FIXTURE, eval=None)),
             )
         },
         inference=InferenceConfig(

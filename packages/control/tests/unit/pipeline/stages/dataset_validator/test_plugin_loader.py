@@ -14,8 +14,7 @@ pytestmark = pytest.mark.unit
 
 def _local_ds(*, plugins: list[dict] | None = None) -> DatasetConfig:
     return DatasetConfig(
-        source_type="local",
-        source_local={"local_paths": {"train": "data/train.jsonl", "eval": None}},
+        source={"kind": "local", "local_paths": {"train": "data/train.jsonl", "eval": None}},
         validations={"plugins": plugins or [], "mode": "fast", "critical_failures": 1},
     )
 

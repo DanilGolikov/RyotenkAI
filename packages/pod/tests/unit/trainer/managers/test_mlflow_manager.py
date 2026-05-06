@@ -91,8 +91,7 @@ def _mk_cfg(
         ),
         datasets={
             "default": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
+                source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
             )
         },
         inference=_inference_cfg_disabled(),
@@ -419,8 +418,7 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
         ),
         datasets={
             "default": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(
+                source=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None),
                 ),
             )
@@ -470,20 +468,17 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
         ),
         datasets={
             "sft_data": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(
+                source=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/sft.jsonl", eval=None),
                 ),
             ),
             "cot_data": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(
+                source=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/cot.jsonl", eval=None),
                 ),
             ),
             "corpus": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(
+                source=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/corpus.jsonl", eval=None),
                 ),
                 max_samples=10000,

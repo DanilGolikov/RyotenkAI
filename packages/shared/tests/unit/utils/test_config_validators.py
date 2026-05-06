@@ -114,8 +114,7 @@ def _pipeline_cfg(**training_overrides) -> PipelineConfig:
         training=_training_cfg(**training_overrides),
         datasets={
             "default": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(
+                source=DatasetSourceLocal(
                     local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)
                 ),
             )
@@ -256,8 +255,7 @@ class TestDatasetConfig:
 
     def test_validations_default(self) -> None:
         ds = DatasetConfig(
-            source_type="local",
-            source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
+            source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
         )
         assert ds.validations.plugins == []
         assert ds.validations.mode == "fast"

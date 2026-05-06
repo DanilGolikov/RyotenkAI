@@ -71,8 +71,7 @@ def _mk_cfg(
         ),
         datasets={
             "default": DatasetConfig(
-                source_type="local",
-                source_local=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
+                source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train="data/train.jsonl", eval=None)),
             )
         },
         inference=InferenceConfig(
