@@ -14,39 +14,29 @@ def _ds(n: int) -> Dataset:
     return Dataset.from_dict({"text": [f"t{i}" for i in range(n)]})
 
 
-def test_load_datasets_local_requires_source_local() -> None:
+def test_load_datasets_unknown_source_returns_err() -> None:
+    """Source neither DatasetSourceLocal nor DatasetSourceHF → typed error."""
     cfg = MagicMock()
     dataset_cfg = MagicMock()
-    dataset_cfg.get_source_type.return_value = "local"
-    dataset_cfg.source_local = None
+    # source attribute is a bare MagicMock — no isinstance branch matches.
+    dataset_cfg.source = MagicMock(kind="alien")
     cfg.get_primary_dataset.return_value = dataset_cfg
 
     mgr = DataLoaderManager(cfg)
     res = mgr.load_datasets()
     assert res.is_failure()
-    assert "requires source_local" in str(res.unwrap_err())
-
-
-def test_load_datasets_huggingface_requires_source_hf() -> None:
-    cfg = MagicMock()
-    dataset_cfg = MagicMock()
-    dataset_cfg.get_source_type.return_value = "huggingface"
-    dataset_cfg.source_hf = None
-    cfg.get_primary_dataset.return_value = dataset_cfg
-
-    mgr = DataLoaderManager(cfg)
-    res = mgr.load_datasets()
-    assert res.is_failure()
-    assert "requires source_hf" in str(res.unwrap_err())
+    assert "Unknown dataset source kind" in str(res.unwrap_err())
 
 
 def test_load_datasets_local_happy_path_with_max_samples_and_callbacks(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     cfg = MagicMock()
 
     dataset_cfg = MagicMock()
-    dataset_cfg.get_source_type.return_value = "local"
-    dataset_cfg.source_local = SimpleNamespace(
-        local_paths=SimpleNamespace(train="train.jsonl", eval="eval.jsonl"),
+    dataset_cfg.source = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(train="train.jsonl", eval="eval.jsonl"),
     )
     dataset_cfg.max_samples = 10
     cfg.get_primary_dataset.return_value = dataset_cfg

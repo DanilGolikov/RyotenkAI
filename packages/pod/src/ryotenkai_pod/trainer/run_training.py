@@ -185,7 +185,7 @@ def run_training(
 
         logger.info("Training config loaded")
         logger.info(f"   Model: {config.model.name}")
-        logger.info(f"   Training type: {config.training.type}")
+        logger.info(f"   Training type: {config.training.adapter.kind}")
         logger.info(f"   4-bit quantization: {config.training.get_effective_load_in_4bit()}")
         logger.info(f"   Strategies: {' -> '.join(s.strategy_type.upper() for s in strategies)}")
         logger.info(f"   Multi-phase: {config.training.is_multi_phase()}")
@@ -251,7 +251,7 @@ def run_training(
                 category=CATEGORY_TRAINING,
                 source=SOURCE_RUN_TRAINING,
                 model=config.model.name,
-                training_type=config.training.type,
+                training_type=config.training.adapter.kind,
                 strategies=[s.strategy_type for s in strategies],
             )
 

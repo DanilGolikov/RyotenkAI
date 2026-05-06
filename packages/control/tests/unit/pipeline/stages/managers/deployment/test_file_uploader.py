@@ -39,14 +39,19 @@ def _make_strategy(strategy_type: str = "sft", dataset: str | None = None):  # t
 
 
 def _make_dataset_local(train: Path | None, eval_: Path | None = None):  # type: ignore[no-untyped-def]
+    from ryotenkai_shared.config import DatasetSourceLocal
+    from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+
     ds = MagicMock()
-    ds.get_source_type.return_value = "local"
-    paths = MagicMock()
-    paths.train = str(train) if train else None
-    paths.eval = str(eval_) if eval_ else None
-    src = MagicMock()
-    src.local_paths = paths
-    ds.source_local = src
+    src = DatasetSourceLocal(
+        local_paths=DatasetLocalPaths(
+            train=str(train) if train else "",
+            eval=str(eval_) if eval_ else None,
+        ),
+    )
+    ds.source = src
+    ds.source_local = src  # legacy shim
+    ds.get_source_type.return_value = "local"  # legacy shim
     return ds
 
 

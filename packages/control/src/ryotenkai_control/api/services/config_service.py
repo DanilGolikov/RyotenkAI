@@ -7,7 +7,6 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ryotenkai_control.api.schemas.config_validate import ConfigCheck, ConfigValidationResult
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
 
 
 def _loc_to_path(loc: tuple) -> str:
@@ -42,11 +41,14 @@ def validate_config(config_path: Path) -> ConfigValidationResult:
         checks.append(ConfigCheck(label="YAML schema", status="fail", detail=str(exc)))
 
     if cfg is not None:
+        from ryotenkai_shared.config import DatasetSourceLocal
+
         # Dataset paths
         for ds_name, ds_cfg in cfg.datasets.items():
-            if ds_cfg.get_source_type() == SOURCE_TYPE_LOCAL and ds_cfg.source_local:
-                train_path = ds_cfg.source_local.local_paths.train
-                eval_path = getattr(ds_cfg.source_local.local_paths, "eval", None)
+            source = ds_cfg.source
+            if isinstance(source, DatasetSourceLocal):
+                train_path = source.local_paths.train
+                eval_path = getattr(source.local_paths, "eval", None)
                 if Path(train_path).exists():
                     checks.append(
                         ConfigCheck(label=f"Dataset '{ds_name}' train path exists", status="ok", detail=train_path)

@@ -26,7 +26,6 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
 from ryotenkai_shared.contracts.runner_api.files import FileUploadTarget
 from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
@@ -104,17 +103,19 @@ class FileUploader:
         else:
             datasets_to_upload["__primary__"] = self.config.get_primary_dataset()
 
+        from ryotenkai_shared.config import DatasetSourceLocal
+
         for ds_name, ds_cfg in datasets_to_upload.items():
-            if not ds_cfg or ds_cfg.get_source_type() != SOURCE_TYPE_LOCAL:
+            if not ds_cfg:
                 continue
-            source_local = ds_cfg.source_local
-            if source_local is None:
-                missing.append(f"{ds_name}: missing source_local")
+            source = ds_cfg.source
+            if not isinstance(source, DatasetSourceLocal):
+                # Non-local sources (HF Hub etc.) need no file upload.
                 continue
 
             for kind, ref in (
-                ("train", source_local.local_paths.train),
-                ("eval", source_local.local_paths.eval),
+                ("train", source.local_paths.train),
+                ("eval", source.local_paths.eval),
             ):
                 if not ref:
                     continue

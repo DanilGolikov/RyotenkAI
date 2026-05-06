@@ -166,22 +166,23 @@ def preview_dataset(
 def check_dataset_paths(
     ctx: DatasetRequestContext = Depends(resolve_dataset_key),
 ) -> PathCheckResponse:
-    cfg = ctx.dataset_config
-    source_type = cfg.get_source_type()
+    from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
 
-    if source_type == SOURCE_TYPE_LOCAL:
-        assert cfg.source_local is not None
-        train_split = _local_split_check(ctx.project_root, cfg.source_local.local_paths.train)
+    cfg = ctx.dataset_config
+    source = cfg.source
+
+    if isinstance(source, DatasetSourceLocal):
+        train_split = _local_split_check(ctx.project_root, source.local_paths.train)
         eval_split: PathCheckSplit | None = None
-        eval_path = cfg.source_local.local_paths.eval
+        eval_path = source.local_paths.eval
         if eval_path:
             eval_split = _local_split_check(ctx.project_root, eval_path)
         return PathCheckResponse(source_type=SOURCE_TYPE_LOCAL, train=train_split, eval=eval_split)
 
     # huggingface
-    assert cfg.source_hf is not None
-    train_split = _hf_repo_check(cfg.source_hf.train_id)
-    eval_split = _hf_repo_check(cfg.source_hf.eval_id) if cfg.source_hf.eval_id else None
+    assert isinstance(source, DatasetSourceHF)
+    train_split = _hf_repo_check(source.train_id)
+    eval_split = _hf_repo_check(source.eval_id) if source.eval_id else None
     return PathCheckResponse(source_type=SOURCE_TYPE_HUGGINGFACE, train=train_split, eval=eval_split)
 
 
@@ -326,18 +327,19 @@ def _preview_page(
     offset: int,
     limit: int,
 ):
-    source_type = cfg.get_source_type()
-    if source_type == SOURCE_TYPE_LOCAL:
-        assert cfg.source_local is not None
-        raw_path = cfg.source_local.local_paths.train if split == "train" else cfg.source_local.local_paths.eval
+    from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
+    source = cfg.source
+    if isinstance(source, DatasetSourceLocal):
+        raw_path = source.local_paths.train if split == "train" else source.local_paths.eval
         if not raw_path:
             raise FileNotFoundError(f"{split}_path_not_configured")
         path = _resolve_local_path(project_root, raw_path)
         return loader.preview_local_jsonl(path, offset=offset, limit=limit)
 
     # huggingface
-    assert cfg.source_hf is not None
-    repo_id = cfg.source_hf.train_id if split == "train" else cfg.source_hf.eval_id
+    assert isinstance(source, DatasetSourceHF)
+    repo_id = source.train_id if split == "train" else source.eval_id
     if not repo_id:
         raise FileNotFoundError(f"{split}_repo_not_configured")
     hf_token = _resolve_hf_token()
@@ -349,10 +351,11 @@ def _load_for_validation(project_root: Path, cfg: Any, *, split: Split, max_samp
     directly. HF: stream with `take(max_samples)`."""
     from datasets import Dataset, load_dataset
 
-    source_type = cfg.get_source_type()
-    if source_type == SOURCE_TYPE_LOCAL:
-        assert cfg.source_local is not None
-        raw_path = cfg.source_local.local_paths.train if split == "train" else cfg.source_local.local_paths.eval
+    from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
+    source = cfg.source
+    if isinstance(source, DatasetSourceLocal):
+        raw_path = source.local_paths.train if split == "train" else source.local_paths.eval
         if not raw_path:
             raise FileNotFoundError(f"{split}_path_not_configured")
         path = _resolve_local_path(project_root, raw_path)
@@ -363,8 +366,8 @@ def _load_for_validation(project_root: Path, cfg: Any, *, split: Split, max_samp
             ds = ds.select(range(max_samples))
         return ds
 
-    assert cfg.source_hf is not None
-    repo_id = cfg.source_hf.train_id if split == "train" else cfg.source_hf.eval_id
+    assert isinstance(source, DatasetSourceHF)
+    repo_id = source.train_id if split == "train" else source.eval_id
     if not repo_id:
         raise FileNotFoundError(f"{split}_repo_not_configured")
     hf_token = _resolve_hf_token()

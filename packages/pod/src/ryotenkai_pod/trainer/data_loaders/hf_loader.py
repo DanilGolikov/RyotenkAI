@@ -167,19 +167,25 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
         """
         from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
 
+        from ryotenkai_shared.config import DatasetSourceHF
+
         try:
             # Get dataset config for this phase
             dataset_config = self.config.get_dataset_for_strategy(phase)
+            source = dataset_config.source
 
-            if dataset_config.source_hf is None:
+            if not isinstance(source, DatasetSourceHF):
                 return Err(
                     DataLoaderError(
-                        message=f"source_type='{SOURCE_TYPE_HUGGINGFACE}' requires source_hf",
+                        message=(
+                            f"HuggingFaceDatasetLoader requires source.kind='huggingface'; "
+                            f"got {source.kind!r}"
+                        ),
                         code="DATA_LOADER_HF_SOURCE_MISSING",
                     )
                 )
 
-            dataset_id = dataset_config.source_hf.train_id
+            dataset_id = source.train_id
             max_samples = dataset_config.max_samples
 
             if not dataset_id:

@@ -69,7 +69,7 @@ class ExecutionSummaryReporter:
     def _print_configuration_section(self) -> None:
         console.print("\n[bold cyan]Configuration:[/bold cyan]")
         console.print(f"   Model: {self._config.model.name}")
-        console.print(f"   Training Type: {self._config.training.type}")
+        console.print(f"   Training Type: {self._config.training.adapter.kind}")
         console.print(f"   4-bit Quantization: {self._config.training.get_effective_load_in_4bit()}")
         try:
             adapter_cfg = self._config.get_adapter_config()
@@ -85,16 +85,19 @@ class ExecutionSummaryReporter:
             console.print(f"   Strategies: {' -> '.join(s.strategy_type.upper() for s in strategies)}")
 
     def _print_dataset_section(self, context: dict[str, Any]) -> None:
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
         default_ds = self._config.get_primary_dataset()
+        source = default_ds.source
         console.print("\n[bold cyan]Dataset:[/bold cyan]")
-        if default_ds.get_source_type() == SOURCE_TYPE_HUGGINGFACE and default_ds.source_hf is not None:
-            console.print(f"   Train (HF): {default_ds.source_hf.train_id}")
-            if default_ds.source_hf.eval_id:
-                console.print(f"   Eval  (HF): {default_ds.source_hf.eval_id}")
-        elif default_ds.source_local is not None:
-            console.print(f"   Train (local): {default_ds.source_local.local_paths.train}")
-            if default_ds.source_local.local_paths.eval:
-                console.print(f"   Eval  (local): {default_ds.source_local.local_paths.eval}")
+        if isinstance(source, DatasetSourceHF):
+            console.print(f"   Train (HF): {source.train_id}")
+            if source.eval_id:
+                console.print(f"   Eval  (HF): {source.eval_id}")
+        elif isinstance(source, DatasetSourceLocal):
+            console.print(f"   Train (local): {source.local_paths.train}")
+            if source.local_paths.eval:
+                console.print(f"   Eval  (local): {source.local_paths.eval}")
         else:
             console.print("   [dim]Dataset source not configured[/dim]")
         if StageNames.DATASET_VALIDATOR in context:

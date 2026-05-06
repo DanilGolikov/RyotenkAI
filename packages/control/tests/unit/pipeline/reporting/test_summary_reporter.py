@@ -27,15 +27,15 @@ from ryotenkai_control.pipeline.stages import StageNames
 def _build_config() -> MagicMock:
     cfg = MagicMock()
     cfg.model.name = "gpt2"
-    cfg.training.type = "sft"
+    cfg.training.adapter = MagicMock()
+    cfg.training.adapter.kind = "sft"
     cfg.training.get_effective_load_in_4bit.return_value = False
     cfg.training.hyperparams.per_device_train_batch_size = 4
     cfg.training.get_strategy_chain.return_value = []
     cfg.get_adapter_config.side_effect = ValueError("no adapter")
     primary_ds = MagicMock()
-    primary_ds.get_source_type.return_value = "local"
-    primary_ds.source_hf = None
-    primary_ds.source_local = None
+    # source unset (bare MagicMock, not DatasetSourceLocal/HF) — falls into the
+    # "Dataset source not configured" branch, matching the original test intent.
     primary_ds.adapter_type = "auto"
     cfg.get_primary_dataset.return_value = primary_ds
     return cfg

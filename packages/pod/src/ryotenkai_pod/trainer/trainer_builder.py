@@ -107,8 +107,8 @@ def create_peft_config(config: PipelineConfig) -> LoraConfig | AdaLoraConfig:
         peft_config = create_peft_config(config)
         trainer = SFTTrainer(model, ..., peft_config=peft_config)
     """
-    training_type = config.training.type.lower()
     adapter_cfg = config.get_adapter_config()
+    training_type = adapter_cfg.kind.lower()
 
     # Handle target_modules
     target_modules = adapter_cfg.target_modules

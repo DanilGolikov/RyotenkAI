@@ -18,7 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     SPLIT_TRAIN,
     VALIDATION_MAX_SAMPLES_FAST,
@@ -53,18 +52,23 @@ class DatasetSplitLoader:
         Returns ``(None, None)`` when no eval is configured for the
         dataset, when load fails, or on unexpected exceptions.
         """
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
         try:
             loader = self._loader_factory.create_for_dataset(dataset_config)
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE:
-                if dataset_config.source_hf is None or not dataset_config.source_hf.eval_id:
+            source = dataset_config.source
+            if isinstance(source, DatasetSourceHF):
+                if not source.eval_id:
                     return None, None
                 ds = self._load(dataset_config, loader, split_name="eval")
-                return ds, dataset_config.source_hf.eval_id
+                return ds, source.eval_id
 
-            if dataset_config.source_local is None or not dataset_config.source_local.local_paths.eval:
-                return None, None
-            ds = self._load(dataset_config, loader, split_name="eval")
-            return ds, dataset_config.source_local.local_paths.eval
+            if isinstance(source, DatasetSourceLocal):
+                if not source.local_paths.eval:
+                    return None, None
+                ds = self._load(dataset_config, loader, split_name="eval")
+                return ds, source.local_paths.eval
+            return None, None
         except Exception:
             return None, None
 
@@ -80,11 +84,14 @@ class DatasetSplitLoader:
     @staticmethod
     def get_train_ref(dataset_config: Any) -> str:
         """Stable train reference string for logging / events."""
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
         try:
-            if dataset_config.get_source_type() == SOURCE_TYPE_HUGGINGFACE and dataset_config.source_hf is not None:
-                return dataset_config.source_hf.train_id
-            if dataset_config.source_local is not None:
-                return dataset_config.source_local.local_paths.train
+            source = dataset_config.source
+            if isinstance(source, DatasetSourceHF):
+                return source.train_id
+            if isinstance(source, DatasetSourceLocal):
+                return source.local_paths.train
         except Exception:
             pass
         return "unknown"
@@ -103,12 +110,14 @@ class DatasetSplitLoader:
         """Load a split: HF streaming or local-file path."""
         from datasets import IterableDataset as HFIterableDataset
 
-        source_type = dataset_config.get_source_type()
+        from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
+
+        source = dataset_config.source
         validation_mode = getattr(
             getattr(dataset_config, VALIDATIONS_ATTR, None), VALIDATION_MODE_ATTR, VALIDATION_MODE_FAST
         )
 
-        if source_type == SOURCE_TYPE_HUGGINGFACE:
+        if isinstance(source, DatasetSourceHF):
             try:
                 from datasets import load_dataset
 
@@ -116,9 +125,7 @@ class DatasetSplitLoader:
                 if hasattr(loader, "token"):
                     token = loader.token
 
-                src = (
-                    dataset_config.source_hf.train_id if split_name == SPLIT_TRAIN else dataset_config.source_hf.eval_id
-                )
+                src = source.train_id if split_name == SPLIT_TRAIN else source.eval_id
                 if not src:
                     return None
 
@@ -150,11 +157,10 @@ class DatasetSplitLoader:
                 return None
 
         # Local files
-        source_local = dataset_config.source_local
-        if source_local is None:
+        if not isinstance(source, DatasetSourceLocal):
             return None
         local_path_str = (
-            source_local.local_paths.train if split_name == SPLIT_TRAIN else source_local.local_paths.eval
+            source.local_paths.train if split_name == SPLIT_TRAIN else source.local_paths.eval
         )
         if not local_path_str:
             return None

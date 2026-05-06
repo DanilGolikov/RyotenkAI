@@ -264,9 +264,12 @@ class TrainerFactory:
         }
 
         # Add PEFT config (Common logic)
-        # All strategies need adapters when using QLoRA/LoRA
-        # Note: We could move this to strategy too, but it seems generic for the pipeline
-        if hasattr(config.training, "type") and config.training.type in ("qlora", "lora", "adalora"):
+        # All shipped adapter kinds (lora/qlora/adalora) need a PEFT config —
+        # the discriminated union restricts ``adapter.kind`` to that set, so
+        # we can call ``create_peft_config`` unconditionally. If/when a
+        # non-PEFT adapter kind is added, ``create_peft_config`` itself
+        # MUST raise — the dispatcher stays here generic.
+        if hasattr(config, "training") and hasattr(config.training, "adapter"):
             from ryotenkai_pod.trainer.trainer_builder import create_peft_config
 
             # PEFT double-apply guard. When a model is loaded from a HF checkpoint

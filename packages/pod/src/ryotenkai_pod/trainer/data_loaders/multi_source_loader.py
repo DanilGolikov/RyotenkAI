@@ -80,12 +80,12 @@ class MultiSourceDatasetLoader:
 
     def load_for_phase(self, phase: StrategyPhaseConfig) -> Any:
         dataset_config = self.config.get_dataset_for_strategy(phase)
-        source_type = dataset_config.get_source_type()
-        loader = self._get_loader(source_type)
+        source_kind = dataset_config.source.kind
+        loader = self._get_loader(source_kind)
 
         logger.debug(
             f"[{self._log_prefix}:PHASE_LOAD] phase={getattr(phase, 'strategy_type', None)}, "
-            f"dataset={getattr(phase, 'dataset', None)}, source_type={source_type}, loader={type(loader).__name__}"
+            f"dataset={getattr(phase, 'dataset', None)}, source_type={source_kind}, loader={type(loader).__name__}"
         )
 
         return loader.load_for_phase(phase)

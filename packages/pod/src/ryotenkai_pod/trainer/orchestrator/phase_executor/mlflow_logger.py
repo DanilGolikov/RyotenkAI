@@ -265,7 +265,7 @@ class MlflowPhaseLogger:
             else:
                 self._mlflow_manager.log_dataset_info(
                     name=dataset_name,
-                    source=dataset_config.get_source_type(),
+                    source=dataset_config.source.kind,
                     num_rows=num_samples,
                     extra_tags={
                         TAG_PHASE_IDX: str(phase_idx),
