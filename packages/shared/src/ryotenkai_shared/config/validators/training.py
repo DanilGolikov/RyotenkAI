@@ -11,20 +11,19 @@ if TYPE_CHECKING:
 
 
 def validate_training_adapter_requires_block(cfg: TrainingOnlyConfig) -> None:
-    """Cross-field rules for TrainingOnlyConfig adapter blocks.
+    """Precision-consistency validator (post-discriminated-unions).
 
-    Each training type must have its own named config block:
-    - type='lora'    → requires 'training.lora:' section
-    - type='qlora'   → requires 'training.qlora:' section
-    - type='adalora' → requires 'training.adalora:' section
+    The legacy "type=X requires X block" rules are now redundant — Pydantic's
+    discriminated union enforces structural correctness at YAML load
+    (kind=qlora MUST be a QloraConfig payload, etc.).
+
+    What remains is the precision-conflict check: fp16 AMP cannot run with
+    a bfloat16 LoRA compute path. We keep this as a model-level cross-check
+    because it spans hyperparams + adapter — no schema-level place to put it.
+
+    Backward-compat: name preserved so any external scripts that import this
+    helper keep working until PR-9.
     """
-    if cfg.type == "lora" and cfg.lora is None:
-        raise ValueError("training.type='lora' requires 'training.lora:' section in config")
-    if cfg.type == "qlora" and cfg.qlora is None:
-        raise ValueError("training.type='qlora' requires 'training.qlora:' section in config")
-    if cfg.type == "adalora" and cfg.adalora is None:
-        raise ValueError("training.type='adalora' requires 'training.adalora:' section in config")
-
     _validate_precision_consistency(cfg)
 
 
@@ -36,9 +35,9 @@ def _validate_precision_consistency(cfg: TrainingOnlyConfig) -> None:
     PyTorch GradScaler (fp16 AMP) crashes on bfloat16 gradients with:
         "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'
 
-    This validator catches two cases:
-    1. QLoRA with explicit bnb_4bit_compute_dtype=bfloat16 + fp16=True
-    2. Any adapter type with fp16=True (risky; bf16=True is recommended)
+    Two cases:
+    1. QLoRA with explicit bnb_4bit_compute_dtype=bfloat16 + fp16=True ⇒ raise.
+    2. Any adapter kind with fp16=True ⇒ warning (bf16=True is recommended).
     """
     hp = getattr(cfg, "hyperparams", None)
     if hp is None:
@@ -47,26 +46,24 @@ def _validate_precision_consistency(cfg: TrainingOnlyConfig) -> None:
     if not uses_fp16:
         return
 
-    if cfg.type == "qlora":
-        adapter = cfg.qlora
-        if adapter is not None:
-            compute_dtype = getattr(adapter, "bnb_4bit_compute_dtype", "bfloat16")
-            if compute_dtype == "bfloat16":
-                raise ValueError(
-                    "Precision conflict: hyperparams.fp16=true with bnb_4bit_compute_dtype='bfloat16'. "
-                    "GradScaler (fp16 AMP) cannot operate on BFloat16 tensors. "
-                    "Fix: use bf16: true instead of fp16: true."
-                )
+    adapter = cfg.adapter
+    if adapter.kind == "qlora":
+        compute_dtype = getattr(adapter, "bnb_4bit_compute_dtype", "bfloat16")
+        if compute_dtype == "bfloat16":
+            raise ValueError(
+                "Precision conflict: hyperparams.fp16=true with bnb_4bit_compute_dtype='bfloat16'. "
+                "GradScaler (fp16 AMP) cannot operate on BFloat16 tensors. "
+                "Fix: use bf16: true instead of fp16: true."
+            )
 
-    if cfg.type in ("lora", "qlora", "adalora"):
-        from ryotenkai_shared.utils.logger import logger
+    from ryotenkai_shared.utils.logger import logger
 
-        logger.warning(
-            "[CFG:PRECISION] fp16=true with %s adapter is risky: TRL/SFTTrainer creates "
-            "LoRA params in the model's native dtype (often bfloat16), which crashes "
-            "GradScaler. Recommended: use bf16: true instead of fp16: true.",
-            cfg.type,
-        )
+    logger.warning(
+        "[CFG:PRECISION] fp16=true with %s adapter is risky: TRL/SFTTrainer creates "
+        "LoRA params in the model's native dtype (often bfloat16), which crashes "
+        "GradScaler. Recommended: use bf16: true instead of fp16: true.",
+        adapter.kind,
+    )
 
 
 def validate_lora_config(cfg: LoraConfig) -> None:

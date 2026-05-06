@@ -96,8 +96,7 @@ def _pipeline_cfg(*, training: TrainingOnlyConfig, providers: dict, datasets: di
 def test_rule_1_strategies_chain_invalid_transition_warns_only() -> None:
     with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
         cfg = TrainingOnlyConfig(
-            type="qlora",
-            qlora=_lora_cfg(),
+            adapter=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="sft", dataset="sft_data"),
@@ -113,8 +112,7 @@ def test_rule_2_dataset_reference_must_exist_in_registry() -> None:
         _pipeline_cfg(
             training=TrainingOnlyConfig(
                 provider=None,
-                type="qlora",
-                qlora=_lora_cfg(),
+                adapter=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="missing")],
             ),
@@ -128,8 +126,7 @@ def test_rule_2_dataset_reference_preserves_config_error_code() -> None:
         _pipeline_cfg(
             training=TrainingOnlyConfig(
                 provider=None,
-                type="qlora",
-                qlora=_lora_cfg(),
+                adapter=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="missing")],
             ),
@@ -143,8 +140,7 @@ def test_rule_3_training_provider_must_exist_in_providers_registry_if_set() -> N
         _pipeline_cfg(
             training=TrainingOnlyConfig(
                 provider="runpod",
-                type="qlora",
-                qlora=_lora_cfg(),
+                adapter=_lora_cfg(),
                 hyperparams=_hp_cfg(),
                 strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="default")],
             ),
@@ -153,14 +149,17 @@ def test_rule_3_training_provider_must_exist_in_providers_registry_if_set() -> N
         )
 
 
-def test_rule_4_adalora_requires_adalora_block() -> None:
-    with pytest.raises(ValidationError, match=r"requires 'training\.adalora:'"):
-        TrainingOnlyConfig(
-            type="adalora",
-            lora=_lora_cfg(),  # optional field, but adalora: block is missing → fails
-            hyperparams=_hp_cfg(),
-            strategies=[StrategyPhaseConfig(strategy_type="sft")],
-        )
+def test_rule_4_unknown_adapter_kind_rejected() -> None:
+    """Post-discriminated-unions: unknown adapter.kind is rejected by the
+    Tag-based discriminator. The legacy "adalora requires adalora block"
+    rule is replaced — kind=adalora WITHOUT init_r/target_r/total_step
+    fails with missing required fields rather than 'requires block'."""
+    with pytest.raises(ValidationError):
+        TrainingOnlyConfig.model_validate({
+            "adapter": {"kind": "no_such_kind"},
+            "hyperparams": _hp_cfg().model_dump(),
+            "strategies": [{"strategy_type": "sft"}],
+        })
 
 
 def test_rule_5_inference_enabled_requires_supported_provider_engine() -> None:

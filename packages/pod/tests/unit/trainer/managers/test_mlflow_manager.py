@@ -85,8 +85,7 @@ def _mk_cfg(
     return PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
-            type="qlora",
-            qlora=_lora_cfg(),
+            adapter=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],
         ),
@@ -414,8 +413,7 @@ def test_log_dataset_config_single_dataset(monkeypatch: pytest.MonkeyPatch) -> N
     config = PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
-            type="qlora",
-            qlora=_lora_cfg(),
+            adapter=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft", dataset="default")],
         ),
@@ -462,8 +460,7 @@ def test_log_dataset_config_multiple_datasets(monkeypatch: pytest.MonkeyPatch) -
     config = PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
-            type="qlora",
-            qlora=_lora_cfg(),
+            adapter=_lora_cfg(),
             hyperparams=_hp_cfg(),
             strategies=[
                 StrategyPhaseConfig(strategy_type="cpt", dataset="corpus"),

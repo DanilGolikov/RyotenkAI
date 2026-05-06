@@ -7,7 +7,8 @@ from pydantic import Field, field_validator, model_validator
 from ryotenkai_shared.constants import STRATEGY_SFT
 
 from ..base import StrictBaseModel
-from .constants import TRAINING_TYPE_ADALORA, TRAINING_TYPE_QLORA
+from .adapter import AdapterConfigUnion
+from .constants import TRAINING_TYPE_QLORA  # noqa: F401  — re-exported for callers (PR-9 cleanup)
 
 # NOTE: Runtime import is required for Pydantic field type.
 from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
@@ -20,34 +21,43 @@ if TYPE_CHECKING:
 
 
 class TrainingOnlyConfig(StrictBaseModel):
-    """
-    Training configuration with unified lora section and adalora support.
+    """Training configuration with discriminated adapter union.
 
-    Architecture:
-    - type: "qlora" | "lora" | "adalora"
-    - hyperparams: GlobalHyperparametersConfig (global defaults)
-    - lora: LoraConfig    (use when type='lora')
-    - qlora: QloraConfig  (use when type='qlora', LoRA + bnb_4bit_* quantization)
-    - adalora: AdaLoraConfig (use when type='adalora')
-    - provider: Reference to provider from providers registry
+    Architecture (post-discriminated-unions refactor):
+      * ``adapter: AdapterConfigUnion`` — single Tag-based discriminated
+        union over LoraConfig / QloraConfig / AdaLoraConfig. The
+        ``kind`` discriminator on each variant tells Pydantic which
+        class to validate against.
+      * ``hyperparams: GlobalHyperparametersConfig`` — global defaults
+        consumed by the trainer.
+      * ``strategies: list[StrategyPhaseConfig]`` — training strategy
+        chain (single or multi-phase).
+      * ``provider: str | None`` — reference into the providers
+        registry.
 
-    Each type has its own named config block:
-    - type: "qlora"   → qlora: ... (4-bit quantization + LoRA, uses bnb_4bit_* settings)
-    - type: "lora"    → lora: ...  (full precision + LoRA)
-    - type: "adalora" → adalora: ... (adaptive rank allocation)
+    Example QLoRA YAML::
 
-    Example QLoRA:
         training:
-          type: qlora
+          adapter:
+            kind: qlora
+            r: 16
+            lora_alpha: 32
+            lora_dropout: 0.05
+            bias: none
+            target_modules: all-linear
+            use_dora: false
+            use_rslora: false
+            init_lora_weights: gaussian
           hyperparams:
             epochs: 3
             learning_rate: 2e-4
             per_device_train_batch_size: 4
-          qlora:
-            r: 16
-            lora_alpha: 32
           strategies:
             - strategy_type: sft
+
+    Backward compat:
+      * ``type`` is preserved as a read-only property forwarding to
+        ``self.adapter.kind`` until PR-9 finalizes call-site migration.
     """
 
     # =========================================================================
@@ -55,35 +65,19 @@ class TrainingOnlyConfig(StrictBaseModel):
     # =========================================================================
     provider: str | None = Field(None, description="Provider name from 'providers' registry.")
 
-    type: str = Field(
-        TRAINING_TYPE_QLORA,
-        description="Training type: qlora, lora, adalora",
+    # =========================================================================
+    # ADAPTER CONFIGURATION (Tag-based discriminated union)
+    # =========================================================================
+    adapter: AdapterConfigUnion = Field(  # type: ignore[valid-type]
+        ...,
+        description=(
+            "Adapter config. Pydantic dispatches on ``kind`` "
+            "(``lora`` | ``qlora`` | ``adalora``) to the matching class."
+        ),
     )
 
     # =========================================================================
-    # ADAPTER CONFIGURATIONS
-    # Each training type has its own named block:
-    #   - "lora"    -> lora: ...
-    #   - "qlora"   -> qlora: ...
-    #   - "adalora" -> adalora: ...
-    # (kept off the leading "type:" pattern so mypy's type-comment parser
-    # doesn't try to interpret the line.)
-    # =========================================================================
-    lora: LoraConfig | None = Field(
-        None,
-        description="LoRA config (use when type='lora')",
-    )
-    qlora: QloraConfig | None = Field(
-        None,
-        description="QLoRA config (use when type='qlora'). Extends LoRA with bnb_4bit_* quantization settings.",
-    )
-    adalora: AdaLoraConfig | None = Field(
-        None,
-        description="AdaLoRA config (use when type='adalora')",
-    )
-
-    # =========================================================================
-    # QUANTIZATION (auto-set based on type, but can be overridden)
+    # QUANTIZATION (auto-set based on adapter.kind, but can be overridden)
     # =========================================================================
     load_in_8bit: bool = Field(False, description="8-bit quantization (alternative to 4-bit)")
 
@@ -116,22 +110,25 @@ class TrainingOnlyConfig(StrictBaseModel):
         ),
     )
 
-    @field_validator("type")
-    @classmethod
-    def validate_type(cls, v: str) -> str:
-        allowed = ["qlora", "lora", "adalora"]
-        if v.lower() not in allowed:
-            raise ValueError(f"Training type must be one of {allowed}")
-        return v.lower()
+    # =========================================================================
+    # BACKWARD-COMPAT: read-only ``type`` property
+    # =========================================================================
+    @property
+    def type(self) -> str:
+        """Read-only forwarder to ``self.adapter.kind``.
+
+        Pre-discriminated-union code paths read ``cfg.training.type`` for
+        logging / branching. Property keeps those working until PR-9
+        migrates them to ``cfg.training.adapter.kind`` and deletes this.
+
+        Deprecated — new code should use ``self.adapter.kind`` directly.
+        """
+        return self.adapter.kind
 
     @field_validator("strategies")
     @classmethod
     def validate_strategies_chain(cls, v: list[StrategyPhaseConfig]) -> list[StrategyPhaseConfig]:
-        """
-        Fail-fast validation for critical strategy-chain issues.
-
-        Invalid ordering is warning-only; structural issues must still fail at config load time.
-        """
+        """Fail-fast validation for critical strategy-chain issues."""
         validation = validate_strategy_chain(v)
         if validation.is_failure():
             raise ValueError(str(validation.unwrap_err()))
@@ -139,50 +136,29 @@ class TrainingOnlyConfig(StrictBaseModel):
 
     @model_validator(mode="after")
     def _run_model_validators(self) -> TrainingOnlyConfig:
-        """
-        Centralized cross-field validators for this config.
-
-        Convention:
-        - Keep ONE `@model_validator(mode="after")` method per config model.
-        - Enumerate and call pure validator functions from `src.config.validators.*`.
-        """
+        """Cross-field validators (precision-consistency post-discriminated-unions)."""
         # Local import to avoid circular imports.
         from ..validators.training import validate_training_adapter_requires_block
 
         validate_training_adapter_requires_block(self)
         return self
 
+    # =========================================================================
+    # ACCESSORS
+    # =========================================================================
     def get_effective_load_in_4bit(self) -> bool:
-        """Get effective 4-bit quantization setting based on type."""
-        return self.type == TRAINING_TYPE_QLORA
+        """4-bit quantization is implied by ``adapter.kind == 'qlora'``."""
+        return self.adapter.kind == "qlora"
 
     def get_effective_optimizer(self) -> str:
-        """Get effective optimizer based on training type."""
+        """Optimizer default depends on adapter kind (qlora ⇒ paged_adamw_8bit)."""
         if self.hyperparams.optim is not None:
             return self.hyperparams.optim
-        return "paged_adamw_8bit" if self.type == TRAINING_TYPE_QLORA else "adamw_torch"
+        return "paged_adamw_8bit" if self.adapter.kind == "qlora" else "adamw_torch"
 
     def get_adapter_config(self) -> LoraConfig | QloraConfig | AdaLoraConfig:
-        """
-        Get the adapter config matching the training type.
-
-        Returns:
-            LoraConfig for type="lora"   (from lora: block, no bnb_* fields)
-            QloraConfig for type="qlora" (from qlora: block, adds bnb_4bit_*)
-            AdaLoraConfig for type="adalora" (from adalora: block)
-        """
-        if self.type == TRAINING_TYPE_ADALORA:
-            if self.adalora is None:
-                raise ValueError("type='adalora' requires 'training.adalora:' section in config")
-            return self.adalora
-        if self.type == TRAINING_TYPE_QLORA:
-            if self.qlora is None:
-                raise ValueError("type='qlora' requires 'training.qlora:' section in config")
-            return self.qlora
-        # type='lora'
-        if self.lora is None:
-            raise ValueError("type='lora' requires 'training.lora:' section in config")
-        return self.lora
+        """Return the typed adapter config — already discriminator-narrowed."""
+        return self.adapter
 
     def get_strategy_chain(self) -> list[StrategyPhaseConfig]:
         """Get the strategy chain."""
@@ -210,7 +186,7 @@ class TrainingOnlyConfig(StrictBaseModel):
     @staticmethod
     def has_adapter() -> bool:
         """Check if training uses an adapter."""
-        return True  # All types use adapters now (no full_ft)
+        return True  # All adapter kinds use adapters now (no full_ft).
 
 
 # Backward-compatible alias (used across codebase)

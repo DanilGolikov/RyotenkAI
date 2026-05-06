@@ -15,6 +15,7 @@ from ryotenkai_shared.config import (
     AdaLoraConfig,
     GlobalHyperparametersConfig,
     LoraConfig,
+    QloraConfig,
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
@@ -57,54 +58,75 @@ def _adalora_cfg() -> AdaLoraConfig:
     )
 
 
-class TestValidateTrainingAdapterRequiresBlock:
-    def test_positive_qlora_with_block(self) -> None:
-        cfg = SimpleNamespace(type="qlora", lora=None, qlora=object(), adalora=None)
-        validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
+class TestDiscriminatedAdapter:
+    """Post-discriminated-unions: the legacy "type=X requires X block"
+    rules are gone (Pydantic's Tag-based union enforces this structurally
+    at YAML load). What remains is the precision-consistency check
+    inside ``validate_training_adapter_requires_block``."""
 
-    def test_positive_lora_with_block(self) -> None:
-        cfg = SimpleNamespace(type="lora", lora=object(), qlora=None, adalora=None)
-        validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
-
-    def test_negative_qlora_missing_block(self) -> None:
-        cfg = SimpleNamespace(type="qlora", lora=None, qlora=None, adalora=None)
-        with pytest.raises(ValueError, match=r"training\.type='qlora' requires 'training\.qlora:'"):
-            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
-
-    def test_negative_lora_missing_block(self) -> None:
-        cfg = SimpleNamespace(type="lora", lora=None, qlora=None, adalora=None)
-        with pytest.raises(ValueError, match=r"training\.type='lora' requires 'training\.lora:'"):
-            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
-
-    def test_negative_adalora_requires_block(self) -> None:
-        cfg = SimpleNamespace(type="adalora", lora=None, qlora=None, adalora=None)
-        with pytest.raises(ValueError, match=r"training\.type='adalora' requires 'training\.adalora:'"):
-            validate_training_adapter_requires_block(cfg)  # type: ignore[arg-type]
-
-    def test_regression_wiring_qlora_missing_block_raises_validation_error(self) -> None:
-        with pytest.raises(ValidationError, match=r"training\.type='qlora' requires 'training\.qlora:'"):
-            _ = TrainingOnlyConfig(
-                type="qlora",
-                hyperparams=_hp_cfg(),
-                strategies=[StrategyPhaseConfig(strategy_type="sft")],
-            )
-
-    def test_regression_wiring_adalora_missing_block_raises_validation_error(self) -> None:
-        with pytest.raises(ValidationError, match=r"training\.type='adalora' requires 'training\.adalora:'"):
-            _ = TrainingOnlyConfig(
-                type="adalora",
-                hyperparams=_hp_cfg(),
-                adalora=None,
-                strategies=[StrategyPhaseConfig(strategy_type="sft")],
-            )
-
-    def test_positive_trainingonlyconfig_adalora_with_block(self) -> None:
+    def test_positive_qlora_adapter_builds(self) -> None:
         _ = TrainingOnlyConfig(
-            type="adalora",
+            adapter=QloraConfig(
+                r=8,
+                lora_alpha=16,
+                lora_dropout=0.05,
+                bias="none",
+                target_modules="all-linear",
+                use_dora=False,
+                use_rslora=False,
+                init_lora_weights="gaussian",
+            ),
             hyperparams=_hp_cfg(),
-            adalora=_adalora_cfg(),
             strategies=[StrategyPhaseConfig(strategy_type="sft")],
         )
+
+    def test_positive_lora_adapter_builds(self) -> None:
+        _ = TrainingOnlyConfig(
+            adapter=_lora_cfg(),
+            hyperparams=_hp_cfg(),
+            strategies=[StrategyPhaseConfig(strategy_type="sft")],
+        )
+
+    def test_positive_adalora_adapter_builds(self) -> None:
+        _ = TrainingOnlyConfig(
+            adapter=_adalora_cfg(),
+            hyperparams=_hp_cfg(),
+            strategies=[StrategyPhaseConfig(strategy_type="sft")],
+        )
+
+    def test_unknown_kind_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TrainingOnlyConfig.model_validate({
+                "adapter": {"kind": "no_such_adapter"},
+                "hyperparams": _hp_cfg().model_dump(),
+                "strategies": [{"strategy_type": "sft"}],
+            })
+
+    def test_kind_mismatch_field_set_rejected(self) -> None:
+        """kind=lora with qlora-only field bnb_4bit_quant_type ⇒ extra=forbid rejects."""
+        with pytest.raises(ValidationError, match="Extra inputs|extra"):
+            TrainingOnlyConfig.model_validate({
+                "adapter": {
+                    "kind": "lora",
+                    "r": 8, "lora_alpha": 16, "lora_dropout": 0.05,
+                    "bias": "none", "target_modules": "all-linear",
+                    "use_dora": False, "use_rslora": False,
+                    "init_lora_weights": "gaussian",
+                    "bnb_4bit_quant_type": "nf4",  # qlora-only
+                },
+                "hyperparams": _hp_cfg().model_dump(),
+                "strategies": [{"strategy_type": "sft"}],
+            })
+
+    def test_validate_training_adapter_requires_block_no_op_today(self) -> None:
+        """Legacy validator name preserved; today only does precision-check.
+        With fp16=False (default), it's a no-op."""
+        cfg = TrainingOnlyConfig(
+            adapter=_lora_cfg(),
+            hyperparams=_hp_cfg(),
+            strategies=[StrategyPhaseConfig(strategy_type="sft")],
+        )
+        validate_training_adapter_requires_block(cfg)  # no-op
 
 
 class TestValidateLoraConfig:

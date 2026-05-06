@@ -93,9 +93,8 @@ def _mk_cfg() -> PipelineConfig:
     return PipelineConfig(
         model=_model_cfg(),
         training=TrainingOnlyConfig(
-            type="qlora",
             provider="runpod",
-            qlora=_lora_cfg(),
+            adapter=_lora_cfg(),
             hyperparams=_hp_global_cfg(),
             strategies=[
                 StrategyPhaseConfig(

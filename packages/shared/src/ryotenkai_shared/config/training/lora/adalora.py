@@ -20,7 +20,8 @@ class AdaLoraConfig(StrictBaseModel):
     AdaLoRA dynamically allocates rank budget during training,
     pruning less important singular values while keeping important ones.
 
-    Used with training.type: "adalora"
+    Used with ``training.adapter.kind: "adalora"`` (Tag-based discriminated
+    union — see ``..adapter:_AdapterUnion``).
 
     REQUIRED fields (explicit config v6.0):
     - AdaLoRA core: init_r, target_r
@@ -29,6 +30,8 @@ class AdaLoraConfig(StrictBaseModel):
     OPTIONAL fields (scheduling + advanced):
     - tinit, tfinal, delta_t, beta1, beta2
     """
+
+    kind: Literal["adalora"] = "adalora"
 
     # =========================================================================
     # REQUIRED: AdaLoRA-specific parameters

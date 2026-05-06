@@ -387,8 +387,8 @@ class TestTrainingConfigIntegration:
     def test_training_config_valid_chain(self):
         """TrainingOnlyConfig with valid chain should work."""
         config = TrainingOnlyConfig(
-            type="qlora",
-            qlora=_MIN_LORA,
+            adapter={"kind": "qlora", **_MIN_LORA},
+            
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sft", dataset="ds_sft"), _mk_phase("dpo", dataset="ds_dpo")],
         )
@@ -399,8 +399,8 @@ class TestTrainingConfigIntegration:
         """TrainingOnlyConfig should still build when ordering is only semantically invalid."""
         with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             config = TrainingOnlyConfig(
-                type="qlora",
-                qlora=_MIN_LORA,
+                adapter={"kind": "qlora", **_MIN_LORA},
+                
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
                     _mk_phase("cot", dataset="ds_cot"),
@@ -417,8 +417,8 @@ class TestTrainingConfigIntegration:
         """Terminal strategy followed by another phase should only warn."""
         with patch("ryotenkai_shared.utils.logger.logger.warning") as mock_warning:
             config = TrainingOnlyConfig(
-                type="qlora",
-                qlora=_MIN_LORA,
+                adapter={"kind": "qlora", **_MIN_LORA},
+                
                 hyperparams=_MIN_GLOBAL_HYPERPARAMS,
                 strategies=[
                     _mk_phase("sft", dataset="ds_sft"),
@@ -434,8 +434,8 @@ class TestTrainingConfigIntegration:
     def test_training_config_single_strategy(self):
         """TrainingOnlyConfig with single strategy should validate."""
         config = TrainingOnlyConfig(
-            type="qlora",
-            qlora=_MIN_LORA,
+            adapter={"kind": "qlora", **_MIN_LORA},
+            
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sft")],
         )
@@ -445,8 +445,8 @@ class TestTrainingConfigIntegration:
     def test_training_config_orpo_standalone(self):
         """ORPO as standalone (valid start + terminal) should work."""
         config = TrainingOnlyConfig(
-            type="qlora",
-            qlora=_MIN_LORA,
+            adapter={"kind": "qlora", **_MIN_LORA},
+            
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("orpo")],
         )
@@ -456,8 +456,8 @@ class TestTrainingConfigIntegration:
     def test_training_config_sapo_standalone(self):
         """SAPO as standalone should work."""
         config = TrainingOnlyConfig(
-            type="qlora",
-            qlora=_MIN_LORA,
+            adapter={"kind": "qlora", **_MIN_LORA},
+            
             hyperparams=_MIN_GLOBAL_HYPERPARAMS,
             strategies=[_mk_phase("sapo")],
         )
