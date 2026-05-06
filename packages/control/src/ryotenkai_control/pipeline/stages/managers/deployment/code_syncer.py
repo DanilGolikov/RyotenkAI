@@ -60,7 +60,8 @@ class CodeSyncer:
     """
 
     # Code shipping policy (post Phase B uv-workspace packagization,
-    # 2026-05-03): ship the import roots of the four pod-relevant
+    # 2026-05-03; updated PR-1..PR-15 for inference-engine plugin
+    # system, 2026-05-06): ship the import roots of the pod-relevant
     # packages so ``PYTHONPATH=<workspace>`` makes them top-level
     # importable. Each pair is ``(local_source_dir, remote_dest_name)``;
     # the rsync wrapper uses an explicit source/dest spelling so we
@@ -70,6 +71,15 @@ class CodeSyncer:
     #   * ``ryotenkai_shared`` — leaf utilities (config / Secrets /
     #     pipeline_context / observability / lifecycle Protocol).
     #     Imported by every other pod-side package.
+    #   * ``ryotenkai_engines`` — inference-engine plugin registry +
+    #     manifests + per-engine config classes (post PR-1..PR-6). The
+    #     pod imports it transitively via
+    #     ``ryotenkai_shared.config.inference.schema._engine_config_union``,
+    #     which calls ``from ryotenkai_engines import get_engine_config_union``
+    #     when Pydantic resolves ``InferenceConfig.engine``'s discriminated-
+    #     union annotation. Skipping this package yields a
+    #     ``ModuleNotFoundError`` at runner startup before FastAPI binds
+    #     the port — which is exactly what would happen on uvicorn boot.
     #   * ``ryotenkai_community`` — plugin loader / catalog / manifest.
     #     Trainer instantiates reward + dataset-validation plugins
     #     through it.
@@ -83,6 +93,7 @@ class CodeSyncer:
     # the importlinter contract forbids the pod from importing it.
     PROVIDED_PACKAGES: ClassVar[list[tuple[str, str]]] = [
         ("packages/shared/src/ryotenkai_shared", "ryotenkai_shared"),
+        ("packages/engines/src/ryotenkai_engines", "ryotenkai_engines"),
         ("packages/community/src/ryotenkai_community", "ryotenkai_community"),
         ("packages/providers/src/ryotenkai_providers", "ryotenkai_providers"),
         ("packages/pod/src/ryotenkai_pod", "ryotenkai_pod"),
