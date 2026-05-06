@@ -1,14 +1,24 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from ..base import StrictBaseModel
 
 
 def _default_validation_apply_to() -> list[Literal["train", "eval"]]:
     return ["train", "eval"]
+
+
+def _autogen_validator_id(plugin: str, params: dict[str, Any]) -> str:
+    """Stable id from plugin name + params hash. Same shape as
+    :func:`ryotenkai_shared.config.evaluation.schema._autogen_plugin_id`."""
+    payload = json.dumps(params, sort_keys=True, default=str).encode()
+    digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()[:8]
+    return f"{plugin}_{digest}"
 
 
 class DatasetValidationPluginConfig(StrictBaseModel):
@@ -21,9 +31,22 @@ class DatasetValidationPluginConfig(StrictBaseModel):
 
     Both blocks stay intentionally dynamic; concrete plugins validate their
     own required and optional keys.
+
+    ``id`` is OPTIONAL — auto-generated as
+    ``f"{plugin}_{md5(params)[:8]}"`` when not supplied. Override with an
+    explicit string for human-readable names that survive across param
+    changes. Auto-id collisions within a parent ``plugins`` list (rare:
+    identical plugin+params) are resolved with ``_2`` / ``_3`` suffixes.
     """
 
-    id: str = Field(..., description="Unique instance id used in metrics, artifacts, and reports.")
+    id: str | None = Field(
+        default=None,
+        description=(
+            "Optional unique instance id used in metrics, artifacts, and "
+            "reports. Auto-generated as ``f'{plugin}_{md5(params)[:8]}'`` "
+            "when not supplied."
+        ),
+    )
     plugin: str = Field(..., description="Registered validation plugin name, e.g. 'min_samples'.")
     apply_to: list[Literal["train", "eval"]] = Field(
         default_factory=_default_validation_apply_to,
@@ -51,6 +74,12 @@ class DatasetValidationPluginConfig(StrictBaseModel):
                 out.append(item)
         return out
 
+    @model_validator(mode="after")
+    def _autofill_id(self) -> DatasetValidationPluginConfig:
+        if not self.id:
+            self.id = _autogen_validator_id(self.plugin, self.params)
+        return self
+
 
 class DatasetValidationsConfig(StrictBaseModel):
     """Dataset validations config."""
@@ -75,11 +104,27 @@ class DatasetValidationsConfig(StrictBaseModel):
         cls,
         plugins: list[DatasetValidationPluginConfig],
     ) -> list[DatasetValidationPluginConfig]:
-        seen: set[str] = set()
+        """Resolve duplicate auto-ids by suffixing _2/_3/...; explicit
+        id collisions raise."""
+        seen_explicit: set[str] = set()
         for plugin in plugins:
-            if plugin.id in seen:
-                raise ValueError(f"Duplicate validation plugin id: {plugin.id!r}")
-            seen.add(plugin.id)
+            assert plugin.id is not None  # filled by _autofill_id
+            auto_id = _autogen_validator_id(plugin.plugin, plugin.params)
+            if plugin.id != auto_id:
+                if plugin.id in seen_explicit:
+                    raise ValueError(
+                        f"Duplicate explicit validation plugin id: {plugin.id!r}"
+                    )
+                seen_explicit.add(plugin.id)
+
+        seen_count: dict[str, int] = {}
+        for plugin in plugins:
+            base = plugin.id or ""
+            n = seen_count.get(base, 0)
+            if n > 0:
+                plugin.id = f"{base}_{n + 1}"
+            seen_count[base] = n + 1
+
         return plugins
 
 
