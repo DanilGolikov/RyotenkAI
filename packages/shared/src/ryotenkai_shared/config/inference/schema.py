@@ -71,22 +71,6 @@ class InferenceConfig(StrictBaseModel):
     )
     common: InferenceCommonConfig = Field(default_factory=InferenceCommonConfig)  # pyright: ignore[reportArgumentType]
 
-    # =========================================================================
-    # BACKWARD-COMPAT: read-only ``engines`` proxy
-    # =========================================================================
-    @property
-    def engines(self) -> _InferenceEnginesProxy:
-        """Read-only proxy that exposes ``engines.vllm`` for legacy callers.
-
-        Pre-discriminated-union code (single_node / runpod inference
-        providers, inference_deployer) reads ``cfg.inference.engines.vllm``.
-        Property keeps those working until PR-7 migrates them to DI via
-        the engine registry and PR-9 deletes the property.
-
-        Deprecated — new code should use ``cfg.inference.engine`` directly.
-        """
-        return _InferenceEnginesProxy(self.engine)
-
     @model_validator(mode="after")
     def _run_model_validators(self) -> InferenceConfig:
         """Centralized cross-field validators."""
@@ -99,57 +83,6 @@ class InferenceConfig(StrictBaseModel):
             )
         validate_inference_enabled_is_supported(self)
         return self
-
-
-class _InferenceEnginesProxy:
-    """Read-only proxy exposing ``.vllm`` (and future ``.<id>``) for the
-    pre-discriminated-union ``cfg.inference.engines.vllm`` access pattern.
-
-    Two construction shapes:
-      * ``_InferenceEnginesProxy(engine_cfg)`` — used internally by the
-        ``InferenceConfig.engines`` property.
-      * ``_InferenceEnginesProxy(vllm=…)`` — backward-compat for legacy
-        callers that still construct via ``InferenceEnginesConfig(vllm=…)``
-        (test fixtures, primarily). Resulting proxy exposes ``.vllm``.
-
-    Deleted in PR-9 alongside its property.
-    """
-
-    __slots__ = ("_engine_cfg",)
-
-    def __init__(self, engine_cfg: Any = None, **kwargs: Any) -> None:
-        # Legacy shape: InferenceEnginesConfig(vllm=...)  /  (sglang=...).
-        # Walk kwargs for the engine kind name; first non-None wins.
-        if engine_cfg is None:
-            for value in kwargs.values():
-                if value is not None:
-                    engine_cfg = value
-                    break
-        self._engine_cfg = engine_cfg
-
-    def __getattr__(self, name: str) -> Any:
-        # Avoid recursion on _engine_cfg lookup itself.
-        if name == "_engine_cfg":
-            raise AttributeError(name)
-        engine_cfg = self._engine_cfg
-        if engine_cfg is None:
-            raise AttributeError(
-                f"engines.{name} accessed but no engine config bound. "
-                f"Use cfg.inference.engine directly."
-            )
-        # Match by kind discriminator OR fall back to "vllm" historically.
-        kind = getattr(engine_cfg, "kind", None)
-        if kind == name:
-            return engine_cfg
-        # Tolerant fallback for legacy code that always says ``.vllm``
-        # regardless of the actual engine — return the bound config.
-        if name == kind:
-            return engine_cfg
-        # Strict: explicit attribute name doesn't match. Helpful error.
-        raise AttributeError(
-            f"engines.{name} accessed but cfg.engine.kind={kind!r}. "
-            f"Use cfg.inference.engine directly."
-        )
 
 
 def _engine_default_factory() -> Any:

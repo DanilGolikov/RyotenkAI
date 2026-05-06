@@ -14,7 +14,7 @@ Config v6.0 Breaking Changes:
 - GlobalHyperparametersConfig: 5 core REQUIRED
 - PhaseHyperparametersConfig: all optional (for phase overrides)
 - DatasetLocalPaths: train → REQUIRED
-- InferenceVLLMEngineConfig: merge_image, serve_image → REQUIRED (only for inference.provider=single_node)
+- VLLMEngineConfig: merge_image, serve_image → REQUIRED (only for inference.provider=single_node)
 """
 
 import pytest
@@ -24,12 +24,12 @@ from ryotenkai_shared.config import (
     AdaLoraConfig,
     DatasetLocalPaths,
     GlobalHyperparametersConfig,
-    InferenceVLLMEngineConfig,
     LoraConfig,
     ModelConfig,
     PhaseHyperparametersConfig,
     QLoRAConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 # =============================================================================
 # Category 1: POSITIVE TESTS - Happy path for all REQUIRED fields
@@ -142,8 +142,8 @@ def test_dataset_local_paths_minimal_valid():
 
 
 def test_inference_vllm_minimal_valid():
-    """InferenceVLLMEngineConfig with merge_image, serve_image REQUIRED validates."""
-    config = InferenceVLLMEngineConfig(
+    """VLLMEngineConfig with merge_image, serve_image REQUIRED validates."""
+    config = VLLMEngineConfig(
     )
     assert config.merge_image == "helix/merge:latest"
     assert config.serve_image == "vllm/vllm-openai:v0.7.0"
@@ -278,11 +278,11 @@ def test_dataset_local_paths_missing_train():
 
 def test_inference_vllm_images_optional_in_engine_config():
     """
-    InferenceVLLMEngineConfig: merge_image/serve_image optional at schema level.
+    VLLMEngineConfig: merge_image/serve_image optional at schema level.
 
     Provider-specific requirements are enforced by InferenceConfig validators.
     """
-    cfg = InferenceVLLMEngineConfig()
+    cfg = VLLMEngineConfig()
     assert cfg.merge_image is None
     assert cfg.serve_image is None
 

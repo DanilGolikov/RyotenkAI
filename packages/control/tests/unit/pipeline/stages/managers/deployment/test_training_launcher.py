@@ -30,13 +30,12 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     ModelConfig,
     PipelineConfig,
     QLoRAConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = [
@@ -112,7 +111,7 @@ def base_config() -> PipelineConfig:
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         ),
     )
 

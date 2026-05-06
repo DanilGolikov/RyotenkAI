@@ -18,8 +18,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
@@ -27,6 +25,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 SINGLE_NODE_PROVIDER_CFG: dict = {
     "connect": {"ssh": {"alias": "pc"}},
@@ -86,7 +85,7 @@ def _mk_cfg(
         inference=InferenceConfig(
             enabled=inference_enabled,
             provider=inference_provider,  # type: ignore[arg-type]
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         ),
         integrations=_integrations_cfg(),
     )

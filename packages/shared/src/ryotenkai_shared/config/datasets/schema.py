@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 from pydantic import Field
 
 from ..base import StrictBaseModel
 from .constants import (
     SOURCE_TYPE_HUGGINGFACE,
-    SOURCE_TYPE_LOCAL,
     SOURCE_URI_HUGGINGFACE_PREFIX,
 )
 from .source import DatasetSourceUnion
@@ -72,30 +71,9 @@ class DatasetConfig(StrictBaseModel):
     )
 
     # =========================================================================
-    # BACKWARD-COMPAT: legacy field forwarders
-    # =========================================================================
-    @property
-    def source_type(self) -> Literal["local", "huggingface"]:
-        """Forwards to ``self.source.kind``. Deprecated, use it directly."""
-        return cast("Literal['local', 'huggingface']", self.source.kind)
-
-    @property
-    def source_local(self) -> DatasetSourceLocal | None:
-        """Forwards to ``self.source`` when kind=local. Deprecated."""
-        return self.source if isinstance(self.source, DatasetSourceLocal) else None
-
-    @property
-    def source_hf(self) -> DatasetSourceHF | None:
-        """Forwards to ``self.source`` when kind=huggingface. Deprecated."""
-        return self.source if isinstance(self.source, DatasetSourceHF) else None
-
     # =========================================================================
     # ACCESSORS
     # =========================================================================
-    def get_source_type(self) -> Literal["local", "huggingface"]:
-        """Get the data source type via the discriminator."""
-        return cast("Literal['local', 'huggingface']", self.source.kind)
-
     def get_source_uri(self) -> str:
         """Get source URI for MLflow tracking.
 

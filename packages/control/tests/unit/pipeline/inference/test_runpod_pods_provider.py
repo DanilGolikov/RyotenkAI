@@ -150,7 +150,7 @@ def _mk_provider(
     )
     p._secrets = SimpleNamespace(runpod_api_key=api_key, hf_token="hf_test")
     p._inf_cfg = inf_cfg
-    p._engine_cfg = inf_cfg.engines.vllm
+    p._engine_cfg = inf_cfg.engine
     p._provider_cfg = prov_cfg
     p._volume_cfg = prov_cfg.inference.volume
     p._pod_cfg = prov_cfg.inference.pod

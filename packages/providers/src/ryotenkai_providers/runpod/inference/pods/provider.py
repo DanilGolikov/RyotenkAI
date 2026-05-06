@@ -65,7 +65,7 @@ _UNKNOWN_ERROR = "<unknown>"
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
-    from ryotenkai_shared.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 
 def _sha12(text: str) -> str:

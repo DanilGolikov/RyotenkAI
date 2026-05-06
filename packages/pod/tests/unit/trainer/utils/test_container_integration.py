@@ -26,8 +26,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
@@ -35,6 +33,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_pod.trainer.container import TrainingContainer
 
 # =============================================================================
@@ -81,7 +80,7 @@ def full_config():
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
             mlflow=MLflowConfig(tracking_uri="https://test.example.com", integration="mlflow-test", experiment_name="test")

@@ -24,9 +24,9 @@ from ryotenkai_providers.single_node.inference.provider import SingleNodeInferen
 from ryotenkai_providers.training.interfaces import GPUInfo
 from ryotenkai_shared.config import (
     InferenceSingleNodeServeConfig,
-    InferenceVLLMEngineConfig,
     Secrets,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_shared.utils.result import Err, InferenceError, Ok
 
 
@@ -58,7 +58,7 @@ def provider_cfg(ssh_cfg):
 
 @pytest.fixture()
 def engine_cfg():
-    return InferenceVLLMEngineConfig(
+    return VLLMEngineConfig(
         tensor_parallel_size=1,
         max_model_len=4096,
     )
@@ -638,7 +638,7 @@ class TestResolveLlmManifestBlock:
 
 class TestRunMergeContainerErrors:
     def test_fails_when_merge_image_not_configured(self, provider, engine_cfg, provider_cfg, secrets):
-        engine_cfg_no_img = InferenceVLLMEngineConfig(
+        engine_cfg_no_img = VLLMEngineConfig(
         )
         pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg_no_img)
         p = SingleNodeInferenceProvider(config=pipeline_cfg, secrets=secrets)

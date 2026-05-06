@@ -110,21 +110,6 @@ class TrainingOnlyConfig(StrictBaseModel):
         ),
     )
 
-    # =========================================================================
-    # BACKWARD-COMPAT: read-only ``type`` property
-    # =========================================================================
-    @property
-    def type(self) -> str:
-        """Read-only forwarder to ``self.adapter.kind``.
-
-        Pre-discriminated-union code paths read ``cfg.training.type`` for
-        logging / branching. Property keeps those working until PR-9
-        migrates them to ``cfg.training.adapter.kind`` and deletes this.
-
-        Deprecated — new code should use ``self.adapter.kind`` directly.
-        """
-        return self.adapter.kind
-
     @field_validator("strategies")
     @classmethod
     def validate_strategies_chain(cls, v: list[StrategyPhaseConfig]) -> list[StrategyPhaseConfig]:

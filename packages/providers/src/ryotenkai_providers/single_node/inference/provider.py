@@ -59,7 +59,8 @@ from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
 from .artifacts import render_readme as _render_readme
 
 if TYPE_CHECKING:
-    from ryotenkai_shared.config import InferenceVLLMEngineConfig, PipelineConfig, Secrets
+    from ryotenkai_engines.vllm.config import VLLMEngineConfig
+    from ryotenkai_shared.config import PipelineConfig, Secrets
 
 PULL_TIMEOUT = 1200
 MERGE_TIMEOUT = 3600
@@ -1090,7 +1091,7 @@ PY
         self,
         *,
         ssh: SSHClient,
-        engine_cfg: InferenceVLLMEngineConfig,
+        engine_cfg: VLLMEngineConfig,
         workspace_host_path: str,
         model_path_in_container: str,
     ) -> Result[None, InferenceError]:

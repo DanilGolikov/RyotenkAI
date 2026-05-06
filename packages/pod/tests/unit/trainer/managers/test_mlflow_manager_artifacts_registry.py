@@ -17,8 +17,6 @@ from ryotenkai_shared.config import (
     IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
-    InferenceEnginesConfig,
-    InferenceVLLMEngineConfig,
     MLflowConfig,
     ModelConfig,
     PipelineConfig,
@@ -26,6 +24,7 @@ from ryotenkai_shared.config import (
     StrategyPhaseConfig,
     TrainingOnlyConfig,
 )
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 
 # Previously skipped pending an integrations resolver pass — schema now
@@ -65,7 +64,7 @@ def _mk_cfg(
         inference=InferenceConfig(
             enabled=False,
             provider="single_node",
-            engine=InferenceVLLMEngineConfig(),
+            engine=VLLMEngineConfig(),
         ),
         integrations=IntegrationsConfig(
             mlflow=MLflowConfig(
