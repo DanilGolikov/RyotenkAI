@@ -1,0 +1,43 @@
+# vLLM engine manifest — declarative metadata for the vLLM plugin.
+#
+# Schema: ryotenkai_engines.manifest.EngineManifest
+# Loader: EngineRegistry.from_filesystem (see registry.py)
+#
+# [image] block intentionally omitted — image name auto-derives via
+# convention: ``{prefix}/inference-{id}:{version}`` →
+# ``ryotenkai/inference-vllm:1.0.0``.
+# Override via:
+#   - ENV var RYOTENKAI_INFERENCE_IMAGE_OVERRIDE_VLLM (CI / dev)
+#   - provider.toml [capabilities.inference.engine_overrides.vllm].image
+#     (per-provider custom builds)
+#   - or add an explicit [image] block here (not recommended — convention
+#     keeps image names predictable across the catalogue).
+
+schema_version = 1
+
+[engine]
+id               = "vllm"
+name             = "vLLM"
+version          = "1.0.0"        # OUR integration contract semver — drives the image tag.
+upstream_version = "0.7.0"        # Informational: the upstream vLLM release this image packages.
+description      = "PagedAttention-based OpenAI-compatible LLM server."
+stability        = "stable"
+homepage         = "https://github.com/vllm-project/vllm"
+
+[capabilities]
+api_dialect              = "openai_compatible"
+supports_lora            = true
+supports_quantization    = true
+supports_streaming       = true
+supports_tensor_parallel = true
+supported_quantizations  = ["awq", "gptq", "fp8", "bitsandbytes"]
+supported_dtypes         = ["bfloat16", "float16", "float32"]
+default_port             = 8000
+
+[entry_points.runtime]
+module = "ryotenkai_engines.vllm.runtime"
+class  = "VLLMEngineRuntime"
+
+[entry_points.config_schema]
+module = "ryotenkai_engines.vllm.config"
+class  = "VLLMEngineConfig"
