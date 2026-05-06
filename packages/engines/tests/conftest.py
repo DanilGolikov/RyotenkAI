@@ -1,7 +1,7 @@
 """pytest configuration for ryotenkai_engines tests.
 
-PR-1 stub — real fixtures (synthetic engine builder, manifest factory,
-registry-with-tmp-path) land alongside their consuming tests in PR-2/PR-3.
+Ensures the lock-protected registry singleton + the cached union are
+reset between tests so synthetic-manifest fixtures don't leak.
 """
 
 from __future__ import annotations
@@ -10,9 +10,13 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _reset_engine_registry_singleton() -> None:
-    """Placeholder — once ``EngineRegistry`` is a lock-protected singleton
-    (PR-2), this fixture clears its cache between tests so ``tmp_path``-based
-    discovery works without leaking state."""
-    # TODO(PR-2): import and reset the singleton here.
+def _reset_engine_singletons() -> None:
+    """Clear lock-protected singletons before AND after every test."""
+    from ryotenkai_engines._config_union import reset_engine_config_union
+    from ryotenkai_engines.registry import reset_registry
+
+    reset_registry()
+    reset_engine_config_union()
     yield
+    reset_registry()
+    reset_engine_config_union()

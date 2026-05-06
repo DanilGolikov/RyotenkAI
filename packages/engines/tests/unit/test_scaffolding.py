@@ -12,12 +12,14 @@ pytestmark = pytest.mark.unit
 
 
 def test_package_import() -> None:
-    """The top-level package imports cleanly."""
+    """The top-level package imports cleanly with the PR-2 public API."""
     import ryotenkai_engines
 
     assert ryotenkai_engines.__version__ == "1.0.0"
-    # Public API is intentionally empty in PR-1.
-    assert ryotenkai_engines.__all__ == ()
+    # Public API populated in PR-2 — every symbol must be importable.
+    assert ryotenkai_engines.__all__ != ()
+    for name in ryotenkai_engines.__all__:
+        assert hasattr(ryotenkai_engines, name), f"{name} declared in __all__ but not importable"
 
 
 def test_stub_modules_import() -> None:
