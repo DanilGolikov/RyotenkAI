@@ -29,6 +29,9 @@ from ryotenkai_control.pipeline.stages.model_retriever.constants import (
     MR_SSH_CMD_TIMEOUT,
     MR_UPLOAD_TIMEOUT,
 )
+from ryotenkai_control.pipeline.stages.model_retriever.hf_errors import (
+    classify_hf_upload_error,
+)
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import Err, ModelError, Ok, Result
 
@@ -487,9 +490,25 @@ class HFModelUploader:
 
             logger.info(f"Uploading to {self.hf_repo_id}...")
 
-            _upload_last_err: str = ""
+            # Bounded retry with error classification.
+            #
+            # The previous code dumped raw `huggingface-cli` tracebacks
+            # (~30 lines per attempt) into the pipeline log on every
+            # retry, AND retried 3× even on auth errors that can't get
+            # better in 10s. Now we classify the failure first:
+            #   * retryable=False (auth, not_found, quota, …) → fail
+            #     fast with a one-line operator-facing message
+            #   * retryable=True (5xx, network, rate_limit, unknown)
+            #     → retry up to MAX_ATTEMPTS with the configured pause
+            # Stable error codes (HF_UPLOAD_AUTH / HF_UPLOAD_NETWORK /
+            # …) so downstream stages can pattern-match without parsing
+            # free-form text.
+            _MAX_ATTEMPTS = 3
+            _RETRY_PAUSE_S = 10
+
+            last_failure = None
             _upload_success = False
-            for _attempt in range(1, 4):
+            for _attempt in range(1, _MAX_ATTEMPTS + 1):
                 success, _stdout, stderr = ssh_client.exec_command(
                     command=upload_cmd,
                     background=False,
@@ -497,20 +516,58 @@ class HFModelUploader:
                 )
                 if success:
                     _upload_success = True
+                    if _attempt > 1:
+                        logger.info(
+                            f"[HF:UPLOAD] succeeded on retry attempt "
+                            f"{_attempt}/{_MAX_ATTEMPTS}"
+                        )
                     break
-                _upload_last_err = stderr
-                if _attempt < 3:
-                    logger.warning(
-                        f"[MR:UPLOAD_RETRY {_attempt}/3] Upload attempt failed: {stderr}. "
-                        "Retrying in 10s..."
+
+                # Classify the failure for retry policy + log shape.
+                # Use exit_code=1 because exec_command flattens success
+                # into a bool — we don't have the actual code at this
+                # layer. Classifier handles None/unknown gracefully.
+                last_failure = classify_hf_upload_error(stderr or "", exit_code=1)
+
+                # Non-retryable → fail fast. No more attempts, no sleep.
+                if not last_failure.retryable:
+                    logger.error(last_failure.to_log_line())
+                    logger.debug(
+                        f"[HF:UPLOAD] raw stderr excerpt: "
+                        f"{last_failure.raw_stderr_excerpt!r}"
                     )
-                    time.sleep(10)
+                    return Err(
+                        ModelError(
+                            message=last_failure.short_reason,
+                            code=last_failure.to_app_error_code(),
+                        )
+                    )
+
+                # Retryable: log a single line, sleep, try again.
+                if _attempt < _MAX_ATTEMPTS:
+                    logger.warning(
+                        f"{last_failure.to_log_line()} "
+                        f"(attempt {_attempt}/{_MAX_ATTEMPTS}, "
+                        f"retrying in {_RETRY_PAUSE_S}s)"
+                    )
+                    time.sleep(_RETRY_PAUSE_S)
+                else:
+                    logger.error(
+                        f"{last_failure.to_log_line()} "
+                        f"(attempt {_attempt}/{_MAX_ATTEMPTS}, no more retries)"
+                    )
 
             if not _upload_success:
+                # All retries exhausted on a retryable failure. Surface
+                # the classified code so callers can react.
+                assert last_failure is not None  # loop must have populated
                 return Err(
                     ModelError(
-                        message=f"Upload command failed after 3 attempts: {_upload_last_err}",
-                        code="HF_UPLOAD_COMMAND_FAILED",
+                        message=(
+                            f"{last_failure.short_reason} "
+                            f"(failed after {_MAX_ATTEMPTS} attempts)"
+                        ),
+                        code=last_failure.to_app_error_code(),
                     )
                 )
 
