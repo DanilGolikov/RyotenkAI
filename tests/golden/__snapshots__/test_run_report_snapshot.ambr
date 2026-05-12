@@ -1,0 +1,25 @@
+# serializer version: 1
+# name: test_report_response_canonical_shape
+  dict({
+    'generated_at': '<TIMESTAMP>',
+    'markdown': '''
+      # Run summary
+      
+      - exit: success
+    ''',
+    'path': 'reports/run-001/index.md',
+    'regenerated': False,
+  })
+# ---
+# name: test_report_response_with_regenerated_flag
+  dict({
+    'generated_at': '<TIMESTAMP>',
+    'markdown': '''
+      # Regen
+      
+      Updated.
+    ''',
+    'path': 'reports/run-002/index.md',
+    'regenerated': True,
+  })
+# ---

@@ -1,0 +1,78 @@
+# Optional dev-workflow path for the hermetic stack.
+#
+# Tests do NOT use this file — they boot sidecars as Python subprocesses via
+# tests._harness.stack.orchestrator.Stack. This compose file exists only for
+# developers who want a long-lived stack mirrored across containers (handy
+# for reaching the sidecars from a non-Python tool).
+#
+# Both paths exercise the same `python -m tests._harness.stack.sidecars.X`
+# entrypoint — only the process model differs.
+#
+# Usage: from the repo root,
+#
+#   docker compose -f tests/_harness/stack/docker-compose.yml up
+#   curl http://localhost:18091/health  # fake-runpod
+#
+# Stop with `docker compose ... down`.
+#
+# NOTE: not exercised by CI; if the compose file rots, prefer the make
+# targets (`make start-stack`/`make stop-stack`) which use the same
+# entrypoints.
+
+services:
+  fake-runpod:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet fastapi uvicorn httpx &&
+             python -m tests._harness.stack.sidecars.runpod_server --port=18091 --clock=real"
+    environment:
+      PYTHONPATH: /workspace
+    ports:
+      - "18091:18091"
+    volumes:
+      - ../../..:/workspace:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:18091/health').status == 200 else 1)"]
+      interval: 5s
+      timeout: 2s
+      retries: 5
+
+  fake-mlflow:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet fastapi uvicorn httpx &&
+             python -m tests._harness.stack.sidecars.mlflow_server --port=18092 --clock=real"
+    environment:
+      PYTHONPATH: /workspace
+    ports:
+      - "18092:18092"
+    volumes:
+      - ../../..:/workspace:ro
+
+  fake-vllm:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet fastapi uvicorn httpx &&
+             python -m tests._harness.stack.sidecars.vllm_server --port=18093 --clock=real"
+    environment:
+      PYTHONPATH: /workspace
+    ports:
+      - "18093:18093"
+    volumes:
+      - ../../..:/workspace:ro
+
+  fake-hf-hub:
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: >
+      sh -c "pip install --quiet fastapi uvicorn httpx &&
+             python -m tests._harness.stack.sidecars.hf_hub_server --port=18094 --clock=real"
+    environment:
+      PYTHONPATH: /workspace
+    ports:
+      - "18094:18094"
+    volumes:
+      - ../../..:/workspace:ro

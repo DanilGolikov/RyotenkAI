@@ -1,0 +1,115 @@
+"""Shared fixtures for the runner integration suite.
+
+The integration tests in this directory drive a *real* FastAPI runner
+app through :class:`JobClient` — same wire format the launcher uses
+in production — but inject :class:`MockSupervisor` so we don't fork
+a real Python interpreter per test. That lets the suite cover the
+full submit → events → terminal flow with deterministic timing while
+staying CI-friendly.
+
+Fixtures
+--------
+
+- :func:`client_against_runner` — :class:`JobClient` whose HTTP
+  transport is the runner app itself via :class:`httpx.ASGITransport`.
+  No sockets, no subprocesses. Lifespan runs once per test.
+- :func:`runner_app` — the underlying :class:`FastAPI` instance for
+  tests that need to reach into ``app.state`` (e.g. drive the mock
+  supervisor's ``finish()``).
+
+Pattern follows :file:`src/tests/unit/api/clients/test_job_client_contract.py`
+which already wires a :class:`JobClient` through ASGI; this module
+generalises that fixture for reuse.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import httpx
+import pytest
+import pytest_asyncio
+
+from ryotenkai_shared.utils.clients.job_client import JobClient
+from ryotenkai_pod.runner.main import create_app
+
+# Phase B follow-up: ``tests.unit.runner.conftest`` is shadowed by a
+# stray ``tests`` package shipped inside an unrelated dependency in
+# site-packages (e.g. runpod-sdk). Manually load the pod-side conftest
+# by absolute path until MockSupervisor is extracted into a real shared
+# helper module (plan §6.4 _test_support).
+import importlib.util as _ilu
+import pathlib as _pathlib
+
+# After Phase B packagization the integration tests live under
+# ``tests/integration/control/runner/`` (4 levels deep from worktree root).
+# The pod-side runner conftest now lives under
+# ``tests/unit/pod/runner/conftest.py``.
+_pod_runner_conftest_path = (
+    _pathlib.Path(__file__).resolve().parents[3]
+    / "unit" / "pod" / "runner" / "conftest.py"
+)
+_spec = _ilu.spec_from_file_location(
+    "_pod_runner_conftest_for_integration", str(_pod_runner_conftest_path),
+)
+assert _spec is not None and _spec.loader is not None
+_mod = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+MockSupervisor = _mod.MockSupervisor
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from fastapi import FastAPI
+
+
+@pytest_asyncio.fixture
+async def runner_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> "AsyncIterator[tuple[FastAPI, JobClient]]":
+    """``(app, client)`` pair sharing the same FastAPI lifespan.
+
+    Tests that need to reach into ``app.state.supervisor`` to drive
+    ``finish()`` / ``fail()`` from the test thread receive the app.
+    Tests that only consume the JobClient surface can ignore it.
+    """
+    monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("RYOTENKAI_RUNTIME_PROVIDER", "single_node")
+    app = create_app(supervisor_factory=MockSupervisor)
+
+    transport = httpx.ASGITransport(app=app)
+    http = httpx.AsyncClient(
+        transport=transport, base_url="http://runner.local",
+    )
+    client = JobClient("http://runner.local", http_client=http)
+
+    async with app.router.lifespan_context(app):
+        try:
+            yield app, client
+        finally:
+            await client.aclose()
+
+
+@pytest.fixture
+def runner_testclient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):  # type: ignore[no-untyped-def]
+    """Synchronous :class:`fastapi.testclient.TestClient`.
+
+    ``httpx.ASGITransport`` doesn't speak WebSocket, so any test that
+    exercises ``GET /api/v1/jobs/{id}/events`` (the WS endpoint) needs
+    TestClient instead — it knows how to drive ASGI WS in-process.
+    Tests that only need HTTP can use either fixture.
+
+    Yields ``(app, client)`` so test code can also reach
+    ``app.state.supervisor`` for deterministic ``finish()`` /
+    ``fail()`` driving.
+    """
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RYOTENKAI_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("RYOTENKAI_RUNTIME_PROVIDER", "single_node")
+    app = create_app(supervisor_factory=MockSupervisor)
+    with TestClient(app) as client:
+        yield app, client

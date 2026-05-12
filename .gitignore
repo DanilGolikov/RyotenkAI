@@ -124,3 +124,9 @@ docker/training/build_and_push.log
 # Community plugin/preset archive extraction cache
 community/.cache/
 packages/runs/
+web/storybook-static/
+
+# Greenfield testing artifacts (per-run)
+tests/.telemetry/
+tests/.debug_bundles/
+tests/.pytest_cache/
