@@ -28,14 +28,15 @@ class _DummySecrets:
     hf_token: str = "hf_test_token"
 
 
-# Batch 7c — uses legacy ``datasets.<name>.source_type`` / ``source_local``
-# YAML schema; current ``PipelineConfig`` requires a typed
-# ``source: {kind: local, local_paths: {...}}`` discriminated union.
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Legacy dataset YAML schema (source_type/source_local) — current "
-        "PipelineConfig requires typed ``source`` discriminated union"
+        "xfail-debt:file-uploader-async-refactor — YAML schema migrated "
+        "to the typed `source` / `adapter` / `engine` discriminators "
+        "(was the original block); the remaining failure is that "
+        "`FileUploader._upload_files_batch` was replaced by async "
+        "`_upload_all`. Rewrite needs async patching + signature update. "
+        "Tracked in xfail_debt.md."
     ),
 )
 def test_yaml_to_deploy_mapping_to_runtime_load_chain(tmp_path: Path, monkeypatch) -> None:
@@ -68,7 +69,6 @@ providers:
         alias: pc
     training:
       workspace_path: /tmp/workspace
-      docker_image: test/training-runtime:latest
     inference:
       serve:
         workspace: /tmp/test_inference
@@ -77,15 +77,8 @@ providers:
 
 training:
   provider: single_node
-  type: qlora
-  hyperparams:
-    per_device_train_batch_size: 1
-    gradient_accumulation_steps: 1
-    learning_rate: 2.0e-4
-    warmup_ratio: 0.0
-    epochs: 1
-    eval_steps: 7
-  qlora:
+  adapter:
+    kind: qlora
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -94,6 +87,13 @@ training:
     use_dora: false
     use_rslora: false
     init_lora_weights: gaussian
+  hyperparams:
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 1
+    learning_rate: 2.0e-4
+    warmup_ratio: 0.0
+    epochs: 1
+    eval_steps: 7
   strategies:
     - strategy_type: sft
       dataset: default
@@ -101,16 +101,13 @@ training:
 inference:
   enabled: false
   provider: single_node
-  engine: vllm
-  engines:
-    vllm:
-      merge_image: test/merge:latest
-      serve_image: test/vllm:latest
+  engine:
+    kind: vllm
 
 datasets:
   default:
-    source_type: local
-    source_local:
+    source:
+      kind: local
       local_paths:
         train: data/train.jsonl
         eval: data/eval.jsonl
@@ -126,9 +123,10 @@ datasets:
 
     assert cfg.get_source_root() == root
     ds = cfg.datasets["default"]
-    assert ds.source_local is not None
-    assert ds.source_local.local_paths.train == "data/train.jsonl"
-    assert ds.source_local.local_paths.eval == "data/eval.jsonl"
+    # Typed discriminated union: ds.source.kind == "local" with local_paths
+    assert ds.source.kind == "local"
+    assert ds.source.local_paths.train == "data/train.jsonl"
+    assert ds.source.local_paths.eval == "data/eval.jsonl"
 
     # ---------------------------------------------------------------------
     # Act 2: DeploymentManager builds local_abs -> remote_rel mapping

@@ -206,15 +206,14 @@ def test_deployment_manager_builds_local_abs_to_remote_rel_upload_map(
         assert (local_abs, remote_rel) in files_to_upload
 
 
-# Batch 7c — uses legacy ``datasets.default.source_type`` / ``source_local``
-# YAML keys; current schema requires a typed ``source`` discriminated
-# union. Removal path: rewrite the inline YAML to use
-# ``source: {kind: local, local_paths: {...}}``.
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Legacy dataset YAML schema (source_type/source_local) — current "
-        "PipelineConfig requires typed ``source`` discriminated union"
+        "xfail-debt:deployment-manager-deploy-files-rename — YAML schema "
+        "migrated to typed `source`/`adapter`/`engine`; next failure is "
+        "that `TrainingDeploymentManager.deploy_files` was renamed to "
+        "`deploy_code` (likely now async). Test needs the call site "
+        "rewritten + async awaiting. Tracked in xfail_debt.md."
     ),
 )
 def test_deployment_manager_missing_dataset_returns_clear_err(tmp_path: Path) -> None:
@@ -241,7 +240,6 @@ providers:
         alias: pc
     training:
       workspace_path: /tmp/workspace
-      docker_image: test/training-runtime:latest
     inference:
       serve:
         workspace: /tmp/test_inference
@@ -249,14 +247,8 @@ providers:
         port: 8000
 training:
   provider: single_node
-  type: qlora
-  hyperparams:
-    per_device_train_batch_size: 1
-    gradient_accumulation_steps: 1
-    learning_rate: 2.0e-4
-    warmup_ratio: 0.0
-    epochs: 1
-  qlora:
+  adapter:
+    kind: qlora
     r: 8
     lora_alpha: 16
     lora_dropout: 0.05
@@ -265,21 +257,24 @@ training:
     use_dora: false
     use_rslora: false
     init_lora_weights: gaussian
+  hyperparams:
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 1
+    learning_rate: 2.0e-4
+    warmup_ratio: 0.0
+    epochs: 1
   strategies:
     - strategy_type: sft
       dataset: default
 inference:
   enabled: false
   provider: single_node
-  engine: vllm
-  engines:
-    vllm:
-      merge_image: test/merge:latest
-      serve_image: test/vllm:latest
+  engine:
+    kind: vllm
 datasets:
   default:
-    source_type: local
-    source_local:
+    source:
+      kind: local
       local_paths:
         train: {missing_rel}
         eval: null

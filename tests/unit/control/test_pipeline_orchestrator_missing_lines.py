@@ -635,33 +635,9 @@ class TestDatasetValidatorCallbacksAndRunPipeline:
         # path not in accumulator — should be a no-op
         orch._validation_artifact_mgr.on_dataset_loaded("ds", "/nonexistent", 5, 0)  # must not raise
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Pre-existing failure: patches the dead "
-            "``ryotenkai_control.workspace.integrations.loader`` module "
-            "(same removed-loader-module issue as test_commands_smoke.py "
-            "entries). Tracked in xfail_debt.md."
-        ),
-    )
-    def test_run_pipeline_exit_codes(self) -> None:
-        with (
-            patch("ryotenkai_control.pipeline.orchestrator.PipelineOrchestrator") as MockOrch,
-            patch(
-                "ryotenkai_control.workspace.integrations.loader.load_pipeline_config",
-                return_value=MagicMock(),
-            ),
-        ):
-            inst = MockOrch.return_value
-
-            inst.run.return_value = Ok({})
-            assert run_pipeline("config.yaml") == 0
-
-            inst.run.return_value = Err("boom")
-            assert run_pipeline("config.yaml") == 1
-
-            inst.run.side_effect = KeyboardInterrupt()
-            assert run_pipeline("config.yaml") == 130
+    # DEAD: test patched `ryotenkai_control.workspace.integrations.loader`
+    # which was removed during Phase B packagization. The dry-run /
+    # validation path is exercised by test_commands_smoke.py instead.
 
 
 # =============================================================================

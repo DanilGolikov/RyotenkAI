@@ -87,66 +87,8 @@ class TestTrainingPathsRemoval:
         assert ref == str(train_file)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pre-existing: `FileUploader._get_training_path` was removed (paths"
-        " are now generated via PodLayout). Tests still reach for the old"
-        " private helper."
-    ),
-)
-class TestDeploymentManagerPathGeneration:
-    """Test that deployment_manager auto-generates paths correctly."""
-
-    def test_get_training_path_helper_generates_correct_path(self):
-        """_get_training_path() should generate data/{strategy_type}/{basename}."""
-        from unittest.mock import MagicMock
-
-        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from ryotenkai_shared.config import Secrets
-
-        # Create minimal mock config and secrets
-        manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
-
-        local_path = "/absolute/path/to/train.jsonl"
-        strategy_type = "sft"
-
-        expected = "data/sft/train.jsonl"
-        actual = manager._file_uploader._get_training_path(local_path, strategy_type)
-
-        assert actual == expected
-
-    def test_get_training_path_with_subdirs(self):
-        """_get_training_path() should use only basename (no subdirs)."""
-        from unittest.mock import MagicMock
-
-        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from ryotenkai_shared.config import Secrets
-
-        manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
-
-        local_path = "/datasets/my_project/subfolder/corpus.jsonl"
-        strategy_type = "cpt"
-
-        expected = "data/cpt/corpus.jsonl"
-        actual = manager._file_uploader._get_training_path(local_path, strategy_type)
-
-        assert actual == expected
-
-    def test_get_training_path_different_strategies(self):
-        """_get_training_path() should generate different paths per strategy."""
-        from unittest.mock import MagicMock
-
-        from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-        from ryotenkai_shared.config import Secrets
-
-        manager = TrainingDeploymentManager(config=MagicMock(), secrets=Secrets())
-        local_path = "data/dataset.jsonl"
-
-        sft_path = manager._file_uploader._get_training_path(local_path, "sft")
-        dpo_path = manager._file_uploader._get_training_path(local_path, "dpo")
-        cpt_path = manager._file_uploader._get_training_path(local_path, "cpt")
-
-        assert sft_path == "data/sft/dataset.jsonl"
-        assert dpo_path == "data/dpo/dataset.jsonl"
-        assert cpt_path == "data/cpt/dataset.jsonl"
+# DEAD: `FileUploader._get_training_path` was removed during Phase 6.6.
+# Training paths are now generated via `PodLayout` (see
+# `ryotenkai_shared.infrastructure.pod_layout`). The tests below
+# anchored on the removed private helper and exercise nothing real
+# under the current API.

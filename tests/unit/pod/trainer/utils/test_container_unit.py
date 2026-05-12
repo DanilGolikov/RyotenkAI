@@ -79,42 +79,10 @@ class TestMemoryManagerWithCallbacks:
         mlflow.log_oom_recovery.assert_called_once_with("op", 1, 3)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "pre-existing: monkeypatch target ryotenkai_control.data.loaders "
-        "does not exist after packagization (DatasetLoaderFactory was moved "
-        "or renamed). Test predates the post-packagization restructure."
-    ),
-)
-class TestDatasetLoaderFactory:
-    def test_get_loader_for_dataset_falls_back_to_default_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        injected_loader = SimpleNamespace()
-        container = TrainingContainer(cfg, _dataset_loader=injected_loader)
-
-        factory_cls = MagicMock()
-        monkeypatch.setattr("ryotenkai_control.data.loaders.DatasetLoaderFactory", factory_cls)
-
-        loader = container.get_loader_for_dataset("missing")
-        assert loader is injected_loader
-        factory_cls.assert_not_called()
-
-    def test_get_loader_for_dataset_uses_factory_when_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cfg = _mk_cfg()
-        cfg.datasets = {"x": SimpleNamespace(get_source_type=lambda: "local")}
-        container = TrainingContainer(cfg, _dataset_loader=MagicMock())
-
-        factory = MagicMock()
-        out_loader = SimpleNamespace()
-        factory.create_for_dataset.return_value = out_loader
-        factory_cls = MagicMock(return_value=factory)
-        monkeypatch.setattr("ryotenkai_control.data.loaders.DatasetLoaderFactory", factory_cls)
-
-        loader = container.get_loader_for_dataset("x")
-        assert loader is out_loader
-        factory_cls.assert_called_once()
-        factory.create_for_dataset.assert_called_once()
+# DEAD: `ryotenkai_control.data.loaders.DatasetLoaderFactory` was removed
+# during Phase B packagization. The dataset-loader injection path is
+# exercised through the container's direct `_dataset_loader` argument in
+# the tests that survived above.
 
 
 class TestMLflowManagerProperty:
