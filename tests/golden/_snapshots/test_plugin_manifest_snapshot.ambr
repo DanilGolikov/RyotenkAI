@@ -1,0 +1,423 @@
+# serializer version: 1
+# name: test_plugin_manifest_summary_snapshot
+  list([
+    dict({
+      'id': 'cerebras_judge',
+      'kind': 'evaluation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/evaluation/cerebras_judge/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_generated_syntax_backend',
+      'kind': 'evaluation',
+      'params_keys': list([
+        'timeout_seconds',
+      ]),
+      'relative_path': 'community/evaluation/helixql_generated_syntax_backend/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_valid_ratio',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_semantic_match',
+      'kind': 'evaluation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/evaluation/helixql_semantic_match/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_mean_score',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_syntax',
+      'kind': 'evaluation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/evaluation/helixql_syntax/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_valid_ratio',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'config_dump',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/config_dump/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'dataset_validation',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/dataset_validation/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'evaluation_block',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/evaluation_block/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'footer',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/footer/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'header',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/header/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'issues',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/issues/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'memory_management',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/memory_management/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'metrics_analysis',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/metrics_analysis/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'model_configuration',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/model_configuration/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'phase_details',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/phase_details/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'stage_timeline',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/stage_timeline/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'summary',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/summary/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'training_configuration',
+      'kind': 'reports',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/reports/training_configuration/manifest.toml',
+      'schema_version': 4,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_compiler_semantic',
+      'kind': 'reward',
+      'params_keys': list([
+        'timeout_seconds',
+        'validation_backend',
+      ]),
+      'relative_path': 'community/reward/helixql_compiler_semantic/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+        'grpo',
+        'sapo',
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'avg_length',
+      'kind': 'validation',
+      'params_keys': list([
+        'sample_size',
+      ]),
+      'relative_path': 'community/validation/avg_length/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'max',
+        'min',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'deduplication',
+      'kind': 'validation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/validation/deduplication/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'diversity_score',
+      'kind': 'validation',
+      'params_keys': list([
+        'sample_size',
+      ]),
+      'relative_path': 'community/validation/diversity/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_score',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'empty_ratio',
+      'kind': 'validation',
+      'params_keys': list([
+        'min_chars',
+        'sample_size',
+      ]),
+      'relative_path': 'community/validation/empty_ratio/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'max_ratio',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_gold_syntax_backend',
+      'kind': 'validation',
+      'params_keys': list([
+        'max_error_examples',
+        'timeout_seconds',
+      ]),
+      'relative_path': 'community/validation/helixql_gold_syntax_backend/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_pass_rate',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_preference_semantics',
+      'kind': 'validation',
+      'params_keys': list([
+        'max_error_examples',
+        'timeout_seconds',
+      ]),
+      'relative_path': 'community/validation/helixql_preference_semantics/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_valid_ratio',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'helixql_sapo_prompt_contract',
+      'kind': 'validation',
+      'params_keys': list([
+        'max_error_examples',
+      ]),
+      'relative_path': 'community/validation/helixql_sapo_prompt_contract/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'min_pass_rate',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'identical_pairs',
+      'kind': 'validation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/validation/identical_pairs/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'min_samples',
+      'kind': 'validation',
+      'params_keys': list([
+        'sample_size',
+      ]),
+      'relative_path': 'community/validation/min_samples/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+        'threshold',
+      ]),
+      'version': '1.0.0',
+    }),
+    dict({
+      'id': 'preference_format',
+      'kind': 'validation',
+      'params_keys': list([
+      ]),
+      'relative_path': 'community/validation/preference_format/manifest.toml',
+      'schema_version': 5,
+      'stability': 'stable',
+      'supported_strategies': list([
+      ]),
+      'thresholds_keys': list([
+      ]),
+      'version': '1.0.0',
+    }),
+  ])
+# ---

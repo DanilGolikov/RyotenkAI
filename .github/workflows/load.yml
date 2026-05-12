@@ -1,0 +1,53 @@
+name: load
+
+on:
+  schedule:
+    # Weekly Sunday 06:00 UTC — runs after chaos-deep finishes.
+    - cron: "0 6 * * 0"
+  workflow_dispatch: {}
+
+# RunLoader scenarios in real-time (SCALE=60 = 1 real-time minute per
+# 1s compressed). Budget: 2h.
+jobs:
+  runloader:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: RunLoader real-time
+        env:
+          SCALE: "60"
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/load/ -v \
+            --tb=short
+
+      - name: Upload SLO report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-slo-report
+          path: |
+            tests/.telemetry/
+            tests/.debug_bundles/
+          if-no-files-found: ignore

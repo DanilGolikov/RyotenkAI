@@ -258,3 +258,79 @@ See [`docs/migration/phase_3a_log.md`](../migration/phase_3a_log.md),
 [`docs/migration/phase_3b_log.md`](../migration/phase_3b_log.md), and
 [`docs/migration/mock_inventory.md`](../migration/mock_inventory.md)
 for the full audit trail.
+
+---
+
+## Quarterly Allowlist Review (Task 3 mechanism)
+
+**Cadence:** every 90 days (or when sentinel flags stale entries).
+
+**Trigger:**
+- Automatic: `test_allowlist_entries_renewed_within_365_days` sentinel fires
+  in CI when ANY entry's `renewed=` field is >365 days old → PR blocked
+- Manual: maintainer schedules quarterly review
+
+**Process** (~1 hour/quarter):
+1. Run `pytest tests/_lint/test_no_protocol_mocking.py -v` — confirms current state
+2. For each entry approaching 365 days:
+   - Re-read the test
+   - Verify the `reason=` is still accurate (production behavior unchanged)
+   - Either:
+     - **Renew**: bump `renewed=` to today's date in `_mock_allowlist.py`
+     - **Remove**: delete the entry (the test no longer needs the mock OR the test was removed)
+     - **Refactor**: convert the mock to a Fake/factory; remove entry
+3. Re-run sentinel; commit changes
+
+**Verification:**
+```bash
+.venv/bin/python -m pytest -c tests/pytest.ini tests/_lint/test_no_protocol_mocking.py::test_allowlist_entries_renewed_within_365_days -v
+```
+
+This is the **only** mechanism preventing allowlist sprawl. Without quarterly
+review, entries accumulate and the lint becomes cargo. Lifecycle of an entry:
+`added → renewed (1×/year) → removed`. Maximum allowlist size grows linearly
+with TRUE legitimate use, not with technical debt.
+
+---
+
+## Natural Erosion Policy (Task 4 mechanism)
+
+**Principle:** every PR that touches a file in `packages/<pkg>/src/` MUST
+also clean up the corresponding test file's mocks if any of these apply:
+
+| When you touch `packages/X/src/foo.py` | Required action in same PR |
+|---|---|
+| Add/change/remove a method | Migrate any `patch.object(*, "method_name")` in `tests/.../test_foo.py` |
+| Add/change a constructor param | Migrate `MagicMock(spec=Foo)` to factory or Fake |
+| Refactor a function signature | Audit test mocks for that function path |
+| Touch an internal helper (`_private`) | Refactor test to use real instance (not patch.object) |
+
+**Why this works** (proven in industry — k8s, Argo, Grafana):
+- Mocks evaporate organically as code evolves
+- No "big-bang migration" risk
+- New code follows new patterns (sentinel-enforced)
+- Old code dies a natural death
+
+**Enforcement:** code review checklist. NOT automated (would be too noisy).
+A reviewer who sees an unchanged mock-heavy test alongside a touched
+production file should request the migration in the same PR.
+
+**Tracking:** quarterly metric — `grep -rc "unittest.mock" tests/ | wc -l`.
+Trend should be monotonically decreasing. If it stalls > 2 quarters,
+investigate (likely a hotspot that needs a dedicated refactor PR).
+
+---
+
+## Tooling reference
+
+- Sentinel: [tests/_lint/test_no_protocol_mocking.py](../../tests/_lint/test_no_protocol_mocking.py)
+- Allowlist: [tests/_lint/_mock_allowlist.py](../../tests/_lint/_mock_allowlist.py)
+- Mock inventory script: [scripts/mock_inventory.py](../../scripts/mock_inventory.py)
+- Codemods: [scripts/codemods/](../../scripts/codemods/) (4 libcst transforms)
+- Compliance harness: [tests/contract/protocol_compliance/](../../tests/contract/protocol_compliance/)
+
+## History
+
+- 2026-05-12 — Phase 5 landed; allowlist sentinel + 75 entries + 365-day decay
+- 2026-05-12 — Phase 4A docker DI; Phase 4B mlflow_manager kwarg
+- 2026-05-12 — Quarterly review + Natural Erosion policies documented (this doc)

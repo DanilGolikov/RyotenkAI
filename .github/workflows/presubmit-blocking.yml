@@ -1,0 +1,73 @@
+name: presubmit-blocking
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# L1-L4 + lint sentinels. Бюджет <12 мин.
+jobs:
+  greenfield:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: make test-new
+        run: make test-new
+
+      - name: Stack smoke boot
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/stack/test_smoke_boot.py -v
+
+      # Phase 3 (Contract Testing Matrix) — fail the PR if OpenAPI spec,
+      # the FE TypeScript schema, or the generated zod/MSW contracts
+      # have drifted from what's committed. Requires node for the
+      # gen:api / gen:zod / gen:msw scripts.
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install FE deps
+        run: cd web && npm ci
+
+      - name: API contract drift gate (make verify-api-sync)
+        run: make verify-api-sync
+
+      - name: OpenAPI drift gate (greenfield)
+        run: .venv/bin/python -m pytest -c tests/pytest.ini tests/contract/openapi_drift/test_openapi_drift_gate.py
+
+      # Schemathesis stateful CI profile (capped at 5 examples per
+      # operation by ``register_profile('ci', ...)`` in the test file).
+      # Times out internally — wrap in ``timeout`` so a hung run
+      # doesn't blow the whole 15-minute job budget.
+      - name: Schemathesis stateful (ci profile)
+        run: |
+          timeout 60s .venv/bin/python -m pytest -c tests/pytest.ini \
+            tests/contract/openapi_drift/test_openapi_stateful.py \
+            --hypothesis-profile=ci || \
+            (echo "schemathesis ci profile timed out or failed" && exit 1)

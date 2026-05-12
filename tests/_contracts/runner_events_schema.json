@@ -1,0 +1,38 @@
+{
+  "$id": "https://ryotenkai.local/schemas/runner_events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "JSONL record schema for <workspace>/events/events.NNN.jsonl. Generated from ryotenkai_pod.runner.event_journal.append + JournalRecord. SCHEMA_VERSION=1, MAX_SUPPORTED=1.",
+  "properties": {
+    "kind": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "offset": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "ts": {
+      "type": "string"
+    },
+    "v": {
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "v",
+    "offset",
+    "ts",
+    "kind",
+    "payload"
+  ],
+  "title": "RyotenkAI Runner Event Journal Record",
+  "type": "object",
+  "version": "1.0.0"
+}

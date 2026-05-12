@@ -44,7 +44,7 @@ from ryotenkai_shared.config import load_secrets
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from ryotenkai_shared.config.runtime import RuntimeSettings
@@ -139,6 +139,7 @@ class PipelineBootstrap:
         attempt_controller: AttemptController,
         on_stage_completed: Callable[[str], None],
         on_shutdown_signal: Callable[[str], None],
+        stages_override: Sequence[PipelineStage] | None = None,
     ) -> BootstrapResult:
         """Wire every collaborator from a pre-loaded config.
 
@@ -162,6 +163,16 @@ class PipelineBootstrap:
         state (``_state_store`` reference). The two hooks
         (``on_stage_completed``, ``on_shutdown_signal``) have the same
         requirement — they read/write orchestrator-owned state.
+
+        ``stages_override`` is the additive test seam introduced in
+        Phase 4-followup. When provided, the bootstrap installs the
+        caller-supplied stage list onto the :class:`StageRegistry` instead
+        of calling :meth:`StageRegistry._build_stages` — which means
+        production-time concrete stages are never constructed. Production
+        callers always omit this kwarg; tests can pass a list of
+        ``MagicMock`` stages (or any duck-typed ``PipelineStage``) to
+        replace the legacy ``patch.object(StageRegistry, "_build_stages")``
+        scaffold.
         """
         logger.info("Initializing Pipeline Orchestrator")
 
@@ -249,11 +260,17 @@ class PipelineBootstrap:
 
         # Step 5: Stages + registry. Stages need validation_artifact_mgr
         # for DatasetValidator's event callbacks, so build them after.
-        stages_list = StageRegistry._build_stages(
-            config=config,
-            secrets=secrets,
-            validation_artifact_mgr=validation_artifact_mgr,
-        )
+        # When ``stages_override`` is supplied (tests / advanced callers),
+        # skip the canonical stage construction entirely — the override
+        # owns the stage list verbatim.
+        if stages_override is not None:
+            stages_list = list(stages_override)
+        else:
+            stages_list = StageRegistry._build_stages(
+                config=config,
+                secrets=secrets,
+                validation_artifact_mgr=validation_artifact_mgr,
+            )
         registry = StageRegistry(config=config, stages=stages_list, collectors=collectors)
         logger.info(f"Initialized {len(registry.stages)} pipeline stages")
 

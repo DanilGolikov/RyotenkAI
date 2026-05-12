@@ -1,0 +1,41 @@
+{
+  "$id": "https://ryotenkai.local/schemas/marker_completion.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Schema for <workspace>/completion.marker written by CompletionCallback._write_completion_marker. Mirrors the literal payload at packages/pod/src/ryotenkai_pod/trainer/callbacks/completion_callback.py:_write_completion_marker.",
+  "properties": {
+    "flush_timed_out": {
+      "type": "boolean"
+    },
+    "flushed_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "enum": [
+        "natural_completion",
+        "flush_budget_exceeded"
+      ],
+      "type": "string"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ts_ms": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "flushed_count",
+    "flush_timed_out",
+    "ts_ms",
+    "reason"
+  ],
+  "title": "RyotenkAI Completion Marker",
+  "type": "object",
+  "version": "1.0.0"
+}

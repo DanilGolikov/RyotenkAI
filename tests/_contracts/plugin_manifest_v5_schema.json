@@ -1,0 +1,314 @@
+{
+  "$defs": {
+    "CompatSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "min_core_version": {
+          "default": "",
+          "title": "Min Core Version",
+          "type": "string"
+        }
+      },
+      "title": "CompatSpec",
+      "type": "object"
+    },
+    "EntryPoint": {
+      "additionalProperties": false,
+      "description": "Entry point for plugin code imports.",
+      "properties": {
+        "class": {
+          "description": "Fully-qualified class name within the module.",
+          "title": "Class",
+          "type": "string"
+        },
+        "module": {
+          "description": "Python module name inside the plugin folder (without .py).",
+          "title": "Module",
+          "type": "string"
+        }
+      },
+      "required": [
+        "module",
+        "class"
+      ],
+      "title": "EntryPoint",
+      "type": "object"
+    },
+    "LibRequirement": {
+      "additionalProperties": false,
+      "description": "A plugin's declared dependency on a community/libs/<name>/ package.\n\nSymmetric with :class:`RequiredEnvSpec` (top-level\n``[[lib_requirements]]`` blocks in the plugin's ``manifest.toml``).\nEach entry pins a *name* (which must match a real lib folder under\n``community/libs/``) and an optional PEP 440 specifier:\n\n.. code-block:: toml\n\n    [[lib_requirements]]\n    name = \"helixql\"\n    version = \">=1.0.0,<2.0.0\"\n\nAn empty ``version`` means \"any version\" \u2014 the loader still checks\nthat the lib *exists*, just doesn't constrain its version.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "default": "",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "LibRequirement",
+      "type": "object"
+    },
+    "ParamFieldSchema": {
+      "additionalProperties": false,
+      "description": "Description of a single params/thresholds field.\n\nOne source-of-truth for everything the UI needs to render a field:\nits type, bounds, default, label, help text, and whether the user\nMUST supply a value. Transformed into JSON Schema via\n:func:`field_to_json_schema` when the manifest goes over the wire.\n\nInvariants (enforced in ``_check_constraints``):\n\n- ``type == \"enum\"`` \u21d2 ``options`` is a non-empty list.\n- ``options`` is only valid when ``type == \"enum\"``.\n- ``min`` / ``max`` are only valid for numeric types\n  (``integer`` / ``number``). ``min`` \u2264 ``max``.\n- ``required=True`` + ``default is not None`` is contradictory \u2014\n  reject it so authors pick one intention (see R6 in the plan).\n- ``default`` must fall inside ``options`` / ``[min, max]`` when\n  relevant.",
+      "properties": {
+        "default": {
+          "default": null,
+          "title": "Default"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Min"
+        },
+        "options": {
+          "items": {},
+          "title": "Options",
+          "type": "array"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "secret": {
+          "default": false,
+          "title": "Secret",
+          "type": "boolean"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "integer",
+            "number",
+            "string",
+            "boolean",
+            "enum"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ParamFieldSchema",
+      "type": "object"
+    },
+    "PluginSpec": {
+      "additionalProperties": false,
+      "description": "Body of [plugin] section in plugin manifest.toml.",
+      "properties": {
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "category": {
+          "default": "",
+          "title": "Category",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "entry_point": {
+          "$ref": "#/$defs/EntryPoint"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "validation",
+            "evaluation",
+            "reward",
+            "reports"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "stability": {
+          "default": "stable",
+          "enum": [
+            "stable",
+            "beta",
+            "experimental"
+          ],
+          "title": "Stability",
+          "type": "string"
+        },
+        "supported_strategies": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Supported Strategies",
+          "type": "array"
+        },
+        "version": {
+          "default": "1.0.0",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "entry_point"
+      ],
+      "title": "PluginSpec",
+      "type": "object"
+    },
+    "RequiredEnvSpec": {
+      "additionalProperties": false,
+      "description": "Environment variable a plugin needs at runtime.\n\nPlugins declare this list explicitly so the UI can render a\n\"Required environment variables\" block in the Configure modal,\npoint the user at the right Settings tab when the value is a\nmanaged credential (HF / RunPod / MLflow), and refuse to launch\na pipeline if a non-optional env is unset.\n\nFields:\n  name        \u2014 env-var name. UPPER_SNAKE_CASE. Stored as-is in\n                the project's `env.json`.\n  description \u2014 what the value is used for. Surfaces in the UI\n                next to the input.\n  optional    \u2014 when True, plugin runs even if the var is unset.\n  secret      \u2014 when True, UI renders a password-style input\n                (`type=password` + show/hide toggle). Default is\n                True because most envs are credentials; explicitly\n                set to False for non-secret config (URLs etc).\n  managed_by  \u2014 informational hint surfaced in the UI when the\n                var is owned by another Settings surface\n                (`integrations` / `providers`). Lets the modal\n                redirect the user instead of accepting a plain-\n                text override.",
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "managed_by": {
+          "default": "",
+          "enum": [
+            "integrations",
+            "providers",
+            ""
+          ],
+          "title": "Managed By",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "secret": {
+          "default": true,
+          "title": "Secret",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "RequiredEnvSpec",
+      "type": "object"
+    }
+  },
+  "$id": "https://ryotenkai.local/schemas/plugin_manifest_v5.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Generated from ryotenkai_community.manifest.PluginManifest. Do NOT edit by hand \u2014 regenerate via `python -m tests._contracts._generators.gen_plugin_manifest`.",
+  "properties": {
+    "compat": {
+      "$ref": "#/$defs/CompatSpec"
+    },
+    "lib_requirements": {
+      "description": "Community libs this plugin imports from, with optional PEP 440 version constraints. Each entry's ``name`` must resolve to a package under community/libs/; the loader version-checks each satisfied lib against its manifest before the plugin loads.",
+      "items": {
+        "$ref": "#/$defs/LibRequirement"
+      },
+      "title": "Lib Requirements",
+      "type": "array"
+    },
+    "params_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ParamFieldSchema"
+      },
+      "title": "Params Schema",
+      "type": "object"
+    },
+    "plugin": {
+      "$ref": "#/$defs/PluginSpec"
+    },
+    "required_env": {
+      "description": "Environment variables this plugin needs at runtime. The web UI renders inputs for these in the Configure modal; values are persisted into the project's env.json (the same place general project env vars live).",
+      "items": {
+        "$ref": "#/$defs/RequiredEnvSpec"
+      },
+      "title": "Required Env",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": 5,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "suggested_params": {
+      "additionalProperties": true,
+      "title": "Suggested Params",
+      "type": "object"
+    },
+    "suggested_thresholds": {
+      "additionalProperties": true,
+      "title": "Suggested Thresholds",
+      "type": "object"
+    },
+    "thresholds_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ParamFieldSchema"
+      },
+      "title": "Thresholds Schema",
+      "type": "object"
+    }
+  },
+  "required": [
+    "plugin"
+  ],
+  "title": "RyotenkAI Plugin Manifest",
+  "type": "object",
+  "version": "5.0.0"
+}

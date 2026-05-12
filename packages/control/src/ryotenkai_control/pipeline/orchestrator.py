@@ -37,6 +37,7 @@ from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from ryotenkai_shared.config.pipeline.schema import PipelineConfig
@@ -67,6 +68,7 @@ class PipelineOrchestrator:
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
         mlflow_manager: IMLflowManager | None = None,
+        stages_override: Sequence[PipelineStage] | None = None,
     ):
         """Initialize the orchestrator from a pre-loaded config.
 
@@ -92,6 +94,16 @@ class PipelineOrchestrator:
                 launcher sets ``RYOTENKAI_RUNS_BASE_DIR`` to relocate
                 ``runs_base_dir`` inside ``<project>/runs/`` for
                 project launches.
+            mlflow_manager: Optional pre-built :class:`IMLflowManager`
+                (tests / advanced callers). When supplied, replaces the
+                manager that :class:`MLflowAttemptManager` would otherwise
+                bootstrap — short-circuits :meth:`_setup_mlflow`.
+            stages_override: Optional pre-built stage list. When supplied,
+                the bootstrap installs these stages on the
+                :class:`StageRegistry` instead of constructing the
+                canonical roster — replaces the legacy
+                ``patch.object(StageRegistry, "_build_stages")`` test
+                scaffold. Production callers always omit this kwarg.
 
         Construction is two-phase:
 
@@ -131,6 +143,7 @@ class PipelineOrchestrator:
             attempt_controller=self._attempt_controller,
             on_stage_completed=self._on_stage_completed,
             on_shutdown_signal=self._on_shutdown_signal,
+            stages_override=stages_override,
         )
         # Unpack onto ``self.*`` for backward compatibility — downstream
         # callers (and tests) still read ``orch.config``, ``orch.stages``,

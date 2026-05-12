@@ -1,0 +1,91 @@
+# serializer version: 1
+# name: test_run_report_snapshot
+  dict({
+    'mlflow': dict({
+      'active_run_id': None,
+      'chaos': dict({
+        'fail_remaining': 0,
+        'latency_seconds': 0.0,
+        'unavailable': False,
+      }),
+      'experiments': dict({
+        'exp-snapshot': '1',
+      }),
+      'is_active': True,
+      'nested_run_stack': list([
+      ]),
+      'runs': dict({
+        'r-0001': dict({
+          'description': None,
+          'end_time': 1700000003.0,
+          'experiment_name': 'exp-snapshot',
+          'metrics': list([
+            dict({
+              'key': 'loss',
+              'step': 0,
+              'timestamp': 1700000000.0,
+              'value': 2.0,
+            }),
+            dict({
+              'key': 'throughput',
+              'step': 0,
+              'timestamp': 1700000000.0,
+              'value': 100.0,
+            }),
+            dict({
+              'key': 'loss',
+              'step': 1,
+              'timestamp': 1700000001.0,
+              'value': 1.0,
+            }),
+            dict({
+              'key': 'throughput',
+              'step': 1,
+              'timestamp': 1700000001.0,
+              'value': 110.0,
+            }),
+            dict({
+              'key': 'loss',
+              'step': 2,
+              'timestamp': 1700000002.0,
+              'value': 0.6667,
+            }),
+            dict({
+              'key': 'throughput',
+              'step': 2,
+              'timestamp': 1700000002.0,
+              'value': 120.0,
+            }),
+          ]),
+          'params': dict({
+            'batch_size': 32,
+            'lr': 0.001,
+            'model': 'Qwen-7B',
+          }),
+          'parent_run_id': None,
+          'start_time': 1700000000.0,
+          'status': 'FINISHED',
+          'tags': dict({
+            'event.info.last': 'checkpoint saved',
+            'provider.gpu_type': 'A100',
+            'provider.name': 'runpod',
+            'provider.resource_id': 'pod-12345',
+            'provider.type': 'cloud',
+          }),
+        }),
+      }),
+      'tracking_uri': 'fake://in-memory',
+    }),
+    'trainer': dict({
+      'active_id': None,
+      'chaos': dict({
+        'callback_failures_remaining': 0,
+        'oom_next_spawn': False,
+        'signal_ignored': False,
+        'slow_start_seconds': 0.0,
+      }),
+      'trainers': dict({
+      }),
+    }),
+  })
+# ---

@@ -1,0 +1,49 @@
+name: visual-regression
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# Phase 6: visual diffs are NON-BLOCKING for the first 6 months while
+# baselines stabilize. The job runs lost-pixel against the static
+# Storybook build and posts a summary; it never fails the workflow.
+# After 2026-11 we flip ``continue-on-error: false`` per
+# Decision 7 in docs/plans/structured-hopping-starfish.md.
+jobs:
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The whole job is best-effort; we want the comment + artifact
+    # uploads but never want to gate a merge on it during this window.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install FE deps
+        run: cd web && npm ci
+
+      - name: Build Storybook
+        run: cd web && npm run build-storybook
+
+      - name: Run lost-pixel
+        run: cd web && npm run visual-test
+        continue-on-error: true
+
+      - name: Upload diff artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lost-pixel-diff
+          path: |
+            web/.lost-pixel/current/
+            web/.lost-pixel/difference/
+          if-no-files-found: ignore

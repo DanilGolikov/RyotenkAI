@@ -15,4 +15,10 @@ a value object that is cheap to construct end-to-end.
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from tests._factories.pipeline_config import make_pipeline_config
+from tests._factories.run_data import make_run_data
+
+__all__: list[str] = [
+    "make_pipeline_config",
+    "make_run_data",
+]

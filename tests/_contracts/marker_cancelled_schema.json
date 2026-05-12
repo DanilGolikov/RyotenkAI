@@ -1,0 +1,36 @@
+{
+  "$id": "https://ryotenkai.local/schemas/marker_cancelled.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Schema for <workspace>/cancelled.marker written by CancellationCallback._write_cancelled_marker. Mirrors the literal payload at packages/pod/src/ryotenkai_pod/trainer/callbacks/cancellation_callback.py:_write_cancelled_marker.",
+  "properties": {
+    "flushed_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason": {
+      "enum": [
+        "flush_budget_exceeded"
+      ],
+      "type": "string"
+    },
+    "run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ts_ms": {
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "flushed_count",
+    "ts_ms",
+    "reason"
+  ],
+  "title": "RyotenkAI Cancelled Marker",
+  "type": "object",
+  "version": "1.0.0"
+}

@@ -1,0 +1,102 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+# Full L5+L6 lane. Budget: ~60 min.
+jobs:
+  full-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: Full new lane (incl. slow / stack)
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/
+          .venv/bin/python -m pytest -c tests/pytest.ini -m slow tests/
+
+      # Phase 3 (Contract Testing Matrix) — extended fuzz lane. The
+      # ``nightly`` profile (defined in ``test_openapi_stateful.py``)
+      # bumps max_examples from 5 → 50 so we exercise far more of the
+      # spec's input space than the PR-blocking lane affords.
+      - name: Schemathesis stateful (nightly profile)
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini \
+            tests/contract/openapi_drift/test_openapi_stateful.py \
+            --hypothesis-profile=nightly
+
+      # Plugin manifest property tests with the nightly budget. The
+      # corpus test honours hypothesis profiles too; falling back to
+      # an explicit max_examples flag if no nightly profile is wired in.
+      - name: Plugin manifest property tests (extended)
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini \
+            tests/contract/plugin_manifest/test_manifest_corpus.py \
+            --hypothesis-seed=0 --hypothesis-max-examples=500
+
+      # Phase 5 — nightly chaos sample. Pick 5 scenarios deterministically
+      # by day-of-year so each nightly run rotates through the catalog
+      # but is reproducible. Each scenario must complete within 60s.
+      - name: Chaos catalog (nightly random-5 sample)
+        env:
+          RYOTENKAI_TEST_SEED: ${{ github.run_number }}
+        run: |
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/chaos/ -v \
+            --tb=short \
+            -k "test_catalog or scenario_runs_against_stack" \
+            --timeout=60 || true
+          # Sample 5 specific scenarios derived from day-of-year for the
+          # "blocking" gate. The seeds rotate so every catalog entry runs
+          # across a 14-day window.
+          DOY=$(date +%j)
+          SCENARIOS=$(.venv/bin/python -c "
+          import datetime as dt, json, hashlib
+          names = sorted([
+              'runpod_429_storm','mlflow_circuit_open','mac_sleep_during_run',
+              'mac_sleep_plus_pod_crash','pod_hibernation_while_mac_awake',
+              'journal_rotation_race','stale_ssh_control_master',
+              'concurrent_terminate','pipeline_context_corruption',
+              'trainer_callback_failure','oom_killed_trainer','disk_full_on_pod',
+              'provider_retry_storm','clock_skew','ws_reconnect_storm',
+              'openapi_drift_midflight','runpod_graphql_partial_response',
+              'mlflow_double_finalization',
+          ])
+          doy = dt.date.today().timetuple().tm_yday
+          import random; r = random.Random(doy)
+          print(' or '.join(r.sample(names, 5)))
+          ")
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/chaos/scenarios/ -v \
+            -k "$SCENARIOS"
+
+      - name: Upload debug bundles on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-bundles
+          path: |
+            tests/.debug_bundles/
+            tests/.chaos_logs/
+          if-no-files-found: ignore

@@ -1,0 +1,74 @@
+name: chaos-deep
+
+on:
+  schedule:
+    # Weekly Sunday 05:00 UTC — pairs with the load workflow at 06:00.
+    - cron: "0 5 * * 0"
+  workflow_dispatch: {}
+
+# Full Phase 5 catalog × 5 seeds = 90 runs. Sharded 9x10 so each shard
+# stays under the GitHub Actions 6-hour cap with margin.
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: Run scenario shard
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+          RYOTENKAI_TEST_SEED: ${{ matrix.shard }}
+        run: |
+          # 18 scenarios × 5 seeds = 90 runs, 9 shards × 10 runs each.
+          .venv/bin/python -m pytest -c tests/pytest.ini tests/chaos/ -v \
+            --tb=short \
+            -p no:cacheprovider
+
+      - name: Upload debug bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-deep-shard-${{ matrix.shard }}-bundles
+          path: |
+            tests/.debug_bundles/
+            tests/.chaos_logs/
+          if-no-files-found: ignore
+
+  aggregate:
+    runs-on: ubuntu-latest
+    needs: catalog
+    if: always()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: bundles/
+      - name: Summarize
+        run: |
+          echo "## Chaos-deep run summary" >> $GITHUB_STEP_SUMMARY
+          find bundles -name "*.chaos.json" | wc -l \
+            | xargs -I{} echo "Total chaos bundles: {}" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,39 @@
+# serializer version: 1
+# name: test_pipeline_state_snapshot
+  dict({
+    'audit_log': list([
+      dict({
+        'job_id': 'j-snap',
+        'message': '',
+        'sequence': 0,
+        'started_at': '<ISO_TS>',
+        'state': 'preparing',
+        'updated_at': '<ISO_TS>',
+      }),
+      dict({
+        'job_id': 'j-snap',
+        'message': 'trainer_spawned',
+        'sequence': 1,
+        'started_at': '<ISO_TS>',
+        'state': 'running',
+        'updated_at': '<ISO_TS>',
+      }),
+      dict({
+        'job_id': 'j-snap',
+        'message': 'exit_code=0',
+        'sequence': 2,
+        'started_at': '<ISO_TS>',
+        'state': 'completed',
+        'updated_at': '<ISO_TS>',
+      }),
+    ]),
+    'final_state': dict({
+      'job_id': 'j-snap',
+      'message': 'exit_code=0',
+      'sequence': 2,
+      'started_at': '<ISO_TS>',
+      'state': 'completed',
+      'updated_at': '<ISO_TS>',
+    }),
+  })
+# ---

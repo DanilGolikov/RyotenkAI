@@ -1,0 +1,25 @@
+{
+  "$id": "https://ryotenkai.local/schemas/runner_internal_events.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Body of POST /api/v1/internal/events. Generated from ryotenkai_shared.contracts.runner_api.InternalEventRequest.",
+  "properties": {
+    "kind": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Kind",
+      "type": "string"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "Runner Internal Events Request",
+  "type": "object",
+  "version": "1.0.0"
+}

@@ -1,0 +1,29 @@
+{
+  "ci": {
+    "collect": {
+      "staticDistDir": "./storybook-static",
+      "url": [
+        "http://localhost/iframe.html?id=components-plugincatalogcard--stable-reward",
+        "http://localhost/iframe.html?id=components-ministagetimeline--default",
+        "http://localhost/iframe.html?id=project-stalepluginsbanner--one-entry",
+        "http://localhost/iframe.html?id=design-icons--default"
+      ],
+      "numberOfRuns": 1,
+      "settings": {
+        "chromeFlags": "--no-sandbox --headless=new"
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:performance": ["warn", { "minScore": 0.8 }],
+        "categories:accessibility": ["error", { "minScore": 0.95 }],
+        "categories:best-practices": ["warn", { "minScore": 0.9 }],
+        "first-contentful-paint": ["warn", { "maxNumericValue": 2000 }],
+        "largest-contentful-paint": ["warn", { "maxNumericValue": 3000 }]
+      }
+    },
+    "upload": {
+      "target": "temporary-public-storage"
+    }
+  }
+}
