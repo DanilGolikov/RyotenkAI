@@ -1,4 +1,4 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov test-mock-policy lint format fix-all pre-commit clean info validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
+.PHONY: help setup install-hooks test test-fast test-unit test-cov test-mock-policy test-quick test-full test-mutation test-status test-lint lint format fix-all pre-commit clean info validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
 
 # Pin all Python tooling to the project-local venv so `make` works regardless
 # of which venv is active in the shell. Override with e.g. `make VENV=.venv2`.
@@ -40,6 +40,11 @@ help:
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test           - Run all tests"
+	@echo "  make test-quick     - Unit lane only (~90s)"
+	@echo "  make test-full      - unit + integration + e2e (~6 min)"
+	@echo "  make test-lint      - Sentinel suite (~25s)"
+	@echo "  make test-mutation  - Incremental mutation testing on diff"
+	@echo "  make test-status    - Regenerate docs/testing/STATUS.md"
 	@echo "  make test-fast      - Skip slow tests"
 	@echo "  make test-unit      - Unit tests only"
 	@echo "  make test-cov       - With coverage"
@@ -105,6 +110,29 @@ test-cov: _check-venv
 # See docs/testing/mock_policy.md.
 test-mock-policy: _check-venv
 	$(PYTEST) -c tests/pytest.ini tests/_lint/test_no_protocol_mocking.py -v
+
+# ----- Test-infrastructure-finalization targets (docs/testing/README.md) -----
+
+# Quick lane: unit tests only. ~90s wall clock.
+test-quick: _check-venv
+	$(PYTEST) -c tests/pytest.ini tests/unit -q
+
+# Full lane: unit + integration + e2e. ~6 min wall clock.
+test-full: _check-venv
+	$(PYTEST) -c tests/pytest.ini tests/unit tests/integration tests/e2e -q
+
+# Sentinel suite only — fast pre-merge structural check.
+test-lint: _check-venv
+	$(PYTEST) -c tests/pytest.ini tests/_lint -q
+
+# Per-PR incremental mutation testing on production files in the diff.
+# See docs/testing/mutation_testing.md.
+test-mutation: _check-venv
+	bash scripts/mutation/run_on_diff.sh
+
+# Regenerate docs/testing/STATUS.md (auto-status dashboard).
+test-status: _check-venv
+	$(PYTHON) scripts/testing/status.py
 
 # ============================================
 # Code Quality

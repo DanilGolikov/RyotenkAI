@@ -1,0 +1,103 @@
+name: quarterly mock policy review
+
+on:
+  schedule:
+    # First day of every 3rd month at 09:00 UTC.
+    - cron: "0 9 1 */3 *"
+  workflow_dispatch: {}
+
+# Tier 5 of the test-infrastructure plan (process gate, durable):
+# re-checks the mock inventory + allowlist drift each quarter and opens
+# an issue summarising stale entries that need re-blessing or removal.
+#
+# Why a workflow (not a CronCreate task):
+# - Durable: survives across local sessions / machine restarts.
+# - Auditable: every run leaves a record in GitHub Actions history.
+# - Public: opens an issue that anyone can pick up.
+jobs:
+  review:
+    name: open quarterly mock-policy issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: Generate fresh mock inventory
+        run: |
+          .venv/bin/python scripts/mock_inventory.py \
+            --output /tmp/mock_inventory_fresh.csv \
+            --markdown /tmp/mock_inventory_fresh.md
+
+      - name: Compute deltas
+        id: deltas
+        run: |
+          {
+            echo "## Mock inventory delta"
+            echo ""
+            echo "**Committed** (\`docs/migration/mock_inventory.md\`) vs fresh scan:"
+            echo ""
+            echo '```diff'
+            diff docs/migration/mock_inventory.md /tmp/mock_inventory_fresh.md \
+              | head -300 || true
+            echo '```'
+            echo ""
+            echo "## Allowlist health"
+            echo ""
+            .venv/bin/python -c "
+          import importlib.util, datetime
+          spec = importlib.util.spec_from_file_location('al', 'tests/_lint/_mock_allowlist.py')
+          mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+          today = datetime.date.today()
+          ages = []
+          for e in mod.ALLOWLIST:
+              try:
+                  age = (today - datetime.date.fromisoformat(e.renewed)).days
+              except Exception:
+                  age = -1
+              ages.append((age, e.path, e.line, e.pattern, e.reason))
+          ages.sort(reverse=True)
+          print('| age (days) | path | pattern | reason |')
+          print('|---:|---|---|---|')
+          for age, p, ln, pat, r in ages[:25]:
+              print(f'| {age} | {p}:{ln} | {pat} | {r[:80]} |')
+          stale = [a for a in ages if a[0] > 300]
+          print()
+          print(f'**{len(stale)} entries are > 300 days old** (will decay at 365).')
+            "
+          } > /tmp/quarterly_review_body.md
+          cat /tmp/quarterly_review_body.md
+
+      - name: Open quarterly-review issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('/tmp/quarterly_review_body.md', 'utf8');
+            const today = new Date().toISOString().slice(0, 10);
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Quarterly mock-policy review — ${today}`,
+              body: body + '\n\n' +
+                'Follow-up: re-bless entries with bumped `renewed=` ISO date in ' +
+                '`tests/_lint/_mock_allowlist.py`, or eliminate the mock entirely.' +
+                ' See `docs/testing/mock_policy.md` for the process.',
+              labels: ['testing', 'mock-policy', 'quarterly-review'],
+            });

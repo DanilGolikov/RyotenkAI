@@ -277,7 +277,7 @@ def test_deploy_missing_ssh_key_file_returns_err(tmp_path: Path) -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure post-packagization: deploy() now intentionally returns endpoint_url=None until activate_for_eval opens the SSH tunnel (was http://127.0.0.1:8000/v1 in legacy contract); test still asserts the legacy URL.",
+    reason="xfail-debt:runpod-pods-deploy-tunnel-drift — Pre-existing failure post-packagization: deploy() now intentionally returns endpoint_url=None until activate_for_eval opens the SSH tunnel (was http://127.0.0.1:8000/v1 in legacy contract); test still asserts the legacy URL.",
 )
 def test_deploy_success_no_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key_file = tmp_path / "id_ed25519"

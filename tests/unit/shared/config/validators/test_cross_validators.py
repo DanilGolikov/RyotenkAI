@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 _XFAIL_REGISTRY_LOAD_DRIFT = pytest.mark.xfail(
     strict=True,
     reason=(
-        "Pre-existing: validator now surfaces CONFIG_PROVIDER_REGISTRY_LOAD_FAILED"
+        "xfail-debt:cross-validators-registry-error-drift — Pre-existing: validator now surfaces CONFIG_PROVIDER_REGISTRY_LOAD_FAILED"
         " (SimpleNamespace.get_registry) instead of CONFIG_PROVIDER_NOT_REGISTERED."
     ),
 )

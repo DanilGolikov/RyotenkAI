@@ -97,7 +97,7 @@ def _hf_ds(train_id: str, *, eval_id: str | None = None) -> DatasetConfig:
 _XFAIL_DATASET_ACCESSOR_DRIFT = pytest.mark.xfail(
     strict=True,
     reason=(
-        "DatasetConfig.source_local / get_source_type removed — replaced by typed "
+        "xfail-debt:dataset-config-typed-source-drift — DatasetConfig.source_local / get_source_type removed — replaced by typed "
         "`source` discriminated union (cfg.source.local_paths etc). Test needs "
         "rewriting against the typed accessor surface."
     ),

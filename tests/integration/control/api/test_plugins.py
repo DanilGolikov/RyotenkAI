@@ -170,14 +170,6 @@ def test_preflight_no_plugins_returns_ok(client: TestClient) -> None:
     assert payload["missing"] == []
 
 
-@_pytest_for_xfail.mark.xfail(
-    strict=True,
-    reason=(
-        "Inline config uses legacy inference.engine (string) and inference.engines "
-        "block — current PipelineConfig requires typed inference.engine "
-        "discriminated union (kind: vllm). Test body needs schema migration."
-    ),
-)
 def test_preflight_surfaces_missing_envs(
     client: TestClient, monkeypatch
 ) -> None:
@@ -186,14 +178,8 @@ def test_preflight_surfaces_missing_envs(
     config = _minimal_preflight_config_payload()
     config["inference"] = {
         "enabled": True,
-        "engine": "vllm",
+        "engine": {"kind": "vllm"},
         "provider": "single_node",
-        "engines": {
-            "vllm": {
-                "merge_image": "test/merge:latest",
-                "serve_image": "test/serve:latest",
-            }
-        },
     }
     config["evaluation"] = {
         "enabled": True,
@@ -224,14 +210,6 @@ def test_preflight_surfaces_missing_envs(
     assert only["secret"] is True
 
 
-@_pytest_for_xfail.mark.xfail(
-    strict=True,
-    reason=(
-        "Inline config uses legacy inference.engine (string) and inference.engines "
-        "block — current PipelineConfig requires typed inference.engine "
-        "discriminated union (kind: vllm). Test body needs schema migration."
-    ),
-)
 def test_preflight_project_env_satisfies_requirement(
     client: TestClient, monkeypatch
 ) -> None:
@@ -241,14 +219,8 @@ def test_preflight_project_env_satisfies_requirement(
     config = _minimal_preflight_config_payload()
     config["inference"] = {
         "enabled": True,
-        "engine": "vllm",
+        "engine": {"kind": "vllm"},
         "provider": "single_node",
-        "engines": {
-            "vllm": {
-                "merge_image": "test/merge:latest",
-                "serve_image": "test/serve:latest",
-            }
-        },
     }
     config["evaluation"] = {
         "enabled": True,

@@ -35,7 +35,7 @@ pytestmark = [
     pytest.mark.unit,
     pytest.mark.xfail(
         strict=True,
-        reason="Pre-existing failure pre-packagization: WaitPolicy.running_no_ports_bailout_s attribute removed; INFERENCE_PROFILE API drifted.",
+        reason="xfail-debt:wait-policy-api-drift — Pre-existing failure pre-packagization: WaitPolicy.running_no_ports_bailout_s attribute removed; INFERENCE_PROFILE API drifted.",
     ),
 ]
 

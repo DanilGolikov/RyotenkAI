@@ -144,7 +144,7 @@ def test_dataset_local_paths_minimal_valid():
 _XFAIL_VLLM_DRIFT = pytest.mark.xfail(
     strict=True,
     reason=(
-        "Pre-existing: VLLMEngineConfig no longer exposes `merge_image` /"
+        "xfail-debt:vllm-engine-config-fields-drift — Pre-existing: VLLMEngineConfig no longer exposes `merge_image` /"
         " `serve_image` attributes (post-engines-refactor drift)."
     ),
 )

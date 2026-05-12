@@ -36,6 +36,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests._fakes.training_monitor import make_monitor_with_log_manager
+
 
 def _load_monitor():
     """Load the monitor module directly so we don't drag the whole
@@ -636,84 +638,80 @@ class TestLogManagerFromContext:
         assert runner_lm is None
         assert ssh is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
     def test_constructs_for_cloud_provider(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Stub SSHClient so the test doesn't actually open a control
-        # socket. We only care that the helper plumbs the deployer
-        # context through to ``LogManager``.
-        constructed: dict[str, Any] = {}
+        """Phase 3 PR-3.2 (transport-unification-v2): the helper no
+        longer opens an SSHClient ControlMaster — both pullers are
+        :class:`LogFetcher` instances reusing the stage's
+        :class:`JobClient`. The third tuple slot is always ``None``.
+        """
+        from ryotenkai_shared.contracts.runner_api.logs import LogName
 
-        class _FakeSSH:
-            def __init__(self, **kwargs):
-                constructed.update(kwargs)
-            def close_master(self) -> None:
-                pass
+        # Capture LogFetcher constructions without touching its real
+        # ``__init__`` (which expects a runtime-typed JobClient + would
+        # call layout.ensure_logs_dir()).
+        constructed: list[dict[str, Any]] = []
 
-        class _FakeLM:
-            def __init__(self, ssh, *, remote_path, local_path):
-                constructed["remote_path"] = remote_path
-                constructed["local_path"] = local_path
-                constructed["ssh"] = ssh
+        class _FakeFetcher:
+            def __init__(self, client, *, name, local_path):
+                constructed.append(
+                    {"client": client, "name": name, "local_path": local_path},
+                )
+                self.name = name
                 self.local_path = local_path
-                self.remote_path = remote_path
 
         class _FakeMacLayout:
-            def ensure_logs_dir(self):  # noqa: ANN001
+            def ensure_logs_dir(self):  # pragma: no cover  (unused after PR-3.2)
                 pass
             @property
-            def remote_trainer_stdio_log(self):  # noqa: ANN001
+            def remote_trainer_stdio_log(self):
                 return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
             @property
-            def remote_runner_log(self):  # noqa: ANN001
-                # PR-B — second LogManager target
+            def remote_runner_log(self):
                 return Path("/tmp/fake-attempt/logs/runner.log")
 
-        monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
-        monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+        monkeypatch.setattr(_monitor_mod, "LogFetcher", _FakeFetcher)
         monkeypatch.setattr(
             _monitor_mod, "get_run_log_layout", lambda: _FakeMacLayout(),
         )
 
-        monitor = _make_monitor()
+        fake_client = MagicMock(name="JobClient")
+        monitor = make_monitor_with_log_manager(_client=fake_client)
         lm, runner_lm, ssh = monitor._build_log_manager_from_context({
             "provider_type": "cloud",
-            "ssh_host": "pod.example.com",
-            "ssh_port": 2222,
-            "ssh_user": "root",
-            "ssh_key_path": "/tmp/key",
-            "is_alias_mode": False,
-            "workspace_path": "/workspace/runs/run_x",
         })
         assert lm is not None
         assert runner_lm is not None  # PR-B — runner.log puller
-        assert ssh is not None
-        assert constructed["host"] == "pod.example.com"
-        assert constructed["port"] == 2222
-        assert constructed["username"] == "root"
-        assert constructed["key_path"] == "/tmp/key"
-        # Per-PodLayout: remote_path is built from workspace_path and
-        # MUST be the per-run trainer.stdio.log under logs/. The fake
-        # LM stashes the LAST construction's args; with PR-B the last
-        # call is the runner_lm — so we assert on runner.log here.
-        assert constructed["remote_path"] == "/workspace/runs/run_x/logs/runner.log"
+        # PR-3.2: SSH slot retired, third tuple element is None.
+        assert ssh is None
+
+        # Trainer fetcher built first, then runner fetcher.
+        assert len(constructed) == 2
+        trainer_args, runner_args = constructed
+        assert trainer_args["client"] is fake_client
+        assert trainer_args["name"] is LogName.TRAINER_STDIO
+        assert trainer_args["local_path"] == Path(
+            "/tmp/fake-attempt/logs/trainer.stdio.log",
+        )
+        assert runner_args["client"] is fake_client
+        assert runner_args["name"] is LogName.RUNNER
+        assert runner_args["local_path"] == Path(
+            "/tmp/fake-attempt/logs/runner.log",
+        )
 
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
+            "xfail-debt:training-monitor-alias-mode-gone — Phase 3 "
+            "PR-3.2 removed the SSHClient construction from "
+            "_build_log_manager_from_context entirely. The HTTP-only "
+            "JobClient pullers have no alias-mode toggle, so the "
+            "behavior this test pinned (SSHClient username/key_path "
+            "forced to None when ~/.ssh/config aliases the host) has "
+            "no analog in the current monitor. Delete or rewrite "
+            "against ryotenkai_control...ssh_helpers.is_alias_mode "
+            "instead."
         ),
     )
     def test_alias_mode_forces_username_and_key_to_none(
@@ -812,94 +810,125 @@ class TestPostMortemDiagnostics:
         })
         assert monitor._ssh_client.exec_command.call_count == 0
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
     def test_nonzero_exit_runs_full_probe_set(self) -> None:
-        """Postmortem refactor: trainer-output sources come from local
-        files (trainer.stdio.log + runner.log via LogManager scp), not
-        SSH probes. Live probes are restricted to environment-level
-        signals (kernel + GPU)."""
-        monitor = _make_monitor()
-        monitor._ssh_client = self._fake_ssh()
+        """Postmortem refactor (Phase 2 PR-2.1, transport-unification-v2):
+        the three environment-level probes (``dmesg_tail``,
+        ``dmesg_kernel_signals``, ``nvidia_smi``) now arrive as a single
+        ``GET /api/v1/diagnostics`` HTTP call instead of separate SSH
+        ``exec_command`` round-trips. We assert the HTTP call fires
+        once on non-zero exit and that all three blocks are rendered."""
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsResponse,
+            DmesgReport,
+            GpuReport,
+            GpuRow,
+            KernelSignalsReport,
+        )
+
+        resp = DiagnosticsResponse(
+            dmesg=DmesgReport(lines=["kern1", "kern2"]),
+            kernel_signals=KernelSignalsReport(matches=["oom-killer"]),
+            gpu=GpuReport(rows=[
+                GpuRow(
+                    name="RTX 5090",
+                    utilization_gpu_percent=99,
+                    memory_used_mib=24000,
+                    memory_total_mib=32000,
+                ),
+            ]),
+        )
+        client = MagicMock()
+        client.get_diagnostics = AsyncMock(return_value=resp)
+
+        monitor = make_monitor_with_log_manager(_client=client)
         monitor._handle_trainer_exited({
             "exit_code": 1, "signal": None, "cancellation_requested": False,
         })
-        labels = [lbl for lbl, _ in monitor._ssh_client.executed]
-        for required in [
-            "dmesg_kernel_signals", "dmesg_tail", "nvidia_smi",
-        ]:
-            assert required in labels, (
-                f"missing probe {required!r} in {labels!r}"
-            )
-        # Legacy probes that were folded into local-file reads (the
-        # trainer.stdio.log and runner.log paths) — no longer probed
-        # over SSH. Verify they do not fire to keep the data plane
-        # vs. environment plane separation explicit.
-        commands = [cmd for _, cmd in monitor._ssh_client.executed]
-        for forbidden in (
-            "training.faulthandler.log",  # was probe 'faulthandler'
-            "/workspace/training.log",   # was probe 'training_log_tail'
-            "TRAINING_",                 # legacy marker IPC
-        ):
-            assert not any(forbidden in cmd for cmd in commands), (
-                f"forbidden legacy fragment {forbidden!r} in commands: {commands!r}"
-            )
+        # Single HTTP call replaces the three SSH probes.
+        assert client.get_diagnostics.await_count == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
     def test_signal_kill_with_zero_exit_still_triggers_postmortem(self) -> None:
         # SIGTERM-killed trainer that returns 0 (process raced before
-        # exit) is still a crash from the operator's POV.
-        monitor = _make_monitor()
-        monitor._ssh_client = self._fake_ssh()
+        # exit) is still a crash from the operator's POV — the HTTP
+        # diagnostics call must fire.
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsResponse,
+        )
+
+        client = MagicMock()
+        client.get_diagnostics = AsyncMock(return_value=DiagnosticsResponse())
+
+        monitor = make_monitor_with_log_manager(_client=client)
         monitor._handle_trainer_exited({
             "exit_code": 0, "signal": "SIGTERM",
             "cancellation_requested": False,
         })
-        assert monitor._ssh_client.exec_command.called
+        assert client.get_diagnostics.await_count == 1
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
-    def test_probe_failure_does_not_abort_remaining_probes(self) -> None:
-        monitor = _make_monitor()
-        ssh = MagicMock()
-        # First two probes raise, the rest succeed — the loop must
-        # keep going so the operator gets the dmesg signals.
-        call_count = {"n": 0}
-        def _exec(**kwargs):
-            call_count["n"] += 1
-            if call_count["n"] <= 2:
-                raise RuntimeError("ssh boom")
-            return True, "ok-output", ""
-        ssh.exec_command = MagicMock(side_effect=_exec)
-        monitor._ssh_client = ssh
+    def test_probe_failure_does_not_abort_remaining_probes(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Post-Phase-2 PR-2.1: per-block failures land inside
+        # ``response.<block>.error`` instead of being swallowed by an
+        # SSH probe loop. Rendering must still emit every block (so a
+        # broken dmesg probe doesn't suppress the nvidia-smi readout).
+        captured: list[tuple[str, tuple[Any, ...]]] = []
+
+        def _info(msg, *args, **_kwargs):
+            captured.append((msg, args))
+
+        monkeypatch.setattr(_monitor_mod.logger, "info", _info)
+
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsBlockError,
+            DiagnosticsResponse,
+            DmesgReport,
+            GpuReport,
+            GpuRow,
+            KernelSignalsReport,
+        )
+
+        # dmesg + kernel_signals report errors; gpu still has data.
+        resp = DiagnosticsResponse(
+            dmesg=DmesgReport(error=DiagnosticsBlockError.PERMISSION_DENIED),
+            kernel_signals=KernelSignalsReport(error=DiagnosticsBlockError.PERMISSION_DENIED),
+            gpu=GpuReport(rows=[
+                GpuRow(
+                    name="RTX 5090",
+                    utilization_gpu_percent=42,
+                    memory_used_mib=8000,
+                    memory_total_mib=32000,
+                ),
+            ]),
+        )
+        client = MagicMock()
+        client.get_diagnostics = AsyncMock(return_value=resp)
+
+        monitor = make_monitor_with_log_manager(_client=client)
         monitor._handle_trainer_exited({
             "exit_code": 1, "signal": None, "cancellation_requested": False,
         })
-        # All 3 environment probes attempted (data-plane probes were
-        # promoted to local-file reads in the postmortem refactor).
-        assert ssh.exec_command.call_count == 3
+
+        def _render(msg, args):
+            if not args:
+                return msg
+            try:
+                return msg % args
+            except TypeError:
+                return msg
+        rendered = [_render(m, a) for m, a in captured]
+        # Each of the three blocks must produce at least one log line —
+        # the two errored blocks render their sentinel, the gpu block
+        # renders the row.
+        assert any("[MONITOR:POSTMORTEM] dmesg: <<PERMISSION_DENIED>>" in line for line in rendered)
+        assert any(
+            "[MONITOR:POSTMORTEM] dmesg_kernel_signals: <<PERMISSION_DENIED>>" in line
+            for line in rendered
+        )
+        assert any(
+            "[MONITOR:POSTMORTEM] nvidia_smi:" in line and "RTX 5090" in line
+            for line in rendered
+        )
 
     def test_no_ssh_client_makes_postmortem_a_noop(self) -> None:
         # Single-node / mock flow — _ssh_client is None.
@@ -909,15 +938,6 @@ class TestPostMortemDiagnostics:
             "exit_code": 1, "signal": None, "cancellation_requested": False,
         })
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
     def test_log_lines_carry_postmortem_prefix(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -928,10 +948,26 @@ class TestPostMortemDiagnostics:
 
         monkeypatch.setattr(_monitor_mod.logger, "info", _info)
 
-        monitor = _make_monitor()
-        monitor._ssh_client = self._fake_ssh(output_per_label={
-            "nvidia_smi": "RTX 5090, 99 %, 24000 MiB, 32000 MiB",
-        })
+        from ryotenkai_shared.contracts.runner_api.diagnostics import (
+            DiagnosticsResponse,
+            GpuReport,
+            GpuRow,
+        )
+
+        resp = DiagnosticsResponse(
+            gpu=GpuReport(rows=[
+                GpuRow(
+                    name="RTX 5090",
+                    utilization_gpu_percent=99,
+                    memory_used_mib=24000,
+                    memory_total_mib=32000,
+                ),
+            ]),
+        )
+        client = MagicMock()
+        client.get_diagnostics = AsyncMock(return_value=resp)
+
+        monitor = make_monitor_with_log_manager(_client=client)
         monitor._handle_trainer_exited({
             "exit_code": 137, "signal": None,
             "cancellation_requested": False,
@@ -946,7 +982,7 @@ class TestPostMortemDiagnostics:
             except TypeError:
                 return msg
         rendered = [_render(m, a) for m, a in captured]
-        # Banner + at least one probe with rendered content.
+        # Banner + at least one block with rendered content.
         assert any(
             "[MONITOR:POSTMORTEM] non-zero exit detected" in line
             for line in rendered
@@ -1023,45 +1059,33 @@ class TestPodResilience:
             _monitor_mod.JobClientError("boom"),
         ) is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
-    def test_terminal_pod_returns_terminated_err(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monitor = _make_monitor()
-        monitor._provider_name = "runpod"
-        monitor._resource_id = "pod-1"
-        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+    def test_terminal_pod_returns_terminated_err(self) -> None:
+        # Phase 14.D+F: ``_recover_pod_if_needed`` now goes through the
+        # provider's :class:`IRecoveryProbeProvider.attempt_recovery`
+        # capability instead of hitting RunPod's SDK directly. A
+        # terminal pod surfaces as ``Err(ProviderError(POD_TERMINAL))``
+        # from the provider, which the monitor maps to
+        # ``MONITOR_POD_TERMINATED``.
+        from ryotenkai_shared.utils.result import Err, ProviderError
 
-        terminal_pod = {
-            "id": "pod-1",
-            "desiredStatus": "TERMINATED",
-            "runtime": {"uptimeInSeconds": 0, "ports": []},
-        }
+        calls: list[str] = []
 
-        sdk = MagicMock()
-        sdk.get_pod = MagicMock(return_value=_FakeOk(terminal_pod))
-        sdk.start_pod = MagicMock()
+        class _FakeProvider:
+            def attempt_recovery(self, *, resource_id):
+                calls.append(resource_id)
+                return Err(ProviderError(message="pod terminal", code="POD_TERMINAL"))
 
-        monkeypatch.setattr(
-            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
-            lambda *, api_key: sdk,
+        monitor = make_monitor_with_log_manager(
+            _provider=_FakeProvider(),
+            _resource_id="pod-1",
         )
-
         result = monitor._recover_pod_if_needed(
             _monitor_mod.JobClientError("boom"),
         )
         assert result is not None
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_POD_TERMINATED"
-        sdk.start_pod.assert_not_called()
+        assert calls == ["pod-1"]
 
     def test_running_pod_returns_none_for_caller_to_propagate(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -1094,77 +1118,49 @@ class TestPodResilience:
         )
         assert result is None
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
-    def test_stopped_pod_triggers_wake_up(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monitor = _make_monitor()
-        monitor._provider_name = "runpod"
-        monitor._resource_id = "pod-1"
-        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+    def test_stopped_pod_triggers_wake_up(self) -> None:
+        # A successful wake-up returns a fresh :class:`ProviderStatus`
+        # that is NOT ``CONNECTED`` (the pod woke up but the runner SSH
+        # session has to be re-established by the orchestrator); the
+        # monitor surfaces this as ``MONITOR_POD_RECOVERED`` so the
+        # orchestrator knows to restart the launcher.
+        from ryotenkai_shared.utils.result import Ok
+        from ryotenkai_providers.training.interfaces import ProviderStatus
 
-        stopped_pod = {
-            "id": "pod-1",
-            "desiredStatus": "EXITED" if False else "STOPPED",
-            "runtime": {"uptimeInSeconds": 0, "ports": []},
-        }
-        # Use a status that is non-terminal AND non-ready (not in
-        # FAILED/TERMINATED/EXITED; not RUNNING).
-        stopped_pod["desiredStatus"] = "STOPPED"
+        calls: list[str] = []
 
-        sdk = MagicMock()
-        sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
-        sdk.start_pod = MagicMock(return_value=_FakeOk(None))
-        monkeypatch.setattr(
-            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
-            lambda *, api_key: sdk,
+        class _FakeProvider:
+            def attempt_recovery(self, *, resource_id):
+                calls.append(resource_id)
+                return Ok(ProviderStatus.AVAILABLE)
+
+        monitor = make_monitor_with_log_manager(
+            _provider=_FakeProvider(),
+            _resource_id="pod-1",
         )
-
         result = monitor._recover_pod_if_needed(
             _monitor_mod.JobClientError("boom"),
         )
         assert result is not None
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_POD_RECOVERED"
-        sdk.start_pod.assert_called_once_with(pod_id="pod-1")
+        assert calls == ["pod-1"]
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
-    def test_wake_up_failure_surfaces_specific_code(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monitor = _make_monitor()
-        monitor._provider_name = "runpod"
-        monitor._resource_id = "pod-1"
-        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
+    def test_wake_up_failure_surfaces_specific_code(self) -> None:
+        # A wake-up rejection from the provider (rate-limited start,
+        # transient SDK failure, …) surfaces as
+        # ``Err(ProviderError(POD_WAKE_FAILED))``; the monitor maps the
+        # provider code to ``MONITOR_POD_WAKE_FAILED``.
+        from ryotenkai_shared.utils.result import Err, ProviderError
 
-        stopped_pod = {
-            "id": "pod-1",
-            "desiredStatus": "STOPPED",
-            "runtime": {"uptimeInSeconds": 0, "ports": []},
-        }
+        class _FakeProvider:
+            def attempt_recovery(self, *, resource_id):
+                return Err(ProviderError(message="rate limit", code="POD_WAKE_FAILED"))
 
-        sdk = SimpleNamespace(get_pod=MagicMock(return_value=_FakeOk(stopped_pod)), start_pod=MagicMock(return_value=_FakeErr("rate limit")))
-        monkeypatch.setattr(
-            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
-            lambda *, api_key: sdk,
+        monitor = make_monitor_with_log_manager(
+            _provider=_FakeProvider(),
+            _resource_id="pod-1",
         )
-
         result = monitor._recover_pod_if_needed(
             _monitor_mod.JobClientError("boom"),
         )
@@ -1172,30 +1168,23 @@ class TestPodResilience:
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_POD_WAKE_FAILED"
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
-    def test_attempt_cap_returns_exhausted_err(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monitor = _make_monitor()
-        monitor._provider_name = "runpod"
-        monitor._resource_id = "pod-1"
-        monitor._secrets = SimpleNamespace(runpod_api_key="rk-1")
-        monitor._recovery_attempts = monitor._RECOVERY_ATTEMPT_CAP
+    def test_attempt_cap_returns_exhausted_err(self) -> None:
+        # Once :attr:`_recovery_attempts` reaches
+        # :attr:`_RECOVERY_ATTEMPT_CAP`, the monitor short-circuits with
+        # ``MONITOR_RECOVERY_EXHAUSTED`` and does NOT call the provider.
+        call_count = {"n": 0}
 
-        # SDK should never be touched once the cap is hit.
-        sdk = MagicMock()
-        monkeypatch.setattr(
-            "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
-            lambda *, api_key: sdk,
+        class _FakeProvider:
+            def attempt_recovery(self, *, resource_id):
+                call_count["n"] += 1
+                raise AssertionError("attempt_recovery must not run when cap exhausted")
+
+        provider = _FakeProvider()
+        monitor = make_monitor_with_log_manager(
+            _provider=provider,
+            _resource_id="pod-1",
         )
+        monitor._recovery_attempts = monitor._RECOVERY_ATTEMPT_CAP
 
         result = monitor._recover_pod_if_needed(
             _monitor_mod.JobClientError("boom"),
@@ -1203,7 +1192,7 @@ class TestPodResilience:
         assert result is not None
         assert result.is_err()
         assert result.unwrap_err().code == "MONITOR_RECOVERY_EXHAUSTED"
-        sdk.get_pod.assert_not_called()
+        assert call_count["n"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1502,59 +1491,51 @@ class TestFinalFlushDebugLogs:
 
 
 class TestLogManagerUsesPodLayoutForRemote:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "Post-Phase-B drift in monitor postmortem/pod-resilience/log-"
-            "manager paths — these tests reference helper attrs and "
-            "expected behavior that changed during refactor; rewrite "
-            "against current TrainingMonitor surface."
-        ),
-    )
     def test_uses_per_run_trainer_stdio_log(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # The monitor MUST resolve remote_path through PodLayout —
-        # ``<workspace>/logs/trainer.stdio.log``. Pre-PodLayout this
-        # used a global ``LogManager.DEFAULT_REMOTE_PATH`` which
-        # silently downloaded from the wrong file.
-        constructed: dict[str, Any] = {}
+        # Phase 2 PR-2.3 (transport-unification-v2): the trainer log
+        # path is no longer encoded on the Mac side as a remote string
+        # — PodLayout resolution moved pod-side and the runner maps
+        # :class:`LogName.TRAINER_STDIO` to the actual pod file. The
+        # remaining Mac-side contract is that the LOCAL artifact lands
+        # at the per-run path :attr:`MacRunLogLayout.remote_trainer_stdio_log`,
+        # so the test pins that the helper hands the trainer fetcher
+        # the layout-derived local path (not a global default).
+        constructed: list[dict[str, Any]] = []
 
-        class _FakeSSH:
-            def __init__(self, **kwargs):
-                pass
-            def close_master(self) -> None:
-                pass
-
-        class _FakeLM:
-            def __init__(self, ssh, *, remote_path, local_path):
-                constructed["remote_path"] = remote_path
-                constructed["local_path"] = local_path
+        class _FakeFetcher:
+            def __init__(self, client, *, name, local_path):
+                constructed.append(
+                    {"client": client, "name": name, "local_path": local_path},
+                )
+                self.name = name
                 self.local_path = local_path
-                self.remote_path = remote_path
 
         class _FakeMacLayout:
-            def ensure_logs_dir(self):  # noqa: ANN001
+            def ensure_logs_dir(self):  # pragma: no cover  (unused after PR-3.2)
                 pass
             @property
-            def remote_trainer_stdio_log(self):  # noqa: ANN001
+            def remote_trainer_stdio_log(self):
                 return Path("/tmp/fake-attempt/logs/trainer.stdio.log")
+            @property
+            def remote_runner_log(self):
+                return Path("/tmp/fake-attempt/logs/runner.log")
 
-        monkeypatch.setattr(_monitor_mod, "SSHClient", _FakeSSH)
-        monkeypatch.setattr(_monitor_mod, "LogManager", _FakeLM)
+        monkeypatch.setattr(_monitor_mod, "LogFetcher", _FakeFetcher)
         monkeypatch.setattr(
             _monitor_mod, "get_run_log_layout", lambda: _FakeMacLayout(),
         )
 
-        monitor = _make_monitor()
+        fake_client = MagicMock(name="JobClient")
+        monitor = make_monitor_with_log_manager(_client=fake_client)
         monitor._build_log_manager_from_context({
             "provider_type": "cloud",
-            "ssh_host": "pod.example.com",
-            "ssh_port": 2222,
-            "ssh_user": "root",
-            "ssh_key_path": "/tmp/key",
-            "is_alias_mode": False,
-            "workspace_path": "/workspace/runs/run_xyz",
         })
-        # Per-run path under PodLayout: <workspace>/logs/trainer.stdio.log.
-        assert constructed["remote_path"] == "/workspace/runs/run_xyz/logs/trainer.stdio.log"
+        # Per-run path under MacRunLogLayout:
+        # <attempt>/logs/trainer.stdio.log.
+        assert len(constructed) == 2
+        trainer_args = constructed[0]
+        assert trainer_args["local_path"] == Path(
+            "/tmp/fake-attempt/logs/trainer.stdio.log",
+        )

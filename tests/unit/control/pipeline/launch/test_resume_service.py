@@ -492,7 +492,7 @@ class TestLogicSpecific:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="Pre-existing failure pre-packagization: RunPodProvider.from_resume_metadata signature changed (now requires extra kwarg).",
+        reason="xfail-debt:resume-service-signature-drift — Pre-existing failure pre-packagization: RunPodProvider.from_resume_metadata signature changed (now requires extra kwarg).",
     )
     def test_default_resolver_uses_env_for_runpod(
         self, monkeypatch: pytest.MonkeyPatch,

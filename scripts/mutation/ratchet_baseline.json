@@ -4,7 +4,7 @@
   "source_report": "docs/migration/mutation_testing_report.md (Phase 6, 2026-05-12)",
   "files": {
     "packages/pod/src/ryotenkai_pod/runner/event_bus.py": 0.6926,
-    "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py": 0.5848,
+    "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py": 0.8187,
     "packages/control/src/ryotenkai_control/pipeline/stages/managers/deployment_manager.py": 0.5000
   }
 }

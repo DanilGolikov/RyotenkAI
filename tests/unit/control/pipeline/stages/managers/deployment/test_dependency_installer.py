@@ -160,7 +160,7 @@ def test_verify_prebuilt_dependencies_failure_returns_err():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: dependency_installer module attribute access drifted (legacy patched attribute removed).",
+    reason="xfail-debt:dependency-installer-attr-drift — Pre-existing failure pre-packagization: dependency_installer module attribute access drifted (legacy patched attribute removed).",
 )
 def test_verify_single_node_docker_runtime_no_image_returns_config_error(installer: DependencyInstaller):
     """_verify_single_node_docker_runtime returns ConfigError when docker_image is absent."""

@@ -55,6 +55,48 @@ def _index(report: dict) -> dict[str, float]:
     return out
 
 
+def _load_merge_base_baseline() -> dict[str, float]:
+    """Read the baseline file at ``git merge-base origin/main HEAD``.
+
+    Used by feature-branch ratchet checks so a branch isn't blocked by
+    kill-rate gaps that existed before it diverged. Falls back to the
+    current-tree baseline if any git command fails.
+    """
+    import subprocess
+
+    try:
+        mb = subprocess.run(
+            ["git", "merge-base", "origin/main", "HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Not a git repo, or origin/main missing. Fall back gracefully.
+        return _load(BASELINE).get("files", {}) if BASELINE.exists() else {}
+
+    if not mb:
+        return _load(BASELINE).get("files", {}) if BASELINE.exists() else {}
+
+    rel = BASELINE.relative_to(REPO_ROOT)
+    try:
+        blob = subprocess.run(
+            ["git", "show", f"{mb}:{rel}"],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            check=True,
+        ).stdout
+    except subprocess.CalledProcessError:
+        # Baseline didn't exist at merge-base; new repo / new file path.
+        return {}
+    try:
+        return json.loads(blob).get("files", {})
+    except json.JSONDecodeError:
+        return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--report", type=Path, help="Path to today's report JSON")
@@ -70,12 +112,31 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Overwrite the baseline file with today's rates (use in a separate PR).",
     )
+    parser.add_argument(
+        "--branch-baseline",
+        action="store_true",
+        help=(
+            "When running on a feature branch, use the kill rate at "
+            "`git merge-base origin/main HEAD` as the baseline (read from "
+            "scripts/mutation/ratchet_baseline.json at that revision). "
+            "This prevents new branches from inheriting old kill-rate "
+            "debt: each branch is compared against the baseline at the "
+            "point it diverged from main."
+        ),
+    )
     args = parser.parse_args(argv)
 
     report_path = args.report or latest_report()
     today = _load(report_path)
     today_idx = _index(today)
-    base = _load(BASELINE).get("files", {}) if BASELINE.exists() else {}
+
+    if args.branch_baseline:
+        # Read the baseline file as it existed at the merge-base with main.
+        # Falls back to the current-tree baseline if `git show` fails (e.g.
+        # not in a git repo).
+        base = _load_merge_base_baseline()
+    else:
+        base = _load(BASELINE).get("files", {}) if BASELINE.exists() else {}
 
     if args.update_baseline:
         try:

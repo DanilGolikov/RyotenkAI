@@ -86,7 +86,7 @@ def test_wait_for_ready_uses_training_profile_when_no_timeout(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: WaitPolicy API drifted (removed attribute); test references obsolete policy field.",
+    reason="xfail-debt:wait-policy-api-drift — Pre-existing failure pre-packagization: WaitPolicy API drifted (removed attribute); test references obsolete policy field.",
 )
 def test_wait_for_ready_overrides_total_timeout_only(
     monkeypatch: pytest.MonkeyPatch,

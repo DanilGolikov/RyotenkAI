@@ -202,7 +202,7 @@ class TestFailurePaths:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Pre-existing failure: provider registry now requires "
+            "xfail-debt:launch-service-resume-api-drift — Pre-existing failure: provider registry now requires "
             "``api_key`` kwarg for ``create_resume_provider`` factories; "
             "test still exercises the legacy ``factory()`` no-arg path. "
             "Tracked in xfail_debt.md."

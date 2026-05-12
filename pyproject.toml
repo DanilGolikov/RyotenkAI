@@ -36,6 +36,10 @@ dev = [
     "jupyterlab>=4.3.0",
     # Mutation testing (tiers 1-4 of docs/testing/mutation_testing.md).
     "cosmic-ray>=8.4.6,<9.0.0",
+    # Snapshot testing (tests/golden/ conftest).
+    "syrupy>=5.0.0,<6.0.0",
+    # Property-based testing (tests/conftest.py imports hypothesis).
+    "hypothesis>=6.0.0,<7.0.0",
 ]
 
 # ============================================

@@ -39,7 +39,7 @@ hotspots:
     rationale: "Event delivery to control plane — silent loss catastrophic"
 
   - path: packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py
-    min_kill_rate: 0.55  # Phase 6 baseline ~58%; ratchet to 0.60 next cycle
+    min_kill_rate: 0.65  # was 0.55 — raised after Phase F3.3 tests (measured ~82%)
     tests: tests/unit/pod/runner/test_mlflow_relay.py
     rationale: "MLflow metric forwarding — circuit breaker correctness"
 

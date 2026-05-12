@@ -104,7 +104,7 @@ class TestGetProviderConfig:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "get_provider_config now returns a typed SingleNodeProviderConfig "
+            "xfail-debt:config-provider-typed-validation — get_provider_config now returns a typed SingleNodeProviderConfig "
             "object, not a dict. Test asserts subscript access which the "
             "typed object no longer supports — needs attribute-style "
             "assertions (provider_cfg.connect.ssh.alias)."
@@ -153,7 +153,7 @@ class TestGetProviderConfig:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Empty {} provider dict now fails PipelineConfig validation (missing "
+            "xfail-debt:config-provider-typed-validation — Empty {} provider dict now fails PipelineConfig validation (missing "
             "required fields) before reaching get_provider_config. Test should "
             "provide a valid provider block and expect ValueError from "
             "get_provider_config(None) instead."
@@ -176,7 +176,7 @@ class TestGetActiveProviderName:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Empty {} provider dict now fails PipelineConfig validation before "
+            "xfail-debt:config-provider-typed-validation — Empty {} provider dict now fails PipelineConfig validation before "
             "reaching get_active_provider_name(). Fixture needs a valid empty-"
             "training-provider construction."
         ),

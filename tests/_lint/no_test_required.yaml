@@ -1,0 +1,267 @@
+# Allowlist for `tests/_lint/test_every_module_has_tests.py`.
+#
+# Production modules that legitimately do NOT need a dedicated test file.
+# Every entry must include a `reason`. The sentinel checks each module
+# under `packages/*/src/**/*.py` (skipping `__init__.py`) for at least
+# one referencing test file; modules listed here are excused.
+#
+# Format:
+#   - path: <relative path from repo root>
+#     reason: <one-sentence justification>
+
+allow:
+  # Pure type/constant modules — no behavior to test
+  - path: packages/shared/src/ryotenkai_shared/constants.py
+    reason: "Constant module — only declarative names; behavior verified by consumers."
+  # Aggregator modules that only re-export — covered by package-level imports
+  - path: packages/shared/src/ryotenkai_shared/config/__init__.py
+    reason: "Pure re-export aggregator; consumers test the actual config types."
+  # CLI entrypoint scripts — exercised by integration/e2e
+  - path: packages/control/src/ryotenkai_control/main.py
+    reason: "CLI entrypoint; exercised by e2e CLI tests via ryotenkai console script."
+  - path: packages/pod/src/ryotenkai_pod/runner/main.py
+    reason: "Server entrypoint; exercised by stack-sidecar integration tests."
+
+  # ---- pre-finalization snapshot 2026-05-12 (116 modules) ----
+  # These were untested when the sentinel was introduced. New modules
+  # added going forward will fail the sentinel until they're either
+  # tested or explicitly listed here with a justified reason. Each
+  # entry below can be removed in follow-up PRs as tests get written.
+  - path: packages/control/src/ryotenkai_control/api/exceptions.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/openapi_dump.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/presentation/icons.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/routers/attempts.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/routers/datasets.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/routers/integrations.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/routers/launch.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/routers/reports.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/attempt.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/common.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/config_preset.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/delete.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/integration.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/launch.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/log.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/project.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/run.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/schemas/stage.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/connection_test.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/delete_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/integration_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/plugin_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/project_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/provider_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/report_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/services/run_service.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/ws/live_tail.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/api/ws/log_stream.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cleanup/batch_terminator.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/_signals.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/_smoke_runner.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/commands/plugin.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/commands/preset.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/commands/project.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/commands/server.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/commands/smoke.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/common_options.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/cli/style.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/data/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/evaluation/model_client/mock_client.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/evaluation/model_client/openai_client.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/dataset_validator/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/managers/log_fetcher.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/model_retriever/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/model_retriever/hf_uploader.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/model_retriever/model_card.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/model_retriever/retriever.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/model_retriever/types.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/pipeline/state/queries.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/reports/core/metrics_registry.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/reports/renderers/markdown_ir.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/control/src/ryotenkai_control/workspace/_registry_base.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/engines/src/ryotenkai_engines/vllm/merge_lora.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/runner/api/control.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/runner/api/deps.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/data_loaders/multi_source_loader.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/data_buffer/checkpoint_utils.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/data_buffer/fault_simulator.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/data_buffer/state_models.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/logging_core.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/run_lifecycle.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/managers/mlflow_manager/setup.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/mlflow/_classifier_bootstrap.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/mlflow/primitives.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/orchestrator/metrics_collector.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/orchestrator/phase_executor/executor.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/orchestrator/phase_executor/mlflow_logger.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/reward_plugins/secrets.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/strategies/base_rl.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/pod/src/ryotenkai_pod/trainer/strategies/grpo.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/providers/src/ryotenkai_providers/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/providers/src/ryotenkai_providers/runpod/_status_mapper.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/providers/src/ryotenkai_providers/runpod/inference/pods/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/providers/src/ryotenkai_providers/runpod/lifecycle/tcp_probe.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/providers/src/ryotenkai_providers/runpod/training/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/datasets/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/datasets/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/inference/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/inference/single_node.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/integrations/huggingface_integration.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/model/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/pipeline/datasets.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/pipeline/io.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/pipeline/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/runpod/cleanup.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/runpod/connect.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/runpod/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/single_node/cleanup.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/single_node/connect.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/providers/single_node/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/secrets/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/training/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/training/lora/adalora.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/training/schema.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/validators/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/config/validators/datasets.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/contracts/runner_api/_strict.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/contracts/runner_api/control.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/inference/__about__.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/docker/local.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/hf_hub/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/job_client/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/lifecycle/availability.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/lifecycle/outcomes.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/lifecycle/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/runpod_api/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/ssh/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/infrastructure/trainer_spawner/protocol.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/atomic_fs.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/constants.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/log_filenames.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/plugin_discovery.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/plugin_secrets.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+  - path: packages/shared/src/ryotenkai_shared/utils/text_utils.py
+    reason: "pre-finalization snapshot 2026-05-12 — add a test or remove the module"
+
+allow_patterns:
+  - pattern: "packages/*/src/ryotenkai_*/version.py"
+    reason: "Auto-generated __version__ stubs; trivial."
+  - pattern: "packages/*/src/ryotenkai_*/py.typed"
+    reason: "Marker file (PEP 561); not Python source."

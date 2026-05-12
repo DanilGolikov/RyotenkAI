@@ -73,7 +73,7 @@ def manager_under_test(tmp_path: Path) -> MLflowAttemptManager:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: MLflowAttemptManager.bootstrap call sequence drifted post-packagization; mock.assert_called_with now mismatches.",
+    reason="xfail-debt:mlflow-attempt-bootstrap-drift — Pre-existing failure pre-packagization: MLflowAttemptManager.bootstrap call sequence drifted post-packagization; mock.assert_called_with now mismatches.",
 )
 def test_bootstrap_success_sets_manager(manager_under_test: MLflowAttemptManager) -> None:
     mock_mgr = MagicMock()

@@ -387,7 +387,7 @@ class TestModelRetrieverExecute:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="Pre-existing failure pre-packagization: ModelRetriever.execute mock-mode short-circuit moved/renamed; needs production refactor for clean fix.",
+        reason="xfail-debt:model-retriever-cuda-drift — Pre-existing failure pre-packagization: ModelRetriever.execute mock-mode short-circuit moved/renamed; needs production refactor for clean fix.",
     )
     def test_execute_mock_mode_short_circuits(
         self, mock_config_with_hf, mock_secrets, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -585,7 +585,7 @@ class TestModelRetrieverInternalRemoteUpload:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="Pre-existing failure pre-packagization: HF upload error classification refactored; legacy error message no longer surfaces.",
+        reason="xfail-debt:model-retriever-cuda-drift — Pre-existing failure pre-packagization: HF upload error classification refactored; legacy error message no longer surfaces.",
     )
     def test_upload_to_hf_from_remote_returns_err_on_upload_cmd_failure(
         self, mock_config_with_hf, mock_secrets, monkeypatch
@@ -719,7 +719,7 @@ class TestModelRetrieverInit:
 
     @pytest.mark.xfail(
         strict=True,
-        reason="Pre-existing failure pre-packagization: get_provider_training_config fallback chain changed signature/return type.",
+        reason="xfail-debt:model-retriever-cuda-drift — Pre-existing failure pre-packagization: get_provider_training_config fallback chain changed signature/return type.",
     )
     def test_init_get_provider_training_config_non_dict_falls_back(self, mock_secrets):
         cfg = MagicMock()

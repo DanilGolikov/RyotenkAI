@@ -562,3 +562,156 @@ async def test_combinatorial_breaker_cooldown_growth(
             assert nxt >= prev
     # Capped at max_cooldown_s.
     assert max(seen_cooldowns) <= 10.0
+
+
+# ---------------------------------------------------------------------------
+# 9. Mutation kills (Phase F3.3 — targeted at surviving mutants)
+# ---------------------------------------------------------------------------
+#
+# Each test below targets a specific surviving mutant from the
+# Phase 6 mutation-testing baseline (docs/migration/mutation_testing_report.md).
+# They are intentionally narrow: one mutation, one observable difference.
+
+
+class _SpyMlflowClient:
+    """Minimal stand-in for ``mlflow.tracking.MlflowClient`` recording which
+    method got called.
+
+    NOT an :class:`IMLflowManager` fake — the relay's ``_forward`` closure
+    talks to the raw ``MlflowClient`` surface (``log_metric`` / ``log_param``
+    / ``set_tag``). We mirror that shape with a small hand-written spy so the
+    test surface stays explicit and the project mock policy
+    (no ``unittest.mock``, no Protocol mocking) is honoured.
+    """
+
+    def __init__(self) -> None:
+        self.log_metric_calls: list[dict[str, Any]] = []
+        self.log_param_calls: list[dict[str, Any]] = []
+        self.set_tag_calls: list[dict[str, Any]] = []
+
+    def log_metric(self, **kwargs: Any) -> None:
+        self.log_metric_calls.append(kwargs)
+
+    def log_param(self, **kwargs: Any) -> None:
+        self.log_param_calls.append(kwargs)
+
+    def set_tag(self, **kwargs: Any) -> None:
+        self.set_tag_calls.append(kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected_attr", "other_attrs"),
+    [
+        (
+            "mlflow_metric",
+            "log_metric_calls",
+            ("log_param_calls", "set_tag_calls"),
+        ),
+        (
+            "mlflow_param",
+            "log_param_calls",
+            ("log_metric_calls", "set_tag_calls"),
+        ),
+        (
+            "mlflow_tag",
+            "set_tag_calls",
+            ("log_metric_calls", "log_param_calls"),
+        ),
+    ],
+)
+async def test_forward_fn_dispatches_to_correct_client_method(
+    kind: str,
+    expected_attr: str,
+    other_attrs: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-kind dispatch in ``make_mlflow_forward_fn._forward``.
+
+    Kills mutations on lines 418/426/430 of ``mlflow_relay.py`` that
+    flip the equality checks ``kind == "mlflow_metric"`` (etc.). If the
+    dispatch is mutated, the wrong client method would fire — or none
+    at all — which this test detects directly.
+    """
+    import sys
+    import types
+
+    from ryotenkai_pod.runner import mlflow_relay as relay_mod
+
+    spy = _SpyMlflowClient()
+
+    fake_mlflow = types.ModuleType("mlflow")
+    fake_mlflow.set_tracking_uri = lambda _u: None  # type: ignore[attr-defined]
+
+    fake_tracking = types.ModuleType("mlflow.tracking")
+    fake_tracking.MlflowClient = lambda: spy  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "mlflow", fake_mlflow)
+    monkeypatch.setitem(sys.modules, "mlflow.tracking", fake_tracking)
+
+    forward = relay_mod.make_mlflow_forward_fn("http://mlflow:5000")
+    await forward({
+        "kind": kind,
+        "payload": {"run_id": "r-1", "key": "k", "value": 0.5, "step": 0},
+    })
+
+    # The matching method must have fired exactly once.
+    assert len(getattr(spy, expected_attr)) == 1, (
+        f"expected {expected_attr} called once for kind={kind!r}, "
+        f"got {len(getattr(spy, expected_attr))}"
+    )
+    # The other two methods must NOT have fired. This is what kills the
+    # equality-flip mutation: a mutated check might route ``mlflow_param``
+    # into the ``log_metric`` branch, etc.
+    for other in other_attrs:
+        assert getattr(spy, other) == [], (
+            f"unexpected {other} call for kind={kind!r}: {getattr(spy, other)}"
+        )
+
+
+def test_circuit_breaker_closes_exactly_at_cooldown_boundary() -> None:
+    """Boundary check ``elapsed >= active_cooldown`` at line 135.
+
+    Kills the mutation ``>=`` → ``>``. With ``>=``, when the elapsed
+    time EQUALS the cooldown (``now - opened_at == active_cooldown``),
+    the breaker treats the cooldown as elapsed and returns ``False``
+    (half-open / closed-for-attempt). The mutant ``>`` would still
+    consider the breaker open at the exact boundary.
+    """
+    cb = MLflowRelayCircuitBreaker(
+        failure_threshold=1, initial_cooldown_s=5.0,
+    )
+    # Open the circuit at t=10.0.
+    cb.record_failure(now=10.0)
+    # Strictly inside the cooldown → still open.
+    assert cb.is_open(11.0) is True
+    assert cb.is_open(14.999) is True
+    # EXACTLY at the boundary: now - opened_at == active_cooldown == 5.0.
+    # Production uses ``>=`` so the cooldown is considered elapsed here.
+    # If a mutant flips this to ``>``, the breaker would still report open.
+    assert cb.is_open(15.0) is False
+    # Past the boundary, still closed (half-open).
+    assert cb.is_open(15.001) is False
+
+
+def test_circuit_breaker_field_defaults() -> None:
+    """Dataclass defaults at lines 103-106 of ``MLflowRelayCircuitBreaker``.
+
+    Kills mutations that replace the literal defaults with other constants.
+    Every other test in this file passes ``failure_threshold=`` (and
+    sometimes the cooldown fields) explicitly, leaving the defaults
+    untested. This is a pure-construction test.
+    """
+    cb = MLflowRelayCircuitBreaker()
+
+    # Documented defaults straight from the dataclass body.
+    assert cb.failure_threshold == 3
+    assert cb.initial_cooldown_s == 1.0
+    assert cb.max_cooldown_s == 60.0
+    assert cb.multiplier == 1.5
+
+    # __post_init__ seeds both internal cooldown trackers from
+    # ``initial_cooldown_s``. Pin that too — a mutant that swaps the
+    # initial seed would slip through if we asserted only the field.
+    assert cb.active_cooldown_s == 1.0
+    # Fresh breaker is closed and has no failures.
+    assert cb.is_open_now is False
+    assert cb.consecutive_failures == 0

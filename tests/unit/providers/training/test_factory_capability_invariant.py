@@ -112,7 +112,7 @@ def _mk_single_node() -> SingleNodeProvider:
 _SINGLENODE_XFAIL = pytest.mark.xfail(
     strict=True,
     reason=(
-        "SingleNodeProvider.__init__ no longer accepts (config=..., secrets=...) "
+        "xfail-debt:providers-factory-context-drift — SingleNodeProvider.__init__ no longer accepts (config=..., secrets=...) "
         "kwargs — it now takes a single ProviderContext. _mk_single_node() in "
         "this file still uses the legacy signature. Tracked: separate "
         "fixture-port PR."

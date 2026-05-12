@@ -197,7 +197,7 @@ class TestResolveJobId:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: runner_launcher attribute access drifted post-packagization (SimpleNamespace stub no longer matches expected attribute set).",
+    reason="xfail-debt:training-launcher-helper-drift — Pre-existing failure pre-packagization: runner_launcher attribute access drifted post-packagization (SimpleNamespace stub no longer matches expected attribute set).",
 )
 class TestStartTrainingHappy:
     def test_full_flow_returns_ok_and_stashes_context(
@@ -245,7 +245,7 @@ class TestStartTrainingHappy:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: runner_launcher attribute access drifted post-packagization (SimpleNamespace stub no longer matches expected attribute set).",
+    reason="xfail-debt:training-launcher-helper-drift — Pre-existing failure pre-packagization: runner_launcher attribute access drifted post-packagization (SimpleNamespace stub no longer matches expected attribute set).",
 )
 class TestStartTrainingErrors:
     def test_plugin_pack_fail_returns_err_without_tunnel(

@@ -166,7 +166,7 @@ class TestMissingInitAndMlflowSetupLines:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "Pre-existing failure: production no longer wires "
+            "xfail-debt:mlflow-disable-sysmetrics-removed — Pre-existing failure: production no longer wires "
             "``disable_system_metrics_logging`` through to the MLflow manager "
             "kwargs (test expected ``{'disable_system_metrics': True}`` but "
             "got ``{}``). Tracked in xfail_debt.md."

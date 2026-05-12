@@ -118,7 +118,7 @@ def _stub_async_path(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: training_launcher attribute access drifted (SimpleNamespace stub missing expected attrs).",
+    reason="xfail-debt:training-launcher-helper-drift — Pre-existing failure pre-packagization: training_launcher attribute access drifted (SimpleNamespace stub missing expected attrs).",
 )
 def test_launch_runner_called_with_self_workspace(
     monkeypatch: pytest.MonkeyPatch,

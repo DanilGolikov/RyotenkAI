@@ -39,7 +39,7 @@ from .providers import (  # noqa: E402
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Pre-existing IGPUProvider Protocol drift — production Protocol "
+        "xfail-debt:igpuprovider-fake-conformance-drift — Pre-existing IGPUProvider Protocol drift — production Protocol "
         "gained ``pod_layout_for_run`` and ``provider_id`` methods (and "
         "``ProviderCapabilities`` gained 7 new fields) that the legacy "
         "FakeGPUProvider does not yet implement. Tracked in xfail_debt.md."

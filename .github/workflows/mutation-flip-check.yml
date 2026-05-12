@@ -1,0 +1,42 @@
+name: mutation testing (auto-flip check)
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"  # weekly Monday 07:00 UTC
+  workflow_dispatch: {}
+
+# Weekly check that runs ``scripts/mutation/maybe_flip_to_blocking.py``.
+# When 4 consecutive nightlies are green AND 14 days of per-PR runs have
+# zero failures, the script auto-opens a PR flipping
+# ``.mutation-hotspots.yml`` from ``mode: advisory`` to ``mode: blocking``.
+# Until those conditions are met, the workflow is a no-op (prints status
+# and exits 0).
+jobs:
+  check:
+    name: maybe flip to blocking
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: Run maybe_flip_to_blocking.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .venv/bin/python scripts/mutation/maybe_flip_to_blocking.py

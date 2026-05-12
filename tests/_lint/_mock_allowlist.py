@@ -297,7 +297,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     # exactly once via SimpleNamespace facade. Interaction-test on lifecycle.
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=131,
+        line=133,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies cleanup() does NOT call aclose() before lifecycle end.",
         added="2026-05-12",
@@ -305,7 +305,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=132,
+        line=134,
         pattern="AsyncMock_interaction",
         reason="Pins get_status return value to drive the monitor loop transition.",
         added="2026-05-12",
@@ -313,7 +313,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=269,
+        line=271,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies aclose is awaited exactly once when subscribe_events raises.",
         added="2026-05-12",
@@ -321,7 +321,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=282,
+        line=284,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies aclose is awaited exactly once on subscribe_events error.",
         added="2026-05-12",
@@ -329,7 +329,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=304,
+        line=306,
         pattern="AsyncMock_interaction",
         reason="Pins get_status return value for monitor-loop transition.",
         added="2026-05-12",
@@ -337,7 +337,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=305,
+        line=307,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies aclose lifecycle invariant on terminal state.",
         added="2026-05-12",
@@ -345,7 +345,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=320,
+        line=322,
         pattern="AsyncMock_interaction",
         reason="Pins get_status return value for monitor-loop transition.",
         added="2026-05-12",
@@ -353,7 +353,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=321,
+        line=323,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies aclose is awaited exactly once on monitor cleanup.",
         added="2026-05-12",
@@ -361,7 +361,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=345,
+        line=347,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies tunnel.close is awaited exactly once on cleanup.",
         added="2026-05-12",
@@ -369,7 +369,7 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=364,
+        line=366,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies aclose is awaited even when raising on subscribe_events.",
         added="2026-05-12",
@@ -377,9 +377,41 @@ ALLOWLIST: list[AllowlistEntry] = [
     ),
     AllowlistEntry(
         path="tests/unit/control/pipeline/test_training_monitor_v2.py",
-        line=366,
+        line=368,
         pattern="AsyncMock_lifecycle_observer",
         reason="Verifies tunnel.close raised RuntimeError doesn't suppress cleanup chain.",
+        added="2026-05-12",
+        renewed="2026-05-12",
+    ),
+    AllowlistEntry(
+        path="tests/unit/control/pipeline/test_training_monitor_v2.py",
+        line=841,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_diagnostics for postmortem HTTP probe test (nonzero exit triggers full probe set).",
+        added="2026-05-12",
+        renewed="2026-05-12",
+    ),
+    AllowlistEntry(
+        path="tests/unit/control/pipeline/test_training_monitor_v2.py",
+        line=859,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_diagnostics for postmortem HTTP probe test (SIGTERM-kill with exit-0 still triggers postmortem).",
+        added="2026-05-12",
+        renewed="2026-05-12",
+    ),
+    AllowlistEntry(
+        path="tests/unit/control/pipeline/test_training_monitor_v2.py",
+        line=905,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_diagnostics for postmortem HTTP probe test (per-block error sentinel rendering).",
+        added="2026-05-12",
+        renewed="2026-05-12",
+    ),
+    AllowlistEntry(
+        path="tests/unit/control/pipeline/test_training_monitor_v2.py",
+        line=968,
+        pattern="AsyncMock_interaction",
+        reason="Pins JobClient.get_diagnostics for postmortem HTTP probe test (log prefix + content rendering).",
         added="2026-05-12",
         renewed="2026-05-12",
     ),

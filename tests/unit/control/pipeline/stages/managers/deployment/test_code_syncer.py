@@ -93,7 +93,7 @@ def syncer(base_config: PipelineConfig, secrets: DummySecrets) -> CodeSyncer:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_success(syncer: CodeSyncer):
     for module in CodeSyncer.REQUIRED_MODULES:
@@ -122,7 +122,7 @@ def test_sync_success(syncer: CodeSyncer):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
     ssh_client = MagicMock()
@@ -147,7 +147,7 @@ def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_module_tar_dir_verify_exists_on_failure_returns_ok(syncer: CodeSyncer):
     module = "src/training"
@@ -170,7 +170,7 @@ def test_sync_module_tar_dir_verify_exists_on_failure_returns_ok(syncer: CodeSyn
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_module_tar_dir_verify_missing_returns_err(syncer: CodeSyncer):
     module = "src/training"
@@ -194,7 +194,7 @@ def test_sync_module_tar_dir_verify_missing_returns_err(syncer: CodeSyncer):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_skips_missing_module_and_still_ok(syncer: CodeSyncer, monkeypatch):
     missing_module = "src/definitely_missing_module_xyz"
@@ -240,7 +240,7 @@ def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_sync_module_tar_file_success_returns_ok(syncer: CodeSyncer):
     module = "src/__init__.py"
@@ -270,7 +270,7 @@ def test_set_workspace_propagates():
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
+    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
 )
 def test_required_modules_ships_full_src_tree() -> None:
     """Phase 0 PR-0.3: ``REQUIRED_MODULES`` is the literal one-entry list

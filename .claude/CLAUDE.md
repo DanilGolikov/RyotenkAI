@@ -22,6 +22,45 @@ each other (runner spawns trainer via subprocess).
 Console scripts: `ryotenkai` (control CLI), `ryotenkai-trainer-run` (pod
 trainer entrypoint).
 
+## Agent testing workflow (mandatory)
+
+This codebase is written by agents. The test infrastructure has gates
+designed to catch agent-specific failure modes (tautological tests,
+over-mocking, "done" claims without coverage). When a subagent (you, or
+one you spawn) is about to declare a task **done** after touching
+production code, the following MUST happen:
+
+1. **Mutation-testing self-check** for any diff that touches
+   `packages/*/src/**/*.py`:
+   ```bash
+   bash scripts/mutation/validate_agent_output.sh main
+   ```
+   Exit 0 = OK. Exit 1 = at least one production file changed in the
+   diff has a kill rate below threshold. Strengthen tests until it
+   passes, then declare done.
+
+2. **Adding `@pytest.mark.xfail(strict=True, ...)`** REQUIRES adding a
+   matching `xfail-debt:<id>` token to the `reason=` text AND a matching
+   row in `docs/migration/xfail_debt.md`. The
+   `tests/_lint/test_xfail_debt_completeness.py` sentinel will block
+   the PR otherwise. Emergency unblock: use token
+   `xfail-debt:ad-hoc-<YYYYMMDDTHHMMSS>` (auto-accepted; resolve within
+   30 days).
+
+3. **No mocking of Protocols.** Sentinel
+   `tests/_lint/test_no_protocol_mocking.py` enforces. Use a canonical
+   fake from `tests/_fakes/` (extend or add one if needed).
+
+4. **No new files under `packages/*/src/`** without a corresponding
+   test file. Sentinel
+   `tests/_lint/test_every_module_has_tests.py` enforces; legitimate
+   exemptions go into `tests/_lint/no_test_required.yaml`.
+
+5. **Reading the policy docs** before non-trivial test changes:
+   - [docs/testing/mock_policy.md](../docs/testing/mock_policy.md)
+   - [docs/testing/mutation_testing.md](../docs/testing/mutation_testing.md)
+   - [docs/migration/xfail_debt.md](../docs/migration/xfail_debt.md)
+
 <!-- Add your custom instructions below. Repowise will never modify anything outside the REPOWISE markers. -->
 <!-- Examples: coding style rules, test commands, workflow preferences, constraints -->
 

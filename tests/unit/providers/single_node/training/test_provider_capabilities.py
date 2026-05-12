@@ -33,7 +33,7 @@ from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE, RUNTIME_PROVIDER_EN
 _XFAIL_DRIFT = pytest.mark.xfail(
     strict=True,
     reason=(
-        "SingleNodeProvider.__init__ no longer accepts (config=..., secrets=...) "
+        "xfail-debt:providers-singlenode-context-drift — SingleNodeProvider.__init__ no longer accepts (config=..., secrets=...) "
         "kwargs — it now takes a single ProviderContext. _mk_provider() in this "
         "file still uses the legacy signature. Tracked: separate fixture-port PR."
     ),
