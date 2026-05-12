@@ -145,6 +145,16 @@ constructor for providers, etc.). Each row above documents the
 specific drift so a future contributor can locate the production
 change and either rewrite the test or delete it.
 
+## xfail-debt entries (token-referenced from test reasons)
+
+These rows are referenced by `xfail-debt:<id>` tokens in test `reason=` text.
+The `tests/_lint/test_xfail_debt_completeness.py` sentinel asserts every
+strict-True xfail in the codebase has a matching entry here.
+
+| id | File / test | Reason | Owner | Trigger to fix |
+|----|-------------|--------|-------|----------------|
+| `report-builder-resilience` | `tests/unit/control/reports/test_report_v2.py::TestReportGenerationNonsense::test_garbage_event_content` | `ReportBuilder` assumes structured `dict`/`list` for `source_config`/`root_params`/phase params throughout. Global `mocker.patch("pathlib.Path.read_text", return_value="Lorem Ipsum")` makes those reads return strings; multiple call sites crash with `'str' has no attribute get/copy`. Hardening means ~10 `_safe_get`-style defensive wrappers in `reports/core/builder.py`. | reports stack owner | Rewrite when `ReportBuilder` next sees substantial refactor; OR rewrite the test to mock only the events-file path narrowly (preferred — test-only fix) |
+
 ## Strict-True xfails added in Batch 7c (2026-05-12)
 
 The FINAL migration batch — control-side integration + e2e tests.

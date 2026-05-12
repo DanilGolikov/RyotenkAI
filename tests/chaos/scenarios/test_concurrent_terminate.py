@@ -14,12 +14,14 @@ import pytest
 
 from ryotenkai_shared.infrastructure.lifecycle import PodTerminalOutcome
 from tests._fakes.lifecycle import FakePodLifecycleClient, PodState
-from tests._harness.chaos import register_scenario
 
+# NOTE: the catalog entry for this scenario lives in
+# `tests/chaos/scenarios/concurrent_terminate.py` (sidecar-driven).
+# This file is the pytest-driver companion using FakePodLifecycleClient
+# directly — it does NOT re-register the scenario in the catalog.
 pytestmark = [pytest.mark.chaos, pytest.mark.slow, pytest.mark.asyncio]
 
 
-@register_scenario
 class ConcurrentTerminate:
     name = "concurrent_terminate"
     tags = ["lifecycle", "idempotency", "race"]

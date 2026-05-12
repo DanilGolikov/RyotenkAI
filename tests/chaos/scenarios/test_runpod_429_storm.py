@@ -17,14 +17,17 @@ from datetime import timedelta
 import pytest
 
 from ryotenkai_shared.infrastructure.runpod_api import RunPodRateLimitedError
-from tests._harness.chaos import ChaosScenario, register_scenario
+from tests._harness.chaos import ChaosScenario
 from tests._harness.clock import ManualClock
 from tests._fakes.runpod import FakeRunPodAPI
 
+# NOTE: the catalog entry for this scenario lives in
+# `tests/chaos/scenarios/runpod_429_storm.py` (sidecar-driven).
+# This pytest-driver companion uses FakeRunPodAPI directly and does NOT
+# re-register the scenario in the catalog.
 pytestmark = [pytest.mark.chaos, pytest.mark.slow, pytest.mark.asyncio]
 
 
-@register_scenario
 class Runpod429Storm:
     """Inject 429 storm; expect client recovers within recovery_window."""
 

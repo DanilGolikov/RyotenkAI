@@ -17,12 +17,14 @@ from datetime import timedelta
 import pytest
 
 from tests._fakes.mlflow import FakeMLflowManager, MLflowUnavailableError
-from tests._harness.chaos import register_scenario
 
+# NOTE: the catalog entry for this scenario lives in
+# `tests/chaos/scenarios/mlflow_circuit_open.py` (sidecar-driven).
+# This pytest-driver companion uses FakeMLflowManager directly and does
+# NOT re-register the scenario in the catalog.
 pytestmark = [pytest.mark.chaos, pytest.mark.slow, pytest.mark.asyncio]
 
 
-@register_scenario
 class MlflowCircuitOpen:
     name = "mlflow_circuit_open"
     tags = ["network", "mlflow", "buffering"]

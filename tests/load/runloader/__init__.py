@@ -6,6 +6,9 @@ hermetic stack and assert SLO compliance.
 """
 
 from tests.load.runloader.framework import (
+    RunLoader,
+    RunLoaderConfig,
+    RunLoaderResult,
     RunLoaderScenario,
     SLOResult,
     SLOSpec,
@@ -13,6 +16,9 @@ from tests.load.runloader.framework import (
 )
 
 __all__ = [
+    "RunLoader",
+    "RunLoaderConfig",
+    "RunLoaderResult",
     "RunLoaderScenario",
     "SLOResult",
     "SLOSpec",

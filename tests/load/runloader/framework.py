@@ -254,10 +254,110 @@ def _rss_kib() -> int:
 
 
 __all__ = [
+    "RunLoader",
+    "RunLoaderConfig",
     "RunLoaderReport",
+    "RunLoaderResult",
     "RunLoaderScenario",
     "SLOResult",
     "SLOSpec",
     "run_scenario",
     "scale_factor",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Lightweight callable-driven RunLoader
+# ---------------------------------------------------------------------------
+#
+# A second, simpler API for callers that already have an async callable
+# representing one "attempt" and want to fan it out across N concurrent
+# workers without writing a full RunLoaderScenario. Used by smoke tests
+# and quick proof-of-pattern checks; the full scenario API
+# (`RunLoaderScenario` + `run_scenario`) remains the canonical L10
+# interface for SLO-enforced sustained load.
+
+
+@dataclass(frozen=True)
+class RunLoaderConfig:
+    """Configuration for the callable-driven :class:`RunLoader`."""
+
+    concurrency: int
+    stages_per_attempt: int = 1
+    timeout_seconds: float = 30.0
+
+
+@dataclass
+class RunLoaderResult:
+    """Outcome of a callable-driven load run."""
+
+    attempts_total: int
+    attempts_succeeded: int
+    attempts_failed: int
+    latencies_ms: list[float] = field(default_factory=list)
+
+    @property
+    def p99_ms(self) -> float:
+        return _percentile(self.latencies_ms, 99.0)
+
+    @property
+    def p50_ms(self) -> float:
+        return statistics.median(self.latencies_ms) if self.latencies_ms else 0.0
+
+
+class RunLoader:
+    """Fan out a single async callable across N concurrent workers.
+
+    Each worker invokes ``attempt_fn(stages=cfg.stages_per_attempt)`` once
+    and the loader records its success/failure + wall-clock latency.
+
+    For SLO-enforced sustained load with a Stack and operator hooks,
+    use :func:`run_scenario` on a :class:`RunLoaderScenario` instead.
+    """
+
+    def __init__(self, config: RunLoaderConfig) -> None:
+        self._cfg = config
+
+    async def run(
+        self,
+        attempt_fn: "Callable[[int], Awaitable[None]]",
+    ) -> RunLoaderResult:
+        cfg = self._cfg
+        latencies_ms: list[float] = []
+        succeeded = 0
+        failed = 0
+
+        async def _worker() -> None:
+            nonlocal succeeded, failed
+            t0 = time.monotonic()
+            try:
+                await attempt_fn(cfg.stages_per_attempt)
+            except Exception:  # noqa: BLE001
+                failed += 1
+            else:
+                succeeded += 1
+            finally:
+                latencies_ms.append((time.monotonic() - t0) * 1000.0)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*[_worker() for _ in range(cfg.concurrency)]),
+                timeout=cfg.timeout_seconds,
+            )
+        except TimeoutError:
+            # Outstanding workers were cancelled; record their non-arrivals
+            # as failed and continue. Latency entries already record their
+            # cancellation slot via the finally clause above.
+            failed += cfg.concurrency - succeeded - failed
+
+        return RunLoaderResult(
+            attempts_total=cfg.concurrency,
+            attempts_succeeded=succeeded,
+            attempts_failed=failed,
+            latencies_ms=latencies_ms,
+        )
+
+
+# Keep callable-import working without TYPE_CHECKING gating: typing only.
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable  # noqa: F401

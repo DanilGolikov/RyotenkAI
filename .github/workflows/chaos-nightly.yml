@@ -1,0 +1,64 @@
+name: chaos testing (nightly)
+
+on:
+  schedule:
+    - cron: "0 4 * * *"  # daily 04:00 UTC (1h after mutation-nightly)
+  workflow_dispatch: {}
+
+# L9 chaos lane: runs the chaos catalog against the hermetic sidecar
+# stack. Advisory only — the workflow records the report but does NOT
+# gate `main` merges. Promote to a blocking gate after a 7-day
+# observation period during which the chaos catalog stays green or its
+# failures are tracked with clear root-cause notes.
+#
+# Triggered tests: anything tagged ``pytest.mark.chaos`` under
+# ``tests/chaos/``. The catalog auto-discovers scenarios via
+# ``tests/_harness/chaos.py::load_catalog``.
+jobs:
+  chaos:
+    name: chaos catalog over hermetic stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+
+      - name: Run chaos catalog
+        continue-on-error: true  # advisory until promotion (see header)
+        run: |
+          .venv/bin/python -m pytest tests/chaos \
+            -m chaos \
+            --no-header \
+            -v \
+            --junit-xml=chaos-results.xml
+
+      - name: Upload chaos artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-nightly-report
+          path: |
+            chaos-results.xml
+            tests/.debug_bundles/
+            tests/.telemetry/
+          if-no-files-found: ignore
+          retention-days: 30
