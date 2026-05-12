@@ -8,22 +8,35 @@
 #   bash scripts/mutation/run_on_diff.sh [BASE_REF]
 #   bash scripts/mutation/run_on_diff.sh --help
 #
-# Defaults: BASE_REF=origin/main (CI) or main (local).
+# Default BASE_REF resolution order:
+#   1. Explicit CLI arg ($1)
+#   2. ``$MUTATION_BASE_REF`` env var
+#   3. ``origin/RESEACRH`` (current integration branch) if it exists
+#   4. ``RESEACRH`` (local)
+#   5. ``origin/main`` / ``main`` fallback (for downstream that's moved
+#      past the RESEACRH-as-integration model)
+#
+# When the integration branch is renamed (e.g. ``dev``), update this
+# resolver in one place AND ``.github/workflows/mutation-pr.yml``.
+#
 # Exit code: 0 if all gates pass OR mode=advisory; 1 if mode=blocking
 # and any hotspot is below its threshold.
 set -euo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    sed -n '2,15p' "$0"
+    sed -n '2,20p' "$0"
     exit 0
 fi
 
 cd "$(dirname "$0")/../.."
 
-BASE_REF="${1:-}"
+BASE_REF="${1:-${MUTATION_BASE_REF:-}}"
 if [ -z "$BASE_REF" ]; then
-    # Auto-detect: prefer origin/main if it exists (CI), else main.
-    if git rev-parse --verify --quiet origin/main >/dev/null; then
+    if git rev-parse --verify --quiet origin/RESEACRH >/dev/null; then
+        BASE_REF="origin/RESEACRH"
+    elif git rev-parse --verify --quiet RESEACRH >/dev/null; then
+        BASE_REF="RESEACRH"
+    elif git rev-parse --verify --quiet origin/main >/dev/null; then
         BASE_REF="origin/main"
     else
         BASE_REF="main"

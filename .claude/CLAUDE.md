@@ -33,8 +33,11 @@ production code, the following MUST happen:
 1. **Mutation-testing self-check** for any diff that touches
    `packages/*/src/**/*.py`:
    ```bash
-   bash scripts/mutation/validate_agent_output.sh main
+   bash scripts/mutation/validate_agent_output.sh
    ```
+   The script auto-detects the integration branch (currently
+   `RESEACRH`; falls back to `main`). Override with
+   `MUTATION_BASE_REF=<ref>` or pass it explicitly as `$1`.
    Exit 0 = OK. Exit 1 = at least one production file changed in the
    diff has a kill rate below threshold. Strengthen tests until it
    passes, then declare done.

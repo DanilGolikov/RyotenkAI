@@ -8,7 +8,13 @@
 #
 # Usage:
 #   bash scripts/mutation/validate_agent_output.sh [BASE_REF]
-#   BASE_REF defaults to `main` (or whatever the spawning task says).
+#
+# Default BASE_REF resolution (matches scripts/mutation/run_on_diff.sh):
+#   1. Explicit CLI arg ($1)
+#   2. ``$MUTATION_BASE_REF`` env var
+#   3. ``origin/RESEACRH`` if it exists (current integration branch)
+#   4. ``RESEACRH`` (local)
+#   5. ``origin/main`` / ``main`` fallback
 #
 # Returns:
 #   0 — every changed production file meets its threshold (or no
@@ -23,7 +29,18 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-BASE_REF="${1:-main}"
+BASE_REF="${1:-${MUTATION_BASE_REF:-}}"
+if [ -z "$BASE_REF" ]; then
+    if git rev-parse --verify --quiet origin/RESEACRH >/dev/null; then
+        BASE_REF="origin/RESEACRH"
+    elif git rev-parse --verify --quiet RESEACRH >/dev/null; then
+        BASE_REF="RESEACRH"
+    elif git rev-parse --verify --quiet origin/main >/dev/null; then
+        BASE_REF="origin/main"
+    else
+        BASE_REF="main"
+    fi
+fi
 
 if [ ! -x .venv/bin/cosmic-ray ]; then
     cat >&2 <<EOF

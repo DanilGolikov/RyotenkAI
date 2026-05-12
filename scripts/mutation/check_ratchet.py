@@ -55,8 +55,34 @@ def _index(report: dict) -> dict[str, float]:
     return out
 
 
+def _resolve_base_ref() -> str:
+    """Resolve the integration-branch ref. Mirrors the bash helpers in
+    ``run_on_diff.sh`` / ``validate_agent_output.sh``.
+
+    Order: $MUTATION_BASE_REF → origin/RESEACRH → RESEACRH →
+    origin/main → main.
+    """
+    import os
+    import subprocess
+
+    env_ref = os.environ.get("MUTATION_BASE_REF")
+    if env_ref:
+        return env_ref
+
+    for candidate in ("origin/RESEACRH", "RESEACRH", "origin/main", "main"):
+        r = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return candidate
+    return "main"  # last-resort fallback
+
+
 def _load_merge_base_baseline() -> dict[str, float]:
-    """Read the baseline file at ``git merge-base origin/main HEAD``.
+    """Read the baseline file at ``git merge-base $BASE_REF HEAD``.
 
     Used by feature-branch ratchet checks so a branch isn't blocked by
     kill-rate gaps that existed before it diverged. Falls back to the
@@ -64,16 +90,17 @@ def _load_merge_base_baseline() -> dict[str, float]:
     """
     import subprocess
 
+    base_ref = _resolve_base_ref()
     try:
         mb = subprocess.run(
-            ["git", "merge-base", "origin/main", "HEAD"],
+            ["git", "merge-base", base_ref, "HEAD"],
             capture_output=True,
             text=True,
             cwd=REPO_ROOT,
             check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        # Not a git repo, or origin/main missing. Fall back gracefully.
+        # Not a git repo, or base ref missing. Fall back gracefully.
         return _load(BASELINE).get("files", {}) if BASELINE.exists() else {}
 
     if not mb:
@@ -117,11 +144,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "When running on a feature branch, use the kill rate at "
-            "`git merge-base origin/main HEAD` as the baseline (read from "
+            "`git merge-base $BASE_REF HEAD` as the baseline (read from "
             "scripts/mutation/ratchet_baseline.json at that revision). "
-            "This prevents new branches from inheriting old kill-rate "
-            "debt: each branch is compared against the baseline at the "
-            "point it diverged from main."
+            "BASE_REF defaults to origin/RESEACRH (current integration "
+            "branch), with fallbacks to RESEACRH / origin/main / main. "
+            "Override via the MUTATION_BASE_REF env var. This prevents "
+            "new branches from inheriting old kill-rate debt."
         ),
     )
     args = parser.parse_args(argv)

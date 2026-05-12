@@ -51,15 +51,19 @@ The mathematical statement of the gate:
 
 | Tier | Trigger | Scope | Action |
 |---|---|---|---|
-| **1. Per-PR incremental** | every PR to `main` | changed files in `packages/*/src/` only | **BLOCK merge** (when `mode: blocking`) if hotspot kill rate < threshold; **WARN** for non-hotspots |
+| **1. Per-PR incremental** | every PR to `RESEACRH`/`main` | changed files in `packages/*/src/` only | **BLOCK merge** (when `mode: blocking`) if hotspot kill rate < threshold; **WARN** for non-hotspots |
 | **2. Hotspot hard gate** | every PR that touches a hotspot file | listed in `.mutation-hotspots.yml` | **HARD BLOCK** if kill rate < threshold (subset of tier 1) |
 | **3. Nightly full ratchet** | cron daily 03:00 UTC | top-N hotspots | **ADVISORY** + ratchet (kill rate must not drop > 5pp vs baseline) |
 | **4. Agent output gate** | subagent self-validates BEFORE declaring "done" | files the agent touched | manual script call; not CI-enforced |
 
 ### Tier 1 + 2 (`.github/workflows/mutation-pr.yml`)
 
-- Triggers on every `pull_request` to `main`.
-- Computes the diff vs `origin/main`.
+- Triggers on every `pull_request` to `RESEACRH` (current integration
+  branch) or `main` (downstream release branch).
+- Computes the diff vs the PR's target branch (`GITHUB_BASE_REF`); the
+  script's local default resolver order is `origin/RESEACRH` →
+  `RESEACRH` → `origin/main` → `main`. Override with
+  `MUTATION_BASE_REF=<ref>`.
 - For each changed `packages/*/src/*.py`:
   - If listed as a hotspot: enforce the file's `min_kill_rate`.
   - Otherwise: warn-only against `default_kill_rate_warning`.
@@ -81,8 +85,12 @@ The mathematical statement of the gate:
 Subagents call this **before** declaring a task done:
 
 ```bash
-bash scripts/mutation/validate_agent_output.sh main
+bash scripts/mutation/validate_agent_output.sh
 ```
+
+The script auto-detects the integration branch (currently `RESEACRH`,
+falls back to `main`). Override with `MUTATION_BASE_REF=<ref>` or pass
+the ref as `$1` (e.g. `bash scripts/mutation/validate_agent_output.sh dev`).
 
 Exit 0 means every changed production file met its threshold. Exit 1
 means something is below — the agent should write additional tests

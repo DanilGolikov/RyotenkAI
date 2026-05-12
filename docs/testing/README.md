@@ -82,8 +82,9 @@ The `.claude/CLAUDE.md` section "Agent testing workflow (mandatory)"
 describes the gates a subagent must satisfy before declaring "done"
 when its diff touches `packages/*/src/`. Summary:
 
-1. Run `bash scripts/mutation/validate_agent_output.sh main` — must
-   pass.
+1. Run `bash scripts/mutation/validate_agent_output.sh` — must pass.
+   (Default base ref is the integration branch — currently `RESEACRH`;
+   override via `MUTATION_BASE_REF=<ref>` or pass as `$1`.)
 2. Any new strict-True xfail MUST carry an `xfail-debt:<id>` token AND
    a matching `xfail_debt.md` row.
 3. No Protocol mocking. Sentinel will catch you.

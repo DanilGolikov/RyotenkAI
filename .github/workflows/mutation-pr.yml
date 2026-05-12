@@ -2,7 +2,9 @@ name: mutation testing (incremental)
 
 on:
   pull_request:
-    branches: [main]
+    # Integration branch is currently RESEACRH; mutation gate runs on PRs
+    # targeting either RESEACRH or main (downstream release branch).
+    branches: [RESEACRH, main]
 
 # Tier 1 of the mutation testing strategy
 # (docs/testing/mutation_testing.md): run Cosmic Ray on the production
@@ -22,7 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full history so `git diff origin/main...HEAD` works.
+          # Need full history so `git diff $BASE_REF...HEAD` works
+          # (BASE_REF defaults to the PR's target branch via
+          # GITHUB_BASE_REF, see "Run mutation testing on diff" step).
           fetch-depth: 0
 
       - name: Install uv
@@ -49,13 +53,22 @@ jobs:
       - name: cosmic-ray version
         run: .venv/bin/cosmic-ray --version
 
-      - name: Make origin/main fetchable
+      - name: Fetch PR base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch --depth=1 origin main || true
+          # GITHUB_BASE_REF is the PR target (RESEACRH or main).
+          if [ -n "$BASE_REF" ]; then
+            git fetch --depth=1 origin "$BASE_REF" || true
+          fi
 
       - name: Run mutation testing on diff
         id: mutate
-        run: bash scripts/mutation/run_on_diff.sh origin/main
+        env:
+          # Pass the PR target branch into the script; falls back to the
+          # script's own resolver (origin/RESEACRH → RESEACRH → main).
+          MUTATION_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || '' }}
+        run: bash scripts/mutation/run_on_diff.sh
 
       - name: Upload mutation artifacts
         if: always()
