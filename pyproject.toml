@@ -34,6 +34,8 @@ dev = [
     "ipython>=8.30.0",
     "jupyter>=1.1.0",
     "jupyterlab>=4.3.0",
+    # Mutation testing (tiers 1-4 of docs/testing/mutation_testing.md).
+    "cosmic-ray>=8.4.6,<9.0.0",
 ]
 
 # ============================================

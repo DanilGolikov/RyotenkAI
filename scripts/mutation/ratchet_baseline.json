@@ -1,0 +1,10 @@
+{
+  "_comment": "Mutation testing baseline — committed kill rates per hotspot module. Updated explicitly via `scripts/mutation/check_ratchet.py --update-baseline`. NEVER manually edit downward. Tolerance: 5 percentage points (set in check_ratchet.py default). Initial values seeded from Phase 6 sessions post-hoc-filtered for PEP 604 BitOr noise; see docs/migration/mutation_testing_report.md.",
+  "tolerance": 0.05,
+  "source_report": "docs/migration/mutation_testing_report.md (Phase 6, 2026-05-12)",
+  "files": {
+    "packages/pod/src/ryotenkai_pod/runner/event_bus.py": 0.6926,
+    "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py": 0.5848,
+    "packages/control/src/ryotenkai_control/pipeline/stages/managers/deployment_manager.py": 0.5000
+  }
+}

@@ -2,6 +2,9 @@
 
 > Status: **enforced** by `tests/_lint/test_no_protocol_mocking.py`
 > Last updated: 2026-05-12 (Phase 5 of the mock-elimination plan)
+> Related: [mutation_testing.md](mutation_testing.md) — the
+> external validator that confirms tests written under this policy
+> actually catch bugs, not just exercise lines.
 
 This document is the canonical reference for when `unittest.mock` may
 appear in `tests/` and how the allowlist process works.

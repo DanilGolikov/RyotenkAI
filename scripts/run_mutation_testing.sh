@@ -45,7 +45,12 @@ run_one() {
     rm -f "$session"
 
     echo "[RUN ] $name  ->  $mod"
-    cat > cosmic-ray.toml <<EOF
+    # Per-run TOML lives in a temp file so the repo-root template
+    # (which documents the operator-filter strategy) stays unchanged.
+    local toml
+    toml=$(mktemp -t cosmic-ray.XXXX.toml)
+    trap "rm -f '$toml'" RETURN
+    cat > "$toml" <<EOF
 [cosmic-ray]
 module-path = "${mod}"
 timeout = 30.0
@@ -54,21 +59,33 @@ test-command = ".venv/bin/python -m pytest -c tests/pytest.ini ${test_path} -x -
 
 [cosmic-ray.distributor]
 name = "local"
+
+[cosmic-ray.filters.operators-filter]
+exclude-operators = [
+    "core/ReplaceBinaryOperator_BitOr_.*",
+    "core/ReplaceBinaryOperator_.*_BitOr",
+]
 EOF
 
-    .venv/bin/cosmic-ray init cosmic-ray.toml "$session"
+    .venv/bin/cosmic-ray init "$toml" "$session"
+    .venv/bin/cr-filter-operators "$session" "$toml" || echo "[warn] cr-filter-operators failed"
+    .venv/bin/cr-filter-pragma "$session" 2>/dev/null || true
     local total
-    total=$(.venv/bin/cosmic-ray dump "$session" | wc -l | tr -d ' ')
-    echo "       $total mutations queued"
+    total=$(sqlite3 "$session" "SELECT COUNT(*) FROM work_items" 2>/dev/null || echo "?")
+    echo "       $total mutations queued (post-filter)"
 
     local t0 t1
     t0=$(date +%s)
-    .venv/bin/cosmic-ray exec cosmic-ray.toml "$session"
+    .venv/bin/cosmic-ray exec "$toml" "$session"
     t1=$(date +%s)
     echo "       exec took $((t1 - t0))s"
 
     .venv/bin/cr-html "$session" > "sessions/${name}_report.html"
-    .venv/bin/cosmic-ray dump "$session" > "sessions/${name}_dump.jsonl"
+    # `cosmic-ray dump` crashes on SKIPPED jobs in 8.4.6; emit a
+    # plain SQL summary instead.
+    sqlite3 "$session" \
+        "SELECT worker_outcome, COALESCE(test_outcome, 'N/A'), COUNT(*) FROM work_results GROUP BY worker_outcome, test_outcome" \
+        > "sessions/${name}_summary.tsv" 2>/dev/null || true
     .venv/bin/cr-report "$session" | tail -3
     echo ""
 }

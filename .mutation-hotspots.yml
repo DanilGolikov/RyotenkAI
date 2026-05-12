@@ -1,0 +1,59 @@
+# Mutation testing hotspot configuration.
+#
+# Files where mutation testing kill rate MUST exceed `min_kill_rate` or
+# the per-PR gate is BLOCKED. These are production-critical modules
+# where agent-written tests need stronger guarantees than line coverage
+# alone.
+#
+# Thresholds intentionally start CONSERVATIVE (0.65-0.70). Tighten via
+# the nightly ratchet over time as test quality improves.
+#
+# Schema:
+#   hotspots: list of:
+#     path: <path/to/file.py>             # production file, packages/*/src/
+#     min_kill_rate: <float, 0-1>         # block PR if below
+#     tests: <pytest path>                # test target for cosmic-ray
+#     rationale: <human-readable why>     # why this is a hotspot
+#   default_kill_rate_warning: <float>    # non-hotspots: warn-only threshold
+#   mode: blocking | advisory              # global tier-1 enforcement mode
+#
+# Once PEP 604 noise falls below 10% false-positive rate AND every
+# hotspot meets its threshold, flip `mode: blocking`.
+
+mode: advisory
+
+hotspots:
+  - path: packages/control/src/ryotenkai_control/pipeline/orchestrator.py
+    min_kill_rate: 0.65  # not yet baselined; target 0.70 after first nightly
+    tests: tests/unit/control/test_pipeline_orchestrator.py tests/unit/control/test_pipeline_orchestrator_missing_lines.py tests/unit/control/pipeline/test_orchestrator_boundary.py
+    rationale: "Pipeline orchestrator — system entrypoint, all stages flow through here"
+
+  - path: packages/pod/src/ryotenkai_pod/runner/supervisor.py
+    min_kill_rate: 0.65  # not yet baselined; target 0.70 after first nightly
+    tests: tests/unit/pod/runner/test_supervisor.py
+    rationale: "Trainer subprocess supervisor — FSM correctness critical"
+
+  - path: packages/pod/src/ryotenkai_pod/runner/event_bus.py
+    min_kill_rate: 0.65  # Phase 6 baseline ~69%
+    tests: tests/unit/pod/runner/event_bus/
+    rationale: "Event delivery to control plane — silent loss catastrophic"
+
+  - path: packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py
+    min_kill_rate: 0.55  # Phase 6 baseline ~58%; ratchet to 0.60 next cycle
+    tests: tests/unit/pod/runner/test_mlflow_relay.py
+    rationale: "MLflow metric forwarding — circuit breaker correctness"
+
+  - path: packages/pod/src/ryotenkai_pod/runner/pod_terminator.py
+    min_kill_rate: 0.65  # not yet baselined; target 0.70 after first nightly
+    tests: tests/unit/pod/runner/test_pod_terminator.py tests/unit/pod/runner/test_pod_terminator_retry.py tests/unit/pod/runner/test_pod_terminator_diagnostic_grace.py
+    rationale: "Pod termination — orphan-cost risk"
+
+# Non-hotspot threshold (advisory only) — applied to any changed file
+# under `packages/*/src/` that is NOT in the hotspots list above.
+default_kill_rate_warning: 0.50
+
+# Global timeout (in seconds) for ANY single Cosmic Ray run. If init
+# projects more mutations than (budget_minutes * mutations_per_minute)
+# the orchestrator emits a "fail-with-helpful-message" and skips.
+budget_minutes_per_pr: 25
+projected_mutations_per_minute: 25  # rough average from Phase 6

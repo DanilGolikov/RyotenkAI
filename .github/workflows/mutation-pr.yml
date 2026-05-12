@@ -1,0 +1,114 @@
+name: mutation testing (incremental)
+
+on:
+  pull_request:
+    branches: [main]
+
+# Tier 1 of the mutation testing strategy
+# (docs/testing/mutation_testing.md): run Cosmic Ray on the production
+# files this PR actually touched. Hotspot files (defined in
+# .mutation-hotspots.yml) have HARD kill-rate thresholds; non-hotspot
+# files are warn-only.
+#
+# Mode is governed by `mode:` in .mutation-hotspots.yml. While it is
+# `advisory`, this workflow does NOT block merges — it leaves a check
+# annotation only. Flip to `blocking` once PEP 604 noise is verified
+# <10% and the hotspot thresholds are stable.
+jobs:
+  mutation:
+    name: cosmic-ray on changed files
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history so `git diff origin/main...HEAD` works.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps (incl. cosmic-ray)
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+          .venv/bin/pip install cosmic-ray==8.4.6
+
+      - name: cosmic-ray version
+        run: .venv/bin/cosmic-ray --version
+
+      - name: Make origin/main fetchable
+        run: |
+          git fetch --depth=1 origin main || true
+
+      - name: Run mutation testing on diff
+        id: mutate
+        run: bash scripts/mutation/run_on_diff.sh origin/main
+
+      - name: Upload mutation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-pr-report
+          path: |
+            scripts/mutation/reports/
+            scripts/mutation/sessions/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Comment kill rates on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const dir = 'scripts/mutation/reports';
+            if (!fs.existsSync(dir)) { return; }
+            const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
+            if (files.length === 0) { return; }
+            files.sort((a, b) =>
+              fs.statSync(path.join(dir, b)).mtimeMs -
+              fs.statSync(path.join(dir, a)).mtimeMs
+            );
+            const report = JSON.parse(fs.readFileSync(path.join(dir, files[0]), 'utf8'));
+            if (!report.files || report.files.length === 0) { return; }
+            const lines = [];
+            lines.push('### Mutation testing report (mode=' + report.mode + ')');
+            lines.push('');
+            lines.push('| file | hotspot | executed | killed | survived | kill rate | threshold | status |');
+            lines.push('|------|---------|---------:|-------:|---------:|----------:|----------:|--------|');
+            for (const f of report.files) {
+              lines.push('| `' + f.path + '` | ' + (f.is_hotspot ? 'yes' : 'no') + ' | ' + f.mutations_executed + ' | ' + f.killed + ' | ' + f.survived + ' | ' + (f.effective_kill_rate * 100).toFixed(1) + '% | ' + (f.threshold * 100).toFixed(0) + '% | ' + f.status + ' |');
+            }
+            lines.push('');
+            if (report.hotspots_below_threshold.length > 0) {
+              lines.push('**Hotspots below threshold:**');
+              for (const s of report.hotspots_below_threshold) { lines.push('- ' + s); }
+              lines.push('');
+            }
+            if (report.advisories.length > 0) {
+              lines.push('**Advisories (non-blocking):**');
+              for (const s of report.advisories) { lines.push('- ' + s); }
+              lines.push('');
+            }
+            lines.push('Overall status: `' + report.overall_status + '`');
+            const body = lines.join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

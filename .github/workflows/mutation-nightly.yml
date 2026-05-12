@@ -1,0 +1,57 @@
+name: mutation testing (nightly)
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # daily 03:00 UTC (1 hour after the main nightly)
+  workflow_dispatch: {}
+
+# Tier 2 of the mutation testing strategy
+# (docs/testing/mutation_testing.md): full run on every hotspot file,
+# plus ratchet enforcement. Advisory only — never blocks the main
+# branch — but a sustained kill-rate drop on any hotspot should
+# create an issue or alert.
+jobs:
+  full:
+    name: full mutation pass over hotspots
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache .venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install deps (incl. cosmic-ray)
+        run: |
+          uv venv .venv
+          uv sync --all-extras
+          .venv/bin/pip install cosmic-ray==8.4.6
+
+      - name: Run full mutation pass on hotspots
+        run: bash scripts/mutation/run_full.sh
+
+      - name: Ratchet check (no regression > 5pp)
+        run: .venv/bin/python scripts/mutation/check_ratchet.py
+
+      - name: Upload nightly mutation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-nightly-report
+          path: |
+            scripts/mutation/reports/
+            scripts/mutation/sessions/
+          if-no-files-found: ignore
+          retention-days: 90

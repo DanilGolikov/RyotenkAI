@@ -1,0 +1,39 @@
+# Base Cosmic Ray configuration.
+#
+# This file is REWRITTEN per-target by scripts/mutation/orchestrate.py
+# and scripts/run_mutation_testing.sh. It is kept in version control as
+# the canonical template + documentation of the filter strategy.
+#
+# Filter strategy (D2 — PEP 604 noise reduction):
+#   Cosmic Ray's core operators mutate the `|` bitwise-or token, but
+#   PEP 604 type-union annotations also use `|` (e.g. `int | None`,
+#   `Foo | Bar | None`). Mutating those expressions is a no-op at
+#   runtime — Python does not evaluate annotations for behaviour — so
+#   the surviving mutations are pure noise. We drop every BitOr-family
+#   operator before exec via `cr-filter-operators`. This trades a small
+#   loss of real signal (genuine bitwise-or expressions in production
+#   code are rare in this codebase) for a large reduction in false
+#   positive rate (~30-50% of survivors were noise pre-filter).
+
+[cosmic-ray]
+module-path = "packages/pod/src/ryotenkai_pod/runner/mlflow_relay.py"
+timeout = 30.0
+excluded-modules = []
+test-command = ".venv/bin/python -m pytest -c tests/pytest.ini tests/unit/pod/runner/test_mlflow_relay.py -x --no-header -q --disable-warnings"
+
+[cosmic-ray.distributor]
+name = "local"
+
+# Operator-level filter: drop BitOr mutations (PEP 604 annotation noise).
+# Applied via `cr-filter-operators cosmic-ray.toml session.sqlite` AFTER
+# `cosmic-ray init` and BEFORE `cosmic-ray exec`.
+[cosmic-ray.filters.operators-filter]
+exclude-operators = [
+    # PEP 604 union annotations — `T | None` etc. Mutating `|` to
+    # `+`, `-`, `*`, ... is a runtime no-op for annotations.
+    "core/ReplaceBinaryOperator_BitOr_.*",
+    "core/ReplaceBinaryOperator_.*_BitOr",
+    # BitOr->BitAnd / BitXor on actual bitwise expressions remains
+    # mostly noise on this codebase (very few real bitwise ops). Keep
+    # those above; tighten if a real bitwise mutation is missed.
+]
