@@ -14,6 +14,8 @@ Target: Increase container.py coverage from 39.54% to >60%.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -255,7 +257,7 @@ class TestFullWorkflow:
         """override() should preserve config reference."""
         original = TrainingContainer(full_config)
 
-        mock_mm = MagicMock()
+        mock_mm = SimpleNamespace()
         overridden = original.override(memory_manager=mock_mm)
 
         # Config should be same

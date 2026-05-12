@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -79,6 +78,12 @@ class _StepClock:
         self.now += seconds
 
 
+async def _noop_forward(_event: dict[str, Any]) -> None:
+    """No-op ``forward_fn`` placeholder for tests that don't exercise
+    the forwarder. Replaces the previous ``AsyncMock()`` literal so the
+    test surface contains a real coroutine instead of a mock object."""
+
+
 async def _drain(relay: MLflowRelay, max_iters: int = 50) -> None:
     """Yield to the worker until the queue is empty or ``max_iters``
     iterations elapse. Each iteration sleeps for a short while so the
@@ -113,7 +118,7 @@ class TestPositive:
         assert [e["payload"]["value"] for e in seen] == [0.4, 0.5]
 
     async def test_start_is_idempotent(self) -> None:
-        relay = MLflowRelay(AsyncMock(), worker_idle_poll_s=0.01)
+        relay = MLflowRelay(_noop_forward, worker_idle_poll_s=0.01)
         await relay.start()
         first = relay._worker_task
         await relay.start()  # second call must not spawn a second worker
@@ -121,11 +126,11 @@ class TestPositive:
         await relay.stop()
 
     async def test_stop_safe_when_never_started(self) -> None:
-        relay = MLflowRelay(AsyncMock())
+        relay = MLflowRelay(_noop_forward)
         await relay.stop()  # must not raise
 
     async def test_dropped_count_starts_at_zero(self) -> None:
-        relay = MLflowRelay(AsyncMock())
+        relay = MLflowRelay(_noop_forward)
         assert relay.dropped_count == 0
         assert relay.queue_size == 0
 
@@ -147,13 +152,13 @@ class TestNegative:
         assert relay.is_running is False
 
     async def test_non_mlflow_kind_ignored(self) -> None:
-        relay = MLflowRelay(AsyncMock())
+        relay = MLflowRelay(_noop_forward)
         assert relay.submit({"kind": "step", "payload": {}}) is False
         assert relay.submit({"kind": "trainer_spawned"}) is False
         assert relay.queue_size == 0
 
     async def test_event_without_kind_ignored(self) -> None:
-        relay = MLflowRelay(AsyncMock())
+        relay = MLflowRelay(_noop_forward)
         assert relay.submit({"payload": {"value": 1}}) is False
 
 
@@ -166,7 +171,7 @@ class TestBoundary:
     async def test_queue_max_one_drops_oldest_on_overflow(self) -> None:
         # Synchronous fill: do NOT start the worker so the queue
         # actually overflows before being drained.
-        relay = MLflowRelay(AsyncMock(), queue_max=1)
+        relay = MLflowRelay(_noop_forward, queue_max=1)
         assert relay.submit(_metric(0.1)) is True
         assert relay.queue_size == 1
         # Second submit drops the first and keeps the second.
@@ -348,7 +353,7 @@ class TestDependencyErrors:
 class TestRegressions:
     async def test_drop_oldest_keeps_newest(self) -> None:
         # Pin: the producer-side overflow MUST drop the oldest event.
-        relay = MLflowRelay(AsyncMock(), queue_max=2)
+        relay = MLflowRelay(_noop_forward, queue_max=2)
         relay.submit(_metric(1))
         relay.submit(_metric(2))
         relay.submit(_metric(3))  # drops 1
@@ -363,7 +368,7 @@ class TestRegressions:
     async def test_stop_cancels_worker_promptly(self) -> None:
         # Worker should respond to ``stop()`` within the idle-poll
         # timeout, not block until the next event arrives.
-        relay = MLflowRelay(AsyncMock(), worker_idle_poll_s=0.05)
+        relay = MLflowRelay(_noop_forward, worker_idle_poll_s=0.05)
         await relay.start()
         await asyncio.sleep(0.02)
         # Don't submit anything — worker is in queue.get(timeout=…).
@@ -376,7 +381,7 @@ class TestRegressions:
     async def test_submit_is_non_blocking_even_when_full(self) -> None:
         # Drop-oldest must keep ``submit`` synchronous — no await
         # path means producers (the FastAPI handler) cannot stall.
-        relay = MLflowRelay(AsyncMock(), queue_max=2)
+        relay = MLflowRelay(_noop_forward, queue_max=2)
         relay.submit(_metric(1))
         relay.submit(_metric(2))
         # The third submit will drop the oldest. ``submit`` is sync,

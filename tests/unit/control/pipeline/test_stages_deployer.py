@@ -13,6 +13,8 @@ Approach: integration-style tests with mocked provider and deployment manager.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -54,9 +56,7 @@ def mock_config_with_gpu():
     # Provider config
     config.get_active_provider_name.return_value = "runpod"
 
-    mock_provider_config = MagicMock()
-    mock_provider_config.gpu_type = "NVIDIA RTX 4090"
-    mock_provider_config.container_disk_gb = 50
+    mock_provider_config = SimpleNamespace(gpu_type="NVIDIA RTX 4090", container_disk_gb=50)
     config.get_provider_config.return_value = mock_provider_config
 
     return config
@@ -65,9 +65,7 @@ def mock_config_with_gpu():
 @pytest.fixture
 def mock_secrets():
     """Mock secrets with API keys."""
-    secrets = MagicMock()
-    secrets.runpod_api_key = "test_runpod_key"
-    secrets.hf_token = "test_hf_token"
+    secrets = SimpleNamespace(runpod_api_key="test_runpod_key", hf_token="test_hf_token")
     return secrets
 
 

@@ -11,6 +11,8 @@ goes through :class:`RunnerEventCallback` (covered by its own tests).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from contextlib import nullcontext
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -208,7 +210,7 @@ class TestDependencyInjection:
     def test_memory_manager_lazy_init(self, mock_config):
         """MemoryManager should be lazily initialized."""
         with patch("ryotenkai_pod.trainer.memory_manager.MemoryManager") as MockMM:
-            mock_instance = MagicMock()
+            mock_instance = SimpleNamespace()
             MockMM.auto_configure.return_value = mock_instance
 
             container = TrainingContainer(mock_config)

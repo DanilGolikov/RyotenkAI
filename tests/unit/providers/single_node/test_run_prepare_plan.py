@@ -23,7 +23,6 @@ import pytest
 from ryotenkai_engines.interfaces import PreparePlan, PrepareStep
 from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
-import ryotenkai_providers.single_node.inference.provider as _mod
 from ryotenkai_providers.single_node.inference.provider import (
     SingleNodeInferenceProvider,
 )
@@ -91,10 +90,24 @@ def _mk_pipeline_config(provider_cfg, engine_cfg):
 
 
 @pytest.fixture()
-def provider(provider_cfg, engine_cfg, secrets):
+def fake_docker():
+    """Canonical :class:`IDockerClient` fake — see ``tests/_fakes/docker.py``."""
+    from tests._fakes.docker import FakeDockerClient
+
+    return FakeDockerClient()
+
+
+@pytest.fixture()
+def provider(provider_cfg, engine_cfg, secrets, fake_docker):
     """Build a real ``SingleNodeInferenceProvider`` via ``ProviderContext`` —
     the legitimate constructor; matches how the registry instantiates it
-    in production."""
+    in production.
+
+    The provider is injected with :class:`FakeDockerClient` so tests
+    control container state, log content, exit codes, etc. via the
+    fake's chaos surface rather than monkey-patching module-level
+    docker functions.
+    """
     from ryotenkai_providers.registry import ProviderContext
 
     pipeline_cfg = _mk_pipeline_config(provider_cfg, engine_cfg)
@@ -104,9 +117,36 @@ def provider(provider_cfg, engine_cfg, secrets):
         provider_block=provider_cfg.model_dump(mode="python"),
         secrets=secrets,
     )
-    p = SingleNodeInferenceProvider(ctx)
+    p = SingleNodeInferenceProvider(ctx, docker=fake_docker)
     p._run_id = "run_test"
     return p
+
+
+def _seed_prepare_step(
+    fake_docker,
+    *,
+    run_id: str = "r1",
+    step_name: str = "merge_lora",
+    exit_code: int = 0,
+    logs: str = "MERGE_SUCCESS",
+    initially_running: bool = False,
+) -> str:
+    """Seed the fake with a container in the post-run state expected by
+    ``_run_prepare_plan``'s polling loop.
+
+    The plan-runner polls ``is_container_running`` until it returns
+    False, then reads logs + exit code. A pre-seeded "already exited"
+    container short-circuits the polling loop on the first iteration,
+    keeping tests fast and deterministic.
+    """
+    container_name = f"helix-prepare-{run_id}-{step_name}"
+    state = "running" if initially_running else "exited"
+    fake_docker.register_container(
+        container_name, state=state, exit_code=exit_code,
+    )
+    if logs:
+        fake_docker.append_logs(container_name, logs)
+    return container_name
 
 
 def _step(
@@ -173,19 +213,14 @@ class TestPositive:
         # No image pulls, no container runs.
         mock_ssh.exec_command.assert_not_called()
 
-    def test_single_step_success(self, provider) -> None:
+    def test_single_step_success(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "OK", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(
-                _mod, "docker_logs", return_value=Ok("Some output\nMERGE_SUCCESS\n")
-            ),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(
+            fake_docker, logs="Some output\nMERGE_SUCCESS\n",
+        )
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -194,7 +229,7 @@ class TestPositive:
             )
         assert result.is_ok(), f"got {result.unwrap_err() if result.is_err() else None}"
 
-    def test_two_step_plan_runs_both(self, provider) -> None:
+    def test_two_step_plan_runs_both(self, provider, fake_docker) -> None:
         a = _step(
             "step_a",
             outputs=("/workspace/intermediate",),
@@ -208,13 +243,9 @@ class TestPositive:
         plan = _plan(a, b)
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "OK", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker, step_name="step_a")
+        _seed_prepare_step(fake_docker, step_name="step_b")
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -286,17 +317,12 @@ class TestNegative:
         assert result.is_err()
         assert "SINGLENODE_PREPARE_CONTAINER_START_FAILED" in str(result.unwrap_err())
 
-    def test_exit_code_nonzero(self, provider) -> None:
+    def test_exit_code_nonzero(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(1)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker, exit_code=1)
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -306,17 +332,12 @@ class TestNegative:
         assert result.is_err()
         assert "SINGLENODE_PREPARE_CONTAINER_FAILED" in str(result.unwrap_err())
 
-    def test_no_success_marker_in_logs(self, provider) -> None:
+    def test_no_success_marker_in_logs(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("nothing notable here")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker, logs="nothing notable here")
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -326,7 +347,7 @@ class TestNegative:
         assert result.is_err()
         assert "SINGLENODE_PREPARE_NO_SUCCESS_MARKER" in str(result.unwrap_err())
 
-    def test_artifacts_not_found(self, provider) -> None:
+    def test_artifacts_not_found(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         # rm/mkdir, docker run, then artifact verify ⇒ MISSING.
@@ -336,13 +357,8 @@ class TestNegative:
             (True, "MISSING", ""),  # test -f artifact
             (True, "(directory listing)", ""),  # ls -lah
         ]
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker)
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -359,7 +375,9 @@ class TestNegative:
 
 
 class TestBoundary:
-    def test_no_marker_no_artifact_passes_with_zero_exit(self, provider) -> None:
+    def test_no_marker_no_artifact_passes_with_zero_exit(
+        self, provider, fake_docker,
+    ) -> None:
         """A step may have no marker and no artifact ⇒ exit code is the
         sole success criterion."""
         plan = _plan(
@@ -367,13 +385,8 @@ class TestBoundary:
         )
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("any output")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker, logs="any output")
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -383,26 +396,21 @@ class TestBoundary:
         assert result.is_ok()
 
     def test_step_with_explicit_image_overrides_serve_image(
-        self, provider
+        self, provider, fake_docker,
     ) -> None:
         """``step.image`` set ⇒ provider uses it instead of engine serve image."""
         plan = _plan(_step(image="custom/converter:1.0"))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
+        _seed_prepare_step(fake_docker)
 
         ensure_calls = []
 
-        def _capture(ssh, image):
+        def _capture(*, ssh, image):
             ensure_calls.append(image)
             return Ok(None)
 
-        with (
-            patch.object(provider, "_ensure_docker_image", side_effect=_capture),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        with patch.object(provider, "_ensure_docker_image", side_effect=_capture):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -413,26 +421,21 @@ class TestBoundary:
         assert ensure_calls == ["custom/converter:1.0"]
 
     def test_step_with_image_none_uses_engine_serve_image(
-        self, provider
+        self, provider, fake_docker,
     ) -> None:
         """``image=None`` ⇒ provider falls through to ``_resolve_engine_image``."""
         plan = _plan(_step(image=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
+        _seed_prepare_step(fake_docker)
 
         ensure_calls = []
 
-        def _capture(ssh, image):
+        def _capture(*, ssh, image):
             ensure_calls.append(image)
             return Ok(None)
 
-        with (
-            patch.object(provider, "_ensure_docker_image", side_effect=_capture),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        with patch.object(provider, "_ensure_docker_image", side_effect=_capture):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -450,7 +453,7 @@ class TestBoundary:
 
 
 class TestInvariants:
-    def test_output_dirs_cleaned_before_run(self, provider) -> None:
+    def test_output_dirs_cleaned_before_run(self, provider, fake_docker) -> None:
         """Idempotency invariant: rm -rf + mkdir -p before docker run."""
         plan = _plan(
             _step(
@@ -460,13 +463,8 @@ class TestInvariants:
         )
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker)
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -482,26 +480,21 @@ class TestInvariants:
         ]
         assert len(cleanup_calls) >= 2
 
-    def test_container_removed_after_run(self, provider) -> None:
+    def test_container_removed_after_run(self, provider, fake_docker) -> None:
         """``docker rm -f`` is always called post-step (success or failure)."""
         plan = _plan(_step(success_artifact=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        rm_force_mock = MagicMock(return_value=Ok(None))
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", rm_force_mock),
-        ):
+        _seed_prepare_step(fake_docker)
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-        assert rm_force_mock.called
+        # The fake records every call; ``rm_force`` must appear at least once.
+        assert len(fake_docker.calls_for("rm_force")) >= 1
 
 
 # ===========================================================================
@@ -510,7 +503,7 @@ class TestInvariants:
 
 
 class TestLogicSpecific:
-    def test_emits_mlflow_events_per_step(self, provider) -> None:
+    def test_emits_mlflow_events_per_step(self, provider, fake_docker) -> None:
         """Operators filter on ``Prepare started``, ``Prepare step started``,
         ``Prepare step completed``, ``Prepare completed``."""
         mlflow = MagicMock()
@@ -518,13 +511,8 @@ class TestLogicSpecific:
         plan = _plan(_step(success_artifact=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker)
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -552,7 +540,7 @@ class TestLogicSpecific:
         assert not any("Merge" in m for m in all_msgs)
 
     def test_container_name_uses_run_id_and_step_name(
-        self, provider
+        self, provider, fake_docker,
     ) -> None:
         plan = _plan(_step("custom_step", success_artifact=None))
         mock_ssh = MagicMock()
@@ -563,13 +551,8 @@ class TestLogicSpecific:
             return (True, "", "")
 
         mock_ssh.exec_command.side_effect = _capture
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", return_value=False),
-            patch.object(_mod, "docker_logs", return_value=Ok("MERGE_SUCCESS")),
-            patch.object(_mod, "docker_container_exit_code", return_value=Ok(0)),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        _seed_prepare_step(fake_docker, step_name="custom_step")
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -588,40 +571,18 @@ class TestLogicSpecific:
 
 
 class TestCombinatorial:
-    def test_second_step_failure_aborts_chain(self, provider) -> None:
+    def test_second_step_failure_aborts_chain(self, provider, fake_docker) -> None:
         """When step B fails, plan returns Err immediately. Step A's outputs
         are NOT cleaned up (no rollback)."""
-        a = _step(
-            "step_a",
-            outputs=("/workspace/a_out",),
-            success_artifact=None,
-        )
         b = _step(
             "step_b",
             outputs=("/workspace/b_out",),
             success_marker="B_OK",
             success_artifact=None,
         )
-        plan = PreparePlan(steps=(a, b), final_model_path="/workspace/b_out")
 
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
-
-        # Track which step's logs we're returning by call count.
-        logs_responses = ["A_DONE_NOTHING", "no marker present"]
-        exit_codes = [0, 0]
-        is_running_responses = [False, False]
-
-        def _logs(*a, **k):
-            return Ok(
-                logs_responses.pop(0) if logs_responses else "no marker present"
-            )
-
-        def _exit(*a, **k):
-            return Ok(exit_codes.pop(0) if exit_codes else 0)
-
-        def _running(*a, **k):
-            return is_running_responses.pop(0) if is_running_responses else False
 
         # Step A has no marker (None) ⇒ marker_seen=True automatically.
         a_no_marker = _step(
@@ -634,13 +595,12 @@ class TestCombinatorial:
             steps=(a_no_marker, b), final_model_path="/workspace/b_out"
         )
 
-        with (
-            patch.object(provider, "_ensure_docker_image", return_value=Ok(None)),
-            patch.object(_mod, "docker_is_container_running", side_effect=_running),
-            patch.object(_mod, "docker_logs", side_effect=_logs),
-            patch.object(_mod, "docker_container_exit_code", side_effect=_exit),
-            patch.object(_mod, "docker_rm_force", return_value=Ok(None)),
-        ):
+        # Step A succeeds (no marker required); step B's logs do NOT
+        # contain ``B_OK`` ⇒ NO_SUCCESS_MARKER.
+        _seed_prepare_step(fake_docker, step_name="step_a", logs="A_DONE_NOTHING")
+        _seed_prepare_step(fake_docker, step_name="step_b", logs="no marker present")
+
+        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
             result = provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,

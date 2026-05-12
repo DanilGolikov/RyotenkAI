@@ -12,6 +12,8 @@ historical ``(host, port)`` tuple that ``activate()`` consumes.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -57,7 +59,7 @@ def test_wait_for_ssh_returns_host_port_tuple_on_success(
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
-    api = MagicMock()
+    api = SimpleNamespace()
     res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
 
     assert res.is_success()

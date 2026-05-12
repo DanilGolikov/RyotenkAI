@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
+
+from tests._fakes.mlflow import FakeMLflowManager
 
 from ryotenkai_control.pipeline.artifacts.base import (
     STATUS_FAILED,
@@ -316,69 +317,59 @@ class TestSaveStageArtifact:
     def test_inactive_mlflow_is_silent(self) -> None:
         """Inactive MLflowManager does not write artifact."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = False
+        # No setup() → is_active is False; FakeMLflowManager mirrors the
+        # pre-setup state of the real concrete MLflowManager.
+        fake_mgr = FakeMLflowManager()
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
         }
         env = _make_envelope()
         save_stage_artifact(context, env, "test.json")
-        mock_mgr.log_dict.assert_not_called()
+        assert fake_mgr.log_dict_calls == []
 
     def test_no_run_id_is_silent(self) -> None:
         """MLflowManager present but run_id missing → does not write artifact."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
-        context = {PipelineContextKeys.MLFLOW_MANAGER: mock_mgr}  # no run_id
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
+        context = {PipelineContextKeys.MLFLOW_MANAGER: fake_mgr}  # no run_id
         env = _make_envelope()
         save_stage_artifact(context, env, "test.json")
-        mock_mgr.log_dict.assert_not_called()
+        assert fake_mgr.log_dict_calls == []
 
     def test_mlflow_write_logs_dict_payload(self, tmp_path: Path) -> None:
         """Happy path: envelope dict is written via MLflowManager.log_dict()."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        logged_args: list[tuple[Any, ...]] = []
-
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
-
-        def capture_log(payload: dict[str, Any], artifact_file: str, *, run_id: str = "") -> bool:
-            logged_args.append((payload, artifact_file, run_id))
-            return True
-
-        mock_mgr.log_dict.side_effect = capture_log
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
 
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "run_abc",
         }
         env = _make_envelope(data={"score": 0.99})
         save_stage_artifact(context, env, "my_artifact.json")
 
-        assert mock_mgr.log_dict.call_count == 1
-        assert logged_args[0][0] == env.to_dict()
-        assert logged_args[0][1] == "my_artifact.json"
-        assert logged_args[0][2] == "run_abc"
+        assert len(fake_mgr.log_dict_calls) == 1
+        call = fake_mgr.log_dict_calls[0]
+        assert call.payload == env.to_dict()
+        assert call.artifact_file == "my_artifact.json"
+        assert call.run_id == "run_abc"
 
     def test_exception_in_log_dict_does_not_propagate(self) -> None:
         """Dependency error: exception in log_dict is swallowed (best-effort)."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
-        mock_mgr.log_dict.side_effect = RuntimeError("MLflow server down")
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
+        fake_mgr.set_log_dict_error(RuntimeError("MLflow server down"))
 
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "run_abc",
         }
         env = _make_envelope()
@@ -388,37 +379,32 @@ class TestSaveStageArtifact:
     def test_artifact_path_passed_through(self) -> None:
         """artifact_path is prefixed into the target artifact file for log_dict."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        logged_args: list[tuple[dict[str, Any], str, str]] = []
-
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
-        mock_mgr.log_dict.side_effect = (
-            lambda payload, artifact_file, *, run_id="": logged_args.append((payload, artifact_file, run_id)) or True
-        )
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
 
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
         }
         save_stage_artifact(context, _make_envelope(), "eval.json", artifact_path="evaluation")
-        assert logged_args[0][1] == "evaluation/eval.json"
-        assert logged_args[0][2] == "rid"
+        assert len(fake_mgr.log_dict_calls) == 1
+        call = fake_mgr.log_dict_calls[0]
+        assert call.artifact_file == "evaluation/eval.json"
+        assert call.run_id == "rid"
 
     def test_empty_run_id_string_is_skipped(self) -> None:
         """Boundary: run_id == '' → does not write artifact."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "",
         }
         save_stage_artifact(context, _make_envelope(), "test.json")
-        mock_mgr.log_dict.assert_not_called()
+        assert fake_mgr.log_dict_calls == []
 
 
 # =============================================================================
@@ -629,27 +615,16 @@ class TestArtifactRegressions:
     def test_save_stage_artifact_json_payload_matches_envelope(self) -> None:
         """Regression: payload sent to MLflow matches envelope.to_dict()."""
         from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-        from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 
-        written_payloads: list[dict[str, Any]] = []
-
-        mock_mgr = MagicMock(spec=MLflowManager)
-        mock_mgr.is_active = True
-
-        def capture(payload: dict[str, Any], artifact_file: str, **kwargs: Any) -> bool:
-            _ = artifact_file
-            _ = kwargs
-            written_payloads.append(payload)
-            return True
-
-        mock_mgr.log_dict.side_effect = capture
+        fake_mgr = FakeMLflowManager()
+        fake_mgr.setup()
 
         context = {
-            PipelineContextKeys.MLFLOW_MANAGER: mock_mgr,
+            PipelineContextKeys.MLFLOW_MANAGER: fake_mgr,
             PipelineContextKeys.MLFLOW_PARENT_RUN_ID: "rid",
         }
         env = _make_envelope(data={"score": 0.75, "count": 10})
         save_stage_artifact(context, env, "results.json")
 
-        assert len(written_payloads) == 1
-        assert written_payloads[0] == env.to_dict()
+        assert len(fake_mgr.log_dict_calls) == 1
+        assert fake_mgr.log_dict_calls[0].payload == env.to_dict()

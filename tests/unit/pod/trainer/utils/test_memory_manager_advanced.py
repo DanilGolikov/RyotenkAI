@@ -16,6 +16,8 @@ Focus areas:
 7. Singleton manager (941-946, 952)
 """
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -139,11 +141,7 @@ class TestDetectGPUErrorPaths:
     def test_detect_gpu_missing_name(self, mock_props, mock_cuda_avail):
         """_detect_gpu() should handle missing GPU name."""
         # Mock GPU without proper name
-        props = MagicMock()
-        props.name = ""  # Empty name
-        props.total_memory = 12 * 1024**3
-        props.major = 7
-        props.minor = 5
+        props = SimpleNamespace(name="", total_memory=12 * 1024**3, major=7, minor=5)
         mock_props.return_value = props
 
         mm = MemoryManager(device="cuda", auto_detect=True)

@@ -209,20 +209,13 @@ class TestStartTrainingHappy:
         monkeypatch.setattr(_launcher_mod, "PluginPacker", fake_packer_cls)
 
         # Stub SSHTunnelManager + JobClient with async-mock surface
-        fake_tunnel = MagicMock()
-        fake_tunnel.local_port = 18080
-        fake_tunnel.base_url = "http://127.0.0.1:18080"
-        fake_tunnel.open = AsyncMock(return_value=None)
-        fake_tunnel.close = AsyncMock(return_value=None)
+        fake_tunnel = SimpleNamespace(local_port=18080, base_url="http://127.0.0.1:18080", open=AsyncMock(return_value=None), close=AsyncMock(return_value=None))
         fake_tunnel_cls = MagicMock(return_value=fake_tunnel)
         monkeypatch.setattr(_launcher_mod, "SSHTunnelManager", fake_tunnel_cls)
 
-        fake_client = MagicMock()
-        fake_client.health_check = AsyncMock(return_value=True)
-        fake_client.submit_job = AsyncMock(
+        fake_client = SimpleNamespace(health_check=AsyncMock(return_value=True), submit_job=AsyncMock(
             return_value={"job_id": "j-1", "sequence": 0, "offset": 0},
-        )
-        fake_client.aclose = AsyncMock(return_value=None)
+        ), aclose=AsyncMock(return_value=None))
         fake_client_cls = MagicMock(return_value=fake_client)
         monkeypatch.setattr(_launcher_mod, "JobClient", fake_client_cls)
 
@@ -291,12 +284,9 @@ class TestStartTrainingErrors:
             _launcher_mod, "SSHTunnelManager", MagicMock(return_value=fake_tunnel),
         )
 
-        fake_client = MagicMock()
-        fake_client.health_check = AsyncMock(return_value=True)
-        fake_client.submit_job = AsyncMock(
+        fake_client = SimpleNamespace(health_check=AsyncMock(return_value=True), submit_job=AsyncMock(
             side_effect=_launcher_mod.JobClientError("422 invalid spec"),
-        )
-        fake_client.aclose = AsyncMock(return_value=None)
+        ), aclose=AsyncMock(return_value=None))
         monkeypatch.setattr(
             _launcher_mod, "JobClient", MagicMock(return_value=fake_client),
         )
@@ -331,11 +321,7 @@ class TestStartTrainingErrors:
             _launcher_mod, "SSHTunnelManager", MagicMock(return_value=fake_tunnel),
         )
 
-        fake_client = MagicMock()
-        # /healthz never returns 200
-        fake_client.health_check = AsyncMock(return_value=False)
-        fake_client.submit_job = AsyncMock(return_value={})
-        fake_client.aclose = AsyncMock(return_value=None)
+        fake_client = SimpleNamespace(health_check=AsyncMock(return_value=False), submit_job=AsyncMock(return_value={}), aclose=AsyncMock(return_value=None))
         monkeypatch.setattr(
             _launcher_mod, "JobClient", MagicMock(return_value=fake_client),
         )

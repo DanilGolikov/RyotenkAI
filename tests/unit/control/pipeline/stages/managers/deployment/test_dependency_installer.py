@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -95,7 +97,7 @@ def installer(base_config: PipelineConfig, secrets: DummySecrets) -> DependencyI
 
 def test_install_single_node_uses_runtime_image_verify(installer: DependencyInstaller):
     """single_node: install() must verify runtime image via docker on host."""
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
 
     with patch.object(installer, "_verify_single_node_docker_runtime", return_value=Ok(None)) as mock_verify:
         result = installer.install(ssh_client)
@@ -111,7 +113,7 @@ def test_install_cloud_verify_ok_skips_install(base_config: PipelineConfig, secr
     cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
 
     installer = DependencyInstaller(config=cfg, secrets=secrets)
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
 
     with patch.object(DependencyInstaller, "verify_prebuilt_dependencies", return_value=Ok(None)) as mock_verify:
         result = installer.install(ssh_client)
@@ -127,7 +129,7 @@ def test_install_cloud_verify_fail_returns_err(base_config: PipelineConfig, secr
     cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
 
     installer = DependencyInstaller(config=cfg, secrets=secrets)
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
 
     with patch.object(
         DependencyInstaller,
@@ -162,7 +164,7 @@ def test_verify_prebuilt_dependencies_failure_returns_err():
 )
 def test_verify_single_node_docker_runtime_no_image_returns_config_error(installer: DependencyInstaller):
     """_verify_single_node_docker_runtime returns ConfigError when docker_image is absent."""
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
 
     with patch(
         "ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer.get_single_node_training_cfg",
@@ -177,7 +179,7 @@ def test_verify_single_node_docker_runtime_no_image_returns_config_error(install
 
 def test_verify_single_node_docker_runtime_pull_failure_returns_error(installer: DependencyInstaller):
     """Propagates pull failure from _ensure_docker_image_present."""
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
     pull_err = ProviderError(message="pull failed", code="DOCKER_PULL_FAILED")
 
     with patch.object(installer, "_ensure_docker_image_present", return_value=Failure(pull_err)):

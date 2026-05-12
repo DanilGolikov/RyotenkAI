@@ -7,6 +7,8 @@ Old perplexity/generation tests are removed (that logic was deleted).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -20,8 +22,7 @@ def _mk_cfg(*, eval_enabled: bool = True) -> MagicMock:
     cfg = MagicMock()
     cfg.model.name = "test-model"
 
-    eval_cfg = MagicMock()
-    eval_cfg.enabled = eval_enabled
+    eval_cfg = SimpleNamespace(enabled=eval_enabled)
 
     cfg.evaluation = eval_cfg
     # Post-Phase-B: production reads ``cfg.inference.engine.kind``
@@ -224,8 +225,7 @@ class TestPreflight:
     """Direct tests for ``_preflight_check_endpoint``."""
 
     def _mk_response(self, status: int):
-        resp = MagicMock()
-        resp.status_code = status
+        resp = SimpleNamespace(status_code=status)
         return resp
 
     def test_returns_ok_on_2xx(self) -> None:
@@ -310,8 +310,7 @@ class TestPreflight:
         from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         call_count = {"n": 0}
-        good_resp = MagicMock()
-        good_resp.status_code = 200
+        good_resp = SimpleNamespace(status_code=200)
 
         def _flaky(*args, **kwargs):
             call_count["n"] += 1

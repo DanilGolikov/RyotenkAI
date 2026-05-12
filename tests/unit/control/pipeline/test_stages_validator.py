@@ -9,22 +9,30 @@ We focus on:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ryotenkai_control.data.validation.base import ValidationResult
 from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
-from ryotenkai_shared.config import DatasetConfig, PipelineConfig
+from ryotenkai_shared.config import DatasetConfig
 from ryotenkai_shared.utils.result import DatasetError, Err, Ok
 
 
-def _mk_primary_only_config(ds: DatasetConfig) -> MagicMock:
-    cfg = MagicMock(spec=PipelineConfig)
-    cfg.get_primary_dataset.return_value = ds
-    cfg.training = MagicMock()
-    cfg.training.strategies = []
-    return cfg
+def _mk_primary_only_config(ds: DatasetConfig) -> SimpleNamespace:
+    """Build a duck-typed PipelineConfig-shaped object for DatasetValidator tests.
+
+    DatasetValidator only reads ``get_primary_dataset()`` and ``training.strategies``
+    on its config argument — building a real :class:`PipelineConfig` here would
+    require a full ``model`` / ``providers`` / ``datasets`` registry that this
+    test does not exercise. SimpleNamespace is a deliberate test double.
+    """
+    return SimpleNamespace(
+        get_primary_dataset=lambda: ds,
+        training=SimpleNamespace(strategies=[]),
+    )
 
 
 def _local_ds(path: str, *, plugins: list[dict] | None = None, critical_failures: int = 1) -> DatasetConfig:
@@ -120,8 +128,7 @@ def test_hf_streaming_fast_uses_train_id(mock_load_dataset: MagicMock) -> None:
 
     # Mock loader with token
     loader_factory = MagicMock()
-    loader = MagicMock()
-    loader.token = "test_token"
+    loader = SimpleNamespace(token="test_token")
     loader_factory.create_for_dataset.return_value = loader
 
     with patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory", return_value=loader_factory):
@@ -151,10 +158,8 @@ class TestDatasetValidatorAdditionalCoverage:
         assert res.unwrap()["validation_status"] == "skipped"
 
     def test_execute_fail_fast_cancels_remaining_futures(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        ds1 = MagicMock()
-        ds1.validations = MagicMock(mode="fast", critical_failures=1)
-        ds2 = MagicMock()
-        ds2.validations = MagicMock(mode="fast", critical_failures=1)
+        ds1 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
+        ds2 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
 
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=1))
         callbacks = DatasetValidatorEventCallbacks(on_dataset_scheduled=MagicMock())
@@ -209,10 +214,8 @@ class TestDatasetValidatorAdditionalCoverage:
         assert callbacks.on_dataset_scheduled.call_count == 2
 
     def test_execute_crash_is_treated_as_critical_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        ds1 = MagicMock()
-        ds1.validations = MagicMock(mode="fast", critical_failures=1)
-        ds2 = MagicMock()
-        ds2.validations = MagicMock(mode="fast", critical_failures=1)
+        ds1 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
+        ds2 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
 
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=1))
         v = DatasetValidator(cfg)
@@ -266,13 +269,16 @@ class TestDatasetValidatorAdditionalCoverage:
 
     @patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
     def test_get_datasets_to_validate_falls_back_when_strategy_dataset_missing(self, _mock_loader_factory) -> None:
-        cfg = MagicMock(spec=PipelineConfig)
-        primary = MagicMock()
-        cfg.get_primary_dataset.return_value = primary
+        primary = SimpleNamespace()
 
-        cfg.training = MagicMock()
-        cfg.training.strategies = [MagicMock(dataset="missing")]
-        cfg.get_dataset_for_strategy.side_effect = KeyError("missing")
+        def _missing(_name: str):
+            raise KeyError("missing")
+
+        cfg = SimpleNamespace(
+            get_primary_dataset=lambda: primary,
+            training=SimpleNamespace(strategies=[SimpleNamespace(dataset="missing")]),
+            get_dataset_for_strategy=_missing,
+        )
 
         v = DatasetValidator(cfg)
         out = v._get_datasets_to_validate()
@@ -285,8 +291,7 @@ class TestDatasetValidatorAdditionalCoverage:
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=0))
         v = DatasetValidator(cfg)
 
-        dataset_config = MagicMock()
-        dataset_config.validations = MagicMock(critical_failures=0)
+        dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
         # Component patches: split_loader, format_checker, plugin_loader.
         monkeypatch.setattr(v._split_loader, "load_train", lambda *a, **k: object())

@@ -103,9 +103,21 @@ def _stamp_provider_manifest_classvars():
     yield
 
 
-def _mk_provider(provider_cfg, engine_cfg, secrets, *, merge_before_deploy: bool = True):
+def _mk_provider(
+    provider_cfg,
+    engine_cfg,
+    secrets,
+    *,
+    merge_before_deploy: bool = True,
+    docker=None,
+):
     """Build the provider via :class:`ProviderContext` — the legitimate
-    constructor matching production registry instantiation."""
+    constructor matching production registry instantiation.
+
+    ``docker`` is the injection seam for :class:`IDockerClient`; if not
+    provided the provider falls back to its production default
+    (:class:`LocalDockerClient`).
+    """
     from ryotenkai_providers.registry import ProviderContext
 
     pipeline_cfg = _mk_pipeline_config(
@@ -117,12 +129,20 @@ def _mk_provider(provider_cfg, engine_cfg, secrets, *, merge_before_deploy: bool
         provider_block=provider_cfg.model_dump(mode="python"),
         secrets=secrets,
     )
-    return SingleNodeInferenceProvider(ctx)
+    return SingleNodeInferenceProvider(ctx, docker=docker)
 
 
 @pytest.fixture()
-def provider(provider_cfg, engine_cfg, secrets):
-    p = _mk_provider(provider_cfg, engine_cfg, secrets)
+def fake_docker():
+    """Canonical :class:`IDockerClient` fake — see ``tests/_fakes/docker.py``."""
+    from tests._fakes.docker import FakeDockerClient
+
+    return FakeDockerClient()
+
+
+@pytest.fixture()
+def provider(provider_cfg, engine_cfg, secrets, fake_docker):
+    p = _mk_provider(provider_cfg, engine_cfg, secrets, docker=fake_docker)
     p._run_id = "run_test_001"
     return p
 
@@ -489,17 +509,15 @@ class TestUndeploy:
         result = provider.undeploy()
         assert result.is_success()
 
-    def test_undeploy_with_ssh_client_calls_docker_rm(self, provider):
+    def test_undeploy_with_ssh_client_calls_docker_rm(self, provider, fake_docker):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
         from ryotenkai_providers.inference.interfaces import EndpointInfo
         provider._endpoint_info = Mock(spec=EndpointInfo)
-        with patch.object(_mod, "docker_rm_force") as mock_rm:
-            mock_rm.return_value = Ok(None)
-            result = provider.undeploy()
+        result = provider.undeploy()
         assert result.is_success()
         assert provider._endpoint_info is None
-        mock_rm.assert_called_once()
+        assert len(fake_docker.calls_for("rm_force")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -513,28 +531,33 @@ class TestCollectStartupLogs:
         provider.collect_startup_logs(local_path=log_path)
         assert not log_path.exists()
 
-    def test_writes_logs_when_docker_logs_succeed(self, provider, tmp_path):
+    def test_writes_logs_when_docker_logs_succeed(self, provider, fake_docker, tmp_path):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
         log_path = tmp_path / "subdir" / "logs.txt"
-        with patch.object(_mod, "docker_logs", return_value=Ok("container log output")):
-            provider.collect_startup_logs(local_path=log_path)
+        # ``collect_startup_logs`` fetches the inference container's logs;
+        # register the canonical container and seed its log buffer.
+        fake_docker.register_container(_mod.VLLM_INFERENCE_CONTAINER_NAME)
+        fake_docker.append_logs(_mod.VLLM_INFERENCE_CONTAINER_NAME, "container log output")
+        provider.collect_startup_logs(local_path=log_path)
         assert log_path.exists()
         assert "container log output" in log_path.read_text()
 
-    def test_skips_write_when_logs_empty(self, provider, tmp_path):
+    def test_skips_write_when_logs_empty(self, provider, fake_docker, tmp_path):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
         log_path = tmp_path / "logs.txt"
-        with patch.object(_mod, "docker_logs", return_value=Ok("")):
-            provider.collect_startup_logs(local_path=log_path)
+        # No logs registered ⇒ FakeDockerClient returns ``Ok("")``.
+        provider.collect_startup_logs(local_path=log_path)
         assert not log_path.exists()
 
-    def test_handles_exception_gracefully(self, provider, tmp_path):
+    def test_handles_exception_gracefully(self, provider, fake_docker, tmp_path):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
         log_path = tmp_path / "logs.txt"
-        with patch.object(_mod, "docker_logs", side_effect=RuntimeError("oops")):
+        # Patch the fake's ``logs`` method to raise — ``collect_startup_logs``
+        # swallows any exception and must not propagate it.
+        with patch.object(fake_docker, "logs", side_effect=RuntimeError("oops")):
             provider.collect_startup_logs(local_path=log_path)
 
 

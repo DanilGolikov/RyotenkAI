@@ -70,7 +70,7 @@ def _mk_phase(repo_id: str = "org/cache") -> SimpleNamespace:
 def _mk_cache_manager(tmp_path: Path) -> Any:
     from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import AdapterCacheManager
 
-    config = MagicMock()
+    config = SimpleNamespace()
     return AdapterCacheManager(config=config)
 
 

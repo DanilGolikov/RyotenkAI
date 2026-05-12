@@ -314,8 +314,9 @@ class TestDependencyError:
         broken_logger.error.side_effect = RuntimeError("logger dead")
         monkeypatch.setattr(errors_mod, "logger", broken_logger)
 
-        request = MagicMock(spec=Request)
-        request.url.path = "/x"
+        # Build a real Starlette/FastAPI Request from an ASGI scope so we
+        # don't need to mock the property surface (``url.path`` etc.).
+        request = Request({"type": "http", "method": "GET", "path": "/x", "headers": []})
 
         # Even with the broken logger, the handler should crash
         # cleanly — we want this to surface so devops knows. The

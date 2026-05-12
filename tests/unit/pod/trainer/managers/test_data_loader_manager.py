@@ -17,9 +17,7 @@ def _ds(n: int) -> Dataset:
 def test_load_datasets_unknown_source_returns_err() -> None:
     """Source neither DatasetSourceLocal nor DatasetSourceHF → typed error."""
     cfg = MagicMock()
-    dataset_cfg = MagicMock()
-    # source attribute is a bare MagicMock — no isinstance branch matches.
-    dataset_cfg.source = MagicMock(kind="alien")
+    dataset_cfg = SimpleNamespace(source=MagicMock(kind="alien"))
     cfg.get_primary_dataset.return_value = dataset_cfg
 
     mgr = DataLoaderManager(cfg)
@@ -34,11 +32,9 @@ def test_load_datasets_local_happy_path_with_max_samples_and_callbacks(monkeypat
 
     cfg = MagicMock()
 
-    dataset_cfg = MagicMock()
-    dataset_cfg.source = DatasetSourceLocal(
+    dataset_cfg = SimpleNamespace(source=DatasetSourceLocal(
         local_paths=DatasetLocalPaths(train="train.jsonl", eval="eval.jsonl"),
-    )
-    dataset_cfg.max_samples = 10
+    ), max_samples=10)
     cfg.get_primary_dataset.return_value = dataset_cfg
 
     # Patch load_dataset to return deterministic Datasets.
@@ -70,7 +66,7 @@ def test_load_datasets_local_happy_path_with_max_samples_and_callbacks(monkeypat
 
 
 def test_validate_datasets_empty_train_is_error() -> None:
-    cfg = MagicMock()
+    cfg = SimpleNamespace()
     mgr = DataLoaderManager(cfg)
 
     empty = Dataset.from_dict({"text": []})
@@ -80,7 +76,7 @@ def test_validate_datasets_empty_train_is_error() -> None:
 
 
 def test_validate_datasets_success_calls_callback() -> None:
-    cfg = MagicMock()
+    cfg = SimpleNamespace()
     called = {"ok": False}
     cb = DataLoaderEventCallbacks(on_dataset_validated=lambda ok: called.__setitem__("ok", ok))
     mgr = DataLoaderManager(cfg, callbacks=cb)

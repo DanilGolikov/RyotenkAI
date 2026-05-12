@@ -43,14 +43,8 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
+from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
-from ryotenkai_shared.utils.docker import (
-    docker_container_exit_code,
-    docker_is_container_running,
-    docker_logs,
-    docker_rm_force,
-    ensure_docker_image,
-)
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
 from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -101,12 +95,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
     _CONTAINER_NAME = VLLM_INFERENCE_CONTAINER_NAME
     SUPPORTED_ENGINES: ClassVar[frozenset[str]] = frozenset({"vllm"})
 
-    def __init__(self, ctx: "ProviderContext") -> None:
-        """Initialize from a :class:`ProviderContext`."""
+    def __init__(
+        self,
+        ctx: "ProviderContext",
+        *,
+        docker: IDockerClient | None = None,
+    ) -> None:
+        """Initialize from a :class:`ProviderContext`.
+
+        ``docker`` is the injection point for the Docker client used
+        by all container operations (logs / rm / inspect / image pull).
+        Defaults to :class:`LocalDockerClient` which delegates to the
+        legacy SSH-backed functions in
+        :mod:`ryotenkai_shared.utils.docker` — production behaviour
+        is unchanged. Tests inject
+        :class:`tests._fakes.docker.FakeDockerClient`.
+        """
         config = ctx.pipeline_config
         secrets = ctx.secrets
         self._cfg = config
         self._secrets = secrets
+        self._docker: IDockerClient = docker if docker is not None else LocalDockerClient()
 
         self._inf_cfg = config.inference
 
@@ -410,7 +419,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         try:
             if not self._ssh_client:
                 return
-            logs_res = docker_logs(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10)
+            logs_res = self._docker.logs(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10)
             if logs_res.is_ok():
                 stdout = logs_res.unwrap()
                 if stdout:
@@ -498,7 +507,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         if not self._ssh_client:
             return Ok(None)
 
-        _ = docker_rm_force(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        _ = self._docker.rm_force(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60)
         self._endpoint_info = None
         return Ok(None)
 
@@ -680,13 +689,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             self._ssh_client = None
             return Err(InferenceError(message=f"SSH initialization failed: {e!s}", code="SINGLENODE_SSH_INIT_FAILED"))
 
-    @staticmethod
     def _ensure_docker_image(
+        self,
         *,
         ssh: SSHClient,
         image: str,
     ) -> Result[None, InferenceError]:
-        res = ensure_docker_image(ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT)
+        res = self._docker.ensure_image(ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT)
         if res.is_failure():
             err = res.unwrap_err()
             return Err(InferenceError(message=str(err), code="SINGLENODE_DOCKER_IMAGE_FAILED"))
@@ -862,7 +871,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             started_polling = time.time()
             while True:
                 if time.time() - started_polling > step.timeout_seconds:
-                    _ = docker_rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+                    _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
                     if self._mlflow_manager:
                         self._mlflow_manager.log_event_error(
                             f"Prepare step timed out: {step.name}",
@@ -878,10 +887,10 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                             code="SINGLENODE_PREPARE_TIMEOUT",
                         )
                     )
-                is_running = docker_is_container_running(
+                is_running = self._docker.is_container_running(
                     ssh, name_filter=container_name, timeout_seconds=5
                 )
-                logs_res = docker_logs(ssh, container_name=container_name, timeout_seconds=10)
+                logs_res = self._docker.logs(ssh, container_name=container_name, timeout_seconds=10)
                 if logs_res.is_ok():
                     logs_content = logs_res.unwrap()
                     if logs_content:
@@ -892,7 +901,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         if step.success_marker and step.success_marker in logs_content:
                             marker_seen = True
                 if not is_running:
-                    exit_res = docker_container_exit_code(
+                    exit_res = self._docker.container_exit_code(
                         ssh, container_name=container_name, timeout_seconds=5
                     )
                     if exit_res.is_ok():
@@ -901,7 +910,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 time.sleep(_PREPARE_POLL_INTERVAL_S)
 
             # 5. Cleanup container regardless of outcome.
-            _ = docker_rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+            _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
 
             step_duration = time.time() - step_started_at
 
@@ -1068,11 +1077,11 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         run_cmd = format_docker_run(spec, host_bind=host_bind)
 
         # Stop old container (if exists) and start new one
-        _ = docker_rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        _ = self._docker.rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
 
         ok, _stdout, stderr = ssh.exec_command(run_cmd, timeout=PULL_TIMEOUT, silent=False)
         if not ok:
-            _ = docker_logs(
+            _ = self._docker.logs(
                 ssh,
                 container_name=self._CONTAINER_NAME,
                 tail=LOG_OUTPUT_SHORT_CHARS,

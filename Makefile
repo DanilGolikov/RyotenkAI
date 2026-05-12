@@ -1,4 +1,4 @@
-.PHONY: help setup install-hooks test test-fast test-unit test-cov lint format fix-all pre-commit clean info validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
+.PHONY: help setup install-hooks test test-fast test-unit test-cov test-mock-policy lint format fix-all pre-commit clean info validate docker-mlflow-up docker-mlflow-down web-install web-build web-start web-stop web-restart web-status web-logs web-backend-start web-backend-stop web-backend-restart web-frontend-start web-frontend-stop web-frontend-restart web-openapi-dump gen-api verify-api-sync _check-venv
 
 # Pin all Python tooling to the project-local venv so `make` works regardless
 # of which venv is active in the shell. Override with e.g. `make VENV=.venv2`.
@@ -43,6 +43,7 @@ help:
 	@echo "  make test-fast      - Skip slow tests"
 	@echo "  make test-unit      - Unit tests only"
 	@echo "  make test-cov       - With coverage"
+	@echo "  make test-mock-policy - Protocol-mocking + Phase 5 allowlist sentinel"
 	@echo ""
 	@echo "Pipeline:"
 	@echo "  make validate CONFIG=path  - Validate config"
@@ -99,6 +100,11 @@ test-unit: _check-venv
 test-cov: _check-venv
 	$(PYTEST) --cov=packages --cov-report=html:tests/coverage/htmlcov --cov-report=term-missing
 	@echo "Report: tests/coverage/htmlcov/index.html"
+
+# Sentinel: Protocol-mocking ban + Phase 5 allowlist enforcement.
+# See docs/testing/mock_policy.md.
+test-mock-policy: _check-venv
+	$(PYTEST) -c tests/pytest.ini tests/_lint/test_no_protocol_mocking.py -v
 
 # ============================================
 # Code Quality

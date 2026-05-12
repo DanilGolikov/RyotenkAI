@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -101,8 +103,7 @@ def test_run_success_fires_complete_and_validation_completed_callbacks():
         on_validation_failed=MagicMock(),
     )
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=0)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
         "d",
@@ -133,8 +134,7 @@ def test_run_failure_fires_plugin_failed_and_validation_failed_callbacks():
         on_validation_failed=MagicMock(),
     )
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=1)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     res = runner.run(
         "d",
@@ -157,8 +157,7 @@ def test_run_failure_fires_plugin_failed_and_validation_failed_callbacks():
 def test_run_critical_threshold_returns_critical_failure_code():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=1)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     res = runner.run(
         "d",
@@ -176,8 +175,7 @@ def test_run_critical_threshold_returns_critical_failure_code():
 def test_run_below_critical_threshold_returns_validation_error_code():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=2)  # need 2 failures, only 1
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=2))
 
     res = runner.run(
         "d",
@@ -195,8 +193,7 @@ def test_run_below_critical_threshold_returns_validation_error_code():
 def test_run_critical_threshold_breaks_loop_early():
     cb = DatasetValidatorEventCallbacks()
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=1)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     second = _OkPlugin()
     second_validate_mock = MagicMock(wraps=second.validate)
@@ -225,8 +222,7 @@ def test_run_critical_threshold_breaks_loop_early():
 def test_run_plugin_crash_fires_failed_callback():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=1)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     res = runner.run(
         "d",
@@ -249,8 +245,7 @@ def test_run_plugin_crash_fires_failed_callback():
 def test_run_no_callbacks_does_not_blow_up():
     """Default DatasetValidatorEventCallbacks() leaves all 7 callbacks None."""
     runner = PluginRunner(callbacks=DatasetValidatorEventCallbacks())
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=0)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
         "d",
@@ -266,8 +261,7 @@ def test_run_no_callbacks_does_not_blow_up():
 def test_run_empty_plugins_list_is_success():
     cb = DatasetValidatorEventCallbacks(on_validation_completed=MagicMock())
     runner = PluginRunner(callbacks=cb)
-    dataset_config = MagicMock()
-    dataset_config.validations = MagicMock(critical_failures=0)
+    dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
         "d",

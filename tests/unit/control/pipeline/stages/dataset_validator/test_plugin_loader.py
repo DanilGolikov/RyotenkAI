@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
-from ryotenkai_shared.config import DatasetConfig, PipelineConfig
+from ryotenkai_shared.config import DatasetConfig
 
 pytestmark = pytest.mark.unit
 
@@ -19,12 +21,13 @@ def _local_ds(*, plugins: list[dict] | None = None) -> DatasetConfig:
     )
 
 
-def _mk_primary_only_config(ds: DatasetConfig) -> MagicMock:
-    cfg = MagicMock(spec=PipelineConfig)
-    cfg.get_primary_dataset.return_value = ds
-    cfg.training = MagicMock()
-    cfg.training.strategies = []
-    return cfg
+def _mk_primary_only_config(ds: DatasetConfig) -> SimpleNamespace:
+    """Duck-typed PipelineConfig double — PluginLoader only reads
+    ``get_primary_dataset()`` and ``training.strategies``."""
+    return SimpleNamespace(
+        get_primary_dataset=lambda: ds,
+        training=SimpleNamespace(strategies=[]),
+    )
 
 
 @patch("ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader.validation_registry")
@@ -110,7 +113,7 @@ def test_secrets_resolver_built_when_secrets_provided(mock_registry):
     cfg = _mk_primary_only_config(ds)
     mock_registry.instantiate.return_value = MagicMock(name="x")
 
-    secrets = MagicMock()
+    secrets = SimpleNamespace()
     loader = PluginLoader(config=cfg, secrets=secrets)
     loader.load_for_dataset(ds)
 

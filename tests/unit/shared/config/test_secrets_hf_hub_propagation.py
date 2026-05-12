@@ -17,10 +17,12 @@ run_training.main()        HF_HUB_* propagated to os.environ / multiple keys /
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -197,8 +199,7 @@ def _run_main_with_secrets_extra(
     """
     from ryotenkai_pod.trainer.run_training import main
 
-    mock_secrets = MagicMock()
-    mock_secrets.model_extra = extra
+    mock_secrets = SimpleNamespace(model_extra=extra)
 
     captured_env: dict[str, str] = {}
 
@@ -250,8 +251,7 @@ class TestRunTrainingHFHubPropagation:
         """MY_CUSTOM_KEY is in model_extra but must NOT go to os.environ."""
         from ryotenkai_pod.trainer.run_training import main
 
-        mock_secrets = MagicMock()
-        mock_secrets.model_extra = {"MY_CUSTOM_KEY": "secret_value"}
+        mock_secrets = SimpleNamespace(model_extra={"MY_CUSTOM_KEY": "secret_value"})
 
         original = os.environ.get("MY_CUSTOM_KEY")
         try:
@@ -272,8 +272,7 @@ class TestRunTrainingHFHubPropagation:
         """Non-str values in model_extra (e.g. int) must NOT be set in os.environ."""
         from ryotenkai_pod.trainer.run_training import main
 
-        mock_secrets = MagicMock()
-        mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": 1}  # int, not str
+        mock_secrets = SimpleNamespace(model_extra={"HF_HUB_DISABLE_XET": 1})
 
         original = os.environ.get("HF_HUB_DISABLE_XET")
         try:
@@ -298,8 +297,7 @@ class TestRunTrainingHFHubPropagation:
         """If HF_HUB_DISABLE_XET is already set in os.environ, it must NOT be changed."""
         from ryotenkai_pod.trainer.run_training import main
 
-        mock_secrets = MagicMock()
-        mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": "1"}
+        mock_secrets = SimpleNamespace(model_extra={"HF_HUB_DISABLE_XET": "1"})
 
         original = os.environ.get("HF_HUB_DISABLE_XET")
         os.environ["HF_HUB_DISABLE_XET"] = "existing_value"
@@ -371,8 +369,7 @@ class TestRunTrainingHFHubPropagation:
         """
         from ryotenkai_pod.trainer.run_training import main
 
-        mock_secrets = MagicMock()
-        mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": ""}
+        mock_secrets = SimpleNamespace(model_extra={"HF_HUB_DISABLE_XET": ""})
 
         original = os.environ.get("HF_HUB_DISABLE_XET")
         os.environ.pop("HF_HUB_DISABLE_XET", None)  # ensure not pre-set
@@ -400,8 +397,7 @@ class TestRunTrainingHFHubPropagation:
         """End-to-end regression: HF_HUB_DISABLE_XET=1 propagated, training runs OK."""
         from ryotenkai_pod.trainer.run_training import main
 
-        mock_secrets = MagicMock()
-        mock_secrets.model_extra = {"HF_HUB_DISABLE_XET": "1"}
+        mock_secrets = SimpleNamespace(model_extra={"HF_HUB_DISABLE_XET": "1"})
 
         original = os.environ.get("HF_HUB_DISABLE_XET")
         os.environ.pop("HF_HUB_DISABLE_XET", None)

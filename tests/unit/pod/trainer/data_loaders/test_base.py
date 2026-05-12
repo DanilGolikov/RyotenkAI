@@ -7,6 +7,8 @@ Coverage:
 - _apply_max_samples edge case (dataset size <= max_samples)
 """
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -37,7 +39,7 @@ class TestBaseDatasetLoader:
 
     def test_log_prefix_default(self) -> None:
         """Test: Default _log_prefix is 'DL'."""
-        config = MagicMock()
+        config = SimpleNamespace()
         loader = ConcreteLoader(config)
         assert loader._log_prefix == "DL"
 
@@ -47,8 +49,7 @@ class TestBaseDatasetLoader:
         config.get_dataset_for_strategy.side_effect = KeyError("dataset_not_found")
 
         loader = ConcreteLoader(config)
-        phase = MagicMock()
-        phase.dataset = "nonexistent"
+        phase = SimpleNamespace(dataset="nonexistent")
 
         result = loader.load_for_phase(phase)
 
@@ -63,16 +64,14 @@ class TestBaseDatasetLoader:
         from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
 
         config = MagicMock()
-        dataset_config = MagicMock()
-        dataset_config.source = DatasetSourceLocal(
+        dataset_config = SimpleNamespace(source=DatasetSourceLocal(
             local_paths=DatasetLocalPaths(train="data/train.jsonl"),
-        )
-        dataset_config.max_samples = None
+        ), max_samples=None)
         config.get_dataset_for_strategy.return_value = dataset_config
         config.resolve_path = lambda p: Path("valid_source")  # type: ignore[assignment]
 
         loader = ConcreteLoader(config)
-        phase = MagicMock()
+        phase = SimpleNamespace()
 
         # Mock validate_source to raise exception
         with patch.object(loader, "validate_source", side_effect=Exception("Unexpected error")):
@@ -84,7 +83,7 @@ class TestBaseDatasetLoader:
 
     def test_apply_max_samples_no_limit_needed(self) -> None:
         """Test: _apply_max_samples returns dataset as-is if already smaller."""
-        config = MagicMock()
+        config = SimpleNamespace()
         loader = ConcreteLoader(config)
 
         # Dataset with 5 samples, max_samples=10
@@ -97,7 +96,7 @@ class TestBaseDatasetLoader:
 
     def test_apply_max_samples_exact_match(self) -> None:
         """Test: _apply_max_samples when dataset size equals max_samples."""
-        config = MagicMock()
+        config = SimpleNamespace()
         loader = ConcreteLoader(config)
 
         # Dataset with 10 samples, max_samples=10

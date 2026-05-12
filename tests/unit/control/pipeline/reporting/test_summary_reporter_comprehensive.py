@@ -6,6 +6,8 @@ Emphasis on the falsy-value aggregation regressions fixed in review
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -24,10 +26,7 @@ def _build_config() -> MagicMock:
     cfg.training.hyperparams.per_device_train_batch_size = 4
     cfg.training.get_strategy_chain.return_value = []
     cfg.get_adapter_config.side_effect = ValueError("no adapter")
-    ds = MagicMock()
-    # source unset (bare MagicMock) — _print_dataset_section falls into the
-    # "source not configured" branch, matching original intent.
-    ds.adapter_type = "auto"
+    ds = SimpleNamespace(adapter_type="auto")
     cfg.get_primary_dataset.return_value = ds
     return cfg
 
@@ -184,8 +183,7 @@ class TestDependencyErrors:
             )
 
     def test_generate_report_swallows_generator_failure(self) -> None:
-        mgr = MagicMock()
-        mgr.tracking_uri = "http://x"
+        mgr = SimpleNamespace(tracking_uri="http://x")
         with (
             patch(
                 "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator",
@@ -281,8 +279,7 @@ class TestRegressions:
 
     def test_regression_tracking_uri_via_public_property(self) -> None:
         """REGRESSION: previously accessed ``_gateway.uri`` — now uses tracking_uri."""
-        mgr = MagicMock()
-        mgr.tracking_uri = "http://public-uri"
+        mgr = SimpleNamespace(tracking_uri="http://public-uri")
         with (
             patch(
                 "ryotenkai_control.pipeline.reporting.summary_reporter.ExperimentReportGenerator"

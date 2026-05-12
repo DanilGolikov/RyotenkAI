@@ -104,9 +104,7 @@ def test_get_run_id_none_when_no_manager(manager_under_test: MLflowAttemptManage
 
 
 def test_get_run_id_prefers_public_property(manager_under_test: MLflowAttemptManager) -> None:
-    mgr = MagicMock()
-    mgr.run_id = "run-123"
-    mgr._run_id = "legacy"
+    mgr = SimpleNamespace(run_id="run-123", _run_id="legacy")
     manager_under_test._manager = mgr
     assert manager_under_test.get_run_id() == "run-123"
 
@@ -205,12 +203,12 @@ def _build_active_mgr() -> MagicMock:
     mgr.run_id = "root-run-id"
     mgr.get_runtime_tracking_uri.return_value = "http://tracking"
 
-    root_run = MagicMock()
+    root_run = SimpleNamespace()
     root_run.__enter__ = MagicMock(return_value=root_run)
     root_run.__exit__ = MagicMock(return_value=None)
     mgr.start_run.return_value = root_run
 
-    attempt_run = MagicMock()
+    attempt_run = SimpleNamespace()
     attempt_run.__enter__ = MagicMock(return_value=attempt_run)
     attempt_run.__exit__ = MagicMock(return_value=None)
     mgr.start_nested_run.return_value = attempt_run
@@ -373,10 +371,8 @@ def test_open_existing_root_run_raises_when_no_manager(
 
 def test_teardown_invokes_hooks_in_order(manager_under_test: MLflowAttemptManager, tmp_path: Path) -> None:
     mgr = MagicMock()
-    attempt_run = MagicMock()
-    attempt_run.__exit__ = MagicMock(return_value=None)
-    run_context = MagicMock()
-    run_context.__exit__ = MagicMock(return_value=None)
+    attempt_run = SimpleNamespace(__exit__=MagicMock(return_value=None))
+    run_context = SimpleNamespace(__exit__=MagicMock(return_value=None))
     manager_under_test._manager = mgr
     manager_under_test._attempt_run = attempt_run
     manager_under_test._run_context = run_context

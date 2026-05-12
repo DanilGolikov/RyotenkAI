@@ -10,6 +10,8 @@ We keep everything heavy mocked (datasets/model/trainer), but use a *real* DataB
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -51,7 +53,7 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
     # 2) MemoryManager spy (record operations)
     entered_ops: list[str] = []
 
-    memory_manager = MagicMock()
+    memory_manager = SimpleNamespace()
     # PhaseExecutor uses with_memory_protection decorators; make them pass-through for this test
     # while still recording the operation names.
     def _with_memory_protection(name: str, **_kwargs):
@@ -68,7 +70,7 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
     dataset_loader = MagicMock()
     dataset_loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=5)), None))
 
-    strategy_factory = MagicMock()
+    strategy_factory = SimpleNamespace()
     trainer_factory = MagicMock()
     trainer = MagicMock()
     trainer.model = MagicMock(name="trained_model")
@@ -137,7 +139,7 @@ def test_phase_executor_redirects_logging_through_tqdm_context(
     )
     buffer.init_pipeline([phase], force=True)
 
-    memory_manager = MagicMock()
+    memory_manager = SimpleNamespace()
 
     def _with_memory_protection(_name: str, **_kwargs):
         def decorator(func):

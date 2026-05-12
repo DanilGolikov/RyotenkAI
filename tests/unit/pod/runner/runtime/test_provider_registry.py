@@ -10,6 +10,8 @@ RunPod client builder import doesn't fail.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import sys
 import types
 from typing import Any
@@ -296,14 +298,9 @@ class TestCrossProtocolInvariant:
         provider._gpu_info = None
         provider._pod_info = None
         provider._had_error = False
-        cleanup_stub = MagicMock()
-        cleanup_stub.keep_pod_on_error = False
-        cleanup_stub.auto_stop_after_training = True
-        training_stub = MagicMock()
-        training_stub.gpu_type = "NVIDIA RTX A6000"
-        config_stub = MagicMock()
-        config_stub.cleanup = cleanup_stub
-        config_stub.training = training_stub
+        cleanup_stub = SimpleNamespace(keep_pod_on_error=False, auto_stop_after_training=True)
+        training_stub = SimpleNamespace(gpu_type="NVIDIA RTX A6000")
+        config_stub = SimpleNamespace(cleanup=cleanup_stub, training=training_stub)
         provider._config = config_stub
         provider._graphql_api_client = MagicMock()
         provider._api_client = MagicMock()

@@ -17,6 +17,8 @@ doesn't break.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import sys
 import types
 from unittest.mock import MagicMock
@@ -101,14 +103,9 @@ def _mk_provider(*, keep_on_error: bool = False) -> RunPodProvider:
     provider._had_error = False
     # Minimal config stub — capability methods only read .cleanup
     # and .training.gpu_type.
-    cleanup_stub = MagicMock()
-    cleanup_stub.keep_pod_on_error = keep_on_error
-    cleanup_stub.auto_stop_after_training = True
-    training_stub = MagicMock()
-    training_stub.gpu_type = "NVIDIA RTX A6000"
-    config_stub = MagicMock()
-    config_stub.cleanup = cleanup_stub
-    config_stub.training = training_stub
+    cleanup_stub = SimpleNamespace(keep_pod_on_error=keep_on_error, auto_stop_after_training=True)
+    training_stub = SimpleNamespace(gpu_type="NVIDIA RTX A6000")
+    config_stub = SimpleNamespace(cleanup=cleanup_stub, training=training_stub)
     provider._config = config_stub
     # Stub the API clients — tests monkeypatch their methods.
     provider._graphql_api_client = MagicMock()

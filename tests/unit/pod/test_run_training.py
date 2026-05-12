@@ -9,6 +9,8 @@ Tests cover:
 - Backward compatibility with train_v2 alias
 """
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -235,7 +237,7 @@ class TestRunTrainingFlow:
         gpu.name = "GPU"
         gpu.tier.value = "TIER"
         gpu.total_memory_gb = 8.0
-        mem_stats = MagicMock(used_mb=100, free_mb=7000, total_mb=8000, utilization_percent=1.2)
+        mem_stats = SimpleNamespace(used_mb=100, free_mb=7000, total_mb=8000, utilization_percent=1.2)
         memory_manager = MagicMock()
         memory_manager.gpu_info = gpu
         memory_manager.preset = None

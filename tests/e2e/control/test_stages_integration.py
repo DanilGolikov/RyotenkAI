@@ -9,12 +9,49 @@ Tests that stages work together correctly:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from typing import Any, Callable
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.base import PipelineStage
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.utils.result import Err, Ok, Result
+
+
+class _FakeStage:
+    """Tiny test double for an arbitrary pipeline stage callable.
+
+    These E2E tests originally used ``MagicMock(spec=PipelineStage)`` and
+    invoked ``stage.run(config, secrets, context)``, which is **not** the
+    real :class:`PipelineStage.run(context)` signature. The fixtures were
+    really testing a sequence-of-callable-stages workflow, not the
+    ``PipelineStage`` ABC. This fake captures that intent without pretending
+    to satisfy a class spec that the call shape doesn't actually match.
+
+    WHY not a real stage subclass: these stages return ``Ok``/``Err`` with
+    domain-specific payloads keyed by stage name (``runpod_deployer``,
+    ``training_monitor`` etc.) and the test wires them by sharing a
+    ``context`` dict. Building real stages would require provider configs,
+    secrets, and pod fixtures that this E2E intentionally elides.
+    """
+
+    def __init__(
+        self,
+        stage_name: str,
+        side_effect: Callable[[Any, Any, dict[str, Any]], Result[dict[str, Any], str]],
+    ) -> None:
+        self.stage_name = stage_name
+        self._side_effect = side_effect
+        self.call_count = 0
+
+    def run(self, config: Any, secrets: Any, context: dict[str, Any]) -> Result[dict[str, Any], str]:
+        self.call_count += 1
+        return self._side_effect(config, secrets, context)
+
+    def set_run_return(self, value: Result[dict[str, Any], str]) -> None:
+        """Override run() to return the given value on subsequent calls.
+
+        Used by error-path tests that flip a happy stage to a failing one.
+        """
+        self._side_effect = lambda _c, _s, _ctx: value
 
 # =============================================================================
 # FIXTURES
@@ -22,13 +59,10 @@ from ryotenkai_shared.utils.result import Err, Ok
 
 
 @pytest.fixture
-def mock_dataset_validator():
-    """Create mock DatasetValidator stage."""
-    stage = MagicMock(spec=PipelineStage)
-    stage.stage_name = "Dataset Validator"
+def mock_dataset_validator() -> _FakeStage:
+    """Create fake DatasetValidator stage."""
 
-    def run_validator(config, secrets, context):
-        # Validate dataset and add metrics to context
+    def run_validator(config, secrets, context):  # noqa: ARG001
         return Ok(
             {
                 "dataset_validator": {
@@ -41,18 +75,14 @@ def mock_dataset_validator():
             }
         )
 
-    stage.run.side_effect = run_validator
-    return stage
+    return _FakeStage("Dataset Validator", run_validator)
 
 
 @pytest.fixture
-def mock_runpod_deployer():
-    """Create mock RunPodDeployer stage."""
-    stage = MagicMock(spec=PipelineStage)
-    stage.stage_name = "RunPod Deployer"
+def mock_runpod_deployer() -> _FakeStage:
+    """Create fake RunPodDeployer stage."""
 
-    def run_deployer(config, secrets, context):
-        # Deploy to RunPod and add pod info
+    def run_deployer(config, secrets, context):  # noqa: ARG001
         return Ok(
             {
                 "runpod_deployer": {
@@ -65,18 +95,14 @@ def mock_runpod_deployer():
             }
         )
 
-    stage.run.side_effect = run_deployer
-    return stage
+    return _FakeStage("RunPod Deployer", run_deployer)
 
 
 @pytest.fixture
-def mock_training_monitor():
-    """Create mock TrainingMonitor stage."""
-    stage = MagicMock(spec=PipelineStage)
-    stage.stage_name = "Training Monitor"
+def mock_training_monitor() -> _FakeStage:
+    """Create fake TrainingMonitor stage."""
 
-    def run_monitor(config, secrets, context):
-        # Check for pod_id from previous stage
+    def run_monitor(config, secrets, context):  # noqa: ARG001
         pod_id = context.get("runpod_deployer", {}).get("pod_id")
         if not pod_id:
             return Err("No pod_id in context")
@@ -92,18 +118,14 @@ def mock_training_monitor():
             }
         )
 
-    stage.run.side_effect = run_monitor
-    return stage
+    return _FakeStage("Training Monitor", run_monitor)
 
 
 @pytest.fixture
-def mock_model_retriever():
-    """Create mock ModelRetriever stage."""
-    stage = MagicMock(spec=PipelineStage)
-    stage.stage_name = "Model Retriever"
+def mock_model_retriever() -> _FakeStage:
+    """Create fake ModelRetriever stage."""
 
-    def run_retriever(config, secrets, context):
-        # Check for training completion
+    def run_retriever(config, secrets, context):  # noqa: ARG001
         training_complete = context.get("training_monitor", {}).get("training_complete")
         if not training_complete:
             return Err("Training not complete")
@@ -118,17 +140,14 @@ def mock_model_retriever():
             }
         )
 
-    stage.run.side_effect = run_retriever
-    return stage
+    return _FakeStage("Model Retriever", run_retriever)
 
 
 @pytest.fixture
-def mock_model_evaluator():
-    """Create mock ModelEvaluator stage."""
-    stage = MagicMock(spec=PipelineStage)
-    stage.stage_name = "Model Evaluator"
+def mock_model_evaluator() -> _FakeStage:
+    """Create fake ModelEvaluator stage."""
 
-    def run_evaluator(config, secrets, context):
+    def run_evaluator(config, secrets, context):  # noqa: ARG001
         model_path = context.get("model_retriever", {}).get("model_path")
         if not model_path:
             return Err("No model path in context")
@@ -144,8 +163,7 @@ def mock_model_evaluator():
             }
         )
 
-    stage.run.side_effect = run_evaluator
-    return stage
+    return _FakeStage("Model Evaluator", run_evaluator)
 
 
 # =============================================================================
@@ -337,8 +355,7 @@ class TestErrorHandlingAcrossStages:
         Then: Subsequent stages don't run after failure
         """
         # Make validator fail - override the side_effect
-        mock_dataset_validator.run.side_effect = None
-        mock_dataset_validator.run.return_value = Err("Dataset too small")
+        mock_dataset_validator.set_run_return(Err("Dataset too small"))
 
         context = {}
         stages_run = []
@@ -372,8 +389,7 @@ class TestErrorHandlingAcrossStages:
         Then: Context from successful stages is preserved
         """
         # Make monitor fail - override the side_effect
-        mock_training_monitor.run.side_effect = None
-        mock_training_monitor.run.return_value = Err("Training timeout")
+        mock_training_monitor.set_run_return(Err("Training timeout"))
 
         context = {}
 
@@ -411,8 +427,7 @@ class TestErrorHandlingAcrossStages:
         context.update(deploy_result.unwrap())
 
         # Training fails - override the side_effect
-        mock_training_monitor.run.side_effect = None
-        mock_training_monitor.run.return_value = Err("Training OOM")
+        mock_training_monitor.set_run_return(Err("Training OOM"))
         monitor_result = mock_training_monitor.run(mock_config, mock_secrets, context)
 
         assert monitor_result.is_failure()

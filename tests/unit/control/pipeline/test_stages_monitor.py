@@ -12,6 +12,8 @@ as a paper-trail of what the old contract asserted.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -207,7 +209,7 @@ class TestExecuteMethod:
             }
         }
 
-        mock_ssh_instance = MagicMock()
+        mock_ssh_instance = SimpleNamespace()
         mock_ssh_cls.return_value = mock_ssh_instance
 
         # Mock wait_for_training_start to return False (to exit early)
@@ -231,7 +233,7 @@ class TestExecuteMethod:
         """Test alias mode (username=None for SSH config)."""
         mock_context["GPU Deployer"]["is_alias_mode"] = True
 
-        mock_ssh_instance = MagicMock()
+        mock_ssh_instance = SimpleNamespace()
         mock_ssh_cls.return_value = mock_ssh_instance
 
         monitor = TrainingMonitor(mock_config)
@@ -252,7 +254,7 @@ class TestExecuteMethod:
     @patch("ryotenkai_control.pipeline.stages.training_monitor.LogManager")
     def test_execute_training_start_timeout(self, mock_log_manager_cls, mock_ssh_cls, mock_config, mock_callbacks):
         """Test training start timeout."""
-        mock_ssh_instance = MagicMock()
+        mock_ssh_instance = SimpleNamespace()
         mock_ssh_cls.return_value = mock_ssh_instance
 
         mock_log_manager_instance = MagicMock()
@@ -296,10 +298,10 @@ class TestExecuteMethod:
         mock_callbacks,
     ):
         """Test successful execute flow."""
-        mock_ssh_instance = MagicMock()
+        mock_ssh_instance = SimpleNamespace()
         mock_ssh_cls.return_value = mock_ssh_instance
 
-        mock_log_manager_instance = MagicMock()
+        mock_log_manager_instance = SimpleNamespace()
         mock_log_manager_cls.return_value = mock_log_manager_instance
 
         context = {
@@ -676,7 +678,7 @@ class TestMonitorTraining:
         time_counter = count(start=0, step=1)
         mock_time.side_effect = lambda: next(time_counter)
 
-        mock_log_manager_instance = MagicMock()
+        mock_log_manager_instance = SimpleNamespace()
         mock_log_manager_cls.return_value = mock_log_manager_instance
 
         monitor = TrainingMonitor(mock_config)
@@ -799,7 +801,7 @@ class TestMonitorTraining:
         time_counter = count(start=0, step=1)
         mock_time.side_effect = lambda: next(time_counter)
 
-        mock_log_manager_instance = MagicMock()
+        mock_log_manager_instance = SimpleNamespace()
         mock_log_manager_cls.return_value = mock_log_manager_instance
 
         monitor = TrainingMonitor(mock_config, callbacks=mock_callbacks)
@@ -1490,8 +1492,7 @@ class TestStaticParsingAndBufferDownload:
         monitor._workspace_path = "/workspace"
         mock_ssh_client.exec_command.return_value = (True, '{"loss":0.5}\n', "")
 
-        mock_log_mgr = MagicMock()
-        mock_log_mgr.local_path = str(tmp_path / "logs" / "training.log")
+        mock_log_mgr = SimpleNamespace(local_path=str(tmp_path / "logs" / "training.log"))
         monitor._log_manager = mock_log_mgr
 
         with patch.object(monitor, "_check_marker", return_value=True):
@@ -1507,8 +1508,7 @@ class TestStaticParsingAndBufferDownload:
         monitor._workspace_path = "/workspace"
         mock_ssh_client.exec_command.return_value = (True, '{"loss":0.5}\n', "")
 
-        mock_log_mgr = MagicMock()
-        mock_log_mgr.local_path = "/some/path/training.log"
+        mock_log_mgr = SimpleNamespace(local_path="/some/path/training.log")
         monitor._log_manager = mock_log_mgr
 
         with patch.object(monitor, "_check_marker", return_value=True):

@@ -9,9 +9,11 @@ components.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -136,7 +138,7 @@ def test_deploy_code_delegates_to_code_syncer(manager: TrainingDeploymentManager
     upload + code sync) is replaced with ``deploy_code`` — pure
     rsync, pre-launch. File upload is HTTP, called from
     ``start_training`` after /healthz."""
-    ssh = MagicMock()
+    ssh = SimpleNamespace()
     with patch.object(manager._code_syncer, "sync", return_value=Ok(None)) as mock:
         result = manager.deploy_code(ssh)
     assert result.is_ok()
@@ -144,7 +146,7 @@ def test_deploy_code_delegates_to_code_syncer(manager: TrainingDeploymentManager
 
 
 def test_install_dependencies_delegates_to_deps_installer(manager: TrainingDeploymentManager):
-    ssh = MagicMock()
+    ssh = SimpleNamespace()
     with patch.object(manager._deps_installer, "install", return_value=Ok(None)) as mock:
         result = manager.install_dependencies(ssh)
     assert result.is_ok()
@@ -152,7 +154,7 @@ def test_install_dependencies_delegates_to_deps_installer(manager: TrainingDeplo
 
 
 def test_start_training_delegates_to_launcher(manager: TrainingDeploymentManager):
-    ssh = MagicMock()
+    ssh = SimpleNamespace()
     ctx: dict[str, Any] = {}
     with patch.object(manager._launcher, "start_training", return_value=Ok({"mode": "docker"})) as mock:
         result = manager.start_training(ssh, ctx)

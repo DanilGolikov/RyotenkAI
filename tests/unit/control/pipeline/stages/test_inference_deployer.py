@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -172,21 +174,15 @@ def test_chat_script_checks_status_before_chat(tmp_path: Path) -> None:
 
             # Container running check
             if "docker ps -q" in cmd_str and "status=running" in cmd_str:
-                result = MagicMock()
-                result.stdout = "container123\n"
-                result.returncode = 0
+                result = SimpleNamespace(stdout="container123\n", returncode=0)
                 return result
 
             # Health check
             if "curl" in cmd_str and "/v1/models" in cmd_str:
-                result = MagicMock()
-                result.stdout = "1\n"
-                result.returncode = 0
+                result = SimpleNamespace(stdout="1\n", returncode=0)
                 return result
 
-        result = MagicMock()
-        result.stdout = ""
-        result.returncode = 1
+        result = SimpleNamespace(stdout="", returncode=1)
         return result
 
     # Execute script with mocked dependencies

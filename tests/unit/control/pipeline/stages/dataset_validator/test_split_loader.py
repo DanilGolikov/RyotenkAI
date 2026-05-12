@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -105,15 +107,13 @@ def test_load_train_local_fast_mode_samples_when_over_threshold(split_loader, lo
     file_path = tmp_path / "train.jsonl"
     file_path.write_text("{}", encoding="utf-8")
 
-    ds_cfg = MagicMock()
-    ds_cfg.validations = MagicMock(mode="fast")
-    ds_cfg.source = DatasetSourceLocal(
+    ds_cfg = SimpleNamespace(validations=MagicMock(mode="fast"), source=DatasetSourceLocal(
         local_paths=DatasetLocalPaths(train=str(file_path), eval=None)
-    )
+    ))
 
     big_ds = MagicMock()
     big_ds.__len__.return_value = 20000
-    sampled = MagicMock()
+    sampled = SimpleNamespace()
     big_ds.select.return_value = sampled
 
     loader = MagicMock()
@@ -139,8 +139,7 @@ def test_get_train_ref_returns_unknown_on_error(split_loader):
 def test_get_train_ref_returns_hf_train_id(split_loader):
     from ryotenkai_shared.config import DatasetSourceHF
 
-    hf = MagicMock()
-    hf.source = DatasetSourceHF(train_id="org/ds-train")
+    hf = SimpleNamespace(source=DatasetSourceHF(train_id="org/ds-train"))
     assert split_loader.get_train_ref(hf) == "org/ds-train"
 
 
@@ -148,20 +147,16 @@ def test_get_train_ref_returns_local_path(split_loader):
     from ryotenkai_shared.config import DatasetSourceLocal
     from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
 
-    local = MagicMock()
-    local.source = DatasetSourceLocal(
+    local = SimpleNamespace(source=DatasetSourceLocal(
         local_paths=DatasetLocalPaths(train="/abs/data/train.jsonl")
-    )
+    ))
     assert split_loader.get_train_ref(local) == "/abs/data/train.jsonl"
 
 
 def test_try_load_eval_hf_branch(split_loader, loader_factory, monkeypatch):
     from ryotenkai_shared.config import DatasetSourceHF
 
-    hf = MagicMock()
-    hf.source = DatasetSourceHF(train_id="org/ds-train", eval_id="org/ds")
-    hf.validations = MagicMock(mode="fast")
-    hf.max_samples = None
+    hf = SimpleNamespace(source=DatasetSourceHF(train_id="org/ds-train", eval_id="org/ds"), validations=MagicMock(mode="fast"), max_samples=None)
     loader_factory.create_for_dataset.return_value = MagicMock()
 
     # bypass internal _load by stubbing it on the instance
@@ -195,7 +190,16 @@ def test_try_load_eval_exception_returns_none(split_loader, loader_factory):
 def test_get_size_iterable_returns_minus_one():
     from datasets import IterableDataset
 
-    iterable = MagicMock(spec=IterableDataset)
+    # Real (minimal) IterableDataset subclass — isinstance(x, IterableDataset)
+    # is the only thing ``get_size`` checks for the size-unknown branch.
+    class _MinimalIterable(IterableDataset):
+        def __init__(self) -> None:  # noqa: D401 — trivial
+            pass
+
+        def __iter__(self):
+            return iter([])
+
+    iterable = _MinimalIterable()
     assert DatasetSplitLoader.get_size(iterable) == -1
 
 

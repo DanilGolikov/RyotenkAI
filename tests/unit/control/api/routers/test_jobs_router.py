@@ -41,6 +41,8 @@ Coverage split (project policy):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -127,10 +129,9 @@ class TestStatus:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(
+        runner = SimpleNamespace(get_status=AsyncMock(
             return_value={"job_id": "j-1", "state": "running", "sequence": 4},
-        )
+        ))
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/status")
@@ -149,8 +150,7 @@ class TestStatus:
         _make_submission_file(run_dir, attempt_no=1)
         _make_submission_file(run_dir, attempt_no=3)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(return_value={"state": "running"})
+        runner = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/status")
@@ -167,8 +167,7 @@ class TestStatus:
         _make_submission_file(run_dir, attempt_no=1)
         _make_submission_file(run_dir, attempt_no=3)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(return_value={"state": "running"})
+        runner = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/status?attempt=1")
@@ -216,10 +215,9 @@ class TestStatus:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(
+        runner = SimpleNamespace(get_status=AsyncMock(
             side_effect=ConnectionError("tunnel collapsed"),
-        )
+        ))
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/status")
@@ -250,8 +248,7 @@ class TestEvents:
             for event in events:
                 yield event
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/events?since=5")
@@ -273,8 +270,7 @@ class TestEvents:
             return
             yield  # pragma: no cover - keep generator semantics
 
-        runner = MagicMock()
-        runner.subscribe_events = _empty
+        runner = SimpleNamespace(subscribe_events=_empty)
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/events?since=10")
@@ -295,8 +291,7 @@ class TestEvents:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.subscribe_events = MagicMock(side_effect=RuntimeError("ws collapsed"))
+        runner = SimpleNamespace(subscribe_events=MagicMock(side_effect=RuntimeError("ws collapsed")))
 
         with _patch_with_runner(runner):
             response = client.get(f"/api/v1/runs/{run_id}/job/events?since=4")
@@ -321,10 +316,9 @@ class TestStop:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.request_stop = AsyncMock(
+        runner = SimpleNamespace(request_stop=AsyncMock(
             return_value={"job_id": "j-1", "state": "stopping", "sequence": 7},
-        )
+        ))
 
         with _patch_with_runner(runner):
             response = client.post(f"/api/v1/runs/{run_id}/job/stop?grace=15")
@@ -342,10 +336,9 @@ class TestStop:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.request_stop = AsyncMock(
+        runner = SimpleNamespace(request_stop=AsyncMock(
             return_value={"state": "stopping", "sequence": 1},
-        )
+        ))
 
         with _patch_with_runner(runner):
             response = client.post(f"/api/v1/runs/{run_id}/job/stop")
@@ -360,8 +353,7 @@ class TestStop:
         run_dir = settings.runs_dir / run_id
         _make_submission_file(run_dir)
 
-        runner = MagicMock()
-        runner.request_stop = AsyncMock(side_effect=ConnectionError("nope"))
+        runner = SimpleNamespace(request_stop=AsyncMock(side_effect=ConnectionError("nope")))
 
         with _patch_with_runner(runner):
             response = client.post(f"/api/v1/runs/{run_id}/job/stop")
@@ -382,8 +374,7 @@ class TestBoundary:
         run_dir = settings.runs_dir / "run-x"
         _make_submission_file(run_dir, attempt_no=1)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(return_value={"state": "running"})
+        runner = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/status?attempt=1")
         assert response.status_code == 200
@@ -398,8 +389,7 @@ class TestBoundary:
             for offset in range(10):
                 yield {"offset": offset, "kind": "step", "payload": {}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events?limit=1")
         assert response.status_code == 200
@@ -419,8 +409,7 @@ class TestBoundary:
             for offset in range(10):
                 yield {"offset": offset, "kind": "step", "payload": {}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events?limit=2000")
         assert response.status_code == 200
@@ -432,8 +421,7 @@ class TestBoundary:
     ) -> None:
         run_dir = settings.runs_dir / "run-x"
         _make_submission_file(run_dir)
-        runner = MagicMock()
-        runner.request_stop = AsyncMock(return_value={"state": "stopping"})
+        runner = SimpleNamespace(request_stop=AsyncMock(return_value={"state": "stopping"}))
         with _patch_with_runner(runner):
             response = client.post("/api/v1/runs/run-x/job/stop?grace=0")
         assert response.status_code == 202
@@ -452,8 +440,7 @@ class TestBoundary:
             assert kwargs.get("since") == 0
             yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events")
         assert response.status_code == 200
@@ -470,8 +457,7 @@ class TestBoundary:
         # Spurious attic.
         archive = run_dir / "attempts" / "attempt_archive"
         archive.mkdir()
-        runner = MagicMock()
-        runner.get_status = AsyncMock(return_value={"state": "running"})
+        runner = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/status")
         # Picks attempt_2 (the only one with a real submission file).
@@ -495,8 +481,7 @@ class TestInvariants:
             for offset in [10, 11, 12]:
                 yield {"offset": offset, "kind": "step", "payload": {}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events?since=10")
         body = response.json()
@@ -516,8 +501,7 @@ class TestInvariants:
             return
             yield  # pragma: no cover
 
-        runner = MagicMock()
-        runner.subscribe_events = _empty
+        runner = SimpleNamespace(subscribe_events=_empty)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events?since=42")
         # An empty slice keeps the cursor where the caller had it.
@@ -532,8 +516,7 @@ class TestInvariants:
         _make_submission_file(run_dir, attempt_no=2)
         _make_submission_file(run_dir, attempt_no=10)
 
-        runner = MagicMock()
-        runner.get_status = AsyncMock(return_value={"state": "running"})
+        runner = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/status")
         assert response.json()["submission"]["job_id"] == "j-10"
@@ -548,8 +531,7 @@ class TestInvariants:
             for offset in range(50):
                 yield {"offset": offset, "kind": "step", "payload": {}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/events?limit=5")
         events = response.json()["events"]
@@ -582,8 +564,7 @@ class TestDependencyErrors:
     ) -> None:
         run_dir = settings.runs_dir / "run-x"
         _make_submission_file(run_dir)
-        runner = MagicMock()
-        runner.get_status = AsyncMock(side_effect=RuntimeError("boom"))
+        runner = SimpleNamespace(get_status=AsyncMock(side_effect=RuntimeError("boom")))
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/status")
         # Any uncategorised runner error → 502 (cannot reach runner).
@@ -672,8 +653,7 @@ class TestLogs:
             yield {"offset": 3, "kind": "trainer_log",
                    "payload": {"kind": "stderr", "line": "warn"}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/logs")
 
@@ -694,8 +674,7 @@ class TestLogs:
             yield {"offset": 1, "kind": "trainer_log",
                    "payload": {"kind": "stderr", "line": "err"}}
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/logs?stream=stderr")
 
@@ -727,8 +706,7 @@ class TestLogs:
                     "payload": {"kind": "stdout", "line": f"l{offset}"},
                 }
 
-        runner = MagicMock()
-        runner.subscribe_events = _stream
+        runner = SimpleNamespace(subscribe_events=_stream)
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/logs?limit=5")
         assert len(response.json()["events"]) == 5
@@ -738,8 +716,7 @@ class TestLogs:
     ) -> None:
         run_dir = settings.runs_dir / "run-x"
         _make_submission_file(run_dir)
-        runner = MagicMock()
-        runner.subscribe_events = MagicMock(side_effect=RuntimeError("ws gone"))
+        runner = SimpleNamespace(subscribe_events=MagicMock(side_effect=RuntimeError("ws gone")))
         with _patch_with_runner(runner):
             response = client.get("/api/v1/runs/run-x/job/logs?since=7")
         assert response.status_code == 200
@@ -779,8 +756,7 @@ def test_combinatorial_events_slice(
         for offset in range(seen_since, seen_since + 50):
             yield {"offset": offset, "kind": "step", "payload": {}}
 
-    runner = MagicMock()
-    runner.subscribe_events = _stream
+    runner = SimpleNamespace(subscribe_events=_stream)
 
     with _patch_with_runner(runner):
         response = client.get(

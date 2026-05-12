@@ -78,7 +78,7 @@ class TestRunChain:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
         orch = _mk_orchestrator(cfg=cfg)
 
-        buf = MagicMock()
+        buf = SimpleNamespace()
         orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
         orch._resume_manager.was_interrupted = MagicMock(return_value=True)
         orch._resume_manager.get_interrupt_info = MagicMock(return_value={"phase_idx": 1, "reason": "sig"})
@@ -93,7 +93,7 @@ class TestRunChain:
     def test_load_checkpoint_failure_propagates(self) -> None:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
         orch = _mk_orchestrator(cfg=cfg)
-        buf = MagicMock()
+        buf = SimpleNamespace()
 
         orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 1, True))
         orch._resume_manager.was_interrupted = MagicMock(return_value=False)
@@ -108,7 +108,7 @@ class TestRunChain:
     def test_loaded_model_none_returns_err(self) -> None:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
         orch = _mk_orchestrator(cfg=cfg)
-        buf = MagicMock()
+        buf = SimpleNamespace()
 
         orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 1, True))
         orch._resume_manager.was_interrupted = MagicMock(return_value=False)
@@ -126,12 +126,12 @@ class TestRunChain:
         sh.should_stop.return_value = True
         orch = _mk_orchestrator(cfg=cfg, shutdown_handler=sh)
 
-        buf = MagicMock()
+        buf = SimpleNamespace()
         orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
         orch._resume_manager.was_interrupted = MagicMock(return_value=False)
         orch._resume_manager.is_all_complete = MagicMock(return_value=False)
 
-        final_model = MagicMock()
+        final_model = SimpleNamespace()
         orch._chain_runner.run = MagicMock(return_value=Ok(final_model))
 
         res = cast("Any", orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=False, run_id="rid"))
@@ -151,10 +151,10 @@ class TestSinglePhaseAndUtilities:
         created_buf = MagicMock()
         monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.strategy_orchestrator.DataBuffer", lambda **kw: created_buf)
 
-        out_model = MagicMock()
+        out_model = SimpleNamespace()
         orch._phase_executor.execute = MagicMock(return_value=Ok(out_model))
 
-        phase = MagicMock(strategy_type="sft")
+        phase = SimpleNamespace(strategy_type="sft")
         res = cast("Any", orch.run_single_phase(phase_idx=0, phase=phase, model=None))
         assert res.is_success()
         assert res.unwrap() is out_model

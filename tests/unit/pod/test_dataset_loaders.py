@@ -284,11 +284,11 @@ class TestHuggingFaceDatasetLoader:
         loader = HuggingFaceDatasetLoader(config=mock_config, token="hf_test_token")
         assert loader.token == "hf_test_token"
 
-    def test_init_with_env_token(self, mock_config: MagicMock) -> None:
+    def test_init_with_env_token(self, mock_config: MagicMock, monkeypatch) -> None:
         """Initialize with token from environment."""
-        with patch.dict("os.environ", {"HF_TOKEN": "env_token"}):
-            loader = HuggingFaceDatasetLoader(config=mock_config)
-            assert loader.token == "env_token"
+        monkeypatch.setenv("HF_TOKEN", "env_token")
+        loader = HuggingFaceDatasetLoader(config=mock_config)
+        assert loader.token == "env_token"
 
     def test_is_hf_dataset_id_true(self) -> None:
         """Identify HuggingFace dataset IDs."""
@@ -707,7 +707,7 @@ class TestTrainingContainerDatasetLoader:
 
     def test_container_accepts_injected_loader(self, mock_config: MagicMock) -> None:
         """Container accepts injected dataset loader."""
-        mock_loader = MagicMock(spec=IDatasetLoader)
+        mock_loader = MockDatasetLoader()
 
         container = TrainingContainer(
             config=mock_config,
@@ -718,7 +718,7 @@ class TestTrainingContainerDatasetLoader:
 
     def test_container_for_testing_accepts_loader(self, mock_config: MagicMock) -> None:
         """for_testing() accepts dataset loader."""
-        mock_loader = MagicMock(spec=IDatasetLoader)
+        mock_loader = MockDatasetLoader()
 
         container = TrainingContainer.for_testing(
             config=mock_config,
@@ -729,7 +729,7 @@ class TestTrainingContainerDatasetLoader:
 
     def test_container_override_loader(self, mock_config: MagicMock) -> None:
         """override() works with dataset loader."""
-        mock_loader = MagicMock(spec=IDatasetLoader)
+        mock_loader = MockDatasetLoader()
         container = TrainingContainer(config=mock_config)
 
         new_container = container.override(dataset_loader=mock_loader)

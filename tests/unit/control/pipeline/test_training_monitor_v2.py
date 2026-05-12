@@ -266,9 +266,7 @@ class TestStreamErrors:
             raise _monitor_mod.JobNotFoundError("nope")
             yield  # pragma: no cover  (make this an async generator)
 
-        client = MagicMock()
-        client.subscribe_events = _raise
-        client.aclose = AsyncMock(return_value=None)
+        client = SimpleNamespace(subscribe_events=_raise, aclose=AsyncMock(return_value=None))
 
         result = monitor.execute(_ctx_with_handles(client))
         assert result.is_err()
@@ -281,9 +279,7 @@ class TestStreamErrors:
             raise _monitor_mod.JobClientError("transport flaky")
             yield  # pragma: no cover
 
-        client = MagicMock()
-        client.subscribe_events = _raise
-        client.aclose = AsyncMock(return_value=None)
+        client = SimpleNamespace(subscribe_events=_raise, aclose=AsyncMock(return_value=None))
 
         result = monitor.execute(_ctx_with_handles(client))
         assert result.is_err()
@@ -365,12 +361,9 @@ class TestTunnelTeardown:
             raise _monitor_mod.JobNotFoundError("nope")
             yield  # pragma: no cover
 
-        client = MagicMock()
-        client.subscribe_events = _raise
-        client.aclose = AsyncMock(side_effect=RuntimeError("close boom"))
+        client = SimpleNamespace(subscribe_events=_raise, aclose=AsyncMock(side_effect=RuntimeError("close boom")))
 
-        tunnel = MagicMock()
-        tunnel.close = AsyncMock(side_effect=RuntimeError("tunnel boom"))
+        tunnel = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("tunnel boom")))
 
         result = monitor.execute(_ctx_with_handles(client, tunnel=tunnel))
         # Original JobNotFoundError → MONITOR_JOB_NOT_FOUND, NOT
@@ -796,9 +789,7 @@ class TestPostMortemDiagnostics:
             stdout = outputs.get(label, "")
             return True, stdout, ""
 
-        ssh = MagicMock()
-        ssh.exec_command = MagicMock(side_effect=_exec)
-        ssh.executed = executed
+        ssh = SimpleNamespace(exec_command=MagicMock(side_effect=_exec), executed=executed)
         return ssh
 
     def test_zero_exit_skips_postmortem(
@@ -1092,8 +1083,7 @@ class TestPodResilience:
             },
         }
 
-        sdk = MagicMock()
-        sdk.get_pod = MagicMock(return_value=_FakeOk(running_pod))
+        sdk = SimpleNamespace(get_pod=MagicMock(return_value=_FakeOk(running_pod)))
         monkeypatch.setattr(
             "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,
@@ -1169,9 +1159,7 @@ class TestPodResilience:
             "runtime": {"uptimeInSeconds": 0, "ports": []},
         }
 
-        sdk = MagicMock()
-        sdk.get_pod = MagicMock(return_value=_FakeOk(stopped_pod))
-        sdk.start_pod = MagicMock(return_value=_FakeErr("rate limit"))
+        sdk = SimpleNamespace(get_pod=MagicMock(return_value=_FakeOk(stopped_pod)), start_pod=MagicMock(return_value=_FakeErr("rate limit")))
         monkeypatch.setattr(
             "ryotenkai_providers.runpod.sdk_adapter.RunPodSDKClient",
             lambda *, api_key: sdk,

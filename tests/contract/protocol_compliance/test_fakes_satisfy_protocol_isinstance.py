@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from ryotenkai_shared.infrastructure.docker import IDockerClient
 from ryotenkai_shared.infrastructure.hf_hub import IHFHubClient
 from ryotenkai_shared.infrastructure.job_client import IJobClient
 from ryotenkai_shared.infrastructure.lifecycle import IPodLifecycleClient
@@ -16,6 +17,7 @@ from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 from ryotenkai_shared.infrastructure.runpod_api import IRunPodAPI
 from ryotenkai_shared.infrastructure.ssh import ISSHClient
 from ryotenkai_shared.infrastructure.trainer_spawner import ITrainerSpawner
+from tests._fakes.docker import FakeDockerClient
 from tests._fakes.hf_hub import FakeHFHubClient
 from tests._fakes.job_client import FakeJobClient
 from tests._fakes.lifecycle import FakePodLifecycleClient
@@ -54,6 +56,10 @@ def test_fake_hf_hub_client_satisfies_protocol() -> None:
 
 def test_fake_job_client_satisfies_protocol() -> None:
     assert isinstance(FakeJobClient(), IJobClient)
+
+
+def test_fake_docker_client_satisfies_protocol() -> None:
+    assert isinstance(FakeDockerClient(), IDockerClient)
 
 
 def test_real_clock_satisfies_protocol() -> None:

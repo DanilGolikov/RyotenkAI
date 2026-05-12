@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -77,7 +79,7 @@ def test_resolve_config_path_for_run_raises_when_state_has_no_config_path(monkey
 
 def test_load_restart_point_options_maps_plain_dicts_to_dataclass(monkeypatch, tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
     restart_points = [
         {
             "stage": "Inference Deployer",
@@ -227,7 +229,7 @@ def test_validate_resume_run_allows_provider_only_hash_drift_when_model_dataset_
         ],
     )
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
 
     monkeypatch.setattr("ryotenkai_control.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
@@ -263,7 +265,7 @@ def test_validate_resume_run_blocks_when_model_dataset_hash_changes(monkeypatch,
         ],
     )
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
 
     monkeypatch.setattr("ryotenkai_control.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
@@ -297,7 +299,7 @@ def test_validate_resume_run_uses_legacy_training_hash_when_model_dataset_hash_m
         ],
     )
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
 
     monkeypatch.setattr("ryotenkai_control.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
@@ -330,7 +332,7 @@ def test_validate_resume_run_blocks_on_late_stage_hash_drift(monkeypatch, tmp_pa
         ],
     )
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
 
     monkeypatch.setattr("ryotenkai_control.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(
@@ -362,7 +364,7 @@ def test_validate_resume_run_raises_when_nothing_is_resumable(monkeypatch, tmp_p
         ],
     )
     config_path = tmp_path / "config.yaml"
-    config_obj = MagicMock()
+    config_obj = SimpleNamespace()
 
     monkeypatch.setattr("ryotenkai_control.pipeline.launch.restart_options.PipelineStateStore.load", lambda self: state)
     monkeypatch.setattr(

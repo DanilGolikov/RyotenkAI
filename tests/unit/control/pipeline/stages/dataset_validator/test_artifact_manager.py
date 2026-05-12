@@ -9,6 +9,8 @@ Covers:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,8 +27,7 @@ def _make_manager(
 ) -> ValidationArtifactManager:
     """Create a ValidationArtifactManager with a mock collector."""
     if collector is None:
-        collector = MagicMock()
-        collector.is_flushed = False
+        collector = SimpleNamespace(is_flushed=False)
     collectors = {"Dataset Validator": collector}
     return ValidationArtifactManager(
         collectors=collectors,

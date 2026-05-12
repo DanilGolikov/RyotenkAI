@@ -8,6 +8,8 @@ surfaces per-field errors so the UI can pinpoint the offending
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -20,9 +22,7 @@ from ryotenkai_control.api.schemas.config_validate import ConfigCheck
 
 
 def _fake_reward_plugin(plugin_id: str, supported: list[str]) -> MagicMock:
-    spec = MagicMock()
-    spec.id = plugin_id
-    spec.supported_strategies = supported
+    spec = SimpleNamespace(id=plugin_id, supported_strategies=supported)
     entry = MagicMock()
     entry.manifest.plugin = spec
     return entry
@@ -45,21 +45,15 @@ def fake_catalog(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 
     # Return a façade that exposes the same .plugins attribute so tests
     # can set return_value on it.
-    facade = MagicMock()
-    facade.plugins = fake_plugins
-    facade.ensure_loaded = real_catalog.ensure_loaded
+    facade = SimpleNamespace(plugins=fake_plugins, ensure_loaded=real_catalog.ensure_loaded)
     return facade
 
 
 def _make_cfg(strategy_type: str, reward_plugin: str | None) -> MagicMock:
     """Minimal ducktyped PipelineConfig."""
-    strat = MagicMock()
-    strat.strategy_type = strategy_type
-    strat.params = {"reward_plugin": reward_plugin} if reward_plugin else {}
-    training = MagicMock()
-    training.strategies = [strat]
-    cfg = MagicMock()
-    cfg.training = training
+    strat = SimpleNamespace(strategy_type=strategy_type, params={"reward_plugin": reward_plugin} if reward_plugin else {})
+    training = SimpleNamespace(strategies=[strat])
+    cfg = SimpleNamespace(training=training)
     return cfg
 
 
@@ -107,8 +101,7 @@ def test_compat_fails_for_missing_plugin(fake_catalog: MagicMock) -> None:
 
 
 def test_compat_noop_when_no_strategies() -> None:
-    cfg = MagicMock()
-    cfg.training = None
+    cfg = SimpleNamespace(training=None)
     checks: list[ConfigCheck] = []
     field_errors: dict[str, list[str]] = {}
     _check_reward_strategy_compat(cfg, checks, field_errors)

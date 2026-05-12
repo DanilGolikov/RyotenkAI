@@ -707,7 +707,7 @@ def test_cli_config_validate_invalid_yaml(tmp_path: Path, cli_runner: CliRunner)
     assert "❌" in result.output or "schema" in result.output.lower()
 
 
-def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner) -> None:
+def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner, monkeypatch) -> None:
     """``config validate`` exits 0 with 'ready to run' for a valid mock config.
 
     Post-Phase-B: the validate path runs through
@@ -728,9 +728,9 @@ def test_cli_config_validate_valid_config(tmp_path: Path, cli_runner: CliRunner)
 
     # HF_TOKEN is now part of the validator's readiness check; provide it so
     # the "valid-config" branch doesn't trip on a missing token in CI.
+    monkeypatch.setenv("HF_TOKEN", "hf_test_token")
     with (
-        patch("ryotenkai_shared.config.loader.load_pipeline_config", return_value=mock_cfg),
-        patch.dict("os.environ", {"HF_TOKEN": "hf_test_token"}, clear=False),
+        patch("ryotenkai_shared.config.loader.load_pipeline_config", return_value=mock_cfg)
     ):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])
 
@@ -757,6 +757,7 @@ def test_cli_config_validate_missing_hf_token(tmp_path: Path, cli_runner: CliRun
     config_path.write_text("model:\n  name: test\n", encoding="utf-8")
 
     env_without_hf = {k: v for k, v in os.environ.items() if k != "HF_TOKEN"}
+    # TODO(codemod): manual review needed for clear=True / with-as binding
     with patch("ryotenkai_shared.config.loader.load_pipeline_config", return_value=mock_cfg), \
          patch.dict("os.environ", env_without_hf, clear=True):
         result = cli_runner.invoke(app, ["config", "validate", "--config", str(config_path)])

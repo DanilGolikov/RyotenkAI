@@ -17,6 +17,8 @@ constructed.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -102,8 +104,7 @@ class _FakeAPIClient:
             result.unwrap.return_value = None
         else:
             result.is_failure.return_value = True
-            err = MagicMock()
-            err.message = self._resume_capacity_msg or "fatal error"
+            err = SimpleNamespace(message=self._resume_capacity_msg or "fatal error")
             result.unwrap_err.return_value = err
         return result
 

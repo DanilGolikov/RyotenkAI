@@ -10,8 +10,9 @@ Tests edge cases for memory analysis:
 - Phase overrides (NEW)
 """
 
+from types import SimpleNamespace
+
 from datetime import datetime
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -121,11 +122,7 @@ def test_phase_override_mismatch(memory_analyzer, base_info):
     config = {"batch_size": 4, "model_size": "7B"}
 
     # Mock phases
-    mock_phase = MagicMock()
-    mock_phase.phase_idx = 1
-    mock_phase.strategy = "dpo"
-    # Phase overrides to 8
-    mock_phase.effective_config = {"per_device_train_batch_size": 8}
+    mock_phase = SimpleNamespace(phase_idx=1, strategy="dpo", effective_config={"per_device_train_batch_size": 8})
 
     phases = [mock_phase]
 

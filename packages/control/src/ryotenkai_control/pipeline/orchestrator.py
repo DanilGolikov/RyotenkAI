@@ -66,6 +66,7 @@ class PipelineOrchestrator:
         config: PipelineConfig,
         run_directory: Path | None = None,
         settings: RuntimeSettings | None = None,
+        mlflow_manager: IMLflowManager | None = None,
     ):
         """Initialize the orchestrator from a pre-loaded config.
 
@@ -152,6 +153,13 @@ class PipelineOrchestrator:
         self._restart_inspector = bootstrap.restart_inspector
         self._stage_execution_loop = bootstrap.stage_execution_loop
 
+        # Optional injection: tests / advanced callers can supply a pre-built
+        # IMLflowManager (e.g. FakeMLflowManager). When provided, _setup_mlflow
+        # returns it directly without invoking _mlflow_attempt.bootstrap() —
+        # this replaces the patch.object(*, "_setup_mlflow") test scaffold.
+        if mlflow_manager is not None:
+            self._mlflow_manager = mlflow_manager
+
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""
         self._shutdown_signal_name = str(signal_name or "").upper()
@@ -173,7 +181,15 @@ class PipelineOrchestrator:
             attempt_mgr._manager = value
 
     def _setup_mlflow(self) -> IMLflowManager | None:
-        """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager)."""
+        """Setup MLflow for pipeline event logging (delegates to MLflowAttemptManager).
+
+        Idempotent: if a manager was already injected (via constructor kwarg
+        ``mlflow_manager`` or assignment to ``_mlflow_manager``), returns it
+        without re-running bootstrap. This is the test-friendly path.
+        """
+        existing = self._mlflow_attempt.manager
+        if existing is not None:
+            return existing
         return self._mlflow_attempt.bootstrap()
 
     def run(

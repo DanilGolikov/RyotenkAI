@@ -39,6 +39,8 @@ Coverage split (project policy):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import json
 from pathlib import Path
 from typing import Any
@@ -105,8 +107,7 @@ class TestAttemptResolution:
         _make_submission_file(run_dir, attempt_no=1)
         _make_submission_file(run_dir, attempt_no=2)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"job_id": "j-2", "state": "running"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"job_id": "j-2", "state": "running"}))
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["-o", "json", "job", "status", str(run_dir)])
@@ -123,8 +124,7 @@ class TestAttemptResolution:
         _make_submission_file(run_dir, attempt_no=1)
         _make_submission_file(run_dir, attempt_no=2)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"job_id": "j-1", "state": "running"}))
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -203,10 +203,9 @@ class TestStop:
         run_dir = tmp_path / "run-1"
         _make_submission_file(run_dir)
 
-        client = MagicMock()
-        client.request_stop = AsyncMock(return_value={
+        client = SimpleNamespace(request_stop=AsyncMock(return_value={
             "job_id": "j-1", "state": "stopping", "sequence": 3,
-        })
+        }))
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -234,8 +233,7 @@ class TestEvents:
             for ev in events:
                 yield ev
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -257,8 +255,7 @@ class TestEvents:
         async def _stream(_job_id, **_kwargs):
             yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["job", "events", str(run_dir)])
@@ -282,8 +279,7 @@ class TestMetrics:
             yield {"offset": 3, "kind": "health_snapshot",
                    "payload": {"gpu_util_percent": 90}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -304,8 +300,7 @@ class TestMetrics:
         async def _stream(_job_id, **_kwargs):
             yield {"offset": 0, "kind": "trainer_spawned", "payload": {}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -328,8 +323,7 @@ class TestBoundary:
         run_dir = tmp_path / "run-1"
         _make_submission_file(run_dir, attempt_no=1)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"job_id": "j-1", "state": "running"}))
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["-o", "json", "job", "status", str(run_dir)])
@@ -343,8 +337,7 @@ class TestBoundary:
         run_dir = tmp_path / "run-1"
         _make_submission_file(run_dir, attempt_no=257)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"job_id": "j-257", "state": "running"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"job_id": "j-257", "state": "running"}))
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -365,8 +358,7 @@ class TestBoundary:
             yield {"offset": 1, "kind": "step", "payload": {"loss": 0.4}}
             # No health_snapshot.
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -385,8 +377,7 @@ class TestBoundary:
             return
             yield  # pragma: no cover
 
-        client = MagicMock()
-        client.subscribe_events = _empty
+        client = SimpleNamespace(subscribe_events=_empty)
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["job", "events", str(run_dir)])
@@ -435,9 +426,7 @@ class TestInvariants:
         _make_submission_file(run_dir, attempt_no=5)
         _make_submission_file(run_dir, attempt_no=10)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"job_id": "j-1", "state": "running"})
-        client.request_stop = AsyncMock(return_value={"state": "stopping"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"job_id": "j-1", "state": "running"}), request_stop=AsyncMock(return_value={"state": "stopping"}))
 
         async def _stream(job_id, **_kwargs):
             yield {"offset": 0, "kind": "trainer_spawned", "payload": {"job_id": job_id}}
@@ -466,8 +455,7 @@ class TestInvariants:
             for offset in range(50):
                 yield {"offset": offset, "kind": "step", "payload": {"loss": 0.5}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -490,8 +478,7 @@ class TestDependencyErrors:
         run_dir = tmp_path / "run-1"
         _make_submission_file(run_dir)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(side_effect=ConnectionError("tunnel closed"))
+        client = SimpleNamespace(get_status=AsyncMock(side_effect=ConnectionError("tunnel closed")))
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["job", "status", str(run_dir)])
@@ -588,8 +575,7 @@ class TestRegressions:
         _make_submission_file(run_dir, attempt_no=2)
         _make_submission_file(run_dir, attempt_no=10)
 
-        client = MagicMock()
-        client.get_status = AsyncMock(return_value={"state": "running"})
+        client = SimpleNamespace(get_status=AsyncMock(return_value={"state": "running"}))
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -617,8 +603,7 @@ class TestLogs:
             yield {"offset": 1, "kind": "trainer_log",
                    "payload": {"kind": "stderr", "line": "boom"}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["job", "logs", str(run_dir)])
@@ -638,8 +623,7 @@ class TestLogs:
             yield {"offset": 2, "kind": "trainer_log",
                    "payload": {"kind": "stdout", "line": "real-line"}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -664,8 +648,7 @@ class TestLogs:
             yield {"offset": 1, "kind": "trainer_log",
                    "payload": {"kind": "stderr", "line": "err"}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -691,8 +674,7 @@ class TestLogs:
                     "payload": {"kind": "stdout", "line": f"l{offset}"},
                 }
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(
@@ -727,8 +709,7 @@ class TestLogs:
         async def _stream(_job_id, **_kwargs):
             yield {"offset": 0, "kind": "step", "payload": {"loss": 0.5}}
 
-        client = MagicMock()
-        client.subscribe_events = _stream
+        client = SimpleNamespace(subscribe_events=_stream)
 
         with _patch_with_runner(client):
             result = runner.invoke(app, ["job", "logs", str(run_dir)])

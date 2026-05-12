@@ -14,6 +14,8 @@ Test categories:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import subprocess
 from unittest.mock import MagicMock
 
@@ -283,7 +285,7 @@ class TestCombinatorial:
             lambda name: "/usr/bin/dmesg" if tool_present else None,
         )
         if not tool_present:
-            runner = MagicMock()
+            runner = SimpleNamespace()
         elif subprocess_outcome == "rc=0":
             runner = MagicMock(return_value=_completed(rc=0, stdout="line"))
         elif subprocess_outcome == "rc=1":

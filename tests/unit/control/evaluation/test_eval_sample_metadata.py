@@ -50,6 +50,8 @@ Combinatorial         | test_flat_format_with_all_reserved_and_extra_fields
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import field, fields
 from typing import Any
 from unittest.mock import MagicMock
@@ -416,5 +418,5 @@ class TestCombinatorial:
 
 def _make_runner() -> EvaluationRunner:
     """Create a minimal EvaluationRunner without any real config."""
-    cfg = MagicMock()
+    cfg = SimpleNamespace()
     return EvaluationRunner(eval_config=cfg)

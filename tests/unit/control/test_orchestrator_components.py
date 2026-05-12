@@ -9,6 +9,8 @@ Tests:
 - PhaseExecutor: Phase execution (integration)
 """
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,9 +32,7 @@ class TestDatasetLoader:
     def mock_config(self):
         """Create mock config."""
         config = MagicMock()
-        dataset_config = MagicMock()
-        dataset_config.train_path = "data/datasets/train.jsonl"
-        dataset_config.max_samples = None
+        dataset_config = SimpleNamespace(train_path="data/datasets/train.jsonl", max_samples=None)
         config.get_dataset_for_strategy.return_value = dataset_config
         return config
 
@@ -106,8 +106,7 @@ class TestMetricsCollector:
 
     def test_extract_from_trainer_no_state(self):
         """Test metrics extraction from trainer without state."""
-        trainer = MagicMock()
-        trainer.state = None
+        trainer = SimpleNamespace(state=None)
 
         collector = MetricsCollector()
         snapshot = collector.extract_from_trainer(trainer)
@@ -227,7 +226,7 @@ class TestResumeManager:
 
     def test_get_checkpoint_path_phase_zero(self, mock_config):
         """Test checkpoint path for phase 0 returns None."""
-        buffer = MagicMock()
+        buffer = SimpleNamespace()
 
         manager = ResumeManager(mock_config)
         path = manager.get_checkpoint_path_for_phase(buffer, 0)
@@ -241,7 +240,7 @@ class TestChainRunner:
     @pytest.fixture
     def mock_executor(self):
         """Create mock PhaseExecutor."""
-        executor = MagicMock()
+        executor = SimpleNamespace()
         return executor
 
     def test_init(self, mock_executor):

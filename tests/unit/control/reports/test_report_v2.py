@@ -7,11 +7,12 @@ REFACTORED: All patches use pytest-mock's mocker fixture for proper cleanup.
 
 import json
 import math
-from unittest.mock import MagicMock
 
 import mlflow
 import pytest
-from mlflow.entities import Run, RunData, RunInfo
+from mlflow.entities import Run, RunInfo
+
+from tests._factories.run_data import make_run_data
 
 from ryotenkai_control.reports.adapters.mlflow_adapter import MLflowAdapter
 from ryotenkai_control.reports.domain.entities import RunStatus
@@ -65,10 +66,11 @@ def create_mock_run(run_id: str, name: str, tags=None, params=None, metrics=None
         artifact_uri=f"path/{run_id}",
     )
 
-    data = MagicMock(spec=RunData)
-    data.metrics = metrics or {}
-    data.params = params or {}
-    data.tags = tags or {"mlflow.runName": name}
+    data = make_run_data(
+        metrics=metrics or {},
+        params=params or {},
+        tags=tags or {"mlflow.runName": name},
+    )
 
     run = Run(run_info=info, run_data=data)
     run._children_ids = children_ids or []
@@ -92,10 +94,7 @@ def create_running_run(run_id: str, name: str, parent_id: str | None = None):
     if parent_id:
         tags["mlflow.parentRunId"] = parent_id
 
-    data = MagicMock(spec=RunData)
-    data.metrics = {}
-    data.params = {}
-    data.tags = tags
+    data = make_run_data(tags=tags)
 
     return Run(run_info=info, run_data=data)
 

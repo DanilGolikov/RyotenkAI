@@ -36,15 +36,12 @@ def _mk_config(
 
 
 def _mk_secrets(*, hf_token: str = "hf_tok", runpod_api_key: str | None = None) -> MagicMock:
-    s = MagicMock()
-    s.hf_token = hf_token
-    s.runpod_api_key = runpod_api_key
+    s = SimpleNamespace(hf_token=hf_token, runpod_api_key=runpod_api_key)
     return s
 
 
 def _mk_strategy(name: str = "sft") -> MagicMock:
-    s = MagicMock()
-    s.strategy_type = name
+    s = SimpleNamespace(strategy_type=name)
     return s
 
 
@@ -161,8 +158,7 @@ class TestInvariants:
 
     def test_hf_token_is_str_cast(self) -> None:
         """Invariant: HF_TOKEN env var is always str (MagicMock tolerance)."""
-        secrets = MagicMock()
-        secrets.hf_token = MagicMock()  # non-str sentinel
+        secrets = SimpleNamespace(hf_token=MagicMock())
         StartupValidator.set_hf_token_env(secrets=secrets)
         assert isinstance(os.environ["HF_TOKEN"], str)
 

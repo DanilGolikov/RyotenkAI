@@ -14,6 +14,8 @@ Test categories:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -32,9 +34,7 @@ from ryotenkai_shared.contracts.runner_api.files import FileUploadTarget
 
 
 def _make_strategy(strategy_type: str = "sft", dataset: str | None = None):  # type: ignore[no-untyped-def]
-    s = MagicMock()
-    s.strategy_type = strategy_type
-    s.dataset = dataset
+    s = SimpleNamespace(strategy_type=strategy_type, dataset=dataset)
     return s
 
 
@@ -59,7 +59,7 @@ def _make_uploader(
     config: MagicMock | None = None,
     workspace: str = DEFAULT_WORKSPACE,
 ) -> FileUploader:
-    secrets = MagicMock()
+    secrets = SimpleNamespace()
     uploader = FileUploader(
         config=config or MagicMock(),
         secrets=secrets,
@@ -70,8 +70,7 @@ def _make_uploader(
 
 @pytest.fixture
 def fake_client() -> MagicMock:
-    client = MagicMock()
-    client.upload_file = AsyncMock(return_value=MagicMock(bytes_written=42))
+    client = SimpleNamespace(upload_file=AsyncMock(return_value=MagicMock(bytes_written=42)))
     return client
 
 

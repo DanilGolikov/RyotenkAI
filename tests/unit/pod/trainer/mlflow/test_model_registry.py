@@ -5,6 +5,8 @@ No real MLflow SDK calls — gateway and mlflow module are mocked.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -99,15 +101,7 @@ class TestMLflowModelRegistryAliases:
         registry, gateway, mlflow = _make_registry()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
-        mv = MagicMock()
-        mv.version = "2"
-        mv.run_id = "run-abc"
-        mv.source = "runs:/abc/model"
-        mv.status = "READY"
-        mv.creation_timestamp = 123
-        mv.last_updated_timestamp = 456
-        mv.description = "desc"
-        mv.tags = {}
+        mv = SimpleNamespace(version="2", run_id="run-abc", source="runs:/abc/model", status="READY", creation_timestamp=123, last_updated_timestamp=456, description="desc", tags={})
         mock_client.get_model_version_by_alias.return_value = mv
 
         result = registry.get_model_by_alias("ryotenkai", "champion")
@@ -146,15 +140,7 @@ class TestMLflowModelRegistryPromote:
         registry, gateway, mlflow = _make_registry()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
-        mv = MagicMock()
-        mv.version = "3"
-        mv.run_id = "r"
-        mv.source = "s"
-        mv.status = "READY"
-        mv.creation_timestamp = 1
-        mv.last_updated_timestamp = 2
-        mv.description = ""
-        mv.tags = {}
+        mv = SimpleNamespace(version="3", run_id="r", source="s", status="READY", creation_timestamp=1, last_updated_timestamp=2, description="", tags={})
         mock_client.get_model_version_by_alias.return_value = mv
 
         result = registry.promote_model("ryotenkai", "staging", "champion")
@@ -178,8 +164,7 @@ class TestMLflowModelRegistryGetAliases:
         registry, gateway, mlflow = _make_registry()
         mock_client = MagicMock()
         gateway.get_client.return_value = mock_client
-        model = MagicMock()
-        model.aliases = {"champion": "3", "staging": "4"}
+        model = SimpleNamespace(aliases={"champion": "3", "staging": "4"})
         mock_client.get_registered_model.return_value = model
 
         aliases = registry.get_model_aliases("ryotenkai")
@@ -191,7 +176,7 @@ class TestMLflowModelRegistryGetAliases:
         assert registry.get_model_aliases("ryotenkai") == {}
 
     def test_get_model_aliases_no_mlflow(self):
-        gateway = MagicMock()
+        gateway = SimpleNamespace()
         registry = MLflowModelRegistry(gateway, None)
         assert registry.get_model_aliases("m") == {}
 
@@ -199,7 +184,7 @@ class TestMLflowModelRegistryGetAliases:
 class TestMLflowModelRegistryLoadModel:
     def test_load_model_by_alias_success(self):
         registry, _, mlflow = _make_registry()
-        mock_model = MagicMock()
+        mock_model = SimpleNamespace()
         mlflow.pyfunc.load_model.return_value = mock_model
 
         result = registry.load_model_by_alias("ryotenkai", "champion")
@@ -219,6 +204,6 @@ class TestMLflowModelRegistryLoadModel:
         assert result is None
 
     def test_load_model_by_alias_no_mlflow(self):
-        gateway = MagicMock()
+        gateway = SimpleNamespace()
         registry = MLflowModelRegistry(gateway, None)
         assert registry.load_model_by_alias("m") is None

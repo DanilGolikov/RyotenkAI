@@ -11,6 +11,8 @@ These tests do NOT require a real GPU: we patch get_memory_stats/is_memory_criti
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,12 +23,7 @@ from ryotenkai_pod.trainer.memory_manager import MemoryManager, MemoryStats, OOM
 def test_safe_operation_oom_becomes_recoverable_error_and_triggers_cleanup_and_callback() -> None:
     events: list[tuple[str, object]] = []
 
-    callbacks = MagicMock()
-    callbacks.on_oom = lambda operation, free_mb: events.append((operation, free_mb))
-    callbacks.on_memory_warning = None
-    callbacks.on_cache_cleared = None
-    callbacks.on_gpu_detected = None
-    callbacks.on_oom_retry = None
+    callbacks = SimpleNamespace(on_oom=lambda operation, free_mb: events.append((operation, free_mb)), on_memory_warning=None, on_cache_cleared=None, on_gpu_detected=None, on_oom_retry=None)
 
     mm = MemoryManager(callbacks=callbacks)
 

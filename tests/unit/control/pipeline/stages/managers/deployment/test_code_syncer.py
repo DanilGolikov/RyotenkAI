@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -105,10 +107,7 @@ def test_sync_success(syncer: CodeSyncer):
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (True, "OK", "")
 
-    completed = MagicMock()
-    completed.returncode = 0
-    completed.stdout = ""
-    completed.stderr = ""
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
         result = syncer.sync(ssh_client)
@@ -134,10 +133,7 @@ def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (True, "OK", "")
 
-    failing = MagicMock()
-    failing.returncode = 1
-    failing.stdout = ""
-    failing.stderr = "rsync failed"
+    failing = SimpleNamespace(returncode=1, stdout="", stderr="rsync failed")
 
     with (
         patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
@@ -164,10 +160,7 @@ def test_sync_module_tar_dir_verify_exists_on_failure_returns_ok(syncer: CodeSyn
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (True, "EXISTS", "")
 
-    failing = MagicMock()
-    failing.returncode = 1
-    failing.stdout = ""
-    failing.stderr = "tar failed"
+    failing = SimpleNamespace(returncode=1, stdout="", stderr="tar failed")
 
     with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
@@ -190,10 +183,7 @@ def test_sync_module_tar_dir_verify_missing_returns_err(syncer: CodeSyncer):
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (False, "", "")
 
-    failing = MagicMock()
-    failing.returncode = 1
-    failing.stdout = ""
-    failing.stderr = "tar failed"
+    failing = SimpleNamespace(returncode=1, stdout="", stderr="tar failed")
 
     with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
@@ -219,10 +209,7 @@ def test_sync_skips_missing_module_and_still_ok(syncer: CodeSyncer, monkeypatch)
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (True, "OK", "")
 
-    completed = MagicMock()
-    completed.returncode = 0
-    completed.stdout = ""
-    completed.stderr = ""
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
         result = syncer.sync(ssh_client)
@@ -239,10 +226,7 @@ def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
     ssh_client.port = 22
     ssh_client.exec_command.return_value = (True, "OK", "")
 
-    failing = MagicMock()
-    failing.returncode = 1
-    failing.stdout = ""
-    failing.stderr = "rsync failed"
+    failing = SimpleNamespace(returncode=1, stdout="", stderr="rsync failed")
 
     with (
         patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
@@ -262,16 +246,9 @@ def test_sync_module_tar_file_success_returns_ok(syncer: CodeSyncer):
     module = "src/__init__.py"
     assert Path(module).exists()
 
-    ssh_client = MagicMock()
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
+    ssh_client = SimpleNamespace(_is_alias_mode=True, ssh_target="pc", key_path="", port=22)
 
-    completed = MagicMock()
-    completed.returncode = 0
-    completed.stdout = ""
-    completed.stderr = ""
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
 
     with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
         result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")

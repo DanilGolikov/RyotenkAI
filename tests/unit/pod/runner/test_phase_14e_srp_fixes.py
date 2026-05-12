@@ -9,6 +9,8 @@ in the training/mlflow package and the tests there require
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import sys
 import types
 from pathlib import Path
@@ -154,7 +156,7 @@ class TestSendWsWithActivity:
     @pytest.mark.asyncio
     async def test_sends_then_marks_in_order(self) -> None:
         order: list[str] = []
-        ws = MagicMock()
+        ws = SimpleNamespace()
 
         async def _fake_send(payload: dict) -> None:
             order.append("send")
@@ -168,7 +170,7 @@ class TestSendWsWithActivity:
 
     @pytest.mark.asyncio
     async def test_send_failure_skips_mark(self) -> None:
-        ws = MagicMock()
+        ws = SimpleNamespace()
 
         async def _fake_send(payload: dict) -> None:
             raise ConnectionError("Mac asleep")

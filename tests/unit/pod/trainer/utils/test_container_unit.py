@@ -26,7 +26,7 @@ def _mk_cfg() -> MagicMock:
 class TestMemoryManagerProperty:
     def test_returns_injected_instance(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()
-        injected = MagicMock()
+        injected = SimpleNamespace()
         container = TrainingContainer(cfg, _memory_manager=injected)
 
         auto = MagicMock()
@@ -39,7 +39,7 @@ class TestMemoryManagerProperty:
         cfg = _mk_cfg()
         container = TrainingContainer(cfg)
 
-        mm = MagicMock()
+        mm = SimpleNamespace()
         auto = MagicMock(return_value=mm)
         monkeypatch.setattr("ryotenkai_pod.trainer.memory_manager.MemoryManager.auto_configure", auto)
 
@@ -51,7 +51,7 @@ class TestMemoryManagerProperty:
 class TestMemoryManagerWithCallbacks:
     def test_returns_regular_memory_manager_when_mlflow_is_none(self) -> None:
         cfg = _mk_cfg()
-        injected = MagicMock()
+        injected = SimpleNamespace()
         container = TrainingContainer(cfg, _memory_manager=injected)
         assert container.create_memory_manager_with_callbacks(mlflow_manager=None) is injected
 
@@ -90,7 +90,7 @@ class TestMemoryManagerWithCallbacks:
 class TestDatasetLoaderFactory:
     def test_get_loader_for_dataset_falls_back_to_default_when_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()
-        injected_loader = MagicMock()
+        injected_loader = SimpleNamespace()
         container = TrainingContainer(cfg, _dataset_loader=injected_loader)
 
         factory_cls = MagicMock()
@@ -106,7 +106,7 @@ class TestDatasetLoaderFactory:
         container = TrainingContainer(cfg, _dataset_loader=MagicMock())
 
         factory = MagicMock()
-        out_loader = MagicMock()
+        out_loader = SimpleNamespace()
         factory.create_for_dataset.return_value = out_loader
         factory_cls = MagicMock(return_value=factory)
         monkeypatch.setattr("ryotenkai_control.data.loaders.DatasetLoaderFactory", factory_cls)
@@ -120,7 +120,7 @@ class TestDatasetLoaderFactory:
 class TestMLflowManagerProperty:
     def test_returns_injected_instance(self) -> None:
         cfg = _mk_cfg()
-        injected = MagicMock()
+        injected = SimpleNamespace()
         container = TrainingContainer(cfg, _mlflow_manager=injected)
         assert container.mlflow_manager is injected
 
@@ -128,7 +128,7 @@ class TestMLflowManagerProperty:
         cfg = _mk_cfg()
         container = TrainingContainer(cfg)
 
-        mgr = MagicMock()
+        mgr = SimpleNamespace()
         cls = MagicMock(return_value=mgr)
         monkeypatch.setattr("ryotenkai_pod.trainer.managers.mlflow_manager.MLflowManager", cls)
 
@@ -146,11 +146,11 @@ class TestMLflowManagerProperty:
 class TestOrchestratorAndModelLoading:
     def test_create_orchestrator_injects_dependencies(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = _mk_cfg()
-        mm = MagicMock()
-        sf = MagicMock()
-        tf = MagicMock()
-        dl = MagicMock()
-        mlflow = MagicMock()
+        mm = SimpleNamespace()
+        sf = SimpleNamespace()
+        tf = SimpleNamespace()
+        dl = SimpleNamespace()
+        mlflow = SimpleNamespace()
         container = TrainingContainer(
             cfg,
             _memory_manager=mm,
@@ -160,12 +160,12 @@ class TestOrchestratorAndModelLoading:
             _mlflow_manager=mlflow,
         )
 
-        orchestrator = MagicMock()
+        orchestrator = SimpleNamespace()
         orch_cls = MagicMock(return_value=orchestrator)
         monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.StrategyOrchestrator", orch_cls)
 
-        model = MagicMock()
-        tok = MagicMock()
+        model = SimpleNamespace()
+        tok = SimpleNamespace()
         out = container.create_orchestrator(model, tok)
         assert out is orchestrator
 
@@ -188,8 +188,8 @@ class TestOrchestratorAndModelLoading:
         mm.safe_operation.return_value = nullcontext()
         container = TrainingContainer(cfg, _memory_manager=mm)
 
-        model = MagicMock()
-        tok = MagicMock()
+        model = SimpleNamespace()
+        tok = SimpleNamespace()
         loader = MagicMock(return_value=(model, tok))
         monkeypatch.setattr("ryotenkai_pod.trainer.models.loader.load_model_and_tokenizer", loader)
 
@@ -203,10 +203,10 @@ class TestOrchestratorAndModelLoading:
 class TestOverrideAndNoopFactories:
     def test_override_is_non_destructive(self) -> None:
         cfg = _mk_cfg()
-        orig_mm = MagicMock()
+        orig_mm = SimpleNamespace()
         container = TrainingContainer(cfg, _memory_manager=orig_mm)
 
-        new_mm = MagicMock()
+        new_mm = SimpleNamespace()
         overridden = container.override(memory_manager=new_mm)
 
         assert overridden is not container

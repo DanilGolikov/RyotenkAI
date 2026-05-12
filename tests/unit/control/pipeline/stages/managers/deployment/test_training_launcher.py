@@ -275,7 +275,7 @@ def test_start_training_returns_err_when_env_file_creation_fails(
 
     manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
     manager.set_workspace(workspace_path="/workspace")
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
 
     with patch.object(
         manager._launcher,

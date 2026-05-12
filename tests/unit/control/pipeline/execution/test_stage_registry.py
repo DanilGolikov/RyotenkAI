@@ -15,6 +15,34 @@ from ryotenkai_control.pipeline.execution import StageRegistry
 from ryotenkai_control.pipeline.stages import StageNames
 
 
+class _FakeReleasable:
+    """Tiny in-test fake for ``IEarlyReleasable``.
+
+    Replaces ``MagicMock(spec=IEarlyReleasable)`` (forbidden by the
+    ``tests/_lint/test_no_protocol_mocking.py`` sentinel — see Phase 5 of
+    ``docs/plans/mock-elimination-architecture.md``). Implements the runtime-
+    checkable Protocol's ``release()`` method and tracks invocations so tests
+    can assert call counts without a Mock.
+    """
+
+    def __init__(self, stage_name: str = "GPU") -> None:
+        self.stage_name = stage_name
+        self.release_calls = 0
+        self.cleanup_called = False
+        self.notify_pipeline_failure_called = False
+
+    def release(self) -> None:
+        self.release_calls += 1
+
+    # The registry's cleanup loop calls ``cleanup``/``notify_pipeline_failure``
+    # on every stage; provide no-op shims so the fake survives any path.
+    def cleanup(self) -> None:
+        self.cleanup_called = True
+
+    def notify_pipeline_failure(self, *_args: Any, **_kwargs: Any) -> None:
+        self.notify_pipeline_failure_called = True
+
+
 def _stage(name: str, *, has_cleanup: bool = True, cleanup_raises: Exception | None = None) -> MagicMock:
     s = MagicMock(spec=["stage_name", "cleanup", "release", "notify_pipeline_failure"])
     s.stage_name = name
@@ -83,10 +111,7 @@ class TestPositive:
         assert order == ["C", "B", "A"]
 
     def test_maybe_early_release_fires_when_flag_true(self) -> None:
-        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
-
-        releasable = MagicMock(spec=IEarlyReleasable)
-        releasable.stage_name = "GPU"
+        releasable = _FakeReleasable(stage_name="GPU")
         other = _stage("OTHER")
         registry = StageRegistry(
             config=_config(terminate_after_retrieval=True),
@@ -94,7 +119,7 @@ class TestPositive:
             collectors={},
         )
         registry.maybe_early_release_gpu()
-        releasable.release.assert_called_once()
+        assert releasable.release_calls == 1
 
 
 # ===========================================================================
@@ -139,17 +164,14 @@ class TestBoundary:
         registry.cleanup_in_reverse(success=True, shutdown_signal_name=None)  # no-op
 
     def test_maybe_early_release_no_op_when_flag_false(self) -> None:
-        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
-
-        releasable = MagicMock(spec=IEarlyReleasable)
-        releasable.stage_name = "GPU"
+        releasable = _FakeReleasable(stage_name="GPU")
         registry = StageRegistry(
             config=_config(terminate_after_retrieval=False),
             stages=[releasable],
             collectors={},
         )
         registry.maybe_early_release_gpu()
-        releasable.release.assert_not_called()
+        assert releasable.release_calls == 0
 
     def test_stage_without_cleanup_attr_is_skipped(self) -> None:
         no_cleanup = _stage("A", has_cleanup=False)
@@ -232,16 +254,14 @@ class TestDependencyErrors:
         gpu.cleanup.assert_called_once()
 
     def test_maybe_early_release_silent_when_config_raises(self) -> None:
-        from ryotenkai_control.pipeline.stages.gpu_deployer import IEarlyReleasable
-
-        releasable = MagicMock(spec=IEarlyReleasable)
+        releasable = _FakeReleasable()
         registry = StageRegistry(
             config=_config(provider_raises=True),
             stages=[releasable],
             collectors={},
         )
         registry.maybe_early_release_gpu()  # no raise
-        releasable.release.assert_not_called()
+        assert releasable.release_calls == 0
 
 
 # ===========================================================================

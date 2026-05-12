@@ -16,6 +16,8 @@ Path-resolution contract (post 2026-05-07 bugfix):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -28,20 +30,16 @@ from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
 
 def _mk_config_for_local(local_train: str, local_eval: str | None = None) -> MagicMock:
     cfg = MagicMock()
-    ds = MagicMock()
-    ds.max_samples = None
-    ds.source = DatasetSourceLocal(
+    ds = SimpleNamespace(max_samples=None, source=DatasetSourceLocal(
         local_paths=DatasetLocalPaths(train=local_train, eval=local_eval),
-    )
+    ))
     cfg.get_dataset_for_strategy.return_value = ds
     return cfg
 
 
 def _mk_config_for_hf(train_id: str, eval_id: str | None = None) -> MagicMock:
     cfg = MagicMock()
-    ds = MagicMock()
-    ds.max_samples = None
-    ds.source = DatasetSourceHF(train_id=train_id, eval_id=eval_id)
+    ds = SimpleNamespace(max_samples=None, source=DatasetSourceHF(train_id=train_id, eval_id=eval_id))
     cfg.get_dataset_for_strategy.return_value = ds
     return cfg
 
@@ -49,8 +47,7 @@ def _mk_config_for_hf(train_id: str, eval_id: str | None = None) -> MagicMock:
 def test_local_missing_train_file_returns_err() -> None:
     cfg = _mk_config_for_local(local_train="/any/train.jsonl")
     loader = DatasetLoader(cfg)
-    phase = MagicMock()
-    phase.strategy_type = "sft"
+    phase = SimpleNamespace(strategy_type="sft")
     res = loader.load_for_phase(phase)
     assert res.is_failure()
     err = str(res.unwrap_err())
@@ -72,8 +69,7 @@ def test_local_loads_train_from_flat_path(
 
     cfg = _mk_config_for_local(local_train="/any/train.jsonl")
     loader = DatasetLoader(cfg)
-    phase = MagicMock()
-    phase.strategy_type = "sft"
+    phase = SimpleNamespace(strategy_type="sft")
 
     fake_ds = MagicMock()
     fake_ds.__len__.return_value = 1
@@ -100,8 +96,7 @@ def test_local_loads_eval_when_present(
 
     cfg = _mk_config_for_local(local_train="/any/train.jsonl", local_eval="/any/eval.jsonl")
     loader = DatasetLoader(cfg)
-    phase = MagicMock()
-    phase.strategy_type = "sft"
+    phase = SimpleNamespace(strategy_type="sft")
 
     train_ds = MagicMock()
     train_ds.__len__.return_value = 1
@@ -122,7 +117,7 @@ def test_local_loads_eval_when_present(
 def test_hf_loads_train_and_optional_eval(mock_load_dataset: MagicMock) -> None:
     cfg = _mk_config_for_hf("org/train", eval_id="org/eval")
     loader = DatasetLoader(cfg)
-    phase = MagicMock()
+    phase = SimpleNamespace()
 
     train_ds = MagicMock()
     train_ds.__len__.return_value = 10

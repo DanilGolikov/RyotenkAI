@@ -28,6 +28,8 @@ Coverage categories:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import MagicMock
@@ -151,9 +153,7 @@ def _make_pipeline_config(*, training_type: str = "full") -> MagicMock:
 
 
 def _make_phase_config(plugin_name: str = "test_plugin") -> MagicMock:
-    pc = MagicMock()
-    pc.strategy_type = "grpo"
-    pc.hyperparams = MagicMock()
+    pc = SimpleNamespace(strategy_type="grpo", hyperparams=MagicMock())
     for attr in [
         "learning_rate", "epochs", "per_device_train_batch_size",
         "gradient_accumulation_steps", "lr_scheduler_type", "warmup_ratio",

@@ -246,6 +246,13 @@ class TestResetForTests:
         assert cancellation._signal_count == 0
 
     def test_reset_cancels_armed_deadline_timer(self) -> None:
+        # WHY MagicMock(spec=threading.Timer): we need to observe
+        # ``timer.cancel()`` was invoked exactly once during reset.
+        # A real ``threading.Timer`` cannot be substituted here without
+        # actually starting a background thread (its constructor expects
+        # a callable + non-zero interval and starting/cancelling
+        # introduces flaky timing into a pure-logic test). The mock
+        # captures the side-effect contract without spawning a thread.
         timer = MagicMock(spec=threading.Timer)
         cancellation._deadline_timer = timer
         reset_for_tests()

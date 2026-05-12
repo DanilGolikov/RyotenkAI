@@ -14,6 +14,8 @@ logic-specific.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -37,7 +39,7 @@ def _build_mock_config(*, source_path: Path | None = None) -> MagicMock:
     canonical config path on PipelineState. Callers go through
     ``load_pipeline_config`` which sets it; tests mimic that.
     """
-    config = MagicMock()
+    config = SimpleNamespace()
     if source_path is not None:
         config._source_path = source_path
     return config
@@ -55,7 +57,7 @@ class TestPositive:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        secrets = MagicMock()
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -83,7 +85,7 @@ class TestPositive:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        secrets = MagicMock()
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -129,9 +131,8 @@ class TestNegative:
         # ``_source_path`` is set. Constructing a bare PipelineConfig
         # object and passing it raises a clear error rather than
         # crashing later in state_store.
-        config = MagicMock()
-        config._source_path = None  # explicit
-        secrets = MagicMock()
+        config = SimpleNamespace(_source_path=None)
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -160,7 +161,7 @@ class TestBoundary:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        secrets = MagicMock()
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -181,7 +182,7 @@ class TestBoundary:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        secrets = MagicMock()
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -213,7 +214,7 @@ class TestInvariants:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        secrets = MagicMock()
+        secrets = SimpleNamespace()
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets", return_value=secrets),
@@ -238,7 +239,7 @@ class TestLogicSpecific:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("model:\n  name: gpt2\n")
         config = _build_mock_config(source_path=config_path)
-        custom_secrets = MagicMock()
+        custom_secrets = SimpleNamespace()
 
         load_secrets_mock = MagicMock(return_value=MagicMock())
         with (
@@ -247,10 +248,9 @@ class TestLogicSpecific:
             patch("ryotenkai_community.preflight.run_preflight", return_value=MagicMock(ok=True)),
             patch.object(StageRegistry, "_build_stages", return_value=[]),
         ):
-            run_ctx = MagicMock()
-            attempt_controller = MagicMock()
-            attempt_controller.adopt_state = MagicMock()
-            settings = MagicMock()
+            run_ctx = SimpleNamespace()
+            attempt_controller = SimpleNamespace(adopt_state=MagicMock())
+            settings = SimpleNamespace()
             PipelineBootstrap.build(
                 config=config,
                 secrets=custom_secrets,

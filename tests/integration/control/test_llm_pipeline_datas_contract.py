@@ -12,6 +12,8 @@ Mark: requires_external_data
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -287,7 +289,7 @@ datasets:
     cfg = PipelineConfig.from_yaml(cfg_path)
     deployment = TrainingDeploymentManager(config=cfg, secrets=_DummySecrets())
 
-    ssh_client = MagicMock()
+    ssh_client = SimpleNamespace()
     res = deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
     assert res.is_err()
     err = str(res.unwrap_err())

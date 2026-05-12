@@ -88,6 +88,15 @@ class _RunInfo:
     run_id: str
 
 
+@dataclass
+class _LogDictCall:
+    """Captured invocation of :meth:`FakeMLflowManager.log_dict`."""
+
+    payload: dict[str, Any]
+    artifact_file: str
+    run_id: str
+
+
 class FakeMLflowManager:
     """Canonical in-memory fake for :class:`IMLflowManager`.
 
@@ -111,6 +120,10 @@ class FakeMLflowManager:
         self._fail_kind: type[Exception] = TransientMLflowError
         self._latency_seconds: float = 0.0
         self._unavailable: bool = False
+        # log_dict observation state — see :meth:`log_dict` for rationale.
+        self._log_dict_calls: list[_LogDictCall] = []
+        self._log_dict_error: BaseException | None = None
+        self._log_dict_return: bool = True
 
     # ------------------------------------------------------------------
     # Chaos surface
@@ -350,6 +363,47 @@ class FakeMLflowManager:
         if artifact_path:
             run.tags["artifact.last_subdir"] = artifact_path
         return True
+
+    def log_dict(
+        self,
+        dictionary: dict[str, Any],
+        artifact_file: str,
+        run_id: str | None = None,
+    ) -> bool:
+        """Log dict-as-JSON artifact. Mirrors the trainer-side concrete shape.
+
+        WHY this lives on the fake (not IMLflowManager Protocol): the
+        Protocol only catalogues the *pipeline-facing* surface; the
+        concrete ``MLflowManager`` exposes ``log_dict`` because the
+        pipeline's ``save_stage_artifact`` writes structured TypedDict
+        envelopes through it. Tests that exercise that helper need a
+        ``log_dict`` method, an ``is_active`` flag, and call tracking —
+        which is the shape the previous ``MagicMock(spec=MLflowManager)``
+        provided. We record calls deterministically and expose a
+        programmable failure hook so tests can assert call count, captured
+        payloads, and tolerant-on-error behaviour without unittest.mock.
+        """
+        self._log_dict_calls.append(
+            _LogDictCall(payload=dict(dictionary), artifact_file=artifact_file, run_id=run_id or ""),
+        )
+        if self._log_dict_error is not None:
+            raise self._log_dict_error
+        return self._log_dict_return
+
+    # --- log_dict observation/injection API (test-only) ---------------------
+
+    @property
+    def log_dict_calls(self) -> list[_LogDictCall]:
+        """Return the captured ``log_dict`` calls in invocation order."""
+        return self._log_dict_calls
+
+    def set_log_dict_error(self, exc: BaseException | None) -> None:
+        """Program ``log_dict`` to raise on next call (``None`` clears)."""
+        self._log_dict_error = exc
+
+    def set_log_dict_return(self, value: bool) -> None:
+        """Program the return value of ``log_dict`` (default ``True``)."""
+        self._log_dict_return = value
 
     def log_event_start(self, message: str, **kwargs: Any) -> dict[str, Any]:
         return self._log_event("start", message, **kwargs)
