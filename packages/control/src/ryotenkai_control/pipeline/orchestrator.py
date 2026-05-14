@@ -32,9 +32,10 @@ from ryotenkai_control.pipeline.state import (
     PipelineStateError,
     PipelineStateStore,
 )
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, Result
+from ryotenkai_shared.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -49,6 +50,46 @@ if TYPE_CHECKING:
 # without needing to know that the exception moved. Orchestrator.run() still
 # catches it by this name.
 __all__ = ["LaunchPreparationError", "PipelineOrchestrator"]
+
+
+def _typed_error_to_app_error(exc: RyotenkAIError) -> AppError:
+    """Adapt a typed :class:`RyotenkAIError` into the legacy ``AppError`` shape.
+
+    Phase A2 Batch 6 migrated the stage execution loop to raise-based;
+    the orchestrator continues to expose ``Result[dict, AppError]`` to
+    ``worker.py`` / ``run_pipeline`` until later batches migrate those
+    consumers. This adapter is the one-point bridge.
+
+    The granular legacy code (e.g. ``"PIPELINE_INTERRUPTED"``,
+    ``"PIPELINE_STATE_ERROR"``, ``"STAGE_FAILED"``) is preserved on
+    :attr:`AppError.code` when the typed exception carries it via
+    ``context["legacy_code"]``; otherwise the typed exception's wire
+    identifier (``exc.code.value``) is used.
+    """
+    legacy_code = exc.context.get("legacy_code") if isinstance(exc.context, dict) else None
+    code = legacy_code if isinstance(legacy_code, str) and legacy_code else exc.code.value
+    detail = exc.detail or str(exc)
+    details: dict[str, Any] = {"typed_error_class": type(exc).__name__}
+    if isinstance(exc.context, dict):
+        for key, value in exc.context.items():
+            if key == "legacy_code":
+                continue
+            details[key] = value
+    # Carry the legacy STAGE_FAILED wrapping when this came from a stage
+    # to preserve assertions like ``err.code == "STAGE_FAILED"``.
+    if code != "PIPELINE_INTERRUPTED" and code != "PIPELINE_STATE_ERROR" and code != "UNEXPECTED_ERROR":
+        # Wrap as STAGE_FAILED when the exception originated from a stage
+        # (heuristic: prereq violations and stage-runner raises share the
+        # ``PIPELINE_STAGE_FAILED`` typed code; other granular codes
+        # round-trip via ``legacy_code``).
+        if exc.code.value == "PIPELINE_STAGE_FAILED" and legacy_code is None:
+            details["original_code"] = code
+            return AppError(
+                message=f"Stage failed: {detail}",
+                code="STAGE_FAILED",
+                details=details,
+            )
+    return AppError(message=detail, code=code, details=details)
 
 
 class PipelineOrchestrator:
@@ -241,14 +282,18 @@ class PipelineOrchestrator:
                 config_hashes=config_hashes,
             )
             assert self._log_layout is not None
-            result = self._stage_execution_loop.run_attempt(
+            # Loop is raise-based since Phase A2 Batch 6: returns context
+            # on success, raises ``RyotenkAIError`` on failure. We adapt
+            # to ``Result`` at this outer boundary for backward compat
+            # with worker.py / run_pipeline.
+            context = self._stage_execution_loop.run_attempt(
                 prepared=prepared,
                 context=self.context,
                 mlflow_manager=self._mlflow_manager,
                 log_layout=self._log_layout,
             )
-            pipeline_success = result.is_ok()
-            return result  # type: ignore[return-value]
+            pipeline_success = True
+            return Ok(context)  # type: ignore[return-value]
         except LaunchPreparationError as exc:
             logger.error(exc.app_error.message)
             # Surface the run_directory+state_store that the preparator
@@ -268,6 +313,10 @@ class PipelineOrchestrator:
                     launch_error=exc,
                     config_hashes=config_hashes,
                 )
+            # NB: launch_preparator's local LaunchPreparationError still
+            # carries ``app_error: AppError`` — Batch 7 migrates the
+            # preparator itself to RyotenkAIError. Until then, surface
+            # the AppError through the legacy boundary.
             return Err(exc.app_error)
         except (KeyboardInterrupt, SystemExit) as exc:
             # Interrupt during prepare — loop never got to own the boundary.
@@ -281,15 +330,20 @@ class PipelineOrchestrator:
             # Corrupted state file / persistence failure during bootstrap.
             # Distinct error code keeps observability clean.
             return Err(AppError(message=str(e), code="PIPELINE_STATE_ERROR"))
+        except RyotenkAIError as exc:
+            # Stage/loop failure surfaced as typed exception — adapt to
+            # AppError at the orchestrator's outer boundary (worker.py /
+            # run_pipeline still consume ``Result[dict, AppError]``).
+            return Err(_typed_error_to_app_error(exc))
         except Exception as e:
-            # Unexpected during prepare — same conversion as in-loop so the
-            # caller sees a consistent AppError shape. PipelineContext is
-            # a dict subclass, so the success branch is structurally
-            # compatible with dict[str, Any] at runtime; ignore the
-            # invariance complaint from mypy.
-            return self._stage_execution_loop.handle_unexpected_error_outside_loop(  # type: ignore[return-value]
+            # Unexpected during prepare — convert via the loop's helper
+            # for consistent recording side effects, then adapt the
+            # returned typed exception to an AppError for the outer
+            # legacy boundary.
+            typed_exc = self._stage_execution_loop.handle_unexpected_error_outside_loop(
                 e, mlflow_manager=self._mlflow_manager
             )
+            return Err(_typed_error_to_app_error(typed_exc))
         finally:
             # Each teardown step is wrapped independently: a failure in one must
             # not skip the others. Critically, this guarantees run_lock.release()

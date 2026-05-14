@@ -3,7 +3,7 @@
 This module owns everything that happens between "launch prepared" and
 "pipeline finished": the for-loop over stages, per-stage bookkeeping,
 outcome handlers for success/failure/interrupt, and the exception
-boundary that converts raw exceptions into ``Result[..., AppError]``.
+boundary that surfaces typed :class:`RyotenkAIError` to the orchestrator.
 
 Architecture
 ------------
@@ -27,14 +27,22 @@ durable" invariant from PR-A4 still holds.
 
 Error boundary
 --------------
-``run_attempt`` converts every exception class below into an appropriate
-``Result[..., AppError]``:
+Phase A2 Batch 6 migrated the loop from ``Result[T, AppError]`` to raise-
+based: ``run_attempt`` returns :class:`PipelineContext` on full success
+and raises a typed :class:`RyotenkAIError` on failure. The orchestrator
+adapts to ``Result`` at its outer boundary for backward compat.
 
-* ``KeyboardInterrupt``      → ``Err(PIPELINE_INTERRUPTED)`` + records interrupt.
+* ``KeyboardInterrupt``      → raises :class:`PipelineStageFailedError`
+                                with ``context["legacy_code"] = "PIPELINE_INTERRUPTED"``
+                                + records interrupt.
 * ``SystemExit``             → records interrupt, then **re-raises** so the
                                 runner's exit code is preserved.
-* ``PipelineStateError``     → ``Err(PIPELINE_STATE_ERROR)`` (state_store I/O).
-* any other ``Exception``    → ``Err(UNEXPECTED_ERROR)`` + finalize as FAILED.
+* ``PipelineStateError``     → raises :class:`InternalError` with
+                                ``context["legacy_code"] = "PIPELINE_STATE_ERROR"``.
+* any other ``Exception``    → raises :class:`InternalError` +
+                                finalize as FAILED.
+* ``RyotenkAIError`` from a stage → routed to ``_handle_stage_failure``
+                                then re-raised.
 
 ``LaunchPreparationError`` is *deliberately* NOT caught here — it can only
 be raised by the preparator, which runs before the loop. Letting it
@@ -72,9 +80,14 @@ from ryotenkai_control.pipeline.constants import (
     SEPARATOR_LINE_WIDTH,
 )
 from ryotenkai_control.pipeline.stages import StageNames
+from ryotenkai_control.pipeline.stages.base import _adapt_legacy_to_typed
 from ryotenkai_control.pipeline.state import PipelineStateError, StageRunState
+from ryotenkai_shared.errors import (
+    InternalError,
+    PipelineStageFailedError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.logger import logger, stage_logging_context
-from ryotenkai_shared.utils.result import AppError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -153,11 +166,17 @@ class StageExecutionLoop:
         context: PipelineContext,
         mlflow_manager: IMLflowManager | None,
         log_layout: LogLayout,
-    ) -> Result[PipelineContext, AppError]:
+    ) -> PipelineContext:
         """Execute stages ``[start_idx, stop_idx)`` for the prepared attempt.
 
-        Returns ``Ok(context)`` on full success or ``Err(app_error)`` on any
-        failure / interrupt / prereq violation. ``SystemExit`` propagates.
+        Returns ``context`` on full success.
+
+        Raises:
+            RyotenkAIError: on stage failure / prereq violation / state I/O
+                / unexpected exception / KeyboardInterrupt. The orchestrator
+                catches and adapts to its outer ``Result`` boundary.
+            SystemExit: re-raised verbatim so the runner's exit code is
+                preserved.
         """
         pipeline_start_time = time.time()
         current_stage_name: str | None = None
@@ -191,7 +210,17 @@ class StageExecutionLoop:
                         failure_kind=prereq_error.code,
                     )
                     self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
-                    return Err(prereq_error)
+                    # Surface prereq violation as typed exception so callers
+                    # can match RyotenkAIError; legacy code preserved via
+                    # context["legacy_code"] for observability.
+                    raise PipelineStageFailedError(
+                        detail=prereq_error.message,
+                        context={
+                            "legacy_code": prereq_error.code,
+                            "stage_name": stage_name,
+                            "prereq_failure": True,
+                        },
+                    )
 
                 current_stage_name = stage_name
                 current_stage_started_at = utc_now_iso()
@@ -220,23 +249,30 @@ class StageExecutionLoop:
                             total_stages=len(self._stages),
                         )
 
-                    result = stage.run(context)
-                    stage_duration = time.time() - current_stage_start_time
-
-                    if result.is_failure():
-                        stage_err = result.unwrap_err()  # type: ignore[union-attr]
-                        return self._handle_stage_failure(
+                    try:
+                        raw_stage_result = stage.run(context)
+                        # Bridge stages whose ``run`` was mocked with legacy
+                        # ``Result[T, AppError]`` (tests + pre-Batch-7 stages
+                        # whose subclass overrode ``run``). The shim raises
+                        # :class:`InternalError` for ``Failure`` and unwraps
+                        # ``Success`` so the loop only sees ``dict`` here.
+                        # TODO Phase A2 Batch 10: drop _adapt_legacy_to_typed.
+                        stage_result = _adapt_legacy_to_typed(raw_stage_result)
+                    except RyotenkAIError as stage_exc:
+                        stage_duration = time.time() - current_stage_start_time
+                        self._handle_stage_failure(
                             context=context,
                             mlflow_manager=mlflow_manager,
                             stage_name=stage_name,
                             stage_idx=i,
-                            stage_err=stage_err,
+                            stage_exc=stage_exc,
                             collector=collector,
                             started_at=current_stage_started_at,
                             duration_seconds=stage_duration,
                         )
+                        raise
+                    stage_duration = time.time() - current_stage_start_time
 
-                    stage_result = result.unwrap()
                     if stage_result is not None:
                         context.update(stage_result)
 
@@ -275,8 +311,13 @@ class StageExecutionLoop:
                 pipeline_duration=pipeline_duration,
                 mlflow_manager=mlflow_manager,
             )
-            return Ok(context)
+            return context
 
+        except RyotenkAIError:
+            # Stage / prereq failure — already recorded via
+            # _handle_stage_failure or the prereq branch above. Re-raise
+            # to the orchestrator boundary.
+            raise
         except (KeyboardInterrupt, SystemExit) as exc:
             is_system_exit = isinstance(exc, SystemExit)
             self._handle_interrupt(
@@ -286,13 +327,26 @@ class StageExecutionLoop:
             )
             if is_system_exit:
                 raise
-            return Err(
-                AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED")
-            )
-        except PipelineStateError as e:
-            return Err(AppError(message=str(e), code="PIPELINE_STATE_ERROR"))
-        except Exception as e:
-            return self._handle_unexpected_error(e, mlflow_manager=mlflow_manager)
+            raise PipelineStageFailedError(
+                detail="Pipeline interrupted by user",
+                context={"legacy_code": "PIPELINE_INTERRUPTED"},
+            ) from exc
+        except PipelineStateError as exc:
+            raise InternalError(
+                detail=str(exc),
+                context={"legacy_code": "PIPELINE_STATE_ERROR"},
+                cause=exc,
+            ) from exc
+        except Exception as exc:
+            self._handle_unexpected_error(exc, mlflow_manager=mlflow_manager)
+            raise InternalError(
+                detail=f"Unexpected error: {exc!s}",
+                context={
+                    "legacy_code": "UNEXPECTED_ERROR",
+                    "exception_type": type(exc).__name__,
+                },
+                cause=exc,
+            ) from exc
 
     # ------------------------------------------------------------------
     # Public exception helpers (used by the orchestrator outside the loop)
@@ -321,14 +375,23 @@ class StageExecutionLoop:
         e: Exception,
         *,
         mlflow_manager: IMLflowManager | None,
-    ) -> Result[PipelineContext, AppError]:
-        """Convert a non-loop exception into an UNEXPECTED_ERROR ``Err``.
+    ) -> RyotenkAIError:
+        """Record + return a typed :class:`RyotenkAIError` for a non-loop exception.
 
         Used when ``_prepare_stateful_attempt`` itself raises something the
         orchestrator doesn't want to let propagate. Delegates to the same
-        logic as in-loop handling for consistency.
+        recording logic as in-loop handling for consistency, then returns
+        a typed exception the orchestrator can wrap or raise as needed.
         """
-        return self._handle_unexpected_error(e, mlflow_manager=mlflow_manager)
+        self._handle_unexpected_error(e, mlflow_manager=mlflow_manager)
+        return InternalError(
+            detail=f"Unexpected error: {e!s}",
+            context={
+                "legacy_code": "UNEXPECTED_ERROR",
+                "exception_type": type(e).__name__,
+            },
+            cause=e,
+        )
 
     # ------------------------------------------------------------------
     # Outcome handlers
@@ -341,17 +404,25 @@ class StageExecutionLoop:
         mlflow_manager: IMLflowManager | None,
         stage_name: str,
         stage_idx: int,
-        stage_err: AppError,
+        stage_exc: RyotenkAIError,
         collector: StageArtifactCollector | None,
         started_at: str,
         duration_seconds: float,
-    ) -> Result[PipelineContext, AppError]:
-        """Log, flush artifacts, mark failed, finalize; return STAGE_FAILED Err."""
+    ) -> None:
+        """Log, flush artifacts, mark failed, finalize.
+
+        Called from the loop's inner try/except when ``stage.run`` raises
+        a :class:`RyotenkAIError`. The caller re-raises after this returns
+        so the exception propagates to the orchestrator boundary.
+        """
+        # Prefer the typed code's wire identifier; ``detail`` for messages.
+        error_code = stage_exc.code.value
+        error_message = stage_exc.detail or str(stage_exc)
         logger.error(f"Pipeline failed at stage {stage_idx + 1}: {stage_name}")
-        logger.error(f"Error: {stage_err}")
+        logger.error(f"Error: {error_message}")
         if mlflow_manager:
             mlflow_manager.log_stage_failed(
-                stage_name=stage_name, stage_idx=stage_idx, error=str(stage_err)
+                stage_name=stage_name, stage_idx=stage_idx, error=error_message
             )
         if collector and not collector.is_flushed:
             if stage_name == StageNames.DATASET_VALIDATOR:
@@ -360,35 +431,24 @@ class StageExecutionLoop:
                 )
             else:
                 collector.flush_error(
-                    error=str(stage_err),
+                    error=error_message,
                     started_at=started_at,
                     duration_seconds=duration_seconds,
                     context=context,
                 )
         self._attempt_controller.record_failed(
             stage_name=stage_name,
-            error=str(stage_err),
-            failure_kind=getattr(stage_err, "code", "STAGE_FAILED"),
+            error=error_message,
+            failure_kind=error_code,
             outputs=(
                 self._validation_artifact_mgr.build_dataset_validation_state_outputs(
-                    error=str(stage_err)
+                    error=error_message
                 )
                 if stage_name == StageNames.DATASET_VALIDATOR
                 else None
             ),
         )
         self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
-        return Err(
-            AppError(
-                message=f"Stage '{stage_name}' failed: {stage_err.message}",
-                code="STAGE_FAILED",
-                details={
-                    **stage_err.to_log_dict(),
-                    "stage_name": stage_name,
-                    "stage_idx": stage_idx,
-                },
-            )
-        )
 
     def _handle_stage_success(
         self,
@@ -519,8 +579,14 @@ class StageExecutionLoop:
         e: Exception,
         *,
         mlflow_manager: IMLflowManager | None,
-    ) -> Result[PipelineContext, AppError]:
-        """Mark attempt FAILED on an unexpected exception and surface UNEXPECTED_ERROR."""
+    ) -> None:
+        """Mark attempt FAILED on an unexpected exception and emit MLflow signal.
+
+        The caller (loop's outer except, or
+        :meth:`handle_unexpected_error_outside_loop`) raises a typed
+        :class:`InternalError` after this returns — keeping the recording
+        side effects in one place.
+        """
         logger.exception(f"Unexpected error in pipeline: {e}")
         completed_at = utc_now_iso()
         if self._attempt_controller.has_active_attempt:
@@ -538,13 +604,6 @@ class StageExecutionLoop:
                 error_type=type(e).__name__,
             )
             mlflow_manager.set_tags({"pipeline.status": _STATUS_FAILED})
-        return Err(
-            AppError(
-                message=f"Unexpected error: {e!s}",
-                code="UNEXPECTED_ERROR",
-                details={"exception_type": type(e).__name__},
-            )
-        )
 
     # ------------------------------------------------------------------
     # Helpers

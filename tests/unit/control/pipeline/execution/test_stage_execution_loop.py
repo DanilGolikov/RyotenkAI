@@ -1,14 +1,14 @@
-"""Comprehensive tests for :mod:`src.pipeline.execution.stage_execution_loop`.
+"""Comprehensive tests for :mod:`stage_execution_loop` (Phase A2 Batch 6).
 
-The stage execution loop is the HIGHEST-RISK component in this refactor —
-it owns the entire per-run control flow: the for-loop, 3 outcome handlers
-(failure/success/interrupt), 4 exception classes, and the final success
-path. Every test below is a regression lock on one of those surfaces.
+Phase A2 Batch 6 migrated the loop from ``Result[T, AppError]`` to
+raise-based: ``run_attempt`` returns :class:`PipelineContext` on success
+and raises :class:`RyotenkAIError` on failure. Tests use ``pytest.raises``
++ assert the typed exception's ``code`` / ``detail`` / ``context``.
 
-Coverage split by category (required by project policy):
+Coverage split by category (project policy — 7-class):
 
 1. **Positive**          — happy-path success; per-stage lifecycle; skipped-config.
-2. **Negative**          — stage failure; prereq error; unexpected exception.
+2. **Negative**          — stage raise; prereq error; unexpected exception; state I/O.
 3. **Boundary**          — empty stage list; start_idx at last; stop_idx mid-way.
 4. **Invariants**        — controller is the only writer; summary runs once.
 5. **Dependency errors** — MLflow None; collector already flushed; state_store fails.
@@ -37,8 +37,13 @@ from ryotenkai_control.pipeline.state import (
     StageRunState,
     build_attempt_state,
 )
+from ryotenkai_shared.errors import (
+    InternalError,
+    PipelineStageFailedError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.logs_layout import LogLayout
-from ryotenkai_shared.utils.result import AppError, Err, Ok
+from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,10 +53,14 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _make_stage(name: str, result: Any = None) -> MagicMock:
+def _make_stage(name: str, *, output: dict[str, Any] | None = None, raises: RyotenkAIError | None = None) -> MagicMock:
+    """Build a MagicMock stage. ``raises`` overrides ``output``."""
     stage = MagicMock()
     stage.stage_name = name
-    stage.run.return_value = result if result is not None else Ok({"ran": True})
+    if raises is not None:
+        stage.run.side_effect = raises
+    else:
+        stage.run.return_value = output if output is not None else {"ran": True}
     return stage
 
 
@@ -200,23 +209,20 @@ class TestPositive:
         prepared = _make_prepared(tmp_path, stages)
         context = _mk_context()
 
-        result = loop.run_attempt(
+        out = loop.run_attempt(
             prepared=prepared,
             context=context,
             mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        assert result.is_ok()
-        # Every stage was run
+        assert out is context
         for s in stages:
             s.run.assert_called_once()
-        # Attempt finalized with COMPLETED
         assert controller.state.pipeline_status == StageRunState.STATUS_COMPLETED
-        # Summary emitted
         summary_reporter.print_summary.assert_called_once()
 
     def test_stage_result_merged_into_context(self, tmp_path: Path) -> None:
-        stage = _make_stage(STAGE_A, result=Ok({"key_from_stage": 42}))
+        stage = _make_stage(STAGE_A, output={"key_from_stage": 42})
         loop, _, _, _, _ = _build_loop(tmp_path, stages=[stage])
         prepared = _make_prepared(tmp_path, [stage])
         context = _mk_context()
@@ -236,20 +242,17 @@ class TestPositive:
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        # Hook called once per successful stage, in order.
         assert hook.call_args_list == [((s.stage_name,),) for s in stages]
 
     def test_disabled_stage_is_skipped(self, tmp_path: Path) -> None:
         loop, controller, stages, _, _ = _build_loop(tmp_path)
         prepared = _make_prepared(tmp_path, stages)
-        # Override: only first stage enabled
         prepared = dataclasses.replace(prepared, enabled_stage_names=(STAGE_A,))
 
         loop.run_attempt(
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        # Second stage recorded as SKIPPED, not RUN
         assert controller.state.attempts[-1].stage_runs[STAGE_B].status == StageRunState.STATUS_SKIPPED
         stages[1].run.assert_not_called()
 
@@ -262,10 +265,8 @@ class TestPositive:
             prepared=prepared, context=_mk_context(), mlflow_manager=mlflow,
             log_layout=prepared.log_layout,
         )
-        # log_stage_start and log_stage_complete called len(stages) times each
         assert mlflow.log_stage_start.call_count == len(stages)
         assert mlflow.log_stage_complete.call_count == len(stages)
-        # log_event_complete once (pipeline-complete)
         mlflow.log_event_complete.assert_called_once()
 
 
@@ -275,21 +276,47 @@ class TestPositive:
 
 
 class TestNegative:
-    def test_stage_failure_returns_stage_failed_err(self, tmp_path: Path) -> None:
-        stages = [_make_stage(STAGE_A, result=Err(AppError(message="boom", code="X")))]
+    def test_stage_raise_routes_through_failure_handler(self, tmp_path: Path) -> None:
+        # Use GPU_DEPLOYER (non-validator) — DATASET_VALIDATOR has a
+        # different artifact-flushing path through ``ValidationArtifactManager``.
+        stage_exc = PipelineStageFailedError(detail="boom", context={"reason": "X"})
+        stages = [_make_stage(STAGE_B, raises=stage_exc)]
+        loop, controller, _, collectors, _ = _build_loop(tmp_path, stages=stages)
+        prepared = _make_prepared(tmp_path, stages)
+
+        with pytest.raises(PipelineStageFailedError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        # Same typed exception propagates upward.
+        assert ei.value is stage_exc
+        # Loop transitioned pipeline to FAILED via _handle_stage_failure.
+        assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
+        # Non-validator collector flushed via flush_error with the typed detail.
+        collectors[STAGE_B].flush_error.assert_called_once()
+        flush_kwargs = collectors[STAGE_B].flush_error.call_args.kwargs
+        assert flush_kwargs["error"] == "boom"
+
+    def test_dataset_validator_failure_uses_validation_artifact_manager(
+        self, tmp_path: Path
+    ) -> None:
+        """DatasetValidator failures route through ValidationArtifactManager."""
+        stage_exc = PipelineStageFailedError(detail="boom")
+        stages = [_make_stage(STAGE_A, raises=stage_exc)]
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        err = result.unwrap_err()  # type: ignore[union-attr]
-        assert err.code == "STAGE_FAILED"
+        with pytest.raises(PipelineStageFailedError):
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
         assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
 
-    def test_prereq_error_halts_loop_before_stage_runs(self, tmp_path: Path) -> None:
+    def test_prereq_error_raises_pipeline_stage_failed_error(
+        self, tmp_path: Path
+    ) -> None:
         planner = _make_stage_planner()
         planner.validate_stage_prerequisites.return_value = AppError(
             message="missing dep", code="PREREQ"
@@ -298,54 +325,54 @@ class TestNegative:
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=[stage], planner=planner)
         prepared = _make_prepared(tmp_path, [stage])
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        err = result.unwrap_err()  # type: ignore[union-attr]
-        assert err.code == "PREREQ"
+        with pytest.raises(PipelineStageFailedError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value.context["legacy_code"] == "PREREQ"
+        assert ei.value.context["prereq_failure"] is True
         stage.run.assert_not_called()
         assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
 
-    def test_unexpected_exception_returns_unexpected_error_err(self, tmp_path: Path) -> None:
+    def test_unexpected_plain_exception_raises_internal_error(
+        self, tmp_path: Path
+    ) -> None:
         stage = _make_stage(STAGE_A)
         stage.run.side_effect = RuntimeError("surprise!")
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=[stage])
         prepared = _make_prepared(tmp_path, [stage])
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        err = result.unwrap_err()  # type: ignore[union-attr]
-        assert err.code == "UNEXPECTED_ERROR"
+        with pytest.raises(InternalError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value.context["legacy_code"] == "UNEXPECTED_ERROR"
+        assert ei.value.context["exception_type"] == "RuntimeError"
         assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
 
-    def test_pipeline_state_error_propagates_as_state_error_code(
+    def test_pipeline_state_error_wrapped_as_internal_error(
         self, tmp_path: Path
     ) -> None:
         stage = _make_stage(STAGE_A)
-        # Build loop with benign save_fn (controller setup needs to succeed)
         save_fn = MagicMock()
         loop, controller, _, _, _ = _build_loop(
             tmp_path, stages=[stage], save_fn=save_fn
         )
         prepared = _make_prepared(tmp_path, [stage])
 
-        # Flip to failing mode AFTER setup so only in-loop persists fail
         def _save_raises(_state: PipelineState) -> None:
             raise PipelineStateError("disk full")
 
         controller._save_fn = _save_raises  # type: ignore[assignment]
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        assert result.unwrap_err().code == "PIPELINE_STATE_ERROR"  # type: ignore[union-attr]
+        with pytest.raises(InternalError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value.context["legacy_code"] == "PIPELINE_STATE_ERROR"
 
 
 # ===========================================================================
@@ -354,19 +381,19 @@ class TestNegative:
 
 
 class TestBoundary:
-    def test_empty_stage_range_returns_ok_immediately(self, tmp_path: Path) -> None:
+    def test_empty_stage_range_returns_context_immediately(self, tmp_path: Path) -> None:
         stages = [_make_stage(STAGE_A)]
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
         prepared = dataclasses.replace(prepared, start_idx=1, stop_idx=1)
+        ctx = _mk_context()
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
+        out = loop.run_attempt(
+            prepared=prepared, context=ctx, mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        assert result.is_ok()
+        assert out is ctx
         stages[0].run.assert_not_called()
-        # Pipeline still marked COMPLETED (vacuous success)
         assert controller.state.pipeline_status == StageRunState.STATUS_COMPLETED
 
     def test_start_idx_skips_early_stages(self, tmp_path: Path) -> None:
@@ -402,11 +429,11 @@ class TestBoundary:
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
 
-        result = loop.run_attempt(
+        out = loop.run_attempt(
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        assert result.is_ok()
+        assert out is not None
         assert controller.state.pipeline_status == StageRunState.STATUS_COMPLETED
 
 
@@ -427,9 +454,9 @@ class TestInvariants:
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        # Each stage: record_running + record_stage_log_paths + record_completed
-        # = 3 persists per stage, plus finalize at the end = 3*N + 1 persists.
         n_stages = len(stages)
+        # Each stage: record_running + record_stage_log_paths + record_completed.
+        # Plus finalize at the end.
         assert save_fn.call_count == 3 * n_stages + 1
 
     def test_summary_reporter_called_exactly_once_on_success(
@@ -446,28 +473,32 @@ class TestInvariants:
         summary.print_summary.assert_called_once()
 
     def test_summary_reporter_not_called_on_failure(self, tmp_path: Path) -> None:
-        stages = [_make_stage(STAGE_A, result=Err(AppError(message="x", code="E")))]
+        stage_exc = PipelineStageFailedError(detail="x")
+        stages = [_make_stage(STAGE_A, raises=stage_exc)]
         loop, _, _, _, summary = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
 
-        loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
+        with pytest.raises(PipelineStageFailedError):
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
         summary.print_summary.assert_not_called()
 
-    def test_interrupt_handler_marks_attempt_interrupted(self, tmp_path: Path) -> None:
+    def test_interrupt_marks_attempt_interrupted_and_raises_typed(
+        self, tmp_path: Path
+    ) -> None:
         stage = _make_stage(STAGE_A)
         stage.run.side_effect = KeyboardInterrupt()
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=[stage])
         prepared = _make_prepared(tmp_path, [stage])
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        assert result.unwrap_err().code == "PIPELINE_INTERRUPTED"  # type: ignore[union-attr]
+        with pytest.raises(PipelineStageFailedError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value.context["legacy_code"] == "PIPELINE_INTERRUPTED"
         assert controller.state.pipeline_status == StageRunState.STATUS_INTERRUPTED
 
     def test_on_shutdown_signal_hook_fires_on_interrupt(self, tmp_path: Path) -> None:
@@ -477,10 +508,11 @@ class TestInvariants:
         loop, _, _, _, _ = _build_loop(tmp_path, stages=[stage], on_shutdown_signal=hook)
         prepared = _make_prepared(tmp_path, [stage])
 
-        loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
+        with pytest.raises(PipelineStageFailedError):
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
         hook.assert_called_once_with("SIGINT")
 
 
@@ -495,43 +527,44 @@ class TestDependencyErrors:
         loop, _, _, _, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
 
-        result = loop.run_attempt(
+        out = loop.run_attempt(
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        assert result.is_ok()
+        assert out is not None
 
     def test_already_flushed_collector_not_flushed_twice(self, tmp_path: Path) -> None:
-        stages = [_make_stage(STAGE_A, result=Err(AppError(message="x", code="E")))]
+        stage_exc = PipelineStageFailedError(detail="x")
+        stages = [_make_stage(STAGE_A, raises=stage_exc)]
         loop, _, _, collectors, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
         collectors[STAGE_A].is_flushed = True  # pre-flushed
 
-        loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
+        with pytest.raises(PipelineStageFailedError):
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
         collectors[STAGE_A].flush_error.assert_not_called()
 
-    def test_save_fn_failure_during_running_transition_returns_state_error(
+    def test_save_fn_failure_during_running_transition_raises_internal_error(
         self, tmp_path: Path
     ) -> None:
         stages = [_make_stage(STAGE_A)]
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=stages)
         prepared = _make_prepared(tmp_path, stages)
 
-        # Flip save_fn to fail on the first in-loop persist
         def _flaky(_state: PipelineState) -> None:
             raise PipelineStateError("save failed")
 
         controller._save_fn = _flaky  # type: ignore[assignment]
 
-        result = loop.run_attempt(
-            prepared=prepared, context=_mk_context(), mlflow_manager=None,
-            log_layout=prepared.log_layout,
-        )
-        assert result.is_failure()
-        assert result.unwrap_err().code == "PIPELINE_STATE_ERROR"  # type: ignore[union-attr]
+        with pytest.raises(InternalError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value.context["legacy_code"] == "PIPELINE_STATE_ERROR"
 
 
 # ===========================================================================
@@ -555,14 +588,14 @@ class TestRegressions:
     def test_no_default_hooks_required_for_success(self, tmp_path: Path) -> None:
         """Regression: loop runs without on_stage_completed/on_shutdown_signal."""
         stages = [_make_stage(STAGE_A)]
-        loop, _, _, _, _ = _build_loop(tmp_path, stages=stages)  # no hooks passed
+        loop, _, _, _, _ = _build_loop(tmp_path, stages=stages)  # no hooks
         prepared = _make_prepared(tmp_path, stages)
 
-        result = loop.run_attempt(
+        out = loop.run_attempt(
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        assert result.is_ok()
+        assert out is not None
 
     def test_log_layout_consulted_for_each_stage(self, tmp_path: Path) -> None:
         stages = [_make_stage(s) for s in [STAGE_A, STAGE_B]]
@@ -573,7 +606,6 @@ class TestRegressions:
             prepared=prepared, context=_mk_context(), mlflow_manager=None,
             log_layout=prepared.log_layout,
         )
-        # log_paths are recorded on the attempt's stage_runs
         for s in stages:
             assert s.stage_name in controller.state.attempts[-1].stage_runs
 
@@ -582,13 +614,34 @@ class TestRegressions:
         loop.handle_interrupt_outside_loop(mlflow_manager=None)
         assert controller.state.pipeline_status == StageRunState.STATUS_INTERRUPTED
 
-    def test_outside_loop_unexpected_error_helper(self, tmp_path: Path) -> None:
+    def test_outside_loop_unexpected_error_helper_returns_typed_exc(
+        self, tmp_path: Path
+    ) -> None:
         loop, controller, _, _, _ = _build_loop(tmp_path)
         err = RuntimeError("bang")
-        result = loop.handle_unexpected_error_outside_loop(err, mlflow_manager=None)
-        assert result.is_failure()
-        assert result.unwrap_err().code == "UNEXPECTED_ERROR"  # type: ignore[union-attr]
+        typed_exc = loop.handle_unexpected_error_outside_loop(err, mlflow_manager=None)
+        assert isinstance(typed_exc, InternalError)
+        assert typed_exc.context["legacy_code"] == "UNEXPECTED_ERROR"
+        assert typed_exc.context["exception_type"] == "RuntimeError"
         assert controller.state.pipeline_status == StageRunState.STATUS_FAILED
+
+    def test_stage_typed_exc_preserves_identity_through_loop(
+        self, tmp_path: Path
+    ) -> None:
+        """Pin: the SAME instance bubbles up — no wrapping/rewrapping."""
+        original = PipelineStageFailedError(
+            detail="propagate me", context={"k": "v"}
+        )
+        stages = [_make_stage(STAGE_A, raises=original)]
+        loop, _, _, _, _ = _build_loop(tmp_path, stages=stages)
+        prepared = _make_prepared(tmp_path, stages)
+
+        with pytest.raises(RyotenkAIError) as ei:
+            loop.run_attempt(
+                prepared=prepared, context=_mk_context(), mlflow_manager=None,
+                log_layout=prepared.log_layout,
+            )
+        assert ei.value is original
 
 
 # ===========================================================================
@@ -633,11 +686,11 @@ def test_success_matrix(
     )
     prepared = _make_prepared(tmp_path, [stage])
 
-    result = loop.run_attempt(
+    out = loop.run_attempt(
         prepared=prepared, context=_mk_context(), mlflow_manager=None,
         log_layout=prepared.log_layout,
     )
-    assert result.is_ok()
+    assert out is not None
 
     stage_status = controller.state.attempts[-1].stage_runs[stage_name].status
     if skip_reason is not None:

@@ -1,13 +1,17 @@
 """
-Tests for the PipelineStage base class.
+Tests for the PipelineStage base class (Phase A2 Batch 6 — raise-based).
 
-Covers:
-- Stage initialization
-- Logging (log_start, log_end)
-- Context updates (update_context)
-- run() lifecycle with execute()
-- Exception handling
-- Invariants
+Coverage by category (7-class):
+- 1. Positive: happy-path success
+- 2. Negative: stage / setup raise
+- 3. Boundary: empty name, repeatable run
+- 4. Invariants: setup→execute→teardown order, teardown always runs when
+                 setup succeeded
+- 5. Dependency errors: legacy Result shim for pre-Batch-7 stages
+- 6. Regressions: teardown exception swallowed; setup raising RyotenkAIError
+- 7. Combinatorial: parametrised lifecycle outcomes
+
+NO MagicMock(spec=Protocol) — PipelineStage is an ABC, not a Protocol.
 """
 
 from __future__ import annotations
@@ -17,8 +21,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.base import PipelineStage
-from ryotenkai_shared.utils.result import Failure, Success
+from ryotenkai_control.pipeline.stages.base import (
+    PipelineStage,
+    _adapt_legacy_to_typed,
+)
+from ryotenkai_shared.errors import (
+    InternalError,
+    PipelineStageFailedError,
+    RyotenkAIError,
+)
+from ryotenkai_shared.utils.result import AppError, Failure, Success
 
 # =========================================================================
 # CONCRETE IMPLEMENTATIONS FOR TESTING
@@ -26,139 +38,133 @@ from ryotenkai_shared.utils.result import Failure, Success
 
 
 class ConcreteStage(PipelineStage):
-    """Concrete PipelineStage for testing."""
+    """Concrete PipelineStage returning dict directly (Batch 6 shape)."""
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
-        """Returns Success with updated context."""
-        updated = self.update_context(context, {"result": "success"})
-        return Success(updated)
-
-
-class ConcreteStageWithError(PipelineStage):
-    """PipelineStage that returns Failure."""
-
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
-        """Returns Failure."""
-        return Failure("Execution failed")
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        self.update_context(context, {"result": "success"})
+        return {"result": "success"}
 
 
-class ConcreteStageWithException(PipelineStage):
-    """PipelineStage that raises."""
+class ConcreteStageRaises(PipelineStage):
+    """Stage that raises a typed RyotenkAIError."""
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
-        """Raises an exception."""
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        raise PipelineStageFailedError(
+            detail="Execution failed", context={"reason": "stage-bug"}
+        )
+
+
+class ConcreteStageRaisesPlain(PipelineStage):
+    """Stage that raises a non-typed Exception (must be wrapped)."""
+
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("Unexpected error during execution")
 
 
 class ConcreteStageWithLifecycle(PipelineStage):
-    """PipelineStage to exercise setup/teardown lifecycle."""
+    """Stage exercising setup → execute → teardown order."""
 
     def __init__(self, config: Any, stage_name: str):
         super().__init__(config=config, stage_name=stage_name)
         self.calls: list[str] = []
 
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
+    def setup(self, _context: dict[str, Any]) -> None:
         self.calls.append("setup")
-        return Success(None)
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         self.calls.append("execute")
-        return Success(self.update_context(context, {"result": "ok"}))
+        return {"ok": True}
 
     def teardown(self) -> None:
         self.calls.append("teardown")
 
 
-class ConcreteStageWithSetupFailure(PipelineStage):
-    """PipelineStage whose setup() fails (fail-fast)."""
+class ConcreteStageWithSetupRaise(PipelineStage):
+    """setup() raises RyotenkAIError — execute + teardown must be skipped."""
 
     def __init__(self, config: Any, stage_name: str):
         super().__init__(config=config, stage_name=stage_name)
         self.execute_called = False
         self.teardown_called = False
 
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
-        return Failure("Setup failed")
+    def setup(self, _context: dict[str, Any]) -> None:
+        raise PipelineStageFailedError(detail="Setup failed")
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         self.execute_called = True
-        return Success(context)
+        return {}
 
     def teardown(self) -> None:
         self.teardown_called = True
 
 
-class ConcreteStageWithTeardownOnException(PipelineStage):
-    """PipelineStage where execute() raises; teardown() must still run."""
-
-    def __init__(self, config: Any, stage_name: str):
-        super().__init__(config=config, stage_name=stage_name)
-        self.teardown_called = False
-
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
-        return Success(None)
-
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
-        raise RuntimeError("boom")
-
-    def teardown(self) -> None:
-        self.teardown_called = True
-
-
-class ConcreteStageWithSetupException(PipelineStage):
-    """setup() raises: execute/teardown must not run."""
+class ConcreteStageWithSetupPlainException(PipelineStage):
+    """setup() raises a plain Exception — wrapped as InternalError."""
 
     def __init__(self, config: Any, stage_name: str):
         super().__init__(config=config, stage_name=stage_name)
         self.execute_called = False
         self.teardown_called = False
 
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
+    def setup(self, _context: dict[str, Any]) -> None:
         raise RuntimeError("setup boom")
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         self.execute_called = True
-        return Success(context)
+        return {}
+
+    def teardown(self) -> None:
+        self.teardown_called = True
+
+
+class ConcreteStageWithTeardownAfterExecuteRaise(PipelineStage):
+    """execute() raises; teardown() must still run."""
+
+    def __init__(self, config: Any, stage_name: str):
+        super().__init__(config=config, stage_name=stage_name)
+        self.teardown_called = False
+
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        raise PipelineStageFailedError(detail="boom")
 
     def teardown(self) -> None:
         self.teardown_called = True
 
 
 class ConcreteStageWithTeardownException(PipelineStage):
-    """teardown() raises: run() must not crash and keeps execute Result."""
+    """teardown() raises: run() returns execute output regardless."""
 
     def __init__(self, config: Any, stage_name: str):
         super().__init__(config=config, stage_name=stage_name)
         self.calls: list[str] = []
 
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
+    def setup(self, _context: dict[str, Any]) -> None:
         self.calls.append("setup")
-        return Success(None)
 
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         self.calls.append("execute")
-        return Success(self.update_context(context, {"ok": True}))
+        return {"ok": True}
 
     def teardown(self) -> None:
         self.calls.append("teardown")
         raise RuntimeError("teardown boom")
 
 
-class ConcreteStageWithTeardownTrackingOnFailure(PipelineStage):
-    """execute() returns Failure: teardown must still run (invariant)."""
+class ConcreteLegacyStage(PipelineStage):
+    """Pre-Batch-7 stage still returning legacy ``Result[T, AppError]``.
 
-    def __init__(self, config: Any, stage_name: str):
+    The shim ``_adapt_legacy_to_typed`` in ``base.run()`` must unwrap
+    ``Success`` and raise ``InternalError`` for ``Failure``.
+    """
+
+    def __init__(self, config: Any, stage_name: str, *, fail: bool = False):
         super().__init__(config=config, stage_name=stage_name)
-        self.teardown_called = False
+        self._fail = fail
 
-    def setup(self, context: dict[str, Any]) -> Success[None] | Failure[str]:
-        return Success(None)
-
-    def execute(self, context: dict[str, Any]) -> Success[dict[str, Any]] | Failure[str]:
-        return Failure("Execution failed")
-
-    def teardown(self) -> None:
-        self.teardown_called = True
+    def execute(self, context: dict[str, Any]):  # type: ignore[override]
+        if self._fail:
+            return Failure(AppError(message="legacy boom", code="LEGACY_X"))
+        return Success({"legacy": True})
 
 
 # =========================================================================
@@ -168,7 +174,6 @@ class ConcreteStageWithTeardownTrackingOnFailure(PipelineStage):
 
 @pytest.fixture
 def mock_config():
-    """Minimal mock config."""
     config = MagicMock()
     config.model.name = "test/model"
     return config
@@ -176,385 +181,270 @@ def mock_config():
 
 @pytest.fixture
 def concrete_stage(mock_config):
-    """Builds ConcreteStage instance."""
     return ConcreteStage(config=mock_config, stage_name="TestStage")
 
 
-@pytest.fixture
-def error_stage(mock_config):
-    """Builds ConcreteStageWithError instance."""
-    return ConcreteStageWithError(config=mock_config, stage_name="ErrorStage")
-
-
-@pytest.fixture
-def exception_stage(mock_config):
-    """Builds ConcreteStageWithException instance."""
-    return ConcreteStageWithException(config=mock_config, stage_name="ExceptionStage")
-
-
 # =========================================================================
-# INITIALIZATION TESTS
+# 1. POSITIVE
 # =========================================================================
 
 
-def test_pipeline_stage_initialization(mock_config):
-    """PipelineStage init with config and name."""
-    stage = ConcreteStage(config=mock_config, stage_name="TestStage")
+class TestPositive:
+    def test_run_calls_execute_and_returns_dict(self, concrete_stage):
+        out = concrete_stage.run({"initial": "data"})
+        assert isinstance(out, dict)
+        assert out == {"result": "success"}
 
-    assert stage.config is mock_config
-    assert stage.stage_name == "TestStage"
-    assert stage.metadata == {}
-    assert isinstance(stage.metadata, dict)
+    def test_run_logs_start_and_success(self, concrete_stage):
+        with patch("ryotenkai_control.pipeline.stages.base.logger") as mock_logger:
+            concrete_stage.run({})
+        calls = [call[0][0] for call in mock_logger.info.call_args_list]
+        # 1: start, 2: end ✅
+        assert "🚀 Starting:" in calls[0]
+        assert "✅ Stage completed:" in calls[1]
 
-
-def test_pipeline_stage_is_abstract():
-    """PipelineStage requires execute() implementation."""
-
-    class IncompleteStage(PipelineStage):
-        pass  # No execute() implementation
-
-    with pytest.raises(TypeError) as exc_info:
-        IncompleteStage(config=MagicMock(), stage_name="Test")
-
-    assert "abstract" in str(exc_info.value).lower()
-
-
-def test_metadata_mutable(concrete_stage):
-    """metadata can be updated after construction."""
-    concrete_stage.metadata["key1"] = "value1"
-    concrete_stage.metadata["key2"] = 42
-
-    assert concrete_stage.metadata["key1"] == "value1"
-    assert concrete_stage.metadata["key2"] == 42
-    assert len(concrete_stage.metadata) == 2
+    def test_lifecycle_order(self, mock_config):
+        stage = ConcreteStageWithLifecycle(config=mock_config, stage_name="L")
+        stage.run({})
+        assert stage.calls == ["setup", "execute", "teardown"]
 
 
 # =========================================================================
-# LOGGING TESTS
+# 2. NEGATIVE
 # =========================================================================
 
 
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_log_start_logs_correctly(mock_logger, concrete_stage):
-    """log_start logs stage start with expected format."""
-    concrete_stage.log_start()
+class TestNegative:
+    def test_run_propagates_ryotenkai_error_from_execute(self, mock_config):
+        stage = ConcreteStageRaises(config=mock_config, stage_name="ErrStage")
+        with pytest.raises(PipelineStageFailedError) as ei:
+            stage.run({})
+        assert ei.value.detail == "Execution failed"
+        assert ei.value.context["reason"] == "stage-bug"
 
-    mock_logger.info.assert_called_once()
-    call_args = mock_logger.info.call_args[0][0]
-    assert "🚀" in call_args
-    assert "Starting:" in call_args
-    assert "TestStage" in call_args
+    def test_plain_exception_wrapped_as_internal_error(self, mock_config):
+        stage = ConcreteStageRaisesPlain(config=mock_config, stage_name="X")
+        with pytest.raises(InternalError) as ei:
+            stage.run({})
+        assert "Unexpected error in X" in (ei.value.detail or "")
+        assert ei.value.context["stage"] == "X"
+        assert ei.value.context["exception_type"] == "RuntimeError"
+        # Cause chain preserved for tracebacks
+        assert isinstance(ei.value.__cause__, RuntimeError)
 
+    def test_setup_ryotenkai_error_propagates_unchanged(self, mock_config):
+        stage = ConcreteStageWithSetupRaise(config=mock_config, stage_name="S")
+        with pytest.raises(PipelineStageFailedError):
+            stage.run({})
+        assert stage.execute_called is False
+        assert stage.teardown_called is False
 
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_log_end_success(mock_logger, concrete_stage):
-    """log_end logs success with checkmark."""
-    concrete_stage.log_end(success=True)
-
-    mock_logger.info.assert_called_once()
-    call_args = mock_logger.info.call_args[0][0]
-    assert "✅" in call_args
-    assert "Stage completed:" in call_args
-    assert "TestStage" in call_args
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_log_end_failure(mock_logger, concrete_stage):
-    """log_end logs failure with cross."""
-    concrete_stage.log_end(success=False)
-
-    mock_logger.info.assert_called_once()
-    call_args = mock_logger.info.call_args[0][0]
-    assert "❌" in call_args
-    assert "Stage completed:" in call_args
-    assert "TestStage" in call_args
-
-
-# =========================================================================
-# UPDATE_CONTEXT TESTS
-# =========================================================================
-
-
-def test_update_context_adds_data(concrete_stage):
-    """update_context stores data under stage_name."""
-    context = {"previous_stage": "data"}
-    updates = {"result": "success", "value": 42}
-
-    updated = concrete_stage.update_context(context, updates)
-
-    assert updated["previous_stage"] == "data"
-    assert updated["TestStage"] == updates
-    assert updated["TestStage"]["result"] == "success"
-    assert updated["TestStage"]["value"] == 42
-
-
-def test_update_context_empty_context(concrete_stage):
-    """update_context with empty context."""
-    context = {}
-    updates = {"data": "value"}
-
-    updated = concrete_stage.update_context(context, updates)
-
-    assert "TestStage" in updated
-    assert updated["TestStage"] == updates
-
-
-def test_update_context_overwrites_existing(concrete_stage):
-    """update_context overwrites existing stage data."""
-    context = {"TestStage": {"old": "data"}}
-    updates = {"new": "data"}
-
-    updated = concrete_stage.update_context(context, updates)
-
-    assert updated["TestStage"] == updates
-    assert "old" not in updated["TestStage"]
-    assert updated["TestStage"]["new"] == "data"
+    def test_setup_plain_exception_wrapped_as_internal_error(self, mock_config):
+        stage = ConcreteStageWithSetupPlainException(
+            config=mock_config, stage_name="SP"
+        )
+        with pytest.raises(InternalError) as ei:
+            stage.run({})
+        assert stage.execute_called is False
+        assert stage.teardown_called is False
+        assert "Setup error in SP" in (ei.value.detail or "")
 
 
 # =========================================================================
-# RUN() LIFECYCLE TESTS
+# 3. BOUNDARY
 # =========================================================================
 
 
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_calls_execute_and_logs(mock_logger, concrete_stage):
-    """run() calls execute() and logs start/end."""
-    context = {"initial": "data"}
+class TestBoundary:
+    def test_pipeline_stage_initialization(self, mock_config):
+        stage = ConcreteStage(config=mock_config, stage_name="T")
+        assert stage.config is mock_config
+        assert stage.stage_name == "T"
+        assert stage.metadata == {}
 
-    result = concrete_stage.run(context)
+    def test_pipeline_stage_is_abstract(self):
+        class Incomplete(PipelineStage):
+            pass
 
-    assert result.is_success()
-    # Logging called twice: start and end
-    assert mock_logger.info.call_count == 2
+        with pytest.raises(TypeError):
+            Incomplete(config=MagicMock(), stage_name="X")
 
-    # Call order
-    calls = [call[0][0] for call in mock_logger.info.call_args_list]
-    assert "🚀 Starting:" in calls[0]
-    assert "✅ Stage completed:" in calls[1]
+    def test_stage_with_empty_name(self, mock_config):
+        s = ConcreteStage(config=mock_config, stage_name="")
+        assert s.stage_name == ""
+        assert isinstance(s, PipelineStage)
 
-
-def test_run_success_returns_success_result(concrete_stage):
-    """Successful execute() yields Success."""
-    context = {"test": "data"}
-
-    result = concrete_stage.run(context)
-
-    assert result.is_success()
-    result_value = result.unwrap()
-    assert "TestStage" in result_value
-    assert result_value["TestStage"]["result"] == "success"
-
-
-def test_run_failure_propagates_error(error_stage):
-    """Failed execute() returns Failure."""
-    context = {}
-
-    result = error_stage.run(context)
-
-    assert result.is_failure()
-    error_msg = str(result.unwrap_err())
-    assert error_msg == "Execution failed"
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_exception_handling(mock_logger, exception_stage):
-    """Exception in execute() is caught as Err."""
-    context = {}
-
-    result = exception_stage.run(context)
-
-    assert result.is_failure()
-    error_msg = str(result.unwrap_err())
-    assert "Unexpected error in ExceptionStage" in error_msg
-    assert "Unexpected error during execution" in error_msg
-
-    # Exception was logged
-    mock_logger.exception.assert_called_once()
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_always_calls_log_end(mock_logger, exception_stage):
-    """log_end runs even on exception."""
-    context = {}
-
-    result = exception_stage.run(context)
-
-    assert result.is_failure()
-
-    # log_end called with success=False
-    calls = [call[0][0] for call in mock_logger.info.call_args_list]
-    assert any("❌" in call for call in calls)
+    def test_run_is_repeatable(self, mock_config):
+        stage = ConcreteStageWithLifecycle(config=mock_config, stage_name="R")
+        stage.run({})
+        stage.run({})
+        assert stage.calls == [
+            "setup", "execute", "teardown",
+            "setup", "execute", "teardown",
+        ]
 
 
 # =========================================================================
-# INVARIANT TESTS
+# 4. INVARIANTS
 # =========================================================================
 
 
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_logging_order_invariant(mock_logger, concrete_stage):
-    """log_start before execute; log_end after."""
-    context = {}
+class TestInvariants:
+    def test_teardown_runs_after_execute_raises(self, mock_config):
+        stage = ConcreteStageWithTeardownAfterExecuteRaise(
+            config=mock_config, stage_name="TR"
+        )
+        with pytest.raises(PipelineStageFailedError):
+            stage.run({})
+        assert stage.teardown_called is True
 
-    # Reset mock for accurate ordering
-    mock_logger.reset_mock()
+    def test_cleanup_default_is_noop(self, mock_config):
+        stage = ConcreteStageWithTeardownAfterExecuteRaise(
+            config=mock_config, stage_name="C"
+        )
+        stage.cleanup()
+        # cleanup must NOT call teardown by default
+        assert stage.teardown_called is False
 
-    result = concrete_stage.run(context)
+    def test_update_context_stores_under_stage_name(self, concrete_stage):
+        ctx = {"prev": 1}
+        out = concrete_stage.update_context(ctx, {"k": "v"})
+        assert out["prev"] == 1
+        assert out["TestStage"] == {"k": "v"}
 
-    assert result.is_success()
-
-    # Call order
-    info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
-    assert len(info_calls) == 2
-
-    # First call: log_start
-    assert "🚀 Starting:" in info_calls[0]
-    # Second call: log_end
-    assert "Stage completed:" in info_calls[1]
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_logging_order_on_exception(mock_logger, exception_stage):
-    """Logging order on exception."""
-    context = {}
-
-    mock_logger.reset_mock()
-
-    result = exception_stage.run(context)
-
-    assert result.is_failure()
-
-    # log_start called
-    info_calls = [call[0][0] for call in mock_logger.info.call_args_list]
-    assert any("🚀 Starting:" in call for call in info_calls)
-    # log_end called
-    assert any("❌" in call for call in info_calls)
-    # exception logged
-    mock_logger.exception.assert_called_once()
-
-
-def test_run_calls_setup_execute_teardown_in_order(mock_config):
-    """run() orders setup -> execute -> teardown."""
-    stage = ConcreteStageWithLifecycle(config=mock_config, stage_name="LifecycleStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_success()
-    assert stage.calls == ["setup", "execute", "teardown"]
-
-
-def test_run_does_not_call_execute_or_teardown_when_setup_fails(mock_config):
-    """If setup() returns Failure, execute/teardown are skipped."""
-    stage = ConcreteStageWithSetupFailure(config=mock_config, stage_name="SetupFailStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_failure()
-    assert stage.execute_called is False
-    assert stage.teardown_called is False
-
-
-def test_run_calls_teardown_on_execute_exception(mock_config):
-    """teardown() runs even if execute() raises."""
-    stage = ConcreteStageWithTeardownOnException(config=mock_config, stage_name="TeardownOnExceptionStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_failure()
-    assert stage.teardown_called is True
-
-
-def test_cleanup_default_is_noop(mock_config):
-    """cleanup() does not call teardown() by default."""
-    stage = ConcreteStageWithTeardownOnException(config=mock_config, stage_name="CleanupNoopStage")
-
-    stage.cleanup()
-
-    assert stage.teardown_called is False
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_setup_exception_is_handled_and_no_execute_teardown(mock_logger, mock_config):
-    """Negative: setup() raises → Err; execute/teardown skipped."""
-    stage = ConcreteStageWithSetupException(config=mock_config, stage_name="SetupExceptionStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_failure()
-    assert stage.execute_called is False
-    assert stage.teardown_called is False
-    mock_logger.exception.assert_called_once()
-
-
-@patch("ryotenkai_control.pipeline.stages.base.logger")
-def test_run_teardown_exception_is_swallowed_and_result_preserved(mock_logger, mock_config):
-    """Edge: teardown() raises → swallowed; execute Result preserved."""
-    stage = ConcreteStageWithTeardownException(config=mock_config, stage_name="TeardownExceptionStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_success()
-    assert stage.calls == ["setup", "execute", "teardown"]
-    mock_logger.warning.assert_called_once()
-
-
-def test_run_calls_teardown_when_execute_returns_failure(mock_config):
-    """Invariant: teardown() runs even when execute() returned Failure."""
-    stage = ConcreteStageWithTeardownTrackingOnFailure(config=mock_config, stage_name="FailureTeardownStage")
-    ctx: dict[str, Any] = {}
-
-    result = stage.run(ctx)
-
-    assert result.is_failure()
-    assert stage.teardown_called is True
-
-
-def test_run_is_repeatable_no_cross_run_state(mock_config):
-    """Regression/invariant: repeated run() does not depend on prior run state."""
-    stage = ConcreteStageWithLifecycle(config=mock_config, stage_name="RepeatableStage")
-    ctx1: dict[str, Any] = {}
-    ctx2: dict[str, Any] = {}
-
-    r1 = stage.run(ctx1)
-    r2 = stage.run(ctx2)
-
-    assert r1.is_success()
-    assert r2.is_success()
-    assert stage.calls == ["setup", "execute", "teardown", "setup", "execute", "teardown"]
 
 # =========================================================================
-# EDGE CASE TESTS
+# 5. DEPENDENCY ERRORS (legacy Result shim)
 # =========================================================================
 
 
-def test_stage_with_empty_name(mock_config):
-    """Stage with empty name."""
-    stage = ConcreteStage(config=mock_config, stage_name="")
+class TestLegacyShim:
+    def test_shim_passes_through_dict(self):
+        assert _adapt_legacy_to_typed({"a": 1}) == {"a": 1}
 
-    assert stage.stage_name == ""
-    assert isinstance(stage, PipelineStage)
+    def test_shim_non_dict_non_result_becomes_empty_dict(self):
+        # None / int etc — shim normalises to {} so the loop's
+        # context.update() never sees a non-dict.
+        assert _adapt_legacy_to_typed(None) == {}
+        assert _adapt_legacy_to_typed(42) == {}
+
+    def test_shim_unwraps_legacy_success(self):
+        result = Success({"k": 1})
+        assert _adapt_legacy_to_typed(result) == {"k": 1}
+
+    def test_shim_raises_internal_error_for_legacy_failure(self):
+        result = Failure(AppError(message="legacy boom", code="LEGACY_X"))
+        with pytest.raises(InternalError) as ei:
+            _adapt_legacy_to_typed(result)
+        assert "legacy boom" in (ei.value.detail or "")
+        assert ei.value.context["legacy_code"] == "LEGACY_X"
+
+    def test_legacy_stage_success_unwrapped_by_run(self, mock_config):
+        stage = ConcreteLegacyStage(config=mock_config, stage_name="L")
+        out = stage.run({})
+        assert out == {"legacy": True}
+
+    def test_legacy_stage_failure_raised_by_run(self, mock_config):
+        stage = ConcreteLegacyStage(config=mock_config, stage_name="L", fail=True)
+        with pytest.raises(InternalError) as ei:
+            stage.run({})
+        assert ei.value.context["legacy_code"] == "LEGACY_X"
+
+    def test_shim_unwrap_returns_empty_dict_for_non_dict_success_value(self):
+        # Defensive: legacy stages occasionally return Success(None)
+        result = Success(None)
+        assert _adapt_legacy_to_typed(result) == {}
 
 
-def test_run_with_none_context_via_run(concrete_stage):
-    """run() handles bad context exceptions."""
+# =========================================================================
+# 6. REGRESSIONS
+# =========================================================================
 
-    # Stage uses None as context
-    class BadContextStage(PipelineStage):
+
+class TestRegressions:
+    def test_teardown_exception_swallowed_and_output_preserved(self, mock_config):
+        stage = ConcreteStageWithTeardownException(
+            config=mock_config, stage_name="TE"
+        )
+        out = stage.run({})
+        assert out == {"ok": True}
+        assert stage.calls == ["setup", "execute", "teardown"]
+
+    def test_keyboard_interrupt_in_execute_reraised(self, mock_config):
+        class KbiStage(PipelineStage):
+            def execute(self, context):
+                raise KeyboardInterrupt
+
+        stage = KbiStage(config=mock_config, stage_name="K")
+        with pytest.raises(KeyboardInterrupt):
+            stage.run({})
+
+    def test_keyboard_interrupt_in_setup_reraised(self, mock_config):
+        class KbiSetupStage(PipelineStage):
+            def setup(self, _context):
+                raise KeyboardInterrupt
+
+            def execute(self, context):
+                return {}
+
+        stage = KbiSetupStage(config=mock_config, stage_name="K2")
+        with pytest.raises(KeyboardInterrupt):
+            stage.run({})
+
+    def test_log_end_called_on_failure(self, mock_config):
+        stage = ConcreteStageRaises(config=mock_config, stage_name="F")
+        with patch("ryotenkai_control.pipeline.stages.base.logger") as mock_logger:
+            with pytest.raises(PipelineStageFailedError):
+                stage.run({})
+        info_calls = [c[0][0] for c in mock_logger.info.call_args_list]
+        assert any("❌" in c for c in info_calls)
+
+
+# =========================================================================
+# 7. COMBINATORIAL
+# =========================================================================
+
+
+@pytest.mark.parametrize(
+    "setup_raise,execute_raise,expect_exc,expect_teardown",
+    [
+        (False, False, None, True),
+        (True, False, PipelineStageFailedError, False),
+        (False, True, PipelineStageFailedError, True),
+    ],
+)
+def test_lifecycle_matrix(
+    mock_config,
+    setup_raise: bool,
+    execute_raise: bool,
+    expect_exc: type[Exception] | None,
+    expect_teardown: bool,
+):
+    """Matrix of {setup_raises, execute_raises} outcomes."""
+    teardown_calls: list[str] = []
+
+    class S(PipelineStage):
+        def setup(self, _context):
+            if setup_raise:
+                raise PipelineStageFailedError(detail="setup")
+
         def execute(self, context):
-            # Intentionally use None as dict
-            context["key"] = "value"  # type: ignore
-            return Success(context)
+            if execute_raise:
+                raise PipelineStageFailedError(detail="execute")
+            return {"ok": True}
 
-    bad_stage = BadContextStage(config=concrete_stage.config, stage_name="BadStage")
+        def teardown(self):
+            teardown_calls.append("teardown")
 
-    # run() catches and returns Err
-    result = bad_stage.run(None)  # type: ignore
+    stage = S(config=mock_config, stage_name="M")
+    if expect_exc is None:
+        out = stage.run({})
+        assert out == {"ok": True}
+    else:
+        with pytest.raises(expect_exc):
+            stage.run({})
 
-    assert result.is_failure()
-    error_msg = str(result.unwrap_err())
-    assert "Unexpected error" in error_msg
+    if expect_teardown:
+        assert teardown_calls == ["teardown"]
+    else:
+        assert teardown_calls == []
