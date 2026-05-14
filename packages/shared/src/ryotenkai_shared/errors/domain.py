@@ -183,6 +183,18 @@ class DatasetValidationFailedError(DomainError):
 
 
 # ---------------------------------------------------------------------------
+# Training / strategy (STRATEGY_*)
+# ---------------------------------------------------------------------------
+
+
+class StrategyChainInvalidError(DomainError):
+    """Strategy chain transitions or composition are semantically invalid."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.STRATEGY_CHAIN_INVALID
+    status: ClassVar[int] = 422
+
+
+# ---------------------------------------------------------------------------
 # Engines (ENGINE_*)
 # ---------------------------------------------------------------------------
 
@@ -222,4 +234,5 @@ __all__ = [
     "RunIsActiveError",
     "StateLoadFailedError",
     "StateLockedError",
+    "StrategyChainInvalidError",
 ]

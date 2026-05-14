@@ -43,6 +43,7 @@ _DEFAULT_TITLES: dict[ErrorCode, str] = {
     # ----- training ----------------------------------------------------
     ErrorCode.TRAINING_FAILED: "Training failed",
     ErrorCode.TRAINING_OOM: "Training ran out of memory",
+    ErrorCode.STRATEGY_CHAIN_INVALID: "Strategy chain validation failed",
     # ----- dataset / model / inference --------------------------------
     ErrorCode.DATASET_LOAD_FAILED: "Dataset load failed",
     ErrorCode.DATASET_VALIDATION_FAILED: "Dataset validation failed",

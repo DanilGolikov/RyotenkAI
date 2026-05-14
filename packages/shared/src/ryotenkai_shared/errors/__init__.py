@@ -41,6 +41,7 @@ from ryotenkai_shared.errors.domain import (
     RunIsActiveError,
     StateLoadFailedError,
     StateLockedError,
+    StrategyChainInvalidError,
 )
 from ryotenkai_shared.errors.infra import (
     InferenceUnavailableError,
@@ -76,6 +77,7 @@ __all__ = [
     "IntegrationNotFoundError",
     "StateLoadFailedError",
     "StateLockedError",
+    "StrategyChainInvalidError",
     "LaunchInProgressError",
     "RunIsActiveError",
     "HFAuthFailedError",

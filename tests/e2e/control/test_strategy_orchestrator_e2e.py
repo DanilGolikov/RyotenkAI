@@ -38,8 +38,7 @@ class TestStrategyChainValidation:
         dpo_phase = MagicMock()
         dpo_phase.strategy_type = "dpo"
 
-        result = validate_strategy_chain([dpo_phase])
-        assert result.is_success()
+        validate_strategy_chain([dpo_phase])
 
     def test_valid_chain_sft_dpo_passes(self, mock_config):
         """
@@ -57,8 +56,7 @@ class TestStrategyChainValidation:
         dpo_phase = MagicMock()
         dpo_phase.strategy_type = "dpo"
 
-        result = validate_strategy_chain([sft_phase, dpo_phase])
-        assert result.is_success()
+        validate_strategy_chain([sft_phase, dpo_phase])
 
     def test_valid_chain_cpt_sft_cot_passes(self, mock_config):
         """
@@ -79,8 +77,7 @@ class TestStrategyChainValidation:
         cot_phase = MagicMock()
         cot_phase.strategy_type = "cot"
 
-        result = validate_strategy_chain([cpt_phase, sft_phase, cot_phase])
-        assert result.is_success()
+        validate_strategy_chain([cpt_phase, sft_phase, cot_phase])
 
     def test_single_sft_valid(self, mock_config):
         """
@@ -94,7 +91,7 @@ class TestStrategyChainValidation:
         sft_phase = MagicMock()
         sft_phase.strategy_type = "sft"
 
-        assert validate_strategy_chain([sft_phase]).is_success()
+        validate_strategy_chain([sft_phase])
 
     def test_single_cpt_valid(self, mock_config):
         """
@@ -108,7 +105,7 @@ class TestStrategyChainValidation:
         cpt_phase = MagicMock()
         cpt_phase.strategy_type = "cpt"
 
-        assert validate_strategy_chain([cpt_phase]).is_success()
+        validate_strategy_chain([cpt_phase])
 
 
 # =============================================================================

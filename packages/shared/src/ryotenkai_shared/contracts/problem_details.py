@@ -131,6 +131,7 @@ class ErrorCode(StrEnum):
     # ----- training (Phase A1) -----------------------------------------
     TRAINING_FAILED = "TRAINING_FAILED"
     TRAINING_OOM = "TRAINING_OOM"
+    STRATEGY_CHAIN_INVALID = "STRATEGY_CHAIN_INVALID"
 
     # ----- dataset / model / inference (Phase A1) ----------------------
     DATASET_LOAD_FAILED = "DATASET_LOAD_FAILED"

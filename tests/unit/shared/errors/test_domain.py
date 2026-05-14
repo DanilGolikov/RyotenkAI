@@ -34,6 +34,7 @@ from ryotenkai_shared.errors import (
     RunIsActiveError,
     StateLoadFailedError,
     StateLockedError,
+    StrategyChainInvalidError,
 )
 from ryotenkai_shared.errors.base import RyotenkAIError
 
@@ -62,6 +63,7 @@ _DOMAIN_CATALOG: list[tuple[type[RyotenkAIError], ErrorCode, int]] = [
     (DatasetValidationFailedError, ErrorCode.DATASET_VALIDATION_FAILED, 422),
     (EngineNotRegisteredError, ErrorCode.ENGINE_NOT_REGISTERED, 404),
     (EngineConfigInvalidError, ErrorCode.ENGINE_CONFIG_INVALID, 422),
+    (StrategyChainInvalidError, ErrorCode.STRATEGY_CHAIN_INVALID, 422),
 ]
 
 
@@ -92,5 +94,5 @@ class TestPositive:
         assert isinstance(exc, RyotenkAIError)
 
     def test_catalog_size_matches_plan(self) -> None:
-        """Sanity: we shipped exactly 20 domain.py subclasses in Phase A1."""
-        assert len(_DOMAIN_CATALOG) == 20
+        """Sanity: we shipped 20 domain.py subclasses in Phase A1, +1 in A2."""
+        assert len(_DOMAIN_CATALOG) == 21

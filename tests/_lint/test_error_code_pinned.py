@@ -62,6 +62,7 @@ _PHASE_A1_NEW_CODES: frozenset[ErrorCode] = frozenset({
     ErrorCode.RUN_IS_ACTIVE,
     ErrorCode.TRAINING_FAILED,
     ErrorCode.TRAINING_OOM,
+    ErrorCode.STRATEGY_CHAIN_INVALID,
     ErrorCode.DATASET_LOAD_FAILED,
     ErrorCode.DATASET_VALIDATION_FAILED,
     ErrorCode.MODEL_LOAD_FAILED,
@@ -201,7 +202,7 @@ def test_concrete_subclass_count_matches_phase_a1_catalog() -> None:
     (which is fine) visible by failing this test until the constant
     below is bumped. That forces a conscious update to the catalog.
     """
-    expected_phase_a1_concrete_count = 34  # 20 domain + 12 infra + InternalError + TransportError
+    expected_phase_a1_concrete_count = 35  # 21 domain + 12 infra + InternalError + TransportError
     actual = len(_concrete_subclasses())
     assert actual == expected_phase_a1_concrete_count, (
         f"Phase A1 ships {expected_phase_a1_concrete_count} concrete subclasses; "

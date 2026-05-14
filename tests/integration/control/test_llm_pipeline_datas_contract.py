@@ -150,20 +150,19 @@ def test_validate_strategy_chain_real_configs(config_paths: dict[str, Path]) -> 
     - most configs must have valid chain
     - invalid_chain config must be detected by validate_strategy_chain()
     """
-    # Positive set
+    # Positive set — validator raises on failure; reaching the next line is success.
     for key in ("test_1", "test_2", "test_3", "test_5_hf", "test_sapo", "mlflow_remote_sft", "pipeline_config"):
         if not _is_new_dataset_schema(config_paths[key]):
             pytest.skip(f"{key}: llm_pipeline_datas config not migrated to new dataset schema yet")
         cfg = PipelineConfig.from_yaml(config_paths[key])
-        result = validate_strategy_chain(cfg.training.strategies)
-        assert result.is_success(), f"{key}: expected valid chain, got error: {result.unwrap_err()}"
+        validate_strategy_chain(cfg.training.strategies)
 
-    # Negative set
+    # Negative set — historically passed (warning-only on bad transition);
+    # invalid_chain has a transition warning but no hard failure.
     if not _is_new_dataset_schema(config_paths["test_4_invalid_chain"]):
         pytest.skip("invalid_chain: llm_pipeline_datas config not migrated to new dataset schema yet")
     invalid_cfg = PipelineConfig.from_yaml(config_paths["test_4_invalid_chain"])
-    result = validate_strategy_chain(invalid_cfg.training.strategies)
-    assert result.is_success()
+    validate_strategy_chain(invalid_cfg.training.strategies)
 
 
 def test_deployment_manager_builds_local_abs_to_remote_rel_upload_map(

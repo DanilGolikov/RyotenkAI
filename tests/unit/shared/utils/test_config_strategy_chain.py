@@ -94,16 +94,38 @@ def _warning_text(mock_warning) -> str:
 
 
 def _assert_ok(result) -> None:
-    assert result.is_success()
-    assert result.unwrap() is None
+    # validate_strategy_chain returns None on success; an exception would
+    # have propagated through the caller's invocation. Reaching this point
+    # means success.
+    assert result is None
 
 
-def _assert_err(result, *, code: str | None = None) -> str:
-    assert result.is_failure()
-    err = result.unwrap_err()
+# Map legacy AppError codes -> StrategyChainInvalidError context['reason']
+_LEGACY_CODE_TO_REASON: dict[str, str] = {
+    "STRATEGY_CHAIN_EMPTY": "empty_chain",
+    "STRATEGY_CHAIN_CONTAINS_NONE": "contains_none",
+    "STRATEGY_CHAIN_DUPLICATE_DATASET": "duplicate_dataset",
+}
+
+
+def _assert_err(call_or_fn, *, code: str | None = None) -> str:
+    """Assert validator raised :class:.
+
+    Test callers wrap the invocation in a zero-arg lambda so this
+    helper can drive it under pytest.raises.
+    """
+    from ryotenkai_shared.errors import StrategyChainInvalidError
+
+    assert callable(call_or_fn), "pass a zero-arg lambda — Result API is gone"
+    with pytest.raises(StrategyChainInvalidError) as exc_info:
+        call_or_fn()
     if code is not None:
-        assert err.code == code
-    return str(err)
+        expected_reason = _LEGACY_CODE_TO_REASON[code]
+        actual_reason = exc_info.value.context.get("reason")
+        assert actual_reason == expected_reason, (
+            f"expected context['reason']={expected_reason!r} for legacy code {code!r}, got {actual_reason!r}"
+        )
+    return str(exc_info.value)
 
 
 # =============================================================================
@@ -260,13 +282,13 @@ class TestInvalidChains:
     def test_empty_chain(self):
         """Empty chain should fail with appropriate error."""
         strategies = []
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_EMPTY")
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_EMPTY")
         assert "cannot be empty" in error_msg
 
     def test_none_in_chain(self):
         """Chain with None should fail (BUG-010 fix)."""
         strategies = [None]  # type: ignore
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
     def test_none_in_middle_of_chain(self):
@@ -276,13 +298,13 @@ class TestInvalidChains:
             None,  # type: ignore
             _mk_phase("dpo", dataset="ds_dpo"),
         ]
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
     def test_none_at_start(self):
         """None at start should fail."""
         strategies = [None, _mk_phase("sft")]  # type: ignore
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "cannot contain None" in error_msg
 
 
@@ -560,12 +582,12 @@ class TestErrorMessages:
 
     def test_empty_chain_error_is_clear(self):
         """Empty chain error should be clear."""
-        error_msg = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
+        error_msg = _assert_err(lambda: validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error_msg.lower()
 
     def test_none_chain_error_is_clear(self):
         """None in chain error should be clear."""
-        error_msg = _assert_err(validate_strategy_chain([None]), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error_msg = _assert_err(lambda: validate_strategy_chain([None]), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "none" in error_msg.lower()
 
 
@@ -583,7 +605,7 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft", dataset="shared"),
             _mk_phase("dpo", dataset="shared"),
         ]
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "Duplicate dataset" in error_msg
         assert "shared" in error_msg
 
@@ -593,7 +615,7 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft"),  # dataset=None → "default"
             _mk_phase("dpo"),  # dataset=None → "default"
         ]
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "Duplicate dataset" in error_msg
         assert "default" in error_msg
 
@@ -616,6 +638,6 @@ class TestDuplicateDatasetValidation:
             _mk_phase("sft", dataset="same"),
             _mk_phase("cot", dataset="same"),
         ]
-        error_msg = _assert_err(validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
+        error_msg = _assert_err(lambda: validate_strategy_chain(strategies), code="STRATEGY_CHAIN_DUPLICATE_DATASET")
         assert "sft" in error_msg
         assert "cot" in error_msg
