@@ -18,6 +18,7 @@ we assert on the call shape rather than on uvicorn semantics.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -25,7 +26,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest  # noqa: TC002 — used only for the pytest.MonkeyPatch type
+import pytest
 
 
 def _load_launcher():
@@ -59,7 +60,10 @@ def _config_obj():
         training=SimpleNamespace(
             provider="runpod", get_strategy_chain=lambda: [],
         ),
-        experiment_tracking=SimpleNamespace(mlflow=None),
+        # Phase A2 Batch 9: the launcher's _build_job_env reads
+        # ``config.integrations.mlflow``; provide a None-shaped stub
+        # so the no-mlflow branch is exercised.
+        integrations=SimpleNamespace(mlflow=None),
     )
 
 
@@ -96,17 +100,31 @@ def _stub_async_path(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         _launcher_mod, "SSHTunnelManager", MagicMock(return_value=fake_tunnel),
     )
 
-    fake_client = SimpleNamespace(health_check=AsyncMock(return_value=True), submit_job=AsyncMock(
-        return_value={"job_id": "j-1", "sequence": 0, "offset": 0},
-    ), aclose=AsyncMock(return_value=None))
+    # check_imports needs to look healthy too — return a report-like
+    # object whose ``all_importable`` is True.
+    fake_import_report = SimpleNamespace(
+        all_importable=True,
+        results=[],
+        failed=[],
+    )
+    fake_client = SimpleNamespace(
+        health_check=AsyncMock(return_value=True),
+        submit_job=AsyncMock(
+            return_value={"job_id": "j-1", "sequence": 0, "offset": 0},
+        ),
+        aclose=AsyncMock(return_value=None),
+        check_imports=AsyncMock(return_value=fake_import_report),
+    )
     monkeypatch.setattr(
         _launcher_mod, "JobClient", MagicMock(return_value=fake_client),
     )
 
     # Replace the imported launch_runner symbol on the launcher module
     # — that's what step-0 actually calls (``from runner_launcher
-    # import launch_runner``). Default return Ok-equivalent.
-    fake_launch = MagicMock(return_value=_launcher_mod.Ok(None))
+    # import launch_runner``). Phase A2 Batch 9 (raise-based):
+    # success returns None, failure raises SSHExecFailedError. Default
+    # return is None.
+    fake_launch = MagicMock(return_value=None)
     monkeypatch.setattr(_launcher_mod, "launch_runner", fake_launch)
     return fake_launch
 
@@ -163,20 +181,36 @@ def test_launch_runner_still_receives_provider_env_vars(
         "RYOTENKAI_RUNTIME_PROVIDER": "runpod",
         "RUNPOD_POD_ID": "abc123",
     }
+    # Provider's prepare_training_script_hooks still returns a Result-shaped
+    # object (providers migrate in Batch 11-12). Stub the legacy is_err()/unwrap()
+    # pair so the launcher's _collect_provider_hooks gate passes.
+    hooks_result = SimpleNamespace(
+        is_err=lambda: False,
+        unwrap=lambda: SimpleNamespace(env_vars={}),
+    )
+    provider.prepare_training_script_hooks.return_value = hooks_result
 
     launcher = _make_launcher()
     launcher.set_workspace("/workspace/runs/r-thin")
     ctx: dict[str, Any] = {"logical_run_id": "j-1", "resource_id": "abc123"}
-    # NOTE: we don't assert on the Result — the rest of start_training
-    # (provider hooks, tunnel, JobClient) needs heavy mocking that's
-    # already covered by test_training_launcher_v2.py. This test cares
-    # only that step-0 (``launch_runner``) fired with the right kwargs
-    # before the post-step-0 paths kick in.
-    launcher.start_training(_ssh_client_stub(), ctx, provider=provider)
+    # NOTE: we don't assert on the public return — the rest of start_training
+    # (tunnel, JobClient) needs heavy mocking that's already covered by
+    # test_training_launcher_v2.py. This test cares only that step-0
+    # (``launch_runner``) fired with the right kwargs before the
+    # post-step-0 paths kick in. Phase A2 Batch 9 (raise-based): we
+    # swallow any post-step-0 exception so the test focuses on the
+    # step-0 wiring only.
+    with contextlib.suppress(Exception):
+        launcher.start_training(_ssh_client_stub(), ctx, provider=provider)
 
     fake_launch.assert_called_once()
     env_kwarg = fake_launch.call_args.kwargs.get("env") or {}
     assert env_kwarg.get("RYOTENKAI_RUNTIME_PROVIDER") == "runpod"
     assert env_kwarg.get("RUNPOD_POD_ID") == "abc123"
-    # Provider's hook was actually consulted with the resolved resource_id
-    provider.required_runtime_env_vars.assert_called_once_with(resource_id="abc123")
+    # Provider's hook was actually consulted with the resolved resource_id.
+    # Pre-Batch-9 the Result-based start_training exited early after step-0,
+    # so this hook was called exactly once. Post-Batch-9 the launcher
+    # completes the full happy path, which consults the hook twice
+    # (once for the runner env, once for the trainer env in _build_job_env).
+    provider.required_runtime_env_vars.assert_called_with(resource_id="abc123")
+    assert provider.required_runtime_env_vars.call_count >= 1

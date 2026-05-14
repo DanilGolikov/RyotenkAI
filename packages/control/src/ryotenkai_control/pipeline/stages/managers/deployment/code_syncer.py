@@ -18,11 +18,10 @@ from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_MARKER_EXISTS,
     DEPLOYMENT_RSYNC_TIMEOUT,
     DEPLOYMENT_SSH_CMD_TIMEOUT,
-    DEPLOYMENT_TAR_TIMEOUT,
     DEPLOYMENT_VERIFY_TIMEOUT,
 )
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets
@@ -144,7 +143,7 @@ class CodeSyncer:
     def set_workspace(self, workspace_path: str) -> None:
         self._workspace = workspace_path
 
-    def sync(self, ssh_client: SSHClient) -> Result[None, AppError]:
+    def sync(self, ssh_client: SSHClient) -> None:
         """Sync each provided package to ``<workspace>/<dest_name>/``.
 
         After Phase B the local source layout is
@@ -154,6 +153,12 @@ class CodeSyncer:
         pair is rsync'd independently (no ``-R``) so the dest can be
         renamed cleanly. Falls back to tar-over-ssh per-pair when rsync
         is unavailable on the remote.
+
+        Phase A2 Batch 9 (2026-05-15): migrated from
+        ``Result[None, AppError]`` to raise-based — returns ``None`` on
+        success, raises :class:`SSHTransferFailedError` when the tar
+        fallback can't verify the destination directory after a failed
+        rsync.
         """
         logger.info("📦 Syncing source code (selective)...")
 
@@ -173,7 +178,7 @@ class CodeSyncer:
 
         if not existing_pairs:
             logger.warning("⚠️ No packages to sync")
-            return Ok(None)
+            return None
 
         remote_dirs = [f"{self._workspace}/{dest}" for _, dest in existing_pairs]
         mkdir_targets = " ".join(shlex.quote(d) for d in remote_dirs)
@@ -197,19 +202,17 @@ class CodeSyncer:
             # green, which validates the SAME synced source AND the
             # runner image — single check covers both.
             logger.info(f"Source code synced ({len(existing_pairs)} packages, rsync)")
-            return Ok(None)
+            return None
 
         logger.warning("⚠️ Batch rsync failed, falling back to per-package tar pipes")
         for local, dest in existing_pairs:
-            tar_result = self._sync_module_tar(ssh_client, local, dest, ssh_opts)
-            if tar_result.is_failure():
-                logger.error(f"❌ Failed to sync {local}")
-                return tar_result
+            # Helper raises SSHTransferFailedError if verify fails.
+            self._sync_module_tar(ssh_client, local, dest, ssh_opts)
             logger.debug(f"   ✓ {local} → {dest}")
 
         self._clear_pycache(ssh_client)
         logger.info(f"Source code synced ({len(existing_pairs)} packages, tar fallback)")
-        return Ok(None)
+        return None
 
     def _sync_all_modules_rsync(
         self,
@@ -288,12 +291,18 @@ class CodeSyncer:
         local: str,
         dest: str,
         ssh_opts: str,
-    ) -> Result[None, AppError]:
+    ) -> None:
         """Fallback path: pack ``local/`` into a tarball and stream it
         into ``<workspace>/<dest>/`` over ssh. Mirrors the rsync layout
         — local source basename is dropped on the remote so the dest
         can be renamed (e.g. ``packages/pod/src/ryotenkai_pod`` →
         ``ryotenkai_pod``) without leaking the local prefix to the pod.
+
+        Phase A2 Batch 9: returns ``None`` on success; raises
+        :class:`SSHTransferFailedError` when the post-tar verify fails.
+        A non-zero tar return-code is tolerated as long as the remote
+        directory exists after the call — some pods report errors for
+        excluded paths but still write the data.
         """
         local_path = Path(local)
         excludes = " ".join(f"--exclude='{p}'" for p in self.EXCLUDE_PATTERNS)
@@ -316,9 +325,18 @@ class CodeSyncer:
                 command=verify_cmd, background=False, timeout=DEPLOYMENT_VERIFY_TIMEOUT
             )
             if not success or DEPLOYMENT_MARKER_EXISTS not in stdout:
-                return Err(ProviderError(message=f"Failed to sync {local}", code="FILE_SYNC_FAILED"))
+                raise SSHTransferFailedError(
+                    detail=f"Failed to sync {local}",
+                    context={
+                        "local": local,
+                        "dest": dest,
+                        "remote_dir": remote_dir,
+                        "tar_returncode": result.returncode,
+                        "tar_stderr": (result.stderr or "")[:200],
+                    },
+                )
 
-        return Ok(None)
+        return None
 
 
 __all__ = ["DEFAULT_WORKSPACE", "CodeSyncer"]

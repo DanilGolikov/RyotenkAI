@@ -44,13 +44,6 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.pipeline.heartbeat.heartbeat import ControlPlaneHeartbeat
-from ryotenkai_shared.utils.clients.job_client import JobClient, JobClientError
-from ryotenkai_shared.utils.clients.ssh_tunnel import (
-    SSHTunnelEndpoint,
-    SSHTunnelError,
-    SSHTunnelManager,
-)
-from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
 from ryotenkai_control.pipeline.stages.managers.deployment.plugin_packer import (
     PluginPacker,
@@ -65,8 +58,21 @@ from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
 )
 from ryotenkai_control.pipeline.state.job_submission import JobSubmission, save_job_submission
 from ryotenkai_providers.training.interfaces import TrainingScriptHooks
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHTransferFailedError,
+    TrainingFailedError,
+)
+from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
+from ryotenkai_shared.utils.clients.job_client import JobClient, JobClientError
+from ryotenkai_shared.utils.clients.ssh_tunnel import (
+    SSHTunnelEndpoint,
+    SSHTunnelError,
+    SSHTunnelManager,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import (
@@ -89,15 +95,19 @@ DEFAULT_WORKSPACE = "/workspace"
 
 
 class _FileUploadFailed(Exception):
-    """Internal — propagates an HTTP file-upload :class:`AppError`
-    out of the async island in :meth:`_submit_via_tunnel` so the
-    sync caller can map it back to a typed ``Err`` without losing
-    the original error code/details.
+    """Internal — propagates an HTTP file-upload typed error out of
+    the async island in :meth:`_submit_via_tunnel` so the sync caller
+    can re-raise without losing the original ``code``/``context``.
+
+    Phase A2 Batch 9 (2026-05-15): the carried payload is now a
+    :class:`RyotenkAIError` (typed exception) rather than the legacy
+    ``AppError``. The async caller catches this, the sync caller
+    re-raises the inner exception.
     """
 
-    def __init__(self, app_error: "AppError") -> None:
-        super().__init__(app_error.message)
-        self.app_error = app_error
+    def __init__(self, typed_error: RyotenkAIError) -> None:
+        super().__init__(str(typed_error.detail or typed_error))
+        self.typed_error = typed_error
 
 
 class _ImportCheckFailed(Exception):
@@ -105,9 +115,9 @@ class _ImportCheckFailed(Exception):
     HTTP import-check gate (PR-2.5 endpoint, PR-3.3 migration).
     """
 
-    def __init__(self, app_error: "AppError") -> None:
-        super().__init__(app_error.message)
-        self.app_error = app_error
+    def __init__(self, typed_error: RyotenkAIError) -> None:
+        super().__init__(str(typed_error.detail or typed_error))
+        self.typed_error = typed_error
 
 # How long we wait for the runner's /healthz to start returning 200
 # after the SSH tunnel comes up. The runner boots with sshd in
@@ -149,7 +159,7 @@ class TrainingLauncher:
         secrets: Secrets,
         *,
         deps_installer: DependencyInstaller,
-        file_uploader: "FileUploader | None" = None,
+        file_uploader: FileUploader | None = None,
     ) -> None:
         self.config = config
         self.secrets = secrets
@@ -177,7 +187,7 @@ class TrainingLauncher:
         ssh_client: SSHClient,
         context: dict[str, Any],
         provider: IGPUProvider | None = None,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Submit the training job and return once the runner has accepted it.
 
         Flow (sync facade — async work is encapsulated in
@@ -196,9 +206,27 @@ class TrainingLauncher:
         5. Stash the open tunnel + :class:`JobClient` + ``job_id`` on
            ``context`` so :class:`TrainingMonitor` can re-use them.
 
-        Returns ``Ok({"mode": "job_server", "job_id": ..., "tunnel_port": N})``.
-        On any error the SSH tunnel is closed before returning ``Err``
-        — no leaked port forwards.
+        Returns ``{"mode": "job_server", "job_id": ..., "tunnel_port": N}``.
+
+        Phase A2 Batch 9 (2026-05-15): migrated from
+        ``Result[dict, AppError]`` to raise-based. On any error the
+        SSH tunnel is closed before the typed exception propagates —
+        no leaked port forwards. Failure-mode → exception type table:
+
+        - runner step-0 launch failure → :class:`SSHExecFailedError`
+          (propagates from :func:`launch_runner`).
+        - provider hooks preparation failed →
+          :class:`ProviderUnavailableError`.
+        - plugin pack failed → :class:`TrainingFailedError`
+          (reason=``PLUGIN_PACK_FAILED``).
+        - HTTP import-check failed → :class:`TrainingFailedError`
+          (reason=``IMPORT_GATE_FAILED``).
+        - HTTP file upload failed → :class:`ConfigInvalidError`
+          (validation) or :class:`SSHTransferFailedError` (transport).
+        - SSH tunnel open failed → :class:`ProviderUnavailableError`
+          (reason=``RUNNER_TUNNEL_FAILED``).
+        - runner rejected the job → :class:`TrainingFailedError`
+          (reason=``JOB_SUBMIT_FAILED``).
         """
         logger.info("[LAUNCHER] Submitting training job to in-pod runner...")
 
@@ -247,8 +275,9 @@ class TrainingLauncher:
         else:
             # Should not happen in production paths but the test path
             # builds the launcher without a provider for unit-coverage.
-            from ryotenkai_shared.utils.pod_layout import PodLayout
             from pathlib import PurePosixPath
+
+            from ryotenkai_shared.utils.pod_layout import PodLayout
             pod_layout_for_runner = PodLayout.from_root(
                 PurePosixPath(self.workspace),
             )
@@ -257,23 +286,19 @@ class TrainingLauncher:
         # only Python + libs, so this directory is the SOLE source of
         # ``src.runner`` on the pod. Without it, uvicorn fails with
         # ``ModuleNotFoundError: No module named 'ryotenkai_pod.runner'``.
-        runner_ready = launch_runner(
+        # launch_runner raises SSHExecFailedError on failure (Phase A2
+        # Batch 9); propagate it without wrapping.
+        launch_runner(
             ssh_client,
             pod_layout=pod_layout_for_runner,
             env=runner_env,
         )
-        if runner_ready.is_err():
-            err = runner_ready.unwrap_err()  # type: ignore[union-attr]
-            logger.error("[LAUNCHER] Runner failed to launch: %s", err.message)
-            return Err(err)
 
         hooks = self._collect_provider_hooks(ssh_client, context, provider)
         if hooks is None:
-            return Err(
-                ProviderError(
-                    message="provider hooks preparation failed",
-                    code="PROVIDER_HOOKS_FAILED",
-                ),
+            raise ProviderUnavailableError(
+                detail="provider hooks preparation failed",
+                context={"reason": "PROVIDER_HOOKS_FAILED"},
             )
 
         try:
@@ -281,12 +306,11 @@ class TrainingLauncher:
             plugins_payload = packer.pack_required()
         except PluginPackError as exc:
             logger.exception("[LAUNCHER] PluginPacker failed")
-            return Err(
-                ProviderError(
-                    message=f"plugin payload pack failed: {exc}",
-                    code="PLUGIN_PACK_FAILED",
-                ),
-            )
+            raise TrainingFailedError(
+                detail=f"plugin payload pack failed: {exc}",
+                context={"reason": "PLUGIN_PACK_FAILED"},
+                cause=exc,
+            ) from exc
 
         job_id = self._resolve_job_id(context)
         # Phase 14.D+F — provider supplies its own runtime env via
@@ -332,27 +356,25 @@ class TrainingLauncher:
                 ),
             )
         except _ImportCheckFailed as exc:
-            logger.error("[LAUNCHER] HTTP import-check failed: %s", exc.app_error.message)
-            return Err(exc.app_error)
+            logger.error("[LAUNCHER] HTTP import-check failed: %s", exc.typed_error)
+            raise exc.typed_error from exc
         except _FileUploadFailed as exc:
-            logger.error("[LAUNCHER] HTTP file upload failed: %s", exc.app_error.message)
-            return Err(exc.app_error)
+            logger.error("[LAUNCHER] HTTP file upload failed: %s", exc.typed_error)
+            raise exc.typed_error from exc
         except SSHTunnelError as exc:
             logger.exception("[LAUNCHER] SSH tunnel open failed")
-            return Err(
-                ProviderError(
-                    message=f"ssh tunnel to runner failed: {exc}",
-                    code="RUNNER_TUNNEL_FAILED",
-                ),
-            )
+            raise ProviderUnavailableError(
+                detail=f"ssh tunnel to runner failed: {exc}",
+                context={"reason": "RUNNER_TUNNEL_FAILED"},
+                cause=exc,
+            ) from exc
         except JobClientError as exc:
             logger.exception("[LAUNCHER] Job submission failed")
-            return Err(
-                ProviderError(
-                    message=f"runner rejected job submission: {exc}",
-                    code="JOB_SUBMIT_FAILED",
-                ),
-            )
+            raise TrainingFailedError(
+                detail=f"runner rejected job submission: {exc}",
+                context={"reason": "JOB_SUBMIT_FAILED"},
+                cause=exc,
+            ) from exc
 
         # Stash everything the monitor needs. We pass the live tunnel
         # so the monitor closes it at end-of-run instead of leaking
@@ -405,11 +427,11 @@ class TrainingLauncher:
             "[LAUNCHER] Job %s submitted; tunnel localhost:%s → pod:8080",
             job_id, tunnel.local_port,
         )
-        return Ok({
+        return {
             "mode": "job_server",
             "job_id": job_id,
             "tunnel_port": tunnel.local_port,
-        })
+        }
 
     # --- helpers ----------------------------------------------------------
 
@@ -420,7 +442,7 @@ class TrainingLauncher:
         provider: IGPUProvider | None,
     ) -> TrainingScriptHooks | None:
         """Run the provider's hook preparation, returning hooks or
-        ``None`` on failure (caller turns that into ``Err``).
+        ``None`` on failure (caller raises ProviderUnavailableError).
 
         Provider-supplied hooks contribute ``env_vars`` only — the
         legacy ``pre_python`` / ``post_python`` bash injection points
@@ -428,6 +450,11 @@ class TrainingLauncher:
         and runpod_stop_pod.sh with :class:`IdleDetector` and
         :class:`PodTerminator`). The dataclass still carries those
         fields for compatibility but we ignore them here.
+
+        Provider interface here still returns ``Result`` — providers
+        migrate in Phase A2 Batch 11-12. Until then this method
+        translates the legacy ``is_err()`` shape to a ``None``-on-fail
+        flag for the caller.
         """
         if provider is None:
             return TrainingScriptHooks.empty()
@@ -661,12 +688,17 @@ class TrainingLauncher:
             # before files upload.
             await self._verify_imports_async(client)
             # HTTP file upload between /healthz and submit.
+            # _upload_files_async raises typed errors directly on
+            # failure; we wrap them in _FileUploadFailed so the sync
+            # caller can re-raise without ``BaseException`` swallowing
+            # the cleanup path.
             if self._file_uploader is not None and upload_context is not None:
-                upload_result = await self._upload_files_async(
-                    client, upload_context,
-                )
-                if upload_result.is_failure():
-                    raise _FileUploadFailed(upload_result.unwrap_err())
+                try:
+                    await self._upload_files_async(
+                        client, upload_context,
+                    )
+                except RyotenkAIError as exc:
+                    raise _FileUploadFailed(exc) from exc
             await client.submit_job(job_spec, plugins_payload=plugins_payload or None)
             return tunnel, client
         except BaseException:
@@ -687,9 +719,10 @@ class TrainingLauncher:
         PYTHONPATH; new mechanism — HTTP, structured per-module
         report, no shell-output parsing.
 
-        Raises :class:`_ImportCheckFailed` carrying an :class:`AppError`
-        when one or more modules fail. The sync caller maps it back
-        to ``Err`` outside the async island.
+        Raises :class:`_ImportCheckFailed` carrying a
+        :class:`TrainingFailedError` when one or more modules fail.
+        The sync caller re-raises the typed payload outside the async
+        island.
         """
         from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import (
             REQUIRED_SRC_MODULES,
@@ -697,11 +730,12 @@ class TrainingLauncher:
 
         try:
             report = await client.check_imports(REQUIRED_SRC_MODULES)
-        except Exception as exc:  # noqa: BLE001 — propagate upstream
+        except Exception as exc:
             raise _ImportCheckFailed(
-                AppError(
-                    message=f"runner import-check call failed: {exc}",
-                    code="IMPORT_GATE_ERROR",
+                TrainingFailedError(
+                    detail=f"runner import-check call failed: {exc}",
+                    context={"reason": "IMPORT_GATE_ERROR"},
+                    cause=exc,
                 )
             ) from exc
         if report.all_importable:
@@ -713,14 +747,17 @@ class TrainingLauncher:
         failed = report.failed
         details = {r.module: r.error for r in report.results if not r.importable}
         raise _ImportCheckFailed(
-            AppError(
-                message=(
+            TrainingFailedError(
+                detail=(
                     f"Post-sync import check failed. Modules not importable "
                     f"on pod: {failed}. Action: ensure these modules exist "
                     f"in your local checkout before deploy."
                 ),
-                code="IMPORT_GATE_FAILED",
-                details={"failed_modules": failed, "errors": details},
+                context={
+                    "reason": "IMPORT_GATE_FAILED",
+                    "failed_modules": failed,
+                    "errors": details,
+                },
             ),
         )
 
@@ -728,7 +765,7 @@ class TrainingLauncher:
         self,
         client: JobClient,
         upload_context: dict[str, Any],
-    ) -> Result[None, AppError]:
+    ) -> None:
         """Async wrapper around the FileUploader's HTTP upload core.
 
         Called from inside ``_submit_via_tunnel`` — already on an
@@ -737,33 +774,39 @@ class TrainingLauncher:
         Instead, replicate the validation step here and delegate to
         the async core ``_upload_all`` directly so the same JobClient
         (and its loop-bound httpx pool) is used end-to-end.
+
+        Phase A2 Batch 9: returns ``None``; raises
+        :class:`ConfigInvalidError` for missing config / dataset, or
+        :class:`SSHTransferFailedError` for transport failures.
         """
         assert self._file_uploader is not None
         from pathlib import Path
+
         from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
             DEPLOYMENT_CONFIG_PATH,
         )
 
         config_path = Path(upload_context.get("config_path", DEPLOYMENT_CONFIG_PATH))
         if not config_path.exists():
-            return Err(
-                ProviderError(
-                    message=f"Config file not found: {config_path}",
-                    code="CONFIG_FILE_NOT_FOUND",
-                ),
+            raise ConfigInvalidError(
+                detail=f"Config file not found: {config_path}",
+                context={
+                    "reason": "CONFIG_FILE_NOT_FOUND",
+                    "config_path": str(config_path),
+                },
             )
 
         dataset_files, missing = self._file_uploader._collect_local_datasets()
         if missing and not dataset_files:
-            return Err(
-                ProviderError(
-                    message=(
-                        "Dataset files referenced but not found: "
-                        + ", ".join(missing)
-                    ),
-                    code="DATASET_FILE_NOT_FOUND",
-                    details={"missing": missing},
+            raise ConfigInvalidError(
+                detail=(
+                    "Dataset files referenced but not found: "
+                    + ", ".join(missing)
                 ),
+                context={
+                    "reason": "DATASET_FILE_NOT_FOUND",
+                    "missing": missing,
+                },
             )
 
         logger.info(
@@ -774,15 +817,14 @@ class TrainingLauncher:
             await self._file_uploader._upload_all(
                 client, config_path, dataset_files,
             )
-        except Exception as exc:  # noqa: BLE001
-            return Err(
-                ProviderError(
-                    message=f"HTTP upload failed: {exc}",
-                    code="HTTP_FILE_UPLOAD_FAILED",
-                ),
-            )
+        except Exception as exc:
+            raise SSHTransferFailedError(
+                detail=f"HTTP upload failed: {exc}",
+                context={"reason": "HTTP_FILE_UPLOAD_FAILED"},
+                cause=exc,
+            ) from exc
         logger.info("✅ HTTP file upload complete")
-        return Ok(None)
+        return None
 
     async def _wait_for_runner_ready(self, client: JobClient) -> None:
         """Poll ``/healthz`` until the runner returns 200 or we

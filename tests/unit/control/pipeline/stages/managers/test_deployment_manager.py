@@ -9,13 +9,13 @@ components.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
 from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
@@ -33,8 +33,7 @@ from ryotenkai_shared.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
-from ryotenkai_shared.utils.result import Ok
+from ryotenkai_shared.errors import PipelineStageFailedError, SSHTransferFailedError
 
 pytestmark = pytest.mark.unit
 
@@ -137,26 +136,81 @@ def test_deploy_code_delegates_to_code_syncer(manager: TrainingDeploymentManager
     """Phase 3 PR-3.3: the legacy ``deploy_files`` (chain of file
     upload + code sync) is replaced with ``deploy_code`` — pure
     rsync, pre-launch. File upload is HTTP, called from
-    ``start_training`` after /healthz."""
+    ``start_training`` after /healthz.
+
+    Phase A2 Batch 9 (raise-based): success returns ``None``.
+    """
     ssh = SimpleNamespace()
-    with patch.object(manager._code_syncer, "sync", return_value=Ok(None)) as mock:
+    with patch.object(manager._code_syncer, "sync", return_value=None) as mock:
         result = manager.deploy_code(ssh)
-    assert result.is_ok()
+    assert result is None
     mock.assert_called_once_with(ssh)
 
 
 def test_install_dependencies_delegates_to_deps_installer(manager: TrainingDeploymentManager):
     ssh = SimpleNamespace()
-    with patch.object(manager._deps_installer, "install", return_value=Ok(None)) as mock:
+    with patch.object(manager._deps_installer, "install", return_value=None) as mock:
         result = manager.install_dependencies(ssh)
-    assert result.is_ok()
+    assert result is None
     mock.assert_called_once_with(ssh)
 
 
 def test_start_training_delegates_to_launcher(manager: TrainingDeploymentManager):
     ssh = SimpleNamespace()
     ctx: dict[str, Any] = {}
-    with patch.object(manager._launcher, "start_training", return_value=Ok({"mode": "docker"})) as mock:
+    with patch.object(manager._launcher, "start_training", return_value={"mode": "docker"}) as mock:
         result = manager.start_training(ssh, ctx)
-    assert result.is_ok()
+    assert result == {"mode": "docker"}
     mock.assert_called_once_with(ssh, ctx, None)
+
+
+# ---------------------------------------------------------------------------
+# Phase A2 Batch 9 — typed-exception propagation through the facade
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_code_propagates_ssh_transfer_failed(manager: TrainingDeploymentManager):
+    """Negative: typed exceptions from CodeSyncer propagate verbatim
+    through the facade (no Result wrapping, no re-classification)."""
+    ssh = SimpleNamespace()
+    typed = SSHTransferFailedError(detail="rsync failed", context={"reason": "TAR_FAILED"})
+    with (
+        patch.object(manager._code_syncer, "sync", side_effect=typed),
+        pytest.raises(SSHTransferFailedError) as exc_info,
+    ):
+        manager.deploy_code(ssh)
+    assert exc_info.value is typed
+
+
+def test_deploy_code_wraps_unexpected_exception(manager: TrainingDeploymentManager):
+    """Boundary: a non-typed exception escapes are re-wrapped as
+    :class:`PipelineStageFailedError` so the upstream stage-execution
+    loop always sees a typed error (no untyped escape)."""
+    ssh = SimpleNamespace()
+    with (
+        patch.object(manager._code_syncer, "sync", side_effect=RuntimeError("oops")),
+        pytest.raises(PipelineStageFailedError) as exc_info,
+    ):
+        manager.deploy_code(ssh)
+    assert exc_info.value.context.get("reason") == "CODE_SYNC_FAILED"
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_install_dependencies_wraps_unexpected_exception(manager: TrainingDeploymentManager):
+    ssh = SimpleNamespace()
+    with (
+        patch.object(manager._deps_installer, "install", side_effect=RuntimeError("oops")),
+        pytest.raises(PipelineStageFailedError) as exc_info,
+    ):
+        manager.install_dependencies(ssh)
+    assert exc_info.value.context.get("reason") == "DEPS_INSTALL_FAILED"
+
+
+def test_start_training_wraps_unexpected_exception(manager: TrainingDeploymentManager):
+    ssh = SimpleNamespace()
+    with (
+        patch.object(manager._launcher, "start_training", side_effect=RuntimeError("oops")),
+        pytest.raises(PipelineStageFailedError) as exc_info,
+    ):
+        manager.start_training(ssh, {})
+    assert exc_info.value.context.get("reason") == "TRAINING_START_FAILED"

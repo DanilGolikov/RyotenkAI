@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
 from ryotenkai_shared.config import (
@@ -22,8 +22,7 @@ from ryotenkai_shared.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
-from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError, SSHExecFailedError
 
 pytestmark = pytest.mark.unit
 
@@ -99,10 +98,11 @@ def test_install_single_node_uses_runtime_image_verify(installer: DependencyInst
     """single_node: install() must verify runtime image via docker on host."""
     ssh_client = SimpleNamespace()
 
-    with patch.object(installer, "_verify_single_node_docker_runtime", return_value=Ok(None)) as mock_verify:
+    with patch.object(installer, "_verify_single_node_docker_runtime", return_value=None) as mock_verify:
         result = installer.install(ssh_client)
 
-    assert result.is_ok()
+    # Phase A2 Batch 9 (raise-based): success returns None.
+    assert result is None
     mock_verify.assert_called_once()
 
 
@@ -115,15 +115,23 @@ def test_install_cloud_verify_ok_skips_install(base_config: PipelineConfig, secr
     installer = DependencyInstaller(config=cfg, secrets=secrets)
     ssh_client = SimpleNamespace()
 
-    with patch.object(DependencyInstaller, "verify_prebuilt_dependencies", return_value=Ok(None)) as mock_verify:
+    with patch.object(DependencyInstaller, "verify_prebuilt_dependencies", return_value=None) as mock_verify:
         result = installer.install(ssh_client)
 
-    assert result.is_ok()
+    assert result is None
     mock_verify.assert_called_once()
 
 
-def test_install_cloud_verify_fail_returns_err(base_config: PipelineConfig, secrets: DummySecrets):
-    """runpod/cloud: if deps missing in the image, we FAIL (no fallback install)."""
+def test_install_cloud_verify_fail_raises_ssh_exec_failed(
+    base_config: PipelineConfig, secrets: DummySecrets,
+):
+    """runpod/cloud: if deps missing in the image, we FAIL (no fallback install).
+
+    Phase A2 Batch 9 (raise-based): a failed runtime contract check
+    in the cloud path is re-wrapped as :class:`SSHExecFailedError`
+    with ``reason="RUNTIME_DEPS_MISSING"`` so observability stays
+    distinct from a transport-level SSH exec failure.
+    """
     cfg = base_config.model_copy(deep=True)
     cfg.training.provider = "runpod"
     cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
@@ -131,31 +139,44 @@ def test_install_cloud_verify_fail_returns_err(base_config: PipelineConfig, secr
     installer = DependencyInstaller(config=cfg, secrets=secrets)
     ssh_client = SimpleNamespace()
 
-    with patch.object(
-        DependencyInstaller,
-        "verify_prebuilt_dependencies",
-        return_value=Failure(ProviderError(message="missing packages", code="DEPS_MISSING")),
-    ):
-        result = installer.install(ssh_client)
+    def _raise_underlying(*args, **kwargs):
+        raise SSHExecFailedError(
+            detail="missing packages",
+            context={"reason": "RUNTIME_CONTRACT_CHECK_FAILED", "output": "ImportError"},
+        )
 
-    assert result.is_err()
+    with (
+        patch.object(
+            DependencyInstaller,
+            "verify_prebuilt_dependencies",
+            side_effect=_raise_underlying,
+        ),
+        pytest.raises(SSHExecFailedError) as exc_info,
+    ):
+        installer.install(ssh_client)
+
+    assert exc_info.value.context.get("reason") == "RUNTIME_DEPS_MISSING"
+    assert exc_info.value.context.get("underlying_reason") == "RUNTIME_CONTRACT_CHECK_FAILED"
+    # ``cause`` chain preserves the original exception.
+    assert isinstance(exc_info.value.__cause__, SSHExecFailedError)
 
 
 def test_verify_prebuilt_dependencies_success():
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (True, "OK\nversion=1.0", "")
 
-    result = DependencyInstaller.verify_prebuilt_dependencies(ssh_client)
-    assert result.is_ok()
+    # Phase A2 Batch 9: returns None on success.
+    assert DependencyInstaller.verify_prebuilt_dependencies(ssh_client) is None
 
 
-def test_verify_prebuilt_dependencies_failure_returns_err():
+def test_verify_prebuilt_dependencies_failure_raises_ssh_exec_failed():
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (False, "", "ImportError")
 
-    result = DependencyInstaller.verify_prebuilt_dependencies(ssh_client)
-    assert result.is_err()
-    assert "Runtime contract check failed" in str(result.unwrap_err())
+    with pytest.raises(SSHExecFailedError) as exc_info:
+        DependencyInstaller.verify_prebuilt_dependencies(ssh_client)
+    assert "Runtime contract check failed" in str(exc_info.value)
+    assert exc_info.value.context.get("reason") == "RUNTIME_CONTRACT_CHECK_FAILED"
 
 
 @pytest.mark.xfail(
@@ -177,39 +198,115 @@ def test_verify_single_node_docker_runtime_no_image_returns_config_error(install
     assert "docker_image is required" in str(err)
 
 
-def test_verify_single_node_docker_runtime_pull_failure_returns_error(installer: DependencyInstaller):
-    """Propagates pull failure from _ensure_docker_image_present."""
+def test_verify_single_node_docker_runtime_pull_failure_propagates(installer: DependencyInstaller):
+    """Phase A2 Batch 9: pull failure propagates the underlying
+    :class:`ProviderUnavailableError` directly (no Result wrapping)."""
     ssh_client = SimpleNamespace()
-    pull_err = ProviderError(message="pull failed", code="DOCKER_PULL_FAILED")
+    pull_err = ProviderUnavailableError(
+        detail="pull failed",
+        context={"reason": "DOCKER_PULL_FAILED"},
+    )
 
-    with patch.object(installer, "_ensure_docker_image_present", return_value=Failure(pull_err)):
-        result = installer._verify_single_node_docker_runtime(ssh_client)
+    with (
+        patch.object(installer, "_ensure_docker_image_present", side_effect=pull_err),
+        pytest.raises(ProviderUnavailableError) as exc_info,
+    ):
+        installer._verify_single_node_docker_runtime(ssh_client)
 
-    assert result.is_err()
-    assert "pull failed" in str(result.unwrap_err())
+    assert "pull failed" in str(exc_info.value)
+    assert exc_info.value.context.get("reason") == "DOCKER_PULL_FAILED"
 
 
 def test_verify_single_node_docker_runtime_check_failed_no_ok_in_stdout(installer: DependencyInstaller):
+    """Phase A2 Batch 9 (raise-based): contract check failure raises
+    :class:`SSHExecFailedError`."""
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (True, "no marker", "")
 
-    with patch.object(installer, "_ensure_docker_image_present", return_value=Ok(None)):
-        result = installer._verify_single_node_docker_runtime(ssh_client)
+    with (
+        patch.object(installer, "_ensure_docker_image_present", return_value=None),
+        pytest.raises(SSHExecFailedError) as exc_info,
+    ):
+        installer._verify_single_node_docker_runtime(ssh_client)
 
-    assert result.is_err()
-    assert "missing required packages" in str(result.unwrap_err())
+    assert "missing required packages" in str(exc_info.value)
+    assert exc_info.value.context.get("reason") == "DOCKER_RUNTIME_CHECK_FAILED"
 
 
 def test_verify_single_node_docker_runtime_check_failed_exec_returns_false(installer: DependencyInstaller):
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (False, "", "")
 
-    with patch.object(installer, "_ensure_docker_image_present", return_value=Ok(None)):
-        result = installer._verify_single_node_docker_runtime(ssh_client)
-
-    assert result.is_err()
+    with (
+        patch.object(installer, "_ensure_docker_image_present", return_value=None),
+        pytest.raises(SSHExecFailedError),
+    ):
+        installer._verify_single_node_docker_runtime(ssh_client)
 
 
 def test_set_workspace_propagates(installer: DependencyInstaller):
     installer.set_workspace("/tmp/run_42")
     assert installer.workspace == "/tmp/run_42"
+
+
+# ---------------------------------------------------------------------------
+# Phase A2 Batch 9 — additional 7-class coverage for raise contract
+# ---------------------------------------------------------------------------
+
+
+def test_verify_single_node_docker_runtime_success_returns_none(installer: DependencyInstaller):
+    """Positive: when pull + contract check both succeed, returns ``None``."""
+    ssh_client = MagicMock()
+    ssh_client.exec_command.return_value = (True, "OK\nversion=1.0", "")
+
+    with patch.object(installer, "_ensure_docker_image_present", return_value=None):
+        assert installer._verify_single_node_docker_runtime(ssh_client) is None
+
+
+def test_install_cloud_verify_chains_cause_for_diagnosis(
+    base_config: PipelineConfig, secrets: DummySecrets,
+):
+    """Invariant: the re-raised :class:`SSHExecFailedError` chains the
+    original via ``__cause__`` so a traceback walker can find both."""
+    cfg = base_config.model_copy(deep=True)
+    cfg.training.provider = "runpod"
+    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
+
+    installer = DependencyInstaller(config=cfg, secrets=secrets)
+    ssh_client = SimpleNamespace()
+
+    underlying = SSHExecFailedError(
+        detail="missing flash-attn",
+        context={"reason": "RUNTIME_CONTRACT_CHECK_FAILED", "output": "no flash-attn module"},
+    )
+
+    with (
+        patch.object(
+            DependencyInstaller,
+            "verify_prebuilt_dependencies",
+            side_effect=underlying,
+        ),
+        pytest.raises(SSHExecFailedError) as exc_info,
+    ):
+        installer.install(ssh_client)
+
+    assert exc_info.value.__cause__ is underlying
+    assert exc_info.value.context.get("output") == "no flash-attn module"
+
+
+def test_install_single_node_propagates_provider_unavailable(installer: DependencyInstaller):
+    """Dependency error: a docker-pull ``ProviderUnavailableError``
+    propagates verbatim through ``install()`` (no re-wrapping)."""
+    ssh_client = SimpleNamespace()
+    pull_err = ProviderUnavailableError(
+        detail="docker daemon down",
+        context={"reason": "DOCKER_PULL_FAILED"},
+    )
+
+    with (
+        patch.object(installer, "_ensure_docker_image_present", side_effect=pull_err),
+        pytest.raises(ProviderUnavailableError) as exc_info,
+    ):
+        installer.install(ssh_client)
+
+    assert exc_info.value is pull_err

@@ -42,8 +42,8 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
+from ryotenkai_shared.errors import SSHExecFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -63,7 +63,7 @@ RUNNER_PORT: int = 8080
 
 def _build_launch_command(
     *,
-    pod_layout: "PodLayout",
+    pod_layout: PodLayout,
     env: Mapping[str, str] | None = None,
 ) -> str:
     """Return the shell command that ssh-execs uvicorn in the pod.
@@ -211,9 +211,9 @@ def _build_launch_command(
 def launch_runner(
     ssh_client: SSHClient,
     *,
-    pod_layout: "PodLayout",
+    pod_layout: PodLayout,
     env: Mapping[str, str] | None = None,
-) -> Result[None, ProviderError]:
+) -> None:
     """Start the uvicorn runner inside the pod and wait for /healthz.
 
     On success, the pod has a uvicorn listening on
@@ -221,10 +221,10 @@ def launch_runner(
     SSH tunnel that the caller will open next.
 
     On failure, the runner is either not running or not responding
-    on /healthz; the returned ``ProviderError`` carries the tail of
-    ``pod_layout.runner_log`` (or whatever stderr the SSH command
-    produced) so callers can surface a useful error message without
-    a separate log fetch.
+    on /healthz; the raised :class:`SSHExecFailedError` carries the
+    tail of ``pod_layout.runner_log`` (or whatever stderr the SSH
+    command produced) so callers can surface a useful error message
+    without a separate log fetch.
 
     Args:
         ssh_client: alive SSH connection to the pod.
@@ -242,9 +242,16 @@ def launch_runner(
             launcher (caller does not need to pre-populate it).
 
     Returns:
-        ``Ok(None)`` if uvicorn is running and /healthz returns 200
-        within :data:`RUNNER_READY_TIMEOUT_SECONDS`. ``Err`` with code
-        ``RUNNER_LAUNCH_FAILED`` otherwise.
+        ``None`` if uvicorn is running and /healthz returns 200
+        within :data:`RUNNER_READY_TIMEOUT_SECONDS`.
+
+    Raises:
+        SSHExecFailedError: the runner did not become ready within
+            :data:`RUNNER_READY_TIMEOUT_SECONDS`. ``context`` carries
+            the tail of stderr (which includes runner.log content) and
+            the path to the on-pod runner.log for offline diagnosis.
+            Phase A2 Batch 9 (2026-05-15): migrated from
+            ``Result[None, ProviderError(code="RUNNER_LAUNCH_FAILED")]``.
     """
     cmd = _build_launch_command(pod_layout=pod_layout, env=env)
     # Allow the SSH command a bit longer than the readiness loop so
@@ -262,21 +269,22 @@ def launch_runner(
         logger.info("[RUNNER_LAUNCHER] ✅ Runner ready on %s:%d", RUNNER_HOST, RUNNER_PORT)
         if "already running" in out_clean:
             logger.debug("[RUNNER_LAUNCHER] (idempotent — was already running)")
-        return Ok(None)
+        return None
 
     # Failure path. Surface stderr (which includes runner.log tail).
     detail = err_clean or out_clean or "no diagnostic output"
     logger.error("[RUNNER_LAUNCHER] ❌ Runner failed to become ready:\n%s", detail)
-    return Err(
-        ProviderError(
-            message=(
-                f"runner did not become ready within "
-                f"{RUNNER_READY_TIMEOUT_SECONDS}s — see runner.log on pod "
-                f"({pod_layout.runner_log})"
-            ),
-            code="RUNNER_LAUNCH_FAILED",
-            details={"stderr_tail": detail[:4000]},
+    raise SSHExecFailedError(
+        detail=(
+            f"runner did not become ready within "
+            f"{RUNNER_READY_TIMEOUT_SECONDS}s — see runner.log on pod "
+            f"({pod_layout.runner_log})"
         ),
+        context={
+            "stderr_tail": detail[:4000],
+            "runner_log_path": str(pod_layout.runner_log),
+            "reason": "RUNNER_LAUNCH_FAILED",
+        },
     )
 
 

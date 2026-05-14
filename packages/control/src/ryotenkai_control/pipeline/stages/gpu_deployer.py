@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import TrainingDeploymentManager
-from ryotenkai_shared.errors import SSHTransferFailedError
+from ryotenkai_shared.errors import RyotenkAIError, SSHTransferFailedError
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -22,6 +22,32 @@ from ryotenkai_shared.utils.ssh_client import SSHClient
 
 # Truncation length for the docker image SHA shown in pipeline logs.
 GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
+
+
+def _typed_error_to_legacy_app_error(exc: RyotenkAIError) -> AppError:
+    """Local typed→AppError bridge for the post-Batch-9 deployment
+    manager (which raises) into this stage's still-legacy
+    ``Result[dict, AppError]`` upward contract.
+
+    Mirrors the canonical helper in
+    :func:`ryotenkai_control.pipeline.orchestrator._typed_error_to_app_error`,
+    but kept local so the import graph stays acyclic (orchestrator
+    imports this stage). Will be removed when gpu_deployer migrates
+    fully in Batch 10.
+    """
+    reason = exc.context.get("reason") if isinstance(exc.context, dict) else None
+    code = str(reason) if isinstance(reason, str) and reason else exc.code.value
+    details: dict[str, Any] = {"typed_error_class": type(exc).__name__}
+    if isinstance(exc.context, dict):
+        for key, value in exc.context.items():
+            if key == "reason":
+                continue
+            details[key] = value
+    return AppError(
+        message=exc.detail or str(exc),
+        code=code,
+        details=details,
+    )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -255,18 +281,25 @@ class GPUDeployer(PipelineStage):
         # ``start_training`` (post-launch, HTTP). The rsync still
         # happens here because uvicorn cannot start without the
         # synced ``ryotenkai_*`` packages on disk.
+        #
+        # Phase A2 Batch 9 (2026-05-15): the deployment manager's
+        # public surface raises typed exceptions; this caller still
+        # exposes ``Result[dict, AppError]`` upward (Batch 10 will
+        # finish the migration), so each call is wrapped in a typed
+        # → AppError translator at the boundary.
         logger.info("Syncing source code (rsync)...")
         upload_start = time.time()
-        sync_result = self.deployment.deploy_code(ssh_client)
-        upload_duration = time.time() - upload_start
-
-        if sync_result.is_failure():
+        try:
+            self.deployment.deploy_code(ssh_client)
+        except RyotenkAIError as exc:
+            upload_duration = time.time() - upload_start
             logger.error("Code sync failed, disconnecting...")
             self._handle_error_and_disconnect("Code sync failed")
-            sync_err = sync_result.unwrap_err()
+            sync_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
                 self._callbacks.on_error("upload", str(sync_err))
             return Err(sync_err)
+        upload_duration = time.time() - upload_start
 
         logger.info(f"Code synced! ({upload_duration:.1f}s)")
         if self._callbacks.on_files_uploaded:
@@ -275,16 +308,17 @@ class GPUDeployer(PipelineStage):
         # Step 6: Verify runtime (docker-only: no host pip/venv installs)
         logger.info("Verifying training runtime (docker-only)...")
         deps_start = time.time()
-        deps_result = self.deployment.install_dependencies(ssh_client)
-        deps_duration = time.time() - deps_start
-
-        if deps_result.is_failure():
+        try:
+            self.deployment.install_dependencies(ssh_client)
+        except RyotenkAIError as exc:
+            deps_duration = time.time() - deps_start
             logger.error("Runtime verification failed, disconnecting...")
             self._handle_error_and_disconnect("Runtime verification failed")
-            deps_err = deps_result.unwrap_err()  # AppError from deployment_manager
+            deps_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
                 self._callbacks.on_error("deps", str(deps_err))
             return Err(deps_err)
+        deps_duration = time.time() - deps_start
 
         logger.info(f"Runtime verified! ({deps_duration:.1f}s)")
         if self._callbacks.on_deps_installed:
@@ -303,17 +337,17 @@ class GPUDeployer(PipelineStage):
         if ssh_info.resource_id:
             context["resource_id"] = ssh_info.resource_id
         logger.info("Starting training...")
-        training_result = self.deployment.start_training(ssh_client, context, provider=self._provider)
-
-        if training_result.is_failure():
+        try:
+            training_metadata = self.deployment.start_training(
+                ssh_client, context, provider=self._provider,
+            )
+        except RyotenkAIError as exc:
             logger.error("Training start failed, disconnecting...")
             self._handle_error_and_disconnect("Training start failed")
-            training_err = training_result.unwrap_err()  # AppError from deployment_manager
+            training_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
                 self._callbacks.on_error("training_start", str(training_err))
             return Err(training_err)
-
-        training_metadata = training_result.unwrap()
         logger.info(f"Training started! Mode: {training_metadata.get('mode', 'unknown')}")
 
         # Log Docker image SHA to MLflow for reproducibility (if available)

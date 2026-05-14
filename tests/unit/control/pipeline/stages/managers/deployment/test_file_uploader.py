@@ -14,9 +14,8 @@ Test categories:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,7 +25,7 @@ from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import 
     FileUploader,
 )
 from ryotenkai_shared.contracts.runner_api.files import FileUploadTarget
-
+from ryotenkai_shared.errors import ConfigInvalidError, SSHTransferFailedError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -89,11 +88,11 @@ class TestPositive:
         cfg.get_primary_dataset.return_value = None  # no datasets
 
         uploader = _make_uploader(cfg)
+        # Phase A2 Batch 9 (raise-based): success returns None.
         result = uploader.upload_via_http(
             fake_client, {"config_path": str(config_file)},
         )
-
-        assert result.is_success(), result
+        assert result is None
         # Exactly one call — config only.
         assert fake_client.upload_file.await_count == 1
         target = fake_client.upload_file.await_args.args[0]
@@ -117,8 +116,7 @@ class TestPositive:
         result = uploader.upload_via_http(
             fake_client, {"config_path": str(config_file)},
         )
-
-        assert result.is_success(), result
+        assert result is None
         # Two calls: config + dataset.
         assert fake_client.upload_file.await_count == 2
         targets = [c.args[0] for c in fake_client.upload_file.await_args_list]
@@ -132,23 +130,23 @@ class TestPositive:
 
 
 class TestNegative:
-    def test_missing_config_returns_err(self, fake_client) -> None:  # type: ignore[no-untyped-def]
+    def test_missing_config_raises_config_invalid(self, fake_client) -> None:  # type: ignore[no-untyped-def]
+        """Phase A2 Batch 9 (raise-based): missing config raises
+        :class:`ConfigInvalidError` with ``reason="CONFIG_FILE_NOT_FOUND"``."""
         cfg = MagicMock()
         cfg.training.get_strategy_chain.return_value = []
         cfg.get_primary_dataset.return_value = None
         uploader = _make_uploader(cfg)
 
-        result = uploader.upload_via_http(
-            fake_client, {"config_path": "/nope/missing.yaml"},
-        )
-
-        assert result.is_failure()
-        err = result.unwrap_err()
-        assert err.code == "CONFIG_FILE_NOT_FOUND"
+        with pytest.raises(ConfigInvalidError) as exc_info:
+            uploader.upload_via_http(
+                fake_client, {"config_path": "/nope/missing.yaml"},
+            )
+        assert exc_info.value.context.get("reason") == "CONFIG_FILE_NOT_FOUND"
         # Client never invoked when config missing.
         assert fake_client.upload_file.await_count == 0
 
-    def test_dataset_missing_on_disk_returns_err(
+    def test_dataset_missing_on_disk_raises_config_invalid(
         self, fake_client, tmp_path: Path,
     ) -> None:  # type: ignore[no-untyped-def]
         config_file = tmp_path / "pipeline_config.yaml"
@@ -163,12 +161,38 @@ class TestNegative:
         cfg.resolve_path.return_value = Path("/missing/file.jsonl")  # doesn't exist
 
         uploader = _make_uploader(cfg)
-        result = uploader.upload_via_http(
-            fake_client, {"config_path": str(config_file)},
-        )
+        with pytest.raises(ConfigInvalidError) as exc_info:
+            uploader.upload_via_http(
+                fake_client, {"config_path": str(config_file)},
+            )
+        assert exc_info.value.context.get("reason") == "DATASET_FILE_NOT_FOUND"
+        assert exc_info.value.context.get("missing") == ["/missing/file.jsonl"]
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "DATASET_FILE_NOT_FOUND"
+    def test_transport_failure_raises_ssh_transfer_failed(
+        self, tmp_path: Path,
+    ) -> None:
+        """Boundary: when the underlying HTTP upload raises, the
+        wrapper translates to :class:`SSHTransferFailedError` so
+        callers can distinguish transport from validation failures."""
+        config_file = tmp_path / "pipeline_config.yaml"
+        config_file.write_text("model: test\n")
+
+        cfg = MagicMock()
+        cfg.training.get_strategy_chain.return_value = []
+        cfg.get_primary_dataset.return_value = None
+
+        # Client that raises on upload — simulates a closed tunnel.
+        boom_client = MagicMock()
+        boom_client.upload_file = AsyncMock(side_effect=RuntimeError("conn closed"))
+
+        uploader = _make_uploader(cfg)
+        with pytest.raises(SSHTransferFailedError) as exc_info:
+            uploader.upload_via_http(
+                boom_client, {"config_path": str(config_file)},
+            )
+        assert exc_info.value.context.get("reason") == "HTTP_FILE_UPLOAD_FAILED"
+        # __cause__ preserves the original RuntimeError for trace fidelity.
+        assert isinstance(exc_info.value.__cause__, RuntimeError)
 
 
 # ---------------------------------------------------------------------------

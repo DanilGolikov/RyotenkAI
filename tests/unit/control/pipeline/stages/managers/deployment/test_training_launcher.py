@@ -20,14 +20,13 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
-from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
 from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
 from ryotenkai_shared.config import (
     DatasetConfig,
     DatasetLocalPaths,
     DatasetSourceLocal,
-    IntegrationsConfig,
     GlobalHyperparametersConfig,
     InferenceConfig,
     ModelConfig,
@@ -35,7 +34,6 @@ from ryotenkai_shared.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
 pytestmark = [
