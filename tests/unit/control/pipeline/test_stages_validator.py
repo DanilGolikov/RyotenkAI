@@ -5,6 +5,10 @@ We focus on:
 - plugin loading (defaults vs configured)
 - critical_failures semantics (critical vs advisory)
 - HF streaming loader call shape (train_id)
+
+Phase A2 Batch 8 — raise-based migration. ``execute()`` returns a
+``dict`` on success / advisory failure, raises
+:class:`DatasetValidationFailedError` on critical failure.
 """
 
 from __future__ import annotations
@@ -15,10 +19,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.data.validation.base import ValidationResult
 from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
 from ryotenkai_shared.config import DatasetConfig
-from ryotenkai_shared.utils.result import DatasetError, Err, Ok
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> SimpleNamespace:
@@ -49,7 +52,7 @@ def _hf_ds(train_id: str, *, plugins: list[dict] | None = None, critical_failure
     )
 
 
-def test_execute_returns_err_on_critical_failure(tmp_path) -> None:
+def test_execute_raises_on_critical_failure(tmp_path) -> None:
     # Create tiny dataset (will fail min_samples threshold)
     dataset_file = tmp_path / "train.jsonl"
     dataset_file.write_text('{"text": "x"}\n', encoding="utf-8")
@@ -66,11 +69,11 @@ def test_execute_returns_err_on_critical_failure(tmp_path) -> None:
     catalog.reload()
 
     validator = DatasetValidator(cfg)
-    res = validator.execute({})
-    assert res.is_failure()
+    with pytest.raises(DatasetValidationFailedError):
+        validator.execute({})
 
 
-def test_execute_returns_ok_with_failed_status_in_advisory_mode(tmp_path) -> None:
+def test_execute_returns_dict_with_failed_status_in_advisory_mode(tmp_path) -> None:
     dataset_file = tmp_path / "train.jsonl"
     dataset_file.write_text('{"text": "x"}\n', encoding="utf-8")
 
@@ -87,12 +90,11 @@ def test_execute_returns_ok_with_failed_status_in_advisory_mode(tmp_path) -> Non
 
     validator = DatasetValidator(cfg)
     res = validator.execute({})
-    assert res.is_success()
-    ctx = res.unwrap()
-    assert ctx["validation_status"] == "failed"
+    assert isinstance(res, dict)
+    assert res["validation_status"] == "failed"
 
 
-def test_execute_returns_ok_when_failed_plugins_below_critical_threshold(tmp_path) -> None:
+def test_execute_returns_dict_when_failed_plugins_below_critical_threshold(tmp_path) -> None:
     dataset_file = tmp_path / "train.jsonl"
     dataset_file.write_text('{"text": "x"}\n', encoding="utf-8")
 
@@ -109,9 +111,8 @@ def test_execute_returns_ok_when_failed_plugins_below_critical_threshold(tmp_pat
 
     validator = DatasetValidator(cfg)
     res = validator.execute({})
-    assert res.is_success()
-    ctx = res.unwrap()
-    assert ctx["validation_status"] == "failed"
+    assert isinstance(res, dict)
+    assert res["validation_status"] == "failed"
 
 
 @patch("datasets.load_dataset")
@@ -133,7 +134,13 @@ def test_hf_streaming_fast_uses_train_id(mock_load_dataset: MagicMock) -> None:
 
     with patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory", return_value=loader_factory):
         validator = DatasetValidator(cfg)
-        _ = validator.execute({})
+        # The validator may either succeed (no plugins) or raise; we only
+        # care that the underlying load_dataset was called with the right
+        # shape.
+        try:
+            validator.execute({})
+        except DatasetValidationFailedError:
+            pass
 
     # Ensure load_dataset called with train_id and streaming=True
     args, kwargs = mock_load_dataset.call_args
@@ -154,8 +161,8 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {})
 
         res = v.execute({})
-        assert res.is_success()
-        assert res.unwrap()["validation_status"] == "skipped"
+        assert isinstance(res, dict)
+        assert res["validation_status"] == "skipped"
 
     def test_execute_fail_fast_cancels_remaining_futures(self, monkeypatch: pytest.MonkeyPatch) -> None:
         ds1 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
@@ -187,8 +194,16 @@ class TestDatasetValidatorAdditionalCoverage:
                 self._done = True
                 return True
 
-        f1 = _F(value=Err(DatasetError(message="boom", code="DATASET_VALIDATION_CRITICAL_FAILURE")), done=True)
-        f2 = _F(value=Ok({"ok": True}), done=False)
+        # First future raises a critical DatasetValidationFailedError;
+        # second future is still pending so it must be cancelled.
+        f1 = _F(
+            exc=DatasetValidationFailedError(
+                detail="boom",
+                context={"critical": True, "legacy_code": "DATASET_VALIDATION_CRITICAL_FAILURE"},
+            ),
+            done=True,
+        )
+        f2 = _F(value={"ok": True}, done=False)
         futures_queue = [f1, f2]
 
         class _Exec:
@@ -208,8 +223,8 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr("concurrent.futures.ThreadPoolExecutor", lambda max_workers: _Exec(futures_queue))
         monkeypatch.setattr("concurrent.futures.as_completed", lambda fut_map: list(fut_map.keys()))
 
-        res = v.execute({})
-        assert res.is_failure()
+        with pytest.raises(DatasetValidationFailedError):
+            v.execute({})
         assert f2.cancelled is True
         assert callbacks.on_dataset_scheduled.call_count == 2
 
@@ -243,7 +258,7 @@ class TestDatasetValidatorAdditionalCoverage:
                 return True
 
         f1 = _F(exc=RuntimeError("crash"), done=True)
-        f2 = _F(value=Ok({"ok": True}), done=False)
+        f2 = _F(value={"ok": True}, done=False)
         futures_queue = [f1, f2]
 
         class _Exec:
@@ -263,8 +278,8 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr("concurrent.futures.ThreadPoolExecutor", lambda max_workers: _Exec(futures_queue))
         monkeypatch.setattr("concurrent.futures.as_completed", lambda fut_map: list(fut_map.keys()))
 
-        res = v.execute({})
-        assert res.is_failure()
+        with pytest.raises(DatasetValidationFailedError):
+            v.execute({})
         assert f2.cancelled is True
 
     @patch("ryotenkai_control.pipeline.stages.dataset_validator.stage.DatasetLoaderFactory")
@@ -286,8 +301,10 @@ class TestDatasetValidatorAdditionalCoverage:
         assert dataset_config is primary
         assert strategy_phases == []
 
-    def test_validate_single_dataset_runs_eval_and_merges_errors(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Facade-orchestration smoke: train OK + eval FAIL → overall Err with 'eval:' prefix."""
+    def test_validate_single_dataset_runs_eval_and_raises_with_eval_prefix(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Facade-orchestration smoke: train OK + eval FAIL → raises with 'eval:' prefix."""
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=0))
         v = DatasetValidator(cfg)
 
@@ -298,21 +315,20 @@ class TestDatasetValidatorAdditionalCoverage:
         monkeypatch.setattr(v._split_loader, "get_train_ref", lambda *a, **k: "train_ref")
         monkeypatch.setattr(v._split_loader, "get_size", lambda *a, **k: 0)
         monkeypatch.setattr(v._split_loader, "try_load_eval", lambda *a, **k: (object(), "eval_ref"))
-        monkeypatch.setattr(v._format_checker, "check", lambda *a, **k: Ok(None))
+        monkeypatch.setattr(v._format_checker, "check", lambda *a, **k: None)
         monkeypatch.setattr(v._plugin_loader, "load_for_dataset", lambda *a, **k: [])
 
-        # train OK, eval FAIL -> overall Err with eval prefix
-        monkeypatch.setattr(
-            v._plugin_runner,
-            "run",
-            lambda *a, **k: (
-                Ok({"m": 1})
-                if k.get("split_name") == "train"
-                else Err(DatasetError(message="bad", code="EVAL_BAD"))
-            ),
-        )
-        res = v._validate_single_dataset("d", dataset_config, [])
-        assert res.is_failure()
-        assert "eval:" in str(res.unwrap_err())
+        # train OK, eval FAIL -> raises with eval prefix
+        def _runner(*_a, **k):
+            if k.get("split_name") == "train":
+                return {"m": 1}
+            raise DatasetValidationFailedError(
+                detail="bad",
+                context={"critical": False, "legacy_code": "EVAL_BAD"},
+            )
 
+        monkeypatch.setattr(v._plugin_runner, "run", _runner)
 
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            v._validate_single_dataset("d", dataset_config, [])
+        assert "eval:" in (excinfo.value.detail or "")

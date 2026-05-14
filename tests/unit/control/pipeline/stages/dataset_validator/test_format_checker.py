@@ -1,10 +1,9 @@
 """Unit tests for src.pipeline.stages.dataset_validator.format_checker.
 
-Phase A2 Batch 7: ``standalone.check_dataset_format`` now returns a bare
-list (raising :class:`DatasetValidationFailedError` on the unknown-strategy
-path). The :class:`FormatChecker` adapter still surfaces a ``Result``
-shape for its (Batch 8) consumers; these stubs match the new standalone
-contract so the adapter logic is exercised end-to-end.
+Phase A2 Batch 8 — raise-based migration. ``FormatChecker.check`` returns
+``None`` on success and raises :class:`DatasetValidationFailedError` on
+the first failed strategy (or propagates the same error type from
+``check_dataset_format`` on the "unknown strategy" branch).
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import pytest
 from ryotenkai_control.data.validation.standalone import FormatCheckResult
 from ryotenkai_control.pipeline.stages.dataset_validator.format_checker import FormatChecker
 from ryotenkai_shared.errors import DatasetValidationFailedError
-from ryotenkai_shared.utils.result import DatasetError
 
 pytestmark = pytest.mark.unit
 
@@ -31,17 +29,16 @@ def dataset() -> MagicMock:
     return MagicMock()
 
 
-def test_check_returns_ok_when_no_phases(monkeypatch, checker, dataset):
-    """Empty strategy_phases → Ok (no formats to check)."""
+def test_check_returns_none_when_no_phases(monkeypatch, checker, dataset):
+    """Empty strategy_phases → returns None (no formats to check)."""
     monkeypatch.setattr(
         "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: [],
     )
-    result = checker.check(dataset, "ds_a", strategy_phases=[])
-    assert result.is_ok()
+    assert checker.check(dataset, "ds_a", strategy_phases=[]) is None
 
 
-def test_check_returns_ok_when_all_phases_pass(monkeypatch, checker, dataset):
+def test_check_returns_none_when_all_phases_pass(monkeypatch, checker, dataset):
     monkeypatch.setattr(
         "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: [
@@ -49,12 +46,11 @@ def test_check_returns_ok_when_all_phases_pass(monkeypatch, checker, dataset):
             FormatCheckResult(strategy_type="dpo", ok=True, message=""),
         ],
     )
-    result = checker.check(dataset, "ds_a", strategy_phases=[MagicMock(), MagicMock()])
-    assert result.is_ok()
+    assert checker.check(dataset, "ds_a", strategy_phases=[MagicMock(), MagicMock()]) is None
 
 
 def test_check_early_fails_on_first_failed_strategy(monkeypatch, checker, dataset):
-    """First failed strategy short-circuits with DATASET_FORMAT_ERROR."""
+    """First failed strategy short-circuits with DatasetValidationFailedError."""
     monkeypatch.setattr(
         "ryotenkai_control.data.validation.standalone.check_dataset_format",
         lambda *_a, **_k: [
@@ -63,22 +59,24 @@ def test_check_early_fails_on_first_failed_strategy(monkeypatch, checker, datase
             FormatCheckResult(strategy_type="cpt", ok=False, message="never reached"),
         ],
     )
-    result = checker.check(dataset, "ds_a", strategy_phases=[MagicMock()])
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, DatasetError)
-    assert err.code == "DATASET_FORMAT_ERROR"
-    assert "ds_a" in str(err)
-    assert "dpo" in str(err)
-    assert "missing chosen" in str(err)
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        checker.check(dataset, "ds_a", strategy_phases=[MagicMock()])
+
+    exc = excinfo.value
+    detail = exc.detail or ""
+    assert "ds_a" in detail
+    assert "dpo" in detail
+    assert "missing chosen" in detail
     # Third entry "never reached" must NOT appear (early-fail).
-    assert "never reached" not in str(err)
+    assert "never reached" not in detail
+    # Context carries metadata for downstream handling.
+    assert exc.context.get("strategy_type") == "dpo"
+    assert exc.context.get("dataset_name") == "ds_a"
+    assert exc.context.get("legacy_code") == "DATASET_FORMAT_ERROR"
 
 
 def test_check_propagates_underlying_failure(monkeypatch, checker, dataset):
-    """If standalone helper raises (e.g. unknown strategy), the adapter
-    surfaces a :class:`DatasetError` with the legacy DATASET_FORMAT_ERROR
-    code so its Batch 8 callers keep seeing the same outer shape."""
+    """``check_dataset_format`` raise (e.g. unknown strategy) propagates verbatim."""
 
     def _raise(*_a, **_k):
         raise DatasetValidationFailedError(
@@ -90,9 +88,7 @@ def test_check_propagates_underlying_failure(monkeypatch, checker, dataset):
         "ryotenkai_control.data.validation.standalone.check_dataset_format",
         _raise,
     )
-    result = checker.check(dataset, "ds_a", strategy_phases=[MagicMock()])
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, DatasetError)
-    assert err.code == "DATASET_FORMAT_ERROR"
-    assert "strategy 'xyz' not registered" in err.message
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        checker.check(dataset, "ds_a", strategy_phases=[MagicMock()])
+
+    assert "strategy 'xyz' not registered" in (excinfo.value.detail or "")

@@ -1,4 +1,12 @@
-"""Unit tests for src.pipeline.stages.dataset_validator.plugin_runner."""
+"""Unit tests for src.pipeline.stages.dataset_validator.plugin_runner.
+
+Phase A2 Batch 8 — raise-based migration. ``PluginRunner.run`` returns a
+metrics ``dict`` on success and raises
+:class:`DatasetValidationFailedError` on failure
+(``context["critical"]`` distinguishes the legacy
+``DATASET_VALIDATION_CRITICAL_FAILURE`` /
+``DATASET_VALIDATION_ERROR`` codes).
+"""
 
 from __future__ import annotations
 
@@ -9,8 +17,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from ryotenkai_control.data.validation.base import ValidationResult
+from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
+    VALIDATION_STATUS_KEY,
+    VALIDATION_STATUS_PASSED,
+)
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
 from ryotenkai_control.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 pytestmark = pytest.mark.unit
 
@@ -113,7 +126,11 @@ def test_run_success_fires_complete_and_validation_completed_callbacks():
         plugins=[("p_main", "p", _OkPlugin(), {"train"})],
         split_name="train",
     )
-    assert res.is_success()
+    assert isinstance(res, dict)
+    assert res[VALIDATION_STATUS_KEY] == VALIDATION_STATUS_PASSED
+    # Metrics carry split-prefixed key.
+    assert res["train.p_main.m"] == 1.0
+    assert res["warnings"] == ["w"]
     cb.on_plugin_start.assert_called_once()
     cb.on_plugin_complete.assert_called_once()
     cb.on_validation_completed.assert_called_once()
@@ -126,7 +143,7 @@ def test_run_success_fires_complete_and_validation_completed_callbacks():
 # ------------------------------------------------------------------
 
 
-def test_run_failure_fires_plugin_failed_and_validation_failed_callbacks():
+def test_run_failure_raises_and_fires_plugin_failed_and_validation_failed_callbacks():
     cb = DatasetValidatorEventCallbacks(
         on_plugin_complete=MagicMock(),
         on_plugin_failed=MagicMock(),
@@ -136,15 +153,15 @@ def test_run_failure_fires_plugin_failed_and_validation_failed_callbacks():
     runner = PluginRunner(callbacks=cb)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
-    res = runner.run(
-        "d",
-        "ref",
-        dataset=object(),
-        dataset_config=dataset_config,
-        plugins=[("p_main", "p", _FailPlugin(), {"train"})],
-        split_name="train",
-    )
-    assert res.is_failure()
+    with pytest.raises(DatasetValidationFailedError):
+        runner.run(
+            "d",
+            "ref",
+            dataset=object(),
+            dataset_config=dataset_config,
+            plugins=[("p_main", "p", _FailPlugin(), {"train"})],
+            split_name="train",
+        )
     cb.on_plugin_failed.assert_called()
     failed_call = cb.on_plugin_failed.call_args
     assert failed_call is not None
@@ -154,40 +171,40 @@ def test_run_failure_fires_plugin_failed_and_validation_failed_callbacks():
     cb.on_validation_completed.assert_not_called()
 
 
-def test_run_critical_threshold_returns_critical_failure_code():
+def test_run_critical_threshold_raises_with_critical_flag():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
-    res = runner.run(
-        "d",
-        "ref",
-        dataset=object(),
-        dataset_config=dataset_config,
-        plugins=[("p_main", "p", _FailPlugin(), {"train"})],
-        split_name="train",
-    )
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DATASET_VALIDATION_CRITICAL_FAILURE"
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        runner.run(
+            "d",
+            "ref",
+            dataset=object(),
+            dataset_config=dataset_config,
+            plugins=[("p_main", "p", _FailPlugin(), {"train"})],
+            split_name="train",
+        )
+    assert excinfo.value.context.get("critical") is True
+    # Non-empty error list also surfaced on context for the stage.
+    assert excinfo.value.context.get("errors")
 
 
-def test_run_below_critical_threshold_returns_validation_error_code():
+def test_run_below_critical_threshold_raises_with_critical_false():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=2))
 
-    res = runner.run(
-        "d",
-        "ref",
-        dataset=object(),
-        dataset_config=dataset_config,
-        plugins=[("p_main", "p", _FailPlugin(), {"train"})],
-        split_name="train",
-    )
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DATASET_VALIDATION_ERROR"
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        runner.run(
+            "d",
+            "ref",
+            dataset=object(),
+            dataset_config=dataset_config,
+            plugins=[("p_main", "p", _FailPlugin(), {"train"})],
+            split_name="train",
+        )
+    assert excinfo.value.context.get("critical") is False
 
 
 def test_run_critical_threshold_breaks_loop_early():
@@ -199,17 +216,18 @@ def test_run_critical_threshold_breaks_loop_early():
     second_validate_mock = MagicMock(wraps=second.validate)
     second.validate = second_validate_mock
 
-    runner.run(
-        "d",
-        "ref",
-        dataset=object(),
-        dataset_config=dataset_config,
-        plugins=[
-            ("p_fail", "p", _FailPlugin(), {"train"}),
-            ("p_ok", "p", second, {"train"}),
-        ],
-        split_name="train",
-    )
+    with pytest.raises(DatasetValidationFailedError):
+        runner.run(
+            "d",
+            "ref",
+            dataset=object(),
+            dataset_config=dataset_config,
+            plugins=[
+                ("p_fail", "p", _FailPlugin(), {"train"}),
+                ("p_ok", "p", second, {"train"}),
+            ],
+            split_name="train",
+        )
     # critical threshold reached after first failure → second plugin not called
     second_validate_mock.assert_not_called()
 
@@ -219,20 +237,20 @@ def test_run_critical_threshold_breaks_loop_early():
 # ------------------------------------------------------------------
 
 
-def test_run_plugin_crash_fires_failed_callback():
+def test_run_plugin_crash_raises_and_fires_failed_callback():
     cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
     runner = PluginRunner(callbacks=cb)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
-    res = runner.run(
-        "d",
-        "ref",
-        dataset=object(),
-        dataset_config=dataset_config,
-        plugins=[("p_main", "p", _CrashPlugin(), {"train"})],
-        split_name="train",
-    )
-    assert res.is_failure()
+    with pytest.raises(DatasetValidationFailedError):
+        runner.run(
+            "d",
+            "ref",
+            dataset=object(),
+            dataset_config=dataset_config,
+            plugins=[("p_main", "p", _CrashPlugin(), {"train"})],
+            split_name="train",
+        )
     cb.on_plugin_failed.assert_called_once()
     failed_call = cb.on_plugin_failed.call_args
     assert failed_call is not None
@@ -255,7 +273,8 @@ def test_run_no_callbacks_does_not_blow_up():
         plugins=[("p_main", "p", _OkPlugin(), {"train"})],
         split_name="train",
     )
-    assert res.is_success()
+    assert isinstance(res, dict)
+    assert res[VALIDATION_STATUS_KEY] == VALIDATION_STATUS_PASSED
 
 
 def test_run_empty_plugins_list_is_success():
@@ -271,5 +290,6 @@ def test_run_empty_plugins_list_is_success():
         plugins=[],
         split_name="train",
     )
-    assert res.is_success()
+    assert isinstance(res, dict)
+    assert res[VALIDATION_STATUS_KEY] == VALIDATION_STATUS_PASSED
     cb.on_validation_completed.assert_called_once()

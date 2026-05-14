@@ -3,6 +3,12 @@ Stage 0: Dataset Validator
 Validates dataset quality before training to prevent wasted resources.
 
 Now supports plugin system for extensible validation.
+
+Phase A2 Batch 8 — raise-based migration. ``execute()`` returns
+``dict[str, Any]`` and raises typed errors
+(:class:`DatasetValidationFailedError` / :class:`DatasetLoadFailedError`).
+Internal helpers no longer return ``Result``; they raise and the parent
+catches per-dataset to accumulate advisory mode reports.
 """
 
 from __future__ import annotations
@@ -10,7 +16,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import StageNames
 from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
@@ -30,14 +35,18 @@ from ryotenkai_control.pipeline.stages.dataset_validator.format_checker import F
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_loader import PluginLoader
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
 from ryotenkai_control.pipeline.stages.dataset_validator.split_loader import DatasetSplitLoader
+from ryotenkai_pod.trainer.data_loaders.factory import DatasetLoaderFactory
+from ryotenkai_shared.errors import (
+    DatasetLoadFailedError,
+    DatasetValidationFailedError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ryotenkai_shared.config.secrets.model import Secrets
     from ryotenkai_shared.config import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
 
 
 # =============================================================================
@@ -83,6 +92,25 @@ class DatasetValidatorEventCallbacks:
     # Args: dataset_name, dataset_path, plugin_id, plugin_name, params, thresholds, metrics, duration_ms, errors, recommendations
 
 
+def _is_critical_validation_failure(exc: BaseException) -> bool:
+    """True iff this exception represents a critical-threshold violation.
+
+    The plugin runner tags exceptions with ``context["critical"]`` when
+    the dataset's ``validations.critical_failures`` threshold is reached.
+    Other typed errors (e.g. :class:`DatasetLoadFailedError`) are NOT
+    automatically critical — the parent loop decides per
+    ``dataset_config.validations.critical_failures`` whether to fail fast.
+    Generic non-typed exceptions ARE treated as critical because we
+    cannot know whether the dataset is partially validated.
+    """
+    if isinstance(exc, DatasetValidationFailedError):
+        return bool(getattr(exc, "context", {}).get("critical", False))
+    # Load failures are not automatically critical; generic crashes are
+    # (conservative — we cannot know whether the dataset is partially
+    # validated).
+    return not isinstance(exc, DatasetLoadFailedError)
+
+
 class DatasetValidator(PipelineStage):
     """
     Validates dataset quality using plugin-based system.
@@ -122,7 +150,7 @@ class DatasetValidator(PipelineStage):
         # no-op — no hidden defaults are injected.
         self._plugin_loader.load_for_dataset(config.get_primary_dataset())
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """
         Validate all datasets used in training strategies.
 
@@ -133,7 +161,12 @@ class DatasetValidator(PipelineStage):
             context: Pipeline context
 
         Returns:
-            Result with aggregated validation metrics or DatasetError
+            Aggregated validation metrics dict.
+
+        Raises:
+            DatasetValidationFailedError: when a dataset's critical-failure
+                threshold is reached (or a worker thread crashes
+                unexpectedly), aborting the pipeline.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from contextvars import copy_context
@@ -159,7 +192,7 @@ class DatasetValidator(PipelineStage):
 
         if not datasets_to_validate:
             logger.warning("[VALIDATOR] No datasets found to validate")
-            return Ok({VALIDATION_STATUS_KEY: VALIDATION_STATUS_SKIPPED, "message": "No datasets configured"})
+            return {VALIDATION_STATUS_KEY: VALIDATION_STATUS_SKIPPED, "message": "No datasets configured"}
 
         logger.info(f"[VALIDATOR] Validating {len(datasets_to_validate)} dataset(s)")
 
@@ -177,9 +210,11 @@ class DatasetValidator(PipelineStage):
                 )
             logger.debug(f"[VALIDATOR] Scheduled: {dataset_name} ({dataset_path})")
 
-        # Validate datasets in parallel
-        all_results = {}
-        all_errors = []
+        # Validate datasets in parallel. We collect per-dataset success
+        # metrics or failure messages; critical failures bubble up to a
+        # pipeline-aborting raise after the pool drains.
+        all_metrics: dict[str, dict[str, Any]] = {}
+        all_errors: list[str] = []
         critical_failure = False
 
         # Propagate ContextVars (e.g. per-stage logging context) into worker
@@ -217,24 +252,32 @@ class DatasetValidator(PipelineStage):
             for future in as_completed(futures):
                 dataset_name, dataset_config = futures[future]
                 try:
-                    result = future.result()
-                    all_results[dataset_name] = result
-
-                    if result.is_err():
-                        error_msg = f"{dataset_name}: {result.unwrap_err()}"
-                        all_errors.append(error_msg)
-
-                        err = result.unwrap_err()
-                        if isinstance(err, AppError) and err.code == "DATASET_VALIDATION_CRITICAL_FAILURE":
-                            stop_on_critical_failure(
-                                reason=f"[VALIDATOR] Critical failure detected for {dataset_name}",
-                                dataset_cfg=dataset_config,
-                            )
-                            if critical_failure:
-                                break
-
-                except Exception as e:
-                    error_msg = f"{dataset_name}: validation crashed - {e}"
+                    metrics = future.result()
+                    all_metrics[dataset_name] = metrics
+                except DatasetValidationFailedError as exc:
+                    error_msg = f"{dataset_name}: {exc.detail or exc}"
+                    all_errors.append(error_msg)
+                    if _is_critical_validation_failure(exc):
+                        stop_on_critical_failure(
+                            reason=f"[VALIDATOR] Critical failure detected for {dataset_name}",
+                            dataset_cfg=dataset_config,
+                        )
+                        if critical_failure:
+                            break
+                except DatasetLoadFailedError as exc:
+                    # Load failures are not automatically critical; they
+                    # follow the legacy ``DATASET_LOAD_ERROR`` path which
+                    # falls through to :meth:`_aggregate_results` so the
+                    # caller sees a ``validation_status == "failed"`` dict
+                    # (unless other datasets succeed, in which case this
+                    # one becomes a warning). We preserve the legacy
+                    # ``[DATASET_LOAD_ERROR] <detail>`` format so warnings
+                    # remain greppable by callers.
+                    legacy_code = exc.context.get("legacy_code", "DATASET_LOAD_ERROR")
+                    error_msg = f"{dataset_name}: [{legacy_code}] {exc.detail or exc}"
+                    all_errors.append(error_msg)
+                except Exception as exc:
+                    error_msg = f"{dataset_name}: validation crashed - {exc}"
                     logger.error(f"[VALIDATOR] {error_msg}")
                     all_errors.append(error_msg)
 
@@ -249,13 +292,21 @@ class DatasetValidator(PipelineStage):
         if critical_failure:
             error_summary = (
                 f"Dataset validation failed critically. "
-                f"Validated {len(all_results)}/{len(datasets_to_validate)} datasets. "
+                f"Validated {len(all_metrics)}/{len(datasets_to_validate)} datasets. "
                 f"Errors: {'; '.join(all_errors)}"
             )
-            return Err(DatasetError(message=error_summary, code="VALIDATION_CRITICAL_FAILURE"))
+            raise DatasetValidationFailedError(
+                detail=error_summary,
+                context={
+                    "legacy_code": "VALIDATION_CRITICAL_FAILURE",
+                    "errors": all_errors,
+                    "datasets_validated": len(all_metrics),
+                    "datasets_total": len(datasets_to_validate),
+                },
+            )
 
         # Aggregate results
-        return self._aggregate_results(all_results, all_errors)
+        return self._aggregate_results(all_metrics, all_errors, len(datasets_to_validate))
 
     def _get_datasets_to_validate(self) -> dict[str, tuple[Any, list[Any]]]:
         """
@@ -292,7 +343,7 @@ class DatasetValidator(PipelineStage):
         dataset_name: str,
         dataset_config: Any,
         strategy_phases: list[Any],
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """
         Validate a single dataset with its specific configuration.
 
@@ -302,7 +353,12 @@ class DatasetValidator(PipelineStage):
             strategy_phases: Strategy phase configs that consume this dataset
 
         Returns:
-            Result with validation metrics or DatasetError
+            Validation metrics dict (merged from train + optional eval).
+
+        Raises:
+            DatasetLoadFailedError: if the train split could not be loaded.
+            DatasetValidationFailedError: on format check or plugin failure.
+                ``context["critical"]`` flags critical-threshold violations.
         """
         logger.info(f"[VALIDATOR] Starting validation for dataset: {dataset_name}")
 
@@ -310,12 +366,14 @@ class DatasetValidator(PipelineStage):
         dataset = self._split_loader.load_train(dataset_config)
 
         if dataset is None:
-            return Err(DatasetError(message=f"Failed to load dataset: {dataset_name}", code="DATASET_LOAD_ERROR"))
+            raise DatasetLoadFailedError(
+                detail=f"Failed to load dataset: {dataset_name}",
+                context={"dataset_name": dataset_name, "legacy_code": "DATASET_LOAD_ERROR"},
+            )
 
         # FORMAT CHECK FIRST — fail fast before quality plugins (before GPU)
-        fmt_result = self._format_checker.check(dataset, dataset_name, strategy_phases)
-        if fmt_result.is_err():
-            return Err(fmt_result.unwrap_err())  # type: ignore[union-attr]
+        # Propagates DatasetValidationFailedError verbatim.
+        self._format_checker.check(dataset, dataset_name, strategy_phases)
 
         # Get dataset train ref for event tracking
         dataset_path = self._split_loader.get_train_ref(dataset_config)
@@ -335,106 +393,114 @@ class DatasetValidator(PipelineStage):
             for (plugin_id, plugin_name, p, apply_to) in plugins
             if SPLIT_TRAIN in apply_to
         ]
-        train_result = self._plugin_runner.run(
-            dataset_name,
-            dataset_path,
-            dataset,
-            dataset_config,
-            train_plugins,
-            split_name=SPLIT_TRAIN,  # type: ignore[arg-type]
-        )
+        merged: dict[str, Any] = {}
+        errors: list[str] = []
+        critical_errors: list[str] = []
+
+        try:
+            train_metrics = self._plugin_runner.run(
+                dataset_name,
+                dataset_path,
+                dataset,
+                dataset_config,
+                train_plugins,
+                split_name=SPLIT_TRAIN,  # type: ignore[arg-type]
+            )
+            merged.update(train_metrics)
+        except DatasetValidationFailedError as train_exc:
+            errors.append(f"train: {train_exc.detail or train_exc}")
+            if _is_critical_validation_failure(train_exc):
+                critical_errors.append(f"train: {train_exc.detail or train_exc}")
 
         # Optional eval
-        eval_result: Result[dict[str, Any], AppError] | None = None
         eval_dataset, eval_ref = self._split_loader.try_load_eval(dataset_config)
         if eval_dataset is not None and eval_ref is not None:
             # FORMAT CHECK for eval dataset too
-            fmt_eval_result = self._format_checker.check(eval_dataset, dataset_name, strategy_phases)
-            if fmt_eval_result.is_err():
-                return Err(fmt_eval_result.unwrap_err())  # type: ignore[union-attr]
+            self._format_checker.check(eval_dataset, dataset_name, strategy_phases)
 
             eval_plugins = [
                 (plugin_id, plugin_name, p, apply_to)
                 for (plugin_id, plugin_name, p, apply_to) in plugins
                 if SPLIT_EVAL in apply_to
             ]
-            eval_result = self._plugin_runner.run(
-                dataset_name,
-                eval_ref,
-                eval_dataset,
-                dataset_config,
-                eval_plugins,
-                split_name=SPLIT_EVAL,  # type: ignore[arg-type]
-            )
-
-        # Merge results
-        merged: dict[str, Any] = {}
-        errors: list[str] = []
-        critical_errors: list[str] = []
-
-        if train_result.is_ok():
-            merged.update(train_result.unwrap())
-        else:
-            train_error = train_result.unwrap_err()
-            errors.append(f"train: {train_error}")
-            if isinstance(train_error, AppError) and train_error.code == "DATASET_VALIDATION_CRITICAL_FAILURE":
-                critical_errors.append(f"train: {train_error}")
-
-        if eval_result is not None:
-            if eval_result.is_ok():
-                merged.update(eval_result.unwrap())
-            else:
-                eval_error = eval_result.unwrap_err()
-                errors.append(f"eval: {eval_error}")
-                if isinstance(eval_error, AppError) and eval_error.code == "DATASET_VALIDATION_CRITICAL_FAILURE":
-                    critical_errors.append(f"eval: {eval_error}")
+            try:
+                eval_metrics = self._plugin_runner.run(
+                    dataset_name,
+                    eval_ref,
+                    eval_dataset,
+                    dataset_config,
+                    eval_plugins,
+                    split_name=SPLIT_EVAL,  # type: ignore[arg-type]
+                )
+                merged.update(eval_metrics)
+            except DatasetValidationFailedError as eval_exc:
+                errors.append(f"eval: {eval_exc.detail or eval_exc}")
+                if _is_critical_validation_failure(eval_exc):
+                    critical_errors.append(f"eval: {eval_exc.detail or eval_exc}")
 
         if critical_errors:
-            return Err(DatasetError(message="; ".join(critical_errors), code="DATASET_VALIDATION_CRITICAL_FAILURE"))
+            raise DatasetValidationFailedError(
+                detail="; ".join(critical_errors),
+                context={
+                    "critical": True,
+                    "dataset_name": dataset_name,
+                    "legacy_code": "DATASET_VALIDATION_CRITICAL_FAILURE",
+                },
+            )
 
         if errors:
-            return Err(DatasetError(message="; ".join(errors), code="DATASET_VALIDATION_ERROR"))
+            raise DatasetValidationFailedError(
+                detail="; ".join(errors),
+                context={
+                    "critical": False,
+                    "dataset_name": dataset_name,
+                    "legacy_code": "DATASET_VALIDATION_ERROR",
+                },
+            )
 
-        return Ok(merged)
+        return merged
 
     @staticmethod
     def _aggregate_results(
-        all_results: dict[str, Result[dict[str, Any], AppError]],
+        all_metrics: dict[str, dict[str, Any]],
         all_errors: list[str],
-    ) -> Result[dict[str, Any], AppError]:
+        total_datasets: int,
+    ) -> dict[str, Any]:
         """
         Aggregate validation results from all datasets.
 
         Continue strategy: collect all errors, return aggregated metrics.
+        ``all_metrics`` carries successful datasets (post-raise migration:
+        a dataset is either fully successful and present here, or its
+        error message is in ``all_errors``).
         """
         aggregated_metrics: dict[str, Any] = {}
         aggregated_warnings: list[str] = []
 
-        for dataset_name, result in all_results.items():
-            if result.is_ok():
-                metrics = result.unwrap()
-                # Prefix metrics with dataset name
-                for key, value in metrics.items():
-                    aggregated_metrics[f"{dataset_name}.{key}"] = value
+        for dataset_name, metrics in all_metrics.items():
+            # Prefix metrics with dataset name
+            for key, value in metrics.items():
+                aggregated_metrics[f"{dataset_name}.{key}"] = value
 
-                # Collect warnings
-                warnings = metrics.get(WARNINGS_KEY, [])
-                for warning in warnings:
-                    aggregated_warnings.append(f"[{dataset_name}] {warning}")
+            # Collect warnings
+            warnings = metrics.get(WARNINGS_KEY, [])
+            for warning in warnings:
+                aggregated_warnings.append(f"[{dataset_name}] {warning}")
 
-        # If all datasets failed, return Ok with warnings (advisory mode).
-        # Critical failures are handled earlier (fail-fast).
+        datasets_passed = len(all_metrics)
+
+        # If all datasets failed, return failed-status dict (advisory mode).
+        # Critical failures are handled earlier (fail-fast raise).
         if all_errors and not aggregated_metrics:
             error_summary = "; ".join(all_errors)
-            result_data: dict[str, Any] = {
+            return {
                 VALIDATION_STATUS_KEY: VALIDATION_STATUS_FAILED,
-                "datasets_validated": len(all_results),
+                "datasets_validated": total_datasets,
                 "datasets_passed": 0,
                 "datasets_failed": len(all_errors),
                 WARNINGS_KEY: [f"ERROR: {e}" for e in all_errors],
                 "message": f"All datasets failed validation (non-critical): {error_summary}",
             }
-            return Ok(result_data)
 
         # If some failed, add warnings
         if all_errors:
@@ -444,8 +510,8 @@ class DatasetValidator(PipelineStage):
         # Build final result with all aggregated data
         final_result_data: dict[str, Any] = {
             VALIDATION_STATUS_KEY: VALIDATION_STATUS_FAILED if all_errors else VALIDATION_STATUS_PASSED,
-            "datasets_validated": len(all_results),
-            "datasets_passed": sum(1 for r in all_results.values() if r.is_ok()),
+            "datasets_validated": total_datasets,
+            "datasets_passed": datasets_passed,
             "datasets_failed": len(all_errors),
             **aggregated_metrics,
         }
@@ -453,4 +519,4 @@ class DatasetValidator(PipelineStage):
         if aggregated_warnings:
             final_result_data[WARNINGS_KEY] = aggregated_warnings
 
-        return Ok(final_result_data)
+        return final_result_data

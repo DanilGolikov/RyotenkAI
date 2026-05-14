@@ -11,8 +11,14 @@ Owns the per-plugin loop:
 * track ``failed_plugins`` count against the dataset's
   ``critical_failures`` threshold; early-break the loop when reached
 * fire ``on_validation_completed`` / ``on_validation_failed`` at the end
-* return ``Ok(metrics)`` on success or ``Err(DatasetError)`` with code
-  ``DATASET_VALIDATION_CRITICAL_FAILURE`` / ``DATASET_VALIDATION_ERROR``
+* return ``dict[str, Any]`` on success or raise
+  :class:`DatasetValidationFailedError` whose ``context["critical"]`` flag
+  distinguishes the legacy ``DATASET_VALIDATION_CRITICAL_FAILURE`` /
+  ``DATASET_VALIDATION_ERROR`` codes
+
+Phase A2 Batch 8 — raise-based migration. The previous ``Result`` shape
+collapsed into Python exception propagation (Decision 4: the call chain
+IS the propagation chain).
 """
 
 from __future__ import annotations
@@ -26,8 +32,8 @@ from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     VALIDATION_STATUS_PASSED,
     VALIDATIONS_ATTR,
 )
+from ryotenkai_shared.errors import DatasetValidationFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -51,8 +57,14 @@ class PluginRunner:
         plugins: list[PluginTuple],
         *,
         split_name: Literal["train", "eval"],
-    ) -> Result[dict[str, Any], AppError]:
-        """Run plugins; fire callbacks; honour critical_failures threshold."""
+    ) -> dict[str, Any]:
+        """Run plugins; fire callbacks; honour critical_failures threshold.
+
+        Returns the metrics dict on success. Raises
+        :class:`DatasetValidationFailedError` on failure with
+        ``context["critical"]`` set when the critical_failures threshold
+        was reached (legacy ``DATASET_VALIDATION_CRITICAL_FAILURE``).
+        """
         logger.info(f"[{dataset_name}] Running {len(plugins)} validation plugins on {split_name}")
 
         all_metrics: dict[str, Any] = {}
@@ -197,7 +209,7 @@ class PluginRunner:
         all_errors: list[str],
         all_recommendations: list[str],
         critical_threshold_reached: bool,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         logger.info(f"[{dataset_name}] Dataset Validation Metrics:")
         for key, value in all_metrics.items():
             logger.info(f"  - {key}: {value}")
@@ -222,22 +234,25 @@ class PluginRunner:
                 self._callbacks.on_validation_failed(dataset_name, dataset_path, all_errors)
 
             error_summary = f"{len(all_errors)} validation errors"
-            error_code = (
-                "DATASET_VALIDATION_CRITICAL_FAILURE" if critical_threshold_reached else "DATASET_VALIDATION_ERROR"
+            raise DatasetValidationFailedError(
+                detail=error_summary,
+                context={
+                    "errors": all_errors,
+                    "critical": critical_threshold_reached,
+                    "dataset_name": dataset_name,
+                },
             )
-            return Err(DatasetError(message=error_summary, code=error_code, details={"errors": all_errors}))
 
         logger.info(f"[{dataset_name}] ✅ All validation checks passed!")
 
         if self._callbacks.on_validation_completed:
             self._callbacks.on_validation_completed(dataset_name, dataset_path, all_metrics, all_warnings)
 
-        result_data = {
+        return {
             VALIDATION_STATUS_KEY: VALIDATION_STATUS_PASSED,
             "warnings": all_warnings,
             **all_metrics,
         }
-        return Ok(result_data)
 
 
 __all__ = ["PluginRunner"]

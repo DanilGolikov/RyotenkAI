@@ -67,10 +67,9 @@ class TestDatasetValidatorBoundary:
         catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_success()
-        ctx = result.unwrap()
-        assert ctx["validation_status"] == "passed"
-        assert ctx["primary.train.min_samples_main.sample_count"] == 10
+        assert isinstance(result, dict)
+        assert result["validation_status"] == "passed"
+        assert result["primary.train.min_samples_main.sample_count"] == 10
 
     def test_empty_dataset_load_error_is_reported_as_failed_validation(self, tmp_path) -> None:
         dataset_file = tmp_path / "empty.jsonl"
@@ -89,10 +88,9 @@ class TestDatasetValidatorBoundary:
         catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_success()
-        ctx = result.unwrap()
-        assert ctx["validation_status"] == "failed"
-        assert any("DATASET_LOAD_ERROR" in warning for warning in ctx.get("warnings", []))
+        assert isinstance(result, dict)
+        assert result["validation_status"] == "failed"
+        assert any("DATASET_LOAD_ERROR" in warning for warning in result.get("warnings", []))
 
     def test_empty_dataset_is_non_critical_when_critical_failures_zero(self, tmp_path) -> None:
         dataset_file = tmp_path / "empty.jsonl"
@@ -111,10 +109,9 @@ class TestDatasetValidatorBoundary:
         catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_success()
-        ctx = result.unwrap()
-        assert ctx["validation_status"] == "failed"
-        assert any("ERROR:" in w for w in ctx.get("warnings", []))
+        assert isinstance(result, dict)
+        assert result["validation_status"] == "failed"
+        assert any("ERROR:" in w for w in result.get("warnings", []))
 
 
 class TestDatasetValidatorNegative:
