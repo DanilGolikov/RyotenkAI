@@ -43,7 +43,12 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
-from ryotenkai_shared.errors import EngineConfigInvalidError, SSHTransferFailedError
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    EngineConfigInvalidError,
+    ProviderUnavailableError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
@@ -435,12 +440,15 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         try:
             if not self._ssh_client:
                 return
-            logs_res = self._docker.logs(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10)
-            if logs_res.is_ok():
-                stdout = logs_res.unwrap()
-                if stdout:
-                    local_path.parent.mkdir(parents=True, exist_ok=True)
-                    local_path.write_text(stdout, encoding=_ENCODING_UTF8)
+            # Docker logs surface raises on failure (Phase A2 Batch 4);
+            # this method is best-effort — swallow the exception in the
+            # outer ``except`` rather than propagating.
+            stdout = self._docker.logs(
+                self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10
+            )
+            if stdout:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(stdout, encoding=_ENCODING_UTF8)
         except Exception as e:
             logger.debug(f"Failed to collect inference logs: {e}")
 
@@ -523,7 +531,15 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         if not self._ssh_client:
             return Ok(None)
 
-        _ = self._docker.rm_force(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        # Best-effort teardown: rm_force now raises on docker-daemon failure
+        # (Phase A2 Batch 4). The provider's legacy contract for undeploy is
+        # "always succeed" — swallow the exception, log, and clear state.
+        try:
+            self._docker.rm_force(
+                self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60
+            )
+        except (ProviderUnavailableError, ConfigInvalidError) as exc:
+            logger.debug(f"Best-effort container teardown failed: {exc}")
         self._endpoint_info = None
         return Ok(None)
 
@@ -711,10 +727,20 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         ssh: SSHClient,
         image: str,
     ) -> Result[None, InferenceError]:
-        res = self._docker.ensure_image(ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT)
-        if res.is_failure():
-            err = res.unwrap_err()
-            return Err(InferenceError(message=str(err), code="SINGLENODE_DOCKER_IMAGE_FAILED"))
+        # ensure_image now raises ProviderUnavailableError on failure
+        # (Phase A2 Batch 4). Provider surface still returns Result —
+        # translate at this boundary until Batch 11/12 migrates it too.
+        try:
+            self._docker.ensure_image(
+                ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT
+            )
+        except ProviderUnavailableError as exc:
+            return Err(
+                InferenceError(
+                    message=str(exc.detail or exc),
+                    code="SINGLENODE_DOCKER_IMAGE_FAILED",
+                )
+            )
         return Ok(None)
 
     @staticmethod
@@ -887,7 +913,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             started_polling = time.time()
             while True:
                 if time.time() - started_polling > step.timeout_seconds:
-                    _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+                    # Best-effort cleanup on timeout — swallow Docker errors.
+                    try:
+                        self._docker.rm_force(
+                            ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S
+                        )
+                    except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                        logger.debug(f"Timeout-path cleanup rm_force failed: {exc}")
                     if self._mlflow_manager:
                         self._mlflow_manager.log_event_error(
                             f"Prepare step timed out: {step.name}",
@@ -906,27 +938,42 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 is_running = self._docker.is_container_running(
                     ssh, name_filter=container_name, timeout_seconds=5
                 )
-                logs_res = self._docker.logs(ssh, container_name=container_name, timeout_seconds=10)
-                if logs_res.is_ok():
-                    logs_content = logs_res.unwrap()
-                    if logs_content:
-                        try:
-                            prepare_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
-                        except OSError as e:
-                            logger.warning(f"Failed to write prepare logs to {prepare_log_path}: {e}")
-                        if step.success_marker and step.success_marker in logs_content:
-                            marker_seen = True
-                if not is_running:
-                    exit_res = self._docker.container_exit_code(
-                        ssh, container_name=container_name, timeout_seconds=5
+                # logs() now raises on failure (Phase A2 Batch 4) — best-effort
+                # in the polling loop: a transient docker-daemon error must not
+                # abort the poll, just skip log capture for this iteration.
+                logs_content = ""
+                try:
+                    logs_content = self._docker.logs(
+                        ssh, container_name=container_name, timeout_seconds=10
                     )
-                    if exit_res.is_ok():
-                        exit_code = exit_res.unwrap()
+                except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                    logger.debug(f"Polling-loop logs fetch failed: {exc}")
+                if logs_content:
+                    try:
+                        prepare_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
+                    except OSError as e:
+                        logger.warning(f"Failed to write prepare logs to {prepare_log_path}: {e}")
+                    if step.success_marker and step.success_marker in logs_content:
+                        marker_seen = True
+                if not is_running:
+                    # container_exit_code raises on failure — fall through to
+                    # exit_code=None which the next block treats as failure.
+                    try:
+                        exit_code = self._docker.container_exit_code(
+                            ssh, container_name=container_name, timeout_seconds=5
+                        )
+                    except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                        logger.debug(f"container_exit_code lookup failed: {exc}")
                     break
                 time.sleep(_PREPARE_POLL_INTERVAL_S)
 
             # 5. Cleanup container regardless of outcome.
-            _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+            try:
+                self._docker.rm_force(
+                    ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S
+                )
+            except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                logger.debug(f"Post-step cleanup rm_force failed: {exc}")
 
             step_duration = time.time() - step_started_at
 
@@ -1092,17 +1139,24 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         )
         run_cmd = format_docker_run(spec, host_bind=host_bind)
 
-        # Stop old container (if exists) and start new one
-        _ = self._docker.rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        # Stop old container (if exists) and start new one — best-effort.
+        try:
+            self._docker.rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        except (ProviderUnavailableError, ConfigInvalidError) as exc:
+            logger.debug(f"Pre-start container cleanup failed: {exc}")
 
         ok, _stdout, stderr = ssh.exec_command(run_cmd, timeout=PULL_TIMEOUT, silent=False)
         if not ok:
-            _ = self._docker.logs(
-                ssh,
-                container_name=self._CONTAINER_NAME,
-                tail=LOG_OUTPUT_SHORT_CHARS,
-                timeout_seconds=60,
-            )
+            # Best-effort log fetch for diagnostics — discard exceptions.
+            try:
+                self._docker.logs(
+                    ssh,
+                    container_name=self._CONTAINER_NAME,
+                    tail=LOG_OUTPUT_SHORT_CHARS,
+                    timeout_seconds=60,
+                )
+            except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                logger.debug(f"Diagnostic logs fetch failed: {exc}")
             return Err(
                 InferenceError(
                     message=f"Failed to start vLLM container: {stderr[:LOG_OUTPUT_LONG_CHARS]}",

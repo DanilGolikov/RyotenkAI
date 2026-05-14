@@ -9,6 +9,11 @@ in the class would duplicate the surface and create a divergence risk.
 
 Stateless and safe to share across threads / providers — the SSH
 client is passed per call, not stored.
+
+Phase A2 Batch 4 (2026-05-14): both the underlying module-level
+functions and these adapter methods now raise typed exceptions
+(:class:`ProviderUnavailableError`, :class:`ConfigInvalidError`)
+instead of returning :class:`Result`. The class is otherwise unchanged.
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ from ryotenkai_shared.utils.docker import (
 from ryotenkai_shared.utils.docker import (
     ensure_docker_image as _ensure_docker_image,
 )
-from ryotenkai_shared.utils.result import ProviderError, Result
 
 
 class LocalDockerClient:
@@ -40,9 +44,7 @@ class LocalDockerClient:
 
     Every call delegates to the legacy function of the same shape in
     :mod:`ryotenkai_shared.utils.docker`. The legacy functions remain
-    public for callers that haven't migrated yet (see the
-    backwards-compat shims documented in
-    :mod:`ryotenkai_shared.infrastructure.docker.protocol`).
+    public for callers that haven't migrated yet.
     """
 
     def image_exists(self, ssh: _ExecClient, image: str) -> bool:
@@ -55,8 +57,8 @@ class LocalDockerClient:
         image: str,
         pull_timeout_seconds: int = 1200,
         verify_after_pull: bool = True,
-    ) -> Result[None, ProviderError]:
-        return _ensure_docker_image(
+    ) -> None:
+        _ensure_docker_image(
             ssh=ssh,
             image=image,
             pull_timeout_seconds=pull_timeout_seconds,
@@ -69,8 +71,8 @@ class LocalDockerClient:
         *,
         container_name: str,
         timeout_seconds: int = 60,
-    ) -> Result[None, ProviderError]:
-        return _docker_rm_force(
+    ) -> None:
+        _docker_rm_force(
             ssh, container_name=container_name, timeout_seconds=timeout_seconds
         )
 
@@ -92,7 +94,7 @@ class LocalDockerClient:
         container_name: str,
         tail: int | None = None,
         timeout_seconds: int = 30,
-    ) -> Result[str, ProviderError]:
+    ) -> str:
         return _docker_logs(
             ssh,
             container_name=container_name,
@@ -106,7 +108,7 @@ class LocalDockerClient:
         *,
         container_name: str,
         timeout_seconds: int = 5,
-    ) -> Result[int, ProviderError]:
+    ) -> int:
         return _docker_container_exit_code(
             ssh,
             container_name=container_name,

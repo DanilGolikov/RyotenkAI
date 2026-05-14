@@ -1,4 +1,12 @@
-"""Unit tests for src/utils/docker.py — branch coverage for key error paths."""
+"""Unit tests for ``ryotenkai_shared.utils.docker`` — branch coverage for
+key error paths.
+
+Phase A2 Batch 4 (2026-05-14): the docker surface no longer returns
+``Result[T, ProviderError]`` — it returns ``T`` directly and raises
+:class:`ConfigInvalidError` for bad input or
+:class:`ProviderUnavailableError` for transient docker / daemon /
+inspect failures. Tests use ``pytest.raises``.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import ryotenkai_shared.utils.docker as docker_mod
+from ryotenkai_shared.errors import ConfigInvalidError, ProviderUnavailableError
 from ryotenkai_shared.utils.docker import (
     _is_latest_tag,
     _validate_container_name,
@@ -31,43 +40,40 @@ def _ssh(ok: bool = True, stdout: str = "", stderr: str = "") -> MagicMock:
 
 
 # ---------------------------------------------------------------------------
-# _validate_container_name (lines 32-40)
+# _validate_container_name — now raises instead of returning Result
 # ---------------------------------------------------------------------------
 
 
-def test_validate_container_name_empty_string() -> None:
-    res = _validate_container_name("")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_INVALID_CONTAINER_NAME"
+def test_validate_container_name_empty_string_raises() -> None:
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        _validate_container_name("")
+    assert exc_info.value.context.get("reason") == "DOCKER_INVALID_CONTAINER_NAME"
 
 
-def test_validate_container_name_none_like_value() -> None:
-    # The guard checks `not name` which catches falsy non-str too, but the
-    # type annotation is str; pass an empty string to cover the branch.
-    res = _validate_container_name("   ")  # spaces → regex mismatch
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_INVALID_CONTAINER_NAME"
+def test_validate_container_name_only_spaces_raises() -> None:
+    # The regex rejects spaces; should raise as "unsafe".
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        _validate_container_name("   ")
+    assert exc_info.value.context.get("reason") == "DOCKER_INVALID_CONTAINER_NAME"
 
 
-def test_validate_container_name_unsafe_chars() -> None:
-    res = _validate_container_name("bad;name")
-    assert res.is_failure()
-    assert "Unsafe" in res.unwrap_err().message
+def test_validate_container_name_unsafe_chars_raises() -> None:
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        _validate_container_name("bad;name")
+    assert "Unsafe" in (exc_info.value.detail or "")
 
 
-def test_validate_container_name_valid() -> None:
-    res = _validate_container_name("my-container_01")
-    assert res.is_success()
+def test_validate_container_name_valid_returns_none() -> None:
+    assert _validate_container_name("my-container_01") is None
 
 
-def test_validate_container_name_starts_with_digit() -> None:
+def test_validate_container_name_starts_with_digit_returns_none() -> None:
     # Regex requires first char to be alphanumeric — digit is fine.
-    res = _validate_container_name("1container")
-    assert res.is_success()
+    assert _validate_container_name("1container") is None
 
 
 # ---------------------------------------------------------------------------
-# _is_latest_tag (lines 67-81)
+# _is_latest_tag (unchanged semantics)
 # ---------------------------------------------------------------------------
 
 
@@ -105,7 +111,7 @@ def test_is_latest_tag_registry_with_port_and_version() -> None:
 
 
 # ---------------------------------------------------------------------------
-# docker_image_exists
+# docker_image_exists (unchanged contract)
 # ---------------------------------------------------------------------------
 
 
@@ -120,44 +126,41 @@ def test_docker_image_exists_returns_false_when_fail() -> None:
 
 
 # ---------------------------------------------------------------------------
-# docker_rm_force (lines 154-170)
+# docker_rm_force — now raises
 # ---------------------------------------------------------------------------
 
 
-def test_docker_rm_force_invalid_container_name() -> None:
+def test_docker_rm_force_invalid_container_name_raises() -> None:
     ssh = _ssh()
-    res = docker_rm_force(ssh, container_name="bad name")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_INVALID_CONTAINER_NAME"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        docker_rm_force(ssh, container_name="bad name")
+    assert exc_info.value.context.get("reason") == "DOCKER_INVALID_CONTAINER_NAME"
     ssh.exec_command.assert_not_called()
 
 
-def test_docker_rm_force_command_fails_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When exec_command returns ok=False, must return Err DOCKER_RM_FAILED (lines 166-167)."""
+def test_docker_rm_force_command_fails_raises_provider_unavailable() -> None:
     ssh = _ssh(ok=False, stderr="no such container")
-    res = docker_rm_force(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DOCKER_RM_FAILED"
-    assert "mycontainer" in str(err.details)
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_rm_force(ssh, container_name="mycontainer")
+    assert exc_info.value.context.get("reason") == "DOCKER_RM_FAILED"
+    assert exc_info.value.context.get("container_name") == "mycontainer"
 
 
-def test_docker_rm_force_success() -> None:
+def test_docker_rm_force_success_returns_none() -> None:
     ssh = _ssh(ok=True)
-    res = docker_rm_force(ssh, container_name="mycontainer")
-    assert res.is_success()
+    assert docker_rm_force(ssh, container_name="mycontainer") is None
 
 
 def test_docker_rm_force_empty_stderr_uses_default_message() -> None:
     """Empty stderr → fallback message 'docker rm failed'."""
     ssh = _ssh(ok=False, stderr="")
-    res = docker_rm_force(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    assert res.unwrap_err().message == "docker rm failed"
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_rm_force(ssh, container_name="mycontainer")
+    assert exc_info.value.detail == "docker rm failed"
 
 
 # ---------------------------------------------------------------------------
-# docker_is_container_running (line 187)
+# docker_is_container_running (unchanged contract — still bool)
 # ---------------------------------------------------------------------------
 
 
@@ -186,41 +189,38 @@ def test_docker_is_container_running_returns_false_when_empty_stdout() -> None:
 
 
 # ---------------------------------------------------------------------------
-# docker_logs (lines 204-220)
+# docker_logs — now raises
 # ---------------------------------------------------------------------------
 
 
-def test_docker_logs_invalid_container_name() -> None:
+def test_docker_logs_invalid_container_name_raises() -> None:
     ssh = _ssh()
-    res = docker_logs(ssh, container_name="bad name")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_INVALID_CONTAINER_NAME"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        docker_logs(ssh, container_name="bad name")
+    assert exc_info.value.context.get("reason") == "DOCKER_INVALID_CONTAINER_NAME"
     ssh.exec_command.assert_not_called()
 
 
-def test_docker_logs_command_fails_returns_err() -> None:
-    """When exec_command returns ok=False, returns Err DOCKER_LOGS_FAILED (lines 216-217)."""
+def test_docker_logs_command_fails_raises() -> None:
     ssh = _ssh(ok=False, stdout="", stderr="container not found")
-    res = docker_logs(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DOCKER_LOGS_FAILED"
-    assert "mycontainer" in str(err.details)
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_logs(ssh, container_name="mycontainer")
+    assert exc_info.value.context.get("reason") == "DOCKER_LOGS_FAILED"
+    assert exc_info.value.context.get("container_name") == "mycontainer"
 
 
 def test_docker_logs_empty_stderr_uses_default_message() -> None:
     """Empty stderr + empty stdout → fallback 'docker logs failed'."""
     ssh = _ssh(ok=False, stdout="", stderr="")
-    res = docker_logs(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    assert res.unwrap_err().message == "docker logs failed"
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_logs(ssh, container_name="mycontainer")
+    assert exc_info.value.detail == "docker logs failed"
 
 
 def test_docker_logs_success_returns_stdout() -> None:
     ssh = _ssh(ok=True, stdout="log line 1\nlog line 2\n")
-    res = docker_logs(ssh, container_name="mycontainer")
-    assert res.is_success()
-    assert res.unwrap() == "log line 1\nlog line 2\n"
+    out = docker_logs(ssh, container_name="mycontainer")
+    assert out == "log line 1\nlog line 2\n"
 
 
 def test_docker_logs_with_tail_parameter() -> None:
@@ -234,80 +234,69 @@ def test_docker_logs_with_tail_parameter() -> None:
 
     mock_ssh.exec_command.side_effect = fake_exec
 
-    res = docker_logs(mock_ssh, container_name="mycontainer", tail=50)
-    assert res.is_success()
+    out = docker_logs(mock_ssh, container_name="mycontainer", tail=50)
+    assert out == "line\n"
     assert calls and "--tail 50" in calls[0]
 
 
 # ---------------------------------------------------------------------------
-# docker_container_exit_code (lines 223-248)
+# docker_container_exit_code — now raises / returns int
 # ---------------------------------------------------------------------------
 
 
-def test_docker_container_exit_code_invalid_name() -> None:
+def test_docker_container_exit_code_invalid_name_raises() -> None:
     ssh = _ssh()
-    res = docker_container_exit_code(ssh, container_name="bad name")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_INVALID_CONTAINER_NAME"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        docker_container_exit_code(ssh, container_name="bad name")
+    assert exc_info.value.context.get("reason") == "DOCKER_INVALID_CONTAINER_NAME"
     ssh.exec_command.assert_not_called()
 
 
-def test_docker_container_exit_code_inspect_failed() -> None:
-    """When exec_command fails, returns Err DOCKER_INSPECT_FAILED (lines 235-236)."""
+def test_docker_container_exit_code_inspect_failed_raises() -> None:
     ssh = _ssh(ok=False, stderr="container not found")
-    res = docker_container_exit_code(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DOCKER_INSPECT_FAILED"
-    assert "mycontainer" in str(err.details)
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_container_exit_code(ssh, container_name="mycontainer")
+    assert exc_info.value.context.get("reason") == "DOCKER_INSPECT_FAILED"
+    assert exc_info.value.context.get("container_name") == "mycontainer"
 
 
-def test_docker_container_exit_code_invalid_output() -> None:
-    """Non-integer stdout → Err DOCKER_INSPECT_INVALID_OUTPUT (lines 242-243)."""
+def test_docker_container_exit_code_invalid_output_raises() -> None:
+    """Non-integer stdout → ProviderUnavailableError(DOCKER_INSPECT_INVALID_OUTPUT)."""
     ssh = _ssh(ok=True, stdout="not-a-number\n")
-    res = docker_container_exit_code(ssh, container_name="mycontainer")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DOCKER_INSPECT_INVALID_OUTPUT"
-    assert "not-a-number" in err.message
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        docker_container_exit_code(ssh, container_name="mycontainer")
+    assert exc_info.value.context.get("reason") == "DOCKER_INSPECT_INVALID_OUTPUT"
+    assert "not-a-number" in (exc_info.value.detail or "")
 
 
 def test_docker_container_exit_code_success_zero() -> None:
     ssh = _ssh(ok=True, stdout="0\n")
-    res = docker_container_exit_code(ssh, container_name="mycontainer")
-    assert res.is_success()
-    assert res.unwrap() == 0
+    assert docker_container_exit_code(ssh, container_name="mycontainer") == 0
 
 
 def test_docker_container_exit_code_success_nonzero() -> None:
     ssh = _ssh(ok=True, stdout="137\n")
-    res = docker_container_exit_code(ssh, container_name="mycontainer")
-    assert res.is_success()
-    assert res.unwrap() == 137
+    assert docker_container_exit_code(ssh, container_name="mycontainer") == 137
 
 
 # ---------------------------------------------------------------------------
-# ensure_docker_image (lines 84-151)
+# ensure_docker_image — now raises
 # ---------------------------------------------------------------------------
 
 
 def test_ensure_docker_image_already_present_non_latest_skips_pull() -> None:
-    """If image exists and tag != latest, skip pull and return Ok."""
+    """If image exists and tag != latest, skip pull and return None."""
     ssh = _ssh(ok=True)
-    res = ensure_docker_image(ssh=ssh, image="myimage:1.0")
-    assert res.is_success()
+    assert ensure_docker_image(ssh=ssh, image="myimage:1.0") is None
     # exec_command should only be called once (for docker_image_exists inspect)
     assert ssh.exec_command.call_count == 1
 
 
-def test_ensure_docker_image_pull_failure_returns_err() -> None:
-    """Pull returning ok=False → Err DOCKER_PULL_FAILED (lines 118-120)."""
-    call_count = [0]
-
+def test_ensure_docker_image_pull_failure_raises() -> None:
+    """Pull returning ok=False → ProviderUnavailableError(DOCKER_PULL_FAILED)."""
     mock_ssh = MagicMock()
 
     def fake_exec(cmd, **kwargs):
-        call_count[0] += 1
         if "image inspect" in cmd:
             return (False, "", "")  # image not present
         if "docker pull" in cmd:
@@ -316,15 +305,14 @@ def test_ensure_docker_image_pull_failure_returns_err() -> None:
 
     mock_ssh.exec_command.side_effect = fake_exec
 
-    res = ensure_docker_image(ssh=mock_ssh, image="myimage:2.0")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "DOCKER_PULL_FAILED"
-    assert "myimage:2.0" in err.message
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        ensure_docker_image(ssh=mock_ssh, image="myimage:2.0")
+    assert exc_info.value.context.get("reason") == "DOCKER_PULL_FAILED"
+    assert "myimage:2.0" in (exc_info.value.detail or "")
 
 
-def test_ensure_docker_image_no_verify_after_pull_returns_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    """verify_after_pull=False → Ok immediately after successful pull (lines 129-130)."""
+def test_ensure_docker_image_no_verify_after_pull_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_after_pull=False → returns None immediately after pull."""
     mock_ssh = MagicMock()
 
     def fake_exec(cmd, **kwargs):
@@ -336,9 +324,7 @@ def test_ensure_docker_image_no_verify_after_pull_returns_ok(monkeypatch: pytest
 
     mock_ssh.exec_command.side_effect = fake_exec
 
-    res = ensure_docker_image(ssh=mock_ssh, image="myimage:2.0", verify_after_pull=False)
-    assert res.is_success()
-    # No sleep should be called since verify is skipped
+    assert ensure_docker_image(ssh=mock_ssh, image="myimage:2.0", verify_after_pull=False) is None
     pull_calls = [c for c in mock_ssh.exec_command.call_args_list if "docker pull" in str(c)]
     assert len(pull_calls) == 1
 
@@ -360,20 +346,20 @@ def test_ensure_docker_image_latest_always_pulls(monkeypatch: pytest.MonkeyPatch
 
     mock_ssh.exec_command.side_effect = fake_exec
 
-    res = ensure_docker_image(ssh=mock_ssh, image="myimage:latest", verify_after_pull=False)
-    assert res.is_success()
+    assert (
+        ensure_docker_image(ssh=mock_ssh, image="myimage:latest", verify_after_pull=False)
+        is None
+    )
     assert pull_called[0] is True
 
 
-def test_ensure_docker_image_post_pull_verify_fails_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If post-pull inspect retries all fail, return Err DOCKER_IMAGE_NOT_AVAILABLE."""
+def test_ensure_docker_image_post_pull_verify_fails_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If post-pull inspect retries all fail, raise DOCKER_IMAGE_NOT_AVAILABLE."""
     monkeypatch.setattr(docker_mod.time, "sleep", lambda _s: None)
 
     mock_ssh = MagicMock()
-    call_count = [0]
 
     def fake_exec(cmd, **kwargs):
-        call_count[0] += 1
         if "docker pull" in cmd:
             return (True, "pulled", "")
         # All inspects fail (both pre-pull and post-pull)
@@ -381,6 +367,6 @@ def test_ensure_docker_image_post_pull_verify_fails_returns_err(monkeypatch: pyt
 
     mock_ssh.exec_command.side_effect = fake_exec
 
-    res = ensure_docker_image(ssh=mock_ssh, image="myimage:2.0")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "DOCKER_IMAGE_NOT_AVAILABLE"
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        ensure_docker_image(ssh=mock_ssh, image="myimage:2.0")
+    assert exc_info.value.context.get("reason") == "DOCKER_IMAGE_NOT_AVAILABLE"

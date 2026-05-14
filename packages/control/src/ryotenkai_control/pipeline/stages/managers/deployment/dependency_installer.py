@@ -23,6 +23,7 @@ from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_STDOUT_LINES,
 )
 from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.docker import ensure_docker_image
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -121,7 +122,27 @@ class DependencyInstaller:
         return Ok(None)
 
     def _ensure_docker_image_present(self, ssh_client: SSHClient, *, image: str) -> Result[None, ProviderError]:
-        return ensure_docker_image(ssh=ssh_client, image=image, pull_timeout_seconds=DEPLOYMENT_DOCKER_PULL_TIMEOUT)
+        """Pull ``image`` and translate failures to the legacy
+        :class:`ProviderError`-based result.
+
+        Phase A2 Batch 4 (2026-05-14): ``ensure_docker_image`` now
+        raises :class:`ProviderUnavailableError`. We translate at this
+        boundary so the caller (legacy pipeline-stage code) keeps its
+        ``Result``-shaped contract until its own migration phase.
+        """
+        try:
+            ensure_docker_image(ssh=ssh_client, image=image, pull_timeout_seconds=DEPLOYMENT_DOCKER_PULL_TIMEOUT)
+        except ProviderUnavailableError as exc:
+            reason = exc.context.get("reason") if exc.context else None
+            code = str(reason) if reason else "DOCKER_PULL_FAILED"
+            return Err(
+                ProviderError(
+                    message=str(exc.detail or exc),
+                    code=code,
+                    details=dict(exc.context) if exc.context else None,
+                )
+            )
+        return Ok(None)
 
     def _verify_single_node_docker_runtime(self, ssh_client: SSHClient) -> Result[None, AppError]:
         """Verify dependencies inside single_node training Docker image.

@@ -19,13 +19,14 @@ shared :class:`LocalDockerClient`, and tests inject a
 :class:`tests._fakes.docker.FakeDockerClient` with deterministic
 in-memory container state.
 
-The interface mirrors the legacy function surface 1:1 — same kwargs,
-same ``Result[..., ProviderError]`` returns — to keep the migration
-mechanical. The Protocol takes an SSH client per call (rather than
-binding it at construction) because the production provider creates
-the SSH session lazily and rebinds across retries; binding inside the
-docker client would force a circular dependency on the SSH
-lifecycle.
+Phase A2 Batch 4 (2026-05-14): Methods that returned
+``Result[T, ProviderError]`` now return ``T`` directly and raise typed
+exceptions on failure (``ProviderUnavailableError`` for transient
+docker daemon / pull / inspect failures; ``ConfigInvalidError`` for
+caller-side validation failures like a malformed container name). The
+two bool-returning methods (``image_exists``, ``is_container_running``)
+keep their plain-``bool`` contract — a missing image / stopped
+container is not a backend error.
 
 Connection model: the Protocol takes an "exec client" (anything with
 the ``exec_command(command, *, timeout, silent) -> (ok, stdout,
@@ -37,8 +38,6 @@ caller's responsibility.
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
-
-from ryotenkai_shared.utils.result import ProviderError, Result
 
 
 class _ExecClient(Protocol):
@@ -69,12 +68,16 @@ class IDockerClient(Protocol):
     Concrete production impl: :class:`LocalDockerClient`. Test impl:
     :class:`tests._fakes.docker.FakeDockerClient`.
 
-    All methods return :class:`Result` rather than raising — failures
-    flow as ``Err(ProviderError)`` so the provider can decide between
-    fail-fast and best-effort cleanup paths without try/except clutter.
-    The two non-``Result`` methods (``image_exists``,
-    ``is_container_running``) return plain ``bool`` — a missing image
-    or stopped container is not a backend error, it's just "no".
+    Failure-mode contract (Phase A2 Batch 4):
+
+    * ``ensure_image``, ``rm_force``, ``logs``, ``container_exit_code`` —
+      raise :class:`ProviderUnavailableError` (PROVIDER_UNAVAILABLE, 503)
+      on docker-daemon / SSH-exec failure; ``rm_force`` / ``logs`` /
+      ``container_exit_code`` raise :class:`ConfigInvalidError` for
+      invalid container-name input.
+    * ``image_exists`` / ``is_container_running`` — return plain
+      ``bool`` (no exceptions for "absent" since that's a normal,
+      expected outcome, not an error).
     """
 
     def image_exists(self, ssh: _ExecClient, image: str) -> bool:
@@ -88,12 +91,16 @@ class IDockerClient(Protocol):
         image: str,
         pull_timeout_seconds: int = 1200,
         verify_after_pull: bool = True,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Pull ``image`` if missing (or always if tag is ``:latest``).
 
-        Idempotent: returns ``Ok(None)`` when the image is already
-        present and not ``:latest``. ``verify_after_pull=False`` skips
-        the post-pull inspect retries (useful in tests).
+        Idempotent: returns silently when the image is already present
+        and not ``:latest``. ``verify_after_pull=False`` skips the
+        post-pull inspect retries (useful in tests).
+
+        Raises:
+            ProviderUnavailableError: pull failed or post-pull verify
+                failed across all retries.
         """
         ...
 
@@ -103,8 +110,13 @@ class IDockerClient(Protocol):
         *,
         container_name: str,
         timeout_seconds: int = 60,
-    ) -> Result[None, ProviderError]:
-        """Force-remove ``container_name`` if it exists. Idempotent."""
+    ) -> None:
+        """Force-remove ``container_name`` if it exists. Idempotent.
+
+        Raises:
+            ConfigInvalidError: invalid container name.
+            ProviderUnavailableError: ``docker rm -f`` exec failed.
+        """
         ...
 
     def is_container_running(
@@ -124,8 +136,13 @@ class IDockerClient(Protocol):
         container_name: str,
         tail: int | None = None,
         timeout_seconds: int = 30,
-    ) -> Result[str, ProviderError]:
-        """Fetch container logs (best-effort)."""
+    ) -> str:
+        """Fetch container logs (best-effort).
+
+        Raises:
+            ConfigInvalidError: invalid container name.
+            ProviderUnavailableError: ``docker logs`` exec failed.
+        """
         ...
 
     def container_exit_code(
@@ -134,8 +151,14 @@ class IDockerClient(Protocol):
         *,
         container_name: str,
         timeout_seconds: int = 5,
-    ) -> Result[int, ProviderError]:
-        """Get container exit code via ``docker inspect``."""
+    ) -> int:
+        """Get container exit code via ``docker inspect``.
+
+        Raises:
+            ConfigInvalidError: invalid container name.
+            ProviderUnavailableError: ``docker inspect`` exec failed or
+                stdout was not an integer.
+        """
         ...
 
 
