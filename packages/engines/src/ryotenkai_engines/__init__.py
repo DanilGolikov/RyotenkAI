@@ -10,8 +10,9 @@ Public API after PR-2:
   * :func:`resolve_image` — convention default + override chain.
   * :func:`get_engine_config_union` — Tag-based discriminated union, used by
     ``ryotenkai_shared.config.inference.schema``.
-  * Errors: :class:`EngineRegistryError`, :class:`EngineNotRegistered`,
-    :class:`EngineConfigError`.
+  * Errors: :class:`EngineNotRegisteredError`,
+    :class:`EngineConfigInvalidError` (re-exported from
+    :mod:`ryotenkai_shared.errors`).
 
 PR-3 lands the first concrete engine (vLLM). See
 ``docs/plans/purring-sleeping-hartmanis.md`` for the full design.
@@ -27,9 +28,8 @@ from ryotenkai_engines._config_union import (
 )
 from ryotenkai_engines.capabilities import ApiDialect, EngineCapabilities
 from ryotenkai_engines.errors import (
-    EngineConfigError,
-    EngineNotRegistered,
-    EngineRegistryError,
+    EngineConfigInvalidError,
+    EngineNotRegisteredError,
 )
 from ryotenkai_engines.images import (
     DEFAULT_IMAGE_REGISTRY,
@@ -88,7 +88,6 @@ __all__ = (
     "reset_engine_config_union",
     "DISCRIMINATOR_FIELD",
     # Errors
-    "EngineRegistryError",
-    "EngineNotRegistered",
-    "EngineConfigError",
+    "EngineNotRegisteredError",
+    "EngineConfigInvalidError",
 )

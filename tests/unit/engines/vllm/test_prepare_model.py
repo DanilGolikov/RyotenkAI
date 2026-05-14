@@ -23,6 +23,7 @@ from ryotenkai_engines.vllm.runtime import (
     _MERGE_TIMEOUT_S,
     VLLMEngineRuntime,
 )
+from ryotenkai_shared.errors import EngineConfigInvalidError
 
 pytestmark = pytest.mark.unit
 
@@ -42,7 +43,7 @@ def _prepare(
     trust_remote_code: bool = False,
 ) -> PreparePlan:
     cfg = cfg or VLLMEngineConfig()
-    res = VLLMEngineRuntime().prepare_model(
+    return VLLMEngineRuntime().prepare_model(
         cfg=cfg,
         base_model=base_model,
         adapter_path_in_container=adapter_path_in_container,
@@ -50,8 +51,6 @@ def _prepare(
         run_id=run_id,
         trust_remote_code=trust_remote_code,
     )
-    assert res.is_ok(), f"prepare_model returned Err: {res.unwrap_err()}"
-    return res.unwrap()
 
 
 # ===========================================================================
@@ -147,7 +146,7 @@ class TestPositive:
 
 
 class TestNegative:
-    def test_wrong_config_type_returns_err(self) -> None:
+    def test_wrong_config_type_raises(self) -> None:
         """Engine guards against dispatch errors. The discriminated union
         SHOULD prevent this in practice (Pydantic narrows by ``kind``),
         but we guard defensively at the engine boundary."""
@@ -158,18 +157,21 @@ class TestNegative:
         class NotVLLMConfig(BaseEngineConfig):
             kind: _Literal["other"] = "other"
 
-        result = VLLMEngineRuntime().prepare_model(
-            cfg=NotVLLMConfig(),
-            base_model="x",
-            adapter_path_in_container="/workspace/a",
-            workspace_host_path="/host",
-            run_id="r1",
-            trust_remote_code=False,
-        )
-        assert result.is_err()
-        err = result.unwrap_err()
-        assert err.code == "VLLM_CONFIG_TYPE_MISMATCH"
-        assert "VLLMEngineConfig" in err.message
+        with pytest.raises(EngineConfigInvalidError) as exc_info:
+            VLLMEngineRuntime().prepare_model(
+                cfg=NotVLLMConfig(),
+                base_model="x",
+                adapter_path_in_container="/workspace/a",
+                workspace_host_path="/host",
+                run_id="r1",
+                trust_remote_code=False,
+            )
+        err = exc_info.value
+        assert err.context["reason"] == "vllm_config_type_mismatch"
+        assert err.context["got"] == "NotVLLMConfig"
+        assert err.context["expected"] == "VLLMEngineConfig"
+        assert err.status == 422
+        assert "VLLMEngineConfig" in (err.detail or "")
 
 
 # ===========================================================================

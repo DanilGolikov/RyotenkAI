@@ -113,12 +113,6 @@ allow:
   - path: ryotenkai_shared.infrastructure.runpod_api.protocol.RunPodPartialResponseError
     reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
 
-  # ----- engines (Phase F) ------------------------------------------
-  - path: ryotenkai_engines.errors.EngineRegistryError
-    reason: "phase-A1-pending-migration: will be migrated in Phase F (engines API)"
-  - path: ryotenkai_engines.errors.EngineConfigError
-    reason: "phase-A1-pending-migration: will be migrated in Phase F (engines API)"
-
   # ----- community (Phase F) ----------------------------------------
   - path: ryotenkai_community.install.InstallError
     reason: "phase-A1-pending-migration: will be migrated in Phase F (community installer)"

@@ -32,7 +32,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     from ryotenkai_engines.capabilities import EngineCapabilities
-    from ryotenkai_shared.utils.result import AppError, Result
 
 
 # ---------------------------------------------------------------------------
@@ -393,15 +392,19 @@ class IInferenceEngine(Protocol):
     def validate_config(
         self,
         cfg: BaseEngineConfig,
-    ) -> Result[None, AppError]:
+    ) -> None:
         """Engine-specific invariant check on the typed config.
 
         Runs after Pydantic schema validation — catches engine-side rules
         that don't fit cleanly in Pydantic ``@model_validator`` (e.g.
         cross-field rules that depend on the engine's MVP scope).
 
-        Returns ``Ok(None)`` on success, ``Err(AppError)`` with a clear
-        message + code on failure. Provider wraps and surfaces the Err.
+        Returns ``None`` on success. Raises
+        :class:`ryotenkai_shared.errors.EngineConfigInvalidError`
+        (status 422, code ``ENGINE_CONFIG_INVALID``) on failure with a
+        clear ``detail`` and ``context["reason"]`` subcode. Providers
+        let it propagate; HTTP / CLI renderers translate via the
+        unified error model.
         """
         ...
 
@@ -414,7 +417,7 @@ class IInferenceEngine(Protocol):
         workspace_host_path: str,
         run_id: str,
         trust_remote_code: bool,
-    ) -> Result[PreparePlan, AppError]:
+    ) -> PreparePlan:
         """Describe pre-launch preparation work (LoRA merge, GGUF conv, …).
 
         Pure function. Engine returns a :class:`PreparePlan` with zero or
@@ -440,11 +443,15 @@ class IInferenceEngine(Protocol):
                 support it (HF ``trust_remote_code`` semantics).
 
         Returns:
-            ``Ok(PreparePlan)`` on success — the plan may be empty
-            (no work needed) or carry ordered steps. ``Err(AppError)``
-            when the engine can't construct a valid plan from the
-            inputs (rare — most config errors should fire earlier in
-            ``validate_config``).
+            The :class:`PreparePlan` — possibly empty (no work needed)
+            or carrying ordered steps.
+
+        Raises:
+            EngineConfigInvalidError: when the engine can't construct
+                a valid plan from the inputs (e.g. config-type mismatch
+                that slipped past Pydantic's discriminated union).
+                Rare — most config errors fire earlier in
+                ``validate_config``.
         """
         ...
 
@@ -483,10 +490,8 @@ class NoPrepareMixin:
         workspace_host_path: str,  # noqa: ARG002
         run_id: str,  # noqa: ARG002
         trust_remote_code: bool,  # noqa: ARG002
-    ) -> Result[PreparePlan, AppError]:
-        from ryotenkai_shared.utils.result import Ok
-
-        return Ok(PreparePlan.empty())
+    ) -> PreparePlan:
+        return PreparePlan.empty()
 
 
 __all__ = (
@@ -502,11 +507,10 @@ __all__ = (
 def _runtime_typing_glue() -> Any:
     """Anchor for runtime imports needed by ``IInferenceEngine`` callers.
 
-    ``Result`` and ``EngineCapabilities`` are imported under TYPE_CHECKING
-    above to keep the public Protocol surface lean. This trivial helper
-    exists only to silence ruff if it ever flags those names as unused
-    — they ARE used (in the Protocol method signatures), but only in
-    string annotations.
+    ``EngineCapabilities`` is imported under TYPE_CHECKING above to keep
+    the public Protocol surface lean. This trivial helper exists only
+    to silence ruff if it ever flags the name as unused — it IS used
+    (in the Protocol method signatures), but only in string annotations.
     """
     # Intentional no-op; do not import here to keep TYPE_CHECKING lean.
     return None

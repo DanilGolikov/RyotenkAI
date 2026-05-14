@@ -43,6 +43,7 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
+from ryotenkai_shared.errors import EngineConfigInvalidError
 from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
@@ -166,16 +167,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
         # Engine validates its own invariants (replaces inline gating in
         # the old __init__: e.g. merge_before_deploy=True for vLLM).
-        validate_result = self._engine.validate_config(self._engine_cfg)
-        if validate_result.is_err():
+        # As of Phase A2 Batch 2, ``validate_config`` returns None on
+        # success and raises ``EngineConfigInvalidError`` on failure;
+        # we translate to the provider's legacy ``ProviderRegistryError``
+        # at the boundary (provider-side migration is Batch 11/12).
+        # The engine's ``context["reason"]`` subcode is preserved as the
+        # ProviderRegistryError ``code`` (upper-cased) so legacy tests
+        # asserting on ``VLLM_LIVE_LORA_NOT_SUPPORTED`` etc. keep matching.
+        try:
+            self._engine.validate_config(self._engine_cfg)
+        except EngineConfigInvalidError as engine_err:
             from ryotenkai_providers.registry import ProviderRegistryError
 
-            err = validate_result.unwrap_err()
-            raise ProviderRegistryError(
-                message=err.message,
-                code=err.code or "PROVIDER_ENGINE_CONFIG_INVALID",
-                details=err.details,
+            subcode = engine_err.context.get("reason", "")
+            translated_code = (
+                str(subcode).upper() if subcode else "PROVIDER_ENGINE_CONFIG_INVALID"
             )
+            raise ProviderRegistryError(
+                message=engine_err.detail or str(engine_err),
+                code=translated_code,
+                details=dict(engine_err.context),
+            ) from engine_err
 
         self._ssh_client: SSHClient | None = None
         self._endpoint_info: EndpointInfo | None = None
@@ -308,23 +320,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             # pass through unchanged. Engine decides whether to merge.
             adapter_path_in_container = adapter_ref_for_merge
 
-        prep_result = self._engine.prepare_model(
-            cfg=self._engine_cfg,
-            base_model=base_model_id,
-            adapter_path_in_container=adapter_path_in_container,
-            workspace_host_path=workspace,
-            run_id=run_id,
-            trust_remote_code=trust_remote_code,
-        )
-        if prep_result.is_err():
-            err = prep_result.unwrap_err()
+        # Engine.prepare_model returns PreparePlan directly and raises
+        # EngineConfigInvalidError on engine-boundary errors (Phase A2
+        # Batch 2). We catch and translate to the provider's legacy
+        # Result-based InferenceError until Batch 11/12 migrates the
+        # provider surface.
+        try:
+            plan = self._engine.prepare_model(
+                cfg=self._engine_cfg,
+                base_model=base_model_id,
+                adapter_path_in_container=adapter_path_in_container,
+                workspace_host_path=workspace,
+                run_id=run_id,
+                trust_remote_code=trust_remote_code,
+            )
+        except EngineConfigInvalidError as engine_err:
             return Err(
                 InferenceError(
-                    message=err.message,
-                    code=err.code or "SINGLENODE_PREPARE_PLAN_BUILD_FAILED",
+                    message=engine_err.detail or str(engine_err),
+                    code="SINGLENODE_PREPARE_PLAN_BUILD_FAILED",
                 )
             )
-        plan = prep_result.unwrap()
 
         run_res = self._run_prepare_plan(
             ssh=ssh, plan=plan, run_id=run_id, workspace_host_path=workspace
