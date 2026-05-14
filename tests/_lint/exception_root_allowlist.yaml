@@ -1,0 +1,174 @@
+# Allowlist for tests/_lint/test_exception_root.py
+#
+# Every entry is a fully-qualified ``<dotted.module>.ClassName`` whose base
+# class resolves to a generic Python exception (Exception, RuntimeError,
+# LookupError, ValueError, TimeoutError, ...) instead of the unified
+# ``RyotenkAIError`` root.
+#
+# Phase A1 (sharded-stargazing-wigderson, 2026-05-14) introduces the
+# unified root and the sentinel. Existing classes that pre-date this
+# phase are allowlisted here with ``phase-A1-pending-migration`` and
+# the migration phase that will retire them.
+#
+# Removing an entry is fine; adding one requires a code-owner review.
+# When migrating a class, delete its row from this list as part of the
+# same PR.
+allow:
+  # ----- pod runtime (Phase B/F) ------------------------------------
+  - path: ryotenkai_pod.runner.supervisor.SupervisorError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (pod runtime rewires)"
+  - path: ryotenkai_pod.runner.event_bus.BufferTruncatedError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (event bus)"
+  - path: ryotenkai_pod.runner.plugin_unpacker.PluginUnpackError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (plugin loader)"
+  - path: ryotenkai_pod.runner.state.InvalidTransitionError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (FSM)"
+  - path: ryotenkai_pod.trainer.memory_manager.OOMRecoverableError
+    reason: "phase-A1-pending-migration: will be migrated in Phase D (trainer exit payload)"
+  - path: ryotenkai_pod.trainer._concurrent_helpers.TimeoutExceededError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (concurrency helpers)"
+  - path: ryotenkai_pod.runner.runtime.provider_registry.BootstrapConfigError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (provider bootstrap)"
+  - path: ryotenkai_pod.runner.api.errors.APIError
+    reason: "phase-A1-pending-migration: replaced by RyotenkAIError in Phase B"
+  - path: ryotenkai_pod.trainer.managers.data_buffer.fault_simulator.SimulatedFaultError
+    reason: "phase-A1-pending-migration: test-only fault simulator; will be migrated in Phase D"
+
+  # ----- providers (Phase E) ----------------------------------------
+  - path: ryotenkai_providers.registry.ProviderRegistryError
+    reason: "phase-A1-pending-migration: will be migrated in Phase E (provider translation)"
+
+  # ----- AppError + Result legacy (Phase A2 destructive) -----------
+  - path: ryotenkai_shared.utils.result.ConfigError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.ConfigDriftError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.TrainingError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.DatasetError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.ModelError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.StrategyError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.OOMError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.DataLoaderError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.ProviderError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  - path: ryotenkai_shared.utils.result.InferenceError
+    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+
+  # ----- shared clients (Phase E or F) ------------------------------
+  - path: ryotenkai_shared.utils.clients.problem_details.TransportError
+    reason: "phase-A1-pending-migration: APIException subclass; replaced by errors.TransportError in Phase B"
+  - path: ryotenkai_shared.utils.clients.job_client.JobClientError
+    reason: "phase-A1-pending-migration: will be migrated in Phase E (job client translation)"
+  - path: ryotenkai_shared.utils.clients.job_client.JobNotFoundError
+    reason: "phase-A1-pending-migration: will be migrated in Phase E (job client translation)"
+  - path: ryotenkai_shared.utils.clients.job_client.ReplayTruncatedError
+    reason: "phase-A1-pending-migration: will be migrated in Phase E (job client translation)"
+  - path: ryotenkai_shared.utils.clients.ssh_tunnel.SSHTunnelError
+    reason: "phase-A1-pending-migration: will be migrated in Phase E (SSH translation)"
+  - path: ryotenkai_shared.utils.crypto.token_crypto.TokenCryptoError
+    reason: "phase-A1-pending-migration: low-level crypto error; will be migrated in Phase F"
+
+  # ----- vendor SDK protocol stubs (Phase E translation) ------------
+  # These are vendor-style exception types; never cross _translate.py boundary.
+  - path: ryotenkai_shared.infrastructure.ssh.protocol.SSHError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.ssh.protocol.SSHConnectionError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.ssh.protocol.SSHExecError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.ssh.protocol.SSHTransferError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.job_client.protocol.JobClientProtocolError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.job_client.protocol.JobClientNotFoundError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.job_client.protocol.JobClientRateLimitedError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.job_client.protocol.JobClientNetworkError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.trainer_spawner.protocol.TrainerSpawnError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase D/E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.hf_hub.protocol.HFHubError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.hf_hub.protocol.HFAuthError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.hf_hub.protocol.HFNotFoundError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.hf_hub.protocol.HFRateLimitedError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.hf_hub.protocol.HFTransientError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.runpod_api.protocol.RunPodAPIError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.runpod_api.protocol.RunPodRateLimitedError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.runpod_api.protocol.RunPodTransientError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+  - path: ryotenkai_shared.infrastructure.runpod_api.protocol.RunPodPartialResponseError
+    reason: "phase-A1-pending-migration: vendor-style protocol type; Phase E translates via _translate.py"
+
+  # ----- engines (Phase F) ------------------------------------------
+  - path: ryotenkai_engines.errors.EngineRegistryError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (engines API)"
+  - path: ryotenkai_engines.errors.EngineConfigError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (engines API)"
+
+  # ----- community (Phase F) ----------------------------------------
+  - path: ryotenkai_community.install.InstallError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (community installer)"
+  - path: ryotenkai_community.preflight.LaunchAbortedError
+    reason: "phase-A1-pending-migration: will be migrated in Phase F (preflight)"
+
+  # ----- control workspace / api / pipeline (Phase C, A2, F) -------
+  - path: ryotenkai_control.workspace._registry_base.WorkspaceRegistryError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (workspace stores)"
+  - path: ryotenkai_control.workspace._registry_base.WorkspaceStoreError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (workspace stores)"
+  - path: ryotenkai_control.pipeline.bootstrap.startup_validator.StartupValidationError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (startup validation)"
+  - path: ryotenkai_control.pipeline.launch.launch_preparator.LaunchPreparationError
+    reason: "phase-A1-pending-migration: replaced by infra.LaunchPreparationError in Phase A2"
+  - path: ryotenkai_control.pipeline.mlflow_attempt.manager.MLflowManagerNotInitializedError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C"
+  - path: ryotenkai_control.pipeline.state.store.PipelineStateError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (pipeline state)"
+  - path: ryotenkai_control.pipeline.state.store.PipelineStateLoadError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (replaced by StateLoadFailedError)"
+  - path: ryotenkai_control.pipeline.state.store.PipelineStateLockError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C (replaced by StateLockedError)"
+  - path: ryotenkai_control.pipeline.state.job_submission.JobSubmissionLoadError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C"
+  - path: ryotenkai_control.pipeline.state.attempt_controller.AttemptControllerError
+    reason: "phase-A1-pending-migration: will be migrated in Phase A2 (stage execution)"
+  - path: ryotenkai_control.pipeline.stages.managers.deployment.plugin_packer.PluginPackError
+    reason: "phase-A1-pending-migration: will be migrated in Phase A2 (stages)"
+  - path: ryotenkai_control.workspace.projects.store.ProjectStoreError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceStoreError; Phase C"
+  - path: ryotenkai_control.workspace.projects.registry.ProjectRegistryError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceRegistryError; Phase C"
+  - path: ryotenkai_control.workspace.projects.adapter.ProjectNotFoundError
+    reason: "phase-A1-pending-migration: LookupError-based; replaced by domain.ProjectNotFoundError in Phase C"
+  - path: ryotenkai_control.workspace.providers.store.ProviderStoreError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceStoreError; Phase C"
+  - path: ryotenkai_control.workspace.providers.registry.ProviderRegistryError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceRegistryError; Phase C"
+  - path: ryotenkai_control.workspace.integrations.store.IntegrationStoreError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceStoreError; Phase C"
+  - path: ryotenkai_control.workspace.integrations.registry.IntegrationRegistryError
+    reason: "phase-A1-pending-migration: subclass of WorkspaceRegistryError; Phase C"
+  - path: ryotenkai_control.api.services.delete_service.RunIsActiveError
+    reason: "phase-A1-pending-migration: replaced by domain.RunIsActiveError in Phase C"
+  - path: ryotenkai_control.api.services.project_service.ProjectServiceError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C"
+  - path: ryotenkai_control.api.services.launch_service.LaunchAlreadyRunningError
+    reason: "phase-A1-pending-migration: replaced by domain.LaunchInProgressError in Phase C"
+  - path: ryotenkai_control.api.services.integration_service.IntegrationServiceError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C"
+  - path: ryotenkai_control.api.services.provider_service.ProviderServiceError
+    reason: "phase-A1-pending-migration: will be migrated in Phase C"

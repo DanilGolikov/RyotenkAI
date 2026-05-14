@@ -43,6 +43,12 @@ class ErrorCode(StrEnum):
     plan §6 (transport-unification-v2). Adding to this enum without
     updating the plan is a doc bug; CI will eventually gate on it
     via PR-3.4 (OpenAPI freshness).
+
+    Phase A1 (sharded-stargazing-wigderson, 2026-05-14) extends the
+    registry with the Mac-side / control-plane error catalog (config,
+    pipeline state, training, providers, SSH, HF Hub, engines). Prior
+    to A1 the enum only carried pod-runner codes; the new entries are
+    consumed by ``ryotenkai_shared.errors`` exception subclasses.
     """
 
     # ----- jobs --------------------------------------------------------
@@ -101,6 +107,54 @@ class ErrorCode(StrEnum):
     # transition denial) because the postmortem in monitor distinguishes
     # them — Phase 3 PR-3.3 will collapse if they prove redundant.
     STOP_NOT_ALLOWED = "STOP_NOT_ALLOWED"
+
+    # ----- config (Phase A1) -------------------------------------------
+    CONFIG_INVALID = "CONFIG_INVALID"
+    CONFIG_DRIFT = "CONFIG_DRIFT"
+    CONFIG_FILE_NOT_FOUND = "CONFIG_FILE_NOT_FOUND"
+
+    # ----- workspace (Phase A1) ----------------------------------------
+    PROJECT_NOT_FOUND = "PROJECT_NOT_FOUND"
+    PROJECT_ALREADY_EXISTS = "PROJECT_ALREADY_EXISTS"
+    PROVIDER_NOT_FOUND = "PROVIDER_NOT_FOUND"
+    INTEGRATION_NOT_FOUND = "INTEGRATION_NOT_FOUND"
+    WORKSPACE_STORE_FAILED = "WORKSPACE_STORE_FAILED"
+
+    # ----- pipeline state / launch (Phase A1) --------------------------
+    STATE_LOAD_FAILED = "STATE_LOAD_FAILED"
+    STATE_LOCKED = "STATE_LOCKED"
+    LAUNCH_IN_PROGRESS = "LAUNCH_IN_PROGRESS"
+    LAUNCH_PREPARATION_FAILED = "LAUNCH_PREPARATION_FAILED"
+    PIPELINE_STAGE_FAILED = "PIPELINE_STAGE_FAILED"
+    RUN_IS_ACTIVE = "RUN_IS_ACTIVE"
+
+    # ----- training (Phase A1) -----------------------------------------
+    TRAINING_FAILED = "TRAINING_FAILED"
+    TRAINING_OOM = "TRAINING_OOM"
+
+    # ----- dataset / model / inference (Phase A1) ----------------------
+    DATASET_LOAD_FAILED = "DATASET_LOAD_FAILED"
+    DATASET_VALIDATION_FAILED = "DATASET_VALIDATION_FAILED"
+    MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
+    INFERENCE_UNAVAILABLE = "INFERENCE_UNAVAILABLE"
+
+    # ----- providers (Phase A1) ----------------------------------------
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    PROVIDER_RATE_LIMITED = "PROVIDER_RATE_LIMITED"
+    PROVIDER_AUTH_FAILED = "PROVIDER_AUTH_FAILED"
+
+    # ----- SSH (Phase A1) ----------------------------------------------
+    SSH_CONNECTION_FAILED = "SSH_CONNECTION_FAILED"
+    SSH_EXEC_FAILED = "SSH_EXEC_FAILED"
+    SSH_TRANSFER_FAILED = "SSH_TRANSFER_FAILED"
+
+    # ----- HF Hub (Phase A1) -------------------------------------------
+    HF_AUTH_FAILED = "HF_AUTH_FAILED"
+    HF_NOT_FOUND = "HF_NOT_FOUND"
+
+    # ----- engines (Phase A1) ------------------------------------------
+    ENGINE_NOT_REGISTERED = "ENGINE_NOT_REGISTERED"
+    ENGINE_CONFIG_INVALID = "ENGINE_CONFIG_INVALID"
 
     # ----- catch-all (server-side bug) ---------------------------------
     INTERNAL_ERROR = "INTERNAL_ERROR"
