@@ -145,20 +145,51 @@ def test_preflight_returns_unreachable_when_connectivity_fails(manager_under_tes
 
 
 def test_preflight_surfaces_gateway_error_code(manager_under_test: MLflowAttemptManager) -> None:
+    """Phase A2 Batch 5: gateway now stores typed ``RyotenkAIError`` values.
+
+    ``ensure_preflight`` must surface the legacy granular MLFLOW_*
+    identifier (carried under ``context["mlflow_probe_reason"]``) as the
+    legacy ``AppError.code`` so the orchestrator / launch-rejection
+    pathway continues to work without a parallel migration of
+    LaunchPreparationError (Batch 6+).
+    """
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     mgr = MagicMock()
     mgr.is_active = True
     mgr.get_runtime_tracking_uri.return_value = "http://fake"
     mgr.check_mlflow_connectivity.return_value = False
-    gateway_err = MagicMock()
-    gateway_err.code = "GW_SPECIFIC"
-    gateway_err.message = "specific reason"
-    gateway_err.to_log_dict.return_value = {"code": "GW_SPECIFIC"}
+    gateway_err = ProviderUnavailableError(
+        detail="specific reason",
+        context={"mlflow_probe_reason": "MLFLOW_PREFLIGHT_HTTP_ERROR"},
+    )
     mgr.get_last_connectivity_error.return_value = gateway_err
     manager_under_test._manager = mgr
     err = manager_under_test.ensure_preflight()
     assert err is not None
-    assert err.code == "GW_SPECIFIC"
+    assert err.code == "MLFLOW_PREFLIGHT_HTTP_ERROR"
     assert "specific reason" in err.message
+    assert err.details is not None
+    assert err.details["gateway_error"]["gateway_error_class"] == "ProviderUnavailableError"
+
+
+def test_preflight_surfaces_legacy_app_error_from_gateway(manager_under_test: MLflowAttemptManager) -> None:
+    """Backwards compat: gateway returning a legacy ``AppError`` still surfaces."""
+    from ryotenkai_shared.utils.result import AppError as LegacyAppError
+
+    mgr = MagicMock()
+    mgr.is_active = True
+    mgr.get_runtime_tracking_uri.return_value = "http://fake"
+    mgr.check_mlflow_connectivity.return_value = False
+    mgr.get_last_connectivity_error.return_value = LegacyAppError(
+        code="LEGACY_SPECIFIC",
+        message="legacy reason",
+    )
+    manager_under_test._manager = mgr
+    err = manager_under_test.ensure_preflight()
+    assert err is not None
+    assert err.code == "LEGACY_SPECIFIC"
+    assert "legacy reason" in err.message
 
 
 def test_preflight_returns_none_when_healthy(manager_under_test: MLflowAttemptManager) -> None:

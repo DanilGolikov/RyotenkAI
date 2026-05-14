@@ -57,10 +57,20 @@ class TestPositiveAndNegative:
 
         monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
+        from ryotenkai_shared.contracts.problem_details import ErrorCode
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
         gateway = MLflowGateway("http://mlflow.example")
         assert gateway.check_connectivity(timeout=0.01) is False
-        assert gateway.last_connectivity_error is not None
-        assert gateway.last_connectivity_error.code == "MLFLOW_PREFLIGHT_HTTP_ERROR"
+        err = gateway.last_connectivity_error
+        assert err is not None
+        # Phase A2 Batch 5: typed exception (ProviderUnavailableError) with
+        # the legacy granular MLFLOW_* identifier carried under
+        # ``context["mlflow_probe_reason"]``.
+        assert isinstance(err, ProviderUnavailableError)
+        assert err.code is ErrorCode.PROVIDER_UNAVAILABLE
+        assert err.context["mlflow_probe_reason"] == "MLFLOW_PREFLIGHT_HTTP_ERROR"
+        assert err.context["status_code"] == 500
 
 
 class TestBoundary:
@@ -210,10 +220,18 @@ class TestLogicSpecific:
         assert training.runtime_tracking_uri == "https://override.example.ts.net"
 
     def test_url_error_with_ssl_reason_maps_to_tls_code(self) -> None:
+        from ryotenkai_shared.contracts.problem_details import ErrorCode
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
         ssl_error = ssl.SSLCertVerificationError("verify failed")
         gateway = MLflowGateway("https://mlflow.example")
         mapped = gateway._map_connectivity_error(urllib.error.URLError(ssl_error))
-        assert mapped.code == "MLFLOW_TLS_CERT_VERIFY_FAILED"
+        # Phase A2 Batch 5: granular MLFLOW_* identifier carried under
+        # ``context["mlflow_probe_reason"]``; the typed-exception code is
+        # ``PROVIDER_UNAVAILABLE`` (transient transport failure semantics).
+        assert isinstance(mapped, ProviderUnavailableError)
+        assert mapped.code is ErrorCode.PROVIDER_UNAVAILABLE
+        assert mapped.context["mlflow_probe_reason"] == "MLFLOW_TLS_CERT_VERIFY_FAILED"
 
 
 class TestCombinatorial:

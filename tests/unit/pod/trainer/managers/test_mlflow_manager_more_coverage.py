@@ -551,10 +551,20 @@ class TestDescriptionAndConnectivityAndRuns:
 
         monkeypatch.setattr(ssl, "create_default_context", fake_create_default_context)
 
+        from ryotenkai_shared.contracts.problem_details import ErrorCode
+        from ryotenkai_shared.errors import ConfigInvalidError
+
         gw = MLflowGateway("https://mlflow.example", ca_bundle_path="missing-ca.pem")
         assert gw.check_connectivity(timeout=0.01) is False
-        assert gw.last_connectivity_error is not None
-        assert gw.last_connectivity_error.code == "MLFLOW_TLS_CA_BUNDLE_INVALID"
+        err = gw.last_connectivity_error
+        assert err is not None
+        # Phase A2 Batch 5: bad/missing CA bundle is a *caller-side* config
+        # problem (4xx semantics) → ConfigInvalidError, not the transient
+        # ProviderUnavailableError class. Granular legacy identifier still
+        # carried on context.
+        assert isinstance(err, ConfigInvalidError)
+        assert err.code is ErrorCode.CONFIG_INVALID
+        assert err.context["mlflow_probe_reason"] == "MLFLOW_TLS_CA_BUNDLE_INVALID"
 
     def test_start_run_exception_path_yields_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = _install_fake_mlflow(monkeypatch)

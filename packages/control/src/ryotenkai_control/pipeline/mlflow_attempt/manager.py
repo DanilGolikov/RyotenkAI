@@ -12,8 +12,12 @@ Design choices:
 * Setup is wrapped in a ``try`` / partial-cleanup branch to guarantee no
   orphan root/attempt runs if any step after their opening fails
   (mitigation for MLflow double-close risk).
-* Preflight returns ``AppError | None`` instead of raising a bespoke exception,
-  so the orchestrator keeps control over launch-rejection policy.
+* Preflight returns a typed :class:`RyotenkAIError` (or ``None``) instead of
+  raising a bespoke exception, so the orchestrator keeps control over
+  launch-rejection policy. Phase A2 Batch 5 swapped the legacy ``AppError``
+  shape for the new exception hierarchy; the returned instance is *not*
+  raised — it lives as a diagnostic value until the orchestrator decides
+  how to surface it.
 * Teardown accepts two optional hooks to let the orchestrator inject
   reporting side effects (training-metrics aggregation, experiment report)
   without this manager knowing about them.
@@ -24,6 +28,7 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
 from ryotenkai_control.pipeline.stages import PipelineContextKeys
@@ -254,8 +259,20 @@ class MLflowAttemptManager:
     def ensure_preflight(self) -> AppError | None:
         """Validate that MLflow setup and connectivity are alive.
 
-        Returns an AppError the orchestrator can wrap in a LaunchPreparationError,
-        or None when everything is healthy.
+        Returns an :class:`AppError` the orchestrator can wrap in a
+        :class:`LaunchPreparationError`, or ``None`` when everything is
+        healthy.
+
+        Phase A2 Batch 5 (typed exceptions migration): the *gateway*
+        underneath now stores a typed :class:`RyotenkAIError` on its
+        ``last_connectivity_error`` slot. To keep the orchestrator/
+        ``LaunchPreparationError`` boundary unchanged (that surface is
+        Batch 6+ territory), we adapt the typed exception back to an
+        :class:`AppError` here. The granular probe-failure identifier
+        (``"MLFLOW_PREFLIGHT_HTTP_ERROR"`` etc.) is read from
+        ``gateway_error.context["mlflow_probe_reason"]`` and surfaced as
+        the legacy ``AppError.code``; the typed-exception class is
+        recorded under ``details["gateway_error_class"]``.
         """
         mlflow_cfg = self._config.integrations.mlflow
         raw_tracking_uri = getattr(mlflow_cfg, "tracking_uri", None)
@@ -282,13 +299,15 @@ class MLflowAttemptManager:
             )
         if not self._manager.check_mlflow_connectivity():
             gateway_error = self._manager.get_last_connectivity_error()
-            error_code = gateway_error.code if gateway_error is not None else "MLFLOW_PREFLIGHT_UNREACHABLE"
+            error_code, gateway_error_dict, gateway_summary = _summarise_gateway_error(
+                gateway_error
+            )
             error_message = (
                 f"MLflow not reachable (effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
                 f"raw_local_tracking_uri={raw_local_tracking_uri})"
             )
-            if gateway_error is not None:
-                error_message = f"{error_message}: {gateway_error.message}"
+            if gateway_summary is not None:
+                error_message = f"{error_message}: {gateway_summary}"
             return AppError(
                 code=error_code,
                 message=error_message,
@@ -296,7 +315,7 @@ class MLflowAttemptManager:
                     "effective_uri": tracking_uri,
                     "raw_tracking_uri": raw_tracking_uri,
                     "raw_local_tracking_uri": raw_local_tracking_uri,
-                    "gateway_error": gateway_error.to_log_dict() if gateway_error is not None else None,
+                    "gateway_error": gateway_error_dict,
                 },
             )
         return None
@@ -412,6 +431,51 @@ def _stringify_tag_value(value: object) -> str:
     if len(s) > _MLFLOW_TAG_VALUE_MAX_CHARS:
         return s[:_MLFLOW_TAG_VALUE_MAX_CHARS] + "…"
     return s
+
+
+def _summarise_gateway_error(
+    gateway_error: RyotenkAIError | AppError | None,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Adapt the gateway's stored error to the legacy ``AppError`` shape.
+
+    Phase A2 Batch 5: the gateway now stores typed
+    :class:`RyotenkAIError` instances (e.g.
+    :class:`ProviderUnavailableError`). Older code paths (tests, mocks)
+    may still carry the legacy :class:`AppError` shape — duck-type both.
+
+    Returns ``(code, details_dict, summary_str)`` where:
+
+    * ``code`` — the granular ``mlflow_probe_reason`` (if present in the
+      typed exception's ``context``), else the typed exception's
+      ``ErrorCode.value``, falling back to ``"MLFLOW_PREFLIGHT_UNREACHABLE"``.
+    * ``details_dict`` — JSON-friendly snapshot for ``AppError.details``.
+    * ``summary_str`` — one-line human description (passed through into
+      the resulting ``AppError.message``).
+    """
+    if gateway_error is None:
+        return "MLFLOW_PREFLIGHT_UNREACHABLE", None, None
+    # Legacy :class:`AppError` carries plain ``.code: str`` / ``.message: str``
+    # / ``.to_log_dict()`` — keep working.
+    if isinstance(gateway_error, AppError):
+        return (
+            gateway_error.code,
+            gateway_error.to_log_dict(),
+            gateway_error.message,
+        )
+    # Typed :class:`RyotenkAIError` — prefer the carried
+    # ``mlflow_probe_reason`` (legacy ``MLFLOW_*`` discriminator) over the
+    # coarser ``ErrorCode`` so dashboards / tests pinned on the granular
+    # code keep working.
+    probe_reason = gateway_error.context.get("mlflow_probe_reason")
+    code = str(probe_reason) if probe_reason else gateway_error.code.value
+    summary = gateway_error.detail or gateway_error.title
+    details = {
+        "code": gateway_error.code.value,
+        "message": summary,
+        "context": dict(gateway_error.context),
+        "gateway_error_class": type(gateway_error).__name__,
+    }
+    return code, details, summary
 
 
 __all__ = [

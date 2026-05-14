@@ -21,6 +21,7 @@ import itertools
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_shared.errors import ProviderUnavailableError, RyotenkAIError
 from tests._harness.clock import Clock, RealClock
 
 if TYPE_CHECKING:
@@ -32,7 +33,14 @@ class TransientMLflowError(Exception):
 
 
 class MLflowUnavailableError(Exception):
-    """Raised when the fake is in ``set_unavailable(True)`` mode."""
+    """Raised when the fake is in ``set_unavailable(True)`` mode.
+
+    Carries no typed-exception semantics — kept as a separate exception
+    class so tests that programmed ``set_unavailable(True)`` continue to
+    observe the original behaviour (chaos signal, not transport probe).
+    The stored ``last_connectivity_error`` is a typed
+    :class:`RyotenkAIError` (Phase A2 Batch 5).
+    """
 
 
 @dataclass
@@ -114,7 +122,7 @@ class FakeMLflowManager:
         self._exp_id_counter = itertools.count(start=1)
         self._active_run_id: str | None = None
         self._nested_run_stack: list[str] = []
-        self._last_connectivity_error: Any = None
+        self._last_connectivity_error: RyotenkAIError | None = None
         # Chaos state.
         self._fail_remaining: int = 0
         self._fail_kind: type[Exception] = TransientMLflowError
@@ -255,7 +263,7 @@ class FakeMLflowManager:
     def get_runtime_tracking_uri(self) -> str:
         return self._tracking_uri or ""
 
-    def get_last_connectivity_error(self) -> Any:
+    def get_last_connectivity_error(self) -> RyotenkAIError | None:
         return self._last_connectivity_error
 
     # ------------------------------------------------------------------
@@ -474,7 +482,15 @@ class FakeMLflowManager:
                 # injection is best-effort visible only via ``snapshot()``.
                 pass
         if self._unavailable:
-            self._last_connectivity_error = MLflowUnavailableError("fake_unavailable")
+            # Store a typed RyotenkAIError so consumers that introspect
+            # ``last_connectivity_error.code`` / ``.context`` (Phase A2 Batch 5
+            # contract) see a vocabulary-shaped value. We still raise the
+            # untyped ``MLflowUnavailableError`` to preserve the chaos signal
+            # semantics for any test that catches it directly.
+            self._last_connectivity_error = ProviderUnavailableError(
+                detail="fake_unavailable",
+                context={"mlflow_probe_reason": "FAKE_UNAVAILABLE"},
+            )
             raise MLflowUnavailableError("fake_unavailable")
         if self._fail_remaining > 0:
             self._fail_remaining -= 1
