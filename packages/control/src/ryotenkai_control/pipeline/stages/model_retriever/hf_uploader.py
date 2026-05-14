@@ -32,6 +32,7 @@ from ryotenkai_control.pipeline.stages.model_retriever.constants import (
 from ryotenkai_control.pipeline.stages.model_retriever.hf_errors import (
     classify_hf_upload_error,
 )
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import Err, ModelError, Ok, Result
 
@@ -653,16 +654,15 @@ class HFModelUploader:
 
             logger.info(f"Remote download directory: {remote_download_dir}")
 
-            download_result = self._ssh_client.download_directory(
-                remote_path=remote_download_dir,
-                local_path=local_model_dir,
-            )
-
-            if download_result.is_failure():
-                dl_err = download_result.unwrap_err()  # type: ignore[union-attr]
+            try:
+                self._ssh_client.download_directory(
+                    remote_path=remote_download_dir,
+                    local_path=local_model_dir,
+                )
+            except SSHTransferFailedError as exc:
                 return Err(
                     ModelError(
-                        message=f"Failed to download model: {dl_err}",
+                        message=f"Failed to download model: {exc.detail or exc}",
                         code="MODEL_DOWNLOAD_FAILED",
                     )
                 )

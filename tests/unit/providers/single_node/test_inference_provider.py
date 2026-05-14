@@ -358,15 +358,18 @@ class TestDeploy:
         assert "SINGLENODE_ADAPTER_NOT_DIR" in str(result.unwrap_err())
 
     def test_deploy_fails_when_adapter_upload_fails(self, provider, tmp_path):
+        from ryotenkai_shared.errors import SSHTransferFailedError
+
         adapter_dir = tmp_path / "adapter"
         adapter_dir.mkdir()
 
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (True, "")
-        upload_err = Mock()
-        upload_err.is_failure.return_value = True
-        upload_err.unwrap_err.return_value = "upload failed"
-        mock_ssh.upload_directory.return_value = upload_err
+        # New SSH contract: upload_directory raises SSHTransferFailedError on failure.
+        mock_ssh.upload_directory.side_effect = SSHTransferFailedError(
+            detail="upload failed",
+            context={"op": "upload_directory"},
+        )
 
         with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
             provider._ssh_client = mock_ssh

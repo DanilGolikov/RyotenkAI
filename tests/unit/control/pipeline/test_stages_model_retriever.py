@@ -16,6 +16,7 @@ import pytest
 
 from ryotenkai_control.pipeline.stages.model_retriever import ModelCardContext, ModelRetriever, PhaseMetricsResult
 from ryotenkai_shared.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.result import Err, Ok
 
 from tests._fakes.dataset_source import make_dataset_hf, make_dataset_local, make_dataset_with_kind
@@ -669,7 +670,10 @@ class TestModelRetrieverModelSizeAndDownload:
 
         ssh = MagicMock()
         ssh.exec_command.return_value = (True, "/w/output/checkpoint-final\n", "")
-        ssh.download_directory.return_value = Err("x")
+        ssh.download_directory.side_effect = SSHTransferFailedError(
+            detail="x",
+            context={"op": "download_directory"},
+        )
         retriever._ssh_client = ssh
 
         res = retriever._download_model()
@@ -685,7 +689,7 @@ class TestModelRetrieverModelSizeAndDownload:
 
         ssh = MagicMock()
         ssh.exec_command.return_value = (True, "/w/output/checkpoint-final\n", "")
-        ssh.download_directory.return_value = Ok(None)
+        ssh.download_directory.return_value = None  # new contract: no return value
         retriever._ssh_client = ssh
 
         res = retriever._download_model()

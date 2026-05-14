@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.logger import get_logger
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
@@ -194,14 +195,14 @@ class MetricsBufferRetriever:
 
         # 3. SCP the buffer file.
         local_path = local_dir / self.REMOTE_BUFFER_FILENAME
-        download_result = self._ssh.download_file(
-            self._remote_buffer_path,
-            local_path,
-            timeout=self.SCP_DOWNLOAD_TIMEOUT_S,
-        )
-        if download_result.is_failure():
-            err = download_result.unwrap_err()
-            err_msg = str(err) if err is not None else "unknown SCP error"
+        try:
+            self._ssh.download_file(
+                self._remote_buffer_path,
+                local_path,
+                timeout=self.SCP_DOWNLOAD_TIMEOUT_S,
+            )
+        except SSHTransferFailedError as exc:
+            err_msg = exc.detail or "unknown SCP error"
             logger.warning(
                 "[METRICS_REPLAY] SCP download failed: %s", err_msg,
             )
@@ -215,11 +216,14 @@ class MetricsBufferRetriever:
         #    for replay correctness — purely forensic.
         offset_local = local_dir / "buffer.flush_offset.json"
         if self._ssh.file_exists(self._remote_flush_offset_path):
-            self._ssh.download_file(
-                self._remote_flush_offset_path,
-                offset_local,
-                timeout=self.SSH_QUICK_TIMEOUT_S,
-            )  # ignored — pure forensics
+            try:
+                self._ssh.download_file(
+                    self._remote_flush_offset_path,
+                    offset_local,
+                    timeout=self.SSH_QUICK_TIMEOUT_S,
+                )  # ignored — pure forensics
+            except SSHTransferFailedError:
+                pass  # forensic-only; swallow
 
         # 5. Local sanity check — count lines.
         line_count = self._count_lines(local_path)

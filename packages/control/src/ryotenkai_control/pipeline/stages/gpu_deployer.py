@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import TrainingDeploymentManager
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
@@ -468,16 +469,16 @@ class GPUDeployer(PipelineStage):
         if not self._ssh_client:
             return
         try:
-            ok, err = self._ssh_client.download_file(
+            self._ssh_client.download_file(
                 remote_path=remote,
                 local_path=str(local),
             )
-            if ok:
-                logger.info(f"[DEPLOYER] Downloaded {label} → {local}")
-            else:
-                logger.debug(
-                    f"[DEPLOYER] {label} not retrieved (reason='{reason}'): {err}",
-                )
+            logger.info(f"[DEPLOYER] Downloaded {label} → {local}")
+        except SSHTransferFailedError as exc:
+            logger.debug(
+                f"[DEPLOYER] {label} not retrieved (reason='{reason}'): "
+                f"{exc.detail or exc}",
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort
             logger.debug(
                 f"[DEPLOYER] {label} SCP raised (reason='{reason}'): "

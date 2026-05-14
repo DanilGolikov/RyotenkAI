@@ -43,7 +43,7 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
-from ryotenkai_shared.errors import EngineConfigInvalidError
+from ryotenkai_shared.errors import EngineConfigInvalidError, SSHTransferFailedError
 from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
@@ -294,12 +294,12 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                     )
                 )
 
-            up = ssh.upload_directory(local_path=local_adapter, remote_path=adapter_dir)
-            if up.is_failure():
-                up_err = up.unwrap_err()
+            try:
+                ssh.upload_directory(local_path=local_adapter, remote_path=adapter_dir)
+            except SSHTransferFailedError as exc:
                 return Err(
                     InferenceError(
-                        message=f"Failed to upload adapter to inference node: {up_err}",
+                        message=f"Failed to upload adapter to inference node: {exc.detail or exc}",
                         code="SINGLENODE_ADAPTER_UPLOAD_FAILED",
                     )
                 )

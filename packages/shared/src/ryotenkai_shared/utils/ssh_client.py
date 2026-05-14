@@ -18,8 +18,12 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
+from ryotenkai_shared.errors import (
+    SSHConnectionFailedError,
+    SSHExecFailedError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 logger = logging.getLogger("ryotenkai")
 
@@ -516,7 +520,7 @@ class SSHClient:
         local_path: Path,
         stall_timeout: int = _SSH_DOWNLOAD_STALL_S,
         max_retries: int = _SSH_DOWNLOAD_MAX_RETRIES,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """
         Download a directory from server using tar+ssh streaming.
 
@@ -530,8 +534,10 @@ class SSHClient:
             stall_timeout: Seconds without new bytes before restart (default 120s)
             max_retries:   Max restart attempts before giving up (default 3)
 
-        Returns:
-            Result[None, ProviderError]
+        Raises:
+            SSHTransferFailedError: local dir creation failed, tar/ssh
+                pipeline exited non-zero, transfer stalled across all
+                retries, or local I/O error spawning the subprocess.
         """
         logger.info(f"📥 Downloading directory: {remote_path} -> {local_path}")
 
@@ -545,23 +551,27 @@ class SSHClient:
                 try:
                     shutil.rmtree(local_path)
                 except OSError as e:
-                    return Err(
-                        ProviderError(
-                            message=f"Failed to clear local directory '{local_path}': {e}",
-                            code="SSH_DOWNLOAD_LOCAL_DIR_FAILED",
-                            details={_LOCAL_PATH_KEY: str(local_path)},
-                        )
-                    )
+                    raise SSHTransferFailedError(
+                        detail=f"failed to clear local directory '{local_path}': {e}",
+                        context={
+                            _LOCAL_PATH_KEY: str(local_path),
+                            "op": "download_directory",
+                            "stage": "clear_local",
+                        },
+                        cause=e,
+                    ) from e
             try:
                 local_path.mkdir(parents=True, exist_ok=True)
             except OSError as e:
-                return Err(
-                    ProviderError(
-                        message=f"Failed to create local directory '{local_path}': {e}",
-                        code="SSH_DOWNLOAD_LOCAL_DIR_FAILED",
-                        details={_LOCAL_PATH_KEY: str(local_path)},
-                    )
-                )
+                raise SSHTransferFailedError(
+                    detail=f"failed to create local directory '{local_path}': {e}",
+                    context={
+                        _LOCAL_PATH_KEY: str(local_path),
+                        "op": "download_directory",
+                        "stage": "mkdir_local",
+                    },
+                    cause=e,
+                ) from e
 
             logger.info(
                 f"🚀 Starting download"
@@ -577,13 +587,16 @@ class SSHClient:
                     text=True,
                 )
             except OSError as e:
-                return Err(
-                    ProviderError(
-                        message=f"Download I/O error: {e}",
-                        code="SSH_DOWNLOAD_IO_ERROR",
-                        details={_REMOTE_PATH_KEY: remote_path, _LOCAL_PATH_KEY: str(local_path)},
-                    )
-                )
+                raise SSHTransferFailedError(
+                    detail=f"download I/O error: {e}",
+                    context={
+                        _REMOTE_PATH_KEY: remote_path,
+                        _LOCAL_PATH_KEY: str(local_path),
+                        "op": "download_directory",
+                        "stage": "spawn",
+                    },
+                    cause=e,
+                ) from e
 
             try:
                 self._monitor_download(proc, local_path, stall_timeout)
@@ -593,30 +606,36 @@ class SSHClient:
                         f"⚠️ Download stalled (attempt {attempt}/{max_retries}): {exc}. Restarting..."
                     )
                     continue
-                return Err(
-                    ProviderError(
-                        message=f"Download stalled after {max_retries} attempts: {exc}",
-                        code="SSH_DOWNLOAD_STALLED",
-                        details={_REMOTE_PATH_KEY: remote_path, "stall_timeout": stall_timeout},
-                    )
-                )
+                raise SSHTransferFailedError(
+                    detail=f"download stalled after {max_retries} attempts: {exc}",
+                    context={
+                        _REMOTE_PATH_KEY: remote_path,
+                        "stall_timeout": stall_timeout,
+                        "op": "download_directory",
+                        "stage": "stalled",
+                    },
+                    cause=exc,
+                ) from exc
 
             stderr_output = proc.stderr.read() if proc.stderr else ""
             if proc.returncode != 0:
-                return Err(
-                    ProviderError(
-                        message=f"Download failed: {stderr_output}",
-                        code="SSH_DOWNLOAD_FAILED",
-                        details={_REMOTE_PATH_KEY: remote_path, _LOCAL_PATH_KEY: str(local_path)},
-                    )
+                raise SSHTransferFailedError(
+                    detail=f"download failed: {stderr_output}",
+                    context={
+                        _REMOTE_PATH_KEY: remote_path,
+                        _LOCAL_PATH_KEY: str(local_path),
+                        "returncode": proc.returncode,
+                        "op": "download_directory",
+                    },
                 )
 
             logger.info("✅ Directory downloaded successfully")
-            return Ok(None)
+            return
 
         # Unreachable — loop always returns, but keeps type-checker happy
-        return Err(  # pragma: no cover
-            ProviderError(message="Download failed", code="SSH_DOWNLOAD_FAILED", details={})
+        raise SSHTransferFailedError(  # pragma: no cover
+            detail="download failed",
+            context={"op": "download_directory"},
         )
 
     def download_file(
@@ -624,7 +643,7 @@ class SSHClient:
         remote_path: str,
         local_path: Path,
         timeout: int = 300,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """
         Download a single file from server using SCP.
 
@@ -644,12 +663,10 @@ class SSHClient:
                           must exist.
             timeout:     SCP timeout in seconds (default 5 min).
 
-        Returns:
-            Result[None, ProviderError]:
-                - ``Ok(None)`` on success.
-                - ``Err(ProviderError)`` on SCP failure, timeout, or
-                  unexpected I/O error. Caller should treat as
-                  best-effort (Phase 12 is fail-open).
+        Raises:
+            SSHTransferFailedError: SCP returned non-zero, timed out,
+                or raised an OSError. Caller should treat as best-effort
+                (Phase 12 is fail-open) and swallow.
         """
         # Build SCP command (download direction: remote → local)
         if self._is_alias_mode:
@@ -683,50 +700,49 @@ class SSHClient:
 
             if result.returncode != 0:
                 stderr = (result.stderr or "").strip()
-                return Err(
-                    ProviderError(
-                        message=f"SCP download failed: {stderr}",
-                        code="SSH_DOWNLOAD_FILE_FAILED",
-                        details={
-                            _REMOTE_PATH_KEY: remote_path,
-                            _LOCAL_PATH_KEY: str(local_path),
-                        },
-                    )
+                raise SSHTransferFailedError(
+                    detail=f"SCP download failed: {stderr}",
+                    context={
+                        _REMOTE_PATH_KEY: remote_path,
+                        _LOCAL_PATH_KEY: str(local_path),
+                        "returncode": result.returncode,
+                        "op": "download_file",
+                    },
                 )
 
             logger.info(f"✅ File downloaded: {local_path}")
-            return Ok(None)
+            return
 
-        except subprocess.TimeoutExpired:
-            return Err(
-                ProviderError(
-                    message=f"SCP download timeout (>{timeout}s)",
-                    code="SSH_DOWNLOAD_FILE_TIMEOUT",
-                    details={
-                        _REMOTE_PATH_KEY: remote_path,
-                        _LOCAL_PATH_KEY: str(local_path),
-                        "timeout": timeout,
-                    },
-                )
-            )
+        except subprocess.TimeoutExpired as e:
+            raise SSHTransferFailedError(
+                detail=f"SCP download timeout (>{timeout}s)",
+                context={
+                    _REMOTE_PATH_KEY: remote_path,
+                    _LOCAL_PATH_KEY: str(local_path),
+                    "timeout": timeout,
+                    "op": "download_file",
+                    "stage": "timeout",
+                },
+                cause=e,
+            ) from e
         except OSError as e:
-            return Err(
-                ProviderError(
-                    message=f"SCP download I/O error: {e}",
-                    code="SSH_DOWNLOAD_FILE_IO_ERROR",
-                    details={
-                        _REMOTE_PATH_KEY: remote_path,
-                        _LOCAL_PATH_KEY: str(local_path),
-                    },
-                )
-            )
+            raise SSHTransferFailedError(
+                detail=f"SCP download I/O error: {e}",
+                context={
+                    _REMOTE_PATH_KEY: remote_path,
+                    _LOCAL_PATH_KEY: str(local_path),
+                    "op": "download_file",
+                    "stage": "io_error",
+                },
+                cause=e,
+            ) from e
 
     def upload_directory(
         self,
         local_path: Path,
         remote_path: str,
         timeout: int = 1800,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """
         Upload a directory to server using tar+ssh streaming.
 
@@ -737,24 +753,28 @@ class SSHClient:
             remote_path: Remote directory path to extract into
             timeout: Upload timeout in seconds (default 30 min)
 
-        Returns:
-            Result[None, ProviderError]: Success or structured provider error
+        Raises:
+            SSHTransferFailedError: local path missing/not-a-directory,
+                tar/ssh pipeline returned non-zero, timed out, or
+                raised an OSError.
         """
         if not local_path.exists():
-            return Err(
-                ProviderError(
-                    message=f"Local directory not found: {local_path}",
-                    code="SSH_UPLOAD_LOCAL_NOT_FOUND",
-                    details={_LOCAL_PATH_KEY: str(local_path)},
-                )
+            raise SSHTransferFailedError(
+                detail=f"local directory not found: {local_path}",
+                context={
+                    _LOCAL_PATH_KEY: str(local_path),
+                    "op": "upload_directory",
+                    "stage": "local_not_found",
+                },
             )
         if not local_path.is_dir():
-            return Err(
-                ProviderError(
-                    message=f"Local path is not a directory: {local_path}",
-                    code="SSH_UPLOAD_NOT_A_DIRECTORY",
-                    details={_LOCAL_PATH_KEY: str(local_path)},
-                )
+            raise SSHTransferFailedError(
+                detail=f"local path is not a directory: {local_path}",
+                context={
+                    _LOCAL_PATH_KEY: str(local_path),
+                    "op": "upload_directory",
+                    "stage": "not_a_directory",
+                },
             )
 
         logger.info(f"📤 Uploading directory: {local_path} -> {remote_path}")
@@ -775,33 +795,42 @@ class SSHClient:
             )
 
             if result.returncode != 0:
-                return Err(
-                    ProviderError(
-                        message=f"Upload failed: {result.stderr}",
-                        code="SSH_UPLOAD_FAILED",
-                        details={_LOCAL_PATH_KEY: str(local_path), _REMOTE_PATH_KEY: remote_path},
-                    )
+                raise SSHTransferFailedError(
+                    detail=f"upload failed: {result.stderr}",
+                    context={
+                        _LOCAL_PATH_KEY: str(local_path),
+                        _REMOTE_PATH_KEY: remote_path,
+                        "returncode": result.returncode,
+                        "op": "upload_directory",
+                    },
                 )
 
             logger.info("✅ Directory uploaded successfully")
-            return Ok(None)
+            return
 
-        except subprocess.TimeoutExpired:
-            return Err(
-                ProviderError(
-                    message=f"Upload timeout (>{timeout}s)",
-                    code="SSH_UPLOAD_TIMEOUT",
-                    details={_LOCAL_PATH_KEY: str(local_path), _REMOTE_PATH_KEY: remote_path, "timeout": timeout},
-                )
-            )
+        except subprocess.TimeoutExpired as e:
+            raise SSHTransferFailedError(
+                detail=f"upload timeout (>{timeout}s)",
+                context={
+                    _LOCAL_PATH_KEY: str(local_path),
+                    _REMOTE_PATH_KEY: remote_path,
+                    "timeout": timeout,
+                    "op": "upload_directory",
+                    "stage": "timeout",
+                },
+                cause=e,
+            ) from e
         except OSError as e:
-            return Err(
-                ProviderError(
-                    message=f"Upload I/O error: {e}",
-                    code="SSH_UPLOAD_IO_ERROR",
-                    details={_LOCAL_PATH_KEY: str(local_path), _REMOTE_PATH_KEY: remote_path},
-                )
-            )
+            raise SSHTransferFailedError(
+                detail=f"upload I/O error: {e}",
+                context={
+                    _LOCAL_PATH_KEY: str(local_path),
+                    _REMOTE_PATH_KEY: remote_path,
+                    "op": "upload_directory",
+                    "stage": "io_error",
+                },
+                cause=e,
+            ) from e
 
     def get_file_content(
         self,

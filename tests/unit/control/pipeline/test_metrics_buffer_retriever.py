@@ -21,7 +21,7 @@ from ryotenkai_control.pipeline.stages.model_retriever.metrics_buffer_retriever 
     FetchResult,
     MetricsBufferRetriever,
 )
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import SSHTransferFailedError
 
 
 # ---------------------------------------------------------------------------
@@ -38,14 +38,14 @@ class _FakeSSHClient:
     * ``sizes``         — map remote_path → bytes returned by stat probe.
     * ``contents``      — map remote_path → string contents written into
                           the local destination on ``download_file``.
-    * ``download_error``— optional :class:`ProviderError` to surface.
+    * ``download_error``— optional :class:`SSHTransferFailedError` to raise.
     """
 
     def __init__(self) -> None:
         self.files_present: set[str] = set()
         self.sizes: dict[str, int] = {}
         self.contents: dict[str, str] = {}
-        self.download_error: ProviderError | None = None
+        self.download_error: SSHTransferFailedError | None = None
         self.exec_calls: list[tuple[str, dict[str, Any]]] = []
         self.download_calls: list[tuple[str, Path]] = []
 
@@ -75,20 +75,17 @@ class _FakeSSHClient:
         remote_path: str,
         local_path: Path,
         timeout: int = 300,
-    ) -> Any:
+    ) -> None:
         self.download_calls.append((remote_path, local_path))
         if self.download_error is not None:
-            return Err(self.download_error)
+            raise self.download_error
         if remote_path in self.contents:
             local_path.parent.mkdir(parents=True, exist_ok=True)
             local_path.write_text(self.contents[remote_path], encoding="utf-8")
-            return Ok(None)
-        return Err(
-            ProviderError(
-                message=f"file not in fake contents: {remote_path}",
-                code="SSH_DOWNLOAD_FILE_FAILED",
-                details={},
-            )
+            return
+        raise SSHTransferFailedError(
+            detail=f"file not in fake contents: {remote_path}",
+            context={"op": "download_file"},
         )
 
 
@@ -195,10 +192,9 @@ class TestNegative:
         ssh = _FakeSSHClient()
         ssh.files_present = {_REMOTE_BUFFER}
         ssh.sizes = {_REMOTE_BUFFER: 100}
-        ssh.download_error = ProviderError(
-            message="SCP boom",
-            code="SSH_DOWNLOAD_FILE_FAILED",
-            details={},
+        ssh.download_error = SSHTransferFailedError(
+            detail="SCP boom",
+            context={"op": "download_file"},
         )
 
         retriever = _make(ssh)
