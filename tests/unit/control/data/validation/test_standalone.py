@@ -4,10 +4,16 @@ These cover the pure helpers that are reused by both the pipeline stage
 and the HTTP API. The pipeline stage's own behaviour (callbacks,
 threshold-stop, MLflow events) is tested elsewhere — here we only
 exercise the standalone surface.
+
+Phase A2 Batch 7: ``check_dataset_format`` no longer returns a
+``Result`` — it returns the per-strategy list directly and raises
+:class:`DatasetValidationFailedError` on the "unknown strategy type"
+config-bug path.
 """
 
 from __future__ import annotations
 
+import pytest
 from datasets import Dataset
 
 from ryotenkai_control.data.validation.base import ValidationErrorGroup, ValidationPlugin, ValidationResult
@@ -16,6 +22,7 @@ from ryotenkai_control.data.validation.standalone import (
     check_dataset_format,
     run_plugins,
 )
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +138,7 @@ def test_run_plugins_isolates_crashed_plugin():
 
 
 def test_check_dataset_format_returns_empty_for_no_phases():
-    result = check_dataset_format(_ds(), "ds", strategy_phases=[], pipeline_config=None)
-    assert result.is_ok()
-    assert result.unwrap() == []
+    assert check_dataset_format(_ds(), "ds", strategy_phases=[], pipeline_config=None) == []
 
 
 class _StubFromPhase:
@@ -175,9 +180,8 @@ def test_check_dataset_format_aggregates_per_strategy(monkeypatch):
             self.strategy_type = st
 
     phases = [_Phase("sft"), _Phase("dpo"), _Phase("sft")]
-    result = check_dataset_format(_ds(), "ds", phases, pipeline_config=None)
-    assert result.is_ok()
-    by_type = {item.strategy_type: item for item in result.unwrap()}
+    items = check_dataset_format(_ds(), "ds", phases, pipeline_config=None)
+    by_type = {item.strategy_type: item for item in items}
     assert by_type["sft"].ok is True
     assert by_type["dpo"].ok is False
     assert "missing chosen" in by_type["dpo"].message
@@ -198,10 +202,10 @@ def test_check_dataset_format_short_circuits_on_unknown_strategy(monkeypatch):
     class _Phase:
         strategy_type = "xyz"
 
-    result = check_dataset_format(_ds(), "ds", [_Phase()], pipeline_config=None)
-    assert result.is_failure()
-    err = result.unwrap_err()
-    assert "Unknown strategy" in err.message
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        check_dataset_format(_ds(), "ds", [_Phase()], pipeline_config=None)
+    assert "Unknown strategy" in (excinfo.value.detail or "")
+    assert excinfo.value.context.get("legacy_code") == "DATASET_FORMAT_ERROR"
 
 
 def test_format_check_result_dataclass_defaults():

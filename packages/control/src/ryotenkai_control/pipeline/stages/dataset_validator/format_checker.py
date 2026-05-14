@@ -35,12 +35,19 @@ class FormatChecker:
     ) -> Result[None, AppError]:
         """Run format checks for every strategy phase. Early-fails on first error."""
         from ryotenkai_control.data.validation.standalone import check_dataset_format
+        from ryotenkai_shared.errors import DatasetValidationFailedError
 
-        bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
-        if bundle.is_failure():
-            return Err(bundle.unwrap_err())
+        # Phase A2 Batch 7: check_dataset_format now returns the bare list
+        # and raises ``DatasetValidationFailedError`` on the
+        # "unknown strategy type" branch. The Batch 8 dataset_validator
+        # migration drops this adapter; for now we translate back to the
+        # legacy ``Result`` shape its callers still expect.
+        try:
+            items = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
+        except DatasetValidationFailedError as exc:
+            return Err(DatasetError(message=exc.detail or str(exc), code="DATASET_FORMAT_ERROR"))
 
-        for item in bundle.unwrap():
+        for item in items:
             if not item.ok:
                 return Err(
                     DatasetError(

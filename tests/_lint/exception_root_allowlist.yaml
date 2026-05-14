@@ -126,8 +126,6 @@ allow:
     reason: "phase-A1-pending-migration: will be migrated in Phase C (workspace stores)"
   - path: ryotenkai_control.pipeline.bootstrap.startup_validator.StartupValidationError
     reason: "phase-A1-pending-migration: will be migrated in Phase C (startup validation)"
-  - path: ryotenkai_control.pipeline.launch.launch_preparator.LaunchPreparationError
-    reason: "phase-A1-pending-migration: replaced by infra.LaunchPreparationError in Phase A2"
   - path: ryotenkai_control.pipeline.mlflow_attempt.manager.MLflowManagerNotInitializedError
     reason: "phase-A1-pending-migration: will be migrated in Phase C"
   - path: ryotenkai_control.pipeline.state.store.PipelineStateError

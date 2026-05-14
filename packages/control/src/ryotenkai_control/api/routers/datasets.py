@@ -222,13 +222,21 @@ def validate_dataset(
     format_check_payloads: list[FormatCheckPayload] = []
     format_check_error: str | None = None
     if pipeline_cfg is not None and strategy_phases:
-        bundle = check_dataset_format(dataset, ctx.dataset_key, strategy_phases, pipeline_cfg)
-        if bundle.is_failure():
-            format_check_error = bundle.unwrap_err().message
+        # Phase A2 Batch 7: check_dataset_format raises on "unknown strategy
+        # type"; per-strategy quality failures are reported via ok=False
+        # entries in the returned list. The HTTP /validate endpoint maps the
+        # raised exception to a string ``format_check_error`` so the response
+        # shape is unchanged.
+        from ryotenkai_shared.errors import DatasetValidationFailedError
+
+        try:
+            items = check_dataset_format(dataset, ctx.dataset_key, strategy_phases, pipeline_cfg)
+        except DatasetValidationFailedError as exc:
+            format_check_error = exc.detail or str(exc)
         else:
             format_check_payloads = [
                 FormatCheckPayload(strategy_type=r.strategy_type, ok=r.ok, message=r.message)
-                for r in bundle.unwrap()
+                for r in items
             ]
     elif not strategy_phases:
         format_check_error = (

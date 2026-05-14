@@ -10,6 +10,12 @@ Coverage split by category (required by project policy):
 5. **Dependency errors**  — corrupted state file, drift validator failures.
 6. **Regressions**        — rejection uses cached state_store; run_dir resolution.
 7. **Combinatorial**      — resume×restart×state matrix.
+
+Phase A2 Batch 7: ``LaunchPreparationError`` is now the typed shared
+exception from :mod:`ryotenkai_shared.errors`. The rejection-recording
+context (state, requested/effective action, start stage) is stashed as
+instance attributes on the raised exception by the preparator's
+``_make_launch_error`` helper.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from ryotenkai_control.pipeline.launch import (
     LaunchPreparator,
     PreparedAttempt,
 )
+from ryotenkai_control.pipeline.launch.launch_preparator import _make_launch_error
 from ryotenkai_control.pipeline.state import (
     AttemptController,
     PipelineAttemptState,
@@ -34,7 +41,7 @@ from ryotenkai_control.pipeline.state import (
     PipelineStateStore,
     StageRunState,
 )
-from ryotenkai_shared.utils.result import AppError
+from ryotenkai_shared.errors import ConfigDriftError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -94,9 +101,12 @@ def _build_stage_planner(stages: list[MagicMock]) -> MagicMock:
     return planner
 
 
-def _build_config_drift(*, drift: AppError | None = None) -> MagicMock:
+def _build_config_drift(*, drift: ConfigDriftError | None = None) -> MagicMock:
     cd = MagicMock()
-    cd.validate_drift.return_value = drift
+    if drift is None:
+        cd.validate_drift.return_value = None
+    else:
+        cd.validate_drift.side_effect = drift
     cd.build_config_hashes.return_value = {
         "training_critical": "t_hash",
         "late_stage": "l_hash",
@@ -109,7 +119,7 @@ def _build_preparator(
     tmp_path: Path,
     *,
     stages: list[MagicMock] | None = None,
-    drift: AppError | None = None,
+    drift: ConfigDriftError | None = None,
     save_fn: MagicMock | None = None,
 ) -> tuple[LaunchPreparator, AttemptController, MagicMock, MagicMock]:
     """Build a ready-to-use preparator + the dependencies needed for assertions."""
@@ -255,7 +265,7 @@ class TestPositive:
             )
         )
 
-        drift_err = AppError(message="training_critical config changed", code="DRIFT")
+        drift_err = ConfigDriftError(detail="training_critical config changed")
         save_fn = MagicMock()
         preparator, controller, _, _ = _build_preparator(tmp_path, drift=drift_err, save_fn=save_fn)
 
@@ -269,8 +279,8 @@ class TestPositive:
 
         # The preparation raised — rejection path needs to emit exactly one
         # persist with a FAILED pipeline_status.
-        launch_err = LaunchPreparationError(
-            drift_err,
+        launch_err = _make_launch_error(
+            "training_critical config changed",
             state=controller.state,
             requested_action="restart",
             effective_action="restart",
@@ -329,7 +339,7 @@ class TestNegative:
                 late_stage_config_hash="l",
             )
         )
-        drift = AppError(message="training_critical config changed", code="DRIFT")
+        drift = ConfigDriftError(detail="training_critical config changed")
         preparator, _, _, _ = _build_preparator(tmp_path, drift=drift)
 
         with pytest.raises(LaunchPreparationError, match="training_critical config changed"):
@@ -499,7 +509,7 @@ class TestInvariants:
                 late_stage_config_hash="l",
             )
         )
-        drift = AppError(message="drift!", code="DRIFT")
+        drift = ConfigDriftError(detail="drift!")
         preparator, _, _, _ = _build_preparator(tmp_path, drift=drift)
 
         with pytest.raises(LaunchPreparationError):
@@ -541,10 +551,7 @@ class TestInvariants:
         save_fn = MagicMock()
         preparator, _, _, _ = _build_preparator(tmp_path, save_fn=save_fn)
         # Construct a rejection-carrying error that never went through prepare().
-        err = LaunchPreparationError(
-            AppError(message="never got a store", code="E"),
-            state=None,
-        )
+        err = _make_launch_error("never got a store", state=None)
         preparator.record_launch_rejection(launch_error=err, config_hashes=_config_hashes())
         save_fn.assert_not_called()
 
@@ -604,7 +611,7 @@ class TestDependencyErrors:
         def _fail(_state: PipelineState) -> None:
             raise OSError("disk full")
 
-        drift = AppError(message="drift", code="D")
+        drift = ConfigDriftError(detail="drift")
         preparator, controller, _, _ = _build_preparator(tmp_path, drift=drift, save_fn=_fail)  # type: ignore[arg-type]
 
         with pytest.raises(LaunchPreparationError):
@@ -614,8 +621,8 @@ class TestDependencyErrors:
                 restart_from_stage=STAGE_B,
                 config_hashes=_config_hashes(),
             )
-        err = LaunchPreparationError(
-            drift,
+        err = _make_launch_error(
+            "drift",
             state=controller.state,
             requested_action="restart",
             effective_action="restart",
@@ -648,7 +655,7 @@ class TestRegressions:
         state.attempts.append(completed)
         store.save(state)
 
-        drift = AppError(message="drift!", code="D")
+        drift = ConfigDriftError(detail="drift!")
         save_fn = MagicMock()
         preparator, controller, _, _ = _build_preparator(
             tmp_path, drift=drift, save_fn=save_fn
@@ -660,8 +667,8 @@ class TestRegressions:
                 restart_from_stage=STAGE_B,
                 config_hashes=_config_hashes(),
             )
-        err = LaunchPreparationError(
-            drift,
+        err = _make_launch_error(
+            "drift!",
             state=controller.state,
             requested_action="restart",
             effective_action="restart",
@@ -717,7 +724,7 @@ class TestRegressions:
         self, tmp_path: Path
     ) -> None:
         """Regression: 'no resumable stage' path raises LaunchPreparationError
-        with the expected RESUME_NOT_AVAILABLE code."""
+        with the expected RESUME_NOT_AVAILABLE legacy code carried in context."""
         run_dir = tmp_path / "no_resume"
         store = PipelineStateStore(run_dir)
         store.save(
@@ -738,7 +745,7 @@ class TestRegressions:
                 restart_from_stage=None,
                 config_hashes=_config_hashes(),
             )
-        assert excinfo.value.app_error.code == "RESUME_NOT_AVAILABLE"
+        assert excinfo.value.context.get("legacy_code") == "RESUME_NOT_AVAILABLE"
 
 
 # ===========================================================================

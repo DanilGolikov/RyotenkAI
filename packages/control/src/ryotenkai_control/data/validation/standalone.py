@@ -14,6 +14,14 @@ Design notes:
     stage keeps its own loop with callbacks and threshold-stop logic;
     the standalone variant is a deliberate, simpler peer (single
     responsibility per call site).
+
+Phase A2 Batch 7 (typed exception migration): :func:`check_dataset_format`
+previously returned ``Result[list[FormatCheckResult], AppError]``. It now
+returns the bare list and raises :class:`DatasetValidationFailedError`
+on the "strategy class missing for declared type" path (a config-level
+bug, not a data quality issue). Per-strategy quality failures are
+still aggregated into the returned list with ``ok=False`` entries —
+the caller decides whether to short-circuit.
 """
 
 from __future__ import annotations
@@ -23,7 +31,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.data.validation.base import ValidationErrorGroup, ValidationPlugin
-from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -43,23 +51,24 @@ def check_dataset_format(
     dataset_name: str,
     strategy_phases: list[Any],
     pipeline_config: Any,
-) -> Result[list[FormatCheckResult], AppError]:
+) -> list[FormatCheckResult]:
     """
     Run ``strategy.validate_dataset(dataset)`` for each unique
     ``strategy_type`` referenced in ``strategy_phases`` and aggregate
     the outcomes.
 
-    Returns ``Ok(list)`` even when individual strategies fail — the
-    caller decides whether the *first* failure should short-circuit the
+    Returns the list even when individual strategies fail — the caller
+    decides whether the *first* failure should short-circuit the
     pipeline (DatasetValidator does so) or whether a full report is
     needed (HTTP /validate endpoint).
 
-    The only ``Err`` path is "strategy class missing for declared type"
+    The only raised path is "strategy class missing for declared type"
     — that's a config-level bug, not a data quality issue, so it short-
-    circuits unconditionally.
+    circuits unconditionally as
+    :class:`DatasetValidationFailedError`.
     """
     if not strategy_phases:
-        return Ok([])
+        return []
 
     # Local import to avoid a circular dependency: factory imports
     # config which transitively imports validation plugins.
@@ -78,17 +87,23 @@ def check_dataset_format(
         try:
             strategy = factory.create_from_phase(phase, pipeline_config)
         except ValueError as exc:
-            return Err(
-                DatasetError(
-                    message=(
-                        f"[{dataset_name}] Unknown strategy type "
-                        f"'{strategy_type}': {exc}"
-                    ),
-                    code="DATASET_FORMAT_ERROR",
-                )
-            )
+            raise DatasetValidationFailedError(
+                detail=(
+                    f"[{dataset_name}] Unknown strategy type "
+                    f"'{strategy_type}': {exc}"
+                ),
+                context={
+                    "legacy_code": "DATASET_FORMAT_ERROR",
+                    "dataset_name": dataset_name,
+                    "strategy_type": strategy_type,
+                },
+                cause=exc,
+            ) from exc
 
         check = strategy.validate_dataset(dataset)
+        # ``strategy.validate_dataset`` still returns the legacy ``Result``
+        # shape — Phase A2 Batch 10 migrates strategies themselves. Until
+        # then, duck-type the failure branch.
         if check.is_failure():
             err = check.unwrap_err()
             out.append(
@@ -101,7 +116,7 @@ def check_dataset_format(
         else:
             out.append(FormatCheckResult(strategy_type=strategy_type, ok=True))
 
-    return Ok(out)
+    return out
 
 
 @dataclass

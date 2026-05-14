@@ -126,32 +126,35 @@ def test_get_run_id_none_when_both_empty(manager_under_test: MLflowAttemptManage
 # -----------------------------------------------------------------------------
 
 
-def test_preflight_returns_setup_failed_when_no_manager(manager_under_test: MLflowAttemptManager) -> None:
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "MLFLOW_PREFLIGHT_SETUP_FAILED"
+def test_preflight_raises_setup_failed_when_no_manager(manager_under_test: MLflowAttemptManager) -> None:
+    from ryotenkai_shared.errors import ConfigInvalidError
+
+    with pytest.raises(ConfigInvalidError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_SETUP_FAILED"
 
 
-def test_preflight_returns_unreachable_when_connectivity_fails(manager_under_test: MLflowAttemptManager) -> None:
+def test_preflight_raises_unreachable_when_connectivity_fails(manager_under_test: MLflowAttemptManager) -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     mgr = MagicMock()
     mgr.is_active = True
     mgr.get_runtime_tracking_uri.return_value = "http://fake"
     mgr.check_mlflow_connectivity.return_value = False
     mgr.get_last_connectivity_error.return_value = None
     manager_under_test._manager = mgr
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "MLFLOW_PREFLIGHT_UNREACHABLE"
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_UNREACHABLE"
 
 
 def test_preflight_surfaces_gateway_error_code(manager_under_test: MLflowAttemptManager) -> None:
-    """Phase A2 Batch 5: gateway now stores typed ``RyotenkAIError`` values.
+    """Phase A2 Batch 7: ``ensure_preflight`` raises typed exceptions.
 
-    ``ensure_preflight`` must surface the legacy granular MLFLOW_*
-    identifier (carried under ``context["mlflow_probe_reason"]``) as the
-    legacy ``AppError.code`` so the orchestrator / launch-rejection
-    pathway continues to work without a parallel migration of
-    LaunchPreparationError (Batch 6+).
+    The granular MLFLOW_* identifier (carried under
+    ``context["mlflow_probe_reason"]`` on the gateway error) is
+    surfaced under ``context["legacy_code"]`` on the raised
+    :class:`ProviderUnavailableError`.
     """
     from ryotenkai_shared.errors import ProviderUnavailableError
 
@@ -165,16 +168,19 @@ def test_preflight_surfaces_gateway_error_code(manager_under_test: MLflowAttempt
     )
     mgr.get_last_connectivity_error.return_value = gateway_err
     manager_under_test._manager = mgr
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "MLFLOW_PREFLIGHT_HTTP_ERROR"
-    assert "specific reason" in err.message
-    assert err.details is not None
-    assert err.details["gateway_error"]["gateway_error_class"] == "ProviderUnavailableError"
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_HTTP_ERROR"
+    assert "specific reason" in (excinfo.value.detail or "")
+    assert (
+        excinfo.value.context["gateway_error"]["gateway_error_class"]
+        == "ProviderUnavailableError"
+    )
 
 
 def test_preflight_surfaces_legacy_app_error_from_gateway(manager_under_test: MLflowAttemptManager) -> None:
     """Backwards compat: gateway returning a legacy ``AppError`` still surfaces."""
+    from ryotenkai_shared.errors import ProviderUnavailableError
     from ryotenkai_shared.utils.result import AppError as LegacyAppError
 
     mgr = MagicMock()
@@ -186,10 +192,10 @@ def test_preflight_surfaces_legacy_app_error_from_gateway(manager_under_test: ML
         message="legacy reason",
     )
     manager_under_test._manager = mgr
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "LEGACY_SPECIFIC"
-    assert "legacy reason" in err.message
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "LEGACY_SPECIFIC"
+    assert "legacy reason" in (excinfo.value.detail or "")
 
 
 def test_preflight_returns_none_when_healthy(manager_under_test: MLflowAttemptManager) -> None:

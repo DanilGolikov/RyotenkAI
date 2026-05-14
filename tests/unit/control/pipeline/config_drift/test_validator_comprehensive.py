@@ -2,11 +2,14 @@
 
 7 test categories: positive, negative, boundary, invariants, dependency errors,
 regressions (scope-naming bug), combinatorial.
+
+Phase A2 Batch 7: ``validate_drift`` raises typed :class:`ConfigDriftError`
+on drift; ``context["scope"]`` carries the legacy ``details["scope"]``
+field.
 """
 
 from __future__ import annotations
 
-from itertools import product
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,7 +17,7 @@ import pytest
 from ryotenkai_control.pipeline.config_drift.validator import ConfigDriftValidator
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import PipelineState, StageRunState
-from ryotenkai_shared.utils.result import ConfigDriftError
+from ryotenkai_shared.errors import ConfigDriftError
 
 
 # -----------------------------------------------------------------------------
@@ -110,25 +113,25 @@ class TestPositive:
 class TestNegative:
     def test_model_dataset_drift_blocks(self, validator: ConfigDriftValidator) -> None:
         state = _build_state(model_dataset="OLD", training_critical="tc", late_stage="ls")
-        err = validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(),
-            resume=True,
-        )
-        assert isinstance(err, ConfigDriftError)
-        assert err.details["scope"] == "model_dataset"
+        with pytest.raises(ConfigDriftError) as excinfo:
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(),
+                resume=True,
+            )
+        assert excinfo.value.context["scope"] == "model_dataset"
 
     def test_late_stage_drift_blocks_full_resume(self, validator: ConfigDriftValidator) -> None:
         state = _build_state(training_critical="tc", late_stage="OLD", model_dataset="md")
-        err = validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(),
-            resume=True,
-        )
-        assert isinstance(err, ConfigDriftError)
-        assert err.details["scope"] == "late_stage"
+        with pytest.raises(ConfigDriftError) as excinfo:
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(),
+                resume=True,
+            )
+        assert excinfo.value.context["scope"] == "late_stage"
 
 
 # =============================================================================
@@ -155,13 +158,13 @@ class TestBoundary:
     def test_hash_different_by_single_char(self, validator: ConfigDriftValidator) -> None:
         """Any change (even 1 char) must be detected."""
         state = _build_state(training_critical="tc", late_stage="ls", model_dataset="md")
-        err = validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(md="Md"),  # capital M
-            resume=True,
-        )
-        assert err is not None
+        with pytest.raises(ConfigDriftError):
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(md="Md"),  # capital M
+                resume=True,
+            )
 
     def test_late_stage_drift_allowed_for_model_evaluator(
         self, validator: ConfigDriftValidator
@@ -209,12 +212,13 @@ class TestInvariants:
             state.late_stage_config_hash,
             state.model_dataset_config_hash,
         )
-        validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(md="OLD"),
-            resume=True,
-        )
+        with pytest.raises(ConfigDriftError):
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(md="OLD"),
+                resume=True,
+            )
         assert (
             state.training_critical_config_hash,
             state.late_stage_config_hash,
@@ -255,15 +259,15 @@ class TestRegressions:
         """REGRESSION: error used to always say scope='training_critical' even when
         the drift was on model_dataset. Now the scope matches the real hash."""
         state = _build_state(training_critical="tc", late_stage="ls", model_dataset="md_OLD")
-        err = validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(),
-            resume=True,
-        )
-        assert isinstance(err, ConfigDriftError)
-        assert err.details["scope"] == "model_dataset"
-        assert "model_dataset" in err.message
+        with pytest.raises(ConfigDriftError) as excinfo:
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(),
+                resume=True,
+            )
+        assert excinfo.value.context["scope"] == "model_dataset"
+        assert "model_dataset" in (excinfo.value.detail or "")
 
     def test_regression_legacy_state_still_uses_training_critical_scope(
         self, validator: ConfigDriftValidator
@@ -271,14 +275,14 @@ class TestRegressions:
         """REGRESSION: legacy states without model_dataset hash fall back to
         training_critical — scope name should match that."""
         state = _build_state(training_critical="tc_OLD", late_stage="ls", model_dataset="")
-        err = validator.validate_drift(
-            state=state,
-            start_stage_name=StageNames.DATASET_VALIDATOR,
-            config_hashes=_hashes(),
-            resume=True,
-        )
-        assert isinstance(err, ConfigDriftError)
-        assert err.details["scope"] == "training_critical"
+        with pytest.raises(ConfigDriftError) as excinfo:
+            validator.validate_drift(
+                state=state,
+                start_stage_name=StageNames.DATASET_VALIDATOR,
+                config_hashes=_hashes(),
+                resume=True,
+            )
+        assert excinfo.value.context["scope"] == "training_critical"
 
 
 # =============================================================================
@@ -321,16 +325,24 @@ def test_combinatorial_drift_policy(
         late_stage="ls_OLD" if ls_drift else "ls",
         model_dataset="md_OLD" if md_drift else "md",
     )
-    err = validator.validate_drift(
-        state=state,
-        start_stage_name=start_stage,
-        config_hashes=_hashes(),
-        resume=resume,
-    )
     if expect_error:
-        assert err is not None
+        with pytest.raises(ConfigDriftError):
+            validator.validate_drift(
+                state=state,
+                start_stage_name=start_stage,
+                config_hashes=_hashes(),
+                resume=resume,
+            )
     else:
-        assert err is None
+        assert (
+            validator.validate_drift(
+                state=state,
+                start_stage_name=start_stage,
+                config_hashes=_hashes(),
+                resume=resume,
+            )
+            is None
+        )
 
 
 @pytest.mark.parametrize("prefix_len", [1, 3, 8, 16, 64])

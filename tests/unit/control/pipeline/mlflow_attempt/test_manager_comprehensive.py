@@ -132,20 +132,24 @@ class TestNegative:
             assert manager.bootstrap() is None
         assert manager.manager is None
 
-    def test_preflight_setup_failed_returns_apperror(self, manager: MLflowAttemptManager) -> None:
-        err = manager.ensure_preflight()
-        assert err is not None
-        assert err.code == "MLFLOW_PREFLIGHT_SETUP_FAILED"
+    def test_preflight_setup_failed_raises(self, manager: MLflowAttemptManager) -> None:
+        from ryotenkai_shared.errors import ConfigInvalidError
 
-    def test_preflight_unreachable_returns_apperror(self, manager: MLflowAttemptManager) -> None:
+        with pytest.raises(ConfigInvalidError) as excinfo:
+            manager.ensure_preflight()
+        assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_SETUP_FAILED"
+
+    def test_preflight_unreachable_raises(self, manager: MLflowAttemptManager) -> None:
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
         mgr = MagicMock()
         mgr.is_active = True
         mgr.check_mlflow_connectivity.return_value = False
         mgr.get_last_connectivity_error.return_value = None
         manager._manager = mgr
-        err = manager.ensure_preflight()
-        assert err is not None
-        assert err.code == "MLFLOW_PREFLIGHT_UNREACHABLE"
+        with pytest.raises(ProviderUnavailableError) as excinfo:
+            manager.ensure_preflight()
+        assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_UNREACHABLE"
 
 
 # =============================================================================

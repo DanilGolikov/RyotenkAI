@@ -6,7 +6,8 @@ Factored out of PipelineOrchestrator. Exposes two pure operations:
   on each attempt (training_critical, late_stage, model_dataset).
 * ``validate_drift`` — compare the freshly-computed hashes against a
   persisted state and, when the user tries to resume/restart into a
-  scope that no longer matches, return a ``ConfigDriftError``.
+  scope that no longer matches, raise a typed
+  :class:`ConfigDriftError`.
 
 The validator is stateless apart from the config it holds; the persisted
 state is passed in on each call so tests can build fixtures trivially.
@@ -14,6 +15,11 @@ state is passed in on each call so tests can build fixtures trivially.
 Legacy fallback (state without ``model_dataset_config_hash``) compares the
 full ``training_critical`` hash — behaviour preserved verbatim from the
 original orchestrator implementation.
+
+Phase A2 Batch 7: migrated from ``AppError`` return value to raise-based.
+Callers wrap the typed exception in a :class:`LaunchPreparationError` (the
+preparator's rejection path attaches state + action context) before
+surfacing to the orchestrator.
 """
 
 from __future__ import annotations
@@ -22,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import hash_payload
-from ryotenkai_shared.utils.result import AppError, ConfigDriftError
+from ryotenkai_shared.errors import ConfigDriftError
 
 if TYPE_CHECKING:
     from ryotenkai_control.pipeline.state import PipelineState
@@ -88,8 +94,8 @@ class ConfigDriftValidator:
         start_stage_name: str,
         config_hashes: dict[str, str],
         resume: bool,
-    ) -> AppError | None:
-        """Return a ConfigDriftError when the stored config scope has drifted.
+    ) -> None:
+        """Raise :class:`ConfigDriftError` if the stored config scope has drifted.
 
         Policy (unchanged from pre-refactor orchestrator):
 
@@ -99,6 +105,10 @@ class ConfigDriftValidator:
 
         Legacy states without ``model_dataset_config_hash`` fall back to
         comparing ``training_critical`` hash.
+
+        Phase A2 Batch 7: previously returned ``AppError | None``. Now
+        returns ``None`` on success and raises :class:`ConfigDriftError`
+        on drift.
         """
         # Prefer the fine-grained model_dataset hash when present; legacy states
         # without it fall back to the broader training_critical hash so they
@@ -113,12 +123,12 @@ class ConfigDriftValidator:
         late_changed = state.late_stage_config_hash != config_hashes["late_stage"]
 
         if model_dataset_changed:
-            return ConfigDriftError(
-                message=(
+            raise ConfigDriftError(
+                detail=(
                     f"{drift_scope} config changed for existing logical run; "
                     "resume/restart is blocked. Use the original config or start a new run."
                 ),
-                details={
+                context={
                     "scope": drift_scope,
                     "start_stage_name": start_stage_name,
                     "resume": resume,
@@ -127,18 +137,17 @@ class ConfigDriftValidator:
         if late_changed and (
             resume or start_stage_name not in {StageNames.INFERENCE_DEPLOYER, StageNames.MODEL_EVALUATOR}
         ):
-            return ConfigDriftError(
-                message=(
+            raise ConfigDriftError(
+                detail=(
                     "late_stage config changed; only manual restart from "
                     "Inference Deployer or Model Evaluator is allowed."
                 ),
-                details={
+                context={
                     "scope": "late_stage",
                     "start_stage_name": start_stage_name,
                     "resume": resume,
                 },
             )
-        return None
 
 
 __all__ = ["ConfigDriftValidator"]
