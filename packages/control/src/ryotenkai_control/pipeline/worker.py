@@ -127,15 +127,22 @@ def main(argv: list[str] | None = None) -> int:
 
     install_handler()
     set_active_orchestrator(orchestrator)
+    # Phase A2 Batch 15.5: orchestrator.run() is raise-based — returns
+    # the final context on success, raises RyotenkAIError on failure.
+    # Worker maps the exception boundary to a non-zero exit code.
+    from ryotenkai_shared.errors import RyotenkAIError
+
     try:
-        result = orchestrator.run(
+        orchestrator.run(
             run_dir=run_dir,
             resume=args.resume,
             restart_from_stage=args.restart_from_stage,
         )
+    except RyotenkAIError:
+        return 1
     finally:
         set_active_orchestrator(None)
-    return 0 if result.is_success() else 1
+    return 0
 
 
 if __name__ == "__main__":

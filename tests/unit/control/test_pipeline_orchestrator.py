@@ -21,7 +21,7 @@ import pytest
 
 from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
 from ryotenkai_control.pipeline.execution import StageRegistry
-from ryotenkai_shared.utils.result import AppError, Err, Ok, StrategyError
+from ryotenkai_shared.errors import PipelineStageFailedError, RyotenkAIError
 
 # ========================================================================
 # FIXTURES
@@ -87,7 +87,7 @@ def mock_stage() -> MagicMock:
     """Create a mock stage."""
     stage = MagicMock()
     stage.stage_name = "Mock Stage"
-    stage.run.return_value = Ok({"mock_result": "data"})
+    stage.run.return_value = {"mock_result": "data"}
     return stage
 
 
@@ -105,7 +105,7 @@ def mock_stages() -> list[MagicMock]:
     for name in stage_names:
         stage = MagicMock()
         stage.stage_name = name
-        stage.run.return_value = Ok({name: {"status": "completed"}})
+        stage.run.return_value = {name: {"status": "completed"}}
         stage.cleanup = MagicMock()
         stages.append(stage)
     return stages
@@ -265,7 +265,7 @@ class TestPipelineOrchestratorHappyPath:
             result = orchestrator.run()
 
             # All stages should be called
-            assert result.is_success()
+            assert isinstance(result, dict)
             for stage in mock_stages:
                 stage.run.assert_called_once()
 
@@ -278,8 +278,8 @@ class TestPipelineOrchestratorHappyPath:
     ):
         """Test that context is passed between stages."""
         # First stage adds data to context
-        mock_stages[0].run.return_value = Ok({"stage1_data": "value1"})
-        mock_stages[1].run.return_value = Ok({"stage2_data": "value2"})
+        mock_stages[0].run.return_value = {"stage1_data": "value1"}
+        mock_stages[1].run.return_value = {"stage2_data": "value2"}
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -291,8 +291,8 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
-            final_context = result.unwrap()
+            assert isinstance(result, dict)
+            final_context = result
 
             # Context should contain data from both stages
             assert "stage1_data" in final_context
@@ -318,8 +318,8 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
-            context = result.unwrap()
+            assert isinstance(result, dict)
+            context = result
             assert isinstance(context, dict)
             assert "config_path" in context
 
@@ -350,7 +350,7 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Check MLflow logging
             mock_mlflow_manager.log_event_start.assert_called_once()
             mock_mlflow_manager.log_event_complete.assert_called_once()
@@ -383,7 +383,7 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             mock_gen_report.assert_called_once_with(run_id="test_run_id")
 
     def test_run_aggregates_training_metrics_from_child_runs(
@@ -414,7 +414,7 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             mock_aggregate.assert_called_once()
 
     def test_run_calls_cleanup_resources_in_finally(
@@ -436,7 +436,7 @@ class TestPipelineOrchestratorHappyPath:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Cleanup should be called with success=True
             mock_cleanup.assert_called_once_with(success=True)
 # ========================================================================
@@ -456,7 +456,7 @@ class TestPipelineOrchestratorErrorHandling:
     ):
         """Test that run stops on first stage failure."""
         # First stage fails
-        mock_stages[0].run.return_value = Err(AppError(message="Stage 1 failed", code="TEST_ERROR"))
+        mock_stages[0].run.side_effect = PipelineStageFailedError(detail="Stage 1 failed", context={"legacy_code": "TEST_ERROR"})
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -466,11 +466,12 @@ class TestPipelineOrchestratorErrorHandling:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
             # Should fail
-            assert result.is_failure()
-            assert "Stage 1 failed" in str(result.unwrap_err())
+            # raise asserted via pytest.raises
+            assert "Stage 1 failed" in str(exc_info.value.detail or exc_info.value)
 
             # First stage called, others not
             mock_stages[0].run.assert_called_once()
@@ -485,7 +486,7 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages: list[MagicMock],
     ):
         """Test that stage failures are logged to MLflow."""
-        mock_stages[1].run.return_value = Err(AppError(message="Stage 2 failed", code="TEST_ERROR"))
+        mock_stages[1].run.side_effect = PipelineStageFailedError(detail="Stage 2 failed", context={"legacy_code": "TEST_ERROR"})
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
         # Properly mock context manager
@@ -502,9 +503,10 @@ class TestPipelineOrchestratorErrorHandling:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # Stage failure should be logged via log_stage_failed, not log_event_error
             mock_mlflow_manager.log_stage_failed.assert_called_once()
 
@@ -516,7 +518,7 @@ class TestPipelineOrchestratorErrorHandling:
         mock_stages: list[MagicMock],
     ):
         """Test that cleanup is called with success=False on error."""
-        mock_stages[0].run.return_value = Err(AppError(message="Stage failed", code="TEST_ERROR"))
+        mock_stages[0].run.side_effect = PipelineStageFailedError(detail="Stage failed", context={"legacy_code": "TEST_ERROR"})
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -527,9 +529,10 @@ class TestPipelineOrchestratorErrorHandling:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # Cleanup should be called with success=False
             mock_cleanup.assert_called_once_with(success=False)
 
@@ -551,11 +554,12 @@ class TestPipelineOrchestratorErrorHandling:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
             # Should capture exception
-            assert result.is_failure()
-            assert "Unexpected error" in str(result.unwrap_err())
+            # raise asserted via pytest.raises
+            assert "Unexpected error" in str(exc_info.value.detail or exc_info.value)
 
     def test_run_returns_err_with_error_message_on_failure(
         self,
@@ -566,7 +570,7 @@ class TestPipelineOrchestratorErrorHandling:
     ):
         """Test that run returns Err with error message on failure."""
         error_msg = "DatasetValidator failed: invalid data"
-        mock_stages[0].run.return_value = Err(AppError(message=error_msg, code="TEST_ERROR"))
+        mock_stages[0].run.side_effect = PipelineStageFailedError(detail=error_msg, context={"legacy_code": "TEST_ERROR"})
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -576,10 +580,11 @@ class TestPipelineOrchestratorErrorHandling:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
-            error = str(result.unwrap_err())
+            # raise asserted via pytest.raises
+            error = str(exc_info.value.detail or exc_info.value)
             assert error_msg in error  # type: ignore[operator]
 # ========================================================================
 # PRIORITY 1: RUN - PARTIAL EXECUTION (3 tests)
@@ -598,9 +603,9 @@ class TestPipelineOrchestratorPartialExecution:
     ):
         """Test that context from completed stages is preserved on failure."""
         # First two stages succeed, third fails
-        mock_stages[0].run.return_value = Ok({"stage1_data": "value1"})
-        mock_stages[1].run.return_value = Ok({"stage2_data": "value2"})
-        mock_stages[2].run.return_value = Err(AppError(message="Stage 3 failed", code="TEST_ERROR"))
+        mock_stages[0].run.return_value = {"stage1_data": "value1"}
+        mock_stages[1].run.return_value = {"stage2_data": "value2"}
+        mock_stages[2].run.side_effect = PipelineStageFailedError(detail="Stage 3 failed", context={"legacy_code": "TEST_ERROR"})
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -610,11 +615,11 @@ class TestPipelineOrchestratorPartialExecution:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
             # Should fail
-            assert result.is_failure()
-
+            # raise asserted via pytest.raises
             # But context should contain data from first two stages
             assert "stage1_data" in orchestrator.context
             assert "stage2_data" in orchestrator.context
@@ -629,8 +634,8 @@ class TestPipelineOrchestratorPartialExecution:
         mock_stages: list[MagicMock],
     ):
         """Test that completed stages are logged before failure."""
-        mock_stages[0].run.return_value = Ok({})
-        mock_stages[1].run.return_value = Err(AppError(message="Stage 2 failed", code="TEST_ERROR"))
+        mock_stages[0].run.return_value = {}
+        mock_stages[1].run.side_effect = PipelineStageFailedError(detail="Stage 2 failed", context={"legacy_code": "TEST_ERROR"})
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
         # Properly mock context manager
@@ -647,9 +652,10 @@ class TestPipelineOrchestratorPartialExecution:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # First stage should have completion logged
             assert mock_mlflow_manager.log_stage_complete.call_count == 1
             # Second stage should have failure logged
@@ -664,7 +670,7 @@ class TestPipelineOrchestratorPartialExecution:
     ):
         """Test that remaining stages are not executed after failure."""
         # Second stage fails
-        mock_stages[1].run.return_value = Err(AppError(message="Stage 2 failed", code="TEST_ERROR"))
+        mock_stages[1].run.side_effect = PipelineStageFailedError(detail="Stage 2 failed", context={"legacy_code": "TEST_ERROR"})
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -674,9 +680,10 @@ class TestPipelineOrchestratorPartialExecution:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # First two stages should be called
             mock_stages[0].run.assert_called_once()
             mock_stages[1].run.assert_called_once()
@@ -717,7 +724,7 @@ class TestPipelineOrchestratorMLflowLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # log_stage_start should be called for each stage
             assert mock_mlflow_manager.log_stage_start.call_count == len(mock_stages)
 
@@ -747,7 +754,7 @@ class TestPipelineOrchestratorMLflowLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # log_stage_complete should be called for each stage
             assert mock_mlflow_manager.log_stage_complete.call_count == len(mock_stages)
 
@@ -760,7 +767,7 @@ class TestPipelineOrchestratorMLflowLogging:
     ):
         """Test that _log_stage_specific_info logs dataset info after DatasetValidator."""
         mock_stages[0].stage_name = "Dataset Validator"
-        mock_stages[0].run.return_value = Ok({"validated_datasets": ["dataset1", "dataset2"]})
+        mock_stages[0].run.return_value = {"validated_datasets": ["dataset1", "dataset2"]}
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
         # Properly mock context manager
@@ -779,7 +786,7 @@ class TestPipelineOrchestratorMLflowLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should log dataset info
             assert mock_mlflow_manager.log_params.call_count > 0
 
@@ -810,7 +817,7 @@ class TestPipelineOrchestratorMLflowLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # start_run should be called to create parent context
             mock_mlflow_manager.start_run.assert_called_once()
 # ========================================================================
@@ -850,7 +857,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # _collect_descendant_metrics should be called with max_depth
             mock_collect.assert_called_once_with(max_depth=2)
 
@@ -883,7 +890,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should not crash, log_metrics may or may not be called with empty dict
 
     def test_aggregate_training_metrics_handles_exception_gracefully(
@@ -916,7 +923,7 @@ class TestPipelineOrchestratorMLflowAggregation:
             result = orchestrator.run()
 
             # Should still succeed despite aggregation error
-            assert result.is_success()
+            assert isinstance(result, dict)
 # ========================================================================
 # PRIORITY 2: REPORT GENERATION (4 tests)
 # ========================================================================
@@ -953,7 +960,7 @@ class TestPipelineOrchestratorReportGeneration:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Report generator should be instantiated
             MockReportGen.assert_called_once()
 
@@ -989,7 +996,7 @@ class TestPipelineOrchestratorReportGeneration:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Report should be logged as artifact
             assert mock_mlflow_manager.log_artifact.call_count > 0
 
@@ -1023,7 +1030,7 @@ class TestPipelineOrchestratorReportGeneration:
             result = orchestrator.run()
 
             # Pipeline should still succeed
-            assert result.is_success()
+            assert isinstance(result, dict)
 
     def test_generate_experiment_report_not_called_when_mlflow_disabled(
         self,
@@ -1044,7 +1051,7 @@ class TestPipelineOrchestratorReportGeneration:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Report generator should not be called
             MockReportGen.assert_not_called()
 # ========================================================================
@@ -1167,11 +1174,12 @@ class TestPipelineOrchestratorEdgeCases:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
             # Should return Err with interrupt message
-            assert result.is_failure()
-            assert "interrupted" in str(result.unwrap_err())
+            # raise asserted via pytest.raises
+            assert "interrupted" in str(exc_info.value.detail or exc_info.value)
 
     def test_run_with_empty_stages_list(
         self,
@@ -1188,11 +1196,11 @@ class TestPipelineOrchestratorEdgeCases:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=[], mlflow_manager=None)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
             # Pipeline validates stage indices, so empty list fails
-            assert result.is_failure()
-
+            # raise asserted via pytest.raises
     def test_run_with_stage_returning_none(
         self,
         mock_config_path: Path,
@@ -1202,7 +1210,7 @@ class TestPipelineOrchestratorEdgeCases:
     ):
         """Test that stages can return None without breaking pipeline."""
         # First stage returns None (no context update)
-        mock_stages[0].run.return_value = Ok(None)
+        mock_stages[0].run.return_value = None
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1215,7 +1223,7 @@ class TestPipelineOrchestratorEdgeCases:
             result = orchestrator.run()
 
             # Should succeed
-            assert result.is_success()
+            assert isinstance(result, dict)
 # ========================================================================
 # ========================================================================
 # COVERAGE BOOST: LOG STAGE SPECIFIC INFO (3 tests)
@@ -1234,8 +1242,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
     ):
         """Test logging specific info for Training Monitor stage."""
         mock_stages[2].stage_name = "Training Monitor"
-        mock_stages[2].run.return_value = Ok(
-            {
+        mock_stages[2].run.return_value = {
                 "Training Monitor": {
                     "training_duration_seconds": 120.5,
                     "training_info": {
@@ -1246,7 +1253,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
                     },
                 }
             }
-        )
+        
 
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
@@ -1266,7 +1273,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:3], mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should log training info
             assert mock_mlflow_manager.log_event_info.call_count >= 1
             assert mock_mlflow_manager.log_metrics.call_count >= 1
@@ -1280,8 +1287,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
     ):
         """Test logging specific info for Model Retriever stage."""
         mock_stages[3].stage_name = "Model Retriever"
-        mock_stages[3].run.return_value = Ok(
-            {
+        mock_stages[3].run.return_value = {
                 "Model Retriever": {
                     "model_size_mb": 1234.5,
                     "hf_uploaded": True,
@@ -1289,7 +1295,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
                     "upload_duration_seconds": 45.2,
                 }
             }
-        )
+        
 
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
@@ -1309,7 +1315,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:4], mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should log model info
             assert mock_mlflow_manager.log_event_info.call_count >= 2  # Model size + HF upload
 
@@ -1322,14 +1328,13 @@ class TestPipelineOrchestratorStageSpecificLogging:
     ):
         """Test logging specific info for Dataset Validator in plugin mode."""
         mock_stages[0].stage_name = "Dataset Validator"
-        mock_stages[0].run.return_value = Ok(
-            {
+        mock_stages[0].run.return_value = {
                 "Dataset Validator": {
                     "validation_mode": "plugin",
                     "metrics": {"min_samples": 1000, "avg_length": 512.3, "diversity_score": 0.85},
                 }
             }
-        )
+        
 
         mock_mlflow_manager = MagicMock()
         mock_mlflow_manager.is_enabled = True
@@ -1349,7 +1354,7 @@ class TestPipelineOrchestratorStageSpecificLogging:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:1], mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should log plugin metrics as params
             assert mock_mlflow_manager.log_params.call_count >= 1
 # ========================================================================
@@ -1388,7 +1393,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Aggregation should be called
             mock_aggregate.assert_called_once()
 
@@ -1421,7 +1426,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # _collect_descendant_metrics should be called
             mock_collect.assert_called_once_with(max_depth=2)
 
@@ -1444,7 +1449,7 @@ class TestPipelineOrchestratorMetricsAggregation:
             result = orchestrator.run()
 
             # Should succeed without MLflow
-            assert result.is_success()
+            assert isinstance(result, dict)
 # ========================================================================
 # COVERAGE BOOST: EXCEPTION HANDLERS (5 tests)
 # ========================================================================
@@ -1479,9 +1484,10 @@ class TestPipelineOrchestratorExceptionHandlers:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # MLflow should log interruption
             mock_mlflow_manager.log_event_warning.assert_called_once()
             mock_mlflow_manager.set_tags.assert_called_once_with({"pipeline.status": "interrupted"})
@@ -1512,9 +1518,10 @@ class TestPipelineOrchestratorExceptionHandlers:
             mock_validate.return_value = None
 
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
-            result = orchestrator.run()
+            with pytest.raises(RyotenkAIError) as exc_info:
+                orchestrator.run()
 
-            assert result.is_failure()
+            # raise asserted via pytest.raises
             # MLflow should log error
             mock_mlflow_manager.log_event_error.assert_called_once()
             assert "Unexpected error" in str(mock_mlflow_manager.log_event_error.call_args)
@@ -1536,19 +1543,17 @@ class TestPipelineOrchestratorPrintSummary:
     ):
         """Test summary printing with cloud provider cost calculation."""
         mock_stages[1].stage_name = "GPU Deployer"
-        mock_stages[1].run.return_value = Ok(
-            {"GPU Deployer": {"provider_type": "cloud", "pod_info": {"cost_per_hr": 1.5, "gpu_type": "RTX 4090"}}}
-        )
+        mock_stages[1].run.return_value = {"GPU Deployer": {"provider_type": "cloud", "pod_info": {"cost_per_hr": 1.5, "gpu_type": "RTX 4090"}}}
+        
         mock_stages[2].stage_name = "Training Monitor"
-        mock_stages[2].run.return_value = Ok(
-            {
+        mock_stages[2].run.return_value = {
                 "Training Monitor": {
                     "training_info": {
                         "runtime_seconds": 3600  # 1 hour
                     }
                 }
             }
-        )
+        
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1560,7 +1565,7 @@ class TestPipelineOrchestratorPrintSummary:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:3], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should calculate and display cost
             assert "pod_info" in orchestrator.context["GPU Deployer"]
 
@@ -1573,8 +1578,7 @@ class TestPipelineOrchestratorPrintSummary:
     ):
         """Test summary printing with cloud provider but zero cost."""
         mock_stages[1].stage_name = "GPU Deployer"
-        mock_stages[1].run.return_value = Ok(
-            {
+        mock_stages[1].run.return_value = {
                 "GPU Deployer": {
                     "provider_type": "cloud",
                     "pod_info": {
@@ -1582,7 +1586,7 @@ class TestPipelineOrchestratorPrintSummary:
                     },
                 }
             }
-        )
+        
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1594,7 +1598,7 @@ class TestPipelineOrchestratorPrintSummary:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:2], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should handle zero cost gracefully
             assert orchestrator.context["GPU Deployer"]["pod_info"]["cost_per_hr"] == 0
 
@@ -1607,7 +1611,7 @@ class TestPipelineOrchestratorPrintSummary:
     ):
         """Test summary printing with local provider (no cost)."""
         mock_stages[1].stage_name = "GPU Deployer"
-        mock_stages[1].run.return_value = Ok({"GPU Deployer": {"provider_type": "local"}})
+        mock_stages[1].run.return_value = {"GPU Deployer": {"provider_type": "local"}}
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1619,7 +1623,7 @@ class TestPipelineOrchestratorPrintSummary:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:2], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should display "$0 (local)"
             assert orchestrator.context["GPU Deployer"]["provider_type"] == "local"
 # ========================================================================
@@ -1639,9 +1643,8 @@ class TestPipelineOrchestratorEvaluationDisplay:
     ):
         """Test summary with evaluation metrics (float values)."""
         mock_stages[4].stage_name = "Model Evaluator"
-        mock_stages[4].run.return_value = Ok(
-            {"Model Evaluator": {"metrics": {"accuracy": 0.9234, "f1_score": 0.8765, "precision": 0.9123}}}
-        )
+        mock_stages[4].run.return_value = {"Model Evaluator": {"metrics": {"accuracy": 0.9234, "f1_score": 0.8765, "precision": 0.9123}}}
+        
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1653,7 +1656,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:5], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should display evaluation metrics
             assert "metrics" in orchestrator.context["Model Evaluator"]
             assert orchestrator.context["Model Evaluator"]["metrics"]["accuracy"] == 0.9234
@@ -1667,9 +1670,8 @@ class TestPipelineOrchestratorEvaluationDisplay:
     ):
         """Test summary with mixed evaluation metrics (float + string)."""
         mock_stages[4].stage_name = "Model Evaluator"
-        mock_stages[4].run.return_value = Ok(
-            {"Model Evaluator": {"metrics": {"accuracy": 0.9234, "status": "PASSED", "f1_score": 0.8765}}}
-        )
+        mock_stages[4].run.return_value = {"Model Evaluator": {"metrics": {"accuracy": 0.9234, "status": "PASSED", "f1_score": 0.8765}}}
+        
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1681,7 +1683,7 @@ class TestPipelineOrchestratorEvaluationDisplay:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:5], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # Should handle mixed types
             assert orchestrator.context["Model Evaluator"]["metrics"]["status"] == "PASSED"
 # ========================================================================
@@ -1722,7 +1724,7 @@ class TestPipelineOrchestratorAggregationDetails:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             # _collect_descendant_metrics should be called
             mock_collect.assert_called_once()
 
@@ -1756,7 +1758,7 @@ class TestPipelineOrchestratorAggregationDetails:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             mock_collect.assert_called_once()
 
     def test_aggregation_pathway_with_global_step(
@@ -1789,7 +1791,7 @@ class TestPipelineOrchestratorAggregationDetails:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             mock_collect.assert_called_once()
 
     def test_aggregation_pathway_with_all_metrics(
@@ -1825,7 +1827,7 @@ class TestPipelineOrchestratorAggregationDetails:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages, mlflow_manager=mock_mlflow_manager)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
             mock_collect.assert_called_once()
 # ========================================================================
 # COVERAGE BOOST: ADDITIONAL EDGE CASES (2 tests)
@@ -1844,7 +1846,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
     ):
         """Test summary when GPU Deployer context is missing."""
         mock_stages[1].stage_name = "GPU Deployer"
-        mock_stages[1].run.return_value = Ok({})  # Empty context
+        mock_stages[1].run.return_value = {}  # Empty context
 
         with (
             patch("ryotenkai_control.pipeline.bootstrap.pipeline_bootstrap.load_secrets") as mock_load_secrets,
@@ -1856,7 +1858,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:2], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
 
     def test_print_summary_without_retriever_context(
         self,
@@ -1877,7 +1879,7 @@ class TestPipelineOrchestratorAdditionalCoverage:
             orchestrator = PipelineOrchestrator(config=mock_config, stages_override=mock_stages[:3], mlflow_manager=None)
             result = orchestrator.run()
 
-            assert result.is_success()
+            assert isinstance(result, dict)
 # ========================================================================
 # COVERAGE BOOST: MLFLOW INTERNAL METHODS (5 tests)
 # ========================================================================

@@ -12,12 +12,10 @@ Design choices:
 * Setup is wrapped in a ``try`` / partial-cleanup branch to guarantee no
   orphan root/attempt runs if any step after their opening fails
   (mitigation for MLflow double-close risk).
-* Preflight returns a typed :class:`RyotenkAIError` (or ``None``) instead of
-  raising a bespoke exception, so the orchestrator keeps control over
-  launch-rejection policy. Phase A2 Batch 5 swapped the legacy ``AppError``
-  shape for the new exception hierarchy; the returned instance is *not*
-  raised — it lives as a diagnostic value until the orchestrator decides
-  how to surface it.
+* Preflight raises a typed :class:`RyotenkAIError` (:class:`ConfigInvalidError`
+  for missing manager, :class:`ProviderUnavailableError` for connectivity
+  failures) — the orchestrator wraps the typed exception in a
+  :class:`LaunchPreparationError` to drive rejection recording.
 * Teardown accepts two optional hooks to let the orchestrator inject
   reporting side effects (training-metrics aggregation, experiment report)
   without this manager knowing about them.
@@ -37,7 +35,6 @@ from ryotenkai_shared.errors import (
 )
 from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -441,34 +438,26 @@ def _stringify_tag_value(value: object) -> str:
 
 
 def _summarise_gateway_error(
-    gateway_error: RyotenkAIError | AppError | None,
+    gateway_error: RyotenkAIError | None,
 ) -> tuple[str, dict[str, Any] | None, str | None]:
-    """Adapt the gateway's stored error to the legacy ``AppError`` shape.
+    """Summarise the gateway's stored typed error for diagnostics.
 
-    Phase A2 Batch 5: the gateway now stores typed
+    Phase A2 Batch 5 migrated the gateway to typed
     :class:`RyotenkAIError` instances (e.g.
-    :class:`ProviderUnavailableError`). Older code paths (tests, mocks)
-    may still carry the legacy :class:`AppError` shape — duck-type both.
+    :class:`ProviderUnavailableError`). Batch 15.5 drops the legacy
+    ``AppError`` duck-type arm — the gateway path is fully typed now.
 
     Returns ``(code, details_dict, summary_str)`` where:
 
     * ``code`` — the granular ``mlflow_probe_reason`` (if present in the
       typed exception's ``context``), else the typed exception's
       ``ErrorCode.value``, falling back to ``"MLFLOW_PREFLIGHT_UNREACHABLE"``.
-    * ``details_dict`` — JSON-friendly snapshot for ``AppError.details``.
-    * ``summary_str`` — one-line human description (passed through into
-      the resulting ``AppError.message``).
+    * ``details_dict`` — JSON-friendly snapshot for ``context["gateway_error"]``.
+    * ``summary_str`` — one-line human description appended to the raised
+      ``ProviderUnavailableError`` detail.
     """
     if gateway_error is None:
         return "MLFLOW_PREFLIGHT_UNREACHABLE", None, None
-    # Legacy :class:`AppError` carries plain ``.code: str`` / ``.message: str``
-    # / ``.to_log_dict()`` — keep working.
-    if isinstance(gateway_error, AppError):
-        return (
-            gateway_error.code,
-            gateway_error.to_log_dict(),
-            gateway_error.message,
-        )
     # Typed :class:`RyotenkAIError` — prefer the carried
     # ``mlflow_probe_reason`` (legacy ``MLFLOW_*`` discriminator) over the
     # coarser ``ErrorCode`` so dashboards / tests pinned on the granular

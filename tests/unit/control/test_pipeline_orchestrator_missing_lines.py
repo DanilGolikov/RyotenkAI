@@ -15,7 +15,7 @@ from ryotenkai_control.pipeline.state import PipelineStateStore, build_attempt_s
 from ryotenkai_control.pipeline.state.models import PipelineState, StageRunState
 from ryotenkai_control.pipeline.state.store import SCHEMA_VERSION
 from ryotenkai_shared.utils.logs_layout import LogLayout
-from ryotenkai_shared.utils.result import AppError, Err, Ok
+from ryotenkai_shared.errors import RyotenkAIError
 
 
 def _mk_orchestrator(
@@ -154,9 +154,11 @@ class TestMissingInitAndMlflowSetupLines:
         orch._mlflow_manager.is_active = True
         orch._mlflow_manager.get_runtime_tracking_uri.return_value = "http://localhost:5002"
         orch._mlflow_manager.check_mlflow_connectivity.return_value = False
-        orch._mlflow_manager.get_last_connectivity_error.return_value = AppError(
-            message="certificate verify failed",
-            code="MLFLOW_TLS_CERT_VERIFY_FAILED",
+        from ryotenkai_shared.errors import ProviderUnavailableError as _PUE
+
+        orch._mlflow_manager.get_last_connectivity_error.return_value = _PUE(
+            detail="certificate verify failed",
+            context={"mlflow_probe_reason": "MLFLOW_TLS_CERT_VERIFY_FAILED"},
         )
 
         state = _mk_pipeline_state(tmp_path)
@@ -225,7 +227,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
 
         stage = MagicMock()
         stage.stage_name = "Dataset Validator"
-        stage.run.return_value = Ok(None)
+        stage.run.return_value = None
         stage_list = [stage]
 
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=stage_list)
@@ -282,7 +284,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
             patch("ryotenkai_control.pipeline.launch.run_lock_guard.acquire_run_lock", return_value=mock_lock),
         ):
             res = orch.run()
-        assert res.is_ok()
+        assert isinstance(res, dict)
         # _flush_pending_collectors must always be called in finally
         assert len(flush_calls) == 1
 
@@ -298,7 +300,7 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
 
         stage = MagicMock()
         stage.stage_name = "Dataset Validator"
-        stage.run.return_value = Ok(None)
+        stage.run.return_value = None
 
         orch = _mk_orchestrator(config_path=tmp_path / "cfg.yaml", config=cfg, secrets=_mk_secrets(), stages=[stage])
 

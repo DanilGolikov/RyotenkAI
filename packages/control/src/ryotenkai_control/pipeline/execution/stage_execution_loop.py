@@ -80,7 +80,6 @@ from ryotenkai_control.pipeline.constants import (
     SEPARATOR_LINE_WIDTH,
 )
 from ryotenkai_control.pipeline.stages import StageNames
-from ryotenkai_control.pipeline.stages.base import _adapt_legacy_to_typed
 from ryotenkai_control.pipeline.state import PipelineStateError, StageRunState
 from ryotenkai_shared.errors import (
     InternalError,
@@ -204,19 +203,24 @@ class StageExecutionLoop:
                     context=context,
                 )
                 if prereq_error is not None:
+                    legacy_code = ""
+                    if isinstance(prereq_error.context, dict):
+                        legacy_code = str(prereq_error.context.get("legacy_code") or "")
+                    failure_kind = legacy_code or prereq_error.code.value
+                    detail = prereq_error.detail or str(prereq_error)
                     self._attempt_controller.record_failed(
                         stage_name=stage_name,
-                        error=prereq_error.message,
-                        failure_kind=prereq_error.code,
+                        error=detail,
+                        failure_kind=failure_kind,
                     )
                     self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
                     # Surface prereq violation as typed exception so callers
                     # can match RyotenkAIError; legacy code preserved via
                     # context["legacy_code"] for observability.
                     raise PipelineStageFailedError(
-                        detail=prereq_error.message,
+                        detail=detail,
                         context={
-                            "legacy_code": prereq_error.code,
+                            "legacy_code": failure_kind,
                             "stage_name": stage_name,
                             "prereq_failure": True,
                         },
@@ -250,13 +254,7 @@ class StageExecutionLoop:
                         )
 
                     try:
-                        raw_stage_result = stage.run(context)
-                        # Defensive: tests sometimes mock ``stage.run`` to
-                        # return legacy ``Result[T, AppError]`` objects.
-                        # Production stages return plain dicts after Batch
-                        # 10 — ``_adapt_legacy_to_typed`` is a pass-through
-                        # in that case and only matters for the mocks.
-                        stage_result = _adapt_legacy_to_typed(raw_stage_result)
+                        stage_result = stage.run(context)
                     except RyotenkAIError as stage_exc:
                         stage_duration = time.time() - current_stage_start_time
                         self._handle_stage_failure(

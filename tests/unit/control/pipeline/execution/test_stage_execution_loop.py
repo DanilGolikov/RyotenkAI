@@ -43,7 +43,6 @@ from ryotenkai_shared.errors import (
     RyotenkAIError,
 )
 from ryotenkai_shared.utils.logs_layout import LogLayout
-from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -318,8 +317,8 @@ class TestNegative:
         self, tmp_path: Path
     ) -> None:
         planner = _make_stage_planner()
-        planner.validate_stage_prerequisites.return_value = AppError(
-            message="missing dep", code="PREREQ"
+        planner.validate_stage_prerequisites.return_value = PipelineStageFailedError(
+            detail="missing dep", context={"legacy_code": "PREREQ"}
         )
         stage = _make_stage(STAGE_A)
         loop, controller, _, _, _ = _build_loop(tmp_path, stages=[stage], planner=planner)

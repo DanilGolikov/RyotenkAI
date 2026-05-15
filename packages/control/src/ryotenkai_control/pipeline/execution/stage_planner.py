@@ -13,7 +13,7 @@ from urllib.request import urlopen
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import PipelineState
 from ryotenkai_control.pipeline.state.queries import first_unfinished_stage
-from ryotenkai_shared.utils.result import AppError
+from ryotenkai_shared.errors import PipelineStageFailedError, RyotenkAIError
 
 if TYPE_CHECKING:
     from ryotenkai_control.pipeline.stages.base import PipelineStage
@@ -196,38 +196,43 @@ class StagePlanner:
         stage_name: str,
         start_stage_name: str,
         context: dict[str, Any],
-    ) -> AppError | None:
+    ) -> RyotenkAIError | None:
         """Check that upstream outputs required by a restart target are present.
 
         The orchestrator supplies ``context`` so the planner stays stateless
         and testable without a live pipeline run.
+
+        Returns ``None`` when prerequisites are satisfied. Otherwise returns
+        a (NOT raised) :class:`PipelineStageFailedError` carrying the granular
+        legacy identifier under ``context["legacy_code"]`` so the stage
+        execution loop can attach observability metadata before raising.
         """
         if stage_name == StageNames.TRAINING_MONITOR and start_stage_name == StageNames.TRAINING_MONITOR:
             gpu_ctx = context.get(StageNames.GPU_DEPLOYER, {})
             if not isinstance(gpu_ctx, dict) or not all(
                 gpu_ctx.get(key) for key in ("ssh_host", "ssh_port", "workspace_path")
             ):
-                return AppError(
-                    message="Training Monitor restart requires persisted GPU deploy outputs and workspace_path",
-                    code="MISSING_TRAINING_MONITOR_PREREQUISITES",
+                return PipelineStageFailedError(
+                    detail="Training Monitor restart requires persisted GPU deploy outputs and workspace_path",
+                    context={"legacy_code": "MISSING_TRAINING_MONITOR_PREREQUISITES"},
                 )
         if stage_name == StageNames.INFERENCE_DEPLOYER and start_stage_name == StageNames.INFERENCE_DEPLOYER:
             retriever_ctx = context.get(StageNames.MODEL_RETRIEVER, {})
             if not isinstance(retriever_ctx, dict) or not (
                 retriever_ctx.get("hf_repo_id") or retriever_ctx.get("local_model_path")
             ):
-                return AppError(
-                    message="Inference Deployer restart requires Model Retriever outputs",
-                    code="MISSING_INFERENCE_PREREQUISITES",
+                return PipelineStageFailedError(
+                    detail="Inference Deployer restart requires Model Retriever outputs",
+                    context={"legacy_code": "MISSING_INFERENCE_PREREQUISITES"},
                 )
         if (
             stage_name == StageNames.MODEL_EVALUATOR
             and start_stage_name == StageNames.MODEL_EVALUATOR
             and not is_inference_runtime_healthy(context.get(StageNames.INFERENCE_DEPLOYER, {}))
         ):
-            return AppError(
-                message="Model Evaluator restart requires a live inference runtime; restart from Inference Deployer",
-                code="INFERENCE_RUNTIME_NOT_HEALTHY",
+            return PipelineStageFailedError(
+                detail="Model Evaluator restart requires a live inference runtime; restart from Inference Deployer",
+                context={"legacy_code": "INFERENCE_RUNTIME_NOT_HEALTHY"},
             )
         return None
 

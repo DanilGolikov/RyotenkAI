@@ -476,12 +476,12 @@ class IGPUProvider(Protocol):
     Example:
         provider = registry.create_training("runpod", ctx).unwrap()
 
-        result = provider.connect(run=run_ctx)
-        if result.is_err():
-            logger.error(f"Connection failed: {result.unwrap_err()}")
+        try:
+            ssh_info = provider.connect(run=run_ctx)
+        except RyotenkAIError as exc:
+            logger.error(f"Connection failed: {exc}")
             return
 
-        ssh_info = result.unwrap()
         # Use ssh_info.host, ssh_info.port, etc.
 
         # When done:

@@ -178,23 +178,24 @@ def test_preflight_surfaces_gateway_error_code(manager_under_test: MLflowAttempt
     )
 
 
-def test_preflight_surfaces_legacy_app_error_from_gateway(manager_under_test: MLflowAttemptManager) -> None:
-    """Backwards compat: gateway returning a legacy ``AppError`` still surfaces."""
+def test_preflight_surfaces_typed_specific_code_from_gateway(manager_under_test: MLflowAttemptManager) -> None:
+    """Phase A2 Batch 15.5: gateway path is fully typed. A typed gateway
+    error WITHOUT ``mlflow_probe_reason`` falls back to its
+    ``ErrorCode.value`` for the legacy_code surface."""
     from ryotenkai_shared.errors import ProviderUnavailableError
-    from ryotenkai_shared.utils.result import AppError as LegacyAppError
 
     mgr = MagicMock()
     mgr.is_active = True
     mgr.get_runtime_tracking_uri.return_value = "http://fake"
     mgr.check_mlflow_connectivity.return_value = False
-    mgr.get_last_connectivity_error.return_value = LegacyAppError(
-        code="LEGACY_SPECIFIC",
-        message="legacy reason",
+    mgr.get_last_connectivity_error.return_value = ProviderUnavailableError(
+        detail="legacy reason",
     )
     manager_under_test._manager = mgr
     with pytest.raises(ProviderUnavailableError) as excinfo:
         manager_under_test.ensure_preflight()
-    assert excinfo.value.context.get("legacy_code") == "LEGACY_SPECIFIC"
+    # No mlflow_probe_reason → wire code surfaces as legacy_code
+    assert excinfo.value.context.get("legacy_code") == "PROVIDER_UNAVAILABLE"
     assert "legacy reason" in (excinfo.value.detail or "")
 
 
