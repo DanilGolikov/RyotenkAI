@@ -17,9 +17,12 @@ from ryotenkai_pod.trainer.orchestrator.phase_executor.adapter_cache import (
     _retry_call,
 )
 from ryotenkai_pod.trainer.orchestrator.phase_executor.mlflow_logger import MlflowPhaseLogger
-from ryotenkai_pod.trainer.orchestrator.phase_executor.training_runner import PhaseTrainingRunner
+from ryotenkai_pod.trainer.orchestrator.phase_executor.training_runner import (
+    TRAINING_INTERRUPTED_LEGACY_CODE,
+    PhaseTrainingRunner,
+)
+from ryotenkai_shared.errors import RyotenkAIError, TrainingFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,22 +39,27 @@ if TYPE_CHECKING:
 # Phase 9.A: error code emitted by ``PhaseTrainingRunner.handle_graceful_shutdown``.
 # Pinned here as a constant rather than imported because the symbol is the
 # *contract* between training_runner and executor — neither side owns it.
-_TRAINING_INTERRUPTED_CODE = "TRAINING_INTERRUPTED"
+_TRAINING_INTERRUPTED_CODE = TRAINING_INTERRUPTED_LEGACY_CODE
 
 
-def _is_cancellation_error(result: Result[Any, TrainingError]) -> bool:
-    """Did this Result fail because the user cancelled training?
+def _is_cancellation_error(exc: BaseException) -> bool:
+    """Was this exception raised because the user cancelled training?
 
-    Returns True only when the failure carries the cancellation code,
-    not for generic training failures. Used by the finally block in
-    :meth:`PhaseExecutor.execute` to pick MLflow ``RunStatus.KILLED``
-    over ``FAILED`` so cancelled runs are visually distinct on the
-    MLflow UI from genuine crashes.
+    Returns True only when the failure carries the cancellation legacy
+    code (``TRAINING_INTERRUPTED``) — not for generic training failures.
+    Used by the finally block in :meth:`PhaseExecutor.execute` to pick
+    MLflow ``RunStatus.KILLED`` over ``FAILED`` so cancelled runs are
+    visually distinct on the MLflow UI from genuine crashes.
+
+    Post-Batch-14 contract: the cancellation signal flows through
+    :class:`TrainingFailedError` instances whose ``context["legacy_code"]``
+    is ``"TRAINING_INTERRUPTED"``. The truth-table at the call site is
+    unchanged.
     """
-    if not result.is_failure():
+    if not isinstance(exc, RyotenkAIError):
         return False
-    err = result.unwrap_err()
-    return isinstance(err, TrainingError) and err.code == _TRAINING_INTERRUPTED_CODE
+    legacy = exc.context.get("legacy_code") if exc.context else None
+    return legacy == _TRAINING_INTERRUPTED_CODE
 
 
 class PhaseExecutor:
@@ -137,7 +145,7 @@ class PhaseExecutor:
         buffer: DataBuffer,
         *,
         upstream_retrained: bool = False,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Execute a single training phase.
 
@@ -149,7 +157,13 @@ class PhaseExecutor:
         13. [Adapter cache] Upload trained adapter (soft-fail)
 
         Returns:
-            Result[PreTrainedModel, TrainingError]
+            PreTrainedModel: trained or cached adapter model.
+
+        Raises:
+            TrainingFailedError: on shutdown-before-start, cancellation, or
+                generic phase failure.
+            TrainingOOMError: OOM recovery exhausted.
+            DatasetLoadFailedError: dataset loader failed.
         """
         self._current_trainer = None
         self._current_output_dir = None
@@ -162,11 +176,12 @@ class PhaseExecutor:
                 phase_idx,
                 reason="Shutdown requested before phase start",
             )
-            return Err(
-                TrainingError(
-                    message="Shutdown requested before phase start",
-                    code="TRAINING_SHUTDOWN_BEFORE_START",
-                )
+            raise TrainingFailedError(
+                detail="Shutdown requested before phase start",
+                context={
+                    "legacy_code": "TRAINING_SHUTDOWN_BEFORE_START",
+                    "phase_idx": phase_idx,
+                },
             )
 
         # 1. START MLFLOW NESTED RUN (before cache check so cache hits are tracked)
@@ -177,9 +192,10 @@ class PhaseExecutor:
         # closes the nested MLflow run as ``FAILED`` whenever
         # ``phase_succeeded == False`` — including the cancelled
         # branch, where ``training_runner.handle_graceful_shutdown``
-        # returns Err(TrainingError(code="TRAINING_INTERRUPTED")). The
-        # flag turns into ``RunStatus.KILLED`` in the finally block,
-        # the canonical MLflow signal for "stopped by user".
+        # raises ``TrainingFailedError`` with
+        # ``context["legacy_code"]="TRAINING_INTERRUPTED"``. The flag
+        # turns into ``RunStatus.KILLED`` in the finally block, the
+        # canonical MLflow signal for "stopped by user".
         was_cancelled = False
 
         try:
@@ -190,13 +206,13 @@ class PhaseExecutor:
             if phase.adapter_cache.enabled:
                 dataset_fingerprint = self._compute_dataset_fingerprint_safe(phase_idx, phase)
                 if not upstream_retrained and dataset_fingerprint is not None:
-                    cache_result = self._try_adapter_cache_hit(phase_idx, phase, model, buffer, dataset_fingerprint)
-                    if cache_result is not None:
+                    cached_model = self._try_adapter_cache_hit(
+                        phase_idx, phase, model, buffer, dataset_fingerprint
+                    )
+                    if cached_model is not None:
                         self._mlflow_logger.log_cache_hit(phase_idx, phase)
-                        phase_succeeded = cache_result.is_ok()
-                        if not phase_succeeded:
-                            was_cancelled = _is_cancellation_error(cache_result)
-                        return cache_result
+                        phase_succeeded = True
+                        return cached_model
                 elif upstream_retrained:
                     logger.warning(
                         f"[PE:ADAPTER_CACHE_MISS_FORCED] phase={phase_idx} "
@@ -217,17 +233,9 @@ class PhaseExecutor:
                 )
 
             # 4-12. TRAINING (includes dataset loading, trainer creation, training, checkpointing)
-            run_result = self._training_runner.run(phase_idx, phase, model, buffer)
-            if run_result.is_failure():
-                # Distinguish user-initiated cancellation from a genuine
-                # training failure. The training runner tags graceful
-                # shutdown with ``code="TRAINING_INTERRUPTED"`` (see
-                # ``handle_graceful_shutdown``); anything else is a real
-                # failure (OOM, dataset corrupt, plugin error, ...).
-                was_cancelled = _is_cancellation_error(run_result)
-                return run_result
-
-            trained_model, final_checkpoint, metrics = run_result.unwrap()
+            trained_model, final_checkpoint, metrics = self._training_runner.run(
+                phase_idx, phase, model, buffer
+            )
 
             # 13. MLFLOW COMPLETION LOGGING
             self._mlflow_logger.log_completion(
@@ -242,7 +250,16 @@ class PhaseExecutor:
 
             logger.debug(f"[PE:COMPLETE] phase={phase_idx}, strategy={phase.strategy_type}")
             phase_succeeded = True
-            return Ok(trained_model)
+            return trained_model
+
+        except RyotenkAIError as exc:
+            # Distinguish user-initiated cancellation from a genuine
+            # training failure. The training runner tags graceful
+            # shutdown with ``context["legacy_code"]="TRAINING_INTERRUPTED"``
+            # (see ``handle_graceful_shutdown``); anything else is a
+            # real failure (OOM, dataset corrupt, plugin error, ...).
+            was_cancelled = _is_cancellation_error(exc)
+            raise
 
         finally:
             # MLflow ``RunStatus`` is the single source of truth for
@@ -290,7 +307,7 @@ class PhaseExecutor:
         model: PreTrainedModel,
         buffer: DataBuffer,
         fingerprint: str,
-    ) -> Result[PreTrainedModel, TrainingError] | None:
+    ) -> PreTrainedModel | None:
         """Backward-compat alias — delegates to cache manager."""
         return self._cache_manager.try_hit(phase_idx, phase, model, buffer, fingerprint)
 
@@ -315,9 +332,9 @@ class PhaseExecutor:
         phase_idx: int,
         trainer: Any | None,
         output_dir: str | None,
-    ) -> Result[Any, TrainingError]:
-        """Backward-compat alias — delegates to training runner."""
-        return self._training_runner.handle_graceful_shutdown(buffer, phase_idx, trainer, output_dir)
+    ) -> None:
+        """Backward-compat alias — delegates to training runner. Always raises."""
+        self._training_runner.handle_graceful_shutdown(buffer, phase_idx, trainer, output_dir)
 
     def _handle_error(
         self,
@@ -325,9 +342,9 @@ class PhaseExecutor:
         phase_idx: int,
         error_type: str,
         error: Exception,
-    ) -> Result[Any, TrainingError]:
-        """Backward-compat alias — delegates to training runner."""
-        return self._training_runner.handle_error(buffer, phase_idx, error_type, error)
+    ) -> None:
+        """Backward-compat alias — delegates to training runner. Always raises."""
+        self._training_runner.handle_error(buffer, phase_idx, error_type, error)
 
     # MLflow helpers — backward-compat for any external callers
     def _mlflow_start_nested_run(self, phase_idx: int, phase: StrategyPhaseConfig) -> Any:

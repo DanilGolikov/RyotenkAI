@@ -49,6 +49,7 @@ from ryotenkai_pod.trainer.constants import (
 )
 from ryotenkai_pod.trainer.managers.mlflow_manager import MLflowManager
 from ryotenkai_pod.trainer.container import TrainingContainer
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.utils.environment import EnvironmentReporter
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.run_naming import generate_run_name
@@ -430,17 +431,20 @@ def run_training(
                 strategy_chain=[s.strategy_type for s in strategies],
             )
 
-        result = orchestrator.run_chain(
-            strategies=strategies,
-            resume=resume,
-            run_id=run_id,
-        )
-
-        # =====================================================================
-        # 10. HANDLE RESULT
-        # =====================================================================
-        if result.is_failure():
-            error_msg = result.unwrap_err()  # type: ignore[union-attr]
+        # Phase A2 Batch 14: ``orchestrator.run_chain`` now raises typed
+        # :class:`RyotenkAIError` subclasses on failure (instead of
+        # returning ``Result[..., TrainingError]``). We catch the typed
+        # exception, surface the same MLflow + log signals as before,
+        # and rewrap as ``RuntimeError`` so the test surface (and
+        # outer-process exit semantics) stays identical.
+        try:
+            _ = orchestrator.run_chain(
+                strategies=strategies,
+                resume=resume,
+                run_id=run_id,
+            )
+        except RyotenkAIError as exc:
+            error_msg = exc.detail or str(exc)
             logger.error(f"Training failed: {error_msg}")
 
             if mlflow_mgr and mlflow_mgr.is_active:
@@ -456,9 +460,8 @@ def run_training(
             # MLflow event above + the RunnerEventCallback's loopback
             # event push (Phase 3) carry the same information; no
             # marker file is written.
-            raise RuntimeError(f"Training failed: {error_msg}")
+            raise RuntimeError(f"Training failed: {error_msg}") from exc
 
-        _ = result.unwrap()
         training_success = True
         logger.info("Training chain completed successfully!")
 

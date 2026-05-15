@@ -35,9 +35,9 @@ from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
 from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
 from ryotenkai_pod.trainer.strategies.factory import StrategyFactory
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.errors import StrategyChainInvalidError, TrainingFailedError
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_pod.trainer.memory_manager import MemoryManager, get_memory_manager
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
@@ -55,20 +55,19 @@ class StrategyOrchestrator:
 
     Supports Dependency Injection for factories (testability).
 
+    Raise contract (post Phase A2 Batch 14):
+    - Success: ``run_chain`` / ``run_single_phase`` return the final
+      ``PreTrainedModel``.
+    - Failure: raise a typed :class:`RyotenkAIError` subclass —
+        * :class:`StrategyChainInvalidError` when no strategies are
+          configured (legacy code ``TRAINING_NO_STRATEGIES``).
+        * Anything raised by :class:`ChainRunner` / :class:`PhaseExecutor`
+          (TrainingFailedError / TrainingOOMError / DatasetLoadFailedError /
+          ModelLoadFailedError, ...).
+
     Example:
         orchestrator = StrategyOrchestrator(model, tokenizer, config)
-        result = orchestrator.run_chain()
-        if result.is_success():
-            final_model = result.unwrap()
-
-        # With DI (for testing)
-        orchestrator = StrategyOrchestrator(
-            model,
-            tokenizer,
-            config,
-            strategy_factory=mock_sf,
-            trainer_factory=mock_tf,
-        )
+        final_model = orchestrator.run_chain()  # raises on failure
     """
 
     def __init__(
@@ -216,7 +215,7 @@ class StrategyOrchestrator:
         *,
         resume: bool = False,
         run_id: str | None = None,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Run the complete training strategy chain.
 
@@ -231,16 +230,19 @@ class StrategyOrchestrator:
             run_id: Optional run ID for reproducibility
 
         Returns:
-            Result[PreTrainedModel, TrainingError]: Final trained model or error
+            Final trained ``PreTrainedModel``.
+
+        Raises:
+            StrategyChainInvalidError: no strategies configured.
+            RyotenkAIError: anything raised by :class:`ChainRunner` /
+                :class:`PhaseExecutor` (training / dataset / model errors).
         """
         # 1. GET STRATEGIES
         strategies = strategies or self.config.training.get_strategy_chain()
         if not strategies:
-            return Err(
-                TrainingError(
-                    message="No strategies configured. Add training.strategies to config.",
-                    code="TRAINING_NO_STRATEGIES",
-                )
+            raise StrategyChainInvalidError(
+                detail="No strategies configured. Add training.strategies to config.",
+                context={"legacy_code": "TRAINING_NO_STRATEGIES"},
             )
 
         # NOTE: Strategy chain validation is done in PipelineOrchestrator (early fail-fast)
@@ -264,23 +266,26 @@ class StrategyOrchestrator:
 
         # 4. CHECK IF ALL COMPLETE
         if resume and self._resume_manager.is_all_complete(self.buffer):
-            return Ok(self.model)
+            return self.model
 
         # 5. LOAD CHECKPOINT IF RESUMING
         current_model = self.model
         if should_load:
             checkpoint_path = self._resume_manager.get_checkpoint_path_for_phase(self.buffer, start_phase)
             if checkpoint_path:
-                load_result = self._resume_manager.load_model_from_checkpoint(checkpoint_path, self.model)
-                if load_result.is_failure():
-                    return load_result
-                loaded_model = load_result.unwrap()
-                if loaded_model is None:
-                    return Err(
-                        TrainingError(  # type: ignore[unreachable]
-                            message="Model is None after checkpoint loading",
-                            code="TRAINING_CHECKPOINT_LOAD_NULL",
-                        )
+                # ``load_model_from_checkpoint`` raises ``TrainingFailedError``
+                # on any failure; propagate. A ``None`` return is impossible
+                # post-Batch-14, so the previous defensive guard is gone.
+                loaded_model = self._resume_manager.load_model_from_checkpoint(
+                    checkpoint_path, self.model
+                )
+                if loaded_model is None:  # pragma: no cover — defensive guard
+                    raise TrainingFailedError(
+                        detail="Model is None after checkpoint loading",
+                        context={
+                            "legacy_code": "TRAINING_CHECKPOINT_LOAD_NULL",
+                            "checkpoint_path": checkpoint_path,
+                        },
                     )
                 current_model = loaded_model
 
@@ -291,7 +296,7 @@ class StrategyOrchestrator:
             logger.debug("[SO:SHUTDOWN_HANDLER_REGISTERED]")
 
         try:
-            result = self._chain_runner.run(
+            final_model = self._chain_runner.run(
                 strategies=strategies,
                 model=current_model,
                 buffer=self.buffer,
@@ -303,7 +308,7 @@ class StrategyOrchestrator:
                 logger.warning("⚠️ Training was interrupted by user signal")
                 # The PhaseExecutor already saved the checkpoint and marked phase as INTERRUPTED
 
-            return result
+            return final_model
 
         finally:
             # Always unregister signal handlers
@@ -316,7 +321,7 @@ class StrategyOrchestrator:
         phase_idx: int,
         phase: StrategyPhaseConfig,
         model: PreTrainedModel | None = None,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Run a single training phase (for testing/debugging).
 
@@ -326,7 +331,10 @@ class StrategyOrchestrator:
             model: Model to train (None = use self.model)
 
         Returns:
-            Result[PreTrainedModel, TrainingError]: Trained model or error
+            Trained ``PreTrainedModel``.
+
+        Raises:
+            RyotenkAIError: surfaced from :class:`PhaseExecutor`.
         """
         model_to_train = model or self.model
 

@@ -23,7 +23,6 @@ from ryotenkai_shared.constants import (
     LORA_CHECKPOINT_PATTERNS,
 )
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError  # noqa: F401  — re-exported
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
@@ -148,13 +147,17 @@ class AdapterCacheManager:
         model: PreTrainedModel,
         buffer: DataBuffer,
         fingerprint: str,
-    ) -> Result[PreTrainedModel, TrainingError] | None:
+    ) -> PreTrainedModel | None:
         """
         Try to load a cached adapter from HF Hub.
 
         Returns:
-            Ok(model)  if cache hit  — training is skipped.
-            None       if cache miss — caller should proceed to training.
+            PreTrainedModel  if cache hit  — training is skipped.
+            None             if cache miss — caller should proceed to training.
+
+        Never raises: every failure mode (repo missing, tag missing, peft load
+        failure, generic network/auth failure) is downgraded to a cache miss
+        because the soft-fail contract is that caching is best-effort.
         """
         from huggingface_hub import HfApi
         from huggingface_hub.errors import RepositoryNotFoundError
@@ -212,7 +215,7 @@ class AdapterCacheManager:
             reason=f"adapter_cache_hit: {repo_id}@{expected_tag}",
         )
         logger.debug(f"[PE:ADAPTER_CACHE_HIT_DONE] phase={phase_idx}, tag={expected_tag}")
-        return Ok(loaded_model)
+        return loaded_model
 
     # ------------------------------------------------------------------
     # Cache upload
@@ -240,7 +243,7 @@ class AdapterCacheManager:
         expected_tag = f"phase-{phase_idx}-{phase.strategy_type}-ds{fingerprint}"
         api = HfApi()
 
-        logger.info(f"   \u2b06\ufe0f  Uploading adapter to cache: {repo_id}@{expected_tag} ...")
+        logger.info(f"   ⬆️  Uploading adapter to cache: {repo_id}@{expected_tag} ...")
 
         def do_upload() -> None:
             api.create_repo(repo_id, private=cache.private, exist_ok=True, repo_type="model")
@@ -276,7 +279,7 @@ class AdapterCacheManager:
             )
             buffer.state.phases[phase_idx].adapter_cache_tag = expected_tag
             buffer.save_state()
-            logger.info(f"   \u2705 Adapter cached: {repo_id}@{expected_tag}")
+            logger.info(f"   ✅ Adapter cached: {repo_id}@{expected_tag}")
         except Exception as e:
             err_msg = str(e)
             buffer.state.phases[phase_idx].adapter_cache_upload_error = err_msg
@@ -286,7 +289,7 @@ class AdapterCacheManager:
                 f"tag={expected_tag}: {err_msg}"
             )
             logger.warning(
-                f"   \u26a0\ufe0f  Adapter upload failed after {HF_UPLOAD_RETRIES} attempts (soft-fail). "
+                f"   ⚠️  Adapter upload failed after {HF_UPLOAD_RETRIES} attempts (soft-fail). "
                 f"Next run will retrain phase {phase_idx} due to cache miss."
             )
 

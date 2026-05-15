@@ -28,7 +28,7 @@ from ryotenkai_pod.trainer.managers.data_buffer import (
     PhaseStatus,
 )
 from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
-from ryotenkai_shared.utils.result import Err, Ok, Success, Failure
+from ryotenkai_shared.errors import TrainingFailedError
 
 pytestmark = pytest.mark.unit
 
@@ -261,7 +261,7 @@ def _mk_refs_empty() -> MagicMock:
 class TestTryAdapterCacheHit:
     # ── Positive ──────────────────────────────
 
-    def test_positive_cache_hit_returns_ok_model(self, tmp_path: Path) -> None:
+    def test_positive_cache_hit_returns_model_directly(self, tmp_path: Path) -> None:
         executor = _mk_executor()
         buf = _mk_buffer_with_phases(tmp_path)
         phase = _mk_phase_ns("sft", repo_id="org/cache")
@@ -285,9 +285,8 @@ class TestTryAdapterCacheHit:
                 fingerprint=fingerprint,
             )
 
-        assert result is not None
-        assert isinstance(result, Success)
-        assert result.unwrap() is loaded_model
+        # Post-Batch-14: returns the model directly (no Result wrapper) or None.
+        assert result is loaded_model
 
     def test_positive_cache_hit_sets_adapter_cache_hit_flag(self, tmp_path: Path) -> None:
         executor = _mk_executor()
@@ -543,21 +542,24 @@ class TestPhaseExecutorExecuteAdapterCache:
                 hyperparams=PhaseHyperparametersConfig(epochs=1),
             )
             assert phase.adapter_cache.enabled is False
-            # Trigger early shutdown to avoid full training infra
+            # Trigger early shutdown to avoid full training infra. Post-Batch-14
+            # the executor raises TrainingFailedError instead of returning Err,
+            # so wrap in pytest.raises to consume the exception.
             executor.shutdown_handler = MagicMock()
             executor.shutdown_handler.should_stop.return_value = True
-            executor.execute(phase_idx=0, phase=phase, model=MagicMock(), buffer=buf)
+            with pytest.raises(TrainingFailedError):
+                executor.execute(phase_idx=0, phase=phase, model=MagicMock(), buffer=buf)
 
         mock_try.assert_not_called()
 
-    def test_positive_cache_hit_returns_ok_without_training(self, tmp_path: Path) -> None:
-        """Cache hit path: _try_adapter_cache_hit returns Ok → execute returns Ok, no training."""
+    def test_positive_cache_hit_returns_model_without_training(self, tmp_path: Path) -> None:
+        """Cache hit path: _try_adapter_cache_hit returns a model → execute returns the model directly, no training."""
         executor, buf = _mk_full_executor(tmp_path)
         loaded_model = MagicMock(name="loaded_peft")
 
         with (
             patch.object(executor, "_compute_dataset_fingerprint_safe", return_value="fp1234567"),
-            patch.object(executor, "_try_adapter_cache_hit", return_value=Ok(loaded_model)),
+            patch.object(executor, "_try_adapter_cache_hit", return_value=loaded_model),
             patch.object(executor, "_should_stop", return_value=False),
         ):
             from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
@@ -577,8 +579,7 @@ class TestPhaseExecutorExecuteAdapterCache:
                 upstream_retrained=False,
             )
 
-        assert isinstance(result, Success)
-        assert result.unwrap() is loaded_model
+        assert result is loaded_model
 
     def test_positive_upstream_retrained_forces_cache_miss(self, tmp_path: Path) -> None:
         """When upstream_retrained=True, _try_adapter_cache_hit must NOT be called."""
@@ -598,13 +599,17 @@ class TestPhaseExecutorExecuteAdapterCache:
                 hyperparams=PhaseHyperparametersConfig(epochs=1),
                 adapter_cache=AdapterCacheConfig(enabled=True, repo_id="org/cache"),
             )
-            executor.execute(
-                phase_idx=0,
-                phase=phase,
-                model=MagicMock(),
-                buffer=buf,
-                upstream_retrained=True,
-            )
+            # Post-Batch-14: the downstream training_runner sees a MagicMock
+            # loader, raises DatasetLoadFailedError, which is propagated.
+            # The pre-raise asserts (mock_try.assert_not_called) still hold.
+            with pytest.raises(Exception):
+                executor.execute(
+                    phase_idx=0,
+                    phase=phase,
+                    model=MagicMock(),
+                    buffer=buf,
+                    upstream_retrained=True,
+                )
 
         mock_try.assert_not_called()
 
@@ -626,13 +631,14 @@ class TestPhaseExecutorExecuteAdapterCache:
                 hyperparams=PhaseHyperparametersConfig(epochs=1),
                 adapter_cache=AdapterCacheConfig(enabled=True, repo_id="org/cache"),
             )
-            executor.execute(
-                phase_idx=0,
-                phase=phase,
-                model=MagicMock(),
-                buffer=buf,
-                upstream_retrained=False,
-            )
+            with pytest.raises(Exception):
+                executor.execute(
+                    phase_idx=0,
+                    phase=phase,
+                    model=MagicMock(),
+                    buffer=buf,
+                    upstream_retrained=False,
+                )
 
         mock_try.assert_called_once()
 
@@ -657,13 +663,15 @@ class TestPhaseExecutorExecuteAdapterCache:
                 hyperparams=PhaseHyperparametersConfig(epochs=1),
                 adapter_cache=AdapterCacheConfig(enabled=True, repo_id="org/cache"),
             )
-            executor.execute(
-                phase_idx=0,
-                phase=phase,
-                model=MagicMock(),
-                buffer=buf,
-                upstream_retrained=False,
-            )
+            # Post-Batch-14: downstream loader is MagicMock — execute raises.
+            with pytest.raises(Exception):
+                executor.execute(
+                    phase_idx=0,
+                    phase=phase,
+                    model=MagicMock(),
+                    buffer=buf,
+                    upstream_retrained=False,
+                )
 
         mock_try.assert_not_called()
 
@@ -702,11 +710,11 @@ class TestChainRunnerCascade:
         phase_executor = MagicMock()
         upstream_flags: list[bool] = []
 
-        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Ok:
+        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool):
             upstream_flags.append(upstream_retrained)
             # Simulate cache hit by marking SKIPPED
             buffer.state.phases[phase_idx].status = PhaseStatus.SKIPPED
-            return Ok(MagicMock(name=f"model_{phase_idx}"))
+            return MagicMock(name=f"model_{phase_idx}")
 
         phase_executor.execute.side_effect = fake_execute
 
@@ -724,10 +732,10 @@ class TestChainRunnerCascade:
         phase_executor = MagicMock()
         upstream_flags: list[bool] = []
 
-        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Ok:
+        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool):
             upstream_flags.append(upstream_retrained)
             buffer.state.phases[phase_idx].status = PhaseStatus.COMPLETED
-            return Ok(MagicMock(name=f"model_{phase_idx}"))
+            return MagicMock(name=f"model_{phase_idx}")
 
         phase_executor.execute.side_effect = fake_execute
 
@@ -753,12 +761,12 @@ class TestChainRunnerCascade:
         phase_executor = MagicMock()
         upstream_flags: list[bool] = []
 
-        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Ok:
+        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool):
             upstream_flags.append(upstream_retrained)
             # Only phase 0 trains; the rest are marked SKIPPED (but upstream_retrained overrides)
             status = PhaseStatus.COMPLETED if phase_idx == 0 else PhaseStatus.SKIPPED
             buffer.state.phases[phase_idx].status = status
-            return Ok(MagicMock())
+            return MagicMock()
 
         phase_executor.execute.side_effect = fake_execute
 
@@ -783,10 +791,10 @@ class TestChainRunnerCascade:
         phase_executor = MagicMock()
         upstream_flags: list[bool] = []
 
-        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Ok:
+        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool):
             upstream_flags.append(upstream_retrained)
             buffer.state.phases[phase_idx].status = PhaseStatus.SKIPPED
-            return Ok(MagicMock())
+            return MagicMock()
 
         phase_executor.execute.side_effect = fake_execute
 
@@ -796,7 +804,7 @@ class TestChainRunnerCascade:
         assert all(f is False for f in upstream_flags)
 
     def test_negative_phase_failure_stops_chain(self, tmp_path: Path) -> None:
-        """If a phase fails, chain stops and returns Err; remaining phases not executed."""
+        """If a phase fails, chain raises; remaining phases not executed."""
         buf = _mk_buffer_with_phases(tmp_path, n_phases=3)
         from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
 
@@ -805,7 +813,6 @@ class TestChainRunnerCascade:
             StrategyPhaseConfig(strategy_type="dpo", dataset="d1", hyperparams=PhaseHyperparametersConfig(epochs=1)),
             StrategyPhaseConfig(strategy_type="dpo", dataset="d2", hyperparams=PhaseHyperparametersConfig(epochs=1)),
         ]
-        from ryotenkai_shared.utils.result import TrainingError
 
         phase_executor = MagicMock()
         calls: list[int] = []
@@ -813,16 +820,16 @@ class TestChainRunnerCascade:
         def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Any:
             calls.append(phase_idx)
             if phase_idx == 1:
-                return Err(TrainingError(message="training failed", code="TRAIN_FAILED"))
+                raise TrainingFailedError(detail="training failed")
             buffer.state.phases[phase_idx].status = PhaseStatus.COMPLETED
-            return Ok(MagicMock())
+            return MagicMock()
 
         phase_executor.execute.side_effect = fake_execute
 
         runner = self._mk_chain_runner(phase_executor)
-        result = runner._run_phases(strategies, MagicMock(), buf, start_phase=0, total_phases=3)
+        with pytest.raises(TrainingFailedError):
+            runner._run_phases(strategies, MagicMock(), buf, start_phase=0, total_phases=3)
 
-        assert result.is_failure()
         assert 2 not in calls  # phase 2 never executed
 
     # ── Combinatorial ─────────────────────────
@@ -846,10 +853,10 @@ class TestChainRunnerCascade:
         phase_executor = MagicMock()
         upstream_flags: list[bool] = []
 
-        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool) -> Ok:
+        def fake_execute(*, phase_idx: int, phase: Any, model: Any, buffer: Any, upstream_retrained: bool):
             upstream_flags.append(upstream_retrained)
             buffer.state.phases[phase_idx].status = statuses[phase_idx]
-            return Ok(MagicMock())
+            return MagicMock()
 
         phase_executor.execute.side_effect = fake_execute
 
