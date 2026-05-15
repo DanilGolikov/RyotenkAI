@@ -7,7 +7,8 @@ Coverage by category (7-class):
 - 3. Boundary: empty name, repeatable run
 - 4. Invariants: setup→execute→teardown order, teardown always runs when
                  setup succeeded
-- 5. Dependency errors: legacy Result shim for pre-Batch-7 stages
+- 5. Dependency errors: legacy Result shim (defensive backward-compat
+                        for test mocks; no production stage returns Result)
 - 6. Regressions: teardown exception swallowed; setup raising RyotenkAIError
 - 7. Combinatorial: parametrised lifecycle outcomes
 
@@ -150,11 +151,21 @@ class ConcreteStageWithTeardownException(PipelineStage):
         raise RuntimeError("teardown boom")
 
 
-class ConcreteLegacyStage(PipelineStage):
-    """Pre-Batch-7 stage still returning legacy ``Result[T, AppError]``.
+class ConcreteStageReturnsNonDict(PipelineStage):
+    """Stage returning a non-dict value (e.g. ``None``). ``run()``
+    normalises to an empty dict — defensive guard for misbehaving stages."""
 
-    The shim ``_adapt_legacy_to_typed`` in ``base.run()`` must unwrap
-    ``Success`` and raise ``InternalError`` for ``Failure``.
+    def execute(self, context: dict[str, Any]):  # type: ignore[override]
+        return None  # type: ignore[return-value]
+
+
+class ConcreteLegacyStage(PipelineStage):
+    """Pre-Batch-7 stage shape: returns legacy ``Result[T, AppError]``.
+
+    Phase A2 Batch 10 — no production stage actually returns Result any
+    more, but the ``_adapt_legacy_to_typed`` shim is kept so test mocks
+    using ``stage.run.return_value = Ok(...)`` (extensive in
+    ``test_pipeline_orchestrator.py``) still work.
     """
 
     def __init__(self, config: Any, stage_name: str, *, fail: bool = False):
@@ -318,19 +329,31 @@ class TestInvariants:
 # =========================================================================
 
 
+class TestNonDictReturnNormalisation:
+    """Post Batch 10: ``base.run()`` normalises any non-dict ``execute``
+    return value to ``{}`` so the orchestrator's ``context.update()`` is
+    always safe.
+    """
+
+    def test_run_normalises_none_return_to_empty_dict(self, mock_config):
+        stage = ConcreteStageReturnsNonDict(config=mock_config, stage_name="N")
+        out = stage.run({})
+        assert out == {}
+
+
 class TestLegacyShim:
+    """Backward-compat shim — only relevant for test mocks. No production
+    stage returns Result after Phase A2 Batch 10."""
+
     def test_shim_passes_through_dict(self):
         assert _adapt_legacy_to_typed({"a": 1}) == {"a": 1}
 
     def test_shim_non_dict_non_result_becomes_empty_dict(self):
-        # None / int etc — shim normalises to {} so the loop's
-        # context.update() never sees a non-dict.
         assert _adapt_legacy_to_typed(None) == {}
         assert _adapt_legacy_to_typed(42) == {}
 
     def test_shim_unwraps_legacy_success(self):
-        result = Success({"k": 1})
-        assert _adapt_legacy_to_typed(result) == {"k": 1}
+        assert _adapt_legacy_to_typed(Success({"k": 1})) == {"k": 1}
 
     def test_shim_raises_internal_error_for_legacy_failure(self):
         result = Failure(AppError(message="legacy boom", code="LEGACY_X"))
@@ -351,9 +374,7 @@ class TestLegacyShim:
         assert ei.value.context["legacy_code"] == "LEGACY_X"
 
     def test_shim_unwrap_returns_empty_dict_for_non_dict_success_value(self):
-        # Defensive: legacy stages occasionally return Success(None)
-        result = Success(None)
-        assert _adapt_legacy_to_typed(result) == {}
+        assert _adapt_legacy_to_typed(Success(None)) == {}
 
 
 # =========================================================================

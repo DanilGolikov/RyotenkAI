@@ -27,11 +27,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from ryotenkai_shared.errors import InferenceUnavailableError
 from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, InferenceError, Ok, Result
 
 # Pre-flight probe parameters. Strict by design: a healthy endpoint
 # answers within ~1 s; two attempts are enough to absorb a single
@@ -94,20 +94,27 @@ class ModelEvaluator(PipelineStage):
         self._callbacks = callbacks or EvaluatorEventCallbacks()
         self._secrets = secrets
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Run plugin-based evaluation against the configured endpoint.
+
+        Returns:
+            Updated pipeline context.
+
+        Raises:
+            InferenceUnavailableError: when ``context['endpoint_url']`` is
+                missing or the endpoint pre-flight probe fails.
+        """
         eval_cfg = getattr(self.config, "evaluation", None)
         forced_stages = context.get(PipelineContextKeys.FORCED_STAGES, set())
         is_forced = self.stage_name in forced_stages if isinstance(forced_stages, set | list | tuple) else False
 
         if (eval_cfg is None or not getattr(eval_cfg, "enabled", False)) and not is_forced:
-            return Ok(
-                self.update_context(
-                    context,
-                    {
-                        "evaluation_skipped": True,
-                        "reason": "evaluation.enabled=false",
-                    },
-                )
+            return self.update_context(
+                context,
+                {
+                    "evaluation_skipped": True,
+                    "reason": "evaluation.enabled=false",
+                },
             )
 
         # Read endpoint URL set by InferenceDeployer.
@@ -117,15 +124,13 @@ class ModelEvaluator(PipelineStage):
         inference_ctx = context.get(StageNames.INFERENCE_DEPLOYER, {})
         endpoint_url: str | None = inference_ctx.get("endpoint_url") or context.get("endpoint_url")
         if not endpoint_url:
-            return Err(
-                InferenceError(
-                    message=(
-                        "evaluation requires a live inference endpoint, but "
-                        "context['endpoint_url'] is missing — InferenceDeployer "
-                        "either did not run or did not activate the endpoint"
-                    ),
-                    code="EVAL_ENDPOINT_MISSING",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    "evaluation requires a live inference endpoint, but "
+                    "context['endpoint_url'] is missing — InferenceDeployer "
+                    "either did not run or did not activate the endpoint"
+                ),
+                context={"legacy_code": "EVAL_ENDPOINT_MISSING"},
             )
 
         # Pre-flight: prove the endpoint is actually reachable before
@@ -135,9 +140,7 @@ class ModelEvaluator(PipelineStage):
         # unreachable endpoint produces 31× Connection refused that the
         # eval code handles per-sample (empty answer), surfacing as
         # "successful" eval with garbage results.
-        preflight = _preflight_check_endpoint(endpoint_url)
-        if preflight.is_err():
-            return Err(preflight.unwrap_err())  # type: ignore[union-attr]
+        _preflight_check_endpoint(endpoint_url)
 
         # Model name for API requests.
         # vLLM serves the merged model under its directory path by default,
@@ -200,15 +203,13 @@ class ModelEvaluator(PipelineStage):
                 if not result.passed:
                     logger.warning(f"[EVAL] Plugin '{plugin_name}' FAILED: {result.errors}")
 
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "eval_passed": summary.overall_passed,
-                    "eval_summary": summary.to_dict(),
-                    "evaluation_completed_at": time.time(),
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "eval_passed": summary.overall_passed,
+                "eval_summary": summary.to_dict(),
+                "evaluation_completed_at": time.time(),
+            },
         )
 
     # ------------------------------------------------------------------
@@ -323,12 +324,15 @@ def _preflight_check_endpoint(
     *,
     timeout_s: float = _PREFLIGHT_TIMEOUT_S,
     retries: int = _PREFLIGHT_RETRIES,
-) -> Result[None, AppError]:
+) -> None:
     """One-shot reachability probe: ``GET {endpoint_url}/models``.
 
     Two attempts (``1 + retries``) cover a single packet loss without
     dragging the wait into long-poll territory — providers must deliver
     a live endpoint by the time ``activate_for_eval`` returns Ok.
+
+    Raises:
+        InferenceUnavailableError: when all attempts fail or any 5xx.
     """
     base = endpoint_url.rstrip("/")
     url = f"{base}/models"
@@ -347,17 +351,15 @@ def _preflight_check_endpoint(
                     url,
                     response.status_code,
                 )
-                return Ok(None)
+                return None
             last_err = f"HTTP {response.status_code}"
         if attempt < retries:
             sleep_cancellable(_PREFLIGHT_RETRY_BACKOFF_S)
-    return Err(
-        InferenceError(
-            message=(
-                f"inference endpoint pre-flight failed: GET {url} → {last_err} "
-                f"(after {retries + 1} attempts). Endpoint is unreachable; "
-                "evaluation aborted to avoid garbage results."
-            ),
-            code="EVAL_ENDPOINT_UNREACHABLE",
-        )
+    raise InferenceUnavailableError(
+        detail=(
+            f"inference endpoint pre-flight failed: GET {url} → {last_err} "
+            f"(after {retries + 1} attempts). Endpoint is unreachable; "
+            "evaluation aborted to avoid garbage results."
+        ),
+        context={"legacy_code": "EVAL_ENDPOINT_UNREACHABLE"},
     )

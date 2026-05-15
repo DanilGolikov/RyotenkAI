@@ -17,9 +17,13 @@ The legacy ``Result[T, AppError]`` return shape was migrated to raise-based:
 * ``teardown(ctx) -> None`` — raises on failure (best-effort; swallowed by run()).
 * ``run(ctx) -> dict[str, Any]`` — orchestrates setup → execute → teardown.
 
-Stages still returning legacy ``Result[T, AppError]`` are bridged by the
-``_adapt_legacy_to_typed`` shim until their own batch (7-10) rewrites them.
-The shim itself is scheduled for deletion in Batch 10.
+Phase A2 Batch 10 (2026-05-15) — every control-side pipeline stage now
+returns ``dict[str, Any]`` or raises :class:`RyotenkAIError` directly.
+The :func:`_adapt_legacy_to_typed` shim is kept as a **defensive guard**
+for test mocks that still wire ``stage.run.return_value = Ok(...)`` (used
+heavily in ``tests/unit/control/test_pipeline_orchestrator.py``). The
+shim is a pure pass-through for plain dicts and never affects production
+flow now that no stage actually returns ``Result``.
 """
 
 from __future__ import annotations
@@ -34,20 +38,16 @@ if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig
 
 
-# TODO Phase A2 Batch 10: delete _adapt_legacy_to_typed once all stages
-# return dict directly. While this shim lives, legacy Result-returning
-# stages keep working without breaking the new raise-based loop.
 def _adapt_legacy_to_typed(value: Any) -> dict[str, Any]:
-    """Bridge a legacy ``Result[T, AppError]`` return into the typed shape.
+    """Backward-compat shim — pass-through for dicts; unwrap legacy
+    ``Result[T, AppError]`` returns from test mocks; normalise everything
+    else to ``{}``.
 
-    Stages migrated by Batches 7-10 will return ``dict[str, Any]`` directly
-    and bypass this shim entirely. Until then, legacy ``Result`` objects
-    coming back from ``execute()`` are unwrapped here:
-
-    * ``Failure(err)`` raises :class:`InternalError` carrying the legacy
-      ``code``/``message`` on ``context`` so observability stays intact.
-    * ``Success(value)`` yields the inner ``value`` (or ``{}`` if absent).
-    * Non-``Result`` values pass through (must be ``dict`` for the loop).
+    No production stage returns ``Result`` after Phase A2 Batch 10, so
+    the legacy-unwrap branches only fire for unit tests that mock
+    ``stage.run.return_value = Ok(...)`` for orchestrator coverage.
+    Failure mocks raise :class:`InternalError` carrying the legacy
+    ``code``/``message`` on ``context``.
     """
     if hasattr(value, "is_failure") and callable(value.is_failure):
         if value.is_failure():
@@ -133,9 +133,7 @@ class PipelineStage(ABC):
             Output dict (merged into the pipeline context by the loop).
 
         Raises:
-            RyotenkAIError: on stage failure. Legacy stages may still return
-                ``Result[T, AppError]``; the shim ``_adapt_legacy_to_typed``
-                in :meth:`run` converts them until Batches 7-10 land.
+            RyotenkAIError: on stage failure.
         """
 
     def teardown(self) -> None:
@@ -203,13 +201,10 @@ class PipelineStage(ABC):
             context: Dictionary containing data from previous stages
 
         Returns:
-            Output dict from ``execute`` (post-shim for legacy stages).
+            Output dict from ``execute``.
 
         Raises:
-            RyotenkAIError: on setup/execute failure. The shim
-                :func:`_adapt_legacy_to_typed` converts legacy
-                ``Result[T, AppError]`` returns into raises until Batches
-                7-10 rewrite all stages.
+            RyotenkAIError: on setup/execute failure.
             KeyboardInterrupt / SystemExit: re-raised verbatim — the loop
                 owns the interrupt boundary.
         """
@@ -243,8 +238,9 @@ class PipelineStage(ABC):
         # Step 2: Execute (+ teardown finally)
         try:
             raw = self.execute(context)
-            # Shim: bridge legacy Result-returning stages until Batches 7-10
-            # rewrite them. Direct dict returns pass through unchanged.
+            # ``_adapt_legacy_to_typed`` normalises return value to dict.
+            # Production stages already return dict; the shim only matters
+            # for test mocks that still wire ``Ok(...)`` /``Err(...)``.
             output = _adapt_legacy_to_typed(raw)
             self.log_end(True)
             return output

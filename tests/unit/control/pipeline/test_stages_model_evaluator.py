@@ -38,11 +38,9 @@ def _mk_cfg(*, eval_enabled: bool = True) -> MagicMock:
 @pytest.fixture
 def mock_preflight_ok():
     """Stub the pre-flight ping so happy-path tests don't need a live HTTP server."""
-    from ryotenkai_shared.utils.result import Ok
-
     with patch(
         "ryotenkai_control.pipeline.stages.model_evaluator._preflight_check_endpoint",
-        return_value=Ok(None),
+        return_value=None,
     ) as m:
         yield m
 
@@ -51,22 +49,23 @@ class TestModelEvaluatorSkipCases:
     """Tests for cases where evaluation is skipped."""
 
     def test_skip_when_evaluation_disabled(self) -> None:
-        """When evaluation.enabled=false, stage returns Ok with skipped=True."""
+        """When evaluation.enabled=false, stage returns dict with skipped=True."""
         stage = ModelEvaluator(_mk_cfg(eval_enabled=False))
-        res = cast("Any", stage.execute({}))
-        assert res.is_success()
-        out = res.unwrap()["Model Evaluator"]
+        out_ctx = cast("Any", stage.execute({}))
+        out = out_ctx["Model Evaluator"]
         assert out["evaluation_skipped"] is True
         assert "evaluation.enabled=false" in out["reason"]
 
     def test_endpoint_url_missing_returns_err(self) -> None:
-        """When no endpoint_url in context, stage now returns Err — no
+        """When no endpoint_url in context, stage now raises — no
         more silent skip. Prior behaviour produced "successful" eval
         runs with empty answers; see plan §1."""
+        from ryotenkai_shared.errors import InferenceUnavailableError
+
         stage = ModelEvaluator(_mk_cfg(eval_enabled=True))
-        res = cast("Any", stage.execute({}))
-        assert res.is_err()
-        assert res.unwrap_err().code == "EVAL_ENDPOINT_MISSING"
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            stage.execute({})
+        assert exc_info.value.context.get("legacy_code") == "EVAL_ENDPOINT_MISSING"
 
     def test_skip_when_eval_config_is_none(self) -> None:
         """When config.evaluation is None, stage returns skipped."""
@@ -76,9 +75,8 @@ class TestModelEvaluatorSkipCases:
         cfg.integrations.mlflow = None
 
         stage = ModelEvaluator(cfg)
-        res = cast("Any", stage.execute({}))
-        assert res.is_success()
-        out = res.unwrap()["Model Evaluator"]
+        out_ctx = cast("Any", stage.execute({}))
+        out = out_ctx["Model Evaluator"]
         assert out["evaluation_skipped"] is True
 
 
@@ -115,10 +113,9 @@ class TestModelEvaluatorHappyPath:
                 "endpoint_url": "http://127.0.0.1:8000/v1",
                 "inference_model_name": "test-model",
             }
-            res = cast("Any", stage.execute(context))
+            out_ctx = cast("Any", stage.execute(context))
 
-        assert res.is_success()
-        out = res.unwrap()["Model Evaluator"]
+        out = out_ctx["Model Evaluator"]
         assert out["eval_passed"] is True
         assert "eval_summary" in out
 
@@ -153,10 +150,9 @@ class TestModelEvaluatorHappyPath:
             context: dict[str, Any] = {
                 "endpoint_url": "http://127.0.0.1:8000/v1",
             }
-            res = cast("Any", stage.execute(context))
+            out_ctx = cast("Any", stage.execute(context))
 
-        assert res.is_success()
-        out = res.unwrap()["Model Evaluator"]
+        out = out_ctx["Model Evaluator"]
         assert out["eval_passed"] is False
 
     def test_mlflow_metrics_are_flattened_correctly(self) -> None:
@@ -233,8 +229,8 @@ class TestPreflight:
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(200)
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_success()
+            # Should return None without raising.
+            assert _preflight_check_endpoint("http://example/v1") is None
         mock_get.assert_called_once_with("http://example/v1/models", timeout=5.0)
 
     def test_returns_ok_on_204_no_content(self) -> None:
@@ -242,8 +238,7 @@ class TestPreflight:
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(204)
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_success()
+            assert _preflight_check_endpoint("http://example/v1") is None
 
     def test_returns_ok_on_404(self) -> None:
         """404 means the server answered → endpoint is reachable. The /models
@@ -253,43 +248,46 @@ class TestPreflight:
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get:
             mock_get.return_value = self._mk_response(404)
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_success()
+            assert _preflight_check_endpoint("http://example/v1") is None
 
     def test_returns_err_on_5xx(self) -> None:
+        from ryotenkai_shared.errors import InferenceUnavailableError
         from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.return_value = self._mk_response(503)
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_err()
-        assert res.unwrap_err().code == "EVAL_ENDPOINT_UNREACHABLE"
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                _preflight_check_endpoint("http://example/v1")
+        assert exc_info.value.context.get("legacy_code") == "EVAL_ENDPOINT_UNREACHABLE"
 
     def test_returns_err_on_connect_error(self) -> None:
         import httpx as _httpx
+        from ryotenkai_shared.errors import InferenceUnavailableError
         from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.side_effect = _httpx.ConnectError("refused")
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_err()
-        assert res.unwrap_err().code == "EVAL_ENDPOINT_UNREACHABLE"
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                _preflight_check_endpoint("http://example/v1")
+        assert exc_info.value.context.get("legacy_code") == "EVAL_ENDPOINT_UNREACHABLE"
 
     def test_returns_err_on_timeout(self) -> None:
         import httpx as _httpx
+        from ryotenkai_shared.errors import InferenceUnavailableError
         from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get") as mock_get, \
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
             mock_get.side_effect = _httpx.ReadTimeout("slow")
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_err()
-        assert res.unwrap_err().code == "EVAL_ENDPOINT_UNREACHABLE"
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                _preflight_check_endpoint("http://example/v1")
+        assert exc_info.value.context.get("legacy_code") == "EVAL_ENDPOINT_UNREACHABLE"
 
     def test_retries_once_then_fails(self) -> None:
         import httpx as _httpx
+        from ryotenkai_shared.errors import InferenceUnavailableError
         from ryotenkai_control.pipeline.stages.model_evaluator import _preflight_check_endpoint
 
         call_count = {"n": 0}
@@ -300,10 +298,10 @@ class TestPreflight:
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get", side_effect=_raise), \
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
-            res = _preflight_check_endpoint("http://example/v1")
+            with pytest.raises(InferenceUnavailableError):
+                _preflight_check_endpoint("http://example/v1")
         # One initial + one retry = 2 attempts
         assert call_count["n"] == 2
-        assert res.is_err()
 
     def test_retry_succeeds_on_second_attempt(self) -> None:
         import httpx as _httpx
@@ -320,8 +318,7 @@ class TestPreflight:
 
         with patch("ryotenkai_control.pipeline.stages.model_evaluator.httpx.get", side_effect=_flaky), \
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"):
-            res = _preflight_check_endpoint("http://example/v1")
-        assert res.is_success()
+            assert _preflight_check_endpoint("http://example/v1") is None
         assert call_count["n"] == 2
 
     def test_strips_trailing_slash_from_endpoint(self) -> None:
@@ -339,8 +336,9 @@ class TestEvaluatorPreflightIntegration:
     """End-to-end: stage.execute() must surface pre-flight failures."""
 
     def test_stage_returns_err_when_preflight_fails(self) -> None:
-        """Unreachable endpoint → Err(EVAL_ENDPOINT_UNREACHABLE), no eval runs."""
+        """Unreachable endpoint → raises InferenceUnavailableError, no eval runs."""
         import httpx as _httpx
+        from ryotenkai_shared.errors import InferenceUnavailableError
 
         stage = ModelEvaluator(_mk_cfg(eval_enabled=True))
 
@@ -348,11 +346,11 @@ class TestEvaluatorPreflightIntegration:
              patch("ryotenkai_control.pipeline.stages.model_evaluator.time.sleep"), \
              patch("ryotenkai_control.evaluation.runner.EvaluationRunner") as MockRunner:
             mock_get.side_effect = _httpx.ConnectError("refused")
-            res = cast("Any", stage.execute({
-                "endpoint_url": "http://127.0.0.1:8000/v1",
-            }))
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                stage.execute({
+                    "endpoint_url": "http://127.0.0.1:8000/v1",
+                })
             # Eval must NOT have been built — pre-flight aborts first.
             MockRunner.assert_not_called()
 
-        assert res.is_err()
-        assert res.unwrap_err().code == "EVAL_ENDPOINT_UNREACHABLE"
+        assert exc_info.value.context.get("legacy_code") == "EVAL_ENDPOINT_UNREACHABLE"

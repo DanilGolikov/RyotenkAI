@@ -14,40 +14,19 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import TrainingDeploymentManager
-from ryotenkai_shared.errors import RyotenkAIError, SSHTransferFailedError
+from ryotenkai_shared.errors import (
+    InternalError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHConnectionFailedError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 # Truncation length for the docker image SHA shown in pipeline logs.
 GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
-
-
-def _typed_error_to_legacy_app_error(exc: RyotenkAIError) -> AppError:
-    """Local typed→AppError bridge for the post-Batch-9 deployment
-    manager (which raises) into this stage's still-legacy
-    ``Result[dict, AppError]`` upward contract.
-
-    Mirrors the canonical helper in
-    :func:`ryotenkai_control.pipeline.orchestrator._typed_error_to_app_error`,
-    but kept local so the import graph stays acyclic (orchestrator
-    imports this stage). Will be removed when gpu_deployer migrates
-    fully in Batch 10.
-    """
-    reason = exc.context.get("reason") if isinstance(exc.context, dict) else None
-    code = str(reason) if isinstance(reason, str) and reason else exc.code.value
-    details: dict[str, Any] = {"typed_error_class": type(exc).__name__}
-    if isinstance(exc.context, dict):
-        for key, value in exc.context.items():
-            if key == "reason":
-                continue
-            details[key] = value
-    return AppError(
-        message=exc.detail or str(exc),
-        code=code,
-        details=details,
-    )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -178,7 +157,7 @@ class GPUDeployer(PipelineStage):
 
         logger.info(f"[DEPLOYER:INIT] GPUDeployer initialized: provider={self._provider_name}")
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """
         Deploy training job to GPU server.
 
@@ -194,17 +173,22 @@ class GPUDeployer(PipelineStage):
             context: Pipeline context with dataset information
 
         Returns:
-            Result with deployment info or AppError
+            Updated context dict with deployment info.
+
+        Raises:
+            ProviderUnavailableError: provider create / SSH info missing /
+                generic connect failure.
+            SSHConnectionFailedError: pod reached but SSH handshake failed.
+            RyotenkAIError: typed exceptions from the deployment manager
+                (code sync / runtime / start_training) propagate.
         """
         logger.info(f"Deploying training job to {self._provider_name}...")
 
         run = context.get(PipelineContextKeys.RUN)
         if not isinstance(run, RunContext):
-            return Err(
-                ProviderError(
-                    message="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
-                    code="MISSING_RUN_CONTEXT",
-                )
+            raise InternalError(
+                detail="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
+                context={"legacy_code": "MISSING_RUN_CONTEXT"},
             )
 
         # Step 1: Create provider via the manifest-driven registry.
@@ -226,7 +210,13 @@ class GPUDeployer(PipelineStage):
             provider_err = create_result.unwrap_err()
             if self._callbacks.on_error:
                 self._callbacks.on_error("provider_create", str(provider_err))
-            return Err(provider_err)
+            raise ProviderUnavailableError(
+                detail=f"Provider create failed: {provider_err}",
+                context={
+                    "legacy_code": getattr(provider_err, "code", "PROVIDER_CREATE_FAILED"),
+                    "provider": self._provider_name,
+                },
+            )
         self._provider = create_result.unwrap()
         # Fire callback
         if self._callbacks.on_provider_created:
@@ -242,7 +232,23 @@ class GPUDeployer(PipelineStage):
             err = connect_result.unwrap_err()  # type: ignore[union-attr]
             if self._callbacks.on_error:
                 self._callbacks.on_error("connect", str(err))
-            return Err(ProviderError(message=f"Connection failed: {err}", code="PROVIDER_CONNECT_FAILED"))
+            # Heuristic split: SSH-shaped errors → SSHConnectionFailedError;
+            # everything else → ProviderUnavailableError. Provider-level
+            # boundary translation is finalised in Batch 11-12.
+            err_code = getattr(err, "code", "") or ""
+            ctx = {
+                "legacy_code": "PROVIDER_CONNECT_FAILED",
+                "provider": self._provider_name,
+            }
+            if "SSH" in err_code or "ssh" in str(err).lower():
+                raise SSHConnectionFailedError(
+                    detail=f"Connection failed: {err}",
+                    context=ctx,
+                )
+            raise ProviderUnavailableError(
+                detail=f"Connection failed: {err}",
+                context=ctx,
+            )
 
         ssh_info = cast("SSHConnectionInfo | None", connect_result.unwrap())
 
@@ -251,7 +257,13 @@ class GPUDeployer(PipelineStage):
             if self._callbacks.on_error:
                 self._callbacks.on_error("connect", msg)
             self._handle_error_and_disconnect(msg)
-            return Err(ProviderError(message=msg, code="PROVIDER_SSH_INFO_MISSING"))
+            raise ProviderUnavailableError(
+                detail=msg,
+                context={
+                    "legacy_code": "PROVIDER_SSH_INFO_MISSING",
+                    "provider": self._provider_name,
+                },
+            )
 
         logger.info(f"Connected: {ssh_info}")
 
@@ -295,10 +307,9 @@ class GPUDeployer(PipelineStage):
             upload_duration = time.time() - upload_start
             logger.error("Code sync failed, disconnecting...")
             self._handle_error_and_disconnect("Code sync failed")
-            sync_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
-                self._callbacks.on_error("upload", str(sync_err))
-            return Err(sync_err)
+                self._callbacks.on_error("upload", exc.detail or str(exc))
+            raise
         upload_duration = time.time() - upload_start
 
         logger.info(f"Code synced! ({upload_duration:.1f}s)")
@@ -314,10 +325,9 @@ class GPUDeployer(PipelineStage):
             deps_duration = time.time() - deps_start
             logger.error("Runtime verification failed, disconnecting...")
             self._handle_error_and_disconnect("Runtime verification failed")
-            deps_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
-                self._callbacks.on_error("deps", str(deps_err))
-            return Err(deps_err)
+                self._callbacks.on_error("deps", exc.detail or str(exc))
+            raise
         deps_duration = time.time() - deps_start
 
         logger.info(f"Runtime verified! ({deps_duration:.1f}s)")
@@ -344,10 +354,9 @@ class GPUDeployer(PipelineStage):
         except RyotenkAIError as exc:
             logger.error("Training start failed, disconnecting...")
             self._handle_error_and_disconnect("Training start failed")
-            training_err = _typed_error_to_legacy_app_error(exc)
             if self._callbacks.on_error:
-                self._callbacks.on_error("training_start", str(training_err))
-            return Err(training_err)
+                self._callbacks.on_error("training_start", exc.detail or str(exc))
+            raise
         logger.info(f"Training started! Mode: {training_metadata.get('mode', 'unknown')}")
 
         # Log Docker image SHA to MLflow for reproducibility (if available)
@@ -363,37 +372,35 @@ class GPUDeployer(PipelineStage):
         pod_info = self._provider.get_resource_info()
 
         # Return connection info for monitoring
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "run_name": run.name,
-                    # Provider info
-                    "provider_name": self._provider_name,
-                    "provider_type": self._provider.provider_type,  # "local" or "cloud"
-                    # Provider instance — TrainingMonitor uses it for the
-                    # capability-Protocol gated recovery loop (Phase 14.D+F:
-                    # ``isinstance(provider, IRecoveryProbeProvider)``).
-                    "provider": self._provider,
-                    "resource_id": ssh_info.resource_id,  # pod_id or run_dir
-                    # SSH connection info (for TrainingMonitor)
-                    "ssh_host": ssh_info.host,
-                    "ssh_port": ssh_info.port,
-                    "ssh_user": ssh_info.user,
-                    "ssh_key_path": ssh_info.key_path,
-                    "is_alias_mode": ssh_info.is_alias_mode,  # True if using SSH alias
-                    "workspace_path": ssh_info.workspace_path,
-                    # Timing
-                    "training_started_at": time.time(),
-                    "pod_startup_seconds": connect_duration,
-                    "upload_duration_seconds": upload_duration,
-                    "deps_duration_seconds": deps_duration,
-                    # Pod metadata (RunPod: PodResourceInfo; single_node: None)
-                    "cost_per_hr": getattr(pod_info, "cost_per_hr", None),
-                    "gpu_type": getattr(pod_info, "gpu_type", None),
-                    "gpu_count": getattr(pod_info, "gpu_count", None),
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "run_name": run.name,
+                # Provider info
+                "provider_name": self._provider_name,
+                "provider_type": self._provider.provider_type,  # "local" or "cloud"
+                # Provider instance — TrainingMonitor uses it for the
+                # capability-Protocol gated recovery loop (Phase 14.D+F:
+                # ``isinstance(provider, IRecoveryProbeProvider)``).
+                "provider": self._provider,
+                "resource_id": ssh_info.resource_id,  # pod_id or run_dir
+                # SSH connection info (for TrainingMonitor)
+                "ssh_host": ssh_info.host,
+                "ssh_port": ssh_info.port,
+                "ssh_user": ssh_info.user,
+                "ssh_key_path": ssh_info.key_path,
+                "is_alias_mode": ssh_info.is_alias_mode,  # True if using SSH alias
+                "workspace_path": ssh_info.workspace_path,
+                # Timing
+                "training_started_at": time.time(),
+                "pod_startup_seconds": connect_duration,
+                "upload_duration_seconds": upload_duration,
+                "deps_duration_seconds": deps_duration,
+                # Pod metadata (RunPod: PodResourceInfo; single_node: None)
+                "cost_per_hr": getattr(pod_info, "cost_per_hr", None),
+                "gpu_type": getattr(pod_info, "gpu_type", None),
+                "gpu_count": getattr(pod_info, "gpu_count", None),
+            },
         )
 
     def get_provider(self) -> IGPUProvider | None:

@@ -251,12 +251,11 @@ class StageExecutionLoop:
 
                     try:
                         raw_stage_result = stage.run(context)
-                        # Bridge stages whose ``run`` was mocked with legacy
-                        # ``Result[T, AppError]`` (tests + pre-Batch-7 stages
-                        # whose subclass overrode ``run``). The shim raises
-                        # :class:`InternalError` for ``Failure`` and unwraps
-                        # ``Success`` so the loop only sees ``dict`` here.
-                        # TODO Phase A2 Batch 10: drop _adapt_legacy_to_typed.
+                        # Defensive: tests sometimes mock ``stage.run`` to
+                        # return legacy ``Result[T, AppError]`` objects.
+                        # Production stages return plain dicts after Batch
+                        # 10 — ``_adapt_legacy_to_typed`` is a pass-through
+                        # in that case and only matters for the mocks.
                         stage_result = _adapt_legacy_to_typed(raw_stage_result)
                     except RyotenkAIError as stage_exc:
                         stage_duration = time.time() - current_stage_start_time

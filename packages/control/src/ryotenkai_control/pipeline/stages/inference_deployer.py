@@ -21,6 +21,12 @@ from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_INFERENCE
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_shared.errors import (
+    InferenceUnavailableError,
+    InternalError,
+    ModelLoadFailedError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_providers.inference.interfaces import (
     EndpointInfo,
@@ -29,7 +35,6 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
-from ryotenkai_shared.utils.result import AppError, Err, InferenceError, Ok, Result
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,39 +84,42 @@ class InferenceDeployer(PipelineStage):
         self.secrets = secrets
         self._provider: IInferenceProvider | None = None
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Deploy an inference endpoint or signal skipped.
+
+        Returns:
+            Updated context dict.
+
+        Raises:
+            InferenceUnavailableError: pod / activate / health check failed.
+            ModelLoadFailedError: model_source unresolved.
+            InternalError: missing run context wiring.
+        """
         inf_cfg = self.config.inference
         forced_stages = context.get(PipelineContextKeys.FORCED_STAGES, set())
         is_forced = self.stage_name in forced_stages if isinstance(forced_stages, set | list | tuple) else False
 
         if not inf_cfg.enabled and not is_forced:
-            return Ok(
-                self.update_context(
-                    context,
-                    {
-                        "inference_skipped": True,
-                        "reason": "inference.enabled=false",
-                    },
-                )
+            return self.update_context(
+                context,
+                {
+                    "inference_skipped": True,
+                    "reason": "inference.enabled=false",
+                },
             )
 
         # Optional event logger from context (if available)
         mlflow_manager = context.get(PipelineContextKeys.MLFLOW_MANAGER)
         event_logger = mlflow_manager if isinstance(mlflow_manager, InferenceEventLogger) else None
 
-        # Resolve model source from ModelRetriever context
-        model_source_res = self._resolve_model_source(context)
-        if model_source_res.is_failure():
-            return Err(model_source_res.unwrap_err())  # type: ignore[union-attr]  # already InferenceError
-        model_source = model_source_res.unwrap()
+        # Resolve model source from ModelRetriever context (raises on miss).
+        model_source = self._resolve_model_source(context)
 
         run = context.get(PipelineContextKeys.RUN)
         if not isinstance(run, RunContext):
-            return Err(
-                InferenceError(
-                    message="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
-                    code="MISSING_RUN_CONTEXT",
-                )
+            raise InternalError(
+                detail="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
+                context={"legacy_code": "MISSING_RUN_CONTEXT"},
             )
 
         run_name = run.name
@@ -140,11 +148,9 @@ class InferenceDeployer(PipelineStage):
         )
         create_result = get_registry().create_inference(provider_id, ctx)
         if create_result.is_failure():
-            return Err(
-                InferenceError(
-                    message=str(create_result.unwrap_err()),
-                    code="INFERENCE_PROVIDER_CREATE_FAILED",
-                )
+            raise InferenceUnavailableError(
+                detail=str(create_result.unwrap_err()),
+                context={"legacy_code": "INFERENCE_PROVIDER_CREATE_FAILED"},
             )
         provider = create_result.unwrap()
         self._provider = provider
@@ -200,7 +206,10 @@ class InferenceDeployer(PipelineStage):
                     model_id=base_model_id,
                 )
             else:
-                return Err(InferenceError(message=str(deploy_err), code="INFERENCE_DEPLOY_FAILED"))
+                raise InferenceUnavailableError(
+                    detail=str(deploy_err),
+                    context={"legacy_code": "INFERENCE_DEPLOY_FAILED"},
+                )
         else:
             endpoint = deploy_res.unwrap()
 
@@ -208,11 +217,12 @@ class InferenceDeployer(PipelineStage):
         if not pod_provisioning_failed and inf_cfg.common.health_check.enabled:
             readiness = provider.get_pipeline_readiness_mode()
             if readiness == PipelineReadinessMode.WAIT_FOR_HEALTHY:
-                healthy = self._wait_for_healthy(provider, event_logger=event_logger)
-                if healthy.is_failure():
+                try:
+                    self._wait_for_healthy(provider, event_logger=event_logger)
+                except RyotenkAIError:
                     # Best-effort cleanup on error
                     _ = provider.undeploy()
-                    return Err(healthy.unwrap_err())  # type: ignore[union-attr]  # already InferenceError
+                    raise
             elif readiness == PipelineReadinessMode.SKIP:
                 logger.info(
                     f"ℹ️ Skipping pipeline health check for {provider.provider_type} "
@@ -228,15 +238,13 @@ class InferenceDeployer(PipelineStage):
         if eval_enabled and not pod_provisioning_failed:
             capabilities = provider.get_capabilities()
             if not capabilities.supports_activate_for_eval:
-                return Err(
-                    InferenceError(
-                        message=(
-                            f"evaluation enabled but provider {inf_cfg.provider!r} does not "
-                            "support activate_for_eval — set evaluation.enabled=false or "
-                            "pick a provider with supports_activate_for_eval=True"
-                        ),
-                        code="INFERENCE_EVAL_NOT_SUPPORTED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=(
+                        f"evaluation enabled but provider {inf_cfg.provider!r} does not "
+                        "support activate_for_eval — set evaluation.enabled=false or "
+                        "pick a provider with supports_activate_for_eval=True"
+                    ),
+                    context={"legacy_code": "INFERENCE_EVAL_NOT_SUPPORTED"},
                 )
             activate_res = provider.activate_for_eval()
             if activate_res.is_failure():
@@ -250,11 +258,11 @@ class InferenceDeployer(PipelineStage):
                         f"(non-fatal): {deactivate_res.unwrap_err()}"  # type: ignore[union-attr]
                     )
                 activate_err = activate_res.unwrap_err()  # type: ignore[union-attr]
-                return Err(
-                    InferenceError(
-                        message=(f"failed to activate inference endpoint for evaluation: {activate_err}"),
-                        code="INFERENCE_ACTIVATION_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=(
+                        f"failed to activate inference endpoint for evaluation: {activate_err}"
+                    ),
+                    context={"legacy_code": "INFERENCE_ACTIVATION_FAILED"},
                 )
             eval_endpoint_url = activate_res.unwrap()
             logger.info(f"✅ Inference endpoint ready for evaluation: {eval_endpoint_url}")
@@ -262,19 +270,17 @@ class InferenceDeployer(PipelineStage):
             # Eval was requested but the pod could not be provisioned
             # (NO_GPU_CAPACITY). Refuse rather than emit a manifest that
             # the user thinks is eval-ready.
-            return Err(
-                InferenceError(
-                    message=(
-                        "evaluation enabled but inference pod could not be provisioned "
-                        "(no GPU capacity). Disable evaluation or retry later."
-                    ),
-                    code="INFERENCE_NO_CAPACITY_BLOCKS_EVAL",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    "evaluation enabled but inference pod could not be provisioned "
+                    "(no GPU capacity). Disable evaluation or retry later."
+                ),
+                context={"legacy_code": "INFERENCE_NO_CAPACITY_BLOCKS_EVAL"},
             )
 
-        # Generate manifest + scripts locally (provider supplies content)
+        # Generate manifest + scripts locally (provider supplies content; raises on failure).
         log_dir = get_run_log_dir()
-        manifest_res = self._write_manifest_and_scripts(
+        manifest_path, script_paths = self._write_manifest_and_scripts(
             provider=provider,
             log_dir=log_dir,
             context=context,
@@ -282,29 +288,23 @@ class InferenceDeployer(PipelineStage):
             model_source=model_source,
             run_name=run_name,
         )
-        if manifest_res.is_failure():
-            return Err(manifest_res.unwrap_err())  # type: ignore[union-attr]  # already InferenceError
 
-        manifest_path, script_paths = manifest_res.unwrap()
-
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "inference_deployed": not pod_provisioning_failed,
-                    "inference_pod_deferred": pod_provisioning_failed,  # True → pod will be created on chat launch
-                    "inference_endpoint_url": endpoint.endpoint_url,
-                    "inference_model_name": endpoint.model_id,
-                    # Single source of truth for endpoint URL.
-                    # When eval is enabled, activate_for_eval guarantees
-                    # ``eval_endpoint_url`` is populated (or the stage has
-                    # already returned Err above).
-                    "endpoint_url": eval_endpoint_url if eval_enabled else endpoint.endpoint_url,
-                    "endpoint_info": endpoint.__dict__,
-                    "inference_manifest_path": str(manifest_path),
-                    "inference_scripts": {k: str(v) for k, v in script_paths.items()},
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "inference_deployed": not pod_provisioning_failed,
+                "inference_pod_deferred": pod_provisioning_failed,  # True → pod will be created on chat launch
+                "inference_endpoint_url": endpoint.endpoint_url,
+                "inference_model_name": endpoint.model_id,
+                # Single source of truth for endpoint URL.
+                # When eval is enabled, activate_for_eval guarantees
+                # ``eval_endpoint_url`` is populated (or the stage has
+                # already raised above).
+                "endpoint_url": eval_endpoint_url if eval_enabled else endpoint.endpoint_url,
+                "endpoint_info": endpoint.__dict__,
+                "inference_manifest_path": str(manifest_path),
+                "inference_scripts": {k: str(v) for k, v in script_paths.items()},
+            },
         )
 
     # ------------------------------------------------------------------
@@ -339,25 +339,32 @@ class InferenceDeployer(PipelineStage):
         else:
             logger.info("[CLEANUP] Inference endpoint deactivated successfully")
 
-    def _resolve_model_source(self, context: dict[str, Any]) -> Result[str, InferenceError]:
+    def _resolve_model_source(self, context: dict[str, Any]) -> str:
+        """Resolve the model identifier the inference provider should serve.
+
+        Raises:
+            ModelLoadFailedError: when auto-resolution cannot find a
+                concrete model id.
+        """
         retriever_ctx = context.get(StageNames.MODEL_RETRIEVER, {})
         hf_repo_id = retriever_ctx.get("hf_repo_id")
         local_model_path = retriever_ctx.get("local_model_path")
 
         if self.config.inference.common.model_source != "auto":
-            return Ok(self.config.inference.common.model_source)
+            return self.config.inference.common.model_source
 
         if isinstance(hf_repo_id, str) and hf_repo_id:
-            return Ok(hf_repo_id)
+            return hf_repo_id
         if isinstance(local_model_path, str) and local_model_path:
-            return Ok(local_model_path)
+            return local_model_path
 
-        return Err(
-            InferenceError(
-                message="Inference model_source=auto but ModelRetriever did not provide hf_repo_id or local_model_path. "
-                "Enable HF upload or ensure model is downloaded locally.",
-                code="MODEL_SOURCE_NOT_RESOLVED",
-            )
+        raise ModelLoadFailedError(
+            detail=(
+                "Inference model_source=auto but ModelRetriever did not provide "
+                "hf_repo_id or local_model_path. Enable HF upload or ensure "
+                "model is downloaded locally."
+            ),
+            context={"legacy_code": "MODEL_SOURCE_NOT_RESOLVED"},
         )
 
     def _wait_for_healthy(
@@ -365,7 +372,7 @@ class InferenceDeployer(PipelineStage):
         provider: IInferenceProvider,
         *,
         event_logger: InferenceEventLogger | None,
-    ) -> Result[None, InferenceError]:
+    ) -> None:
         cfg = self.config.inference.common.health_check
         deadline = time.time() + cfg.timeout_seconds
         last_state: str = "not_checked"
@@ -411,7 +418,7 @@ class InferenceDeployer(PipelineStage):
                             duration_seconds=health_check_duration,
                         )
 
-                    return Ok(None)
+                    return None
                 last_state = "not_ready"
             else:
                 last_state = f"error:{res.unwrap_err()}"  # type: ignore[union-attr]
@@ -436,12 +443,16 @@ class InferenceDeployer(PipelineStage):
                 last_state=last_state,
             )
 
-        return Err(
-            InferenceError(
-                message=f"Inference health check timed out after {cfg.timeout_seconds}s (last_state={last_state})",
-                code="INFERENCE_HEALTH_CHECK_TIMEOUT",
-                details={"timeout_seconds": cfg.timeout_seconds, "last_state": last_state},
-            )
+        raise InferenceUnavailableError(
+            detail=(
+                f"Inference health check timed out after {cfg.timeout_seconds}s "
+                f"(last_state={last_state})"
+            ),
+            context={
+                "legacy_code": "INFERENCE_HEALTH_CHECK_TIMEOUT",
+                "timeout_seconds": cfg.timeout_seconds,
+                "last_state": last_state,
+            },
         )
 
     def _write_manifest_and_scripts(
@@ -453,7 +464,12 @@ class InferenceDeployer(PipelineStage):
         endpoint: EndpointInfo,
         model_source: str,
         run_name: str,
-    ) -> Result[tuple[Path, dict[str, Path]], InferenceError]:
+    ) -> tuple[Path, dict[str, Path]]:
+        """Render manifest + helper scripts on disk.
+
+        Raises:
+            InferenceUnavailableError: when the provider cannot build artifacts.
+        """
         mlflow_run_id = context.get(PipelineContextKeys.MLFLOW_PARENT_RUN_ID)
         if not (isinstance(mlflow_run_id, str) and mlflow_run_id.strip()):
             mlflow_run_id = None
@@ -467,7 +483,10 @@ class InferenceDeployer(PipelineStage):
         artifacts_res = provider.build_inference_artifacts(ctx=artifacts_ctx)
         if artifacts_res.is_failure():
             artifacts_err = artifacts_res.unwrap_err()  # type: ignore[union-attr]  # str from provider
-            return Err(InferenceError(message=str(artifacts_err), code="INFERENCE_ARTIFACTS_BUILD_FAILED"))
+            raise InferenceUnavailableError(
+                detail=str(artifacts_err),
+                context={"legacy_code": "INFERENCE_ARTIFACTS_BUILD_FAILED"},
+            )
         artifacts = artifacts_res.unwrap()
 
         inference_dir = log_dir / INFERENCE_DIRNAME
@@ -488,7 +507,7 @@ class InferenceDeployer(PipelineStage):
         logger.info(f"🧾 Inference manifest: {manifest_path}")
         logger.info(f"🛠️ Inference scripts: {', '.join(str(p) for p in scripts.values())}")
 
-        return Ok((manifest_path, scripts))
+        return manifest_path, scripts
 
 
 __all__ = [

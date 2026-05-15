@@ -16,10 +16,26 @@ import pytest
 
 from ryotenkai_control.pipeline.stages.model_retriever import ModelCardContext, ModelRetriever, PhaseMetricsResult
 from ryotenkai_shared.config import HuggingFaceHubConfig, PhaseHyperparametersConfig, StrategyPhaseConfig
-from ryotenkai_shared.errors import SSHTransferFailedError
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import (
+    HFAuthFailedError,
+    HFNotFoundError,
+    ModelLoadFailedError,
+    RyotenkAIError,
+    SSHTransferFailedError,
+)
 
 from tests._fakes.dataset_source import make_dataset_hf, make_dataset_local, make_dataset_with_kind
+
+
+def _raise_model(msg: str):
+    """Helper: returns a function that raises ModelLoadFailedError(msg).
+
+    Used to monkeypatch helpers that previously returned ``Err(msg)``
+    — the Batch 10 contract is raise-based.
+    """
+    def _fn(*_args, **_kwargs):
+        raise ModelLoadFailedError(detail=msg, context={"legacy_code": "HF_UPLOAD_FAILED"})
+    return _fn
 
 
 @pytest.fixture
@@ -292,9 +308,8 @@ class TestHuggingFaceRepoPrivacy:
 
         retriever.hf_api.repo_info.side_effect = _NotFound()
 
-        result = retriever._ensure_hf_repo_ready()
-
-        assert result.is_ok()
+        # Returns None on success (raise-based); no exception expected.
+        assert retriever._ensure_hf_repo_ready() is None
         retriever.hf_api.repo_info.assert_called_once_with(repo_id="org/test-model", repo_type="model")
         retriever.hf_api.create_repo.assert_called_once_with(
             repo_id="org/test-model",
@@ -313,9 +328,7 @@ class TestHuggingFaceRepoPrivacy:
         retriever.hf_api = MagicMock()
         retriever.hf_api.repo_info.return_value = MagicMock()  # repo exists
 
-        result = retriever._ensure_hf_repo_ready()
-
-        assert result.is_ok()
+        assert retriever._ensure_hf_repo_ready() is None
         retriever.hf_api.repo_info.assert_called_once_with(repo_id="org/test-model", repo_type="model")
         retriever.hf_api.create_repo.assert_not_called()
         retriever.hf_api.update_repo_settings.assert_called_once_with(repo_id="org/test-model", private=True)
@@ -331,9 +344,8 @@ class TestHuggingFaceRepoPrivacy:
         retriever.hf_api.repo_info.return_value = MagicMock()
         retriever.hf_api.update_repo_settings.side_effect = RuntimeError("forbidden")
 
-        result = retriever._ensure_hf_repo_ready()
-
-        assert result.is_ok()
+        # update_repo_settings failure is logged as a warning, not a raise.
+        assert retriever._ensure_hf_repo_ready() is None
         retriever.hf_api.create_repo.assert_not_called()
 
     def test_ensure_hf_repo_ready_returns_err_when_disabled(self, mock_secrets):
@@ -348,17 +360,17 @@ class TestHuggingFaceRepoPrivacy:
 
         retriever = ModelRetriever(cfg, mock_secrets)
         retriever.hf_api = MagicMock()
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        assert "disabled" in str(res.unwrap_err()).lower()
+        with pytest.raises(HFNotFoundError) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        assert "disabled" in str(exc_info.value).lower()
 
     def test_ensure_hf_repo_ready_returns_err_when_repo_id_missing(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
         retriever.hf_repo_id = None
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        assert "repo_id" in str(res.unwrap_err()).lower()
+        with pytest.raises(HFNotFoundError) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        assert "repo_id" in str(exc_info.value).lower()
 
     def test_ensure_hf_repo_ready_handles_exception(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
@@ -372,9 +384,9 @@ class TestHuggingFaceRepoPrivacy:
                 self.response = _types.SimpleNamespace(status_code=404)
 
         retriever.hf_api.repo_info.side_effect = _NotFound()
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        assert "failed to prepare" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        assert "failed to prepare" in str(exc_info.value).lower()
 
 
 class TestModelRetrieverExecute:
@@ -382,9 +394,9 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
 
-        res = retriever.execute(context={})
-        assert res.is_failure()
-        assert "No SSH connection info" in str(res.unwrap_err())
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever.execute(context={})
+        assert "No SSH connection info" in str(exc_info.value)
 
     @pytest.mark.xfail(
         strict=True,
@@ -427,8 +439,8 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
-        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Ok(None))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 10.0)
+        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: None)
         monkeypatch.setattr(
             retriever, "_download_model", lambda: (_ for _ in ()).throw(AssertionError("should not download"))
         )
@@ -446,8 +458,7 @@ class TestModelRetrieverExecute:
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
-        assert res.is_success()
-        out = res.unwrap()["Model Retriever"]
+        out = res["Model Retriever"]
         assert out["hf_uploaded"] is True
         assert out["hf_repo_id"] == "org/test-model"
         assert "upload_duration_seconds" in out
@@ -464,15 +475,14 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(100.0))
-        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("fail"))
-        monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 100.0)
+        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", _raise_model("fail"))
+        monkeypatch.setattr(retriever, "_download_model", lambda: tmp_path)
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
-        assert res.is_success()
-        out = res.unwrap()["Model Retriever"]
+        out = res["Model Retriever"]
         assert out["hf_uploaded"] is False
         assert out["local_model_path"] == str(tmp_path)
         assert events and events[0].startswith("dl_start:")
@@ -487,15 +497,15 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(100.0))
-        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("hf fail"))
-        monkeypatch.setattr(retriever, "_download_model", lambda: Err("dl fail"))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 100.0)
+        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", _raise_model("hf fail"))
+        monkeypatch.setattr(retriever, "_download_model", _raise_model("dl fail"))
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
-        res = retriever.execute(ctx)
-        assert res.is_failure()
-        assert "local download failed" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever.execute(ctx)
+        assert "local download failed" in str(exc_info.value).lower()
         assert events and events[0].startswith("dl_fail:")
 
     def test_execute_hf_disabled_downloads(self, mock_config_with_hf, mock_secrets, monkeypatch, tmp_path) -> None:
@@ -505,14 +515,13 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
-        monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 10.0)
+        monkeypatch.setattr(retriever, "_download_model", lambda: tmp_path)
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
-        assert res.is_success()
-        out = res.unwrap()["Model Retriever"]
+        out = res["Model Retriever"]
         assert out["hf_uploaded"] is False
         assert out["local_model_path"] == str(tmp_path)
 
@@ -524,14 +533,13 @@ class TestModelRetrieverExecute:
         retriever.hf_enabled = True
         retriever.hf_repo_id = None
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
-        monkeypatch.setattr(retriever, "_download_model", lambda: Ok(tmp_path))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 10.0)
+        monkeypatch.setattr(retriever, "_download_model", lambda: tmp_path)
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
         res = retriever.execute(ctx)
-        assert res.is_success()
-        out = res.unwrap()["Model Retriever"]
+        out = res["Model Retriever"]
         assert out["hf_uploaded"] is False
         assert out["local_model_path"] == str(tmp_path)
 
@@ -539,14 +547,14 @@ class TestModelRetrieverExecute:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(2048.0))
-        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", lambda context=None: Err("fail"))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 2048.0)
+        monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", _raise_model("fail"))
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "ssh_user": "root", "workspace_path": "/w"}}
-        res = retriever.execute(ctx)
-        assert res.is_failure()
-        assert "too large" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever.execute(ctx)
+        assert "too large" in str(exc_info.value).lower()
 
 
 class _SSHStub:
@@ -578,10 +586,10 @@ class TestModelRetrieverInternalRemoteUpload:
 
         # Keep model card small to avoid huge base64 cmd in debugging
         monkeypatch.setattr(retriever, "_generate_model_card", lambda ctx=None: "CARD")
-        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: Ok(None))
+        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: None)
 
-        res = retriever._upload_to_hf_from_remote()
-        assert res.is_success()
+        # New contract: returns None on success; raises on failure.
+        assert retriever._upload_to_hf_from_remote() is None
         assert any("huggingface-cli upload" in c for c in retriever._ssh_client.commands)
 
     @pytest.mark.xfail(
@@ -603,7 +611,7 @@ class TestModelRetrieverInternalRemoteUpload:
 
         retriever._ssh_client = _FailUploadSSH()
         monkeypatch.setattr(retriever, "_generate_model_card", lambda ctx=None: "CARD")
-        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: Ok(None))
+        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: None)
 
         res = retriever._upload_to_hf_from_remote()
         assert res.is_failure()
@@ -615,29 +623,29 @@ class TestModelRetrieverInternalRemoteUpload:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
         retriever._ssh_client = None
-        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: Ok(None))
-        res = retriever._upload_to_hf_from_remote()
-        assert res.is_failure()
-        assert "ssh client" in str(res.unwrap_err()).lower()
+        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: None)
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._upload_to_hf_from_remote()
+        assert "ssh client" in str(exc_info.value).lower()
 
     def test_upload_to_hf_from_remote_propagates_repo_prepare_error(
         self, mock_config_with_hf, mock_secrets, monkeypatch
     ):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever._ssh_client = _SSHStub()
-        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: Err("nope"))
-        res = retriever._upload_to_hf_from_remote()
-        assert res.is_failure()
-        assert "nope" in str(res.unwrap_err())
+        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", _raise_model("nope"))
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._upload_to_hf_from_remote()
+        assert "nope" in str(exc_info.value)
 
 
 class TestModelRetrieverModelSizeAndDownload:
     def test_get_model_size_returns_err_when_no_ssh(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever._ssh_client = None
-        res = retriever._get_model_size()
-        assert res.is_failure()
-        assert "ssh client" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._get_model_size()
+        assert "ssh client" in str(exc_info.value).lower()
 
     def test_get_model_size_success_and_failures(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
@@ -647,21 +655,20 @@ class TestModelRetrieverModelSizeAndDownload:
         # success: 1MB in bytes
         ssh.exec_command.return_value = (True, "1048576\n", "")
         retriever._ssh_client = ssh
-        ok = retriever._get_model_size()
-        assert ok.is_success()
-        assert ok.unwrap() == pytest.approx(1.0, rel=1e-6)
+        size_mb = retriever._get_model_size()
+        assert size_mb == pytest.approx(1.0, rel=1e-6)
 
         # command failure
         ssh.exec_command.return_value = (False, "", "err")
-        bad = retriever._get_model_size()
-        assert bad.is_failure()
-        assert "size command failed" in str(bad.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._get_model_size()
+        assert "size command failed" in str(exc_info.value).lower()
 
         # parsing exception
         ssh.exec_command.return_value = (True, "not-int\n", "")
-        boom = retriever._get_model_size()
-        assert boom.is_failure()
-        assert "failed to get model size" in str(boom.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._get_model_size()
+        assert "failed to get model size" in str(exc_info.value).lower()
 
     def test_download_model_download_directory_failure(self, mock_config_with_hf, mock_secrets, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
@@ -676,9 +683,9 @@ class TestModelRetrieverModelSizeAndDownload:
         )
         retriever._ssh_client = ssh
 
-        res = retriever._download_model()
-        assert res.is_failure()
-        assert "failed to download model" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._download_model()
+        assert "failed to download model" in str(exc_info.value).lower()
 
     def test_download_model_ok(self, mock_config_with_hf, mock_secrets, monkeypatch, tmp_path):
         monkeypatch.chdir(tmp_path)
@@ -692,9 +699,7 @@ class TestModelRetrieverModelSizeAndDownload:
         ssh.download_directory.return_value = None  # new contract: no return value
         retriever._ssh_client = ssh
 
-        res = retriever._download_model()
-        assert res.is_success()
-        p = res.unwrap()
+        p = retriever._download_model()
         assert p.exists()
         assert "models" in str(p)
 
@@ -905,9 +910,9 @@ class TestEnsureHfRepoReadyEdgeCases:
                 self.response = types.SimpleNamespace(status_code=500)
 
         retriever.hf_api.repo_info.side_effect = _ServerError()
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        assert "failed to prepare" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        assert "failed to prepare" in str(exc_info.value).lower()
 
     def test_401_in_update_repo_settings_logs_hint_and_continues(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
@@ -919,9 +924,8 @@ class TestEnsureHfRepoReadyEdgeCases:
                 self.response = types.SimpleNamespace(status_code=401)
 
         retriever.hf_api.update_repo_settings.side_effect = _Unauthorized()
-        res = retriever._ensure_hf_repo_ready()
-        # Must not fail – just log warning
-        assert res.is_ok()
+        # Must not raise – just log warning
+        assert retriever._ensure_hf_repo_ready() is None
 
     def test_401_in_repo_prepare_includes_whoami_in_error(self, mock_config_with_hf, mock_secrets):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
@@ -935,9 +939,10 @@ class TestEnsureHfRepoReadyEdgeCases:
         retriever.hf_api.repo_info.side_effect = _Unauthorized()
         retriever.hf_api.whoami.return_value = {"name": "user1", "orgs": ["org1"]}
 
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        err_msg = str(res.unwrap_err())
+        # 401 status maps to HFAuthFailedError; the rich hint lives in detail.
+        with pytest.raises((HFAuthFailedError, ModelLoadFailedError)) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        err_msg = str(exc_info.value)
         assert "401" in err_msg or "unauthorized" in err_msg.lower()
 
     def test_403_in_repo_prepare_includes_forbidden_hint(self, mock_config_with_hf, mock_secrets):
@@ -951,9 +956,9 @@ class TestEnsureHfRepoReadyEdgeCases:
         retriever.hf_api.repo_info.side_effect = _Forbidden()
         retriever.hf_api.whoami.return_value = {"name": "user1", "orgs": []}
 
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        err_msg = str(res.unwrap_err())
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        err_msg = str(exc_info.value)
         assert "403" in err_msg or "forbidden" in err_msg.lower()
 
     def test_whoami_raises_is_handled_gracefully(self, mock_config_with_hf, mock_secrets):
@@ -967,9 +972,9 @@ class TestEnsureHfRepoReadyEdgeCases:
         retriever.hf_api.repo_info.side_effect = _Unauthorized()
         retriever.hf_api.whoami.side_effect = RuntimeError("whoami failed")
 
-        res = retriever._ensure_hf_repo_ready()
-        assert res.is_failure()
-        assert "whoami_check_failed" in str(res.unwrap_err())
+        with pytest.raises((HFAuthFailedError, ModelLoadFailedError)) as exc_info:
+            retriever._ensure_hf_repo_ready()
+        assert "whoami_check_failed" in str(exc_info.value)
 
 
 class TestSha12:
@@ -990,7 +995,7 @@ class TestExecuteCloseMasterException:
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
 
-        monkeypatch.setattr(retriever, "_execute_retrieval", lambda ctx: Ok(ctx))
+        monkeypatch.setattr(retriever, "_execute_retrieval", lambda ctx: ctx)
 
         class _BoomSSH:
             def close_master(self):
@@ -1001,8 +1006,10 @@ class TestExecuteCloseMasterException:
         )
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4"}}
+        # Should not raise even though close_master errored.
         res = retriever.execute(ctx)
-        assert res.is_success()
+        # Even with our stubbed _execute_retrieval, execute returns the ctx.
+        assert res is not None
 
 
 class TestExecuteRetrievalTypeErrorFallback:
@@ -1018,15 +1025,15 @@ class TestExecuteRetrievalTypeErrorFallback:
             calls.append(dict(kwargs))
             if "context" in kwargs:
                 raise TypeError("unexpected keyword argument 'context'")
-            return Ok(None)
+            return None
 
-        monkeypatch.setattr(retriever, "_get_model_size", lambda: Ok(10.0))
+        monkeypatch.setattr(retriever, "_get_model_size", lambda: 10.0)
         monkeypatch.setattr(retriever, "_upload_to_hf_from_remote", upload_mock)
         monkeypatch.setattr("ryotenkai_control.pipeline.stages.model_retriever.SSHClient", MagicMock())
 
         ctx = {"GPU Deployer": {"ssh_host": "1.2.3.4", "ssh_port": 22, "workspace_path": "/w"}}
         res = retriever.execute(ctx)
-        assert res.is_success()
+        assert res is not None
         # First call had context kwarg, second did not
         assert len(calls) == 2
         assert "context" in calls[0]
@@ -1049,11 +1056,10 @@ class TestUploadToHfFromRemoteEdgeCases:
 
         retriever._ssh_client = _FailReadmeSSH()
         monkeypatch.setattr(retriever, "_generate_model_card", lambda ctx=None: "CARD")
-        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: Ok(None))
+        monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", lambda: None)
 
         # Should still succeed – README failure is non-fatal
-        res = retriever._upload_to_hf_from_remote()
-        assert res.is_success()
+        assert retriever._upload_to_hf_from_remote() is None
 
     def test_unexpected_exception_returns_err(self, mock_config_with_hf, mock_secrets, monkeypatch):
         retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
@@ -1066,9 +1072,9 @@ class TestUploadToHfFromRemoteEdgeCases:
 
         monkeypatch.setattr(retriever, "_ensure_hf_repo_ready", _raise)
 
-        res = retriever._upload_to_hf_from_remote()
-        assert res.is_failure()
-        assert "direct upload failed" in str(res.unwrap_err()).lower()
+        with pytest.raises(ModelLoadFailedError) as exc_info:
+            retriever._upload_to_hf_from_remote()
+        assert "direct upload failed" in str(exc_info.value).lower()
 
 
 class TestGenerateModelCardPhaseMetrics:

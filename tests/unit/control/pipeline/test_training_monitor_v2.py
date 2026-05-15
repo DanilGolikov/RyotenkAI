@@ -36,6 +36,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ryotenkai_shared.errors import InternalError, RyotenkAIError, TrainingFailedError
+
 from tests._fakes.training_monitor import make_monitor_with_log_manager
 
 
@@ -143,10 +145,9 @@ def _make_client(events: list[dict[str, Any]] | None = None):
 class TestExecuteContract:
     def test_missing_handles_returns_err(self) -> None:
         monitor = _make_monitor()
-        result = monitor.execute({})
-        assert result.is_err()
-        err = result.unwrap_err()
-        assert err.code == "MONITOR_LAUNCHER_NOT_WIRED"
+        with pytest.raises(InternalError) as exc_info:
+            monitor.execute({})
+        assert exc_info.value.context.get("legacy_code") == "MONITOR_LAUNCHER_NOT_WIRED"
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +170,7 @@ class TestMockMode:
             "GPU Deployer": {"provider_info": {"mock": True}},
         }
         result = monitor.execute(ctx)
-        assert result.is_ok()
-        assert result.unwrap()["mock"] is True
+        assert result["mock"] is True
         assert started and completed
 
 
@@ -195,8 +195,7 @@ class TestEventDispatch:
             },
         ])
         result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_ok()
-        assert result.unwrap()["status"] == "completed"
+        assert result["status"] == "completed"
         assert len(completions) == 1
         # Phase 11.E — teardown moved to cleanup() so the SSH tunnel
         # + JobClient stay alive through ModelRetriever.
@@ -217,9 +216,9 @@ class TestEventDispatch:
                             "cancellation_requested": False},
             },
         ])
-        result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_err()
-        assert result.unwrap_err().code == "TRAINING_FAILED"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client))
+        assert exc_info.value.context.get("legacy_code") == "TRAINING_FAILED"
         assert failures and "exit_code=137" in failures[0][0]
 
     def test_trainer_exited_cancelled(self) -> None:
@@ -231,9 +230,9 @@ class TestEventDispatch:
                             "cancellation_requested": True},
             },
         ])
-        result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_err()
-        assert result.unwrap_err().code == "TRAINING_CANCELLED"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client))
+        assert exc_info.value.context.get("legacy_code") == "TRAINING_CANCELLED"
 
     def test_health_snapshot_fires_resource_check(self) -> None:
         seen: list[dict] = []
@@ -251,7 +250,6 @@ class TestEventDispatch:
             },
         ])
         result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_ok()
         assert seen == [{"gpu_util_percent": 80.0}]
 
 
@@ -270,9 +268,9 @@ class TestStreamErrors:
 
         client = SimpleNamespace(subscribe_events=_raise, aclose=AsyncMock(return_value=None))
 
-        result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_JOB_NOT_FOUND"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client))
+        assert exc_info.value.context.get("legacy_code") == "MONITOR_JOB_NOT_FOUND"
 
     def test_generic_client_error_propagates(self) -> None:
         monitor = _make_monitor()
@@ -283,9 +281,9 @@ class TestStreamErrors:
 
         client = SimpleNamespace(subscribe_events=_raise, aclose=AsyncMock(return_value=None))
 
-        result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_CLIENT_ERROR"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client))
+        assert exc_info.value.context.get("legacy_code") == "MONITOR_CLIENT_ERROR"
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +305,6 @@ class TestReplayTruncated:
         client.aclose = AsyncMock(return_value=None)
 
         result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_ok()
         client.get_status.assert_awaited()
 
     def test_truncated_with_non_terminal_returns_err(self) -> None:
@@ -322,9 +319,9 @@ class TestReplayTruncated:
         client.get_status = AsyncMock(return_value={"state": "running"})
         client.aclose = AsyncMock(return_value=None)
 
-        result = monitor.execute(_ctx_with_handles(client))
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_REPLAY_TRUNCATED"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client))
+        assert exc_info.value.context.get("legacy_code") == "MONITOR_REPLAY_TRUNCATED"
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +344,6 @@ class TestTunnelTeardown:
         tunnel.close = AsyncMock(return_value=None)
 
         result = monitor.execute(_ctx_with_handles(client, tunnel=tunnel))
-        assert result.is_ok()
         # Execute does NOT close — kept alive for downstream stages.
         tunnel.close.assert_not_awaited()
         client.aclose.assert_not_awaited()
@@ -367,11 +363,11 @@ class TestTunnelTeardown:
 
         tunnel = SimpleNamespace(close=AsyncMock(side_effect=RuntimeError("tunnel boom")))
 
-        result = monitor.execute(_ctx_with_handles(client, tunnel=tunnel))
         # Original JobNotFoundError → MONITOR_JOB_NOT_FOUND, NOT
         # masked by tunnel-close noise.
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_JOB_NOT_FOUND"
+        with pytest.raises(TrainingFailedError) as exc_info:
+            monitor.execute(_ctx_with_handles(client, tunnel=tunnel))
+        assert exc_info.value.context.get("legacy_code") == "MONITOR_JOB_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +581,8 @@ class TestPeriodicLogDownload:
         result = _asyncio.run(
             monitor._watch_and_download(client, "j-1", log_manager),
         )
-        assert result.is_ok()
+        # Post-Batch-10: _watch_and_download returns dict on success.
+        assert result["status"] == "completed"
         # The downloader loop may not have fired (sleep elapsed before
         # cancel), but the FINAL flush is mandatory.
         final_calls = [
@@ -610,7 +607,7 @@ class TestPeriodicLogDownload:
         result = _asyncio.run(
             monitor._watch_and_download(client, "j-1", None),
         )
-        assert result.is_ok()
+        assert result["status"] == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -804,10 +801,14 @@ class TestPostMortemDiagnostics:
         # Operator pressed stop — no crash to investigate.
         monitor = _make_monitor()
         monitor._ssh_client = self._fake_ssh()
-        monitor._handle_trainer_exited({
-            "exit_code": 137, "signal": "SIGKILL",
-            "cancellation_requested": True,
-        })
+        # Post-Batch-10: cancelled exit raises TrainingFailedError. The
+        # invariant under test is "no postmortem SSH probes were made"
+        # — the raise itself is expected, suppress.
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 137, "signal": "SIGKILL",
+                "cancellation_requested": True,
+            })
         assert monitor._ssh_client.exec_command.call_count == 0
 
     def test_nonzero_exit_runs_full_probe_set(self) -> None:
@@ -841,9 +842,12 @@ class TestPostMortemDiagnostics:
         client.get_diagnostics = AsyncMock(return_value=resp)
 
         monitor = make_monitor_with_log_manager(_client=client)
-        monitor._handle_trainer_exited({
-            "exit_code": 1, "signal": None, "cancellation_requested": False,
-        })
+        # Post-Batch-10: non-zero trainer exit raises; we care about
+        # the postmortem side-effects (HTTP probe call), so suppress.
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 1, "signal": None, "cancellation_requested": False,
+            })
         # Single HTTP call replaces the three SSH probes.
         assert client.get_diagnostics.await_count == 1
 
@@ -859,10 +863,13 @@ class TestPostMortemDiagnostics:
         client.get_diagnostics = AsyncMock(return_value=DiagnosticsResponse())
 
         monitor = make_monitor_with_log_manager(_client=client)
-        monitor._handle_trainer_exited({
-            "exit_code": 0, "signal": "SIGTERM",
-            "cancellation_requested": False,
-        })
+        # exit_code=0 with signal=SIGTERM is still a non-zero outcome →
+        # _handle_trainer_exited raises after the probe fires.
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 0, "signal": "SIGTERM",
+                "cancellation_requested": False,
+            })
         assert client.get_diagnostics.await_count == 1
 
     def test_probe_failure_does_not_abort_remaining_probes(
@@ -905,9 +912,12 @@ class TestPostMortemDiagnostics:
         client.get_diagnostics = AsyncMock(return_value=resp)
 
         monitor = make_monitor_with_log_manager(_client=client)
-        monitor._handle_trainer_exited({
-            "exit_code": 1, "signal": None, "cancellation_requested": False,
-        })
+        # Probe failures + render must still happen even though the
+        # raise terminates _handle_trainer_exited at the very end.
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 1, "signal": None, "cancellation_requested": False,
+            })
 
         def _render(msg, args):
             if not args:
@@ -933,10 +943,13 @@ class TestPostMortemDiagnostics:
     def test_no_ssh_client_makes_postmortem_a_noop(self) -> None:
         # Single-node / mock flow — _ssh_client is None.
         monitor = _make_monitor()
-        # Should not raise.
-        monitor._handle_trainer_exited({
-            "exit_code": 1, "signal": None, "cancellation_requested": False,
-        })
+        # Post-Batch-10: non-zero exit raises after the postmortem
+        # path runs. Test invariant is "no probes attempted when
+        # no client wired" — suppress the raise.
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 1, "signal": None, "cancellation_requested": False,
+            })
 
     def test_log_lines_carry_postmortem_prefix(
         self, monkeypatch: pytest.MonkeyPatch,
@@ -968,10 +981,11 @@ class TestPostMortemDiagnostics:
         client.get_diagnostics = AsyncMock(return_value=resp)
 
         monitor = make_monitor_with_log_manager(_client=client)
-        monitor._handle_trainer_exited({
-            "exit_code": 137, "signal": None,
-            "cancellation_requested": False,
-        })
+        with contextlib.suppress(TrainingFailedError):
+            monitor._handle_trainer_exited({
+                "exit_code": 137, "signal": None,
+                "cancellation_requested": False,
+            })
         # logger.info is called both with an already-formatted f-string
         # (no args) AND with %-format strings; render conditionally.
         def _render(msg, args):
@@ -1082,9 +1096,9 @@ class TestPodResilience:
         result = monitor._recover_pod_if_needed(
             _monitor_mod.JobClientError("boom"),
         )
+        # Post-Batch-10: _recover_pod_if_needed returns RyotenkAIError | None.
         assert result is not None
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_POD_TERMINATED"
+        assert result.context.get("legacy_code") == "MONITOR_POD_TERMINATED"
         assert calls == ["pod-1"]
 
     def test_running_pod_returns_none_for_caller_to_propagate(
@@ -1142,8 +1156,7 @@ class TestPodResilience:
             _monitor_mod.JobClientError("boom"),
         )
         assert result is not None
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_POD_RECOVERED"
+        assert result.context.get("legacy_code") == "MONITOR_POD_RECOVERED"
         assert calls == ["pod-1"]
 
     def test_wake_up_failure_surfaces_specific_code(self) -> None:
@@ -1165,8 +1178,7 @@ class TestPodResilience:
             _monitor_mod.JobClientError("boom"),
         )
         assert result is not None
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_POD_WAKE_FAILED"
+        assert result.context.get("legacy_code") == "MONITOR_POD_WAKE_FAILED"
 
     def test_attempt_cap_returns_exhausted_err(self) -> None:
         # Once :attr:`_recovery_attempts` reaches
@@ -1190,8 +1202,7 @@ class TestPodResilience:
             _monitor_mod.JobClientError("boom"),
         )
         assert result is not None
-        assert result.is_err()
-        assert result.unwrap_err().code == "MONITOR_RECOVERY_EXHAUSTED"
+        assert result.context.get("legacy_code") == "MONITOR_RECOVERY_EXHAUSTED"
         assert call_count["n"] == 0
 
 
@@ -1449,7 +1460,7 @@ class TestFinalFlushDebugLogs:
         lm = _FakeLogManager(download_results=[True])
 
         result = _asyncio.run(monitor._watch_and_download(client, "j-1", lm))
-        assert result.is_ok()
+        assert result["status"] == "completed"
         assert any("final trainer.stdio.log flush ok" in line for line in captured)
 
     def test_final_flush_no_data_emits_debug(

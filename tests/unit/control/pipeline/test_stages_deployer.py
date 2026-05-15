@@ -23,7 +23,7 @@ import pytest
 
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
-from ryotenkai_shared.utils.result import Failure, ProviderError, Success
+from ryotenkai_shared.utils.result import Failure, Success  # used by fixtures returning provider Results
 
 # =========================================================================
 # HELPER CLASSES
@@ -178,15 +178,16 @@ def test_deployer_with_callbacks(mock_tdm_class, mock_config_with_gpu, mock_secr
 def test_execute_missing_run_context_returns_error(
     mock_tdm_class, mock_config_with_gpu, mock_secrets
 ):
-    """Line 173: execute() without RunContext in context → ProviderError MISSING_RUN_CONTEXT."""
+    """execute() without RunContext in context → raises InternalError carrying
+    legacy_code MISSING_RUN_CONTEXT."""
+    from ryotenkai_shared.errors import InternalError
+
     deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets)
 
-    result = deployer.execute({"no_run": "here"})
-
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert err.code == "MISSING_RUN_CONTEXT"
-    assert "RunContext" in err.message
+    with pytest.raises(InternalError) as exc_info:
+        deployer.execute({"no_run": "here"})
+    assert exc_info.value.context.get("legacy_code") == "MISSING_RUN_CONTEXT"
+    assert "RunContext" in (exc_info.value.detail or "")
 
 
 @patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")

@@ -121,18 +121,18 @@ def test_inference_deployer_skips_when_disabled() -> None:
     cfg = _load_test_config()
     cfg.inference.enabled = False
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
-    res = stage.execute({})
-    assert res.is_success()
-    ctx = res.unwrap()
+    ctx = stage.execute({})
     assert ctx[StageNames.INFERENCE_DEPLOYER]["inference_skipped"] is True
 
 
 def test_inference_deployer_fails_when_model_source_missing() -> None:
+    from ryotenkai_shared.errors import ModelLoadFailedError
+
     cfg = _load_test_config()
     cfg.inference.enabled = True
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
-    res = stage.execute({})
-    assert res.is_failure()
+    with pytest.raises(ModelLoadFailedError):
+        stage.execute({})
 
 
 def test_chat_script_checks_status_before_chat(tmp_path: Path) -> None:
@@ -234,7 +234,9 @@ def test_chat_script_reports_when_container_not_running(tmp_path: Path) -> None:
 
 
 def test_deploy_fails_when_run_context_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Negative: context without RunContext yields Err."""
+    """Negative: context without RunContext raises InternalError."""
+    from ryotenkai_shared.errors import InternalError
+
     cfg = _load_test_config()
     cfg.inference.enabled = True
     cfg.inference.common.model_source = "test/repo"
@@ -244,9 +246,9 @@ def test_deploy_fails_when_run_context_missing(monkeypatch: pytest.MonkeyPatch) 
         "mlflow_parent_run_id": None,
     }
 
-    res = stage.execute(context)
-    assert res.is_failure()
-    assert "RunContext" in str(res.unwrap_err())
+    with pytest.raises(InternalError) as exc_info:
+        stage.execute(context)
+    assert "RunContext" in (exc_info.value.detail or "")
 
 
 # =============================================================================
