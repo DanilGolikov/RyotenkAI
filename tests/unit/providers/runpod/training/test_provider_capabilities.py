@@ -48,7 +48,6 @@ from ryotenkai_providers.training.interfaces import (
 )
 from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
 from ryotenkai_shared.errors import ProviderUnavailableError
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
 
 from tests._fakes.provider_context import attach_manifest_capabilities
 
@@ -290,7 +289,7 @@ class TestLifecycleActions:
 
 
 # ---------------------------------------------------------------------------
-# 5. Dependency errors — transport returns Err propagates
+# 5. Dependency errors — transport raises typed exception propagates
 # ---------------------------------------------------------------------------
 
 

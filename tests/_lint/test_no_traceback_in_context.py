@@ -51,8 +51,6 @@ _BAD_KEYS: frozenset[str] = frozenset({
 #
 # Entries:
 #
-# * ``shared/.../utils/result.py`` -- AppError's ``details`` dict.
-#   Deleted entirely in Phase A2.
 # * ``community/.../loader.py`` and ``libs.py`` -- the plugin loader
 #   populates a ``LoadFailure`` dataclass (NOT a raised exception)
 #   with ``traceback=...`` for developer drilldown. The field is
@@ -60,9 +58,11 @@ _BAD_KEYS: frozenset[str] = frozenset({
 #   never crosses an HTTP boundary; the sentinel's protection is
 #   moot for this surface. If/when LoadFailure is replaced by a
 #   typed exception (Phase F), this entry can be removed.
+#
+# Phase A2 finale (2026-05-16): the ``shared/.../utils/result.py``
+# entry was retired together with the file it pinned.
 _LEGACY_ALLOWLIST: frozenset[str] = frozenset({
     # Path relative to packages/ root.
-    "shared/src/ryotenkai_shared/utils/result.py",
     "community/src/ryotenkai_community/loader.py",
     "community/src/ryotenkai_community/libs.py",
 })

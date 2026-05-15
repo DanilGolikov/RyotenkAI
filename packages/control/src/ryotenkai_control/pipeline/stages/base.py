@@ -17,13 +17,10 @@ The legacy ``Result[T, AppError]`` return shape was migrated to raise-based:
 * ``teardown(ctx) -> None`` — raises on failure (best-effort; swallowed by run()).
 * ``run(ctx) -> dict[str, Any]`` — orchestrates setup → execute → teardown.
 
-Phase A2 Batch 10 (2026-05-15) — every control-side pipeline stage now
-returns ``dict[str, Any]`` or raises :class:`RyotenkAIError` directly.
-The :func:`_adapt_legacy_to_typed` shim is kept as a **defensive guard**
-for test mocks that still wire ``stage.run.return_value = Ok(...)`` (used
-heavily in ``tests/unit/control/test_pipeline_orchestrator.py``). The
-shim is a pure pass-through for plain dicts and never affects production
-flow now that no stage actually returns ``Result``.
+Phase A2 finale (2026-05-16) — the ``_adapt_legacy_to_typed`` shim that
+papered over the cutover is gone. Every control-side pipeline stage
+returns ``dict[str, Any]`` or raises :class:`RyotenkAIError` directly;
+non-dict ``execute`` returns are normalised here for safety.
 """
 
 from __future__ import annotations
@@ -36,36 +33,6 @@ from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig
-
-
-def _adapt_legacy_to_typed(value: Any) -> dict[str, Any]:
-    """Backward-compat shim — pass-through for dicts; unwrap legacy
-    ``Result[T, AppError]`` returns from test mocks; normalise everything
-    else to ``{}``.
-
-    No production stage returns ``Result`` after Phase A2 Batch 10, so
-    the legacy-unwrap branches only fire for unit tests that mock
-    ``stage.run.return_value = Ok(...)`` for orchestrator coverage.
-    Failure mocks raise :class:`InternalError` carrying the legacy
-    ``code``/``message`` on ``context``.
-    """
-    if hasattr(value, "is_failure") and callable(value.is_failure):
-        if value.is_failure():
-            err = value.unwrap_err()
-            legacy_code = getattr(err, "code", "UNKNOWN")
-            legacy_message = getattr(err, "message", None) or str(err)
-            raise InternalError(
-                detail=legacy_message,
-                context={
-                    "legacy_code": legacy_code,
-                    "legacy_details": getattr(err, "details", None),
-                },
-            )
-        if hasattr(value, "unwrap") and callable(value.unwrap):
-            unwrapped = value.unwrap()
-            return unwrapped if isinstance(unwrapped, dict) else {}
-        return {}
-    return value if isinstance(value, dict) else {}
 
 
 class PipelineStage(ABC):
@@ -238,10 +205,11 @@ class PipelineStage(ABC):
         # Step 2: Execute (+ teardown finally)
         try:
             raw = self.execute(context)
-            # ``_adapt_legacy_to_typed`` normalises return value to dict.
-            # Production stages already return dict; the shim only matters
-            # for test mocks that still wire ``Ok(...)`` /``Err(...)``.
-            output = _adapt_legacy_to_typed(raw)
+            # Normalise non-dict ``execute`` returns to ``{}`` — production
+            # stages already return dict, this is a defensive guard for
+            # misbehaving stages so ``context.update(out)`` upstream stays
+            # safe.
+            output: dict[str, Any] = raw if isinstance(raw, dict) else {}
             self.log_end(True)
             return output
         except RyotenkAIError:
@@ -271,4 +239,4 @@ class PipelineStage(ABC):
                     logger.warning(f"Teardown error in {self.stage_name}: {exc}")
 
 
-__all__ = ["PipelineStage", "_adapt_legacy_to_typed"]
+__all__ = ["PipelineStage"]

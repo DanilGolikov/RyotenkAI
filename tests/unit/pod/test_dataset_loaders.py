@@ -830,9 +830,9 @@ class MockDatasetLoader:
         return self.mock_dataset
 
     def load_for_phase(self, _phase: Any) -> Any:
-        from ryotenkai_shared.utils.result import Ok
-
-        return Ok(self.mock_dataset)
+        # Phase A2 finale (2026-05-16): load_for_phase returns Dataset
+        # directly; loaders raise typed DatasetLoadFailedError on failure.
+        return self.mock_dataset
 
     def validate_source(self, source: str) -> bool:
         self.validate_calls.append(source)

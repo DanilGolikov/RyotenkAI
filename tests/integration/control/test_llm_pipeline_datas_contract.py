@@ -24,7 +24,6 @@ pytestmark = pytest.mark.requires_external_data
 
 from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
 from ryotenkai_shared.config import PipelineConfig, validate_strategy_chain
-from ryotenkai_shared.utils.result import Ok
 
 
 def _is_new_dataset_schema(path: Path) -> bool:
@@ -180,13 +179,12 @@ def test_deployment_manager_builds_local_abs_to_remote_rel_upload_map(
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (True, "", "")
 
+    # Phase A2: raise-based; internal upload helpers now return None and raise on failure.
     with (
-        patch.object(deployment, "_upload_files_batch", return_value=Ok(None)) as mock_batch,
-        patch.object(deployment, "_sync_source_code", return_value=Ok(None)),
+        patch.object(deployment, "_upload_files_batch", return_value=None) as mock_batch,
+        patch.object(deployment, "_sync_source_code", return_value=None),
     ):
-        result = deployment.deploy_files(ssh_client, {"config_path": str(config_paths["test_3"])})
-
-    assert result.is_ok()
+        deployment.deploy_files(ssh_client, {"config_path": str(config_paths["test_3"])})
 
     files_to_upload: list[tuple[str, str]] = mock_batch.call_args[0][1]
 
@@ -284,9 +282,12 @@ datasets:
     deployment = TrainingDeploymentManager(config=cfg, secrets=_DummySecrets())
 
     ssh_client = SimpleNamespace()
-    res = deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
-    assert res.is_err()
-    err = str(res.unwrap_err())
+    # Phase A2: raise-based; deploy_files raises typed error on missing dataset.
+    from ryotenkai_shared.errors import RyotenkAIError
+
+    with pytest.raises(RyotenkAIError) as exc_info:
+        deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
+    err = exc_info.value.detail or str(exc_info.value)
     assert "Dataset file not found" in err
     assert missing_rel in err
 

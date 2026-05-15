@@ -1,8 +1,8 @@
 """Phase 6.3b — :class:`TrainingMonitor` (post-rewrite) contract.
 
-Covers the new JobClient/WebSocket-based monitor. The old SSH-poll
-flow is exercised in :file:`test_stages_monitor.py` (skipped post
-6.3b).
+Covers ``ryotenkai_control.pipeline.stages.training_monitor`` (new
+JobClient/WebSocket-based monitor). The old SSH-poll flow's legacy
+suite was deleted in Phase A2 finale (sharded-stargazing-wigderson).
 
 Coverage:
 - TestExecuteContract     missing job_client/job_id → MONITOR_LAUNCHER_NOT_WIRED

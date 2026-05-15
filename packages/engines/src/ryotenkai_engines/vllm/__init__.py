@@ -6,10 +6,9 @@ Public API (lazy):
 
 Both are imported lazily on attribute access to avoid the
 ``shared → engines → shared`` circular at module init: ``runtime.py``
-transitively pulls ``ryotenkai_shared.utils.result``, which itself
-imports ``ryotenkai_shared.config`` — and during a fresh import of
-``ryotenkai_shared.config.inference``, the loader is mid-init and
-the import would fail.
+transitively pulls ``ryotenkai_shared.config`` — and during a fresh
+import of ``ryotenkai_shared.config.inference``, the loader is mid-init
+and the import would fail.
 
 Direct submodule imports work as expected:
     from ryotenkai_engines.vllm.config import VLLMEngineConfig

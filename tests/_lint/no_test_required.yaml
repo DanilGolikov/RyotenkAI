@@ -13,6 +13,8 @@ allow:
   # Pure type/constant modules — no behavior to test
   - path: packages/shared/src/ryotenkai_shared/constants.py
     reason: "Constant module — only declarative names; behavior verified by consumers."
+  - path: packages/control/src/ryotenkai_control/pipeline/stages/managers/deployment_constants.py
+    reason: "Constant module — only deployment timeout/path/truncation numbers; behavior verified by deployment manager tests."
   # Aggregator modules that only re-export — covered by package-level imports
   - path: packages/shared/src/ryotenkai_shared/config/__init__.py
     reason: "Pure re-export aggregator; consumers test the actual config types."

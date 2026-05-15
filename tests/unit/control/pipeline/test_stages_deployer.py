@@ -23,7 +23,6 @@ import pytest
 
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
-from ryotenkai_shared.utils.result import Failure, Success  # used by fixtures returning provider Results
 
 # =========================================================================
 # HELPER CLASSES
@@ -90,9 +89,9 @@ def mock_provider():
     provider.provider_type = "cloud"
     provider.get_base_workspace.return_value = "/workspace"
 
-    # Default: successful connect
+    # Default: successful connect (Phase A2: raise-based, returns SSHInfo directly)
     ssh_info = MockSSHInfo()
-    provider.connect.return_value = Success(ssh_info)
+    provider.connect.return_value = ssh_info
     provider.disconnect.return_value = None
 
     return provider
@@ -103,10 +102,10 @@ def mock_deployment_manager():
     """Mock deployment manager."""
     manager = MagicMock()
 
-    # Default: successful operations
-    manager.deploy_code.return_value = Success(None)
-    manager.install_dependencies.return_value = Success(None)
-    manager.start_training.return_value = Success({"mode": "venv"})
+    # Default: successful operations (Phase A2: raise-based, methods return None / dict)
+    manager.deploy_code.return_value = None
+    manager.install_dependencies.return_value = None
+    manager.start_training.return_value = {"mode": "venv"}
 
     return manager
 

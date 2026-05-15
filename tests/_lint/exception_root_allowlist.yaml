@@ -38,27 +38,8 @@ allow:
   - path: ryotenkai_providers.registry.ProviderRegistryError
     reason: "phase-A1-pending-migration: will be migrated in Phase E (provider translation)"
 
-  # ----- AppError + Result legacy (Phase A2 destructive) -----------
-  - path: ryotenkai_shared.utils.result.ConfigError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.ConfigDriftError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.TrainingError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.DatasetError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.ModelError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.StrategyError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.OOMError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.DataLoaderError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.ProviderError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
-  - path: ryotenkai_shared.utils.result.InferenceError
-    reason: "phase-A1-pending-migration: AppError subclass; deleted in Phase A2"
+  # ----- AppError + Result legacy: retired in Phase A2 finale -------
+  # (entries removed together with the deleted result.py module)
 
   # ----- shared clients (Phase E or F) ------------------------------
   - path: ryotenkai_shared.utils.clients.problem_details.TransportError

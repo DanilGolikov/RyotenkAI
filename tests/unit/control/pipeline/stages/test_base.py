@@ -22,16 +22,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.base import (
-    PipelineStage,
-    _adapt_legacy_to_typed,
-)
+from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_shared.errors import (
     InternalError,
     PipelineStageFailedError,
     RyotenkAIError,
 )
-from ryotenkai_shared.utils.result import AppError, Failure, Success
 
 # =========================================================================
 # CONCRETE IMPLEMENTATIONS FOR TESTING
@@ -157,25 +153,6 @@ class ConcreteStageReturnsNonDict(PipelineStage):
 
     def execute(self, context: dict[str, Any]):  # type: ignore[override]
         return None  # type: ignore[return-value]
-
-
-class ConcreteLegacyStage(PipelineStage):
-    """Pre-Batch-7 stage shape: returns legacy ``Result[T, AppError]``.
-
-    Phase A2 Batch 10 — no production stage actually returns Result any
-    more, but the ``_adapt_legacy_to_typed`` shim is kept so test mocks
-    using ``stage.run.return_value = Ok(...)`` (extensive in
-    ``test_pipeline_orchestrator.py``) still work.
-    """
-
-    def __init__(self, config: Any, stage_name: str, *, fail: bool = False):
-        super().__init__(config=config, stage_name=stage_name)
-        self._fail = fail
-
-    def execute(self, context: dict[str, Any]):  # type: ignore[override]
-        if self._fail:
-            return Failure(AppError(message="legacy boom", code="LEGACY_X"))
-        return Success({"legacy": True})
 
 
 # =========================================================================
@@ -325,7 +302,7 @@ class TestInvariants:
 
 
 # =========================================================================
-# 5. DEPENDENCY ERRORS (legacy Result shim)
+# 5. DEPENDENCY ERRORS (non-dict normalisation)
 # =========================================================================
 
 
@@ -339,42 +316,6 @@ class TestNonDictReturnNormalisation:
         stage = ConcreteStageReturnsNonDict(config=mock_config, stage_name="N")
         out = stage.run({})
         assert out == {}
-
-
-class TestLegacyShim:
-    """Backward-compat shim — only relevant for test mocks. No production
-    stage returns Result after Phase A2 Batch 10."""
-
-    def test_shim_passes_through_dict(self):
-        assert _adapt_legacy_to_typed({"a": 1}) == {"a": 1}
-
-    def test_shim_non_dict_non_result_becomes_empty_dict(self):
-        assert _adapt_legacy_to_typed(None) == {}
-        assert _adapt_legacy_to_typed(42) == {}
-
-    def test_shim_unwraps_legacy_success(self):
-        assert _adapt_legacy_to_typed(Success({"k": 1})) == {"k": 1}
-
-    def test_shim_raises_internal_error_for_legacy_failure(self):
-        result = Failure(AppError(message="legacy boom", code="LEGACY_X"))
-        with pytest.raises(InternalError) as ei:
-            _adapt_legacy_to_typed(result)
-        assert "legacy boom" in (ei.value.detail or "")
-        assert ei.value.context["legacy_code"] == "LEGACY_X"
-
-    def test_legacy_stage_success_unwrapped_by_run(self, mock_config):
-        stage = ConcreteLegacyStage(config=mock_config, stage_name="L")
-        out = stage.run({})
-        assert out == {"legacy": True}
-
-    def test_legacy_stage_failure_raised_by_run(self, mock_config):
-        stage = ConcreteLegacyStage(config=mock_config, stage_name="L", fail=True)
-        with pytest.raises(InternalError) as ei:
-            stage.run({})
-        assert ei.value.context["legacy_code"] == "LEGACY_X"
-
-    def test_shim_unwrap_returns_empty_dict_for_non_dict_success_value(self):
-        assert _adapt_legacy_to_typed(Success(None)) == {}
 
 
 # =========================================================================
