@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from datasets import Dataset
 
     from ryotenkai_shared.config import PipelineConfig
-    from ryotenkai_shared.utils.result import Result, StrategyError
 
 
 @dataclass
@@ -69,7 +68,7 @@ class TrainingStrategy(ABC):
         logger.info(f"Initialized {self.__class__.__name__}")
 
     @abstractmethod
-    def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
+    def validate_dataset(self, dataset: Dataset) -> None:
         """
         Validate dataset column format for this strategy.
 
@@ -79,8 +78,8 @@ class TrainingStrategy(ABC):
         Args:
             dataset: Dataset to validate
 
-        Returns:
-            Result[bool, StrategyError]: True if valid, error otherwise
+        Raises:
+            DatasetValidationFailedError: When required columns are missing.
         """
         pass
 

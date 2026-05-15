@@ -1,4 +1,10 @@
-"""Unit tests for ConfigDriftValidator."""
+"""Unit tests for ConfigDriftValidator.
+
+Phase A2 Batch 7: ``validate_drift`` now raises ``ConfigDriftError`` from
+the typed-exception hierarchy (``ryotenkai_shared.errors``) instead of
+returning an ``AppError``. ``context["scope"]`` carries the same scope
+identifier that used to live on ``AppError.details["scope"]``.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +15,7 @@ import pytest
 from ryotenkai_control.pipeline.config_drift.validator import ConfigDriftValidator
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import PipelineState, StageRunState
-from ryotenkai_shared.utils.result import ConfigDriftError
+from ryotenkai_shared.errors import ConfigDriftError
 
 
 # -----------------------------------------------------------------------------
@@ -111,6 +117,7 @@ def _hashes(
 
 def test_no_drift_returns_none(validator: ConfigDriftValidator) -> None:
     state = _build_state(training_critical="tc", late_stage="ls", model_dataset="md")
+    # No drift → no exception, returns None.
     assert (
         validator.validate_drift(
             state=state,
@@ -124,30 +131,30 @@ def test_no_drift_returns_none(validator: ConfigDriftValidator) -> None:
 
 def test_model_dataset_drift_is_fatal(validator: ConfigDriftValidator) -> None:
     state = _build_state(model_dataset="OLD", training_critical="tc", late_stage="ls")
-    err = validator.validate_drift(
-        state=state,
-        start_stage_name=StageNames.DATASET_VALIDATOR,
-        config_hashes=_hashes(),
-        resume=True,
-    )
-    assert isinstance(err, ConfigDriftError)
+    with pytest.raises(ConfigDriftError) as excinfo:
+        validator.validate_drift(
+            state=state,
+            start_stage_name=StageNames.DATASET_VALIDATOR,
+            config_hashes=_hashes(),
+            resume=True,
+        )
     # Modern state: scope should be the specific hash that drifted.
-    assert err.details["scope"] == "model_dataset"
-    assert "model_dataset" in err.message
+    assert excinfo.value.context["scope"] == "model_dataset"
+    assert "model_dataset" in (excinfo.value.detail or "")
 
 
 def test_legacy_state_uses_training_critical_hash(validator: ConfigDriftValidator) -> None:
     """State without model_dataset_config_hash falls back to training_critical."""
     state = _build_state(training_critical="OLD", late_stage="ls", model_dataset="")
-    err = validator.validate_drift(
-        state=state,
-        start_stage_name=StageNames.DATASET_VALIDATOR,
-        config_hashes=_hashes(),
-        resume=True,
-    )
-    assert isinstance(err, ConfigDriftError)
+    with pytest.raises(ConfigDriftError) as excinfo:
+        validator.validate_drift(
+            state=state,
+            start_stage_name=StageNames.DATASET_VALIDATOR,
+            config_hashes=_hashes(),
+            resume=True,
+        )
     # Legacy fallback scope.
-    assert err.details["scope"] == "training_critical"
+    assert excinfo.value.context["scope"] == "training_critical"
 
 
 def test_legacy_state_matching_training_critical_is_ok(validator: ConfigDriftValidator) -> None:
@@ -165,14 +172,14 @@ def test_legacy_state_matching_training_critical_is_ok(validator: ConfigDriftVal
 
 def test_late_stage_drift_blocks_full_resume(validator: ConfigDriftValidator) -> None:
     state = _build_state(training_critical="tc", late_stage="OLD", model_dataset="md")
-    err = validator.validate_drift(
-        state=state,
-        start_stage_name=StageNames.DATASET_VALIDATOR,
-        config_hashes=_hashes(),
-        resume=True,
-    )
-    assert isinstance(err, ConfigDriftError)
-    assert err.details["scope"] == "late_stage"
+    with pytest.raises(ConfigDriftError) as excinfo:
+        validator.validate_drift(
+            state=state,
+            start_stage_name=StageNames.DATASET_VALIDATOR,
+            config_hashes=_hashes(),
+            resume=True,
+        )
+    assert excinfo.value.context["scope"] == "late_stage"
 
 
 def test_late_stage_drift_allowed_for_inference_restart(validator: ConfigDriftValidator) -> None:
@@ -206,10 +213,10 @@ def test_late_stage_drift_still_fatal_when_resume_true_from_inference(
 ) -> None:
     """Even restart-from-Inference-Deployer is blocked when the user sets resume=True."""
     state = _build_state(training_critical="tc", late_stage="OLD", model_dataset="md")
-    err = validator.validate_drift(
-        state=state,
-        start_stage_name=StageNames.INFERENCE_DEPLOYER,
-        config_hashes=_hashes(),
-        resume=True,
-    )
-    assert isinstance(err, ConfigDriftError)
+    with pytest.raises(ConfigDriftError):
+        validator.validate_drift(
+            state=state,
+            start_stage_name=StageNames.INFERENCE_DEPLOYER,
+            config_hashes=_hashes(),
+            resume=True,
+        )

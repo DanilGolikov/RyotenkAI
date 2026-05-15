@@ -26,8 +26,8 @@ from ryotenkai_control.pipeline.stages.managers.deployment.runner_launcher impor
     _build_launch_command,
     launch_runner,
 )
+from ryotenkai_shared.errors import SSHExecFailedError
 from ryotenkai_shared.utils.pod_layout import PodLayout
-from ryotenkai_shared.utils.result import ProviderError
 
 # Canonical run-scoped workspace used in tests — the rsync target
 # CodeSyncer dropped ``src/...`` into for this run. The thin image
@@ -63,25 +63,26 @@ class _SSHStub:
 # ---------------------------------------------------------------------------
 
 
-def test_launch_runner_success_returns_ok() -> None:
-    """SSH command succeeded and 'runner ready' in stdout → Ok(None)."""
+def test_launch_runner_success_returns_none() -> None:
+    """SSH command succeeded and 'runner ready' in stdout → returns None.
+
+    Phase A2 Batch 9 (raise-based): success returns ``None`` (no
+    Result wrapper); failure raises :class:`SSHExecFailedError`.
+    """
     ssh = _SSHStub(success=True, stdout="runner ready", stderr="")
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_ok(), f"expected Ok, got {result!r}"
-    assert result.unwrap() is None
+    assert launch_runner(ssh, pod_layout=_layout()) is None  # type: ignore[arg-type]
 
 
 def test_launch_runner_idempotent_when_already_running() -> None:
     """If the curl-probe finds the runner already healthy on its
     port, the script exits 0 with stdout=='runner already running'
-    and we treat that as Ok — no duplicate launch."""
+    and we treat that as success — no duplicate launch."""
     ssh = _SSHStub(
         success=True,
         stdout="runner already running",
         stderr="",
     )
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_ok(), f"expected Ok, got {result!r}"
+    assert launch_runner(ssh, pod_layout=_layout()) is None  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -89,20 +90,19 @@ def test_launch_runner_idempotent_when_already_running() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_launch_runner_ssh_command_fails_returns_err() -> None:
-    """exec_command success=False → Err with launcher code."""
+def test_launch_runner_ssh_command_fails_raises_ssh_exec_failed() -> None:
+    """exec_command success=False → raises :class:`SSHExecFailedError`
+    with ``reason="RUNNER_LAUNCH_FAILED"``."""
     ssh = _SSHStub(success=False, stdout="", stderr="ssh: connection refused")
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_err(), f"expected Err, got {result!r}"
-    err = result.unwrap_err()
-    assert isinstance(err, ProviderError)
-    assert err.code == "RUNNER_LAUNCH_FAILED"
-    assert "ssh: connection refused" in str(err.details)
+    with pytest.raises(SSHExecFailedError) as exc_info:
+        launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
+    assert exc_info.value.context.get("reason") == "RUNNER_LAUNCH_FAILED"
+    assert "ssh: connection refused" in exc_info.value.context.get("stderr_tail", "")
 
 
-def test_launch_runner_healthz_timeout_returns_err_with_log_tail() -> None:
+def test_launch_runner_healthz_timeout_raises_with_log_tail() -> None:
     """Runner failed to bind /healthz; script tail's runner.log to stderr.
-    The tail must surface in the ProviderError details for diagnosis."""
+    The tail must surface in the raised exception's context for diagnosis."""
     ssh = _SSHStub(
         success=False,
         stdout="",
@@ -112,19 +112,18 @@ def test_launch_runner_healthz_timeout_returns_err_with_log_tail() -> None:
             "ModuleNotFoundError: No module named 'ryotenkai_shared.utils'\n"
         ),
     )
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_err(), f"expected Err, got {result!r}"
-    err = result.unwrap_err()
-    assert "ModuleNotFoundError" in str(err.details)
+    with pytest.raises(SSHExecFailedError) as exc_info:
+        launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
+    assert "ModuleNotFoundError" in exc_info.value.context.get("stderr_tail", "")
 
 
-def test_launch_runner_success_but_no_ready_marker_returns_err() -> None:
+def test_launch_runner_success_but_no_ready_marker_raises() -> None:
     """Defensive: if exec_command reports success but stdout doesn't
     contain 'runner ready' (e.g. a future protocol change broke
     parsing), we treat it as failure rather than silent-pass."""
     ssh = _SSHStub(success=True, stdout="some unrelated output", stderr="")
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_err(), f"expected Err, got {result!r}"
+    with pytest.raises(SSHExecFailedError):
+        launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -132,22 +131,31 @@ def test_launch_runner_success_but_no_ready_marker_returns_err() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_launch_runner_empty_outputs_returns_err_with_placeholder() -> None:
-    """Both stdout and stderr empty → Err with 'no diagnostic output'."""
+def test_launch_runner_empty_outputs_raises_with_placeholder() -> None:
+    """Both stdout and stderr empty → raise with 'no diagnostic output'."""
     ssh = _SSHStub(success=False, stdout="", stderr="")
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_err(), f"expected Err, got {result!r}"
-    err = result.unwrap_err()
-    assert "no diagnostic output" in str(err.details)
+    with pytest.raises(SSHExecFailedError) as exc_info:
+        launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
+    assert "no diagnostic output" in exc_info.value.context.get("stderr_tail", "")
 
 
-def test_launch_runner_whitespace_only_outputs_returns_err() -> None:
+def test_launch_runner_whitespace_only_outputs_raises() -> None:
     """Stdout/stderr full of just whitespace must still be treated as
     no diagnostic info — protects against false-positive stderr_tail
     in the error message."""
     ssh = _SSHStub(success=False, stdout="   \n\t", stderr="\n\n")
-    result = launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
-    assert result.is_err(), f"expected Err, got {result!r}"
+    with pytest.raises(SSHExecFailedError):
+        launch_runner(ssh, pod_layout=_layout())  # type: ignore[arg-type]
+
+
+def test_launch_runner_runner_log_path_carried_in_context() -> None:
+    """Invariant: the raised exception carries the on-pod runner.log
+    path under ``context["runner_log_path"]`` for offline log fetch."""
+    ssh = _SSHStub(success=False, stdout="", stderr="boom")
+    layout = _layout("/workspace/runs/r-debug")
+    with pytest.raises(SSHExecFailedError) as exc_info:
+        launch_runner(ssh, pod_layout=layout)  # type: ignore[arg-type]
+    assert exc_info.value.context.get("runner_log_path") == str(layout.runner_log)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +260,7 @@ def test_command_dumps_log_tail_on_failure() -> None:
     layout = _layout()
     runner_log = str(layout.runner_log)
     cmd = _build_launch_command(pod_layout=layout)
-    assert f"ls -la " in cmd
+    assert "ls -la " in cmd
     assert runner_log in cmd
     assert "tail -100 " in cmd
     # Critical: tail's stderr must not be swallowed.

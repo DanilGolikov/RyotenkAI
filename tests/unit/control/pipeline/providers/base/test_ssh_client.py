@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import ryotenkai_shared.utils.ssh_client as ssh_mod
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.ssh_client import SSHClient, _mask_secrets
 
 
@@ -136,8 +137,8 @@ def test_download_directory_success(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(returncode=0))
 
     c = SSHClient(host="pc", username=None)
-    res = c.download_directory("/remote/dir", tmp_path / "out")
-    assert res.is_success()
+    # Returns None on success; raises on failure. Just call.
+    c.download_directory("/remote/dir", tmp_path / "out")
 
 
 def test_ssh_target_property() -> None:
@@ -327,25 +328,29 @@ def test_file_and_directory_exists_and_create_directory(monkeypatch: pytest.Monk
 def test_download_directory_failure_and_exceptions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     c = SSHClient(host="pc", username=None)
 
-    # returncode != 0 → SSH_DOWNLOAD_FAILED
+    # returncode != 0 → SSHTransferFailedError ("download failed")
     monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(returncode=1, stderr_text="no"))
-    res = c.download_directory("/remote/dir", tmp_path / "out")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_DOWNLOAD_FAILED"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.download_directory("/remote/dir", tmp_path / "out")
+    assert exc_info.value.context.get("op") == "download_directory"
+    assert exc_info.value.context.get("returncode") == 1
 
-    # Stall detected across all retries → SSH_DOWNLOAD_STALLED
+    # Stall detected across all retries → SSHTransferFailedError (stalled)
     monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(always_timeout=True))
-    res2 = c.download_directory(
-        "/remote/dir", tmp_path / "out2",
-        stall_timeout=1,
-        max_retries=2,
-    )
-    assert res2.is_failure()
-    assert res2.unwrap_err().code == "SSH_DOWNLOAD_STALLED"
+    with pytest.raises(SSHTransferFailedError) as exc_info2:
+        c.download_directory(
+            "/remote/dir", tmp_path / "out2",
+            stall_timeout=1,
+            max_retries=2,
+        )
+    assert exc_info2.value.context.get("stage") == "stalled"
 
-    # OSError when spawning Popen → SSH_DOWNLOAD_IO_ERROR
+    # OSError when spawning Popen → SSHTransferFailedError (spawn)
     monkeypatch.setattr(ssh_mod.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
-    assert c.download_directory("/remote/dir", tmp_path / "out3").is_failure()
+    with pytest.raises(SSHTransferFailedError) as exc_info3:
+        c.download_directory("/remote/dir", tmp_path / "out3")
+    assert exc_info3.value.context.get("stage") == "spawn"
+    assert isinstance(exc_info3.value.__cause__, OSError)
 
 
 def test_get_file_content_tail_lines(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -517,7 +522,7 @@ def test_close_master_explicit_mode_includes_port_and_key(monkeypatch: pytest.Mo
 
 
 def test_download_directory_local_mkdir_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """When local_path.mkdir raises OSError, returns Err with SSH_DOWNLOAD_LOCAL_DIR_FAILED."""
+    """When local_path.mkdir raises OSError, raise SSHTransferFailedError with stage=mkdir_local."""
 
     c = SSHClient(host="pc", username=None)
 
@@ -532,11 +537,12 @@ def test_download_directory_local_mkdir_oserror(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(Path, "mkdir", patched_mkdir)
 
-    res = c.download_directory("/remote/dir", bad_local)
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "SSH_DOWNLOAD_LOCAL_DIR_FAILED"
-    assert "read-only filesystem" in err.message
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.download_directory("/remote/dir", bad_local)
+    err = exc_info.value
+    assert err.context.get("stage") == "mkdir_local"
+    assert "read-only filesystem" in (err.detail or "")
+    assert isinstance(err.__cause__, OSError)
 
 
 # ---------------------------------------------------------------------------
@@ -545,26 +551,26 @@ def test_download_directory_local_mkdir_oserror(monkeypatch: pytest.MonkeyPatch,
 
 
 def test_upload_directory_local_not_found(tmp_path: Path) -> None:
-    """Err with SSH_UPLOAD_LOCAL_NOT_FOUND when local path doesn't exist."""
+    """Raise SSHTransferFailedError(stage='local_not_found') when local path doesn't exist."""
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(tmp_path / "nonexistent", "/remote")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_UPLOAD_LOCAL_NOT_FOUND"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.upload_directory(tmp_path / "nonexistent", "/remote")
+    assert exc_info.value.context.get("stage") == "local_not_found"
 
 
 def test_upload_directory_not_a_directory(tmp_path: Path) -> None:
-    """Err with SSH_UPLOAD_NOT_A_DIRECTORY when local path is a file."""
+    """Raise SSHTransferFailedError(stage='not_a_directory') when local path is a file."""
     local = tmp_path / "file.txt"
     local.write_text("data", encoding="utf-8")
 
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(local, "/remote")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_UPLOAD_NOT_A_DIRECTORY"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.upload_directory(local, "/remote")
+    assert exc_info.value.context.get("stage") == "not_a_directory"
 
 
 def test_upload_directory_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Ok(None) when subprocess returns zero exit code."""
+    """Returns None when subprocess returns zero exit code."""
     local = tmp_path / "mydir"
     local.mkdir()
 
@@ -574,12 +580,12 @@ def test_upload_directory_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(local, "/remote")
-    assert res.is_success()
+    # No exception → success.
+    c.upload_directory(local, "/remote")
 
 
 def test_upload_directory_failure_returncode(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Err with SSH_UPLOAD_FAILED when subprocess returns non-zero."""
+    """Raise SSHTransferFailedError when subprocess returns non-zero."""
     local = tmp_path / "mydir"
     local.mkdir()
 
@@ -589,15 +595,16 @@ def test_upload_directory_failure_returncode(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(local, "/remote")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "SSH_UPLOAD_FAILED"
-    assert "tar: error" in err.message
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.upload_directory(local, "/remote")
+    err = exc_info.value
+    assert err.context.get("op") == "upload_directory"
+    assert err.context.get("returncode") == 1
+    assert "tar: error" in (err.detail or "")
 
 
 def test_upload_directory_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Err with SSH_UPLOAD_TIMEOUT when subprocess times out."""
+    """Raise SSHTransferFailedError(stage='timeout') when subprocess times out."""
     local = tmp_path / "mydir"
     local.mkdir()
 
@@ -607,13 +614,13 @@ def test_upload_directory_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(local, "/remote", timeout=1)
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_UPLOAD_TIMEOUT"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.upload_directory(local, "/remote", timeout=1)
+    assert exc_info.value.context.get("stage") == "timeout"
 
 
 def test_upload_directory_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Err with SSH_UPLOAD_IO_ERROR when subprocess raises OSError."""
+    """Raise SSHTransferFailedError(stage='io_error') when subprocess raises OSError."""
     local = tmp_path / "mydir"
     local.mkdir()
 
@@ -623,9 +630,10 @@ def test_upload_directory_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.upload_directory(local, "/remote")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_UPLOAD_IO_ERROR"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.upload_directory(local, "/remote")
+    assert exc_info.value.context.get("stage") == "io_error"
+    assert isinstance(exc_info.value.__cause__, OSError)
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +642,7 @@ def test_upload_directory_oserror(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_download_file_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Happy path: SCP returncode 0 → Ok(None), no exception."""
+    """Happy path: SCP returncode 0 → None, no exception."""
     captured: dict = {}
 
     def fake_run(cmd, **kwargs):
@@ -650,9 +658,8 @@ def test_download_file_success(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 
     c = SSHClient(host="pc", username=None)
     local = tmp_path / "metrics_buffer.jsonl"
-    res = c.download_file("/workspace/metrics_buffer.jsonl", local)
+    c.download_file("/workspace/metrics_buffer.jsonl", local)
 
-    assert res.is_success()
     assert local.exists()
     assert local.read_text() == "contents"
     # SCP command shape: scp <opts> alias:remote local
@@ -673,8 +680,7 @@ def test_download_file_explicit_mode_includes_port_and_key(
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="1.2.3.4", port=2222, username="root", key_path="/tmp/k")
-    res = c.download_file("/remote/x", tmp_path / "x")
-    assert res.is_success()
+    c.download_file("/remote/x", tmp_path / "x")
 
     # SCP argv must include `-P 2222 -i /tmp/k` somewhere before the
     # remote path.
@@ -696,10 +702,12 @@ def test_download_file_returncode_failure(
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.download_file("/remote/x", tmp_path / "x")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_FAILED"
-    assert "permission denied" in res.unwrap_err().message
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.download_file("/remote/x", tmp_path / "x")
+    err = exc_info.value
+    assert err.context.get("op") == "download_file"
+    assert err.context.get("returncode") == 1
+    assert "permission denied" in (err.detail or "")
 
 
 def test_download_file_timeout(
@@ -711,9 +719,9 @@ def test_download_file_timeout(
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.download_file("/remote/x", tmp_path / "x", timeout=1)
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_TIMEOUT"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.download_file("/remote/x", tmp_path / "x", timeout=1)
+    assert exc_info.value.context.get("stage") == "timeout"
 
 
 def test_download_file_oserror(
@@ -725,6 +733,7 @@ def test_download_file_oserror(
     monkeypatch.setattr(ssh_mod.subprocess, "run", fake_run)
 
     c = SSHClient(host="pc", username=None)
-    res = c.download_file("/remote/x", tmp_path / "x")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "SSH_DOWNLOAD_FILE_IO_ERROR"
+    with pytest.raises(SSHTransferFailedError) as exc_info:
+        c.download_file("/remote/x", tmp_path / "x")
+    assert exc_info.value.context.get("stage") == "io_error"
+    assert isinstance(exc_info.value.__cause__, OSError)

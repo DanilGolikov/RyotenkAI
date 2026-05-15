@@ -16,8 +16,8 @@ from datasets import Dataset, load_dataset
 
 from ryotenkai_shared.constants import STRATEGY_SFT
 from ryotenkai_pod.trainer.managers.constants import HF_SPLIT_TRAIN
+from ryotenkai_shared.errors import DatasetLoadFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import (
@@ -39,9 +39,12 @@ class DatasetLoader:
 
     Example:
         loader = DatasetLoader(config)
-        result = loader.load_for_phase(phase_config)
-        if result.is_success():
-            dataset = result.unwrap()
+        train, eval_ds = loader.load_for_phase(phase_config)
+
+    Raises:
+        DatasetLoadFailedError: on any loader failure (missing dataset
+            config, source kind unsupported, file missing, parse error).
+            Legacy error codes preserved on ``context["legacy_code"]``.
     """
 
     def __init__(
@@ -60,7 +63,7 @@ class DatasetLoader:
     def load_for_phase(
         self,
         phase: StrategyPhaseConfig,
-    ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
+    ) -> tuple[Dataset, Dataset | None]:
         """
         Load dataset for a training phase.
 
@@ -68,7 +71,13 @@ class DatasetLoader:
             phase: Strategy phase configuration with dataset reference
 
         Returns:
-            Result with loaded dataset or error message
+            ``(train_dataset, eval_dataset)`` tuple. ``eval_dataset`` is
+            ``None`` when not configured.
+
+        Raises:
+            DatasetLoadFailedError: dataset config missing, source kind
+                unsupported, file not found, or underlying ``load_dataset``
+                raised.
         """
         from ryotenkai_shared.config import DatasetSourceHF, DatasetSourceLocal
 
@@ -78,22 +87,20 @@ class DatasetLoader:
 
             # Discriminated dispatch — typed source binds via isinstance, no string match.
             if isinstance(source, DatasetSourceHF):
-                loaded_result = self._load_hf_datasets(source)
+                train_dataset, eval_dataset = self._load_hf_datasets(source)
             elif isinstance(source, DatasetSourceLocal):
                 # Pass strategy_type for auto-generating training paths
-                loaded_result = self._load_local_datasets(source, strategy_type=phase.strategy_type)
-            else:
-                return Err(
-                    DataLoaderError(
-                        message=f"Unsupported dataset source kind: {source.kind!r}",
-                        code="DATA_LOADER_UNKNOWN_SOURCE",
-                    )
+                train_dataset, eval_dataset = self._load_local_datasets(
+                    source, strategy_type=phase.strategy_type
                 )
-
-            if loaded_result.is_failure():
-                return loaded_result
-
-            train_dataset, eval_dataset = loaded_result.unwrap()
+            else:
+                raise DatasetLoadFailedError(
+                    detail=f"Unsupported dataset source kind: {source.kind!r}",
+                    context={
+                        "legacy_code": "DATA_LOADER_UNKNOWN_SOURCE",
+                        "source_kind": source.kind,
+                    },
+                )
 
             # Apply max_samples if configured
             if dataset_config.max_samples:
@@ -110,20 +117,35 @@ class DatasetLoader:
             logger.debug(
                 f"[DL:LOADED] train={len(train_dataset)}, eval={len(eval_dataset) if eval_dataset is not None else 0}"
             )
-            return Ok((train_dataset, eval_dataset))
+            return train_dataset, eval_dataset
+
+        except DatasetLoadFailedError:
+            # Already-typed exception from a helper — surface as-is.
+            raise
 
         except KeyError as e:
             error_msg = f"Dataset '{phase.dataset}' not found in config: {e}"
             logger.error(f"[DL:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_DATASET_NOT_FOUND"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "DATA_LOADER_DATASET_NOT_FOUND",
+                    "phase_dataset": getattr(phase, "dataset", None),
+                },
+                cause=e,
+            )
 
         except Exception as e:
             error_msg = f"Failed to load dataset: {e}"
             logger.error(f"[DL:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_LOAD_FAILED"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={"legacy_code": "DATA_LOADER_LOAD_FAILED"},
+                cause=e,
+            )
 
     @staticmethod
-    def _load_hf_datasets(source: DatasetSourceHF) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
+    def _load_hf_datasets(source: DatasetSourceHF) -> tuple[Dataset, Dataset | None]:
         """Load HuggingFace datasets (train + optional eval)."""
         train_id = source.train_id
         eval_id = source.eval_id
@@ -141,13 +163,13 @@ class DatasetLoader:
                 load_dataset(eval_id, split=HF_SPLIT_TRAIN, trust_remote_code=True),
             )
 
-        return Ok((train_dataset, eval_dataset))
+        return train_dataset, eval_dataset
 
     @staticmethod
     def _load_local_datasets(
         source: DatasetSourceLocal,
         strategy_type: str = STRATEGY_SFT,  # noqa: ARG004 — kept for API stability
-    ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
+    ) -> tuple[Dataset, Dataset | None]:
         """
         Load local datasets from the pod-side ``data/`` directory.
 
@@ -156,8 +178,8 @@ class DatasetLoader:
             strategy_type: Current strategy type (UNUSED — see note). Kept in
                 the signature so existing callers don't churn.
 
-        Returns:
-            Result with (train_dataset, eval_dataset) or error
+        Raises:
+            DatasetLoadFailedError: if the resolved train file does not exist.
 
         Path resolution contract (post-bugfix 2026-05-07):
             The Mac-side :class:`FileUploader` uploads dataset files via
@@ -184,7 +206,13 @@ class DatasetLoader:
         if not train_path.exists():
             error_msg = f"Dataset file not found: {train_path}"
             logger.error(f"[DL:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_FILE_NOT_FOUND"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "DATA_LOADER_FILE_NOT_FOUND",
+                    "train_path": str(train_path),
+                },
+            )
 
         logger.info(f"   Loading dataset: {train_path}")
         train_dataset = cast(
@@ -207,7 +235,7 @@ class DatasetLoader:
             else:
                 logger.warning(f"[DL:EVAL_MISSING] eval dataset not found: {eval_path} (skipping)")
 
-        return Ok((train_dataset, eval_dataset))
+        return train_dataset, eval_dataset
 
     @staticmethod
     def validate_exists(train_path: str) -> bool:

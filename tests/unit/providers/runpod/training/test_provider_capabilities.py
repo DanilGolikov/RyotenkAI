@@ -47,7 +47,7 @@ from ryotenkai_providers.training.interfaces import (
     VolumeKind,
 )
 from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 from tests._fakes.provider_context import attach_manifest_capabilities
 
@@ -190,13 +190,13 @@ class TestProbeAvailabilityNegative:
     def test_query_pod_returns_err_gone_marker(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # ProviderError with "not found" → mapped to "gone".
+        # Typed exception with "not found" → mapped to "gone".
         provider = _mk_provider()
         monkeypatch.setattr(
             provider._graphql_api_client, "query_pod",
-            MagicMock(return_value=Err(ProviderError(
-                message="pod does not exist", code="X", details={},
-            ))),
+            MagicMock(side_effect=ProviderUnavailableError(
+                detail="pod does not exist", context={"code": "X"},
+            )),
         )
         v = provider.probe_availability("pod-abc")
         assert v.state == "gone"
@@ -207,9 +207,9 @@ class TestProbeAvailabilityNegative:
         provider = _mk_provider()
         monkeypatch.setattr(
             provider._graphql_api_client, "query_pod",
-            MagicMock(return_value=Err(ProviderError(
-                message="random transient", code="X", details={},
-            ))),
+            MagicMock(side_effect=ProviderUnavailableError(
+                detail="random transient", context={"code": "X"},
+            )),
         )
         v = provider.probe_availability("pod-abc")
         assert v.state == "probe_failed"
@@ -238,7 +238,7 @@ class TestProbeAvailabilityMapping:
         provider = _mk_provider()
         monkeypatch.setattr(
             provider._graphql_api_client, "query_pod",
-            MagicMock(return_value=Ok({"desiredStatus": raw})),
+            MagicMock(return_value={"desiredStatus": raw}),
         )
         v = provider.probe_availability("pod-abc")
         assert v.state == expected
@@ -250,7 +250,7 @@ class TestProbeAvailabilityMapping:
         provider = _mk_provider()
         monkeypatch.setattr(
             provider._graphql_api_client, "query_pod",
-            MagicMock(return_value=Ok({"desiredStatus": "WAT"})),
+            MagicMock(return_value={"desiredStatus": "WAT"}),
         )
         v = provider.probe_availability("pod-abc")
         assert v.state == "probe_failed"
@@ -265,31 +265,31 @@ class TestProbeAvailabilityMapping:
 class TestLifecycleActions:
     def test_terminate_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = _mk_provider()
-        delegate = MagicMock(return_value=Ok(None))
+        delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "terminate_pod", delegate)
-        result = provider.terminate(resource_id="pod-abc", reason="user_stop")
-        assert result.is_success()
+        # Phase A2 Batch 12: terminate() raises on failure, returns None on success.
+        provider.terminate(resource_id="pod-abc", reason="user_stop")
         delegate.assert_called_once_with("pod-abc")
 
     def test_pause_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = _mk_provider()
-        delegate = MagicMock(return_value=Ok(None))
+        delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "stop_pod", delegate)
-        result = provider.pause(resource_id="pod-abc")
-        assert result.is_success()
+        # Phase A2 Batch 12: pause() raises on failure, returns None on success.
+        provider.pause(resource_id="pod-abc")
         delegate.assert_called_once_with(pod_id="pod-abc")
 
     def test_resume_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = _mk_provider()
-        delegate = MagicMock(return_value=Ok(None))
+        delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "start_pod", delegate)
-        result = provider.resume(resource_id="pod-abc")
-        assert result.is_success()
+        # Phase A2 Batch 12: resume() raises on failure, returns None on success.
+        provider.resume(resource_id="pod-abc")
         delegate.assert_called_once_with(pod_id="pod-abc")
 
 
 # ---------------------------------------------------------------------------
-# 5. Dependency errors — transport returns Err propagates
+# 5. Dependency errors — transport raises typed exception propagates
 # ---------------------------------------------------------------------------
 
 
@@ -298,11 +298,14 @@ class TestDependencyErrors:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         provider = _mk_provider()
-        err = Err(ProviderError(message="api down", code="X", details={}))
-        monkeypatch.setattr(provider._api_client, "terminate_pod",
-                            MagicMock(return_value=err))
-        result = provider.terminate(resource_id="pod-abc", reason="x")
-        assert result.is_failure()
+        monkeypatch.setattr(
+            provider._api_client,
+            "terminate_pod",
+            MagicMock(side_effect=ProviderUnavailableError(detail="api down", context={"code": "X"})),
+        )
+        # Phase A2 Batch 12: terminate() raises ProviderUnavailableError on transport failure.
+        with pytest.raises(ProviderUnavailableError, match="api down"):
+            provider.terminate(resource_id="pod-abc", reason="x")
 
 
 # ---------------------------------------------------------------------------

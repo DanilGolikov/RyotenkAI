@@ -19,7 +19,6 @@ from ryotenkai_shared.constants import (
 
 if TYPE_CHECKING:
     from .phase import StrategyPhaseConfig
-    from ryotenkai_shared.utils.result import Result, StrategyError
 
 # Valid strategy transitions (from → to)
 # WPS407: use MappingProxyType for immutable module-level constant
@@ -41,13 +40,7 @@ VALID_STRATEGY_TRANSITIONS: MappingProxyType[str, tuple[str, ...]] = MappingProx
 VALID_START_STRATEGIES: tuple[str, ...] = (STRATEGY_CPT, STRATEGY_SFT, STRATEGY_ORPO, STRATEGY_GRPO, STRATEGY_SAPO, STRATEGY_DPO)
 
 
-def _strategy_chain_error(message: str, code: str) -> Result[None, StrategyError]:
-    from ryotenkai_shared.utils.result import Err, StrategyError
-
-    return Err(StrategyError(message=message, code=code))
-
-
-def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> Result[None, StrategyError]:
+def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> None:
     """
     Validate a chain of training strategies.
 
@@ -56,19 +49,32 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> Result[Non
     - Chain must not be empty
     - Chain cannot contain None values
     - Datasets must still be unique across non-cached phases
+
+    Raises:
+        StrategyChainInvalidError: on any hard validation failure
+            (empty chain, None elements, duplicate datasets).
+            ``context["reason"]`` carries a machine-readable subcode
+            (``empty_chain`` / ``contains_none`` / ``duplicate_dataset``)
+            for callers that need to branch on the cause.
     """
     # Local import to avoid heavy side-effects at module import time.
+    from ryotenkai_shared.errors import StrategyChainInvalidError
     from ryotenkai_shared.utils.logger import logger
-    from ryotenkai_shared.utils.result import Ok
 
     if not strategies:
         logger.debug("[CFG:CHAIN_INVALID] reason=empty_chain")
-        return _strategy_chain_error("Strategy chain cannot be empty", "STRATEGY_CHAIN_EMPTY")
+        raise StrategyChainInvalidError(
+            detail="[STRATEGY_CHAIN_EMPTY] Strategy chain cannot be empty",
+            context={"reason": "empty_chain", "code": "STRATEGY_CHAIN_EMPTY"},
+        )
 
     # FIX BUG-010: Check for None elements before accessing attributes
     if any(s is None for s in strategies):
         logger.debug("[CFG:CHAIN_INVALID] reason=contains_none")
-        return _strategy_chain_error("Strategy chain cannot contain None values", "STRATEGY_CHAIN_CONTAINS_NONE")
+        raise StrategyChainInvalidError(
+            detail="[STRATEGY_CHAIN_CONTAINS_NONE] Strategy chain cannot contain None values",
+            context={"reason": "contains_none", "code": "STRATEGY_CHAIN_CONTAINS_NONE"},
+        )
 
     chain_str = " → ".join(s.strategy_type for s in strategies)
     logger.debug(f"[CFG:CHAIN_VALIDATING] chain={chain_str}")
@@ -109,18 +115,23 @@ def validate_strategy_chain(strategies: list[StrategyPhaseConfig]) -> Result[Non
                     f"[CFG:CHAIN_INVALID] reason=duplicate_dataset, dataset={resolved}, "
                     f"strategies={prev_type}+{cur_type}"
                 )
-                return _strategy_chain_error(
-                    (
-                        f"Duplicate dataset '{resolved}': strategies '{prev_type}' and '{cur_type}' "
+                raise StrategyChainInvalidError(
+                    detail=(
+                        f"[STRATEGY_CHAIN_DUPLICATE_DATASET] Duplicate dataset '{resolved}': "
+                        f"strategies '{prev_type}' and '{cur_type}' "
                         f"reference the same dataset. Each strategy must use its own dataset entry "
                         f"(different data formats are uploaded to separate remote paths)."
                     ),
-                    "STRATEGY_CHAIN_DUPLICATE_DATASET",
+                    context={
+                        "reason": "duplicate_dataset",
+                        "code": "STRATEGY_CHAIN_DUPLICATE_DATASET",
+                        "dataset": resolved,
+                        "strategies": [prev_type, cur_type],
+                    },
                 )
             seen_datasets[resolved] = phase.strategy_type
 
     logger.debug(f"[CFG:CHAIN_CHECKED] chain={chain_str}, phases={len(strategies)}")
-    return Ok(None)
 
 
 __all__ = [

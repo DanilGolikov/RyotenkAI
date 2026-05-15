@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer
+from ryotenkai_shared.errors import SSHTransferFailedError
 from ryotenkai_shared.utils.logs_layout import LogLayout
 
 
@@ -48,7 +49,8 @@ def deployer_with_ssh(tmp_path, monkeypatch):
         )
 
     deployer._ssh_client = MagicMock()
-    deployer._ssh_client.download_file.return_value = (True, "")
+    # New SSH contract: download_file returns None on success, raises on failure.
+    deployer._ssh_client.download_file.return_value = None
     deployer.deployment.workspace = "/workspace"
     return deployer
 
@@ -75,8 +77,8 @@ def test_both_channels_scp_via_download_file(deployer_with_ssh) -> None:
 
 def test_runner_log_failure_does_not_skip_trainer_log(deployer_with_ssh) -> None:
     deployer_with_ssh._ssh_client.download_file.side_effect = [
-        (False, "boom"),  # runner.log fails
-        (True, ""),       # trainer.stdio.log succeeds
+        SSHTransferFailedError(detail="boom", context={"op": "download_file"}),  # runner.log fails
+        None,       # trainer.stdio.log succeeds
     ]
     deployer_with_ssh._download_remote_logs(reason="test")
     assert deployer_with_ssh._ssh_client.download_file.call_count == 2
@@ -85,7 +87,7 @@ def test_runner_log_failure_does_not_skip_trainer_log(deployer_with_ssh) -> None
 def test_runner_log_exception_does_not_skip_trainer_log(deployer_with_ssh) -> None:
     deployer_with_ssh._ssh_client.download_file.side_effect = [
         RuntimeError("ssh dead"),
-        (True, ""),
+        None,
     ]
     deployer_with_ssh._download_remote_logs(reason="test")
     # Both calls were attempted despite the first raising.

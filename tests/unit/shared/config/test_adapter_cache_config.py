@@ -31,16 +31,40 @@ pytestmark = pytest.mark.unit
 
 
 def _assert_ok(result) -> None:
-    assert result.is_success()
-    assert result.unwrap() is None
+    """Validators now return ``None`` on success and raise on failure."""
+    assert result is None
 
 
-def _assert_err(result, *, code: str | None = None) -> str:
-    assert result.is_failure()
-    err = result.unwrap_err()
+# Legacy code → typed-exception-mapping for the two validators used here.
+# - CONFIG_*  → ConfigInvalidError(context['code'] == legacy_code)
+# - STRATEGY_* → StrategyChainInvalidError(context['reason'] == reason)
+_LEGACY_TO_STRATEGY_REASON: dict[str, str] = {
+    "STRATEGY_CHAIN_EMPTY": "empty_chain",
+    "STRATEGY_CHAIN_CONTAINS_NONE": "contains_none",
+    "STRATEGY_CHAIN_DUPLICATE_DATASET": "duplicate_dataset",
+}
+
+
+def _assert_err(call_or_fn, *, code: str | None = None) -> str:
+    """Assert validator raised the typed exception matching the legacy code."""
+    from ryotenkai_shared.errors import ConfigInvalidError, StrategyChainInvalidError
+
+    assert callable(call_or_fn), "pass a zero-arg lambda — Result API is gone"
+    is_strategy = code is not None and code in _LEGACY_TO_STRATEGY_REASON
+    expected_cls: type[Exception] = (
+        StrategyChainInvalidError if is_strategy else ConfigInvalidError
+    )
+    with pytest.raises(expected_cls) as exc_info:
+        call_or_fn()
     if code is not None:
-        assert err.code == code
-    return str(err)
+        if is_strategy:
+            expected = _LEGACY_TO_STRATEGY_REASON[code]
+            actual = exc_info.value.context.get("reason")
+            assert actual == expected, f"reason {actual!r} != {expected!r}"
+        else:
+            actual = exc_info.value.context.get("code")
+            assert actual == code, f"code {actual!r} != {code!r}"
+    return str(exc_info.value)
 
 
 # ─────────────────────────────────────────────
@@ -292,19 +316,19 @@ class TestValidatePipelineAdapterCacheHFConfig:
     def test_negative_cache_enabled_hf_not_configured(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline_no_hf(strategies=[s])
-        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
         assert "integrations.huggingface" in err
 
     def test_negative_cache_enabled_hf_not_enabled(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/sft-cache"))
         cfg = _pipeline(strategies=[s], hf_enabled=False, hf_repo="org/final")
-        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_HF_REQUIRED")  # type: ignore[arg-type]
         assert "huggingface" in err.lower()
 
     def test_negative_adapter_cache_repo_equals_final_model_repo(self) -> None:
         s = _StrategyWithCache("sft", _AdapterCacheStub(enabled=True, repo_id="org/final-model"))
         cfg = _pipeline(strategies=[s], hf_enabled=True, hf_repo="org/final-model")
-        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
         assert "must differ" in err
 
     def test_negative_second_phase_repo_equals_final_model_repo(self) -> None:
@@ -313,7 +337,7 @@ class TestValidatePipelineAdapterCacheHFConfig:
             _StrategyWithCache("dpo", _AdapterCacheStub(enabled=True, repo_id="org/final")),
         ]
         cfg = _pipeline(strategies=phases, hf_enabled=True, hf_repo="org/final")
-        err = _assert_err(validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_pipeline_adapter_cache_hf_config(cfg), code="CONFIG_ADAPTER_CACHE_REPO_CONFLICT")  # type: ignore[arg-type]
         assert "must differ" in err
 
     # ── Boundary ──────────────────────────────
@@ -381,7 +405,7 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="shared"),
             _FullPhase("dpo", dataset="shared"),
         ]
-        err = _assert_err(validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
         assert "shared" in err
 
     def test_negative_mixed_only_non_cache_duplicate_fails(self) -> None:
@@ -397,7 +421,7 @@ class TestValidateStrategyChainAdapterCache:
             _FullPhase("sft", dataset="dup"),
             _FullPhase("dpo", dataset="dup"),
         ]
-        err = _assert_err(validate_strategy_chain(phases2), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
+        err = _assert_err(lambda: validate_strategy_chain(phases2), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
         assert "dup" in err
 
     # ── Boundary ──────────────────────────────
@@ -414,7 +438,7 @@ class TestValidateStrategyChainAdapterCache:
             dataset: str | None = None
 
         phases = [MinPhase("sft", "shared"), MinPhase("dpo", "shared")]
-        _assert_err(validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
+        _assert_err(lambda: validate_strategy_chain(phases), code="STRATEGY_CHAIN_DUPLICATE_DATASET")  # type: ignore[arg-type]
 
     # ── Combinatorial ─────────────────────────
 

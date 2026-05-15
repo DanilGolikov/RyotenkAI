@@ -20,23 +20,33 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 from ryotenkai_pod.trainer.constants import (
     CATEGORY_TRAINING,
-    TRUNCATE_ERROR_MSG,
-    TRUNCATE_ERROR_SHORT,
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
+    TRUNCATE_ERROR_MSG,
+    TRUNCATE_ERROR_SHORT,
 )
-from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
-from ryotenkai_shared.utils.logger import logger
 from ryotenkai_pod.trainer.memory_manager import MemoryManager, OOMRecoverableError
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
+from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
+from ryotenkai_shared.errors import (
+    RyotenkAIError,
+    TrainingFailedError,
+    TrainingOOMError,
+)
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, ITrainerFactory
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, ITrainerFactory
+
+
+# Legacy "interrupted" code preserved on the exception's ``context`` so the
+# executor's finally block can distinguish user-initiated cancellation from
+# a genuine crash (KILLED vs FAILED on the MLflow UI).
+TRAINING_INTERRUPTED_LEGACY_CODE = "TRAINING_INTERRUPTED"
 
 
 class PhaseTrainingRunner:
@@ -49,6 +59,14 @@ class PhaseTrainingRunner:
     - OOM recovery via MemoryManager
     - Graceful shutdown checkpoint saving
     - Error classification and marking phase failed
+
+    Raise contract (post Phase A2 Batch 14):
+    - Success: returns ``(trained_model, final_checkpoint_path, metrics)`` tuple.
+    - Failure: raises a typed :class:`RyotenkAIError` subclass —
+        * :class:`TrainingOOMError` on OOM
+        * :class:`DatasetLoadFailedError` if the dataset loader signals failure
+        * :class:`TrainingFailedError` for cancellation / validation /
+          unexpected exceptions (with ``context['legacy_code']`` preserved).
     """
 
     def __init__(
@@ -70,9 +88,7 @@ class PhaseTrainingRunner:
         self._mlflow_manager = mlflow_manager
         self.shutdown_handler = shutdown_handler
 
-        self.trainer_factory: ITrainerFactory = (
-            trainer_factory if trainer_factory is not None else TrainerFactory()
-        )
+        self.trainer_factory: ITrainerFactory = trainer_factory if trainer_factory is not None else TrainerFactory()
 
         # Tracking for emergency checkpoints
         self._current_trainer: Any | None = None
@@ -88,13 +104,18 @@ class PhaseTrainingRunner:
         phase: StrategyPhaseConfig,
         model: PreTrainedModel,
         buffer: DataBuffer,
-    ) -> Result[tuple[PreTrainedModel, Path, dict], TrainingError]:
+    ) -> tuple[PreTrainedModel, Path, dict]:
         """
         Execute the training workflow for one phase.
 
         Returns:
-            Ok((trained_model, final_checkpoint_path, metrics)) on success
-            Err(TrainingError) on failure or interruption
+            (trained_model, final_checkpoint_path, metrics) on success.
+
+        Raises:
+            DatasetLoadFailedError: dataset loader reported an error.
+            TrainingOOMError: OOM recovery exhausted.
+            TrainingFailedError: training was cancelled / validation /
+                unexpected error; the original cause is chained.
         """
         self._current_trainer = None
         self._current_output_dir = None
@@ -104,13 +125,10 @@ class PhaseTrainingRunner:
             self._current_output_dir = output_dir
             logger.info(f"   Output: {output_dir}")
 
-            dataset_result = self.dataset_loader.load_for_phase(phase)
-            if dataset_result.is_failure():
-                buffer.mark_phase_failed(phase_idx, dataset_result.error)  # type: ignore[union-attr]
-                return dataset_result
-
-            train_dataset, eval_dataset = dataset_result.unwrap()
-            logger.info(f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples")
+            train_dataset, eval_dataset = self._load_datasets(phase_idx, phase, buffer)
+            logger.info(
+                f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples"
+            )
 
             if self._mlflow_manager:
                 self._mlflow_manager.log_event_info(
@@ -140,7 +158,7 @@ class PhaseTrainingRunner:
             trained_model = self._run_training(phase_idx, trainer, resume_checkpoint, buffer)
 
             if self._should_stop():
-                return self.handle_graceful_shutdown(buffer, phase_idx, trainer, output_dir)
+                self.handle_graceful_shutdown(buffer, phase_idx, trainer, output_dir)
 
             final_checkpoint = self._save_checkpoint(trainer, output_dir)
 
@@ -167,7 +185,15 @@ class PhaseTrainingRunner:
 
             buffer.cleanup_old_checkpoints(keep_last=2)
 
-            return Ok((trained_model, final_checkpoint, metrics))
+            return trained_model, final_checkpoint, metrics
+
+        except RyotenkAIError:
+            # Already-typed failures (DatasetLoadFailedError from the
+            # loader, graceful-shutdown TrainingFailedError raised by
+            # ``handle_graceful_shutdown`` further up the stack) propagate
+            # untouched. The executor's finally block reads the legacy
+            # code from ``context`` to pick KILLED vs FAILED.
+            raise
 
         except OOMRecoverableError as e:
             if self._mlflow_manager:
@@ -175,31 +201,55 @@ class PhaseTrainingRunner:
                     operation=f"phase_{phase_idx}_{phase.strategy_type}",
                     free_mb=None,
                 )
-            return self.handle_error(buffer, phase_idx, "OOM", e)
+            self.handle_error(buffer, phase_idx, "OOM", e)
 
         except ValueError as e:
-            return self.handle_error(buffer, phase_idx, "Validation", e)
+            self.handle_error(buffer, phase_idx, "Validation", e)
 
         except KeyboardInterrupt:
-            return self.handle_graceful_shutdown(
-                buffer, phase_idx, self._current_trainer, self._current_output_dir
-            )
+            self.handle_graceful_shutdown(buffer, phase_idx, self._current_trainer, self._current_output_dir)
 
         except Exception as e:
             if self._should_stop():
-                return self.handle_graceful_shutdown(
-                    buffer, phase_idx, self._current_trainer, self._current_output_dir
-                )
-            return self.handle_error(buffer, phase_idx, "Unexpected", e)
+                self.handle_graceful_shutdown(buffer, phase_idx, self._current_trainer, self._current_output_dir)
+            self.handle_error(buffer, phase_idx, "Unexpected", e)
 
         finally:
             self._teardown_reward_plugin()
             self._current_trainer = None
             self._current_output_dir = None
+        # All non-RyotenkAIError branches delegate to ``handle_error`` /
+        # ``handle_graceful_shutdown`` which always raise. This statement
+        # is unreachable but makes the static type checker happy.
+        raise AssertionError("unreachable: handle_error / handle_graceful_shutdown always raise")
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _load_datasets(
+        self,
+        phase_idx: int,
+        phase: StrategyPhaseConfig,
+        buffer: DataBuffer,
+    ) -> tuple[Any, Any]:
+        """Call the dataset loader and surface typed failures.
+
+        Contract (post-Batch 15): every loader registered as
+        :class:`IDatasetLoader` raises :class:`RyotenkAIError` subclasses
+        on failure and returns the loaded payload on success
+        (typically a ``(train, eval)`` tuple, but the runner stays
+        shape-agnostic — downstream consumers handle the unpack).
+
+        On loader failure this method marks the phase failed (preserving
+        the on-disk state contract) and re-raises without wrapping so the
+        ``__cause__`` chain is preserved.
+        """
+        try:
+            return self.dataset_loader.load_for_phase(phase)
+        except RyotenkAIError as exc:
+            buffer.mark_phase_failed(phase_idx, exc.detail or str(exc))
+            raise
 
     def _should_stop(self) -> bool:
         if self.shutdown_handler is not None:
@@ -296,9 +346,7 @@ class PhaseTrainingRunner:
         trained_model = protected_train(self, phase_idx, trainer, resume_checkpoint, _buffer)
 
         if self._should_stop():
-            logger.warning(
-                f"[PE:TRAIN_INTERRUPTED] phase={phase_idx} - shutdown requested during training"
-            )
+            logger.warning(f"[PE:TRAIN_INTERRUPTED] phase={phase_idx} - shutdown requested during training")
         else:
             logger.debug(f"[PE:TRAIN_COMPLETE] phase={phase_idx}")
 
@@ -347,8 +395,7 @@ class PhaseTrainingRunner:
             if mlflow_dataset is not None:
                 self._mlflow_manager.log_dataset_input(mlflow_dataset, context="training")
                 logger.debug(
-                    f"[PE:MLFLOW_DATASET_LINKED] name={dataset_name}, "
-                    f"source={source_uri}, samples={num_samples}"
+                    f"[PE:MLFLOW_DATASET_LINKED] name={dataset_name}, source={source_uri}, samples={num_samples}"
                 )
             else:
                 self._mlflow_manager.log_dataset_info(
@@ -372,8 +419,15 @@ class PhaseTrainingRunner:
         phase_idx: int,
         trainer: Any | None,
         output_dir: str | None,
-    ) -> Result[Any, TrainingError]:
-        """Handle graceful shutdown: save checkpoint, mark phase interrupted."""
+    ) -> None:
+        """Handle graceful shutdown: save checkpoint, mark phase interrupted, raise.
+
+        Raises:
+            TrainingFailedError: tagged with ``context['legacy_code'] =
+                "TRAINING_INTERRUPTED"`` so the executor's finally block can
+                pick the MLflow ``KILLED`` status (vs ``FAILED`` for a real
+                crash).
+        """
         shutdown_info = ""
         if self.shutdown_handler is not None:
             info = self.shutdown_handler.get_shutdown_info()
@@ -415,11 +469,13 @@ class PhaseTrainingRunner:
             checkpoint_path=checkpoint_path,
         )
 
-        return Err(
-            TrainingError(
-                message=f"Training interrupted at phase {phase_idx}{shutdown_info}",
-                code="TRAINING_INTERRUPTED",
-            )
+        raise TrainingFailedError(
+            detail=f"Training interrupted at phase {phase_idx}{shutdown_info}",
+            context={
+                "legacy_code": TRAINING_INTERRUPTED_LEGACY_CODE,
+                "phase_idx": phase_idx,
+                "checkpoint_path": checkpoint_path,
+            },
         )
 
     def handle_error(
@@ -428,8 +484,15 @@ class PhaseTrainingRunner:
         phase_idx: int,
         error_type: str,
         error: Exception,
-    ) -> Result[Any, TrainingError]:
-        """Handle and log error, mark phase failed."""
+    ) -> None:
+        """Handle and log error, mark phase failed, raise typed exception.
+
+        Raises:
+            TrainingOOMError: when ``error_type == "OOM"``.
+            TrainingFailedError: for all other error types
+                ("Validation"/"Unexpected"), with the original exception
+                chained as ``__cause__``.
+        """
         error_msg = f"{error_type} error in phase {phase_idx}: {error}"
         logger.error(f"[PE:ERROR] type={error_type}, phase={phase_idx}, error={error}")
         logger.exception(error_msg) if error_type == "Unexpected" else logger.error(error_msg)
@@ -453,8 +516,26 @@ class PhaseTrainingRunner:
                 }
             )
 
-        code = "TRAINING_OOM_ERROR" if error_type == "OOM" else "TRAINING_PHASE_FAILED"
-        return Err(TrainingError(message=error_msg, code=code))
+        if error_type == "OOM":
+            raise TrainingOOMError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "TRAINING_OOM_ERROR",
+                    "phase_idx": phase_idx,
+                    "error_type": error_type,
+                },
+                cause=error,
+            )
+
+        raise TrainingFailedError(
+            detail=error_msg,
+            context={
+                "legacy_code": "TRAINING_PHASE_FAILED",
+                "phase_idx": phase_idx,
+                "error_type": error_type,
+            },
+            cause=error,
+        )
 
 
-__all__ = ["PhaseTrainingRunner"]
+__all__ = ["TRAINING_INTERRUPTED_LEGACY_CODE", "PhaseTrainingRunner"]

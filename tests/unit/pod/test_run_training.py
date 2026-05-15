@@ -18,7 +18,7 @@ import pydantic
 import pytest
 import yaml
 
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import TrainingFailedError
 
 # =============================================================================
 # TEST CLASS: Configuration Loading
@@ -249,7 +249,8 @@ class TestRunTrainingFlow:
         buffer.run_id = "run_1"
         orchestrator = MagicMock()
         orchestrator.buffer = buffer
-        orchestrator.run_chain.return_value = Ok(None)
+        # Post-Batch-14: run_chain returns the model directly (raises on failure).
+        orchestrator.run_chain.return_value = MagicMock(name="trained_model")
 
         # Container stub (Phase 6.3b: notifier abstraction removed —
         # trainer events flow via RunnerEventCallback now).
@@ -304,7 +305,8 @@ class TestRunTrainingFlow:
 
         orchestrator = MagicMock()
         orchestrator.buffer = None
-        orchestrator.run_chain.return_value = Err("boom")
+        # Post-Batch-14: run_chain raises typed exceptions on failure.
+        orchestrator.run_chain.side_effect = TrainingFailedError(detail="boom")
 
         container = MagicMock()
         container.create_memory_manager_with_callbacks.return_value = memory_manager
@@ -350,7 +352,8 @@ class TestRunTrainingFlow:
         buffer.run_id = "run_1"
         orchestrator = MagicMock()
         orchestrator.buffer = buffer
-        orchestrator.run_chain.return_value = Ok(None)
+        # Post-Batch-14: run_chain returns the model directly (raises on failure).
+        orchestrator.run_chain.return_value = MagicMock(name="trained_model")
 
         container = MagicMock()
         container.create_memory_manager_with_callbacks.return_value = memory_manager

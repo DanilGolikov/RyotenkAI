@@ -10,11 +10,16 @@ This module centralizes:
 * :class:`FakeGPUProvider` — full :class:`IGPUProvider` impl with
   sensible defaults; subclass / kwargs to customize.
 * :class:`FailingGPUProvider` — variant where every state-changing
-  method returns :class:`Err`.
+  method raises :class:`ProviderUnavailableError`.
+
+Phase A2 Batch 12: provider Protocol migrated to raise-based.
+Methods return ``T`` on success and raise typed errors on failure;
+the optional ``*_exc`` kwargs let tests inject a pre-built exception
+to be raised on a specific call.
 
 Usage::
 
-    from src.tests.fixtures.providers import FakeGPUProvider
+    from tests.unit.control.fixtures.providers import FakeGPUProvider
 
     def test_my_thing():
         provider = FakeGPUProvider(
@@ -42,7 +47,7 @@ from ryotenkai_providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.errors import ProviderUnavailableError, RyotenkAIError
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
@@ -50,11 +55,12 @@ from ryotenkai_shared.utils.ssh_client import SSHClient
 class FakeGPUProvider:
     """Drop-in :class:`IGPUProvider` test double.
 
-    Every method returns :class:`Ok` with sensible defaults.
-    Override specific methods via constructor kwargs (e.g.
-    ``connect_result=Err(...)``) or subclass for richer stubs.
+    Every method returns a sensible default. Inject a typed exception
+    via ``*_exc`` kwargs (e.g. ``connect_exc=ProviderUnavailableError(...)``)
+    to exercise error paths, or replace the return value via
+    ``connect_value`` / ``check_gpu_value`` / ``hooks_value``.
 
-    Phase 14.D+F: replaces ad-hoc ``_FakeProvider`` classes
+    Phase A2 Batch 12: replaces ad-hoc ``_FakeProvider`` classes
     proliferating across the test suite. Conforms to
     :class:`IGPUProvider` runtime-checkable Protocol — verified by
     the fixture's own test.
@@ -81,10 +87,15 @@ class FakeGPUProvider:
             message="fake provider always running",
         ),
     )
-    connect_result: Result[SSHConnectionInfo, ProviderError] | None = None
-    disconnect_result: Result[None, ProviderError] | None = None
-    check_gpu_result: Result[GPUInfo, ProviderError] | None = None
-    hooks_result: Result[TrainingScriptHooks, ProviderError] | None = None
+    # Optional pre-built return values (None ⇒ default fabricated value).
+    connect_value: SSHConnectionInfo | None = None
+    check_gpu_value: GPUInfo | None = None
+    hooks_value: TrainingScriptHooks | None = None
+    # Optional typed exceptions to raise (None ⇒ no raise).
+    connect_exc: RyotenkAIError | None = None
+    disconnect_exc: RyotenkAIError | None = None
+    check_gpu_exc: RyotenkAIError | None = None
+    hooks_exc: RyotenkAIError | None = None
     resource_info_value: PodResourceInfo | None = None
     status: ProviderStatus = ProviderStatus.AVAILABLE
     pod_id: str | None = None
@@ -98,35 +109,34 @@ class FakeGPUProvider:
     def provider_type(self) -> str:
         return self.capabilities.provider_type
 
-    def connect(self, *, run: Any) -> Result[SSHConnectionInfo, ProviderError]:
-        if self.connect_result is not None:
-            return self.connect_result
-        return Ok(
-            SSHConnectionInfo(
-                host="fake.host",
-                port=22,
-                user="root",
-                key_path="/tmp/fake_key",
-                workspace_path="/workspace",
-            ),
+    def connect(self, *, run: Any) -> SSHConnectionInfo:
+        if self.connect_exc is not None:
+            raise self.connect_exc
+        if self.connect_value is not None:
+            return self.connect_value
+        return SSHConnectionInfo(
+            host="fake.host",
+            port=22,
+            user="root",
+            key_path="/tmp/fake_key",
+            workspace_path="/workspace",
         )
 
-    def disconnect(self) -> Result[None, ProviderError]:
-        if self.disconnect_result is not None:
-            return self.disconnect_result
-        return Ok(None)
+    def disconnect(self) -> None:
+        if self.disconnect_exc is not None:
+            raise self.disconnect_exc
 
-    def check_gpu(self) -> Result[GPUInfo, ProviderError]:
-        if self.check_gpu_result is not None:
-            return self.check_gpu_result
-        return Ok(
-            GPUInfo(
-                name="Fake-GPU",
-                vram_total_mb=24576,
-                vram_used_mb=0,
-                vram_free_mb=24576,
-                utilization_percent=0.0,
-            ),
+    def check_gpu(self) -> GPUInfo:
+        if self.check_gpu_exc is not None:
+            raise self.check_gpu_exc
+        if self.check_gpu_value is not None:
+            return self.check_gpu_value
+        return GPUInfo(
+            name="Fake-GPU",
+            vram_total_mb=24576,
+            vram_free_mb=24576,
+            cuda_version="12.0",
+            driver_version="555.00",
         )
 
     def get_capabilities(self) -> ProviderCapabilities:
@@ -134,10 +144,12 @@ class FakeGPUProvider:
 
     def prepare_training_script_hooks(
         self, ssh_client: SSHClient, context: dict[str, Any],
-    ) -> Result[TrainingScriptHooks, ProviderError]:
-        if self.hooks_result is not None:
-            return self.hooks_result
-        return Ok(TrainingScriptHooks.empty())
+    ) -> TrainingScriptHooks:
+        if self.hooks_exc is not None:
+            raise self.hooks_exc
+        if self.hooks_value is not None:
+            return self.hooks_value
+        return TrainingScriptHooks.empty()
 
     def get_resource_info(self) -> PodResourceInfo | None:
         return self.resource_info_value
@@ -162,28 +174,25 @@ class FakeGPUProvider:
 
 @dataclass
 class FailingGPUProvider(FakeGPUProvider):
-    """Variant where every state-changing method returns :class:`Err`.
+    """Variant where every state-changing method raises a typed error.
 
     Useful for testing error-handling paths without writing
     per-test failure stubs.
     """
 
     def __post_init__(self) -> None:
-        err = Err(
-            ProviderError(
-                message="fake provider failure",
-                code="FAKE_FAILURE",
-                details={},
-            ),
+        exc = ProviderUnavailableError(
+            detail="fake provider failure",
+            context={"legacy_code": "FAKE_FAILURE"},
         )
-        if self.connect_result is None:
-            self.connect_result = err
-        if self.disconnect_result is None:
-            self.disconnect_result = err
-        if self.check_gpu_result is None:
-            self.check_gpu_result = err
-        if self.hooks_result is None:
-            self.hooks_result = err
+        if self.connect_exc is None:
+            self.connect_exc = exc
+        if self.disconnect_exc is None:
+            self.disconnect_exc = exc
+        if self.check_gpu_exc is None:
+            self.check_gpu_exc = exc
+        if self.hooks_exc is None:
+            self.hooks_exc = exc
 
 
 # Phase 14.D+F § R-5 mitigation — assert the fake conforms to the

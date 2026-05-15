@@ -21,7 +21,6 @@ from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
 from ryotenkai_pod.trainer.orchestrator.resume_manager import ResumeManager
 from ryotenkai_pod.trainer.orchestrator.strategy_orchestrator import StrategyOrchestrator
 from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from ryotenkai_shared.utils.result import Ok
 
 
 def test_resume_manager_fresh_init_pipeline_applies_global_hyperparams_to_state(
@@ -119,15 +118,15 @@ def test_strategy_orchestrator_run_chain_resume_calls_chain_runner_with_loaded_m
     resumed_model = MagicMock(name="resumed_model")
     final_model = MagicMock(name="final_model")
 
-    orchestrator._resume_manager.load_model_from_checkpoint = MagicMock(return_value=Ok(resumed_model))
-    orchestrator._chain_runner.run = MagicMock(return_value=Ok(final_model))
+    orchestrator._resume_manager.load_model_from_checkpoint = MagicMock(return_value=resumed_model)
+    orchestrator._chain_runner.run = MagicMock(return_value=final_model)
 
     # 3) Run chain in resume mode
     monkeypatch.chdir(run_workspace)
     result = orchestrator.run_chain(strategies=strategies, resume=True, run_id=run_id)
 
-    assert result.is_ok()
-    assert result.unwrap() is final_model
+    # Phase A2: run_chain returns PreTrainedModel directly; raises on failure.
+    assert result is final_model
 
     # Ensure checkpoint loading was requested (start_phase > 0)
     orchestrator._resume_manager.load_model_from_checkpoint.assert_called_once()
@@ -189,12 +188,12 @@ def test_strategy_orchestrator_resume_with_corrupted_state_file_starts_fresh_and
     orchestrator._resume_manager.load_model_from_checkpoint = MagicMock()
 
     final_model = MagicMock(name="final_model")
-    orchestrator._chain_runner.run = MagicMock(return_value=Ok(final_model))
+    orchestrator._chain_runner.run = MagicMock(return_value=final_model)
 
     monkeypatch.chdir(run_workspace)
     res = orchestrator.run_chain(strategies=strategies, resume=True, run_id=run_id)
-    assert res.is_ok()
-    assert res.unwrap() is final_model
+    # Phase A2: run_chain returns PreTrainedModel directly; raises on failure.
+    assert res is final_model
 
     orchestrator._resume_manager.load_model_from_checkpoint.assert_not_called()
 

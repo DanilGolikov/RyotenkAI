@@ -10,6 +10,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.pipeline.state.models import PipelineAttemptState, PipelineState, StageLineageRef, StageRunState, utc_now_iso
+from ryotenkai_shared.errors import (
+    StateLoadFailedError as _SharedStateLoadFailedError,
+    StateLockedError as _SharedStateLockedError,
+)
 
 if TYPE_CHECKING:
     from ryotenkai_shared.pipeline_context import RunContext
@@ -18,15 +22,34 @@ SCHEMA_VERSION = 1
 
 
 class PipelineStateError(RuntimeError):
-    """Base error for pipeline state issues."""
+    """Historical base for pipeline state issues.
+
+    Phase C left this in place because nothing actually catches the
+    base type -- the two concrete subclasses below carry the typed
+    error-code semantics. Removing it would force every
+    ``from ... import PipelineStateError`` import site to update for
+    no behavioural change.
+    """
 
 
-class PipelineStateLoadError(PipelineStateError):
-    """State load failure."""
+class PipelineStateLoadError(_SharedStateLoadFailedError):
+    """State load failure.
+
+    Phase C: inherits from the shared typed
+    :class:`StateLoadFailedError` (404, ``STATE_LOAD_FAILED``) so the
+    RFC 9457 problem+json contract converts it without an ad-hoc
+    adapter (previously a 4-line ``app.exception_handler`` in
+    ``control/api/exceptions.py``).
+    """
 
 
-class PipelineStateLockError(PipelineStateError):
-    """Run lock failure."""
+class PipelineStateLockError(_SharedStateLockedError):
+    """Run lock failure.
+
+    Phase C: inherits from the shared typed :class:`StateLockedError`
+    (409, ``STATE_LOCKED``) so the RFC 9457 problem+json contract
+    converts it without an ad-hoc adapter.
+    """
 
 
 @dataclass(frozen=True, slots=True)

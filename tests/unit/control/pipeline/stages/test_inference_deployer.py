@@ -20,93 +20,6 @@ from ryotenkai_providers.inference.interfaces import (
 from ryotenkai_control.pipeline.stages.constants import StageNames
 from ryotenkai_control.pipeline.stages.inference_deployer import InferenceDeployer
 from ryotenkai_shared.config import PipelineConfig, Secrets
-from ryotenkai_shared.utils.result import Err, Ok, Success
-
-class _FakeProvider:
-    def __init__(self):
-        self.deploy_calls: list[dict[str, Any]] = []
-        self.health_calls = 0
-
-    @property
-    def provider_name(self) -> str:
-        return "fake"
-
-    @property
-    def provider_type(self) -> str:
-        return "fake"
-
-    def deploy(self, model_source: str, **kwargs):
-        self.deploy_calls.append({"model_source": model_source, **kwargs})
-        return Ok(
-            EndpointInfo(
-                endpoint_url="http://127.0.0.1:8000/v1",
-                api_type="openai_compatible",
-                provider_type="single_node",
-                engine="vllm",
-                model_id="test-model/test-llm",
-                health_url="http://127.0.0.1:8000/v1/models",
-            )
-        )
-
-    def set_event_logger(self, event_logger):
-        _ = event_logger
-        return None
-
-    def get_pipeline_readiness_mode(self):
-        return PipelineReadinessMode.WAIT_FOR_HEALTHY
-
-    def collect_startup_logs(self, *, local_path: Path) -> None:
-        _ = local_path
-        return
-
-    def build_inference_artifacts(self, *, ctx: InferenceArtifactsContext):
-        from ryotenkai_providers.single_node.inference.artifacts import CHAT_SCRIPT, render_readme
-
-        manifest = {
-            "run_name": ctx.run_name,
-            "mlflow_run_id": ctx.mlflow_run_id,
-            "provider": "single_node",
-            "engine": "vllm",
-            "ssh": {"alias": "pc"},
-            "docker": {
-                "container_name": "ryotenkai-inference-vllm",
-                "host_bind": "127.0.0.1",
-                "port": 8000,
-            },
-            "model": {"base_model_id": "test-model/test-llm", "adapter_ref": ctx.model_source},
-            "endpoint": {"client_base_url": ctx.endpoint.endpoint_url, "health_url": ctx.endpoint.health_url},
-        }
-        return Ok(
-            InferenceArtifacts(
-                manifest=manifest,
-                chat_script=CHAT_SCRIPT,
-                readme=render_readme(manifest_filename="inference_manifest.json", endpoint_url=ctx.endpoint.endpoint_url),
-            )
-        )
-
-    def undeploy(self):
-        return Ok(None)
-
-    def health_check(self):
-        self.health_calls += 1
-        return Ok(True)
-
-    def get_capabilities(self):
-        from ryotenkai_providers.inference.interfaces import InferenceCapabilities
-        return InferenceCapabilities(
-            provider_type="fake",
-            supported_engines=["vllm"],
-            supports_activate_for_eval=True,
-        )
-
-    def get_endpoint_info(self):
-        return None
-
-    def activate_for_eval(self):
-        return Ok("http://127.0.0.1:8000/v1")
-
-    def deactivate_after_eval(self):
-        return Ok(None)
 
 
 def _load_test_config() -> PipelineConfig:
@@ -121,18 +34,18 @@ def test_inference_deployer_skips_when_disabled() -> None:
     cfg = _load_test_config()
     cfg.inference.enabled = False
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
-    res = stage.execute({})
-    assert res.is_success()
-    ctx = res.unwrap()
+    ctx = stage.execute({})
     assert ctx[StageNames.INFERENCE_DEPLOYER]["inference_skipped"] is True
 
 
 def test_inference_deployer_fails_when_model_source_missing() -> None:
+    from ryotenkai_shared.errors import ModelLoadFailedError
+
     cfg = _load_test_config()
     cfg.inference.enabled = True
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
-    res = stage.execute({})
-    assert res.is_failure()
+    with pytest.raises(ModelLoadFailedError):
+        stage.execute({})
 
 
 def test_chat_script_checks_status_before_chat(tmp_path: Path) -> None:
@@ -234,7 +147,9 @@ def test_chat_script_reports_when_container_not_running(tmp_path: Path) -> None:
 
 
 def test_deploy_fails_when_run_context_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Negative: context without RunContext yields Err."""
+    """Negative: context without RunContext raises InternalError."""
+    from ryotenkai_shared.errors import InternalError
+
     cfg = _load_test_config()
     cfg.inference.enabled = True
     cfg.inference.common.model_source = "test/repo"
@@ -244,9 +159,9 @@ def test_deploy_fails_when_run_context_missing(monkeypatch: pytest.MonkeyPatch) 
         "mlflow_parent_run_id": None,
     }
 
-    res = stage.execute(context)
-    assert res.is_failure()
-    assert "RunContext" in str(res.unwrap_err())
+    with pytest.raises(InternalError) as exc_info:
+        stage.execute(context)
+    assert "RunContext" in (exc_info.value.detail or "")
 
 
 # =============================================================================
@@ -450,16 +365,16 @@ def test_cleanup_skips_deactivate_when_eval_disabled() -> None:
 
 
 def test_cleanup_logs_warning_on_deactivate_failure() -> None:
-    """Lines 263-264: cleanup() eval enabled + deactivate_after_eval fails → warning, no raise."""
-    from ryotenkai_shared.utils.result import Failure, InferenceError
+    """Lines 263-264: cleanup() eval enabled + deactivate_after_eval raises → warning, no propagate."""
+    from ryotenkai_shared.errors import InferenceUnavailableError
 
     cfg = _load_test_config()
     cfg.evaluation.enabled = True
 
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
     mock_provider = MagicMock()
-    mock_provider.deactivate_after_eval.return_value = Failure(
-        InferenceError(message="deactivation failed", code="DEACT_ERR")
+    mock_provider.deactivate_after_eval.side_effect = InferenceUnavailableError(
+        detail="deactivation failed", context={"code": "DEACT_ERR"}
     )
     stage._provider = mock_provider
 
@@ -471,14 +386,12 @@ def test_cleanup_logs_warning_on_deactivate_failure() -> None:
 
 def test_cleanup_deactivates_when_eval_enabled_success() -> None:
     """Lines 265-266: cleanup() eval enabled + deactivate_after_eval succeeds → ok."""
-    from ryotenkai_shared.utils.result import Success as _Success
-
     cfg = _load_test_config()
     cfg.evaluation.enabled = True
 
     stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
     mock_provider = MagicMock()
-    mock_provider.deactivate_after_eval.return_value = _Success(None)
+    mock_provider.deactivate_after_eval.return_value = None
     stage._provider = mock_provider
 
     stage.cleanup()

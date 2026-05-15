@@ -34,7 +34,7 @@ from ryotenkai_shared.config.providers.single_node import (
     SingleNodeTrainingConfig,
 )
 from ryotenkai_shared.config.providers.ssh import SSHConfig
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import InferenceUnavailableError, ProviderUnavailableError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -203,13 +203,13 @@ class TestPositive:
     def test_empty_plan_returns_ok_immediately(self, provider) -> None:
         """No steps ⇒ no docker calls, no SSH usage."""
         mock_ssh = MagicMock()
-        result = provider._run_prepare_plan(
+        # Phase A2 Batch 12: _run_prepare_plan returns None on success, raises on failure.
+        provider._run_prepare_plan(
             ssh=mock_ssh,
             plan=PreparePlan.empty(),
             run_id="r1",
             workspace_host_path="/host/ws/inference",
         )
-        assert result.is_ok()
         # No image pulls, no container runs.
         mock_ssh.exec_command.assert_not_called()
 
@@ -220,14 +220,13 @@ class TestPositive:
         _seed_prepare_step(
             fake_docker, logs="Some output\nMERGE_SUCCESS\n",
         )
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-        assert result.is_ok(), f"got {result.unwrap_err() if result.is_err() else None}"
 
     def test_two_step_plan_runs_both(self, provider, fake_docker) -> None:
         a = _step(
@@ -245,14 +244,13 @@ class TestPositive:
         mock_ssh.exec_command.return_value = (True, "OK", "")
         _seed_prepare_step(fake_docker, step_name="step_a")
         _seed_prepare_step(fake_docker, step_name="step_b")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-        assert result.is_ok()
 
 
 # ===========================================================================
@@ -271,32 +269,33 @@ class TestNegative:
         # Bypass frozen by direct __dict__ mutation (test-only; production
         # provider sees the version on the validated instance).
         object.__setattr__(plan, "spec_version", 999)
-        result = provider._run_prepare_plan(
-            ssh=MagicMock(),
-            plan=plan,
-            run_id="r1",
-            workspace_host_path="/host/ws/inference",
-        )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED" in str(result.unwrap_err())
-
-    def test_image_pull_fails(self, provider) -> None:
-        from ryotenkai_shared.utils.result import InferenceError
-
-        plan = _plan(_step())
-        with patch.object(
-            provider,
-            "_ensure_docker_image",
-            return_value=Err(InferenceError(message="pull fail", code="X")),
-        ):
-            result = provider._run_prepare_plan(
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider._run_prepare_plan(
                 ssh=MagicMock(),
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_IMAGE_PULL_FAILED" in str(result.unwrap_err())
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED"
+
+    def test_image_pull_fails(self, provider) -> None:
+        plan = _plan(_step())
+        with patch.object(
+            provider,
+            "_ensure_docker_image",
+            side_effect=InferenceUnavailableError(
+                detail="pull fail",
+                context={"reason": "X"},
+            ),
+        ):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=MagicMock(),
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_IMAGE_PULL_FAILED"
 
     def test_container_start_fails(self, provider) -> None:
         plan = _plan(_step())
@@ -307,45 +306,45 @@ class TestNegative:
             (True, "", ""),  # rm -rf && mkdir -p
             (False, "", "docker daemon not reachable"),  # docker run fail
         ]
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
-                ssh=mock_ssh,
-                plan=plan,
-                run_id="r1",
-                workspace_host_path="/host/ws/inference",
-            )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_CONTAINER_START_FAILED" in str(result.unwrap_err())
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=mock_ssh,
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_CONTAINER_START_FAILED"
 
     def test_exit_code_nonzero(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker, exit_code=1)
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
-                ssh=mock_ssh,
-                plan=plan,
-                run_id="r1",
-                workspace_host_path="/host/ws/inference",
-            )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_CONTAINER_FAILED" in str(result.unwrap_err())
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=mock_ssh,
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_CONTAINER_FAILED"
 
     def test_no_success_marker_in_logs(self, provider, fake_docker) -> None:
         plan = _plan(_step())
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker, logs="nothing notable here")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
-                ssh=mock_ssh,
-                plan=plan,
-                run_id="r1",
-                workspace_host_path="/host/ws/inference",
-            )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_NO_SUCCESS_MARKER" in str(result.unwrap_err())
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=mock_ssh,
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_NO_SUCCESS_MARKER"
 
     def test_artifacts_not_found(self, provider, fake_docker) -> None:
         plan = _plan(_step())
@@ -358,15 +357,15 @@ class TestNegative:
             (True, "(directory listing)", ""),  # ls -lah
         ]
         _seed_prepare_step(fake_docker)
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
-                ssh=mock_ssh,
-                plan=plan,
-                run_id="r1",
-                workspace_host_path="/host/ws/inference",
-            )
-        assert result.is_err()
-        assert "SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND" in str(result.unwrap_err())
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=mock_ssh,
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND"
 
 
 # ===========================================================================
@@ -386,20 +385,19 @@ class TestBoundary:
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker, logs="any output")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
                 run_id="r1",
                 workspace_host_path="/host/ws/inference",
             )
-        assert result.is_ok()
 
     def test_step_with_explicit_image_overrides_serve_image(
         self, provider, fake_docker,
     ) -> None:
         """``step.image`` set ⇒ provider uses it instead of engine serve image."""
-        plan = _plan(_step(image="custom/converter:1.0"))
+        plan = _plan(_step(image="custom/converter:1.0", success_artifact=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
@@ -408,7 +406,7 @@ class TestBoundary:
 
         def _capture(*, ssh, image):
             ensure_calls.append(image)
-            return Ok(None)
+            return None
 
         with patch.object(provider, "_ensure_docker_image", side_effect=_capture):
             provider._run_prepare_plan(
@@ -424,7 +422,7 @@ class TestBoundary:
         self, provider, fake_docker,
     ) -> None:
         """``image=None`` ⇒ provider falls through to ``_resolve_engine_image``."""
-        plan = _plan(_step(image=None))
+        plan = _plan(_step(image=None, success_artifact=None))
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
@@ -433,7 +431,7 @@ class TestBoundary:
 
         def _capture(*, ssh, image):
             ensure_calls.append(image)
-            return Ok(None)
+            return None
 
         with patch.object(provider, "_ensure_docker_image", side_effect=_capture):
             provider._run_prepare_plan(
@@ -464,7 +462,7 @@ class TestInvariants:
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -486,7 +484,7 @@ class TestInvariants:
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -512,7 +510,7 @@ class TestLogicSpecific:
         mock_ssh = MagicMock()
         mock_ssh.exec_command.return_value = (True, "", "")
         _seed_prepare_step(fake_docker)
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -552,7 +550,7 @@ class TestLogicSpecific:
 
         mock_ssh.exec_command.side_effect = _capture
         _seed_prepare_step(fake_docker, step_name="custom_step")
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
             provider._run_prepare_plan(
                 ssh=mock_ssh,
                 plan=plan,
@@ -600,17 +598,17 @@ class TestCombinatorial:
         _seed_prepare_step(fake_docker, step_name="step_a", logs="A_DONE_NOTHING")
         _seed_prepare_step(fake_docker, step_name="step_b", logs="no marker present")
 
-        with patch.object(provider, "_ensure_docker_image", return_value=Ok(None)):
-            result = provider._run_prepare_plan(
-                ssh=mock_ssh,
-                plan=plan,
-                run_id="r1",
-                workspace_host_path="/host/ws/inference",
-            )
+        with patch.object(provider, "_ensure_docker_image", return_value=None):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._run_prepare_plan(
+                    ssh=mock_ssh,
+                    plan=plan,
+                    run_id="r1",
+                    workspace_host_path="/host/ws/inference",
+                )
 
-        assert result.is_err()
         # Step A succeeded (no marker required) → step B failed (B_OK missing).
-        assert "SINGLENODE_PREPARE_NO_SUCCESS_MARKER" in str(result.unwrap_err())
+        assert exc_info.value.context.get("reason") == "SINGLENODE_PREPARE_NO_SUCCESS_MARKER"
 
 
 # ===========================================================================

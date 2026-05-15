@@ -26,12 +26,12 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.contracts.runner_api.files import FileUploadTarget
 from ryotenkai_control.pipeline.stages.managers.deployment_constants import (
     DEPLOYMENT_CONFIG_PATH,
 )
+from ryotenkai_shared.contracts.runner_api.files import FileUploadTarget
+from ryotenkai_shared.errors import ConfigInvalidError, SSHTransferFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, ConfigError, Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets
@@ -139,36 +139,43 @@ class FileUploader:
 
     def upload_via_http(
         self,
-        client: "JobClient",
+        client: JobClient,
         context: dict[str, Any],
-    ) -> Result[None, AppError]:
+    ) -> None:
         """Upload config + datasets via ``client.upload_file``.
 
         Called from :class:`TrainingLauncher.start_training` after
         ``/healthz`` returns 200. Sequential — runs each upload one
         at a time so a slow tunnel doesn't end up with N concurrent
         TCP streams competing for the same SSH ControlMaster.
+
+        Phase A2 Batch 9 (2026-05-15): migrated from
+        ``Result[None, AppError]`` to raise-based. Returns ``None`` on
+        success; raises :class:`ConfigInvalidError` for config-validation
+        failures (missing config, missing dataset files) or
+        :class:`SSHTransferFailedError` for transport failures.
         """
         config_path = Path(context.get("config_path", DEPLOYMENT_CONFIG_PATH))
         if not config_path.exists():
-            return Err(
-                ConfigError(
-                    message=f"Config file not found: {config_path}",
-                    code="CONFIG_FILE_NOT_FOUND",
-                )
+            raise ConfigInvalidError(
+                detail=f"Config file not found: {config_path}",
+                context={
+                    "reason": "CONFIG_FILE_NOT_FOUND",
+                    "config_path": str(config_path),
+                },
             )
 
         dataset_files, missing = self._collect_local_datasets()
         if missing and not dataset_files:
-            return Err(
-                ConfigError(
-                    message=(
-                        "Dataset files referenced but not found: "
-                        + ", ".join(missing)
-                    ),
-                    code="DATASET_FILE_NOT_FOUND",
-                    details={"missing": missing},
-                )
+            raise ConfigInvalidError(
+                detail=(
+                    "Dataset files referenced but not found: "
+                    + ", ".join(missing)
+                ),
+                context={
+                    "reason": "DATASET_FILE_NOT_FOUND",
+                    "missing": missing,
+                },
             )
 
         logger.info(
@@ -179,20 +186,19 @@ class FileUploader:
             asyncio.run(
                 self._upload_all(client, config_path, dataset_files),
             )
-        except Exception as exc:  # noqa: BLE001 — surface uniformly
-            return Err(
-                ProviderError(
-                    message=f"HTTP upload failed: {exc}",
-                    code="HTTP_FILE_UPLOAD_FAILED",
-                ),
-            )
+        except Exception as exc:
+            raise SSHTransferFailedError(
+                detail=f"HTTP upload failed: {exc}",
+                context={"reason": "HTTP_FILE_UPLOAD_FAILED"},
+                cause=exc,
+            ) from exc
 
         logger.info("✅ All files uploaded via HTTP")
-        return Ok(None)
+        return None
 
     async def _upload_all(
         self,
-        client: "JobClient",
+        client: JobClient,
         config_path: Path,
         dataset_files: list[Path],
     ) -> None:

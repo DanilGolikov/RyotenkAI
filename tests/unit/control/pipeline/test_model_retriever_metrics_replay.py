@@ -31,7 +31,7 @@ from ryotenkai_control.pipeline.stages.model_retriever import (
     ModelRetrieverEventCallbacks,
 )
 from ryotenkai_shared.config import HuggingFaceHubConfig
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import SSHTransferFailedError
 
 
 # ---------------------------------------------------------------------------
@@ -85,26 +85,30 @@ class _FakeSSHClient:
         remote_path: str,
         local_path: Path,
         timeout: int = 300,
-    ) -> Any:
+    ) -> None:
+        # Phase A2 finale (2026-05-16): SSHClient.download_file raises
+        # SSHTransferFailedError on failure; returns None on success.
         self.download_calls.append((remote_path, local_path))
         if not self._download_succeeds:
-            return Err(
-                ProviderError(
-                    message="simulated download failure",
-                    code="SSH_DOWNLOAD_FILE_FAILED",
-                    details={},
-                )
+            raise SSHTransferFailedError(
+                detail="simulated download failure",
+                context={
+                    "op": "download_file",
+                    "remote_path": remote_path,
+                    "legacy_code": "SSH_DOWNLOAD_FILE_FAILED",
+                },
             )
         if remote_path in self._contents:
             local_path.parent.mkdir(parents=True, exist_ok=True)
             local_path.write_text(self._contents[remote_path], encoding="utf-8")
-            return Ok(None)
-        return Err(
-            ProviderError(
-                message=f"file not in fake contents: {remote_path}",
-                code="SSH_DOWNLOAD_FILE_FAILED",
-                details={},
-            )
+            return None
+        raise SSHTransferFailedError(
+            detail=f"file not in fake contents: {remote_path}",
+            context={
+                "op": "download_file",
+                "remote_path": remote_path,
+                "legacy_code": "SSH_DOWNLOAD_FILE_FAILED",
+            },
         )
 
     def close_master(self) -> None:  # pragma: no cover — defensive

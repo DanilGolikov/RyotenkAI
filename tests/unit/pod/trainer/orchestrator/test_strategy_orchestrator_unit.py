@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
 from ryotenkai_pod.trainer.orchestrator.strategy_orchestrator import StrategyOrchestrator
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import (
+    RyotenkAIError,
+    StrategyChainInvalidError,
+    TrainingFailedError,
+)
 
 
 def _mk_cfg(*, strategies: list[Any] | None = None) -> MagicMock:
@@ -68,11 +72,12 @@ class TestDataBufferCallbacks:
 
 
 class TestRunChain:
-    def test_returns_err_when_no_strategies(self) -> None:
+    def test_raises_when_no_strategies(self) -> None:
         orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[]))
-        res = cast("Any", orch.run_chain(strategies=None))
-        assert res.is_failure()
-        assert "No strategies configured" in str(res.unwrap_err())
+        with pytest.raises(StrategyChainInvalidError) as exc_info:
+            orch.run_chain(strategies=None)
+        assert "No strategies configured" in (exc_info.value.detail or "")
+        assert exc_info.value.context.get("legacy_code") == "TRAINING_NO_STRATEGIES"
 
     def test_resume_all_complete_returns_base_model(self) -> None:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
@@ -84,10 +89,9 @@ class TestRunChain:
         orch._resume_manager.get_interrupt_info = MagicMock(return_value={"phase_idx": 1, "reason": "sig"})
         orch._resume_manager.is_all_complete = MagicMock(return_value=True)
 
-        orch._chain_runner.run = MagicMock(return_value=Ok(MagicMock()))
-        res = cast("Any", orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True, run_id="rid"))
-        assert res.is_success()
-        assert res.unwrap() is orch.model
+        orch._chain_runner.run = MagicMock(return_value=MagicMock(name="should_not_be_used"))
+        out = orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True, run_id="rid")
+        assert out is orch.model
         orch._chain_runner.run.assert_not_called()
 
     def test_load_checkpoint_failure_propagates(self) -> None:
@@ -99,26 +103,13 @@ class TestRunChain:
         orch._resume_manager.was_interrupted = MagicMock(return_value=False)
         orch._resume_manager.is_all_complete = MagicMock(return_value=False)
         orch._resume_manager.get_checkpoint_path_for_phase = MagicMock(return_value="/ckpt")
-        orch._resume_manager.load_model_from_checkpoint = MagicMock(return_value=Err("boom"))
+        orch._resume_manager.load_model_from_checkpoint = MagicMock(
+            side_effect=TrainingFailedError(detail="boom"),
+        )
 
-        res = cast("Any", orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True, run_id="rid"))
-        assert res.is_failure()
-        assert "boom" in str(res.unwrap_err())
-
-    def test_loaded_model_none_returns_err(self) -> None:
-        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
-        orch = _mk_orchestrator(cfg=cfg)
-        buf = SimpleNamespace()
-
-        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 1, True))
-        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
-        orch._resume_manager.is_all_complete = MagicMock(return_value=False)
-        orch._resume_manager.get_checkpoint_path_for_phase = MagicMock(return_value="/ckpt")
-        orch._resume_manager.load_model_from_checkpoint = MagicMock(return_value=Ok(None))
-
-        res = cast("Any", orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True, run_id="rid"))
-        assert res.is_failure()
-        assert "Model is None after checkpoint loading" in str(res.unwrap_err())
+        with pytest.raises(TrainingFailedError) as exc_info:
+            orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True, run_id="rid")
+        assert "boom" in (exc_info.value.detail or "")
 
     def test_registers_and_unregisters_shutdown_handler(self) -> None:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
@@ -132,12 +123,32 @@ class TestRunChain:
         orch._resume_manager.is_all_complete = MagicMock(return_value=False)
 
         final_model = SimpleNamespace()
-        orch._chain_runner.run = MagicMock(return_value=Ok(final_model))
+        orch._chain_runner.run = MagicMock(return_value=final_model)
 
-        res = cast("Any", orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=False, run_id="rid"))
-        assert res.is_success()
-        assert res.unwrap() is final_model
+        out = orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=False, run_id="rid")
+        assert out is final_model
 
+        sh.register.assert_called_once()
+        sh.unregister.assert_called_once()
+
+    def test_shutdown_handler_unregistered_on_failure(self) -> None:
+        """Phase A2 Batch 14 invariant: signal handlers are released
+        even when chain_runner raises — the finally block must run.
+        """
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        sh = MagicMock()
+        sh.should_stop.return_value = False
+        orch = _mk_orchestrator(cfg=cfg, shutdown_handler=sh)
+
+        buf = SimpleNamespace()
+        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
+        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
+        orch._resume_manager.is_all_complete = MagicMock(return_value=False)
+
+        orch._chain_runner.run = MagicMock(side_effect=TrainingFailedError(detail="kaboom"))
+
+        with pytest.raises(TrainingFailedError):
+            orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=False, run_id="rid")
         sh.register.assert_called_once()
         sh.unregister.assert_called_once()
 
@@ -152,13 +163,27 @@ class TestSinglePhaseAndUtilities:
         monkeypatch.setattr("ryotenkai_pod.trainer.orchestrator.strategy_orchestrator.DataBuffer", lambda **kw: created_buf)
 
         out_model = SimpleNamespace()
-        orch._phase_executor.execute = MagicMock(return_value=Ok(out_model))
+        orch._phase_executor.execute = MagicMock(return_value=out_model)
 
         phase = SimpleNamespace(strategy_type="sft")
-        res = cast("Any", orch.run_single_phase(phase_idx=0, phase=phase, model=None))
-        assert res.is_success()
-        assert res.unwrap() is out_model
+        out = orch.run_single_phase(phase_idx=0, phase=phase, model=None)
+        assert out is out_model
         created_buf.init_pipeline.assert_called_once()
+
+    def test_run_single_phase_propagates_failure(self) -> None:
+        """``run_single_phase`` no longer wraps in Result; it propagates."""
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        orch = _mk_orchestrator(cfg=cfg)
+        orch.buffer = MagicMock()
+        orch.buffer.is_initialized = True
+
+        orch._phase_executor.execute = MagicMock(
+            side_effect=TrainingFailedError(detail="boom in phase"),
+        )
+
+        phase = SimpleNamespace(strategy_type="sft")
+        with pytest.raises(TrainingFailedError):
+            orch.run_single_phase(phase_idx=0, phase=phase, model=None)
 
     def test_get_summary_and_phase_lists(self) -> None:
         cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
@@ -187,3 +212,83 @@ class TestSinglePhaseAndUtilities:
         sh.should_stop.return_value = True
         orch = _mk_orchestrator(cfg=cfg, shutdown_handler=sh)
         assert orch.was_interrupted() is True
+
+
+class TestRaiseContract:
+    """7-class coverage for the new raise-based public surface.
+
+    Pins the contract described in :class:`StrategyOrchestrator` docstring:
+    no strategies → ``StrategyChainInvalidError``; downstream errors
+    propagate untouched; signal handlers are always unregistered.
+    """
+
+    def test_positive_success_returns_model(self) -> None:
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        orch = _mk_orchestrator(cfg=cfg)
+        buf = SimpleNamespace()
+        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
+        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
+        orch._resume_manager.is_all_complete = MagicMock(return_value=False)
+        final = SimpleNamespace()
+        orch._chain_runner.run = MagicMock(return_value=final)
+        assert orch.run_chain(strategies=[MagicMock(strategy_type="sft")]) is final
+
+    def test_negative_no_strategies_raises(self) -> None:
+        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[]))
+        with pytest.raises(StrategyChainInvalidError):
+            orch.run_chain(strategies=None)
+
+    def test_boundary_empty_strategies_arg_falls_back_to_config(self) -> None:
+        # When ``strategies=None`` we read from config; if config is also
+        # empty we raise.
+        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[]))
+        with pytest.raises(StrategyChainInvalidError):
+            orch.run_chain(strategies=[])
+
+    def test_invariant_legacy_code_preserved(self) -> None:
+        orch = _mk_orchestrator(cfg=_mk_cfg(strategies=[]))
+        try:
+            orch.run_chain(strategies=None)
+        except StrategyChainInvalidError as exc:
+            assert exc.context["legacy_code"] == "TRAINING_NO_STRATEGIES"
+
+    def test_dependency_error_chain_runner_failure_propagates(self) -> None:
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        orch = _mk_orchestrator(cfg=cfg)
+        buf = SimpleNamespace()
+        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
+        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
+        orch._resume_manager.is_all_complete = MagicMock(return_value=False)
+        sentinel = TrainingFailedError(detail="downstream")
+        orch._chain_runner.run = MagicMock(side_effect=sentinel)
+        with pytest.raises(TrainingFailedError) as exc:
+            orch.run_chain(strategies=[MagicMock(strategy_type="sft")])
+        assert exc.value is sentinel
+
+    def test_regression_run_chain_returns_model_not_result(self) -> None:
+        """Pin: ``run_chain`` does not return a ``Result`` wrapper post-Batch-14."""
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        orch = _mk_orchestrator(cfg=cfg)
+        buf = SimpleNamespace()
+        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
+        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
+        orch._resume_manager.is_all_complete = MagicMock(return_value=False)
+        model_sentinel = SimpleNamespace(name="final")
+        orch._chain_runner.run = MagicMock(return_value=model_sentinel)
+        out = orch.run_chain(strategies=[MagicMock(strategy_type="sft")])
+        # If we accidentally re-introduced Result wrapping, this assertion would fail.
+        assert not hasattr(out, "is_failure")
+        assert not hasattr(out, "unwrap")
+        assert out is model_sentinel
+
+    def test_combinatorial_resume_complete_skips_chain_runner(self) -> None:
+        cfg = _mk_cfg(strategies=[MagicMock(strategy_type="sft")])
+        orch = _mk_orchestrator(cfg=cfg)
+        buf = SimpleNamespace()
+        orch._resume_manager.setup_buffer = MagicMock(return_value=(buf, 0, False))
+        orch._resume_manager.was_interrupted = MagicMock(return_value=False)
+        orch._resume_manager.is_all_complete = MagicMock(return_value=True)
+        orch._chain_runner.run = MagicMock()
+        out = orch.run_chain(strategies=[MagicMock(strategy_type="sft")], resume=True)
+        assert out is orch.model
+        orch._chain_runner.run.assert_not_called()

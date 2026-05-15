@@ -4,11 +4,17 @@ SUT: :class:`RunPodCleanupManager` — terminate-with-bounded-retry поверх
 RunPod API. Все коллабораторы — fakes:
 
 * ``api_client`` — узкий stub поверх :class:`FakeRunPodAPI`, который
-  отвечает за ``terminate_pod`` (Result-стиль).
+  отвечает за ``terminate_pod`` (raise-based: успех = None; ошибка =
+  типизированный :class:`RyotenkAIError`).
 * ``sleep_fn`` — заменяется на счётчик, так что тесты не блокируются
   реальным sleep и могут проверять backoff-схему.
 
 Три сценария: happy / retry-then-success / exhaust-retries.
+
+Phase A2 finale (2026-05-16): converted from legacy ``Result[None,
+ProviderError]`` to raise-based contract. ``terminate_pod`` now returns
+``None`` on success and raises a typed exception on failure;
+``cleanup_pod`` re-raises the last typed exception on exhaustion.
 """
 
 from __future__ import annotations
@@ -16,29 +22,33 @@ from __future__ import annotations
 import pytest
 
 from ryotenkai_providers.runpod.training.cleanup_manager import RunPodCleanupManager
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError
 from tests._fakes.runpod import FakeRunPodAPI
 
 pytestmark = pytest.mark.component
 
 
-# --- адаптер: SUT ожидает sync метод ``terminate_pod(pod_id) -> Result`` -----
+# --- адаптер: SUT ожидает sync метод ``terminate_pod(pod_id) -> None`` -------
 
 
 class _SyncRunPodAdapter:
     """SUT — синхронный, FakeRunPodAPI — async. Адаптер хранит
-    предзаписанные результаты и крутит их по очереди."""
+    предзаписанные результаты и крутит их по очереди. ``None`` означает
+    успех; экземпляр :class:`Exception` — ошибку (raise on call)."""
 
     def __init__(self, results: list[object]) -> None:
-        # каждый результат — либо Ok(None), либо Err(ProviderError(...))
+        # каждый результат — либо None (успех), либо исключение для raise
         self._results = list(results)
         self.calls: list[str] = []
 
-    def terminate_pod(self, pod_id: str) -> object:
+    def terminate_pod(self, pod_id: str) -> None:
         self.calls.append(pod_id)
         if not self._results:
             raise AssertionError("test exhausted prepared results without expectation")
-        return self._results.pop(0)
+        nxt = self._results.pop(0)
+        if isinstance(nxt, BaseException):
+            raise nxt
+        return None
 
 
 # --- fixtures ----------------------------------------------------------------
@@ -63,12 +73,12 @@ class TestPositive:
         self, sleep_recorder: tuple[list[float], object],
     ) -> None:
         recorded, sleep_fn = sleep_recorder
-        adapter = _SyncRunPodAdapter([Ok(None)])
+        adapter = _SyncRunPodAdapter([None])
         mgr = RunPodCleanupManager(adapter, sleep_fn=sleep_fn)  # type: ignore[arg-type]
 
-        result = mgr.cleanup_pod("pod-1")
+        out = mgr.cleanup_pod("pod-1")
 
-        assert result.is_ok()
+        assert out is None
         assert adapter.calls == ["pod-1"]
         # Sleep не должен звучать — успех с первой попытки.
         assert recorded == []
@@ -84,8 +94,10 @@ class TestRetryThenSuccess:
         recorded, sleep_fn = sleep_recorder
         adapter = _SyncRunPodAdapter(
             [
-                Err(ProviderError(message="5xx blip", code="RUNPOD_TRANSIENT")),
-                Ok(None),
+                ProviderUnavailableError(
+                    detail="5xx blip", context={"code": "RUNPOD_TRANSIENT"}
+                ),
+                None,
             ],
         )
         mgr = RunPodCleanupManager(
@@ -94,9 +106,9 @@ class TestRetryThenSuccess:
             sleep_fn=sleep_fn,
         )
 
-        result = mgr.cleanup_pod("pod-2")
+        out = mgr.cleanup_pod("pod-2")
 
-        assert result.is_ok()
+        assert out is None
         assert adapter.calls == ["pod-2", "pod-2"]
         # Один sleep между попытками — initial_backoff.
         assert recorded == [2.0]
@@ -106,15 +118,21 @@ class TestRetryThenSuccess:
 
 
 class TestRetryExhausted:
-    def test_all_attempts_fail_returns_last_error(
+    def test_all_attempts_fail_raises_last_error(
         self, sleep_recorder: tuple[list[float], object],
     ) -> None:
         recorded, sleep_fn = sleep_recorder
         adapter = _SyncRunPodAdapter(
             [
-                Err(ProviderError(message="first", code="RUNPOD_TRANSIENT")),
-                Err(ProviderError(message="second", code="RUNPOD_TRANSIENT")),
-                Err(ProviderError(message="third", code="RUNPOD_AUTH")),
+                ProviderUnavailableError(
+                    detail="first", context={"code": "RUNPOD_TRANSIENT"}
+                ),
+                ProviderUnavailableError(
+                    detail="second", context={"code": "RUNPOD_TRANSIENT"}
+                ),
+                ProviderUnavailableError(
+                    detail="third", context={"code": "RUNPOD_AUTH"}
+                ),
             ],
         )
         mgr = RunPodCleanupManager(
@@ -124,13 +142,12 @@ class TestRetryExhausted:
             sleep_fn=sleep_fn,
         )
 
-        result = mgr.cleanup_pod("pod-3")
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            mgr.cleanup_pod("pod-3")
 
-        assert result.is_err()
         # Последний error — из третьей попытки, не из первой.
-        err = result.unwrap_err()
-        assert err.code == "RUNPOD_AUTH"
-        assert "third" in err.message
+        assert exc_info.value.context.get("code") == "RUNPOD_AUTH"
+        assert "third" in (exc_info.value.detail or "")
         # 3 попытки + 2 sleep'а между ними (exponential backoff: 1s, 2s).
         assert len(adapter.calls) == 3
         assert recorded == [1.0, 2.0]

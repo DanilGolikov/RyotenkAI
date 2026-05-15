@@ -3,15 +3,22 @@
 Inject fakes for every seam (``query``, ``clock``, ``sleep``,
 ``tcp_probe``) so the tests are deterministic and fast — no ``time.sleep``,
 no socket calls.
+
+Phase A2 Batch 11 (2026-05-15): raise-based contract.
+``query_pod_snapshot`` returns ``PodSnapshot`` and raises typed
+exceptions; ``wait`` returns ``PodSnapshot`` and raises typed
+exceptions on terminal / stuck / timeout.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.cancellation import PipelineCancelled
 from ryotenkai_providers.runpod.lifecycle.pod_ssh_waiter import (
     PodQuery,
@@ -19,7 +26,6 @@ from ryotenkai_providers.runpod.lifecycle.pod_ssh_waiter import (
 )
 from ryotenkai_providers.runpod.lifecycle.policy import WaitPolicy
 from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 pytestmark = pytest.mark.unit
 
@@ -49,14 +55,23 @@ def _snap(
 
 @dataclass
 class FakeQuery:
-    responses: list[Result[PodSnapshot, ProviderError]] = field(default_factory=list)
+    """Raise-based fake for ``PodQuery``. Each action is a PodSnapshot
+    (returned) or Exception (raised)."""
+
+    actions: list[object] = field(default_factory=list)
     calls: int = 0
 
-    def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+    def query_pod_snapshot(self, pod_id: str) -> PodSnapshot:
         self.calls += 1
-        if not self.responses:
-            return Err(ProviderError(message="exhausted", code="STUB_NO_RESPONSE"))
-        return self.responses.pop(0)
+        if not self.actions:
+            raise ProviderUnavailableError(
+                detail="exhausted", context={"code": "STUB_NO_RESPONSE"}
+            )
+        action = self.actions.pop(0)
+        if isinstance(action, BaseException):
+            raise action
+        assert isinstance(action, PodSnapshot)
+        return action
 
 
 @dataclass
@@ -90,13 +105,13 @@ def _always_closed(_host: str, _port: int, _timeout: float) -> bool:
 
 def _make_waiter(
     *,
-    responses: list[Result[PodSnapshot, ProviderError]],
+    actions: list[object],
     policy: WaitPolicy | None = None,
     sleep: Callable[[float], None] = _no_sleep,
     clock: FakeClock | None = None,
     tcp_probe: Callable[[str, int, float], bool] = _always_open,
 ) -> tuple[PodSshWaiter, FakeQuery]:
-    query = FakeQuery(responses=list(responses))
+    query = FakeQuery(actions=list(actions))
     pol = policy or WaitPolicy(
         total_timeout_s=300, poll_interval_s=5.0,
         no_exposed_tcp_grace_s=30,
@@ -115,32 +130,30 @@ def _make_waiter(
 
 
 class TestPositive:
-    def test_returns_ok_when_ready_and_tcp_open(self) -> None:
+    def test_returns_snapshot_when_ready_and_tcp_open(self) -> None:
         waiter, query = _make_waiter(
-            responses=[Ok(_snap(status="RUNNING", ssh=_SSH_OK))],
+            actions=[_snap(status="RUNNING", ssh=_SSH_OK)],
         )
-        res = waiter.wait("pod-1")
-        assert res.is_success()
-        assert res.unwrap().is_ready
+        out = waiter.wait("pod-1")
+        assert out.is_ready
         assert query.calls == 1
 
     def test_returns_ok_only_when_both_status_and_tcp_ready(self) -> None:
         """RUNNING with SSH endpoint allocated but TCP refusing connections
         means sshd hasn't started yet — keep polling until it does."""
         waiter, query = _make_waiter(
-            responses=[
-                Ok(_snap(status="RUNNING", ssh=_SSH_OK)),  # tcp_probe says NO
-                Ok(_snap(status="RUNNING", ssh=_SSH_OK)),  # tcp_probe says YES
+            actions=[
+                _snap(status="RUNNING", ssh=_SSH_OK),
+                _snap(status="RUNNING", ssh=_SSH_OK),
             ],
             tcp_probe=_make_probe_sequence([False, True]),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_success()
+        out = waiter.wait("pod-1")
+        assert out.is_ready
         assert query.calls == 2
 
 
 def _make_probe_sequence(answers: list[bool]) -> Callable[[str, int, float], bool]:
-    """Probe that returns the next answer from the list each call."""
     queue = list(answers)
 
     def probe(_host: str, _port: int, _timeout: float) -> bool:
@@ -155,80 +168,70 @@ def _make_probe_sequence(answers: list[bool]) -> Callable[[str, int, float], boo
 
 
 class TestNegative:
-    def test_terminal_status_returns_pod_failed(self) -> None:
-        waiter, query = _make_waiter(
-            responses=[Ok(_snap(status="FAILED"))],
-        )
-        res = waiter.wait("pod-1")
-        assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_POD_FAILED"
-        assert query.calls == 1  # bailed on first poll, didn't loop
+    def test_terminal_status_raises_pod_failed(self) -> None:
+        waiter, query = _make_waiter(actions=[_snap(status="FAILED")])
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_FAILED"
+        assert query.calls == 1
 
     def test_running_with_ports_no_ssh_endpoint_bails_after_grace(self) -> None:
-        """RUNNING + ports>0 but no SSH endpoint → community-cloud limitation."""
         snap = _snap(status="RUNNING", ssh=None, port_count=2)
-        # Many polls so we exceed the grace window.
         clock = FakeClock(step=10.0)
         waiter, _ = _make_waiter(
-            responses=[Ok(snap)] * 50,
+            actions=[snap] * 50,
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=600, poll_interval_s=5.0,
                 no_exposed_tcp_grace_s=30,
             ),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_NO_EXPOSED_TCP"
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_NO_EXPOSED_TCP"
 
     def test_running_with_zero_ports_waits_full_timeout(self) -> None:
-        """RUNNING + ports==0 must NOT early-bail. The platform sometimes
-        takes the full window to allocate ports; a mid-window cutoff
-        forces retries on what would otherwise be a successful boot.
-
-        Pre-refactor behaviour kept the loop polling until the deadline
-        and then surfaced ``RUNPOD_POD_TIMEOUT`` — which the provider's
-        ``_RECREATABLE_ERRORS`` filter handles as "fresh pod retry".
-        """
         snap = _snap(status="RUNNING", ssh=None, port_count=0)
-        clock = FakeClock(step=120.0)  # second poll lands past deadline
+        clock = FakeClock(step=120.0)
         waiter, _ = _make_waiter(
-            responses=[Ok(snap)] * 5,
+            actions=[snap] * 5,
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=60, poll_interval_s=5.0,
                 no_exposed_tcp_grace_s=30,
             ),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_POD_TIMEOUT"
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_TIMEOUT"
 
     def test_total_timeout_exceeded(self) -> None:
-        clock = FakeClock(step=120.0)  # huge step — second poll past deadline
+        clock = FakeClock(step=120.0)
         waiter, _ = _make_waiter(
-            responses=[Ok(_snap(status="STARTING"))] * 5,
+            actions=[_snap(status="STARTING")] * 5,
             clock=clock,
             policy=WaitPolicy(
                 total_timeout_s=60, poll_interval_s=5.0,
                 no_exposed_tcp_grace_s=30,
             ),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_POD_TIMEOUT"
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_TIMEOUT"
 
     def test_terminal_query_code_aborts_immediately(self) -> None:
         """Pod doesn't exist on RunPod side → terminal query error,
         do not retry."""
         waiter, query = _make_waiter(
-            responses=[
-                Err(ProviderError(message="anything", code="RUNPOD_POD_DATA_MISSING")),
+            actions=[
+                ProviderUnavailableError(
+                    detail="anything", context={"code": "RUNPOD_POD_DATA_MISSING"}
+                ),
             ],
         )
-        res = waiter.wait("pod-1")
-        assert res.is_failure()
-        assert res.unwrap_err().code == "RUNPOD_POD_DATA_MISSING"
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_DATA_MISSING"
         assert query.calls == 1
 
 
@@ -239,20 +242,17 @@ class TestNegative:
 
 class TestBoundary:
     def test_grace_window_resets_on_status_change(self) -> None:
-        """RUNNING with ports>0 no SSH → status changes to PROVISIONING →
-        back to RUNNING. The grace timer must reset; the second RUNNING
-        stretch shouldn't count time from the first."""
         snap_running_no_ssh = _snap(status="RUNNING", ssh=None, port_count=2)
         snap_provisioning = _snap(status="PROVISIONING", port_count=0)
         snap_ready = _snap(status="RUNNING", ssh=_SSH_OK)
         clock = FakeClock(step=10.0)
         waiter, _ = _make_waiter(
-            responses=[
-                Ok(snap_running_no_ssh),
-                Ok(snap_running_no_ssh),
-                Ok(snap_provisioning),  # resets grace timer
-                Ok(snap_running_no_ssh),
-                Ok(snap_ready),
+            actions=[
+                snap_running_no_ssh,
+                snap_running_no_ssh,
+                snap_provisioning,  # resets grace timer
+                snap_running_no_ssh,
+                snap_ready,
             ],
             clock=clock,
             policy=WaitPolicy(
@@ -260,20 +260,18 @@ class TestBoundary:
                 no_exposed_tcp_grace_s=30,
             ),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_success()
+        out = waiter.wait("pod-1")
+        assert out.is_ready
 
     def test_tcp_probe_disabled_returns_on_status_alone(self) -> None:
-        """``tcp_probe_enabled=False`` means status-only readiness check —
-        RUNNING + SSH endpoint = ready, no socket call."""
         called: list[tuple[str, int, float]] = []
 
         def tracking_probe(host: str, port: int, t: float) -> bool:
             called.append((host, port, t))
-            return False  # would block forever if invoked
+            return False
 
         waiter, _ = _make_waiter(
-            responses=[Ok(_snap(status="RUNNING", ssh=_SSH_OK))],
+            actions=[_snap(status="RUNNING", ssh=_SSH_OK)],
             tcp_probe=tracking_probe,
             policy=WaitPolicy(
                 total_timeout_s=300, poll_interval_s=5.0,
@@ -281,8 +279,8 @@ class TestBoundary:
                 tcp_probe_enabled=False,
             ),
         )
-        res = waiter.wait("pod-1")
-        assert res.is_success()
+        out = waiter.wait("pod-1")
+        assert out.is_ready
         assert called == []  # probe not invoked
 
 
@@ -293,35 +291,30 @@ class TestBoundary:
 
 class TestInvariants:
     def test_two_wait_calls_have_independent_state(self) -> None:
-        """Two ``wait()`` calls must not share the running_no_ports timer
-        between invocations — fresh state each call."""
         snap_no_ports = _snap(status="RUNNING", ssh=None, port_count=0)
         clock = FakeClock(step=1.0)
-        # First wait — short response, succeeds.
         waiter, query = _make_waiter(
-            responses=[
-                Ok(_snap(status="RUNNING", ssh=_SSH_OK)),
-            ],
+            actions=[_snap(status="RUNNING", ssh=_SSH_OK)],
             clock=clock,
         )
         first = waiter.wait("pod-1")
-        assert first.is_success()
-        # Reset query for second wait.
-        query.responses = [Ok(snap_no_ports)] * 10 + [Ok(_snap(status="RUNNING", ssh=_SSH_OK))]
+        assert first.is_ready
+        query.actions = (
+            [snap_no_ports] * 10 + [_snap(status="RUNNING", ssh=_SSH_OK)]
+        )
         second = waiter.wait("pod-2")
-        assert second.is_success()
+        assert second.is_ready
 
     def test_transient_query_errors_do_not_abort(self) -> None:
-        """Non-terminal query errors → keep polling."""
         waiter, query = _make_waiter(
-            responses=[
-                Err(ProviderError(message="net glitch", code="RUNPOD_TRANSIENT")),
-                Err(ProviderError(message="another", code="RUNPOD_SDK_CALL_FAILED")),
-                Ok(_snap(status="RUNNING", ssh=_SSH_OK)),
+            actions=[
+                ProviderUnavailableError(detail="net glitch", context={"code": "RUNPOD_TRANSIENT"}),
+                ProviderUnavailableError(detail="another", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
+                _snap(status="RUNNING", ssh=_SSH_OK),
             ],
         )
-        res = waiter.wait("pod-1")
-        assert res.is_success()
+        out = waiter.wait("pod-1")
+        assert out.is_ready
         assert query.calls == 3
 
 
@@ -332,14 +325,11 @@ class TestInvariants:
 
 class TestCancellation:
     def test_pipeline_cancelled_in_sleep_propagates(self) -> None:
-        """The waiter MUST NOT catch ``PipelineCancelled`` — provider's
-        cleanup hook owns that responsibility."""
-
         def cancelled_sleep(_: float) -> None:
             raise PipelineCancelled()
 
         waiter, _ = _make_waiter(
-            responses=[Ok(_snap(status="STARTING"))] * 5,
+            actions=[_snap(status="STARTING")] * 5,
             sleep=cancelled_sleep,
         )
         with pytest.raises(PipelineCancelled):
@@ -350,9 +340,7 @@ class TestCancellation:
         class CancellingQuery:
             calls: int = 0
 
-            def query_pod_snapshot(
-                self, pod_id: str
-            ) -> Result[PodSnapshot, ProviderError]:
+            def query_pod_snapshot(self, pod_id: str) -> PodSnapshot:
                 self.calls += 1
                 raise PipelineCancelled()
 
@@ -375,7 +363,7 @@ class TestCancellation:
     "status,port_count,ssh_ok,tcp_ok,expected",
     [
         ("RUNNING", 1, True, True, "ok"),
-        ("RUNNING", 1, True, False, "tcp_no"),  # keeps polling, eventually times out
+        ("RUNNING", 1, True, False, "tcp_no"),
         ("FAILED", 0, False, None, "pod_failed"),
         ("EXITED", 0, False, None, "pod_failed"),
         ("STARTING", 0, False, None, "polling"),
@@ -388,7 +376,6 @@ def test_combinatorial_status_matrix(
     snap = _snap(status=status, port_count=port_count, ssh=ssh)
     clock = FakeClock(step=1.0)
     if expected == "tcp_no":
-        # Force timeout fast so we exit the loop deterministically.
         policy = WaitPolicy(total_timeout_s=2, poll_interval_s=1.0)
         clock = FakeClock(step=1.0)
     elif expected == "polling":
@@ -396,17 +383,19 @@ def test_combinatorial_status_matrix(
     else:
         policy = WaitPolicy(total_timeout_s=300, poll_interval_s=5.0)
     waiter, _ = _make_waiter(
-        responses=[Ok(snap)] * 100,
+        actions=[snap] * 100,
         clock=clock,
         tcp_probe=_always_open if tcp_ok else _always_closed,
         policy=policy,
     )
-    res = waiter.wait("pod-1")
     if expected == "ok":
-        assert res.is_success()
+        out = waiter.wait("pod-1")
+        assert out.is_ready
     elif expected == "pod_failed":
-        assert res.unwrap_err().code == "RUNPOD_POD_FAILED"
-    elif expected in ("tcp_no", "polling"):
-        # Both should hit total-timeout because we don't reach a ready
-        # state within the budget.
-        assert res.unwrap_err().code == "RUNPOD_POD_TIMEOUT"
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_FAILED"
+    else:
+        with pytest.raises(ProviderUnavailableError) as ei:
+            waiter.wait("pod-1")
+        assert ei.value.context["code"] == "RUNPOD_POD_TIMEOUT"

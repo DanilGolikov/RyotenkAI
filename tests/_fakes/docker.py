@@ -8,6 +8,11 @@ Determinism: no time source — log content is exactly what tests
 ``append`` and stays put until cleared. No background tasks, no
 network — every operation is pure data manipulation.
 
+Phase A2 Batch 4 (2026-05-14): contract switched from
+``Result[T, ProviderError]`` to plain ``T`` returns with raised
+:class:`ProviderUnavailableError` / :class:`ConfigInvalidError` on
+failure — mirrors the new production :class:`LocalDockerClient`.
+
 Chaos surface (programming API):
 
 * :meth:`register_container` — pre-create a container with a state
@@ -29,8 +34,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.infrastructure.docker.protocol import IDockerClient, _ExecClient
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 
 @dataclass
@@ -55,8 +60,7 @@ class FakeDockerClient:
         fake.register_container("helix-prepare-r1-merge", state="exited", exit_code=0)
         fake.append_logs("helix-prepare-r1-merge", "MERGE_SUCCESS")
         provider = SingleNodeInferenceProvider(ctx, docker=fake)
-        result = provider._run_prepare_plan(ssh=..., plan=..., ...)
-        assert result.is_ok()
+        provider._run_prepare_plan(ssh=..., plan=..., ...)
         # Inspect the call log:
         assert ("rm_force", {"container_name": "helix-prepare-r1-merge", ...}) in fake.calls
     """
@@ -129,10 +133,13 @@ class FakeDockerClient:
 
         - ``"register"`` (default): pull succeeds and image is added to
           the registry.
-        - ``"fail"``: pull returns ``Err(DOCKER_PULL_FAILED)``.
+        - ``"fail"``: pull raises ``ProviderUnavailableError`` with
+          ``context["reason"] == "DOCKER_PULL_FAILED"``.
         - ``"silently_missing"``: pull "succeeds" but image stays
           missing — used to exercise the post-pull verify-retry path
-          in :class:`LocalDockerClient`.
+          in :class:`LocalDockerClient`. Raises
+          ``ProviderUnavailableError`` with
+          ``context["reason"] == "DOCKER_IMAGE_NOT_AVAILABLE"``.
         """
         if behaviour not in {"register", "fail", "silently_missing"}:
             raise ValueError(f"unknown pull behaviour: {behaviour!r}")
@@ -189,15 +196,14 @@ class FakeDockerClient:
     # Internal — failure injection helper
     # ------------------------------------------------------------------
 
-    def _maybe_fail(self, method: str, code: str) -> ProviderError | None:
+    def _maybe_raise(self, method: str, reason: str) -> None:
         n = self._fail_counts.get(method, 0)
         if n > 0:
             self._fail_counts[method] = n - 1
-            return ProviderError(
-                message=f"fake_injected_failure for {method}",
-                code=code,
+            raise ProviderUnavailableError(
+                detail=f"fake_injected_failure for {method}",
+                context={"reason": reason, "method": method},
             )
-        return None
 
     # ------------------------------------------------------------------
     # IDockerClient surface
@@ -221,7 +227,7 @@ class FakeDockerClient:
         image: str,
         pull_timeout_seconds: int = 1200,
         verify_after_pull: bool = True,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         self._call_log.append(
             (
                 "ensure_image",
@@ -232,28 +238,19 @@ class FakeDockerClient:
                 },
             )
         )
-        err = self._maybe_fail("ensure_image", "DOCKER_PULL_FAILED")
-        if err is not None:
-            return Err(err)
+        self._maybe_raise("ensure_image", "DOCKER_PULL_FAILED")
         if self._pull_behaviour == "fail":
-            return Err(
-                ProviderError(
-                    message=f"fake pull failed for {image}",
-                    code="DOCKER_PULL_FAILED",
-                    details={"image": image},
-                )
+            raise ProviderUnavailableError(
+                detail=f"fake pull failed for {image}",
+                context={"reason": "DOCKER_PULL_FAILED", "image": image},
             )
         if self._pull_behaviour == "silently_missing":
-            return Err(
-                ProviderError(
-                    message=f"Image '{image}' was pulled but is not available.",
-                    code="DOCKER_IMAGE_NOT_AVAILABLE",
-                    details={"image": image},
-                )
+            raise ProviderUnavailableError(
+                detail=f"Image '{image}' was pulled but is not available.",
+                context={"reason": "DOCKER_IMAGE_NOT_AVAILABLE", "image": image},
             )
         # Default: register and succeed.
         self._known_images.add(image)
-        return Ok(None)
 
     def rm_force(
         self,
@@ -261,20 +258,17 @@ class FakeDockerClient:
         *,
         container_name: str,
         timeout_seconds: int = 60,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         self._call_log.append(
             (
                 "rm_force",
                 {"container_name": container_name, "timeout_seconds": timeout_seconds},
             )
         )
-        err = self._maybe_fail("rm_force", "DOCKER_RM_FAILED")
-        if err is not None:
-            return Err(err)
+        self._maybe_raise("rm_force", "DOCKER_RM_FAILED")
         rec = self._containers.get(container_name)
         if rec is not None:
             rec.state = "removed"
-        return Ok(None)
 
     def is_container_running(
         self,
@@ -304,7 +298,7 @@ class FakeDockerClient:
         container_name: str,
         tail: int | None = None,
         timeout_seconds: int = 30,
-    ) -> Result[str, ProviderError]:
+    ) -> str:
         self._call_log.append(
             (
                 "logs",
@@ -315,16 +309,14 @@ class FakeDockerClient:
                 },
             )
         )
-        err = self._maybe_fail("logs", "DOCKER_LOGS_FAILED")
-        if err is not None:
-            return Err(err)
+        self._maybe_raise("logs", "DOCKER_LOGS_FAILED")
         rec = self._containers.get(container_name)
         if rec is None:
-            return Ok("")
+            return ""
         chunks = rec.logs
         if tail is not None and tail > 0:
             chunks = chunks[-tail:]
-        return Ok("\n".join(chunks))
+        return "\n".join(chunks)
 
     def container_exit_code(
         self,
@@ -332,23 +324,21 @@ class FakeDockerClient:
         *,
         container_name: str,
         timeout_seconds: int = 5,
-    ) -> Result[int, ProviderError]:
+    ) -> int:
         self._call_log.append(
             (
                 "container_exit_code",
                 {"container_name": container_name, "timeout_seconds": timeout_seconds},
             )
         )
-        err = self._maybe_fail("container_exit_code", "DOCKER_INSPECT_FAILED")
-        if err is not None:
-            return Err(err)
+        self._maybe_raise("container_exit_code", "DOCKER_INSPECT_FAILED")
         rec = self._containers.get(container_name)
         if rec is None or rec.exit_code is None:
             # Legacy function returns the value docker reports; a
             # missing container or never-set exit code is most useful
-            # in tests as "0" — assertions on exit_code use ``Ok(N)``.
-            return Ok(0)
-        return Ok(rec.exit_code)
+            # in tests as "0" — assertions on exit_code use ``== N``.
+            return 0
+        return rec.exit_code
 
 
 def assert_fake_implements_protocol() -> None:

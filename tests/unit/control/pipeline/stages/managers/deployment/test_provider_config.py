@@ -7,8 +7,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
-from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
 from ryotenkai_control.pipeline.stages.managers.deployment.provider_config import (
     get_active_provider_name,
     get_cloud_training_cfg,
@@ -27,7 +27,7 @@ from ryotenkai_shared.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
+from ryotenkai_shared.constants import PROVIDER_SINGLE_NODE
 
 pytestmark = pytest.mark.unit
 

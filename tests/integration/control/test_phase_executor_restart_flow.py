@@ -20,7 +20,6 @@ from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, PhaseStatus
 from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
 from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
 from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from ryotenkai_shared.utils.result import Ok
 
 
 def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_path: Path) -> None:
@@ -68,7 +67,7 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
 
     # 3) Training dependencies (mocked)
     dataset_loader = MagicMock()
-    dataset_loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=5)), None))
+    dataset_loader.load_for_phase.return_value = (MagicMock(__len__=MagicMock(return_value=5)), None)
 
     strategy_factory = SimpleNamespace()
     trainer_factory = MagicMock()
@@ -101,7 +100,8 @@ def test_phase_executor_passes_latest_resume_checkpoint_from_data_buffer(tmp_pat
         buffer=buffer,
     )
 
-    assert result.is_ok()
+    # Phase A2: execute() returns the trained PreTrainedModel directly; raises on failure.
+    assert result is not None
 
     # TrainerFactory invoked with per-phase output_dir (set by DataBuffer/PhaseExecutor)
     trainer_factory.create_from_phase.assert_called_once()
@@ -150,7 +150,7 @@ def test_phase_executor_redirects_logging_through_tqdm_context(
     memory_manager.with_memory_protection = _with_memory_protection
 
     dataset_loader = MagicMock()
-    dataset_loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=5)), None))
+    dataset_loader.load_for_phase.return_value = (MagicMock(__len__=MagicMock(return_value=5)), None)
 
     trainer_factory = MagicMock()
     trainer = MagicMock()
@@ -200,7 +200,8 @@ def test_phase_executor_redirects_logging_through_tqdm_context(
         buffer=buffer,
     )
 
-    assert result.is_ok()
+    # Phase A2: execute() returns the trained PreTrainedModel directly; raises on failure.
+    assert result is not None
     assert events == ["enter", "train", "exit"]
 
 

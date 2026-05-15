@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
 from ryotenkai_control.api.dependencies import get_runs_dir, resolve_run_dir
 from ryotenkai_control.api.http_cache import apply_cache_headers, is_fresh
@@ -23,7 +23,17 @@ def list_runs(runs_dir: Path = Depends(get_runs_dir)) -> RunsListResponse:
 
 @router.post("", response_model=RunSummary, status_code=201)
 def create_run(body: CreateRunRequest, runs_dir: Path = Depends(get_runs_dir)) -> RunSummary:
-    return run_service.create_empty_run(runs_dir, body.run_id, body.subgroup)
+    # Phase C: ``run_service.create_empty_run`` raises ``ValueError``
+    # on duplicate / invalid run id. Convert to the typed
+    # :class:`JobSpecInvalidError` (422, ``JOB_SPEC_INVALID``) so the
+    # response carries a stable code via the shared problem+json
+    # contract.
+    from ryotenkai_shared.errors import JobSpecInvalidError
+
+    try:
+        return run_service.create_empty_run(runs_dir, body.run_id, body.subgroup)
+    except ValueError as exc:
+        raise JobSpecInvalidError(str(exc)) from exc
 
 
 @router.get("/{run_id:path}", response_model=RunDetail)
@@ -49,11 +59,13 @@ def delete_run(
     run_dir: Path = Depends(resolve_run_dir),
     mode: str = "local_and_mlflow",
 ) -> DeleteResultSchema:
+    # Phase C: ``RunIsActiveError`` is a typed ``DomainError`` (409,
+    # ``RUN_IS_ACTIVE``); it flows through the shared exception handler
+    # without an ad-hoc adapter here. Bare ``ValueError`` becomes a
+    # typed ``JobSpecInvalidError`` so it carries a stable error code.
+    from ryotenkai_shared.errors import JobSpecInvalidError
+
     try:
         return delete_service.delete_run(run_dir, mode)
-    except delete_service.RunIsActiveError as exc:
-        raise HTTPException(
-            status_code=409, detail={"code": "run_active", "pid": exc.pid, "message": str(exc)}
-        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise JobSpecInvalidError(str(exc), context={"pid_field": "mode"}) from exc

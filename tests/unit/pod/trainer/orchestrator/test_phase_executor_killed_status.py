@@ -10,10 +10,10 @@ crashed run, indistinguishable from OOM, dataset corruption, or
 plugin error.
 
 Phase 9.A fix: thread ``was_cancelled`` through by inspecting the
-``TrainingError.code`` returned from ``handle_graceful_shutdown``
-(``"TRAINING_INTERRUPTED"``). When set, finally picks
-``RunStatus.KILLED`` — the canonical MLflow signal for "stopped
-by user".
+typed exception raised from ``handle_graceful_shutdown`` —
+``TrainingFailedError`` with ``context['legacy_code']="TRAINING_INTERRUPTED"``.
+When set, finally picks ``RunStatus.KILLED`` — the canonical MLflow
+signal for "stopped by user".
 
 Test strategy: source-inspection guard — same trick used by
 ``test_runner_event_callback_wiring.py``. Importing the executor
@@ -22,14 +22,15 @@ module at runtime requires the full ML stack (``peft``, ``datasets``,
 inspection asserts the fix is present and the truth-table holds
 without paying for that.
 
-The behavioural integration (full executor + nested run + MLflow
-status) lands in Phase 9.C's ``test_stop_with_cancellation.py``
-end-to-end test.
+Phase A2 Batch 14: error model migrated from
+``Result[T, TrainingError]`` to typed raises. The contract symbol
+between training_runner and executor is now the legacy code on the
+exception's ``context`` map; the constant pinned by these tests is
+``_TRAINING_INTERRUPTED_CODE = "TRAINING_INTERRUPTED"``.
 """
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
 import pytest
@@ -56,14 +57,19 @@ class TestSourceInvariants:
         (writer) and ``executor.py`` (reader). Pin its presence so a
         rename triggers a test failure rather than silent breakage."""
         src = _executor_source()
-        assert '_TRAINING_INTERRUPTED_CODE = "TRAINING_INTERRUPTED"' in src
+        # Post Batch 14: the literal lives in training_runner; executor
+        # binds it via import so the local constant assignment uses the
+        # imported name. Pin both halves.
+        assert "TRAINING_INTERRUPTED_LEGACY_CODE" in src
+        assert "_TRAINING_INTERRUPTED_CODE = TRAINING_INTERRUPTED_LEGACY_CODE" in src
 
     def test_is_cancellation_error_helper_defined(self) -> None:
         src = _executor_source()
         assert "def _is_cancellation_error(" in src
-        # The helper must check both: failure AND specific code.
-        assert "is_failure()" in src
+        # The helper must check both: RyotenkAIError AND specific legacy code.
+        assert "RyotenkAIError" in src
         assert "_TRAINING_INTERRUPTED_CODE" in src
+        assert "legacy_code" in src
 
     def test_was_cancelled_flag_used_in_execute(self) -> None:
         """``was_cancelled`` flag must be threaded through the try/
@@ -147,8 +153,8 @@ class TestStatusMappingTruthTable:
         """The pivotal assertion of Phase 9.A.
 
         ``was_cancelled=True`` plus ``phase_succeeded=False`` is the
-        common case — graceful shutdown returns Err so phase_succeeded
-        stays False. Cancellation MUST win over the residual ``failed``
+        common case — graceful shutdown raises so phase_succeeded stays
+        False. Cancellation MUST win over the residual ``failed``
         signal so the operator sees ``KILLED`` on the MLflow UI."""
         status = self._pick_mlflow_status(
             was_cancelled=True, phase_succeeded=False,
@@ -163,10 +169,10 @@ class TestStatusMappingTruthTable:
 
 
 class TestHelperSignature:
-    def test_helper_takes_result_returns_bool(self) -> None:
+    def test_helper_takes_exception_returns_bool(self) -> None:
         """``_is_cancellation_error`` is a small pure function.
         Inspect its source to confirm the signature stays narrow:
-        one positional arg (``result``), returns bool.
+        one positional arg (``exc``), returns bool.
 
         Anything wider (e.g. taking trainer state, mutating something)
         violates the SRP boundary that lets the finally block reuse
@@ -177,7 +183,7 @@ class TestHelperSignature:
         assert idx >= 0
         signature_block = src[idx:idx + 200]
         # Single positional arg, return type bool.
-        assert "result:" in signature_block
+        assert "exc:" in signature_block
         assert "-> bool:" in signature_block
         # No other arguments — keep the helper SRP-narrow.
         assert "self" not in signature_block.split(":")[0]

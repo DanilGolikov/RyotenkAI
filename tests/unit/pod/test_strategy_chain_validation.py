@@ -46,16 +46,29 @@ def _warning_text(mock_warning) -> str:
 
 
 def _assert_ok(result) -> None:
-    assert result.is_success()
-    assert result.unwrap() is None
+    assert result is None
 
 
-def _assert_err(result, *, code: str | None = None) -> str:
-    assert result.is_failure()
-    err = result.unwrap_err()
+_LEGACY_CODE_TO_REASON: dict[str, str] = {
+    "STRATEGY_CHAIN_EMPTY": "empty_chain",
+    "STRATEGY_CHAIN_CONTAINS_NONE": "contains_none",
+    "STRATEGY_CHAIN_DUPLICATE_DATASET": "duplicate_dataset",
+}
+
+
+def _assert_err(call_or_fn, *, code: str | None = None) -> str:
+    from ryotenkai_shared.errors import StrategyChainInvalidError
+
+    assert callable(call_or_fn), "pass a zero-arg lambda — Result API is gone"
+    with pytest.raises(StrategyChainInvalidError) as exc_info:
+        call_or_fn()
     if code is not None:
-        assert err.code == code
-    return str(err)
+        expected_reason = _LEGACY_CODE_TO_REASON[code]
+        actual_reason = exc_info.value.context.get("reason")
+        assert actual_reason == expected_reason, (
+            f"expected context['reason']={expected_reason!r} for legacy code {code!r}, got {actual_reason!r}"
+        )
+    return str(exc_info.value)
 
 
 # =============================================================================
@@ -172,13 +185,13 @@ class TestInvalidChainsEmptyNone:
 
     def test_empty_chain(self):
         """Empty chain is invalid."""
-        error = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
+        error = _assert_err(lambda: validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error.lower()
 
     def test_none_element_only(self):
         """Chain with only None element is invalid (after filtering)."""
         chain = [None]  # type: ignore
-        _ = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        _ = _assert_err(lambda: validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         # After filtering None, chain is empty
 
     def test_none_in_middle(self):
@@ -190,13 +203,13 @@ class TestInvalidChainsEmptyNone:
         ]
         # Current implementation: filters None and validates rest as [sft, dpo]
         # OR: rejects None immediately
-        error = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error = _assert_err(lambda: validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "none" in error.lower() or "empty" in error.lower()
 
     def test_multiple_nones(self):
         """Chain with multiple Nones should fail validation."""
         chain = [None, None, None]  # type: ignore
-        error = _assert_err(validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
+        error = _assert_err(lambda: validate_strategy_chain(chain), code="STRATEGY_CHAIN_CONTAINS_NONE")  # type: ignore[arg-type]
         assert "empty" in error.lower() or "none" in error.lower()
 
 
@@ -366,7 +379,7 @@ class TestErrorMessageQuality:
 
     def test_empty_chain_error_is_clear(self):
         """Empty chain error should mention 'empty'."""
-        error = _assert_err(validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
+        error = _assert_err(lambda: validate_strategy_chain([]), code="STRATEGY_CHAIN_EMPTY")
         assert "empty" in error.lower() or "cannot be empty" in error.lower()
 
     def test_invalid_start_warning_shows_allowed(self):

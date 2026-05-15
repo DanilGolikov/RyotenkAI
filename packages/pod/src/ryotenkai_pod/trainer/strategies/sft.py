@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.constants import STRATEGY_SFT
 from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
-from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
+from ryotenkai_shared.constants import STRATEGY_SFT
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -51,17 +51,23 @@ class SFTStrategy(TrainingStrategy):
             "packing": hp.packing,
         }
 
-    def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        """Validate SFT dataset has required TRL columns."""
+    def validate_dataset(self, dataset: Dataset) -> None:
+        """Validate SFT dataset has required TRL columns.
+
+        Raises:
+            DatasetValidationFailedError: When required columns are missing.
+        """
         columns = dataset.column_names or []
         if "messages" not in columns and "text" not in columns:
-            return Err(
-                StrategyError(
-                    message="SFT requires 'messages' (ChatML) or 'text' column",
-                    code="SFT_MISSING_REQUIRED_COLUMN",
-                )
+            raise DatasetValidationFailedError(
+                detail="SFT requires 'messages' (ChatML) or 'text' column",
+                context={
+                    "legacy_code": "SFT_MISSING_REQUIRED_COLUMN",
+                    "strategy": STRATEGY_SFT,
+                    "expected_one_of": ["messages", "text"],
+                    "available_columns": list(columns),
+                },
             )
-        return Ok(True)
 
     def get_training_objective(self) -> str:
         return "supervised_learning"

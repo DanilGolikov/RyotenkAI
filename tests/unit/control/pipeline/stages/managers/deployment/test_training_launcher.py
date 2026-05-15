@@ -1,513 +1,768 @@
-"""Unit tests for src.pipeline.stages.managers.deployment.training_launcher.
+"""Phase 6.3 — :class:`TrainingLauncher` (post-rewrite) contract.
 
-NOTE (Phase 6.3 cutover, 2026-04-26):
-This file targets the LEGACY launcher (heredoc start_training.sh +
-nohup + marker-file probes). Phase 6.3 replaced the implementation
-with a JobClient/SSHTunnel flow; the new public surface is covered
-by ``test_training_launcher_v2.py`` (see sibling file). The legacy
-tests are skipped here pending deletion in Phase 6.3 follow-up — we
-keep the file around as a paper-trail of what the old contract
-asserted, in case we need to backport behaviour when something
-surprises us in production.
+Covers the new JobClient/SSHTunnel-based launcher. The old marker-file
+flow is exercised in :file:`test_training_launcher.py` (skipped post
+6.3 — kept as a paper-trail of the legacy contract).
+
+Coverage (kept tight; deeper integration tests live in the runner
+suite):
+- TestBuildJobEnv         _build_job_env merges defaults + secrets +
+                          MLflow + provider hooks in priority order
+- TestStartTrainingHappy  end-to-end happy path (preflight ok,
+                          PluginPacker ok, tunnel + submit ok)
+- TestStartTrainingErrors plugin pack fails → tunnel never opens;
+                          tunnel open fails → no leaked port;
+                          submit fails → tunnel closed before return
+- TestResolveJobId        priority: logical_run_id > run.name > fallback
+- TestPersistJobSubmission*  the small bridge from in-process submit
+                             to ``attempts/<n>/job_submission.json``
+                             that powers the out-of-process CLI / Web
+                             UI tooling. Split across positive /
+                             negative / boundary / dependency /
+                             invariant / regression sub-classes.
+
+Tests bypass :mod:`src.pipeline.stages.managers.__init__` (which
+eager-imports heavy deps not present in the dev venv) by loading
+the launcher module directly via importlib.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from itertools import count
+import importlib.util
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ryotenkai_shared.config.integrations.mlflow import MLflowConfig
-from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
-from ryotenkai_shared.config import (
-    DatasetConfig,
-    DatasetLocalPaths,
-    DatasetSourceLocal,
-    IntegrationsConfig,
-    GlobalHyperparametersConfig,
-    InferenceConfig,
-    ModelConfig,
-    PipelineConfig,
-    QLoRAConfig,
-    TrainingOnlyConfig,
-)
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
-from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
 
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.skip(
-        reason=(
-            "Phase 6.3 cutover: legacy heredoc/nohup launcher replaced "
-            "by JobClient flow. New tests live in "
-            "test_training_launcher_v2.py. This file will be deleted "
-            "in the Phase 6.3 follow-up commit."
+def _load_launcher():
+    """Load the launcher module directly so we don't drag the whole
+    pipeline package init into the test process. Same pattern used
+    by :file:`test_plugin_packer.py`."""
+    if "ryotenkai_launcher_test" in sys.modules:
+        return sys.modules["ryotenkai_launcher_test"]
+    repo_root = Path(__file__).resolve().parents[7]
+    src_path = (
+        repo_root
+        / "packages" / "control" / "src" / "ryotenkai_control" / "pipeline" / "stages" / "managers"
+        / "deployment" / "training_launcher.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "ryotenkai_launcher_test", str(src_path),
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ryotenkai_launcher_test"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_launcher_mod = _load_launcher()
+TrainingLauncher = _launcher_mod.TrainingLauncher
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+def _config_obj(*, single_node: bool = False, mlflow=None):
+    """Build a minimal config-like object the launcher consumes."""
+    cfg = SimpleNamespace(
+        training=SimpleNamespace(
+            provider="single_node" if single_node else "runpod",
+            get_strategy_chain=lambda: [],
         ),
-    ),
-]
+        integrations=SimpleNamespace(mlflow=mlflow),
+    )
+    return cfg
 
 
-DATASET_CHAT_FIXTURE = "src/tests/fixtures/datasets/test_chat.jsonl"
-
-SINGLE_NODE_PROVIDER_CFG: dict[str, Any] = {
-    "connect": {"ssh": {"alias": "pc"}},
-    "training": {"workspace_path": "/tmp/workspace"},
-}
-
-RUNPOD_PROVIDER_CFG: dict[str, Any] = {
-    "connect": {"ssh": {"key_path": "/tmp/id_ed25519"}},
-    "cleanup": {},
-    "training": {"image_name": "test/training-runtime:latest"},
-    "inference": {},
-}
-
-LAUNCHER_MODULE = "ryotenkai_control.pipeline.stages.managers.deployment.training_launcher"
+def _secrets_obj(*, hf_token: str | None = None):
+    return SimpleNamespace(hf_token=hf_token)
 
 
-@dataclass(frozen=True)
-class DummySecrets:
-    hf_token: str = "hf_test_token"
+def _ssh_client_stub() -> Any:
+    return SimpleNamespace(host="1.2.3.4", port=22022, username="root", key_path="/k/id")
 
 
-@pytest.fixture
-def secrets() -> DummySecrets:
-    return DummySecrets()
-
-
-@pytest.fixture
-def base_config() -> PipelineConfig:
-    return PipelineConfig(
-        model=ModelConfig(name="gpt2", torch_dtype="bfloat16", trust_remote_code=False),
-        providers={"single_node": SINGLE_NODE_PROVIDER_CFG},
-        training=TrainingOnlyConfig(
-            provider="single_node",
-            adapter=QLoRAConfig(
-                r=8,
-                lora_alpha=16,
-                lora_dropout=0.05,
-                bias="none",
-                target_modules="all-linear",
-                use_dora=False,
-                use_rslora=False,
-                init_lora_weights="gaussian",
-            ),
-            hyperparams=GlobalHyperparametersConfig(
-                per_device_train_batch_size=1,
-                gradient_accumulation_steps=1,
-                learning_rate=2e-4,
-                warmup_ratio=0.0,
-                epochs=1,
-            ),
-        ),
-        datasets={
-            "default": DatasetConfig(
-                source=DatasetSourceLocal(local_paths=DatasetLocalPaths(train=DATASET_CHAT_FIXTURE, eval=None)),
-            )
-        },
-        inference=InferenceConfig(
-            enabled=False,
-            provider="single_node",
-            engine=VLLMEngineConfig(),
-        ),
+def _make_launcher(*, config=None, secrets=None) -> TrainingLauncher:
+    return TrainingLauncher(
+        config or _config_obj(),
+        secrets or _secrets_obj(),
+        deps_installer=MagicMock(),
     )
 
 
-# ============================================================================
-# start_training (cloud path) — RunPod / non-single-node providers
-# ============================================================================
+# ---------------------------------------------------------------------------
+# _build_job_env
+# ---------------------------------------------------------------------------
 
 
-def test_start_training_fast_completion_marker_returns_ok(base_config: PipelineConfig, secrets: DummySecrets):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
+class TestBuildJobEnv:
+    def test_defaults_present(self) -> None:
+        launcher = _make_launcher()
+        launcher.set_workspace("/tmp/run-x")
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert env["LOG_LEVEL"] == "DEBUG"
+        assert env["HELIX_WORKSPACE"] == "/tmp/run-x"
+        assert env["PYTHONPATH"] == "/tmp/run-x"
+        # Crash observability defaults
+        assert env["PYTHONUNBUFFERED"] == "1"
+        assert env["PYTHONFAULTHANDLER"] == "1"
+        # PYTHONFAULTHANDLER_PATH removed — faulthandler writes to
+        # stderr, captured by Supervisor pump into trainer.stdio.log.
+        assert "PYTHONFAULTHANDLER_PATH" not in env
+        # Loopback runner URL — trainer's RunnerEventCallback uses this
+        assert env["RYOTENKAI_RUNNER_URL"] == "http://127.0.0.1:8080"
 
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
+    def test_single_node_workspace_is_container_path(self) -> None:
+        launcher = _make_launcher(config=_config_obj(single_node=True))
+        launcher.set_workspace("/host/run-dir")  # ignored for single_node
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        # single_node container always sees /workspace because the
+        # host run dir is mounted there
+        assert env["HELIX_WORKSPACE"] == "/workspace"
 
-    ssh_client = MagicMock()
-    executed_commands: list[str] = []
+    def test_hf_token_added_when_set(self) -> None:
+        launcher = _make_launcher(secrets=_secrets_obj(hf_token="hf_xxx"))
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert env["HF_TOKEN"] == "hf_xxx"
 
-    def exec_side_effect(command: str, **kwargs: Any):
-        executed_commands.append(command)
-        if command.startswith("if [ -f /workspace/TRAINING_COMPLETE ]"):
-            return True, "STATUS=COMPLETE\n", ""
-        return True, "", ""
+    def test_hf_token_omitted_when_unset(self) -> None:
+        launcher = _make_launcher(secrets=_secrets_obj(hf_token=None))
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert "HF_TOKEN" not in env
 
-    ssh_client.exec_command.side_effect = exec_side_effect
+    def test_provider_hooks_override_defaults(self) -> None:
+        launcher = _make_launcher()
+        env = launcher._build_job_env(
+            context={},
+            provider=None,
+            extra_env_vars={"LOG_LEVEL": "WARNING", "RUNPOD_API_KEY": "k"},
+        )
+        assert env["LOG_LEVEL"] == "WARNING"  # overridden
+        assert env["RUNPOD_API_KEY"] == "k"   # added
 
-    with (
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {"config_path": "config/local_dev.yaml"})
+    def test_build_job_env_does_not_set_training_log_path(self) -> None:
+        """Trainer no longer attaches its own FileHandler — pod-side
+        ``trainer.stdio.log`` (written by Supervisor pump) is the
+        ground-truth artefact. The legacy
+        ``RYOTENKAI_TRAINING_LOG_PATH`` env var was removed in the
+        log-pipeline-refactor PR."""
+        launcher = _make_launcher()
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert "RYOTENKAI_TRAINING_LOG_PATH" not in env
 
-    assert result.is_ok()
-    assert result.unwrap().get("mode") == "docker"
-    assert any("--config config/pipeline_config.yaml" in cmd for cmd in executed_commands)
-
-
-def test_start_training_failure_marker_returns_err(base_config: PipelineConfig, secrets: DummySecrets):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    ssh_client = MagicMock()
-
-    def exec_side_effect(command: str, **kwargs: Any):
-        if command.startswith("if [ -f /workspace/TRAINING_COMPLETE ]"):
-            return True, "STATUS=FAILED\nTraceback: boom\n", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    with (
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {"config_path": "config/local_dev.yaml"})
-
-    assert result.is_err()
-    assert "Training failed:" in str(result.unwrap_err())
-
-
-def test_start_training_ps_detects_running_process_returns_ok(base_config: PipelineConfig, secrets: DummySecrets):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    ssh_client = MagicMock()
-
-    def exec_side_effect(command: str, **kwargs: Any):
-        if command.startswith("if [ -f /workspace/TRAINING_COMPLETE ]"):
-            return True, "STATUS=RUNNING\n", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    with (
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {"config_path": "config/local.yaml"})
-
-    assert result.is_ok()
-    assert result.unwrap().get("mode") == "docker"
+    def test_build_job_env_does_not_set_faulthandler_path(self) -> None:
+        """faulthandler now writes to stderr (default), captured by
+        the runner's Supervisor pump into ``trainer.stdio.log``. The
+        legacy ``PYTHONFAULTHANDLER_PATH`` was removed."""
+        launcher = _make_launcher()
+        env = launcher._build_job_env(context={}, provider=None, extra_env_vars={})
+        assert "PYTHONFAULTHANDLER_PATH" not in env
+        # PYTHONFAULTHANDLER itself stays — that activates the handler.
+        assert env.get("PYTHONFAULTHANDLER") == "1"
 
 
-def test_start_training_log_file_exists_returns_ok(base_config: PipelineConfig, secrets: DummySecrets):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    ssh_client = MagicMock()
-
-    def exec_side_effect(command: str, **kwargs: Any):
-        if command.startswith("if [ -f /workspace/TRAINING_COMPLETE ]"):
-            return True, "STATUS=LOG_EXISTS\n", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    with (
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {"config_path": "config/local.yaml"})
-
-    assert result.is_ok()
+# ---------------------------------------------------------------------------
+# _resolve_job_id
+# ---------------------------------------------------------------------------
 
 
-def test_start_training_no_process_includes_log_details_in_err(base_config: PipelineConfig, secrets: DummySecrets):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
+class TestResolveJobId:
+    def test_logical_run_id_wins(self) -> None:
+        launcher = _make_launcher()
+        ctx = {"logical_run_id": "lrid-42", "run": SimpleNamespace(name="run-name")}
+        assert launcher._resolve_job_id(ctx) == "lrid-42"
 
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
+    def test_run_name_fallback(self) -> None:
+        launcher = _make_launcher()
+        ctx = {"run": SimpleNamespace(name="run-99")}
+        assert launcher._resolve_job_id(ctx) == "run-99"
 
-    ssh_client = MagicMock()
-
-    def exec_side_effect(command: str, **kwargs: Any):
-        if command.startswith("if [ -f /workspace/TRAINING_COMPLETE ]"):
-            return True, "STATUS=NONE\n", ""
-        if command.startswith("tail -n 80 /workspace/training.log"):
-            return True, "Traceback: something bad happened\n", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    # start_training uses a wall-clock deadline; advance time deterministically.
-    time_counter = count(start=0, step=60)
-
-    with (
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-        patch(f"{LAUNCHER_MODULE}.time.time", side_effect=lambda: next(time_counter)),
-    ):
-        result = manager.start_training(ssh_client, {"config_path": "config/local.yaml"})
-
-    assert result.is_err()
-    err = str(result.unwrap_err())
-    assert "Training failed to start" in err
-    assert "Log content:" in err
+    def test_last_resort_fallback(self) -> None:
+        launcher = _make_launcher()
+        assert launcher._resolve_job_id({}) == "unnamed-job"
 
 
-def test_start_training_returns_err_when_env_file_creation_fails(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-    ssh_client = SimpleNamespace()
-
-    with patch.object(
-        manager._launcher,
-        "_create_env_file",
-        return_value=Failure(ProviderError(message="env failed", code="ENV_FAILED")),
-    ):
-        result = manager.start_training(ssh_client, {})
-
-    assert result.is_err()
-    assert "env failed" in str(result.unwrap_err())
+# ---------------------------------------------------------------------------
+# start_training — happy path
+# ---------------------------------------------------------------------------
 
 
-def test_start_training_create_script_chmod_and_launch_failures(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    cfg = base_config.model_copy(deep=True)
-    cfg.training.provider = "runpod"
-    cfg.providers = {"runpod": RUNPOD_PROVIDER_CFG}
-
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace")
-
-    # 1) create script fails
-    ssh_client = MagicMock()
-    ssh_client.exec_command.side_effect = [
-        (False, "", "nope"),  # create start script
-    ]
-    with patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")):
-        result = manager.start_training(ssh_client, {})
-    assert result.is_err()
-    assert "Failed to create start script" in str(result.unwrap_err())
-
-    # 2) chmod fails
-    ssh_client = MagicMock()
-    ssh_client.exec_command.side_effect = [
-        (True, "", ""),  # create script ok
-        (False, "", "nope"),  # chmod
-    ]
-    with patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")):
-        result = manager.start_training(ssh_client, {})
-    assert result.is_err()
-    assert "Failed to chmod start script" in str(result.unwrap_err())
-
-    # 3) launch fails
-    ssh_client = MagicMock()
-    ssh_client.exec_command.side_effect = [
-        (True, "", ""),  # create script ok
-        (True, "", ""),  # chmod ok
-        (False, "", "nope"),  # launch
-    ]
-    with patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/.env")):
-        result = manager.start_training(ssh_client, {})
-    assert result.is_err()
-    assert "Failed to start training" in str(result.unwrap_err())
+def _stub_launch_runner(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Stub the synchronous step-0 launch_runner so start_training can
+    reach its async island. Phase A2 Batch 9 (raise-based): the stub
+    returns ``None`` on success, matches the new contract.
+    """
+    fake_launch = MagicMock(return_value=None)
+    monkeypatch.setattr(_launcher_mod, "launch_runner", fake_launch)
+    return fake_launch
 
 
-# ============================================================================
-# start_training (Docker path) — single_node provider
-# ============================================================================
+def _stub_async_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fake_tunnel: SimpleNamespace | MagicMock | None = None,
+    fake_client: SimpleNamespace | MagicMock | None = None,
+    plugin_pack_error: Exception | None = None,
+) -> tuple[MagicMock, SimpleNamespace | MagicMock, SimpleNamespace | MagicMock]:
+    """Stub PluginPacker + SSHTunnelManager + JobClient so the launcher's
+    async island runs end-to-end without networking. Returns the
+    (packer_cls, tunnel, client) triple for assertion convenience.
+    """
+    fake_packer_cls = MagicMock()
+    if plugin_pack_error is not None:
+        fake_packer_cls.return_value.pack_required.side_effect = plugin_pack_error
+    else:
+        fake_packer_cls.return_value.pack_required.return_value = b""
+    monkeypatch.setattr(_launcher_mod, "PluginPacker", fake_packer_cls)
+
+    if fake_tunnel is None:
+        fake_tunnel = SimpleNamespace(
+            local_port=18080,
+            base_url="http://127.0.0.1:18080",
+            open=AsyncMock(return_value=None),
+            close=AsyncMock(return_value=None),
+        )
+    monkeypatch.setattr(
+        _launcher_mod, "SSHTunnelManager", MagicMock(return_value=fake_tunnel),
+    )
+
+    if fake_client is None:
+        fake_import_report = SimpleNamespace(all_importable=True, results=[], failed=[])
+        fake_client = SimpleNamespace(
+            health_check=AsyncMock(return_value=True),
+            submit_job=AsyncMock(
+                return_value={"job_id": "j-1", "sequence": 0, "offset": 0},
+            ),
+            aclose=AsyncMock(return_value=None),
+            check_imports=AsyncMock(return_value=fake_import_report),
+        )
+    monkeypatch.setattr(
+        _launcher_mod, "JobClient", MagicMock(return_value=fake_client),
+    )
+    return fake_packer_cls, fake_tunnel, fake_client
 
 
-def test_start_training_docker_generates_docker_run_script_contains_mount_and_name(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    cfg = base_config.model_copy(deep=True)
-    cfg.providers["single_node"] = {
-        "training": {
-            "execution_mode": "docker",
-            "docker_image": "test/runtime:latest",
-            "docker_shm_size": "16g",
-            "docker_container_name_prefix": "helix_training",
+class TestStartTrainingHappy:
+    """Phase A2 Batch 9 — replaces the xfail-debt-marked legacy tests.
+
+    The new raise-based contract:
+      * success: returns the metadata dict (no ``Result`` wrapper).
+      * the launcher stashes ``job_client``/``ssh_tunnel``/``job_id``
+        on the context for the monitor.
+    """
+
+    def test_full_flow_returns_dict_and_stashes_context(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _stub_launch_runner(monkeypatch)
+        _packer, fake_tunnel, fake_client = _stub_async_dependencies(monkeypatch)
+
+        launcher = _make_launcher()
+        ctx: dict[str, Any] = {"logical_run_id": "j-1"}
+        out = launcher.start_training(_ssh_client_stub(), ctx, provider=None)
+
+        assert out["mode"] == "job_server"
+        assert out["job_id"] == "j-1"
+        assert out["tunnel_port"] == 18080
+        # Monitor will read these.
+        assert ctx["job_client"] is fake_client
+        assert ctx["ssh_tunnel"] is fake_tunnel
+        assert ctx["job_id"] == "j-1"
+        # submit was called with the right shape.
+        spec_arg = fake_client.submit_job.await_args.args[0]
+        assert spec_arg["job_id"] == "j-1"
+        assert spec_arg["command"][0] == "python"
+        assert spec_arg["command"][-1] == "config/pipeline_config.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Error paths — typed-exception propagation
+# ---------------------------------------------------------------------------
+
+
+class TestStartTrainingErrors:
+    """Phase A2 Batch 9 — typed-exception propagation contract."""
+
+    def test_plugin_pack_fail_raises_training_failed_without_tunnel(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ryotenkai_shared.errors import TrainingFailedError
+
+        _stub_launch_runner(monkeypatch)
+        _packer, _tun, _client = _stub_async_dependencies(
+            monkeypatch,
+            plugin_pack_error=_launcher_mod.PluginPackError("missing manifest"),
+        )
+        # Sentinel: tunnel ctor must NOT be invoked when pack fails.
+        sentinel = MagicMock(side_effect=AssertionError("tunnel created prematurely"))
+        monkeypatch.setattr(_launcher_mod, "SSHTunnelManager", sentinel)
+
+        launcher = _make_launcher()
+        with pytest.raises(TrainingFailedError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j"}, provider=None,
+            )
+        assert exc_info.value.context.get("reason") == "PLUGIN_PACK_FAILED"
+
+    def test_submit_failure_raises_and_closes_tunnel(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ryotenkai_shared.errors import TrainingFailedError
+
+        _stub_launch_runner(monkeypatch)
+        fake_tunnel = MagicMock()
+        fake_tunnel.local_port = 18080
+        fake_tunnel.base_url = "http://127.0.0.1:18080"
+        fake_tunnel.open = AsyncMock(return_value=None)
+        fake_tunnel.close = AsyncMock(return_value=None)
+        fake_import_report = SimpleNamespace(all_importable=True, results=[], failed=[])
+        fake_client = SimpleNamespace(
+            health_check=AsyncMock(return_value=True),
+            submit_job=AsyncMock(
+                side_effect=_launcher_mod.JobClientError("422 invalid spec"),
+            ),
+            aclose=AsyncMock(return_value=None),
+            check_imports=AsyncMock(return_value=fake_import_report),
+        )
+        _stub_async_dependencies(
+            monkeypatch, fake_tunnel=fake_tunnel, fake_client=fake_client,
+        )
+
+        launcher = _make_launcher()
+        with pytest.raises(TrainingFailedError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j"}, provider=None,
+            )
+        assert exc_info.value.context.get("reason") == "JOB_SUBMIT_FAILED"
+        # Tunnel must be closed even when submit blew up — leaving an
+        # open ssh -L would leak a local port forever.
+        fake_tunnel.close.assert_awaited()
+
+    def test_runner_health_timeout_raises_and_closes_tunnel(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
+        # Shrink the readiness budget so the test is fast.
+        monkeypatch.setattr(_launcher_mod, "RUNNER_READY_MAX_ATTEMPTS", 2)
+        monkeypatch.setattr(_launcher_mod, "RUNNER_READY_POLL_SECONDS", 0.0)
+
+        _stub_launch_runner(monkeypatch)
+        fake_tunnel = MagicMock()
+        fake_tunnel.local_port = 18080
+        fake_tunnel.base_url = "http://127.0.0.1:18080"
+        fake_tunnel.open = AsyncMock(return_value=None)
+        fake_tunnel.close = AsyncMock(return_value=None)
+        fake_client = SimpleNamespace(
+            health_check=AsyncMock(return_value=False),
+            submit_job=AsyncMock(return_value={}),
+            aclose=AsyncMock(return_value=None),
+            check_imports=AsyncMock(return_value=SimpleNamespace(
+                all_importable=True, results=[], failed=[],
+            )),
+        )
+        _stub_async_dependencies(
+            monkeypatch, fake_tunnel=fake_tunnel, fake_client=fake_client,
+        )
+
+        launcher = _make_launcher()
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j"}, provider=None,
+            )
+        assert exc_info.value.context.get("reason") == "RUNNER_TUNNEL_FAILED"
+        fake_tunnel.close.assert_awaited()
+
+    def test_import_check_failure_raises_training_failed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Phase 3 PR-3.3 + Phase A2 Batch 9: when the runner's HTTP
+        import-check reports a missing module, the launcher raises
+        :class:`TrainingFailedError` with ``reason="IMPORT_GATE_FAILED"``."""
+        from ryotenkai_shared.errors import TrainingFailedError
+
+        _stub_launch_runner(monkeypatch)
+        bad_report = SimpleNamespace(
+            all_importable=False,
+            results=[SimpleNamespace(module="ryotenkai_pod.trainer", importable=False, error="no module")],
+            failed=["ryotenkai_pod.trainer"],
+        )
+        fake_client = SimpleNamespace(
+            health_check=AsyncMock(return_value=True),
+            submit_job=AsyncMock(return_value={}),
+            aclose=AsyncMock(return_value=None),
+            check_imports=AsyncMock(return_value=bad_report),
+        )
+        _stub_async_dependencies(monkeypatch, fake_client=fake_client)
+
+        launcher = _make_launcher()
+        with pytest.raises(TrainingFailedError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j"}, provider=None,
+            )
+        assert exc_info.value.context.get("reason") == "IMPORT_GATE_FAILED"
+        assert exc_info.value.context.get("failed_modules") == ["ryotenkai_pod.trainer"]
+
+    def test_runner_launch_failure_propagates_ssh_exec_failed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Step-0 launch_runner raises :class:`SSHExecFailedError`; the
+        launcher must propagate it without wrapping (no double-coating)."""
+        from ryotenkai_shared.errors import SSHExecFailedError
+
+        underlying = SSHExecFailedError(
+            detail="runner failed to bind",
+            context={"reason": "RUNNER_LAUNCH_FAILED"},
+        )
+        monkeypatch.setattr(_launcher_mod, "launch_runner", MagicMock(side_effect=underlying))
+        # Tunnel ctor must NOT be invoked when step-0 fails.
+        sentinel = MagicMock(side_effect=AssertionError("tunnel created prematurely"))
+        monkeypatch.setattr(_launcher_mod, "SSHTunnelManager", sentinel)
+
+        launcher = _make_launcher()
+        with pytest.raises(SSHExecFailedError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j"}, provider=None,
+            )
+        # Propagated as-is (the same instance).
+        assert exc_info.value is underlying
+
+    def test_provider_hooks_failure_raises_provider_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When ``provider.prepare_training_script_hooks`` raises a typed
+        exception (Batch 12 contract), the launcher catches and re-raises as
+        :class:`ProviderUnavailableError` with ``reason="PROVIDER_HOOKS_FAILED"``."""
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
+        _stub_launch_runner(monkeypatch)
+        # Provider's hook raises a typed exception (Batch 12 contract).
+        provider = MagicMock()
+        provider.required_runtime_env_vars.return_value = {"RYOTENKAI_RUNTIME_PROVIDER": "runpod"}
+        provider.prepare_training_script_hooks.side_effect = ProviderUnavailableError(
+            detail="boom",
+            context={"reason": "PROVIDER_HOOK_INTERNAL_ERROR"},
+        )
+        provider.pod_layout_for_run.return_value = _launcher_mod.PodLayout.from_root(
+            __import__("pathlib").PurePosixPath("/workspace/runs/r1"),
+        ) if hasattr(_launcher_mod, "PodLayout") else None
+        # PodLayout import lives via PodLayout.from_root in the production
+        # path — fall back to a duck-typed SimpleNamespace when our test
+        # harness doesn't carry PodLayout symbol.
+        if provider.pod_layout_for_run.return_value is None:
+            from ryotenkai_shared.utils.pod_layout import PodLayout
+            from pathlib import PurePosixPath
+            provider.pod_layout_for_run.return_value = PodLayout.from_root(
+                PurePosixPath("/workspace/runs/r1"),
+            )
+
+        launcher = _make_launcher()
+        launcher.set_workspace("/workspace/runs/r1")
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            launcher.start_training(
+                _ssh_client_stub(), {"logical_run_id": "j", "resource_id": "p1"},
+                provider=provider,
+            )
+        assert exc_info.value.context.get("reason") == "PROVIDER_HOOKS_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# _persist_job_submission
+#
+# Bridges in-process submit → out-of-process CLI / Web UI tools by
+# writing ``attempts/<n>/job_submission.json``. Best-effort by design:
+# IO errors are logged but never raise. Coverage matrix below mirrors
+# project policy (positive / negative / boundary / invariant /
+# dependency / regression / logic / combinatorial).
+# ---------------------------------------------------------------------------
+
+
+class TestPersistJobSubmissionPositive:
+    def test_writes_file_with_runpod_provider(
+        self, tmp_path: Path,
+    ) -> None:
+        attempt_dir = tmp_path / "run" / "attempts" / "attempt_1"
+        attempt_dir.mkdir(parents=True)
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-abc",
         }
-    }
+        provider = SimpleNamespace(provider_name="runpod")
 
-    manager = TrainingDeploymentManager(config=cfg, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace/run_123")
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", provider)
 
-    ssh_client = MagicMock()
-    executed: list[str] = []
+        target = attempt_dir / "job_submission.json"
+        assert target.is_file()
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
-    def exec_side_effect(command: str, **kwargs: Any):
-        executed.append(command)
-        if command.startswith("test -f ") and "TRAINING_COMPLETE" in command:
-            return False, "", ""
-        if command.startswith("test -f ") and "TRAINING_FAILED" in command:
-            return False, "", ""
-        if command.startswith("docker ps"):
-            return True, "RUNNING", ""
-        return True, "", ""
+        sub = load_job_submission(attempt_dir)
+        assert sub.job_id == "j-1"
+        assert sub.provider_name == "runpod"
+        assert sub.pod_id == "pod-abc"
+        assert sub.ssh_host == "1.2.3.4"
+        assert sub.ssh_port == 22022
+        assert sub.ssh_username == "root"
+        assert sub.ssh_key_path == "/k/id"
 
-    ssh_client.exec_command.side_effect = exec_side_effect
+    def test_provider_none_falls_back_to_single_node(
+        self, tmp_path: Path,
+    ) -> None:
+        # When the launcher is invoked without a provider object (single_node
+        # local docker flow), ``provider_name`` defaults to "single_node" so
+        # the persisted record stays meaningful.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
 
-    with (
-        patch.object(manager._deps_installer, "_ensure_docker_image_present", return_value=Ok(None)),
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/run_123/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {"run": SimpleNamespace(name="my_run")})
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-    assert result.is_ok()
-    create_cmd = next(cmd for cmd in executed if cmd.startswith("cat > /workspace/run_123/start_training.sh"))
-    assert "docker run --rm --detach" in create_cmd
-    assert "--name helix_training_my_run" in create_cmd
-    assert "-v /workspace/run_123:/workspace" in create_cmd
-    assert "-w /workspace" in create_cmd
-    assert "test/runtime:latest" in create_cmd
-    assert "python3 -m src.training.run_training --config config/pipeline_config.yaml" in create_cmd
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).provider_name == "single_node"
 
 
-def test_start_training_docker_training_complete_marker_returns_ok(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    """_start_training_docker returns Ok when TRAINING_COMPLETE marker found immediately."""
-    manager = TrainingDeploymentManager(config=base_config, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace/run_docker")
+class TestPersistJobSubmissionNegative:
+    def test_no_attempt_directory_in_context_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        # Tests / scripts that don't go through pipeline_bootstrap may
+        # not have ATTEMPT_DIRECTORY set. We must not crash — best-effort
+        # contract — and we must not write anywhere either.
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {}, _ssh_client_stub(), "j-1", None,
+        )
+        # Nothing under tmp_path got created.
+        assert list(tmp_path.iterdir()) == []
 
-    ssh_client = MagicMock()
-    executed: list[str] = []
+    def test_empty_attempt_directory_string_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: ""},
+            _ssh_client_stub(), "j-1", None,
+        )
+        assert list(tmp_path.iterdir()) == []
 
-    def exec_side_effect(command: str, **kwargs: Any):
-        executed.append(command)
-        if "TRAINING_COMPLETE" in command and command.startswith("test -f"):
-            return True, "SUCCESS", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    with (
-        patch.object(manager._deps_installer, "_ensure_docker_image_present", return_value=Ok(None)),
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/run_docker/.env")),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {})
-
-    assert result.is_ok()
-    assert result.unwrap().get("mode") == "docker"
-
-
-def test_start_training_docker_log_file_exists_returns_ok(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    """_start_training_docker returns Ok when training.log exists on host (container wrote into mount)."""
-    manager = TrainingDeploymentManager(config=base_config, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace/run_docker")
-
-    ssh_client = MagicMock()
-
-    def exec_side_effect(command: str, **kwargs: Any):
-        if "TRAINING_COMPLETE" in command and command.startswith("test -f"):
-            return False, "", ""
-        if "TRAINING_FAILED" in command and command.startswith("test -f"):
-            return False, "", ""
-        if command.startswith("docker ps"):
-            return False, "", ""
-        if "training.log" in command and command.startswith("test -f"):
-            return True, "EXISTS", ""
-        return True, "", ""
-
-    ssh_client.exec_command.side_effect = exec_side_effect
-
-    with (
-        patch.object(manager._deps_installer, "_ensure_docker_image_present", return_value=Ok(None)),
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/run_docker/.env")),
-        patch(f"{LAUNCHER_MODULE}.docker_is_container_running", return_value=False),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-    ):
-        result = manager.start_training(ssh_client, {})
-
-    assert result.is_ok()
-    assert result.unwrap().get("mode") == "docker"
+    def test_non_string_attempt_directory_silently_skips(
+        self, tmp_path: Path,
+    ) -> None:
+        # Defensive: if upstream passes a Path object instead of str
+        # (or anything else), we still don't crash. The real orchestrator
+        # always sets a str — this just keeps us robust to bugs there.
+        launcher = _make_launcher()
+        launcher._persist_job_submission(
+            {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: 12345},
+            _ssh_client_stub(), "j-1", None,
+        )
+        assert list(tmp_path.iterdir()) == []
 
 
-def test_start_training_docker_timeout_returns_provider_error(
-    base_config: PipelineConfig, secrets: DummySecrets
-):
-    """_start_training_docker returns ProviderError TRAINING_START_TIMEOUT when all polls exhaust."""
-    manager = TrainingDeploymentManager(config=base_config, secrets=secrets)
-    manager.set_workspace(workspace_path="/workspace/run_docker")
+class TestPersistJobSubmissionBoundary:
+    def test_resource_id_falls_back_to_pod_id(self, tmp_path: Path) -> None:
+        # Different providers stash the pod identifier under different
+        # context keys. The launcher tries ``resource_id`` first, then
+        # ``pod_id`` — pin the precedence here.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "pod_id": "pod-old",
+            # No resource_id key
+        }
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-    ssh_client = MagicMock()
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
-    def exec_side_effect(command: str, **kwargs: Any):
-        if command.startswith("test -f") and "TRAINING_COMPLETE" in command:
-            return False, "", ""
-        if command.startswith("test -f") and "TRAINING_FAILED" in command:
-            return False, "", ""
-        if command.startswith("test -f") and "training.log" in command:
-            return False, "", ""
-        return True, "", ""
+        assert load_job_submission(attempt_dir).pod_id == "pod-old"
 
-    ssh_client.exec_command.side_effect = exec_side_effect
+    def test_resource_id_wins_over_pod_id(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-new",
+            "pod_id": "pod-old",
+        }
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
 
-    with (
-        patch.object(manager._deps_installer, "_ensure_docker_image_present", return_value=Ok(None)),
-        patch.object(manager._launcher, "_create_env_file", return_value=Ok("/workspace/run_docker/.env")),
-        patch(f"{LAUNCHER_MODULE}.docker_is_container_running", return_value=False),
-        patch(f"{LAUNCHER_MODULE}.time.sleep", return_value=None),
-        patch(f"{LAUNCHER_MODULE}.DEPLOYMENT_TRAINING_START_TIMEOUT", 1),
-    ):
-        result = manager.start_training(ssh_client, {})
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert isinstance(err, ProviderError)
-    assert err.code == "TRAINING_START_TIMEOUT"
+        assert load_job_submission(attempt_dir).pod_id == "pod-new"
+
+    def test_pod_id_absent_yields_none(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).pod_id is None
+
+    def test_ssh_username_none_defaults_to_root(self, tmp_path: Path) -> None:
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(host="h", port=22, username=None, key_path=None)
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
+
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).ssh_username == "root"
+
+    def test_ssh_key_path_empty_string_becomes_none(
+        self, tmp_path: Path,
+    ) -> None:
+        # ``ssh_client.key_path`` may be ``""`` when the user relies on
+        # ssh-agent. Persist that as ``None`` so JobSubmission's typed
+        # contract (None means "use ssh-agent / system default") holds.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(host="h", port=22, username="me", key_path="")
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
+
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).ssh_key_path is None
 
 
-# ============================================================================
-# _sanitize_docker_name (staticmethod)
-# ============================================================================
+class TestPersistJobSubmissionDependencyErrors:
+    def test_oserror_on_save_is_swallowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Best-effort persistence: the in-memory monitor still has live
+        # handles, so a missing job_submission.json isn't fatal.
+        # Confirm we don't propagate the IO error.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+
+        def _boom(_dir: Any, _sub: Any) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_launcher_mod, "save_job_submission", _boom)
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        # Must not raise.
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+    def test_value_error_in_ssh_port_is_propagated(
+        self, tmp_path: Path,
+    ) -> None:
+        # ``int(ssh_client.port)`` runs before the save attempt — this is
+        # a true config bug, not a transient IO failure, so we let it
+        # bubble up and surface a loud error during launch instead of
+        # silently dropping the persist.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ssh_client = SimpleNamespace(
+            host="h", port="not-a-port", username="me", key_path="/k",
+        )
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        with pytest.raises(ValueError):
+            launcher._persist_job_submission(ctx, ssh_client, "j-1", None)
 
 
-def test_sanitize_docker_name_replaces_unsafe_chars():
-    from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+class TestPersistJobSubmissionInvariants:
+    def test_round_trip_yields_loadable_submission(
+        self, tmp_path: Path,
+    ) -> None:
+        # Persist + load with the launcher's wiring is exactly what the
+        # CLI / Web UI do at runtime. This is the integration check
+        # binding the launcher and the persistence layer together.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {
+            _launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir),
+            "resource_id": "pod-z",
+        }
 
-    assert TrainingLauncher._sanitize_docker_name("my run!@#") == "my_run___"
-    assert TrainingLauncher._sanitize_docker_name("ok-name.v1_2") == "ok-name.v1_2"
+        launcher._persist_job_submission(
+            ctx, _ssh_client_stub(), "j-z", SimpleNamespace(provider_name="runpod"),
+        )
+
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        sub = load_job_submission(attempt_dir)
+        assert sub.job_id == "j-z"
+        assert sub.provider_name == "runpod"
+        assert sub.pod_id == "pod-z"
+
+    def test_writes_atomically_into_attempt_dir(
+        self, tmp_path: Path,
+    ) -> None:
+        # Any tmp file used by ``atomic_write_json`` must be cleaned up
+        # before we return; the attempt directory should contain only
+        # the canonical filename.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", None)
+
+        names = {p.name for p in attempt_dir.iterdir()}
+        assert "job_submission.json" in names
+        # No transient .tmp files left behind.
+        assert not any(name.endswith(".tmp") for name in names)
 
 
-def test_sanitize_docker_name_truncates_long_names():
-    from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
-    from ryotenkai_control.pipeline.stages.managers.deployment_constants import DEPLOYMENT_CONTAINER_NAME_MAX_LEN
+class TestPersistJobSubmissionRegressions:
+    def test_overwrite_replaces_previous_attempt_record(
+        self, tmp_path: Path,
+    ) -> None:
+        # Restart-from-stage scenarios call ``start_training`` again on
+        # the same attempt directory. The new submission must replace
+        # the old one — we can't have two job_ids for one attempt.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
 
-    long = "a" * (DEPLOYMENT_CONTAINER_NAME_MAX_LEN + 50)
-    out = TrainingLauncher._sanitize_docker_name(long)
-    assert len(out) == DEPLOYMENT_CONTAINER_NAME_MAX_LEN
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "first", None)
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "second", None)
 
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
 
-# ``_create_env_file`` tests removed: the method itself was deleted in
-# the deployment-manager refactor — env vars are now built inline by
-# TrainingLauncher. The skipped tests had been waiting on a YAML
-# integration resolver that's no longer planned (project YAMLs carry
-# values inline now). No replacement coverage needed for the deleted
-# method; coverage for the new path lives in TrainingLauncher tests
-# above.
+        assert load_job_submission(attempt_dir).job_id == "second"
+
+    def test_provider_with_missing_provider_name_attribute(
+        self, tmp_path: Path,
+    ) -> None:
+        # A future provider stub without the conventional ``provider_name``
+        # attribute should still leave a well-formed submission file
+        # (``provider_name="unknown"``) rather than crashing the launcher.
+        attempt_dir = tmp_path / "attempt_1"
+        attempt_dir.mkdir()
+        launcher = _make_launcher()
+        ctx = {_launcher_mod.PipelineContextKeys.ATTEMPT_DIRECTORY: str(attempt_dir)}
+        broken_provider = SimpleNamespace()  # no provider_name
+
+        launcher._persist_job_submission(ctx, _ssh_client_stub(), "j-1", broken_provider)
+
+        from ryotenkai_control.pipeline.state.job_submission import load_job_submission
+
+        assert load_job_submission(attempt_dir).provider_name == "unknown"

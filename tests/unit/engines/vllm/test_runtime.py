@@ -15,6 +15,7 @@ from ryotenkai_engines.capabilities import EngineCapabilities
 from ryotenkai_engines.interfaces import IInferenceEngine, LaunchSpec
 from ryotenkai_engines.vllm.config import VLLMEngineConfig
 from ryotenkai_engines.vllm.runtime import VLLMEngineRuntime
+from ryotenkai_shared.errors import EngineConfigInvalidError
 
 pytestmark = pytest.mark.unit
 
@@ -201,39 +202,49 @@ class TestHealthcheckAndEndpoint:
 
 class TestValidateConfig:
     def test_default_config_passes(self) -> None:
-        result = VLLMEngineRuntime().validate_config(VLLMEngineConfig())
-        assert result.is_ok()
+        # Returns None on success; no exception raised.
+        assert VLLMEngineRuntime().validate_config(VLLMEngineConfig()) is None
 
     def test_merge_before_deploy_false_fails(self) -> None:
         cfg = VLLMEngineConfig(merge_before_deploy=False)
-        result = VLLMEngineRuntime().validate_config(cfg)
-        assert result.is_err()
-        err = result.unwrap_err()
-        assert err.code == "VLLM_LIVE_LORA_NOT_SUPPORTED"
+        with pytest.raises(EngineConfigInvalidError) as exc_info:
+            VLLMEngineRuntime().validate_config(cfg)
+        err = exc_info.value
+        assert err.context["reason"] == "vllm_live_lora_not_supported"
+        assert err.context["merge_before_deploy"] is False
+        assert err.status == 422
+        assert err.code.value == "ENGINE_CONFIG_INVALID"
 
     def test_supported_quantization_passes(self) -> None:
-        result = VLLMEngineRuntime().validate_config(
-            VLLMEngineConfig(quantization="awq"),
+        assert (
+            VLLMEngineRuntime().validate_config(
+                VLLMEngineConfig(quantization="awq"),
+            )
+            is None
         )
-        assert result.is_ok()
 
     def test_unsupported_quantization_fails(self) -> None:
-        result = VLLMEngineRuntime().validate_config(
-            VLLMEngineConfig(quantization="not-a-real-quant"),
-        )
-        assert result.is_err()
-        err = result.unwrap_err()
-        assert err.code == "VLLM_QUANTIZATION_UNSUPPORTED"
+        with pytest.raises(EngineConfigInvalidError) as exc_info:
+            VLLMEngineRuntime().validate_config(
+                VLLMEngineConfig(quantization="not-a-real-quant"),
+            )
+        err = exc_info.value
+        assert err.context["reason"] == "vllm_quantization_unsupported"
+        assert err.context["requested"] == "not-a-real-quant"
+        assert "awq" in err.context["supported"]
 
-    def test_wrong_config_type_returns_err(self) -> None:
+    def test_wrong_config_type_raises(self) -> None:
         from ryotenkai_engines.interfaces import BaseEngineConfig
 
         class FakeCfg(BaseEngineConfig):
             kind: str = "fake"
 
-        result = VLLMEngineRuntime().validate_config(FakeCfg())
-        assert result.is_err()
-        assert result.unwrap_err().code == "VLLM_CONFIG_TYPE_MISMATCH"
+        with pytest.raises(EngineConfigInvalidError) as exc_info:
+            VLLMEngineRuntime().validate_config(FakeCfg())
+        err = exc_info.value
+        assert err.context["reason"] == "vllm_config_type_mismatch"
+        assert err.context["got"] == "FakeCfg"
+        assert err.context["expected"] == "VLLMEngineConfig"
 
 
 # ---------------------------------------------------------------------------

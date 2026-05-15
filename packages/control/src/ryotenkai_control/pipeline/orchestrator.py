@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
 from ryotenkai_control.pipeline.bootstrap import PipelineBootstrap
 from ryotenkai_control.pipeline.constants import (
     EXIT_CODE_SIGINT,
@@ -32,16 +31,21 @@ from ryotenkai_control.pipeline.state import (
     PipelineStateError,
     PipelineStateStore,
 )
+from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
+from ryotenkai_shared.errors import (
+    InternalError,
+    PipelineStageFailedError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, Result
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
     from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_shared.config.pipeline.schema import PipelineConfig
     from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
     from ryotenkai_shared.utils.logs_layout import LogLayout
 
@@ -49,6 +53,34 @@ if TYPE_CHECKING:
 # without needing to know that the exception moved. Orchestrator.run() still
 # catches it by this name.
 __all__ = ["LaunchPreparationError", "PipelineOrchestrator"]
+
+
+def _wrap_as_launch_error(
+    exc: RyotenkAIError,
+    *,
+    state: PipelineState,
+    legacy_code: str | None = None,
+) -> LaunchPreparationError:
+    """Wrap a typed exception (e.g. from MLflow preflight) as ``LaunchPreparationError``.
+
+    Used by the orchestrator's preflight path so the run()-level
+    ``except LaunchPreparationError`` block continues to drive the
+    rejection-recording flow uniformly. The original exception is
+    attached via ``__cause__`` (``raise ... from``) by the caller.
+    """
+    detail = exc.detail or str(exc)
+    context: dict[str, Any] = {"typed_error_class": type(exc).__name__}
+    if isinstance(exc.context, dict):
+        for key, value in exc.context.items():
+            context.setdefault(key, value)
+    if legacy_code is not None:
+        context["legacy_code"] = legacy_code
+    err = LaunchPreparationError(detail, context=context)
+    err.state = state  # type: ignore[attr-defined]
+    err.requested_action = None  # type: ignore[attr-defined]
+    err.effective_action = None  # type: ignore[attr-defined]
+    err.start_stage_name = None  # type: ignore[attr-defined]
+    return err
 
 
 class PipelineOrchestrator:
@@ -211,8 +243,19 @@ class PipelineOrchestrator:
         run_dir: Path | None = None,
         resume: bool = False,
         restart_from_stage: str | int | None = None,
-    ) -> Result[dict[str, Any], AppError]:
-        """Run the pipeline using persisted state and attempt-aware restart logic."""
+    ) -> dict[str, Any]:
+        """Run the pipeline using persisted state and attempt-aware restart logic.
+
+        Returns the final pipeline context on full success.
+
+        Raises:
+            RyotenkAIError: stage failure / prereq violation / state I/O
+                error / unexpected exception / KeyboardInterrupt /
+                LaunchPreparationError. Callers (``worker.py`` /
+                ``run_pipeline``) catch and map to exit codes.
+            SystemExit: re-raised verbatim so the runner's exit code
+                is preserved.
+        """
         return self._run_stateful(
             run_dir=run_dir,
             resume=resume,
@@ -225,7 +268,7 @@ class PipelineOrchestrator:
         run_dir: Path | None,
         resume: bool,
         restart_from_stage: str | int | None,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
         logger.info("Starting RyotenkAI Training Pipeline (stateful flow)")
         logger.info(SEPARATOR_CHAR * SEPARATOR_LINE_WIDTH)
@@ -241,16 +284,18 @@ class PipelineOrchestrator:
                 config_hashes=config_hashes,
             )
             assert self._log_layout is not None
-            result = self._stage_execution_loop.run_attempt(
+            # Loop is raise-based since Phase A2 Batch 6: returns context
+            # on success, raises ``RyotenkAIError`` on failure.
+            context = self._stage_execution_loop.run_attempt(
                 prepared=prepared,
                 context=self.context,
                 mlflow_manager=self._mlflow_manager,
                 log_layout=self._log_layout,
             )
-            pipeline_success = result.is_ok()
-            return result  # type: ignore[return-value]
+            pipeline_success = True
+            return context
         except LaunchPreparationError as exc:
-            logger.error(exc.app_error.message)
+            logger.error(exc.detail or str(exc))
             # Surface the run_directory+state_store that the preparator
             # resolved before raising, so teardown callers that read them
             # still see the right paths.
@@ -258,17 +303,29 @@ class PipelineOrchestrator:
                 self._state_store = self._launch_preparator.last_state_store
             if self._launch_preparator.last_run_directory is not None:
                 self.run_directory = self._launch_preparator.last_run_directory
+            # Rejection recording requires the four context fields populated
+            # by the preparator's ``_make_launch_error`` helper — preflight
+            # wraps via ``_wrap_as_launch_error`` and intentionally leaves
+            # requested_action/effective_action/start_stage_name unset.
+            exc_state = getattr(exc, "state", None)
+            exc_requested = getattr(exc, "requested_action", None)
+            exc_effective = getattr(exc, "effective_action", None)
+            exc_start_stage = getattr(exc, "start_stage_name", None)
             if (
-                exc.state is not None
-                and exc.requested_action is not None
-                and exc.effective_action is not None
-                and exc.start_stage_name is not None
+                exc_state is not None
+                and exc_requested is not None
+                and exc_effective is not None
+                and exc_start_stage is not None
             ):
                 self._launch_preparator.record_launch_rejection(
                     launch_error=exc,
                     config_hashes=config_hashes,
                 )
-            return Err(exc.app_error)
+            # Phase A2 Batch 15.5: re-raise the typed
+            # :class:`LaunchPreparationError` (a ``RyotenkAIError`` subclass)
+            # so the caller (``worker.py``) catches the typed boundary
+            # directly. No more Result/AppError adapter at this layer.
+            raise
         except (KeyboardInterrupt, SystemExit) as exc:
             # Interrupt during prepare — loop never got to own the boundary.
             # Delegate to the loop's public helper so the record-interrupted
@@ -276,20 +333,30 @@ class PipelineOrchestrator:
             self._stage_execution_loop.handle_interrupt_outside_loop(mlflow_manager=self._mlflow_manager)
             if isinstance(exc, SystemExit):
                 raise
-            return Err(AppError(message="Pipeline interrupted by user", code="PIPELINE_INTERRUPTED"))
+            raise PipelineStageFailedError(
+                detail="Pipeline interrupted by user",
+                context={"legacy_code": "PIPELINE_INTERRUPTED"},
+            ) from exc
         except PipelineStateError as e:
             # Corrupted state file / persistence failure during bootstrap.
-            # Distinct error code keeps observability clean.
-            return Err(AppError(message=str(e), code="PIPELINE_STATE_ERROR"))
+            # Distinct legacy code keeps observability clean.
+            raise InternalError(
+                detail=str(e),
+                context={"legacy_code": "PIPELINE_STATE_ERROR"},
+                cause=e,
+            ) from e
+        except RyotenkAIError:
+            # Stage/loop failure surfaced as typed exception — let it
+            # propagate to the caller.
+            raise
         except Exception as e:
-            # Unexpected during prepare — same conversion as in-loop so the
-            # caller sees a consistent AppError shape. PipelineContext is
-            # a dict subclass, so the success branch is structurally
-            # compatible with dict[str, Any] at runtime; ignore the
-            # invariance complaint from mypy.
-            return self._stage_execution_loop.handle_unexpected_error_outside_loop(  # type: ignore[return-value]
+            # Unexpected during prepare — convert via the loop's helper
+            # for consistent recording side effects, then raise the
+            # typed exception the helper produced.
+            typed_exc = self._stage_execution_loop.handle_unexpected_error_outside_loop(
                 e, mlflow_manager=self._mlflow_manager
             )
+            raise typed_exc from e
         finally:
             # Each teardown step is wrapped independently: a failure in one must
             # not skip the others. Critically, this guarantees run_lock.release()
@@ -456,10 +523,19 @@ class PipelineOrchestrator:
         )
 
     def _ensure_mlflow_preflight(self, *, state: PipelineState) -> None:
-        """Fail fast when mandatory MLflow setup/connectivity is not available."""
-        app_error = self._mlflow_attempt.ensure_preflight()
-        if app_error is not None:
-            raise LaunchPreparationError(app_error, state=state)
+        """Fail fast when mandatory MLflow setup/connectivity is not available.
+
+        Phase A2 Batch 7: ``ensure_preflight`` now raises typed exceptions
+        (:class:`ConfigInvalidError` for missing manager,
+        :class:`ProviderUnavailableError` for connectivity failures).
+        Wrap them in a :class:`LaunchPreparationError` so the run() catch
+        path's rejection-recording works uniformly.
+        """
+        try:
+            self._mlflow_attempt.ensure_preflight()
+        except RyotenkAIError as exc:
+            legacy_code = exc.context.get("legacy_code") if isinstance(exc.context, dict) else None
+            raise _wrap_as_launch_error(exc, state=state, legacy_code=legacy_code) from exc
         self._mlflow_attempt.log_config_artifact()
         # MLflowAttemptManager may have written run ids onto state/attempt
         # out-of-band; persist those through the controller.
@@ -566,19 +642,17 @@ def run_pipeline(config_path: str) -> int:
     try:
         cfg = load_pipeline_config(config_path)
         orchestrator = PipelineOrchestrator(config=cfg)
-        result = orchestrator.run()
-
-        if result.is_success():
-            logger.info("Pipeline execution completed successfully")
-            return 0
-        else:
-            logger.error(f"Pipeline execution failed: {result.unwrap_err()}")  # type: ignore[union-attr]
-            return 1
+        orchestrator.run()
+        logger.info("Pipeline execution completed successfully")
+        return 0
 
     except KeyboardInterrupt:
         # Fallback: direct KBI without a signal handler registered (rare / legacy path).
         logger.warning("\nPipeline interrupted by user")
         return EXIT_CODE_SIGINT
+    except RyotenkAIError as exc:
+        logger.error(f"Pipeline execution failed: {exc.detail or exc!s}")
+        return 1
     except Exception as e:
         logger.exception(f"Unexpected error in pipeline: {e}")
         return 1

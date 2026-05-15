@@ -286,17 +286,6 @@ class TestReportGenerationNonsense:
         with pytest.raises(ValueError):
             generator.generate_report_model("🍌_banana_king_👑")
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "xfail-debt:report-builder-resilience — ReportBuilder assumes "
-            "structured dict/list inputs throughout. When Path.read_text is "
-            "globally mocked to return garbage, multiple downstream paths "
-            "crash with 'str has no attribute get/copy'. Production "
-            "hardening is out of scope for the test-infrastructure-"
-            "finalization PR; tracked in xfail_debt.md."
-        ),
-    )
     def test_garbage_event_content(self, mock_mlflow_client, mocker):
         """Nonsense 2: Events file contains random text."""
         root = create_mock_run("root_garbage", "Garbage_Content")

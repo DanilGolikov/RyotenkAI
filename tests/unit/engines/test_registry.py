@@ -12,7 +12,7 @@ from typing import Literal
 
 import pytest
 
-from ryotenkai_engines.errors import EngineNotRegistered, EngineRegistryError
+from ryotenkai_engines.errors import EngineNotRegisteredError
 from ryotenkai_engines.interfaces import BaseEngineConfig
 from ryotenkai_engines.registry import EngineRegistry, LoadFailure
 
@@ -119,9 +119,12 @@ class TestPositive:
 class TestNegative:
     def test_get_manifest_unknown_raises(self, tmp_path: Path) -> None:
         registry = EngineRegistry.from_filesystem(roots=[tmp_path])
-        with pytest.raises(EngineNotRegistered) as exc_info:
+        with pytest.raises(EngineNotRegisteredError) as exc_info:
             registry.get_manifest("nonexistent")
         assert "nonexistent" in str(exc_info.value)
+        assert exc_info.value.context["reason"] == "engine_not_registered"
+        assert exc_info.value.context["engine_id"] == "nonexistent"
+        assert exc_info.value.status == 404
 
     def test_duplicate_engine_id_collected_as_failure(
         self, tmp_path: Path
@@ -187,8 +190,9 @@ class TestNegative:
             ),
             encoding="utf-8",
         )
-        with pytest.raises(EngineRegistryError, match="folder name"):
+        with pytest.raises(EngineNotRegisteredError, match="folder name") as exc_info:
             EngineRegistry.from_filesystem(roots=[tmp_path], strict=True)
+        assert exc_info.value.context["reason"] == "engine_id_folder_mismatch"
 
     def test_malformed_toml_collected(self, tmp_path: Path) -> None:
         folder = tmp_path / "alpha"
@@ -402,8 +406,9 @@ class TestClassResolution:
             runtime_cls="X",
         )
         registry = EngineRegistry.from_filesystem(roots=[tmp_path])
-        with pytest.raises(EngineRegistryError, match="could not be resolved"):
+        with pytest.raises(EngineNotRegisteredError, match="could not be resolved") as exc_info:
             registry.get_runtime("alpha")
+        assert exc_info.value.context["reason"] == "engine_locator_resolve_failed"
 
     def test_get_runtime_engine_id_drift_raises(self, tmp_path: Path) -> None:
         _write_manifest(
@@ -420,8 +425,9 @@ class TestClassResolution:
         sys.modules["tests.unit.test_registry"] = sys.modules[__name__]
 
         registry = EngineRegistry.from_filesystem(roots=[tmp_path])
-        with pytest.raises(EngineRegistryError, match="ENGINE_RUNTIME_ID_DRIFT|engine_id"):
+        with pytest.raises(EngineNotRegisteredError, match="engine_id|runtime class") as exc_info:
             registry.get_runtime("alpha")
+        assert exc_info.value.context["reason"] == "engine_runtime_id_drift"
 
     def test_get_config_class_kind_drift_raises(self, tmp_path: Path) -> None:
         _write_manifest(
@@ -438,8 +444,9 @@ class TestClassResolution:
         sys.modules["tests.unit.test_registry"] = sys.modules[__name__]
 
         registry = EngineRegistry.from_filesystem(roots=[tmp_path])
-        with pytest.raises(EngineRegistryError, match="ENGINE_CONFIG_KIND_DRIFT|kind"):
+        with pytest.raises(EngineNotRegisteredError, match="kind") as exc_info:
             registry.get_config_class("alpha")
+        assert exc_info.value.context["reason"] == "engine_config_kind_drift"
 
 
 # ---------------------------------------------------------------------------
@@ -456,5 +463,6 @@ class TestImageLookup:
 
     def test_get_image_unknown_raises(self, tmp_path: Path) -> None:
         registry = EngineRegistry.from_filesystem(roots=[tmp_path])
-        with pytest.raises(EngineNotRegistered):
+        with pytest.raises(EngineNotRegisteredError) as exc_info:
             registry.get_image("nonexistent")
+        assert exc_info.value.context["reason"] == "engine_not_registered"

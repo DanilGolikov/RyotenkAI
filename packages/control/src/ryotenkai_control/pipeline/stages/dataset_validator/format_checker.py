@@ -5,15 +5,20 @@ so the HTTP API (``POST /projects/.../datasets/.../validate``) and the
 DatasetValidator stage answer from the same code path.
 
 Behaviour: O(1) — only reads column metadata, no dataset iteration.
-Called BEFORE quality plugins to fail fast before GPU spin-up. Returns
-the first failure with code ``DATASET_FORMAT_ERROR``.
+Called BEFORE quality plugins to fail fast before GPU spin-up. Raises
+:class:`DatasetValidationFailedError` on the first failure.
+
+Phase A2 Batch 8 — raise-based migration. The legacy ``Result`` adapter
+is gone; the underlying ``check_dataset_format`` already raises, so the
+"unknown strategy" branch propagates verbatim and per-strategy failures
+are translated into the same exception type.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ryotenkai_shared.utils.result import AppError, DatasetError, Err, Ok, Result
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 if TYPE_CHECKING:
     from datasets import Dataset, IterableDataset
@@ -32,26 +37,31 @@ class FormatChecker:
         dataset: Dataset | IterableDataset,
         dataset_name: str,
         strategy_phases: list,
-    ) -> Result[None, AppError]:
-        """Run format checks for every strategy phase. Early-fails on first error."""
+    ) -> None:
+        """Run format checks for every strategy phase. Early-fails on first error.
+
+        Raises:
+            DatasetValidationFailedError: on the first failed strategy. The
+                "unknown strategy type" branch raised by
+                :func:`check_dataset_format` propagates unchanged.
+        """
         from ryotenkai_control.data.validation.standalone import check_dataset_format
 
-        bundle = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
-        if bundle.is_failure():
-            return Err(bundle.unwrap_err())
+        items = check_dataset_format(dataset, dataset_name, strategy_phases, self._config)
 
-        for item in bundle.unwrap():
+        for item in items:
             if not item.ok:
-                return Err(
-                    DatasetError(
-                        message=(
-                            f"[{dataset_name}] Format check failed for "
-                            f"'{item.strategy_type}': {item.message}"
-                        ),
-                        code="DATASET_FORMAT_ERROR",
-                    )
+                raise DatasetValidationFailedError(
+                    detail=(
+                        f"[{dataset_name}] Format check failed for "
+                        f"'{item.strategy_type}': {item.message}"
+                    ),
+                    context={
+                        "dataset_name": dataset_name,
+                        "strategy_type": item.strategy_type,
+                        "legacy_code": "DATASET_FORMAT_ERROR",
+                    },
                 )
-        return Ok(None)
 
 
 __all__ = ["FormatChecker"]

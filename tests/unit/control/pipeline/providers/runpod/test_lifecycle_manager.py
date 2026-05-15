@@ -6,6 +6,8 @@ The heavy poll-loop matrix is tested in
 the shim's contract: that ``wait_for_ready`` builds the right policy
 and calls into the waiter, and that ``check_health`` is a pass-through
 to ``query_pod_snapshot``.
+
+Phase A2 Batch 11 (2026-05-15): raise-based contract.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ import pytest
 from ryotenkai_providers.runpod.lifecycle.policy import TRAINING_PROFILE
 from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
 from ryotenkai_providers.runpod.training.lifecycle_manager import PodLifecycleManager
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 pytestmark = pytest.mark.unit
 
@@ -41,24 +43,26 @@ def _snap(
 
 @dataclass
 class StubQuery:
-    responses: list[Result[PodSnapshot, ProviderError]] = field(default_factory=list)
+    """Raise-based fake for ``PodQuery``. Each action is a PodSnapshot
+    (returned) or Exception (raised)."""
+
+    actions: list[object] = field(default_factory=list)
     calls: int = 0
 
-    def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+    def query_pod_snapshot(self, pod_id: str) -> PodSnapshot:
         self.calls += 1
-        if self.responses:
-            return self.responses.pop(0)
-        return Err(ProviderError(message="exhausted", code="STUB"))
+        if not self.actions:
+            raise ProviderUnavailableError(detail="exhausted", context={"code": "STUB"})
+        action = self.actions.pop(0)
+        if isinstance(action, BaseException):
+            raise action
+        assert isinstance(action, PodSnapshot)
+        return action
 
 
 # ---------------------------------------------------------------------------
 # wait_for_ready — thin-shim contract
 # ---------------------------------------------------------------------------
-#
-# Behavior of the underlying poll loop is pinned in
-# ``tests/.../lifecycle/test_pod_ssh_waiter.py`` (18 cases). These tests
-# cover only what's specific to the shim: it delegates to the waiter
-# with the right policy and forwards the result.
 
 
 def test_wait_for_ready_uses_training_profile_when_no_timeout(
@@ -71,8 +75,8 @@ def test_wait_for_ready_uses_training_profile_when_no_timeout(
         def __init__(self, *, query: object, policy: object, **_: object) -> None:
             captured["policy"] = policy
 
-        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
-            return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
+        def wait(self, pod_id: str) -> PodSnapshot:
+            return _snap(status="RUNNING", ssh=_SSH_OK)
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
@@ -99,8 +103,8 @@ def test_wait_for_ready_overrides_total_timeout_only(
         def __init__(self, *, query: object, policy: object, **_: object) -> None:
             captured["policy"] = policy
 
-        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
-            return Ok(_snap(status="RUNNING", ssh=_SSH_OK))
+        def wait(self, pod_id: str) -> PodSnapshot:
+            return _snap(status="RUNNING", ssh=_SSH_OK)
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
@@ -116,20 +120,20 @@ def test_wait_for_ready_overrides_total_timeout_only(
     assert pol.running_no_ports_bailout_s == TRAINING_PROFILE.running_no_ports_bailout_s  # type: ignore[attr-defined]
 
 
-def test_wait_for_ready_forwards_waiter_result(
+def test_wait_for_ready_propagates_waiter_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Whatever the waiter returns, the shim returns — no transformation."""
-    sentinel_err = Err(
-        ProviderError(message="boom", code="RUNPOD_NO_EXPOSED_TCP", details={"x": 1})
+    """Whatever the waiter raises, the shim propagates — no transformation."""
+    sentinel = ProviderUnavailableError(
+        detail="boom", context={"code": "RUNPOD_NO_EXPOSED_TCP", "x": 1}
     )
 
     class StaticWaiter:
         def __init__(self, **_: object) -> None:
             pass
 
-        def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
-            return sentinel_err
+        def wait(self, pod_id: str) -> PodSnapshot:
+            raise sentinel
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.training.lifecycle_manager.PodSshWaiter",
@@ -137,8 +141,9 @@ def test_wait_for_ready_forwards_waiter_result(
     )
     api = StubQuery()
     mgr = PodLifecycleManager(api_client=api)
-    res = mgr.wait_for_ready("pod-1")
-    assert res is sentinel_err
+    with pytest.raises(ProviderUnavailableError) as ei:
+        mgr.wait_for_ready("pod-1")
+    assert ei.value is sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -147,24 +152,21 @@ def test_wait_for_ready_forwards_waiter_result(
 
 
 def test_check_health_running_returns_true() -> None:
-    api = StubQuery(responses=[Ok(_snap(status="RUNNING", ssh=_SSH_OK))])
+    api = StubQuery(actions=[_snap(status="RUNNING", ssh=_SSH_OK)])
     mgr = PodLifecycleManager(api_client=api)
-    res = mgr.check_health("pod-1")
-    assert res.is_success() and res.unwrap() is True
+    assert mgr.check_health("pod-1") is True
 
 
 def test_check_health_non_running_returns_false() -> None:
-    api = StubQuery(responses=[Ok(_snap(status="STARTING"))])
+    api = StubQuery(actions=[_snap(status="STARTING")])
     mgr = PodLifecycleManager(api_client=api)
-    res = mgr.check_health("pod-1")
-    assert res.is_success() and res.unwrap() is False
+    assert mgr.check_health("pod-1") is False
 
 
 def test_check_health_propagates_query_error() -> None:
-    api = StubQuery(
-        responses=[Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED"))]
-    )
+    err = ProviderUnavailableError(detail="boom", context={"code": "RUNPOD_SDK_CALL_FAILED"})
+    api = StubQuery(actions=[err])
     mgr = PodLifecycleManager(api_client=api)
-    res = mgr.check_health("pod-1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        mgr.check_health("pod-1")
+    assert ei.value.context["code"] == "RUNPOD_SDK_CALL_FAILED"

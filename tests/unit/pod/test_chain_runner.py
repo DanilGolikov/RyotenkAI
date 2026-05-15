@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import TrainingFailedError, TrainingOOMError
 
 # =============================================================================
 # HELPER: Create test strategies
@@ -55,7 +55,7 @@ class TestSinglePhaseExecution:
         # Mock PhaseExecutor
         mock_executor = MagicMock()
         mock_model = MagicMock()
-        mock_executor.execute.return_value = Ok(mock_model)
+        mock_executor.execute.return_value = mock_model
 
         # Mock DataBuffer
         mock_buffer = MagicMock()
@@ -66,10 +66,9 @@ class TestSinglePhaseExecution:
         strategies = [make_strategy("sft")]
         initial_model = MagicMock()
 
-        result = runner.run(strategies, initial_model, mock_buffer)
+        out = runner.run(strategies, initial_model, mock_buffer)
 
-        assert result.is_success()
-        assert result.unwrap() == mock_model
+        assert out is mock_model
 
         # Verify executor was called once
         mock_executor.execute.assert_called_once()
@@ -77,12 +76,12 @@ class TestSinglePhaseExecution:
         assert call_kwargs["phase_idx"] == 0
         assert call_kwargs["phase"].strategy_type == "sft"
 
-    def test_single_phase_failure(self):
-        """Single phase failure should propagate error."""
+    def test_single_phase_failure_raises(self):
+        """Single phase failure raises a typed exception (post-Batch-14)."""
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
-        mock_executor.execute.return_value = Err("Training failed: CUDA OOM")
+        mock_executor.execute.side_effect = TrainingOOMError(detail="Training failed: CUDA OOM")
 
         mock_buffer = MagicMock()
         mock_buffer.run_id = "test_run_002"
@@ -92,10 +91,9 @@ class TestSinglePhaseExecution:
         strategies = [make_strategy("sft")]
         initial_model = MagicMock()
 
-        result = runner.run(strategies, initial_model, mock_buffer)
-
-        assert result.is_failure()
-        assert "OOM" in str(result.error)
+        with pytest.raises(TrainingOOMError) as exc_info:
+            runner.run(strategies, initial_model, mock_buffer)
+        assert "OOM" in (exc_info.value.detail or "")
 
 
 # =============================================================================
@@ -117,22 +115,27 @@ class TestMultiPhaseExecution:
 
         # Return different models for each phase
         mock_executor.execute.side_effect = [
-            Ok(model_after_phase_0),
-            Ok(model_after_phase_1),
+            model_after_phase_0,
+            model_after_phase_1,
         ]
 
         mock_buffer = MagicMock()
         mock_buffer.run_id = "test_run_003"
+        # Buffer state ladder: phase 0 not skipped, phase 1 not skipped.
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        mock_buffer.state.phases = [
+            MagicMock(status=PhaseStatus.COMPLETED),
+            MagicMock(status=PhaseStatus.COMPLETED),
+        ]
 
         runner = ChainRunner(mock_executor)
 
         strategies = [make_strategy("sft"), make_strategy("dpo")]
         initial_model = MagicMock(name="base_model")
 
-        result = runner.run(strategies, initial_model, mock_buffer)
+        out = runner.run(strategies, initial_model, mock_buffer)
 
-        assert result.is_success()
-        assert result.unwrap() == model_after_phase_1
+        assert out is model_after_phase_1
 
         # Verify both phases were executed
         assert mock_executor.execute.call_count == 2
@@ -154,10 +157,12 @@ class TestMultiPhaseExecution:
         mock_executor = MagicMock()
 
         models = [MagicMock(name=f"model_{i}") for i in range(3)]
-        mock_executor.execute.side_effect = [Ok(m) for m in models]
+        mock_executor.execute.side_effect = list(models)
 
         mock_buffer = MagicMock()
         mock_buffer.run_id = "test_run_004"
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        mock_buffer.state.phases = [MagicMock(status=PhaseStatus.COMPLETED) for _ in range(3)]
 
         runner = ChainRunner(mock_executor)
 
@@ -168,26 +173,31 @@ class TestMultiPhaseExecution:
         ]
         initial_model = MagicMock(name="base")
 
-        result = runner.run(strategies, initial_model, mock_buffer)
+        out = runner.run(strategies, initial_model, mock_buffer)
 
-        assert result.is_success()
-        assert result.unwrap() == models[2]  # Final model
+        assert out is models[2]  # Final model
         assert mock_executor.execute.call_count == 3
 
     def test_phase_failure_stops_chain(self):
-        """Phase failure should stop chain execution."""
+        """Phase failure should stop chain execution (raises)."""
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
 
         # Phase 0 succeeds, phase 1 fails
         mock_executor.execute.side_effect = [
-            Ok(MagicMock()),
-            Err("Phase 1 failed: Gradient explosion"),
+            MagicMock(name="m0"),
+            TrainingFailedError(detail="Phase 1 failed: Gradient explosion"),
         ]
 
         mock_buffer = MagicMock()
         mock_buffer.run_id = "test_run_005"
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        mock_buffer.state.phases = [
+            MagicMock(status=PhaseStatus.COMPLETED),
+            MagicMock(status=PhaseStatus.COMPLETED),
+            MagicMock(status=PhaseStatus.COMPLETED),
+        ]
 
         runner = ChainRunner(mock_executor)
 
@@ -197,10 +207,9 @@ class TestMultiPhaseExecution:
             make_strategy("dpo"),  # Should never execute
         ]
 
-        result = runner.run(strategies, MagicMock(), mock_buffer)
-
-        assert result.is_failure()
-        assert "Phase 1" in str(result.error) or "Gradient" in str(result.error)
+        with pytest.raises(TrainingFailedError) as exc:
+            runner.run(strategies, MagicMock(), mock_buffer)
+        assert "Phase 1" in (exc.value.detail or "") or "Gradient" in (exc.value.detail or "")
 
         # Phase 2 should NOT be executed
         assert mock_executor.execute.call_count == 2
@@ -214,14 +223,20 @@ class TestMultiPhaseExecution:
 class TestResumeFromPhase:
     """Tests for resuming from a specific phase."""
 
+    def _buf_with_phases(self, n: int):
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        mock_buffer = MagicMock()
+        mock_buffer.state.phases = [MagicMock(status=PhaseStatus.COMPLETED) for _ in range(n)]
+        return mock_buffer
+
     def test_resume_from_phase_1(self):
         """start_phase=1 should skip phase 0."""
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
-        mock_executor.execute.return_value = Ok(MagicMock())
+        mock_executor.execute.return_value = MagicMock()
 
-        mock_buffer = MagicMock()
+        mock_buffer = self._buf_with_phases(2)
         mock_buffer.run_id = "test_run_006"
 
         runner = ChainRunner(mock_executor)
@@ -234,9 +249,7 @@ class TestResumeFromPhase:
         # Resume from phase 1 (checkpoint model)
         checkpoint_model = MagicMock(name="checkpoint_model")
 
-        result = runner.run(strategies, checkpoint_model, mock_buffer, start_phase=1)
-
-        assert result.is_success()
+        runner.run(strategies, checkpoint_model, mock_buffer, start_phase=1)
 
         # Only phase 1 should be executed
         assert mock_executor.execute.call_count == 1
@@ -250,9 +263,9 @@ class TestResumeFromPhase:
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
-        mock_executor.execute.return_value = Ok(MagicMock())
+        mock_executor.execute.return_value = MagicMock()
 
-        mock_buffer = MagicMock()
+        mock_buffer = self._buf_with_phases(4)
         mock_buffer.run_id = "test_run_007"
 
         runner = ChainRunner(mock_executor)
@@ -264,9 +277,8 @@ class TestResumeFromPhase:
             make_strategy("dpo"),  # 3 - execute
         ]
 
-        result = runner.run(strategies, MagicMock(), mock_buffer, start_phase=2)
+        runner.run(strategies, MagicMock(), mock_buffer, start_phase=2)
 
-        assert result.is_success()
         assert mock_executor.execute.call_count == 2
 
         # Verify phases 2 and 3 were executed
@@ -279,9 +291,9 @@ class TestResumeFromPhase:
         from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
 
         mock_executor = MagicMock()
-        mock_executor.execute.return_value = Ok(MagicMock())
+        mock_executor.execute.return_value = MagicMock()
 
-        mock_buffer = MagicMock()
+        mock_buffer = self._buf_with_phases(3)
         mock_buffer.run_id = "test_run_008"
 
         runner = ChainRunner(mock_executor)
@@ -292,9 +304,8 @@ class TestResumeFromPhase:
             make_strategy("dpo"),  # Only this
         ]
 
-        result = runner.run(strategies, MagicMock(), mock_buffer, start_phase=2)
+        runner.run(strategies, MagicMock(), mock_buffer, start_phase=2)
 
-        assert result.is_success()
         assert mock_executor.execute.call_count == 1
 
 
@@ -320,7 +331,6 @@ class TestEdgeCases:
 
         # Empty strategies, should return immediately
         mock_executor.execute.assert_not_called()
-        # Result depends on implementation - might be Ok(initial_model) or need validation
 
     def test_start_phase_beyond_strategies(self):
         """start_phase >= len(strategies) should not execute anything."""
@@ -434,7 +444,6 @@ class TestPhaseHeaderLogging:
         phase = make_strategy("sft", epochs=5, learning_rate=1e-4)
 
         # Just verify it doesn't raise
-        # Actual logging is hard to test with our logger setup
         runner._log_phase_header(0, 3, phase)
 
         # Method exists and runs without error
@@ -460,14 +469,12 @@ class TestModelPropagation:
         model_1 = MagicMock(name="model_after_cot")
         model_2 = MagicMock(name="model_after_dpo")
 
-        mock_executor.execute.side_effect = [
-            Ok(model_0),
-            Ok(model_1),
-            Ok(model_2),
-        ]
+        mock_executor.execute.side_effect = [model_0, model_1, model_2]
 
         mock_buffer = MagicMock()
         mock_buffer.run_id = "test_run"
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        mock_buffer.state.phases = [MagicMock(status=PhaseStatus.COMPLETED) for _ in range(3)]
 
         runner = ChainRunner(mock_executor)
 
@@ -492,6 +499,97 @@ class TestModelPropagation:
 
         # Phase 2 gets model_1 (output of phase 1)
         assert calls[2][1]["model"] == model_1
+
+
+class TestChainRunnerRaiseContract:
+    """7-class coverage for the new raise-based ChainRunner.run."""
+
+    def _buf(self, n: int):
+        from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
+        buf = MagicMock()
+        buf.run_id = "rid"
+        buf.state.phases = [MagicMock(status=PhaseStatus.COMPLETED) for _ in range(n)]
+        return buf
+
+    def test_positive_returns_model_not_result(self):
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+
+        class _Model:  # plain object — no MagicMock auto-attrs
+            pass
+
+        executor = MagicMock()
+        final = _Model()
+        executor.execute.return_value = final
+        out = ChainRunner(executor).run([make_strategy("sft")], MagicMock(), self._buf(1))
+        assert out is final
+        assert not hasattr(out, "is_failure")
+        assert not hasattr(out, "unwrap_err")
+
+    def test_negative_first_phase_raises_propagates(self):
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+        executor = MagicMock()
+        executor.execute.side_effect = TrainingFailedError(detail="x")
+        with pytest.raises(TrainingFailedError):
+            ChainRunner(executor).run([make_strategy("sft")], MagicMock(), self._buf(1))
+
+    def test_boundary_empty_strategies_returns_initial_model(self):
+        """Edge case: empty list returns the initial model untouched."""
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+        executor = MagicMock()
+        initial = MagicMock()
+        out = ChainRunner(executor).run([], initial, self._buf(0))
+        assert out is initial
+        executor.execute.assert_not_called()
+
+    def test_invariant_mlflow_failed_tag_logged_before_raise(self):
+        """The MLflow status tag is set before propagating, so external
+        observers see "failed" rather than just the missing run."""
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+        executor = MagicMock()
+        executor.execute.side_effect = TrainingFailedError(detail="x")
+        mlflow = MagicMock()
+        mlflow.is_active = True
+        with pytest.raises(TrainingFailedError):
+            ChainRunner(executor, mlflow_manager=mlflow).run(
+                [make_strategy("sft")], MagicMock(), self._buf(1),
+            )
+        # Failed status should be tagged via set_tags.
+        set_tags_calls = [c for c in mlflow.set_tags.call_args_list]
+        assert any(
+            "status" in c.args[0] and c.args[0]["status"] == "failed"
+            for c in set_tags_calls
+        )
+
+    def test_dependency_error_oom_propagates(self):
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+        executor = MagicMock()
+        executor.execute.side_effect = TrainingOOMError(detail="oom")
+        with pytest.raises(TrainingOOMError):
+            ChainRunner(executor).run([make_strategy("sft")], MagicMock(), self._buf(1))
+
+    def test_regression_no_result_imports(self):
+        """Pin: the chain_runner module must not depend on the legacy
+        ``Result`` machinery after Batch 14."""
+        import ryotenkai_pod.trainer.orchestrator.chain_runner as cr_mod
+
+        src = cr_mod.__file__
+        with open(src, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "from ryotenkai_shared.utils.result" not in content
+        assert "is_failure" not in content
+        assert "unwrap_err" not in content
+
+    def test_combinatorial_success_then_failure(self):
+        from ryotenkai_pod.trainer.orchestrator.chain_runner import ChainRunner
+        executor = MagicMock()
+        ok_model = MagicMock()
+        executor.execute.side_effect = [ok_model, TrainingFailedError(detail="phase 1 down")]
+        with pytest.raises(TrainingFailedError):
+            ChainRunner(executor).run(
+                [make_strategy("sft"), make_strategy("dpo")], MagicMock(), self._buf(2),
+            )
+        # Second phase received the model from phase 0.
+        assert executor.execute.call_args_list[1].kwargs["model"] is ok_model
 
 
 # =============================================================================

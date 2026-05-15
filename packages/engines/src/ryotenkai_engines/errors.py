@@ -1,89 +1,37 @@
-"""Engine-system errors.
+"""Engine-system errors — re-exports from the typed hierarchy.
 
-Three-level hierarchy:
+Phase A2 Batch 2 migration (sharded-stargazing-wigderson):
+the legacy ``EngineRegistryError`` / ``EngineNotRegistered`` /
+``EngineConfigError`` classes (plain ``Exception``/``ValueError`` subclasses)
+have been removed in favour of the typed hierarchy rooted at
+:class:`ryotenkai_shared.errors.RyotenkAIError`.
 
-  * :class:`EngineRegistryError` — registry / loader concerns (manifest
-    parse, importlib resolution, missing entries). Configuration / plumbing
-    bugs that the caller cannot retry away.
-  * :class:`EngineConfigError` — engine-config validation concerns
-    (``validate_config`` returned Err, capability/config mismatch). Surfaced
-    when a user picks a config the engine refuses.
-  * :class:`EngineNotRegistered` — specific lookup-miss subtype of
-    :class:`EngineRegistryError`. Distinct because callers commonly handle
-    "engine simply doesn't exist" cleanly.
+  * Registry-lookup misses and registry-plumbing failures now raise
+    :class:`EngineNotRegisteredError` (DomainError, status 404,
+    code ENGINE_NOT_REGISTERED). The legacy distinction between
+    "lookup miss" and "registry-plumbing bug" collapses into a single
+    domain error; callers branch on ``context["reason"]`` if they need
+    a sub-category (e.g. ``locator_resolve_failed``,
+    ``manifest_invalid``, ``runtime_id_drift``, …).
 
-All three carry the same ``code`` / ``details`` shape as
-``ryotenkai_shared.utils.result.AppError`` so HTTP / CLI error renderers
-stay uniform across the codebase.
+  * Engine-config invariant rejections now raise
+    :class:`EngineConfigInvalidError` (DomainError, status 422,
+    code ENGINE_CONFIG_INVALID). Subcodes ride in ``context["reason"]``
+    (e.g. ``vllm_live_lora_not_supported``).
+
+This module is kept as a thin re-export to preserve import paths for
+in-package callers (``from ryotenkai_engines.errors import …``); the
+concrete classes live in :mod:`ryotenkai_shared.errors`.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-
-class EngineRegistryError(Exception):
-    """Raised when the registry itself can't satisfy a request.
-
-    Mirrors :class:`ryotenkai_providers.registry.ProviderRegistryError` —
-    same shape, separate hierarchy so callers can ``except`` precisely.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str = "ENGINE_REGISTRY_ERROR",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.message = message
-        self.code = code
-        self.details: dict[str, Any] = dict(details) if details else {}
-
-
-class EngineNotRegistered(EngineRegistryError):
-    """Specific lookup miss — the registry knows nothing about ``engine_id``."""
-
-    def __init__(
-        self,
-        engine_id: str,
-        *,
-        known: tuple[str, ...] = (),
-    ) -> None:
-        super().__init__(
-            message=(
-                f"engine {engine_id!r} is not registered. "
-                f"Known engines: {sorted(known)!r}."
-            ),
-            code="ENGINE_NOT_REGISTERED",
-            details={"engine_id": engine_id, "known": list(known)},
-        )
-
-
-class EngineConfigError(ValueError):
-    """Raised when an engine config fails an engine-side invariant.
-
-    Distinct from Pydantic ``ValidationError`` (schema-level) — this fires
-    after schema validation, when the engine's ``validate_config`` rejects
-    the typed config (e.g. ``merge_before_deploy=False`` on vLLM today).
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str = "ENGINE_CONFIG_INVALID",
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.message = message
-        self.code = code
-        self.details: dict[str, Any] = dict(details) if details else {}
-
+from ryotenkai_shared.errors import (
+    EngineConfigInvalidError,
+    EngineNotRegisteredError,
+)
 
 __all__ = (
-    "EngineRegistryError",
-    "EngineNotRegistered",
-    "EngineConfigError",
+    "EngineConfigInvalidError",
+    "EngineNotRegisteredError",
 )

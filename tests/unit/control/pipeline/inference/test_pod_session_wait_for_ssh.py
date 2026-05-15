@@ -1,13 +1,8 @@
 """Tests for ``pod_session._wait_for_ssh`` — now a thin wrapper over
 :class:`PodSshWaiter`.
 
-The poll-loop matrix (positive / negative / boundary / invariants /
-cancellation) is pinned in
-``tests/.../runpod/lifecycle/test_pod_ssh_waiter.py``. These tests
-cover only what's specific to the wrapper: it constructs a waiter
-with :data:`INFERENCE_PROFILE` (or a profile whose only override is
-``total_timeout_s``) and reshapes the success result back to the
-historical ``(host, port)`` tuple that ``activate()`` consumes.
+Phase A2 Batch 11 (2026-05-15): the waiter now raises typed exceptions;
+``_wait_for_ssh`` returns ``(host, port)`` directly and re-raises.
 """
 
 from __future__ import annotations
@@ -22,7 +17,7 @@ import pytest
 from ryotenkai_providers.runpod.inference.pods import pod_session as ps
 from ryotenkai_providers.runpod.lifecycle.policy import INFERENCE_PROFILE
 from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 pytestmark = pytest.mark.unit
 
@@ -52,18 +47,17 @@ def test_wait_for_ssh_returns_host_port_tuple_on_success(
             captured["policy"] = policy
             captured["query"] = query
 
-        def wait(self, pod_id: str) -> object:
+        def wait(self, pod_id: str) -> PodSnapshot:
             captured["pod_id"] = pod_id
-            return Ok(_ready_snapshot())
+            return _ready_snapshot()
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
     api = SimpleNamespace()
-    res = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
+    out = ps._wait_for_ssh(api=api, pod_id="pod-x", timeout_sec=600)
 
-    assert res.is_success()
-    assert res.unwrap() == ("1.2.3.4", 2222)
+    assert out == ("1.2.3.4", 2222)
     assert captured["pod_id"] == "pod-x"
 
 
@@ -78,8 +72,8 @@ def test_wait_for_ssh_uses_inference_profile_when_timeout_matches_default(
         def __init__(self, *, query: object, policy: object, **_: object) -> None:
             captured["policy"] = policy
 
-        def wait(self, pod_id: str) -> object:
-            return Ok(_ready_snapshot())
+        def wait(self, pod_id: str) -> PodSnapshot:
+            return _ready_snapshot()
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
@@ -102,8 +96,8 @@ def test_wait_for_ssh_overrides_only_total_timeout(
         def __init__(self, *, query: object, policy: object, **_: object) -> None:
             captured["policy"] = policy
 
-        def wait(self, pod_id: str) -> object:
-            return Ok(_ready_snapshot())
+        def wait(self, pod_id: str) -> PodSnapshot:
+            return _ready_snapshot()
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
@@ -118,25 +112,22 @@ def test_wait_for_ssh_overrides_only_total_timeout(
 def test_wait_for_ssh_propagates_waiter_error_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The wrapper does not transform error shape — caller-side branches
-    on the canonical waiter error codes (``RUNPOD_*``)."""
-    err = Err(
-        ProviderError(
-            message="stuck", code="RUNPOD_NO_EXPOSED_TCP",
-            details={"pod_id": "pod-x"},
-        )
-    )
+    """The wrapper does not transform exception shape — caller-side branches
+    on the canonical waiter error codes (``RUNPOD_*``) via ``context['code']``."""
 
     class StaticWaiter:
         def __init__(self, **_: object) -> None:
             pass
 
-        def wait(self, pod_id: str) -> object:
-            return err
+        def wait(self, pod_id: str) -> PodSnapshot:
+            raise ProviderUnavailableError(
+                detail="stuck",
+                context={"code": "RUNPOD_NO_EXPOSED_TCP", "pod_id": "pod-x"},
+            )
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.lifecycle.PodSshWaiter", StaticWaiter,
     )
-    res = ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=600)
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NO_EXPOSED_TCP"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        ps._wait_for_ssh(api=MagicMock(), pod_id="pod-x", timeout_sec=600)
+    assert ei.value.context["code"] == "RUNPOD_NO_EXPOSED_TCP"

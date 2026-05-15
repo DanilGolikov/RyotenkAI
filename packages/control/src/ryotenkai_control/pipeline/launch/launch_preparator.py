@@ -60,48 +60,48 @@ from ryotenkai_control.pipeline.state import (
     StageRunState,
     build_attempt_state,
 )
+from ryotenkai_shared.errors import ConfigDriftError, LaunchPreparationError
 from ryotenkai_shared.utils.logger import init_run_logging, logger
 from ryotenkai_shared.utils.logs_layout import LogLayout
-from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from ryotenkai_shared.config.runtime import RuntimeSettings
     from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
     from ryotenkai_control.pipeline.execution import StagePlanner
     from ryotenkai_control.pipeline.stages.base import PipelineStage
+    from ryotenkai_shared.config.runtime import RuntimeSettings
     from ryotenkai_shared.pipeline_context import RunContext
 
 _SEPARATOR_CHAR = "="
 _SEPARATOR_LINE_WIDTH = 80
 
 
-class LaunchPreparationError(Exception):
-    """Raised when preparation cannot produce a :class:`PreparedAttempt`.
+def _make_launch_error(
+    detail: str,
+    *,
+    state: PipelineState | None = None,
+    requested_action: str | None = None,
+    effective_action: str | None = None,
+    start_stage_name: str | None = None,
+    context: dict[str, Any] | None = None,
+    cause: Exception | None = None,
+) -> LaunchPreparationError:
+    """Construct a typed :class:`LaunchPreparationError` plus rejection context.
 
-    Carries the partially-computed context needed to record a rejected
-    launch attempt (see :meth:`LaunchPreparator.record_launch_rejection`).
-    Fields are optional because very-early failures (e.g. invalid run dir)
-    may not have a state to attach.
+    Phase A2 Batch 7 replaced the local dataclass with a stash of attributes
+    on the typed (shared) exception. The orchestrator's rejection path reads
+    ``state`` / ``requested_action`` / ``effective_action`` /
+    ``start_stage_name`` from the raised instance to persist a terminal
+    failed-attempt record.
     """
-
-    def __init__(
-        self,
-        app_error: AppError,
-        *,
-        state: PipelineState | None = None,
-        requested_action: str | None = None,
-        effective_action: str | None = None,
-        start_stage_name: str | None = None,
-    ) -> None:
-        super().__init__(app_error.message)
-        self.app_error = app_error
-        self.state = state
-        self.requested_action = requested_action
-        self.effective_action = effective_action
-        self.start_stage_name = start_stage_name
+    err = LaunchPreparationError(detail, context=context, cause=cause)
+    err.state = state  # type: ignore[attr-defined]
+    err.requested_action = requested_action  # type: ignore[attr-defined]
+    err.effective_action = effective_action  # type: ignore[attr-defined]
+    err.start_stage_name = start_stage_name  # type: ignore[attr-defined]
+    return err
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,23 +297,27 @@ class LaunchPreparator:
           :meth:`AttemptController.record_rejected_attempt`), never emitting
           an intermediate ``RUNNING`` state that could fool crash recovery.
         """
-        if self._last_state_store is None or launch_error.state is None:
+        state = getattr(launch_error, "state", None)
+        if self._last_state_store is None or state is None:
             return
+        requested_action = getattr(launch_error, "requested_action", None)
+        effective_action = getattr(launch_error, "effective_action", None)
+        start_stage_name = getattr(launch_error, "start_stage_name", None)
         # Invariant: prepare() always fills these three together; the
         # state_store check above guards the happy path.
-        assert launch_error.start_stage_name is not None
-        assert launch_error.requested_action is not None
-        assert launch_error.effective_action is not None
+        assert start_stage_name is not None
+        assert requested_action is not None
+        assert effective_action is not None
 
         enabled_stage_names = self._stage_planner.compute_enabled_stage_names(
-            start_stage_name=launch_error.start_stage_name
+            start_stage_name=start_stage_name
         )
         attempt = build_attempt_state(
-            state=launch_error.state,
+            state=state,
             run_ctx=self._run_ctx,
-            requested_action=launch_error.requested_action,
-            effective_action=launch_error.effective_action,
-            restart_from_stage=launch_error.start_stage_name,
+            requested_action=requested_action,
+            effective_action=effective_action,
+            restart_from_stage=start_stage_name,
             enabled_stage_names=enabled_stage_names,
             training_critical_config_hash=config_hashes["training_critical"],
             late_stage_config_hash=config_hashes["late_stage"],
@@ -322,10 +326,10 @@ class LaunchPreparator:
         attempt_directory = self._last_state_store.next_attempt_dir(attempt.attempt_no)
         init_run_logging(self._run_ctx.name, log_dir=attempt_directory)
         logger.info(_SEPARATOR_CHAR * _SEPARATOR_LINE_WIDTH)
-        logger.error(f"Launch rejected before stage execution: {launch_error.app_error}")
+        logger.error(f"Launch rejected before stage execution: {launch_error}")
         logger.info(_SEPARATOR_CHAR * _SEPARATOR_LINE_WIDTH)
 
-        attempt.error = launch_error.app_error.message
+        attempt.error = launch_error.detail or str(launch_error)
         self._attempt_controller.record_rejected_attempt(
             attempt=attempt,
             status=StageRunState.STATUS_FAILED,
@@ -403,30 +407,37 @@ class LaunchPreparator:
                 else self._stages[0].stage_name
             )
             if start_stage_name is None:
-                raise LaunchPreparationError(
-                    AppError(
-                        message="No resumable stage found in pipeline_state.json",
-                        code="RESUME_NOT_AVAILABLE",
-                    ),
+                raise _make_launch_error(
+                    "No resumable stage found in pipeline_state.json",
                     state=state,
                     requested_action=requested_action,
                     effective_action=effective_action,
                     start_stage_name=self._stages[0].stage_name,
+                    context={"legacy_code": "RESUME_NOT_AVAILABLE"},
                 )
-            drift_error = self._config_drift.validate_drift(
-                state=state,
-                start_stage_name=start_stage_name,
-                config_hashes=config_hashes,
-                resume=resume,
-            )
-            if drift_error is not None:
-                raise LaunchPreparationError(
-                    drift_error,
+            try:
+                self._config_drift.validate_drift(
+                    state=state,
+                    start_stage_name=start_stage_name,
+                    config_hashes=config_hashes,
+                    resume=resume,
+                )
+            except ConfigDriftError as drift_error:
+                # ``drift_error`` is a typed ``ConfigDriftError`` (Phase A2
+                # Batch 7). Re-raise as a LaunchPreparationError carrying
+                # the same detail + the rejection context.
+                raise _make_launch_error(
+                    drift_error.detail or str(drift_error),
                     state=state,
                     requested_action=requested_action,
                     effective_action=effective_action,
                     start_stage_name=start_stage_name,
-                )
+                    context={
+                        "legacy_code": drift_error.code.value,
+                        **(drift_error.context or {}),
+                    },
+                    cause=drift_error,
+                ) from drift_error
             return state, requested_action, effective_action, start_stage_name
 
         if resume or normalized_restart is not None:

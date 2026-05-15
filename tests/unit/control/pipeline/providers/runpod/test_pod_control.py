@@ -1,6 +1,9 @@
+"""Tests for the raise-based :class:`RunPodTrainingPodControl` and
+:class:`RunPodInferencePodControl` (Phase A2 Batch 11)."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -10,16 +13,24 @@ from ryotenkai_providers.runpod.pod_control import (
     RunPodInferencePodControl,
     RunPodTrainingPodControl,
 )
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 pytestmark = pytest.mark.unit
 
 
 @dataclass
 class FakeTrainingApi:
-    create_result: Result[dict[str, Any], ProviderError] = Ok({"pod_id": "pod-api"})  # type: ignore[call-arg]
-    query_result: Result[dict[str, Any], ProviderError] = Ok(  # type: ignore[call-arg]
-        {
+    """Canonical raise-based fake for the training API.
+
+    Each ``*_value`` is the value to return; ``*_exc`` raises instead.
+    """
+
+    create_value: dict[str, Any] | None = field(
+        default_factory=lambda: {"pod_id": "pod-api"}
+    )
+    create_exc: BaseException | None = None
+    query_value: dict[str, Any] | None = field(
+        default_factory=lambda: {
             "id": "pod-api",
             "desiredStatus": "RUNNING",
             "runtime": {
@@ -28,48 +39,75 @@ class FakeTrainingApi:
             },
         }
     )
-    terminate_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    ssh_result: Result[dict[str, Any], ProviderError] = Ok({"host": "5.6.7.8", "port": 2222})  # type: ignore[call-arg]
+    query_exc: BaseException | None = None
+    terminate_exc: BaseException | None = None
+    ssh_value: dict[str, Any] | None = field(
+        default_factory=lambda: {"host": "5.6.7.8", "port": 2222}
+    )
+    ssh_exc: BaseException | None = None
 
     def create_pod(self, config, *, pod_name: str | None = None):
-        return self.create_result
+        if self.create_exc is not None:
+            raise self.create_exc
+        assert self.create_value is not None
+        return self.create_value
 
     def query_pod(self, pod_id: str):
-        return self.query_result
+        if self.query_exc is not None:
+            raise self.query_exc
+        assert self.query_value is not None
+        return self.query_value
 
-    def terminate_pod(self, pod_id: str):
-        return self.terminate_result
+    def terminate_pod(self, pod_id: str) -> None:
+        if self.terminate_exc is not None:
+            raise self.terminate_exc
+
+    def stop_pod(self, pod_id: str) -> None:
+        pass
+
+    def resume_pod(self, pod_id: str) -> None:
+        pass
 
     def get_ssh_info(self, pod_id: str):
-        return self.ssh_result
+        if self.ssh_exc is not None:
+            raise self.ssh_exc
+        assert self.ssh_value is not None
+        return self.ssh_value
 
     def extract_exposed_ssh_info(self, pod_data: dict[str, Any] | None, *, pod_id: str | None = None):
         if not pod_data or not pod_data.get("runtime"):
-            return Err(ProviderError(message="no runtime", code="NO_RUNTIME"))
+            raise ProviderUnavailableError(detail="no runtime", context={"code": "NO_RUNTIME"})
         snapshot = PodSnapshot.from_graphql(pod_data)
         if snapshot.ssh_endpoint:
-            return Ok({"host": snapshot.ssh_endpoint.host, "port": snapshot.ssh_endpoint.port})
-        return Err(ProviderError(message="no ssh", code="NO_SSH"))
+            return {"host": snapshot.ssh_endpoint.host, "port": snapshot.ssh_endpoint.port}
+        raise ProviderUnavailableError(detail="no ssh", context={"code": "NO_SSH"})
 
 
 @dataclass
 class FakeInferenceApi:
-    start_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    stop_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    delete_result: Result[None, ProviderError] = Ok(None)  # type: ignore[call-arg]
-    get_result: Result[dict[str, Any], ProviderError] = Ok({"id": "pod-1"})  # type: ignore[call-arg]
+    start_exc: BaseException | None = None
+    stop_exc: BaseException | None = None
+    delete_exc: BaseException | None = None
+    get_value: dict[str, Any] | None = field(default_factory=lambda: {"id": "pod-1"})
+    get_exc: BaseException | None = None
 
-    def start_pod(self, *, pod_id: str):
-        return self.start_result
+    def start_pod(self, *, pod_id: str) -> None:
+        if self.start_exc is not None:
+            raise self.start_exc
 
-    def stop_pod(self, *, pod_id: str):
-        return self.stop_result
+    def stop_pod(self, *, pod_id: str) -> None:
+        if self.stop_exc is not None:
+            raise self.stop_exc
 
-    def delete_pod(self, *, pod_id: str):
-        return self.delete_result
+    def delete_pod(self, *, pod_id: str) -> None:
+        if self.delete_exc is not None:
+            raise self.delete_exc
 
     def get_pod(self, *, pod_id: str):
-        return self.get_result
+        if self.get_exc is not None:
+            raise self.get_exc
+        assert self.get_value is not None
+        return self.get_value
 
 
 # ---------------------------------------------------------------------------
@@ -78,92 +116,82 @@ class FakeInferenceApi:
 
 
 def test_create_delegates_to_api() -> None:
-    api = FakeTrainingApi(create_result=Ok({"pod_id": "pod-api"}))  # type: ignore[call-arg]
+    api = FakeTrainingApi(create_value={"pod_id": "pod-api"})
     control = RunPodTrainingPodControl(api=api)
-    res = control.create_pod(config=None, pod_name="pod-name")  # type: ignore[arg-type]
-    assert res.is_success()
-    assert res.unwrap()["pod_id"] == "pod-api"
+    out = control.create_pod(config=None, pod_name="pod-name")  # type: ignore[arg-type]
+    assert out["pod_id"] == "pod-api"
 
 
 def test_query_pod_delegates_to_api() -> None:
     api = FakeTrainingApi()
     control = RunPodTrainingPodControl(api=api)
-    res = control.query_pod("pod-1")
-    assert res.is_success()
-    assert res.unwrap()["desiredStatus"] == "RUNNING"
+    out = control.query_pod("pod-1")
+    assert out["desiredStatus"] == "RUNNING"
 
 
 def test_query_pod_snapshot_returns_typed_snapshot() -> None:
     api = FakeTrainingApi(
-        query_result=Ok(  # type: ignore[call-arg]
-            {
-                "id": "pod-1",
-                "desiredStatus": "RUNNING",
-                "runtime": {
-                    "uptimeInSeconds": 42,
-                    "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345}],
-                },
-            }
-        )
+        query_value={
+            "id": "pod-1",
+            "desiredStatus": "RUNNING",
+            "runtime": {
+                "uptimeInSeconds": 42,
+                "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345}],
+            },
+        }
     )
     control = RunPodTrainingPodControl(api=api)
-    res = control.query_pod_snapshot("pod-1")
-    assert res.is_success()
-    snap = res.unwrap()
+    snap = control.query_pod_snapshot("pod-1")
     assert isinstance(snap, PodSnapshot)
     assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=12345)
 
 
 def test_query_pod_snapshot_propagates_api_error() -> None:
     api = FakeTrainingApi(
-        query_result=Err(ProviderError(message="No pod data received", code="RUNPOD_POD_DATA_MISSING"))
+        query_exc=ProviderUnavailableError(
+            detail="No pod data received", context={"code": "RUNPOD_POD_DATA_MISSING"}
+        )
     )
     control = RunPodTrainingPodControl(api=api)
-    res = control.query_pod_snapshot("pod-1")
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.query_pod_snapshot("pod-1")
+    assert ei.value.context["code"] == "RUNPOD_POD_DATA_MISSING"
 
 
 def test_get_ssh_info_from_snapshot() -> None:
     api = FakeTrainingApi(
-        query_result=Ok(  # type: ignore[call-arg]
-            {
-                "id": "pod-1",
-                "desiredStatus": "RUNNING",
-                "runtime": {
-                    "uptimeInSeconds": 10,
-                    "ports": [{"ip": "9.9.9.9", "privatePort": 22, "publicPort": 3456}],
-                },
-            }
-        )
+        query_value={
+            "id": "pod-1",
+            "desiredStatus": "RUNNING",
+            "runtime": {
+                "uptimeInSeconds": 10,
+                "ports": [{"ip": "9.9.9.9", "privatePort": 22, "publicPort": 3456}],
+            },
+        }
     )
     control = RunPodTrainingPodControl(api=api)
-    res = control.get_ssh_info("pod-1")
-    assert res.is_success()
-    assert res.unwrap() == {"host": "9.9.9.9", "port": 3456}
+    out = control.get_ssh_info("pod-1")
+    assert out == {"host": "9.9.9.9", "port": 3456}
 
 
 def test_get_ssh_info_falls_back_to_api_when_no_ssh_endpoint() -> None:
     api = FakeTrainingApi(
-        query_result=Ok(  # type: ignore[call-arg]
-            {
-                "id": "pod-1",
-                "desiredStatus": "RUNNING",
-                "runtime": {"uptimeInSeconds": 0, "ports": []},
-            }
-        ),
-        ssh_result=Ok({"host": "fallback.host", "port": 4444}),  # type: ignore[call-arg]
+        query_value={
+            "id": "pod-1",
+            "desiredStatus": "RUNNING",
+            "runtime": {"uptimeInSeconds": 0, "ports": []},
+        },
+        ssh_value={"host": "fallback.host", "port": 4444},
     )
     control = RunPodTrainingPodControl(api=api)
-    res = control.get_ssh_info("pod-1")
-    assert res.is_success()
-    assert res.unwrap() == {"host": "fallback.host", "port": 4444}
+    out = control.get_ssh_info("pod-1")
+    assert out == {"host": "fallback.host", "port": 4444}
 
 
 def test_terminate_delegates_to_api() -> None:
     api = FakeTrainingApi()
     control = RunPodTrainingPodControl(api=api)
-    res = control.terminate_pod("pod-1")
-    assert res.is_success()
+    control.terminate_pod("pod-1")  # no exception
 
 
 # ---------------------------------------------------------------------------
@@ -172,60 +200,62 @@ def test_terminate_delegates_to_api() -> None:
 
 
 class _CountingTrainingApi(FakeTrainingApi):
-    """FakeTrainingApi that returns different results per call."""
+    """FakeTrainingApi that returns different results per call.
 
-    def __init__(self, results: list[Result[dict[str, Any], ProviderError]]):
+    Each ``actions`` entry is either a dict (returned) or an
+    ``Exception`` (raised).
+    """
+
+    def __init__(self, actions: list[Any]):
         super().__init__()
-        self._results = list(results)
+        self._actions = list(actions)
         self.call_count = 0
 
     def create_pod(self, config, *, pod_name: str | None = None):
-        idx = min(self.call_count, len(self._results) - 1)
+        idx = min(self.call_count, len(self._actions) - 1)
         self.call_count += 1
-        return self._results[idx]
+        action = self._actions[idx]
+        if isinstance(action, BaseException):
+            raise action
+        return action
 
 
 def test_create_retries_on_transient_capacity_error(monkeypatch) -> None:
     monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
-    transient = Err(ProviderError(
-        message="There are no longer any instances available with the requested specifications. Please refresh and try again.",
-        code="RUNPOD_GRAPHQL_ERROR",
-    ))
-    success = Ok({"pod_id": "pod-ok"})  # type: ignore[call-arg]
-    api = _CountingTrainingApi(results=[transient, transient, success])
+    transient = ProviderUnavailableError(
+        detail="There are no longer any instances available with the requested specifications. Please refresh and try again.",
+        context={"code": "RUNPOD_GRAPHQL_ERROR"},
+    )
+    success = {"pod_id": "pod-ok"}
+    api = _CountingTrainingApi(actions=[transient, transient, success])
     control = RunPodTrainingPodControl(api=api)
 
-    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
-    assert res.is_success()
-    assert res.unwrap()["pod_id"] == "pod-ok"
+    out = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
+    assert out["pod_id"] == "pod-ok"
     assert api.call_count == 3
 
 
 def test_create_does_not_retry_non_transient_error(monkeypatch) -> None:
     monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
-    permanent = Err(ProviderError(
-        message="Invalid API key",
-        code="RUNPOD_GRAPHQL_ERROR",
-    ))
-    api = _CountingTrainingApi(results=[permanent])
+    permanent = ProviderUnavailableError(detail="Invalid API key", context={"code": "RUNPOD_GRAPHQL_ERROR"})
+    api = _CountingTrainingApi(actions=[permanent])
     control = RunPodTrainingPodControl(api=api)
 
-    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
     assert api.call_count == 1
 
 
 def test_create_exhausts_retries_on_persistent_transient_error(monkeypatch) -> None:
     monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
-    transient = Err(ProviderError(
-        message="no instances available, try again",
-        code="RUNPOD_GRAPHQL_ERROR",
-    ))
-    api = _CountingTrainingApi(results=[transient, transient, transient])
+    transient = ProviderUnavailableError(
+        detail="no instances available, try again", context={"code": "RUNPOD_GRAPHQL_ERROR"}
+    )
+    api = _CountingTrainingApi(actions=[transient, transient, transient])
     control = RunPodTrainingPodControl(api=api)
 
-    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
     assert api.call_count == 3
 
 
@@ -240,31 +270,27 @@ def test_create_exhausts_retries_on_persistent_transient_error(monkeypatch) -> N
 )
 def test_create_retries_on_additional_transient_markers(monkeypatch, message: str) -> None:
     monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
-    transient = Err(ProviderError(message=message, code="RUNPOD_GRAPHQL_ERROR"))
-    success = Ok({"pod_id": "pod-ok"})  # type: ignore[call-arg]
-    api = _CountingTrainingApi(results=[transient, success])
+    transient = ProviderUnavailableError(detail=message, context={"code": "RUNPOD_GRAPHQL_ERROR"})
+    success = {"pod_id": "pod-ok"}
+    api = _CountingTrainingApi(actions=[transient, success])
     control = RunPodTrainingPodControl(api=api)
 
-    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
-
-    assert res.is_success()
+    out = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
+    assert out["pod_id"] == "pod-ok"
     assert api.call_count == 2
 
 
-def test_create_returns_last_error_instance_after_retry_exhaustion(monkeypatch) -> None:
+def test_create_raises_last_error_instance_after_retry_exhaustion(monkeypatch) -> None:
     monkeypatch.setattr("ryotenkai_providers.runpod.pod_control.time.sleep", lambda _: None)
-    first = Err(ProviderError(message="timeout", code="RUNPOD_GRAPHQL_ERROR"))
-    second_err = ProviderError(message="503 unavailable", code="RUNPOD_GRAPHQL_ERROR")
-    second = Err(second_err)
-    third_err = ProviderError(message="rate limit", code="RUNPOD_GRAPHQL_ERROR")
-    third = Err(third_err)
-    api = _CountingTrainingApi(results=[first, second, third])
+    first = ProviderUnavailableError(detail="timeout", context={"code": "RUNPOD_GRAPHQL_ERROR"})
+    second = ProviderUnavailableError(detail="503 unavailable", context={"code": "RUNPOD_GRAPHQL_ERROR"})
+    third = ProviderUnavailableError(detail="rate limit", context={"code": "RUNPOD_GRAPHQL_ERROR"})
+    api = _CountingTrainingApi(actions=[first, second, third])
     control = RunPodTrainingPodControl(api=api)
 
-    res = control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
-
-    assert res.is_failure()
-    assert res.unwrap_err() is third_err
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.create_pod(config=None, pod_name="test")  # type: ignore[arg-type]
+    assert ei.value is third
 
 
 # ---------------------------------------------------------------------------
@@ -274,53 +300,56 @@ def test_create_returns_last_error_instance_after_retry_exhaustion(monkeypatch) 
 
 def test_inference_control_delegates_to_api() -> None:
     control = RunPodInferencePodControl(api=FakeInferenceApi())
-    assert control.start_pod(pod_id="pod-1").is_success()
-    assert control.stop_pod(pod_id="pod-1").is_success()
-    assert control.delete_pod(pod_id="pod-1").is_success()
+    control.start_pod(pod_id="pod-1")  # no exception
+    control.stop_pod(pod_id="pod-1")
+    control.delete_pod(pod_id="pod-1")
 
 
 def test_inference_control_get_pod_passthrough() -> None:
-    api = FakeInferenceApi(get_result=Ok({"id": "pod-xyz", "desiredStatus": "RUNNING"}))  # type: ignore[call-arg]
+    api = FakeInferenceApi(get_value={"id": "pod-xyz", "desiredStatus": "RUNNING"})
     control = RunPodInferencePodControl(api=api)
-    res = control.get_pod(pod_id="pod-xyz")
-    assert res.is_success()
-    assert res.unwrap()["id"] == "pod-xyz"
+    out = control.get_pod(pod_id="pod-xyz")
+    assert out["id"] == "pod-xyz"
 
 
 def test_inference_control_propagates_api_errors() -> None:
     api = FakeInferenceApi(
-        start_result=Err(ProviderError(message="start failed", code="RUNPOD_SDK_CALL_FAILED")),
-        stop_result=Err(ProviderError(message="stop failed", code="RUNPOD_SDK_CALL_FAILED")),
-        delete_result=Err(ProviderError(message="delete failed", code="RUNPOD_SDK_CALL_FAILED")),
-        get_result=Err(ProviderError(message="get failed", code="RUNPOD_SDK_CALL_FAILED")),
+        start_exc=ProviderUnavailableError(detail="start failed", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
+        stop_exc=ProviderUnavailableError(detail="stop failed", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
+        delete_exc=ProviderUnavailableError(detail="delete failed", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
+        get_exc=ProviderUnavailableError(detail="get failed", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
     )
     control = RunPodInferencePodControl(api=api)
 
-    assert control.start_pod(pod_id="pod-1").unwrap_err().message == "start failed"
-    assert control.stop_pod(pod_id="pod-1").unwrap_err().message == "stop failed"
-    assert control.delete_pod(pod_id="pod-1").unwrap_err().message == "delete failed"
-    assert control.get_pod(pod_id="pod-1").unwrap_err().message == "get failed"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.start_pod(pod_id="pod-1")
+    assert ei.value.detail == "start failed"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.stop_pod(pod_id="pod-1")
+    assert ei.value.detail == "stop failed"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.delete_pod(pod_id="pod-1")
+    assert ei.value.detail == "delete failed"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.get_pod(pod_id="pod-1")
+    assert ei.value.detail == "get failed"
 
 
 def test_inference_control_query_pod_snapshot_returns_typed_snapshot() -> None:
     """Inference control mirrors training's ``query_pod_snapshot`` so a
     single ``PodQuery`` Protocol can drive both surfaces."""
     api = FakeInferenceApi(
-        get_result=Ok(  # type: ignore[call-arg]
-            {
-                "id": "pod-inf",
-                "desiredStatus": "RUNNING",
-                "runtime": {
-                    "uptimeInSeconds": 12,
-                    "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345, "isIpPublic": True}],
-                },
-            }
-        )
+        get_value={
+            "id": "pod-inf",
+            "desiredStatus": "RUNNING",
+            "runtime": {
+                "uptimeInSeconds": 12,
+                "ports": [{"ip": "1.2.3.4", "privatePort": 22, "publicPort": 12345, "isIpPublic": True}],
+            },
+        }
     )
     control = RunPodInferencePodControl(api=api)
-    res = control.query_pod_snapshot("pod-inf")
-    assert res.is_success()
-    snap = res.unwrap()
+    snap = control.query_pod_snapshot("pod-inf")
     assert isinstance(snap, PodSnapshot)
     assert snap.is_ready
     assert snap.ssh_endpoint == SshEndpoint(host="1.2.3.4", port=12345)
@@ -328,20 +357,20 @@ def test_inference_control_query_pod_snapshot_returns_typed_snapshot() -> None:
 
 def test_inference_control_query_pod_snapshot_propagates_api_error() -> None:
     api = FakeInferenceApi(
-        get_result=Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED")),
+        get_exc=ProviderUnavailableError(detail="boom", context={"code": "RUNPOD_SDK_CALL_FAILED"}),
     )
     control = RunPodInferencePodControl(api=api)
-    res = control.query_pod_snapshot("pod-1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.query_pod_snapshot("pod-1")
+    assert ei.value.context["code"] == "RUNPOD_SDK_CALL_FAILED"
 
 
 def test_inference_control_query_pod_snapshot_empty_dict_returns_data_missing() -> None:
     """Empty SDK response => typed terminal-class error code, matching
     training's behavior so the waiter's abort-vs-retry classification
     is identical for both surfaces."""
-    api = FakeInferenceApi(get_result=Ok({}))  # type: ignore[call-arg]
+    api = FakeInferenceApi(get_value={})
     control = RunPodInferencePodControl(api=api)
-    res = control.query_pod_snapshot("pod-1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_DATA_MISSING"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        control.query_pod_snapshot("pod-1")
+    assert ei.value.context["code"] == "RUNPOD_POD_DATA_MISSING"

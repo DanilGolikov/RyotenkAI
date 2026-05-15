@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer, DataBufferEventCallbacks
+from ryotenkai_shared.errors import TrainingFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
@@ -31,9 +31,9 @@ class ResumeManager:
 
     Example:
         manager = ResumeManager(config)
-        resume_info = manager.get_resume_info(strategies)
-        if resume_info.can_resume:
-            model = manager.load_checkpoint_model(resume_info.checkpoint_path)
+        buffer, start_phase, should_load = manager.setup_buffer(strategies, resume=True)
+        if should_load:
+            model = manager.load_model_from_checkpoint(ckpt_path, base_model)
     """
 
     def __init__(
@@ -137,7 +137,7 @@ class ResumeManager:
     def load_model_from_checkpoint(
         checkpoint_path: str,
         base_model: PreTrainedModel,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Load model from checkpoint for resume.
 
@@ -148,7 +148,13 @@ class ResumeManager:
             base_model: Base model to load adapters onto
 
         Returns:
-            Result with loaded model or error
+            PEFT-wrapped model when an ``adapter_config.json`` is present;
+            otherwise the supplied ``base_model``.
+
+        Raises:
+            TrainingFailedError: checkpoint directory missing or PEFT
+                load failed. Legacy codes preserved on
+                ``context["legacy_code"]``.
         """
         try:
             logger.info(f"   Loading model from: {checkpoint_path}")
@@ -160,7 +166,13 @@ class ResumeManager:
             if not checkpoint_path_obj.exists():
                 error_msg = f"Checkpoint not found: {checkpoint_path}"
                 logger.error(f"[RM:ERROR] {error_msg}")
-                return Err(TrainingError(message=error_msg, code="TRAINING_CHECKPOINT_NOT_FOUND"))
+                raise TrainingFailedError(
+                    detail=error_msg,
+                    context={
+                        "legacy_code": "TRAINING_CHECKPOINT_NOT_FOUND",
+                        "checkpoint_path": str(checkpoint_path),
+                    },
+                )
 
             # Check if it's a PEFT adapter
             if (checkpoint_path_obj / "adapter_config.json").exists():
@@ -171,17 +183,27 @@ class ResumeManager:
                 logger.debug("[RM:LOADED] type=PEFT_adapter")
                 # NOTE: `PeftModel` is not a subclass of `PreTrainedModel`, but it is a valid model for training/inference.
                 # We keep the public API typed as `PreTrainedModel` for the orchestrator, and intentionally erase here.
-                return Ok(cast("Any", model))
+                return cast("Any", model)
 
             # For full model checkpoints, we need to reload entirely
             # This is handled by ModelFactory in the orchestrator
             logger.debug("[RM:LOADED] type=full_model (use base)")
-            return Ok(base_model)
+            return base_model
+
+        except TrainingFailedError:
+            raise
 
         except Exception as e:
             error_msg = f"Failed to load model from checkpoint: {e}"
             logger.error(f"[RM:ERROR] {error_msg}")
-            return Err(TrainingError(message=error_msg, code="TRAINING_CHECKPOINT_LOAD_FAILED"))
+            raise TrainingFailedError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "TRAINING_CHECKPOINT_LOAD_FAILED",
+                    "checkpoint_path": str(checkpoint_path),
+                },
+                cause=e,
+            )
 
     @staticmethod
     def can_resume(buffer: DataBuffer | None) -> bool:

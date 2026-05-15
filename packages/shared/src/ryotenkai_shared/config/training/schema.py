@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from pydantic import Field, field_validator, model_validator
 
 from ryotenkai_shared.constants import STRATEGY_SFT
@@ -15,9 +13,6 @@ from .hyperparams import GlobalHyperparametersConfig  # noqa: TC001
 from .lora import AdaLoraConfig, LoraConfig, QloraConfig  # noqa: TC001
 from .metrics_buffer import MetricsBufferConfig
 from .strategies import StrategyPhaseConfig, validate_strategy_chain
-
-if TYPE_CHECKING:
-    from ryotenkai_shared.utils.result import Result, StrategyError
 
 
 class TrainingOnlyConfig(StrictBaseModel):
@@ -113,10 +108,18 @@ class TrainingOnlyConfig(StrictBaseModel):
     @field_validator("strategies")
     @classmethod
     def validate_strategies_chain(cls, v: list[StrategyPhaseConfig]) -> list[StrategyPhaseConfig]:
-        """Fail-fast validation for critical strategy-chain issues."""
-        validation = validate_strategy_chain(v)
-        if validation.is_failure():
-            raise ValueError(str(validation.unwrap_err()))
+        """Fail-fast validation for critical strategy-chain issues.
+
+        ``validate_strategy_chain`` raises :class:`StrategyChainInvalidError`
+        on hard failures; Pydantic expects a ``ValueError`` from
+        ``field_validator``, so we translate at this boundary.
+        """
+        from ryotenkai_shared.errors import StrategyChainInvalidError
+
+        try:
+            validate_strategy_chain(v)
+        except StrategyChainInvalidError as exc:
+            raise ValueError(str(exc)) from exc
         return v
 
     @model_validator(mode="after")
@@ -164,9 +167,13 @@ class TrainingOnlyConfig(StrictBaseModel):
             total += epochs
         return total
 
-    def validate_chain(self) -> Result[None, StrategyError]:
-        """Validate the strategy chain transitions."""
-        return validate_strategy_chain(self.strategies)
+    def validate_chain(self) -> None:
+        """Validate the strategy chain transitions.
+
+        Raises:
+            StrategyChainInvalidError: if the chain is invalid.
+        """
+        validate_strategy_chain(self.strategies)
 
     @staticmethod
     def has_adapter() -> bool:

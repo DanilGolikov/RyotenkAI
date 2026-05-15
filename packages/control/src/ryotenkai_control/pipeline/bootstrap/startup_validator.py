@@ -181,16 +181,18 @@ class StartupValidator:
     @staticmethod
     def check_strategy_chain(*, config: PipelineConfig) -> None:
         """Fail when the configured training strategy chain is invalid."""
+        from ryotenkai_shared.errors import StrategyChainInvalidError
+
         strategies = config.training.strategies
         if not strategies:
             return
-        validation = validate_strategy_chain(strategies)
         chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-        if validation.is_failure():
-            error = validation.unwrap_err()
+        try:
+            validate_strategy_chain(strategies)
+        except StrategyChainInvalidError as exc:
             logger.error(f"Invalid strategy chain: {chain_str}")
-            logger.error(f"   Error: {error}")
-            raise StartupValidationError(f"Invalid strategy chain: {error}")
+            logger.error(f"   Error: {exc}")
+            raise StartupValidationError(f"Invalid strategy chain: {exc}") from exc
         logger.info(f"Strategy chain checked: {chain_str}")
 
 

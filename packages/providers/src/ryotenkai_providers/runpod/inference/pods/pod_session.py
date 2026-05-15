@@ -14,7 +14,8 @@ for that use case).
 
 Design:
 - All blocking operations use explicit timeouts to avoid hanging the pipeline.
-- SSH subprocess errors are propagated as Err(ProviderError) — never raise.
+- SSH subprocess errors propagate as typed exceptions
+  (Phase A2 Batch 11 — was ``Err(ProviderError)``).
 - Timeouts are hardcoded constants (not user config) as per project policy.
 """
 
@@ -29,8 +30,13 @@ from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_providers.runpod.inference.pods.constants import POD_MERGE_SCRIPT
+from ryotenkai_shared.errors import (
+    InferenceUnavailableError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHExecFailedError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 if TYPE_CHECKING:
     from ryotenkai_providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
@@ -42,8 +48,7 @@ if TYPE_CHECKING:
 # How long to wait for the pod to become RUNNING + SSH port mapped + TCP ready
 _POD_SSH_READY_TIMEOUT_SEC = 600
 # Early-bailout windows (RUNNING-without-SSH-ports, RUNNING-no-ports-allocated)
-# are tuned in ``src.providers.runpod.lifecycle.policy.INFERENCE_PROFILE``,
-# not here. The waiter (``PodSshWaiter``) handles them centrally.
+# are tuned in the lifecycle policy module, not here.
 
 # How long to wait for vLLM /v1/models health endpoint
 _VLLM_READY_TIMEOUT_SEC = 600
@@ -133,7 +138,7 @@ def activate(
     log_file: str,
     hash_file: str,
     lock_dir: str,
-) -> Result[PodSessionState, ProviderError]:
+) -> PodSessionState:
     """
     Bring up a RunPod pod for evaluation:
 
@@ -145,56 +150,50 @@ def activate(
     6. Wait for /v1/models health
     7. Return PodSessionState
 
-    All steps return Err on failure — no exceptions propagate.
+    Phase A2 Batch 11: raise-based contract. On failure raises a typed
+    exception (subclass of :class:`RyotenkAIError`). The inference
+    provider facade catches and translates to ``Result``.
     """
     state = PodSessionState(pod_id=pod_id)
 
     # --- Step 1: start pod --------------------------------------------------
     logger.info("[EVAL] Starting RunPod Pod %s for evaluation ...", pod_id)
-    start_res = _start_pod(api=api, pod_id=pod_id)
-    if start_res.is_failure():
-        return Err(start_res.unwrap_err())  # type: ignore[union-attr]
+    _start_pod(api=api, pod_id=pod_id)
 
     # --- Step 2: wait for SSH -----------------------------------------------
     logger.info("[EVAL] Waiting for SSH readiness (timeout=%ds) ...", _POD_SSH_READY_TIMEOUT_SEC)
-    ssh_res = _wait_for_ssh(api=api, pod_id=pod_id, timeout_sec=_POD_SSH_READY_TIMEOUT_SEC)
-    if ssh_res.is_failure():
-        return Err(ssh_res.unwrap_err())  # type: ignore[union-attr]
-    public_ip, ssh_port = ssh_res.unwrap()
+    public_ip, ssh_port = _wait_for_ssh(api=api, pod_id=pod_id, timeout_sec=_POD_SSH_READY_TIMEOUT_SEC)
     state.public_ip = public_ip
     state.ssh_port = ssh_port
     logger.info("[EVAL] Pod SSH ready: %s:%d", public_ip, ssh_port)
 
     # --- Step 3: open SSH tunnel --------------------------------------------
-    tunnel_res = _open_tunnel(
+    state.tunnel_proc = _open_tunnel(
         host=public_ip,
         ssh_port=ssh_port,
         key_path=key_path,
         local_port=serve_port,
         remote_port=serve_port,
     )
-    if tunnel_res.is_failure():
-        return Err(tunnel_res.unwrap_err())  # type: ignore[union-attr]
-    state.tunnel_proc = tunnel_res.unwrap()
     logger.info("[EVAL] SSH tunnel open: localhost:%d → 127.0.0.1:%d (inside pod)", serve_port, serve_port)
 
     # --- Step 4: ensure dirs + merge LoRA ----------------------------------
-    dirs_res = _ssh_exec(
-        host=public_ip,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=f"mkdir -p {shlex.quote(hf_cache_dir)} {shlex.quote(run_dir)}",
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if dirs_res.is_failure():
-        return Err(  # type: ignore[union-attr]
-            ProviderError(
-                message=f"[EVAL] mkdir failed: {dirs_res.unwrap_err()}",
-                code="POD_MKDIR_FAILED",
-            )
+    try:
+        _ssh_exec(
+            host=public_ip,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=f"mkdir -p {shlex.quote(hf_cache_dir)} {shlex.quote(run_dir)}",
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
         )
+    except RyotenkAIError as exc:
+        raise SSHExecFailedError(
+            detail=f"[EVAL] mkdir failed: {exc.detail or exc}",
+            context={"code": "POD_MKDIR_FAILED"},
+            cause=exc,
+        ) from exc
 
-    merge_res = _ensure_merge(
+    _ensure_merge(
         host=public_ip,
         ssh_port=ssh_port,
         key_path=key_path,
@@ -207,21 +206,17 @@ def activate(
         trust_remote_code=trust_remote_code,
         hf_token=hf_token,
     )
-    if merge_res.is_failure():
-        return Err(merge_res.unwrap_err())  # type: ignore[union-attr]
 
     # --- Step 5: acquire lock + start vLLM ---------------------------------
-    lock_res = _acquire_lock(
+    _acquire_lock(
         host=public_ip,
         ssh_port=ssh_port,
         key_path=key_path,
         lock_dir=lock_dir,
         pid_file=pid_file,
     )
-    if lock_res.is_failure():
-        return Err(lock_res.unwrap_err())  # type: ignore[union-attr]
 
-    vllm_res = _start_vllm(
+    _start_vllm(
         host=public_ip,
         ssh_port=ssh_port,
         key_path=key_path,
@@ -232,16 +227,15 @@ def activate(
         trust_remote_code=trust_remote_code,
         vllm_cfg=vllm_cfg,
     )
-    if vllm_res.is_failure():
-        return Err(vllm_res.unwrap_err())  # type: ignore[union-attr]
     state.vllm_pid_file = pid_file
 
     # --- Step 6: wait for vLLM health ---------------------------------------
     endpoint_url = f"http://127.0.0.1:{serve_port}/v1"
     health_url = f"{endpoint_url}/models"
     logger.info("[EVAL] Waiting for vLLM health: %s (timeout=%ds)", health_url, _VLLM_READY_TIMEOUT_SEC)
-    health_res = _wait_http_ok(url=health_url, timeout_sec=_VLLM_READY_TIMEOUT_SEC, interval_sec=_POLL_INTERVAL_SEC)
-    if health_res.is_failure():
+    try:
+        _wait_http_ok(url=health_url, timeout_sec=_VLLM_READY_TIMEOUT_SEC, interval_sec=_POLL_INTERVAL_SEC)
+    except RyotenkAIError:
         # Dump vLLM log tail for diagnostics
         _dump_vllm_log(
             host=public_ip,
@@ -249,11 +243,11 @@ def activate(
             key_path=key_path,
             log_file=log_file,
         )
-        return Err(health_res.unwrap_err())  # type: ignore[union-attr]
+        raise
 
     state.endpoint_url = endpoint_url
     logger.info("[EVAL] vLLM ready: %s", endpoint_url)
-    return Ok(state)
+    return state
 
 
 def deactivate(
@@ -261,12 +255,17 @@ def deactivate(
     api: RunPodPodsRESTClient,
     state: PodSessionState,
     key_path: Path,
-) -> Result[None, ProviderError]:
+) -> None:
     """
     Shut down the evaluation session:
     1. Kill vLLM process inside the pod (best-effort)
     2. Close SSH tunnel
     3. Delete pod (preserves Network Volume)
+
+    Phase A2 Batch 11: raises :class:`ProviderUnavailableError` with
+    ``context['code'] == 'POD_DEACTIVATE_PARTIAL_FAILURE'`` when at
+    least one cleanup step fails. Best-effort: continues through all
+    cleanup steps even if earlier ones fail.
     """
     errors: list[str] = []
 
@@ -281,19 +280,19 @@ def deactivate(
             f"  rm -f {shlex.quote(state.vllm_pid_file)}; "
             f"fi"
         )
-        kill_res = _ssh_exec(
-            host=state.public_ip,
-            ssh_port=state.ssh_port,
-            key_path=key_path,
-            command=kill_cmd,
-            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-        )
-        if kill_res.is_failure():
-            err = f"vLLM kill warning (non-fatal): {kill_res.unwrap_err()}"
+        try:
+            _ssh_exec(
+                host=state.public_ip,
+                ssh_port=state.ssh_port,
+                key_path=key_path,
+                command=kill_cmd,
+                timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
+            )
+            logger.info("[EVAL] vLLM process terminated")
+        except RyotenkAIError as exc:
+            err = f"vLLM kill warning (non-fatal): {exc.detail or exc}"
             logger.warning("[EVAL] %s", err)
             errors.append(err)
-        else:
-            logger.info("[EVAL] vLLM process terminated")
 
     # --- Close SSH tunnel ---------------------------------------------------
     if state.tunnel_proc is not None:
@@ -304,25 +303,25 @@ def deactivate(
                 state.tunnel_proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 state.tunnel_proc.kill()
-        except Exception as e:
-            err = f"SSH tunnel close warning (non-fatal): {e}"
+        except Exception as exc:
+            err = f"SSH tunnel close warning (non-fatal): {exc}"
             logger.warning("[EVAL] %s", err)
             errors.append(err)
 
     # --- Delete pod (preserves Network Volume) ------------------------------
     logger.info("[EVAL] Deleting RunPod Pod %s (volume preserved) ...", state.pod_id)
-    del_res = api.delete_pod(pod_id=state.pod_id)
-    if del_res.is_failure():
-        pod_err = del_res.unwrap_err()  # type: ignore[union-attr]
-        logger.warning("[EVAL] Pod delete failed (non-fatal): %s", pod_err)
-        errors.append(f"delete_pod: {pod_err}")
-    else:
+    try:
+        api.delete_pod(pod_id=state.pod_id)
         logger.info("[EVAL] Pod %s deleted successfully", state.pod_id)
+    except RyotenkAIError as exc:
+        logger.warning("[EVAL] Pod delete failed (non-fatal): %s", exc)
+        errors.append(f"delete_pod: {exc.detail or exc}")
 
     if errors:
-        # Non-fatal: return Err so caller can log, but pipeline continues
-        return Err(ProviderError(message="; ".join(errors), code="POD_DEACTIVATE_PARTIAL_FAILURE"))
-    return Ok(None)
+        raise ProviderUnavailableError(
+            detail="; ".join(errors),
+            context={"code": "POD_DEACTIVATE_PARTIAL_FAILURE"},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -330,22 +329,16 @@ def deactivate(
 # ---------------------------------------------------------------------------
 
 
-def _start_pod(*, api: RunPodPodsRESTClient, pod_id: str) -> Result[None, ProviderError]:
+def _start_pod(*, api: RunPodPodsRESTClient, pod_id: str) -> None:
     """Start a stopped pod. No-op if already running."""
-    get_res = api.get_pod(pod_id=pod_id)
-    if get_res.is_failure():
-        return Err(get_res.unwrap_err())  # type: ignore[union-attr]
-    pod = get_res.unwrap()
+    pod = api.get_pod(pod_id=pod_id)
     status = str(pod.get("desiredStatus") or "")
 
     if status == "RUNNING":
         logger.debug("[EVAL] Pod %s is already RUNNING", pod_id)
-        return Ok(None)
+        return
 
-    start_res = api.start_pod(pod_id=pod_id)
-    if start_res.is_failure():
-        return Err(start_res.unwrap_err())  # type: ignore[union-attr]
-    return Ok(None)
+    api.start_pod(pod_id=pod_id)
 
 
 def _wait_for_ssh(
@@ -353,7 +346,7 @@ def _wait_for_ssh(
     api: RunPodPodsRESTClient,
     pod_id: str,
     timeout_sec: int,
-) -> Result[tuple[str, int], ProviderError]:
+) -> tuple[str, int]:
     """Wait for the eval pod to be SSH-ready (RUNNING + endpoint + TCP).
 
     Thin wrapper over the canonical :class:`PodSshWaiter`. Uses
@@ -364,6 +357,8 @@ def _wait_for_ssh(
     so the rest of ``activate()`` stays untouched. Cancel propagation
     (``PipelineCancelled`` from ``sleep_cancellable``) is intentionally
     not caught — the inference provider's cleanup hook will handle it.
+
+    Phase A2 Batch 11: raises typed exceptions from the waiter.
     """
     from dataclasses import replace
 
@@ -383,15 +378,12 @@ def _wait_for_ssh(
         policy=policy,
         log=lambda level, msg: getattr(logger, level, logger.info)(f"[EVAL] {msg}"),
     )
-    res = waiter.wait(pod_id)
-    if res.is_failure():
-        return Err(res.unwrap_err())  # type: ignore[union-attr]
-    snapshot = res.unwrap()
+    snapshot = waiter.wait(pod_id)
     ssh = snapshot.ssh_endpoint
-    # Defensive: ``is_ready`` (which the waiter pinned before returning Ok)
-    # already guarantees this — assert for static analysis only.
+    # Defensive: ``is_ready`` (which the waiter pinned before returning) already
+    # guarantees this — assert for static analysis only.
     assert ssh is not None
-    return Ok((ssh.host, ssh.port))
+    return ssh.host, ssh.port
 
 
 def _open_tunnel(
@@ -401,7 +393,7 @@ def _open_tunnel(
     key_path: Path,
     local_port: int,
     remote_port: int,
-) -> Result[subprocess.Popen[bytes], ProviderError]:
+) -> subprocess.Popen[bytes]:
     """
     Open a persistent SSH tunnel in background.
     Returns the Popen handle so caller can terminate it in deactivate().
@@ -432,18 +424,22 @@ def _open_tunnel(
         # Brief wait to catch immediate failures (e.g. port already in use)
         time.sleep(2)
         if proc.poll() is not None:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"SSH tunnel process exited immediately (returncode={proc.returncode}). "
-                        f"Check that port {local_port} is free and SSH key is valid."
-                    ),
-                    code="POD_SSH_TUNNEL_FAILED",
-                )
+            raise SSHExecFailedError(
+                detail=(
+                    f"SSH tunnel process exited immediately (returncode={proc.returncode}). "
+                    f"Check that port {local_port} is free and SSH key is valid."
+                ),
+                context={"code": "POD_SSH_TUNNEL_FAILED"},
             )
-        return Ok(proc)
-    except Exception as e:
-        return Err(ProviderError(message=f"Failed to open SSH tunnel: {e}", code="POD_SSH_TUNNEL_FAILED"))
+        return proc
+    except SSHExecFailedError:
+        raise
+    except Exception as exc:
+        raise SSHExecFailedError(
+            detail=f"Failed to open SSH tunnel: {exc}",
+            context={"code": "POD_SSH_TUNNEL_FAILED"},
+            cause=exc,
+        ) from exc
 
 
 def _ssh_exec(
@@ -453,10 +449,11 @@ def _ssh_exec(
     key_path: Path,
     command: str,
     timeout_sec: int,
-) -> Result[str, ProviderError]:
+) -> str:
     """
     Execute a shell command remotely via SSH.
-    Returns Ok(stdout) on returncode==0, Err(ProviderError) otherwise.
+    Returns stdout on returncode==0, raises :class:`SSHExecFailedError`
+    otherwise.
     """
     remote_cmd = f"bash -lc {shlex.quote(command)}"
     full_cmd = [
@@ -480,22 +477,25 @@ def _ssh_exec(
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()[:_STDERR_SNIPPET_LEN]
             stdout = (result.stdout or "").strip()[:_STDOUT_SNIPPET_LEN]
-            return Err(
-                ProviderError(
-                    message=f"SSH command failed (rc={result.returncode}): stderr={stderr!r} stdout={stdout!r}",
-                    code="POD_SSH_EXEC_FAILED",
-                )
+            raise SSHExecFailedError(
+                detail=f"SSH command failed (rc={result.returncode}): stderr={stderr!r} stdout={stdout!r}",
+                context={"code": "POD_SSH_EXEC_FAILED"},
             )
-        return Ok((result.stdout or "").strip())
-    except subprocess.TimeoutExpired:
-        return Err(
-            ProviderError(
-                message=f"SSH command timed out after {timeout_sec}s: {command[:100]!r}",
-                code="POD_SSH_EXEC_TIMEOUT",
-            )
-        )
-    except Exception as e:
-        return Err(ProviderError(message=f"SSH exec error: {e}", code="POD_SSH_EXEC_ERROR"))
+        return (result.stdout or "").strip()
+    except subprocess.TimeoutExpired as exc:
+        raise SSHExecFailedError(
+            detail=f"SSH command timed out after {timeout_sec}s: {command[:100]!r}",
+            context={"code": "POD_SSH_EXEC_TIMEOUT"},
+            cause=exc,
+        ) from exc
+    except SSHExecFailedError:
+        raise
+    except Exception as exc:
+        raise SSHExecFailedError(
+            detail=f"SSH exec error: {exc}",
+            context={"code": "POD_SSH_EXEC_ERROR"},
+            cause=exc,
+        ) from exc
 
 
 def _ensure_merge(
@@ -511,7 +511,7 @@ def _ensure_merge(
     adapter_ref: str,
     trust_remote_code: bool,
     hf_token: str,
-) -> Result[None, ProviderError]:
+) -> None:
     """Run LoRA merge on the pod (idempotent: skip if config_hash matches)."""
     check_cmd = (
         f"test -f {shlex.quote(hash_file)} && "
@@ -519,16 +519,20 @@ def _ensure_merge(
         f'test "$(cat {shlex.quote(hash_file)} 2>/dev/null || true)" = {shlex.quote(config_hash)} '
         f"&& echo OK || echo NO"
     )
-    chk_res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=check_cmd,
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if chk_res.is_success() and chk_res.unwrap().strip() == "OK":
-        logger.info("[EVAL] LoRA merge skipped (config_hash matches)")
-        return Ok(None)
+    try:
+        chk = _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=check_cmd,
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
+        )
+        if chk.strip() == "OK":
+            logger.info("[EVAL] LoRA merge skipped (config_hash matches)")
+            return
+    except RyotenkAIError:
+        # If the check itself failed, fall through and try the merge.
+        pass
 
     logger.info("[EVAL] Running LoRA merge (base=%r adapter=%r) ...", base_model_id, adapter_ref)
     trust_arg = "--trust-remote-code" if trust_remote_code else ""
@@ -542,34 +546,34 @@ def _ensure_merge(
         f"{trust_arg}"
     ).strip()
 
-    merge_res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=merge_cmd,
-        timeout_sec=_SSH_MERGE_TIMEOUT_SEC,
-    )
-    if merge_res.is_failure():
-        return Err(  # type: ignore[union-attr]
-            ProviderError(
-                message=f"LoRA merge failed: {merge_res.unwrap_err()}",
-                code="POD_MERGE_FAILED",
-            )
+    try:
+        _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=merge_cmd,
+            timeout_sec=_SSH_MERGE_TIMEOUT_SEC,
         )
+    except RyotenkAIError as exc:
+        raise SSHExecFailedError(
+            detail=f"LoRA merge failed: {exc.detail or exc}",
+            context={"code": "POD_MERGE_FAILED"},
+            cause=exc,
+        ) from exc
 
-    # Write hash file
-    write_hash_res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=f"echo {shlex.quote(config_hash)} > {shlex.quote(hash_file)}",
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if write_hash_res.is_failure():
-        logger.warning("[EVAL] Failed to write config hash file (non-fatal): %s", write_hash_res.unwrap_err())
+    # Write hash file (best-effort)
+    try:
+        _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=f"echo {shlex.quote(config_hash)} > {shlex.quote(hash_file)}",
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
+        )
+    except RyotenkAIError as exc:
+        logger.warning("[EVAL] Failed to write config hash file (non-fatal): %s", exc)
 
     logger.info("[EVAL] LoRA merge completed")
-    return Ok(None)
 
 
 def _acquire_lock(
@@ -579,7 +583,7 @@ def _acquire_lock(
     key_path: Path,
     lock_dir: str,
     pid_file: str,
-) -> Result[None, ProviderError]:
+) -> None:
     """Acquire exclusive volume lock on the pod (mkdir-based)."""
     lock_cmd = (
         f"set +e; "
@@ -592,24 +596,27 @@ def _acquire_lock(
         f"rm -rf {shlex.quote(lock_dir)}; "
         f"mkdir {shlex.quote(lock_dir)} 2>/dev/null; exit $?"
     )
-    res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=lock_cmd,
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if res.is_failure():
-        out = str(res.unwrap_err())  # type: ignore[union-attr]
+    try:
+        _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=lock_cmd,
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
+        )
+    except RyotenkAIError as exc:
+        out = exc.detail or str(exc)
         if "BUSY" in out or "exit 2" in out:
-            return Err(
-                ProviderError(
-                    message="Volume lock is held by another session (vLLM is alive). Cannot run evaluation concurrently.",
-                    code="POD_LOCK_BUSY",
-                )
-            )
-        return Err(ProviderError(message=f"Failed to acquire volume lock: {out}", code="POD_LOCK_FAILED"))
-    return Ok(None)
+            raise SSHExecFailedError(
+                detail="Volume lock is held by another session (vLLM is alive). Cannot run evaluation concurrently.",
+                context={"code": "POD_LOCK_BUSY"},
+                cause=exc,
+            ) from exc
+        raise SSHExecFailedError(
+            detail=f"Failed to acquire volume lock: {out}",
+            context={"code": "POD_LOCK_FAILED"},
+            cause=exc,
+        ) from exc
 
 
 def _start_vllm(
@@ -623,7 +630,7 @@ def _start_vllm(
     log_file: str,
     trust_remote_code: bool,
     vllm_cfg: dict[str, Any],
-) -> Result[None, ProviderError]:
+) -> None:
     """Start vLLM server inside the pod (nohup, background)."""
     tp = int(vllm_cfg.get("tensor_parallel_size") or 1)
     max_len = int(vllm_cfg.get("max_model_len") or _VLLM_DEFAULT_MAX_MODEL_LEN)
@@ -666,26 +673,25 @@ def _start_vllm(
         f"set -e"
     )
 
-    res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=start_cmd,
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if res.is_failure():
-        return Err(  # type: ignore[union-attr]
-            ProviderError(
-                message=f"Failed to start vLLM: {res.unwrap_err()}",
-                code="POD_VLLM_START_FAILED",
-            )
+    try:
+        _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=start_cmd,
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
         )
+    except RyotenkAIError as exc:
+        raise SSHExecFailedError(
+            detail=f"Failed to start vLLM: {exc.detail or exc}",
+            context={"code": "POD_VLLM_START_FAILED"},
+            cause=exc,
+        ) from exc
     logger.info("[EVAL] vLLM process launched (nohup), waiting for health ...")
-    return Ok(None)
 
 
-def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> Result[None, ProviderError]:
-    """Poll url until HTTP 200. Returns Err on timeout.
+def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> None:
+    """Poll url until HTTP 200. Raises on timeout.
 
     Uses ``sleep_cancellable`` between probes so Ctrl+C during a vLLM
     cold-start (which can take 5+ minutes for big models) wakes the
@@ -701,15 +707,13 @@ def _wait_http_ok(*, url: str, timeout_sec: int, interval_sec: float) -> Result[
         try:
             with urllib.request.urlopen(url, timeout=5) as resp:
                 if resp.status == _HTTP_OK_STATUS:
-                    return Ok(None)
+                    return
         except Exception as e:
             last_err = str(e)
         sleep_cancellable(interval_sec)
-    return Err(
-        ProviderError(
-            message=f"Timed out waiting for {url} to become healthy (timeout={timeout_sec}s, last_err={last_err!r})",
-            code="POD_VLLM_HEALTH_TIMEOUT",
-        )
+    raise InferenceUnavailableError(
+        detail=f"Timed out waiting for {url} to become healthy (timeout={timeout_sec}s, last_err={last_err!r})",
+        context={"code": "POD_VLLM_HEALTH_TIMEOUT"},
     )
 
 
@@ -721,21 +725,20 @@ def _dump_vllm_log(
     log_file: str,
 ) -> None:
     """Fetch and log the last 60 lines of vLLM log for diagnostics (best-effort)."""
-    res = _ssh_exec(
-        host=host,
-        ssh_port=ssh_port,
-        key_path=key_path,
-        command=f"tail -n 60 {shlex.quote(log_file)}",
-        timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
-    )
-    if res.is_success():
-        tail = res.unwrap().strip()
+    try:
+        tail = _ssh_exec(
+            host=host,
+            ssh_port=ssh_port,
+            key_path=key_path,
+            command=f"tail -n 60 {shlex.quote(log_file)}",
+            timeout_sec=_SSH_SHORT_TIMEOUT_SEC,
+        ).strip()
         if tail:
             logger.error("[EVAL] vLLM log tail:\n%s", tail[-_LOG_TAIL_LEN:])
         else:
             logger.warning("[EVAL] vLLM log is empty or unreadable")
-    else:
-        logger.warning("[EVAL] Could not fetch vLLM log: %s", res.unwrap_err())
+    except RyotenkAIError as exc:
+        logger.warning("[EVAL] Could not fetch vLLM log: %s", exc)
 
 
 __all__ = [

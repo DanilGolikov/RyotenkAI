@@ -23,7 +23,6 @@ import pytest
 
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
-from ryotenkai_shared.utils.result import Failure, ProviderError, Success
 
 # =========================================================================
 # HELPER CLASSES
@@ -90,9 +89,9 @@ def mock_provider():
     provider.provider_type = "cloud"
     provider.get_base_workspace.return_value = "/workspace"
 
-    # Default: successful connect
+    # Default: successful connect (Phase A2: raise-based, returns SSHInfo directly)
     ssh_info = MockSSHInfo()
-    provider.connect.return_value = Success(ssh_info)
+    provider.connect.return_value = ssh_info
     provider.disconnect.return_value = None
 
     return provider
@@ -103,10 +102,10 @@ def mock_deployment_manager():
     """Mock deployment manager."""
     manager = MagicMock()
 
-    # Default: successful operations
-    manager.deploy_code.return_value = Success(None)
-    manager.install_dependencies.return_value = Success(None)
-    manager.start_training.return_value = Success({"mode": "venv"})
+    # Default: successful operations (Phase A2: raise-based, methods return None / dict)
+    manager.deploy_code.return_value = None
+    manager.install_dependencies.return_value = None
+    manager.start_training.return_value = {"mode": "venv"}
 
     return manager
 
@@ -178,15 +177,16 @@ def test_deployer_with_callbacks(mock_tdm_class, mock_config_with_gpu, mock_secr
 def test_execute_missing_run_context_returns_error(
     mock_tdm_class, mock_config_with_gpu, mock_secrets
 ):
-    """Line 173: execute() without RunContext in context → ProviderError MISSING_RUN_CONTEXT."""
+    """execute() without RunContext in context → raises InternalError carrying
+    legacy_code MISSING_RUN_CONTEXT."""
+    from ryotenkai_shared.errors import InternalError
+
     deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets)
 
-    result = deployer.execute({"no_run": "here"})
-
-    assert result.is_err()
-    err = result.unwrap_err()
-    assert err.code == "MISSING_RUN_CONTEXT"
-    assert "RunContext" in err.message
+    with pytest.raises(InternalError) as exc_info:
+        deployer.execute({"no_run": "here"})
+    assert exc_info.value.context.get("legacy_code") == "MISSING_RUN_CONTEXT"
+    assert "RunContext" in (exc_info.value.detail or "")
 
 
 @patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")

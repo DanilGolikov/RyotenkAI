@@ -59,26 +59,28 @@ def validate_cmd(
         )
 
     from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator  # heavy: lazy
+    from ryotenkai_shared.errors import RyotenkAIError
 
     orchestrator = PipelineOrchestrator(config=cfg)
     stage = orchestrator.stages[0]
-    result = stage.run(orchestrator.context)
-
-    if result.is_success():
+    # Phase A2 Batch 15.5: ``stage.run`` is raise-based (no more
+    # ``Result``). On success it returns the merged stage output dict;
+    # on failure it raises :class:`RyotenkAIError`.
+    try:
+        stage.run(orchestrator.context)
+    except RyotenkAIError as err:
         if state.is_machine_readable:
-            renderer.emit({"ok": True, "validated_datasets": declared})
+            renderer.emit({"ok": False, "error": err.detail or str(err)})
         else:
-            renderer.text(f"Dataset validation passed ({len(declared)} datasets)")
+            renderer.text(f"Validation failed: {err.detail or err}")
         renderer.flush()
-        return
+        raise typer.Exit(code=1) from err
 
-    err = result.unwrap_err()
     if state.is_machine_readable:
-        renderer.emit({"ok": False, "error": str(err)})
+        renderer.emit({"ok": True, "validated_datasets": declared})
     else:
-        renderer.text(f"Validation failed: {err}")
+        renderer.text(f"Dataset validation passed ({len(declared)} datasets)")
     renderer.flush()
-    raise typer.Exit(code=1)
 
 
 def _datasets_with_validation(cfg) -> list[str]:  # type: ignore[no-untyped-def]

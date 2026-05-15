@@ -151,10 +151,18 @@ def test_check_connectivity_exception_returns_false(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("boom")))
 
+    from ryotenkai_shared.contracts.problem_details import ErrorCode
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     gw = MLflowGateway("http://x")
     assert gw.check_connectivity(timeout=0.01) is False
-    assert gw.last_connectivity_error is not None
-    assert gw.last_connectivity_error.code == "MLFLOW_PREFLIGHT_CONNECTION_FAILED"
+    err = gw.last_connectivity_error
+    assert err is not None
+    # Phase A2 Batch 5: typed exception (ProviderUnavailableError) with the
+    # legacy granular MLFLOW_* identifier preserved on ``context``.
+    assert isinstance(err, ProviderUnavailableError)
+    assert err.code is ErrorCode.PROVIDER_UNAVAILABLE
+    assert err.context["mlflow_probe_reason"] == "MLFLOW_PREFLIGHT_CONNECTION_FAILED"
 
 
 def test_client_property_uses_tracking_uri_from_gateway(monkeypatch: pytest.MonkeyPatch) -> None:

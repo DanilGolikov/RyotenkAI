@@ -1,6 +1,11 @@
 """
 Unit tests for SingleNodeHealthCheck and SingleNodeProvider.
 
+Phase A2 Batch 12: migrated from ``Result[T, ProviderError]`` to raise-based.
+Methods return ``T`` on success and raise ``ProviderUnavailableError`` on
+failure; tests use ``pytest.raises`` and inspect
+``exc.context["legacy_code"]``.
+
 Covers missing health_check.py lines: 96, 99, 110, 145-146, 165-173, 221,
 232-240, 256-267, 286-287, 319, 328, 332-333, 411-412, 418, 425-426
 
@@ -24,8 +29,8 @@ from ryotenkai_providers.single_node.training.health_check import (
 from ryotenkai_providers.single_node.training.provider import SingleNodeProvider
 from ryotenkai_providers.training.interfaces import GPUInfo, ProviderCapabilities, ProviderStatus
 from ryotenkai_shared.config import Secrets
+from ryotenkai_shared.errors import ProviderUnavailableError, SSHConnectionFailedError
 from ryotenkai_shared.pipeline_context import RunContext
-from ryotenkai_shared.utils.result import Ok
 
 from tests._fakes.provider_context import attach_manifest_capabilities, make_provider_context
 
@@ -70,42 +75,42 @@ class TestCheckGpu:
     CUDA_SMI_CMD = "nvidia-smi --query-gpu=cuda_version --format=csv,noheader 2>/dev/null"
 
     def test_fails_when_nvidia_smi_fails(self):
-        """Line 96: nvidia-smi fails → Err(SINGLENODE_NVIDIA_SMI_FAILED)."""
+        """Line 96: nvidia-smi fails → raises ProviderUnavailableError(SINGLENODE_NVIDIA_SMI_FAILED)."""
         hc = _hc({self.GPU_CMD: (False, "", "nvidia-smi not found")})
-        result = hc.check_gpu()
-        assert result.is_failure()
-        assert "SINGLENODE_NVIDIA_SMI_FAILED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_gpu()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_NVIDIA_SMI_FAILED"
 
     def test_fails_when_nvidia_smi_empty_output(self):
-        """Line 99: empty stdout → Err(SINGLENODE_NO_GPU_DETECTED)."""
+        """Line 99: empty stdout → raises ProviderUnavailableError(SINGLENODE_NO_GPU_DETECTED)."""
         hc = _hc({self.GPU_CMD: (True, "   \n  ", "")})
-        result = hc.check_gpu()
-        assert result.is_failure()
-        assert "SINGLENODE_NO_GPU_DETECTED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_gpu()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_NO_GPU_DETECTED"
 
     def test_fails_when_no_parseable_lines(self):
-        """Line 110: only whitespace lines → Err(SINGLENODE_NO_GPU_DETECTED)."""
+        """Line 110: only whitespace lines → raises ProviderUnavailableError(SINGLENODE_NO_GPU_DETECTED)."""
         hc = _hc({self.GPU_CMD: (True, "\n  \n  \n", "")})
-        result = hc.check_gpu()
-        assert result.is_failure()
-        assert "SINGLENODE_NO_GPU_DETECTED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_gpu()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_NO_GPU_DETECTED"
 
     def test_fails_when_format_has_too_few_parts(self):
-        """Lines 145-146: format error (< 4 parts) → Err(SINGLENODE_NVIDIA_SMI_PARSE_ERROR)."""
+        """Lines 145-146: format error (< 4 parts) → raises ProviderUnavailableError(SINGLENODE_NVIDIA_SMI_PARSE_ERROR)."""
         hc = _hc({self.GPU_CMD: (True, "GPU A100, 80000\n", "")})
-        result = hc.check_gpu()
-        assert result.is_failure()
-        assert "Unexpected nvidia-smi format" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_gpu()
+        assert "Unexpected nvidia-smi format" in (exc_info.value.detail or "")
 
     def test_fails_on_value_error_parsing(self):
-        """Lines 145-146: non-numeric memory → ValueError → Err(SINGLENODE_NVIDIA_SMI_PARSE_ERROR)."""
+        """Lines 145-146: non-numeric memory → ValueError → raises ProviderUnavailableError(SINGLENODE_NVIDIA_SMI_PARSE_ERROR)."""
         hc = _hc({
             self.GPU_CMD: (True, "GPU A100, not_a_number, 40000, 550.66\n", ""),
             self.NVCC_CMD: (True, "12.1\n", ""),
         })
-        result = hc.check_gpu()
-        assert result.is_failure()
-        assert "parse" in str(result.unwrap_err()).lower()
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_gpu()
+        assert "parse" in (exc_info.value.detail or "").lower()
 
     def test_cuda_version_nvcc_fallback_to_smi(self):
         """Lines 165-173: nvcc fails, falls back to nvidia-smi for CUDA version."""
@@ -115,9 +120,8 @@ class TestCheckGpu:
             self.CUDA_SMI_CMD: (True, "12.1\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_gpu()
-        assert result.is_success()
-        assert result.unwrap().cuda_version == "12.1"
+        gpu_info = hc.check_gpu()
+        assert gpu_info.cuda_version == "12.1"
 
     def test_cuda_version_unknown_when_both_fail(self):
         """Lines 165-173: both nvcc and nvidia-smi CUDA fail → 'unknown'."""
@@ -127,9 +131,8 @@ class TestCheckGpu:
             self.CUDA_SMI_CMD: (False, "", ""),
         }
         hc = _hc(script)
-        result = hc.check_gpu()
-        assert result.is_success()
-        assert result.unwrap().cuda_version == "unknown"
+        gpu_info = hc.check_gpu()
+        assert gpu_info.cuda_version == "unknown"
 
     def test_multi_gpu_count(self):
         """Multiple GPUs are counted correctly."""
@@ -139,9 +142,8 @@ class TestCheckGpu:
             self.NVCC_CMD: (True, "12.1\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_gpu()
-        assert result.is_success()
-        assert result.unwrap().gpu_count == 2
+        gpu_info = hc.check_gpu()
+        assert gpu_info.gpu_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -150,19 +152,19 @@ class TestCheckGpu:
 
 class TestCheckDocker:
     def test_daemon_not_running_in_any_context(self):
-        """Line 221: daemon not running in default or rootless → Err(SINGLENODE_DOCKER_DAEMON_NOT_RUNNING)."""
+        """Line 221: daemon not running in default or rootless → raises ProviderUnavailableError(SINGLENODE_DOCKER_DAEMON_NOT_RUNNING)."""
         script: dict[str, tuple[bool, str, str]] = {
             "docker --version": (True, "Docker version 24.0.7, build afdd53b\n", ""),
             "docker context use default 2>/dev/null": (False, "", ""),
             "docker context use rootless 2>/dev/null": (False, "", ""),
         }
         hc = _hc(script)
-        result = hc.check_docker()
-        assert result.is_failure()
-        assert "SINGLENODE_DOCKER_DAEMON_NOT_RUNNING" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_docker()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DOCKER_DAEMON_NOT_RUNNING"
 
     def test_daemon_running_but_no_nvidia_in_default(self):
-        """Lines 232-240: nvidia not in docker info → Err(SINGLENODE_DOCKER_NO_GPU_SUPPORT)."""
+        """Lines 232-240: nvidia not in docker info → raises ProviderUnavailableError(SINGLENODE_DOCKER_NO_GPU_SUPPORT)."""
         script = {
             "docker --version": (True, "Docker version 24.0.7, build afdd53b\n", ""),
             "docker context use default 2>/dev/null": (True, "", ""),
@@ -170,9 +172,9 @@ class TestCheckDocker:
             "docker info 2>/dev/null | grep -i nvidia": (True, "something else", ""),
         }
         hc = _hc(script)
-        result = hc.check_docker()
-        assert result.is_failure()
-        assert "SINGLENODE_DOCKER_NO_GPU_SUPPORT" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_docker()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DOCKER_NO_GPU_SUPPORT"
 
     def test_rootless_context_adds_extra_hint(self):
         """Lines 256-267: rootless context adds special message to error hint."""
@@ -184,9 +186,9 @@ class TestCheckDocker:
             "docker info 2>/dev/null | grep -i nvidia": (True, "other stuff", ""),
         }
         hc = _hc(script)
-        result = hc.check_docker()
-        assert result.is_failure()
-        err_str = str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_docker()
+        err_str = exc_info.value.detail or ""
         assert "rootless" in err_str.lower() or "daemon.json" in err_str
 
     def test_daemon_running_in_rootless_with_nvidia(self):
@@ -199,8 +201,8 @@ class TestCheckDocker:
             "docker info 2>/dev/null | grep -i nvidia": (True, "nvidia runtime\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_docker()
-        assert result.is_success()
+        version = hc.check_docker()
+        assert version == "24.0.7"
 
 
 # ---------------------------------------------------------------------------
@@ -211,23 +213,21 @@ class TestGetDockerRootDir:
     ROOT_CMD = 'docker info --format "{{.DockerRootDir}}" 2>/dev/null'
 
     def test_fails_when_command_fails(self):
-        """Lines 286-287: command fails → Err."""
+        """Lines 286-287: command fails → raises ProviderUnavailableError."""
         hc = _hc({self.ROOT_CMD: (False, "", "error")})
-        result = hc._get_docker_root_dir()
-        assert result.is_failure()
-        assert "SINGLENODE_DOCKER_ROOT_DIR_FAILED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc._get_docker_root_dir()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DOCKER_ROOT_DIR_FAILED"
 
     def test_fails_when_stdout_empty(self):
-        """Lines 286-287: empty stdout → Err."""
+        """Lines 286-287: empty stdout → raises ProviderUnavailableError."""
         hc = _hc({self.ROOT_CMD: (True, "   \n", "")})
-        result = hc._get_docker_root_dir()
-        assert result.is_failure()
+        with pytest.raises(ProviderUnavailableError):
+            hc._get_docker_root_dir()
 
     def test_success_returns_path(self):
         hc = _hc({self.ROOT_CMD: (True, "/var/lib/docker\n", "")})
-        result = hc._get_docker_root_dir()
-        assert result.is_success()
-        assert result.unwrap() == "/var/lib/docker"
+        assert hc._get_docker_root_dir() == "/var/lib/docker"
 
 
 # ---------------------------------------------------------------------------
@@ -250,44 +250,44 @@ class TestCheckDiskSpace:
             self._df_cmd(parent): (True, "100\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_disk_space(path)
-        assert result.is_success()
+        free_gb = hc.check_disk_space(path)
+        assert free_gb == 100.0
 
     def test_fails_when_check_command_fails(self):
-        """Line 328: df command fails → Err(SINGLENODE_DISK_CHECK_FAILED)."""
+        """Line 328: df command fails → raises ProviderUnavailableError(SINGLENODE_DISK_CHECK_FAILED)."""
         path = "/workspace"
         script = {
             self._exists_cmd(path): (True, "exists\n", ""),
             self._df_cmd(path): (False, "", "df failed"),
         }
         hc = _hc(script)
-        result = hc.check_disk_space(path)
-        assert result.is_failure()
-        assert "SINGLENODE_DISK_CHECK_FAILED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_disk_space(path)
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DISK_CHECK_FAILED"
 
     def test_fails_when_stdout_not_a_number(self):
-        """Lines 332-333: non-numeric output → Err(SINGLENODE_DISK_PARSE_ERROR)."""
+        """Lines 332-333: non-numeric output → raises ProviderUnavailableError(SINGLENODE_DISK_PARSE_ERROR)."""
         path = "/workspace"
         script = {
             self._exists_cmd(path): (True, "exists\n", ""),
             self._df_cmd(path): (True, "not_a_number\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_disk_space(path)
-        assert result.is_failure()
-        assert "SINGLENODE_DISK_PARSE_ERROR" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_disk_space(path)
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DISK_PARSE_ERROR"
 
     def test_fails_when_insufficient_disk_space(self):
-        """Returns Err when free_gb < required."""
+        """Raises ProviderUnavailableError when free_gb < required."""
         path = "/workspace"
         script = {
             self._exists_cmd(path): (True, "exists\n", ""),
             self._df_cmd(path): (True, "5\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_disk_space(path, min_free_gb=20.0)
-        assert result.is_failure()
-        assert "SINGLENODE_DISK_INSUFFICIENT" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            hc.check_disk_space(path, min_free_gb=20.0)
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_DISK_INSUFFICIENT"
 
     def test_path_with_no_slash_falls_back_to_root(self):
         """Lines 316-317: path without '/' falls back to '/'."""
@@ -297,8 +297,8 @@ class TestCheckDiskSpace:
             self._df_cmd("/"): (True, "500\n", ""),
         }
         hc = _hc(script)
-        result = hc.check_disk_space(path)
-        assert result.is_success()
+        free_gb = hc.check_disk_space(path)
+        assert free_gb == 500.0
 
 
 # ---------------------------------------------------------------------------
@@ -449,9 +449,7 @@ class FakeHealthCheck:
         )
 
     def check_gpu(self):
-        return Ok(
-            GPUInfo(name="GPU", vram_total_mb=1, vram_free_mb=1, cuda_version="x", driver_version="x")
-        )
+        return GPUInfo(name="GPU", vram_total_mb=1, vram_free_mb=1, cuda_version="x", driver_version="x")
 
 
 def _mk_provider(**overrides) -> SingleNodeProvider:
@@ -526,17 +524,16 @@ class TestSingleNodeProviderCoverage:
         p = _mk_provider()
         gpu = GPUInfo(name="A40", vram_total_mb=46080, vram_free_mb=45000, cuda_version="12.1", driver_version="x")
         p._gpu_info = gpu
-        result = p.check_gpu()
-        assert result.is_success()
-        assert result.unwrap().name == "A40"
+        info = p.check_gpu()
+        assert info.name == "A40"
 
     def test_check_gpu_fails_when_not_connected(self):
-        """Lines 417-418: not connected → Err(SINGLENODE_NOT_CONNECTED)."""
+        """Lines 417-418: not connected → raises ProviderUnavailableError(SINGLENODE_NOT_CONNECTED)."""
         p = _mk_provider()
         # _status is AVAILABLE but not CONNECTED, no _ssh_client
-        result = p.check_gpu()
-        assert result.is_failure()
-        assert "SINGLENODE_NOT_CONNECTED" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            p.check_gpu()
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_NOT_CONNECTED"
 
     def test_check_gpu_delegates_to_health_check(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 421-422: connected → delegates to health checker."""
@@ -549,8 +546,8 @@ class TestSingleNodeProviderCoverage:
         p.connect(run=_mk_run())
         p._gpu_info = None  # clear cached info
 
-        result = p.check_gpu()
-        assert result.is_success()
+        info = p.check_gpu()
+        assert info is not None
 
     def test_get_capabilities_with_gpu_info(self, monkeypatch: pytest.MonkeyPatch):
         """Lines 432-441: get_capabilities returns GPU info when available."""
@@ -590,8 +587,9 @@ class TestSingleNodeProviderCoverage:
 
         p = _mk_provider(connect={"ssh": {"host": "1.2.3.4", "user": "user", "port": 22}})
         ssh.dirs.add("/workspace")
-        result = p.connect(run=_mk_run())
-        assert result.is_success()
+        # Phase A2 Batch 12: connect() raises on failure, returns SSHConnectionInfo on success.
+        ssh_info = p.connect(run=_mk_run())
+        assert ssh_info is not None
         assert p.get_status() == ProviderStatus.CONNECTED
 
     def test_connect_alias_fails_fallback_to_explicit(self, monkeypatch: pytest.MonkeyPatch):
@@ -630,13 +628,13 @@ class TestSingleNodeProviderCoverage:
                 "port": 22,
             }
         })
-        result = p.connect(run=_mk_run())
         # First alias call fails, second explicit call succeeds → connected
-        assert result.is_success()
+        ssh_info = p.connect(run=_mk_run())
+        assert ssh_info is not None
         assert call_count[0] >= 2
 
     def test_connect_alias_fails_no_explicit_fallback(self, monkeypatch: pytest.MonkeyPatch):
-        """Lines 175-183: alias fails and no host+user → Err(SINGLENODE_SSH_ALIAS_FAILED)."""
+        """Lines 175-183: alias fails and no host+user → raises SSHConnectionFailedError(SINGLENODE_SSH_ALIAS_FAILED)."""
         def _fail_ssh(**kw):
             return FakeSSHClient(host=kw.get("host", "pc"), port=kw.get("port", 22), connection_ok=False)
 
@@ -644,17 +642,17 @@ class TestSingleNodeProviderCoverage:
         monkeypatch.setattr(sp, "SingleNodeHealthCheck", FakeHealthCheck)
 
         p = _mk_provider(connect={"ssh": {"alias": "myalias"}})
-        result = p.connect(run=_mk_run())
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_ALIAS_FAILED" in str(result.unwrap_err())
+        with pytest.raises(SSHConnectionFailedError) as exc_info:
+            p.connect(run=_mk_run())
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_SSH_ALIAS_FAILED"
 
     def test_connect_unexpected_exception(self, monkeypatch: pytest.MonkeyPatch):
-        """Lines 284-288: unexpected exception during connect → Err(SINGLENODE_CONNECT_UNEXPECTED_ERROR)."""
+        """Lines 284-288: unexpected exception during connect → raises ProviderUnavailableError(SINGLENODE_CONNECT_UNEXPECTED_ERROR)."""
         monkeypatch.setattr(sp, "SSHClient", lambda **_kw: (_ for _ in ()).throw(RuntimeError("unexpected!")))
         p = _mk_provider()
-        result = p.connect(run=_mk_run())
-        assert result.is_failure()
-        assert "SINGLENODE_CONNECT_UNEXPECTED_ERROR" in str(result.unwrap_err())
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            p.connect(run=_mk_run())
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CONNECT_UNEXPECTED_ERROR"
 
     def test_preempt_inference_container_no_ssh(self):
         """Line 299: _preempt_inference_container returns early when no SSH client."""
@@ -701,12 +699,12 @@ class TestSingleNodeProviderCoverage:
         assert any("docker rm -f" in c for c in ssh.commands)
 
     def test_connect_explicit_fails_returns_error(self, monkeypatch: pytest.MonkeyPatch):
-        """Lines 203-204: explicit connection test fails → Err(SINGLENODE_SSH_CONNECT_FAILED)."""
+        """Lines 203-204: explicit connection test fails → raises SSHConnectionFailedError(SINGLENODE_SSH_CONNECT_FAILED)."""
         ssh = FakeSSHClient(host="1.2.3.4", port=22, connection_ok=False)
         monkeypatch.setattr(sp, "SSHClient", lambda **_kw: ssh)
         monkeypatch.setattr(sp, "SingleNodeHealthCheck", FakeHealthCheck)
 
         p = _mk_provider(connect={"ssh": {"host": "1.2.3.4", "user": "user", "port": 22}})
-        result = p.connect(run=_mk_run())
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_CONNECT_FAILED" in str(result.unwrap_err())
+        with pytest.raises(SSHConnectionFailedError) as exc_info:
+            p.connect(run=_mk_run())
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_SSH_CONNECT_FAILED"

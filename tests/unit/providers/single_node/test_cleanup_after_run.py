@@ -29,6 +29,7 @@ import pytest
 
 from ryotenkai_providers.single_node.training.provider import SingleNodeProvider
 from ryotenkai_providers.training.interfaces import ProviderStatus
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -85,10 +86,10 @@ class TestPositive:
             rm_result=(True, "", ""),
             verify_result=(True, "", ""),  # empty stdout → container gone
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
+        # Phase A2 Batch 12: cleanup_after_run() raises on failure, returns None on success.
+        _make_provider_with_ssh(ssh).cleanup_after_run(
             "ryotenkai_training_run-1",
         )
-        assert result.is_ok()
         # Two commands: rm + verify.
         commands = [c for c, _ in ssh.commands]
         assert any("docker rm -f ryotenkai_training_run-1" in c for c in commands)
@@ -104,15 +105,15 @@ class TestNegative:
     def test_no_ssh_client_returns_err(self) -> None:
         provider = SingleNodeProvider.__new__(SingleNodeProvider)
         provider._ssh_client = None  # type: ignore[attr-defined]
-        result = provider.cleanup_after_run("ryotenkai_training_x")
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_NO_SSH"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            provider.cleanup_after_run("ryotenkai_training_x")
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_NO_SSH"
 
     def test_empty_container_name_rejected(self) -> None:
         ssh = _FakeSSHClient()
-        result = _make_provider_with_ssh(ssh).cleanup_after_run("")
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_INVALID_NAME"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            _make_provider_with_ssh(ssh).cleanup_after_run("")
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_INVALID_NAME"
         # SSH never touched.
         assert ssh.commands == []
 
@@ -127,9 +128,9 @@ class TestNegative:
     ])
     def test_shell_injection_attempts_rejected(self, bad_name: str) -> None:
         ssh = _FakeSSHClient()
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(bad_name)
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_INVALID_NAME"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            _make_provider_with_ssh(ssh).cleanup_after_run(bad_name)
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_INVALID_NAME"
         # SSH never touched — defence in depth.
         assert ssh.commands == []
 
@@ -148,11 +149,11 @@ class TestBoundary:
             rm_result=(True, "", ""),
             verify_result=(True, "abc123\n", ""),  # stdout has container id
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
-            "ryotenkai_training_run-1",
-        )
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_VERIFY_FAILED"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            _make_provider_with_ssh(ssh).cleanup_after_run(
+                "ryotenkai_training_run-1",
+            )
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_VERIFY_FAILED"
 
     def test_verify_returns_empty_stdout_means_gone(self) -> None:
         # The "happy path" already covers this; explicit boundary test
@@ -161,10 +162,10 @@ class TestBoundary:
             rm_result=(True, "", ""),
             verify_result=(True, "", ""),
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
+        # Phase A2 Batch 12: success returns None, no raise.
+        _make_provider_with_ssh(ssh).cleanup_after_run(
             "ryotenkai_training_run-1",
         )
-        assert result.is_ok()
 
 
 # ---------------------------------------------------------------------------
@@ -211,11 +212,11 @@ class TestDependencyErrors:
         ssh = _FakeSSHClient(
             rm_raises=ConnectionError("dns lookup failed"),
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
-            "ryotenkai_training_x",
-        )
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_SSH_TRANSPORT"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            _make_provider_with_ssh(ssh).cleanup_after_run(
+                "ryotenkai_training_x",
+            )
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_SSH_TRANSPORT"
 
     def test_docker_rm_returns_failure_propagates_err(self) -> None:
         # exec_command returns (ok=False, ...). Even with || true the
@@ -225,11 +226,11 @@ class TestDependencyErrors:
         ssh = _FakeSSHClient(
             rm_result=(False, "", "docker daemon not running"),
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
-            "ryotenkai_training_x",
-        )
-        assert result.is_err()
-        assert result.unwrap_err().code == "SINGLENODE_CLEANUP_DOCKER_RM_FAILED"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            _make_provider_with_ssh(ssh).cleanup_after_run(
+                "ryotenkai_training_x",
+            )
+        assert exc_info.value.context.get("legacy_code") == "SINGLENODE_CLEANUP_DOCKER_RM_FAILED"
 
 
 # ---------------------------------------------------------------------------
@@ -247,10 +248,10 @@ class TestRegressions:
             rm_result=(True, "", ""),
             verify_raises=ConnectionError("ssh closed"),
         )
-        result = _make_provider_with_ssh(ssh).cleanup_after_run(
+        # Phase A2 Batch 12: rm succeeded → no raise even if verify failed.
+        _make_provider_with_ssh(ssh).cleanup_after_run(
             "ryotenkai_training_x",
         )
-        assert result.is_ok()
 
 
 # ---------------------------------------------------------------------------

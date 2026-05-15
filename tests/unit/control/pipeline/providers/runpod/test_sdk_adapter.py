@@ -1,3 +1,5 @@
+"""Tests for the raise-based :class:`RunPodSDKClient` (Phase A2 Batch 11)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -6,21 +8,23 @@ import pytest
 
 from ryotenkai_providers.runpod import sdk_adapter
 from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import (
+    ProviderAuthFailedError,
+    ProviderRateLimitedError,
+    ProviderUnavailableError,
+)
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_call_sdk_returns_error_when_function_is_missing() -> None:
+def test_call_sdk_raises_when_function_is_missing() -> None:
     client = RunPodSDKClient(api_key="rk")
 
-    res = client._call_sdk("definitely_missing_fn")
-
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_SDK_CALL_FAILED"
-    assert err.details == {"function": "definitely_missing_fn"}
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client._call_sdk("definitely_missing_fn")
+    assert ei.value.context["code"] == "RUNPOD_SDK_CALL_FAILED"
+    assert ei.value.context["function"] == "definitely_missing_fn"
 
 
 def test_call_sdk_maps_value_error_to_validation_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -32,42 +36,63 @@ def test_call_sdk_maps_value_error_to_validation_error(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(sdk_adapter.runpod, "create_pod", fake_create_pod, raising=False)
 
-    res = client._call_sdk("create_pod", name="pod")
-
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_SDK_VALIDATION_ERROR"
-    assert err.details == {"function": "create_pod"}
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client._call_sdk("create_pod", name="pod")
+    assert ei.value.context["code"] == "RUNPOD_SDK_VALIDATION_ERROR"
+    assert ei.value.context["function"] == "create_pod"
 
 
-def test_get_pod_returns_unexpected_response_error_for_non_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_call_sdk_classifies_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = RunPodSDKClient(api_key="rk")
+    monkeypatch.setattr(
+        sdk_adapter.runpod,
+        "create_pod",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("401 Unauthorized")),
+        raising=False,
+    )
+
+    with pytest.raises(ProviderAuthFailedError):
+        client._call_sdk("create_pod", name="x")
+
+
+def test_call_sdk_classifies_rate_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = RunPodSDKClient(api_key="rk")
+    monkeypatch.setattr(
+        sdk_adapter.runpod,
+        "create_pod",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("HTTP 429 rate limit exceeded")),
+        raising=False,
+    )
+
+    with pytest.raises(ProviderRateLimitedError):
+        client._call_sdk("create_pod", name="x")
+
+
+def test_get_pod_raises_unexpected_response_error_for_non_dict(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodSDKClient(api_key="rk")
     monkeypatch.setattr(sdk_adapter.runpod, "get_pod", lambda pod_id: ["not", "a", "dict"], raising=False)
 
-    res = client.get_pod(pod_id="pod-1")
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.get_pod(pod_id="pod-1")
+    assert ei.value.context["code"] == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
-
-def test_list_pods_returns_unexpected_response_error_for_non_list(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_pods_raises_unexpected_response_error_for_non_list(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodSDKClient(api_key="rk")
     monkeypatch.setattr(sdk_adapter.runpod, "get_pods", lambda: {"id": "pod-1"}, raising=False)
 
-    res = client.list_pods()
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.list_pods()
+    assert ei.value.context["code"] == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
-
-def test_create_pod_returns_unexpected_response_error_for_non_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_pod_raises_unexpected_response_error_for_non_dict(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodSDKClient(api_key="rk")
     monkeypatch.setattr(sdk_adapter.runpod, "create_pod", lambda **kwargs: ["bad"], raising=False)
 
-    res = client.create_pod(name="pod")
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.create_pod(name="pod")
+    assert ei.value.context["code"] == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
 
 
 def test_create_pod_from_payload_without_gpu_type_ids_normalizes_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -76,11 +101,11 @@ def test_create_pod_from_payload_without_gpu_type_ids_normalizes_payload(monkeyp
 
     def fake_create_pod(**kwargs: Any):
         captured.update(kwargs)
-        return Ok({"id": "pod-1"})
+        return {"id": "pod-1"}
 
     monkeypatch.setattr(client, "create_pod", fake_create_pod)
 
-    res = client.create_pod_from_payload(
+    out = client.create_pod_from_payload(
         payload={
             "name": "  pod-name  ",
             "imageName": " img ",
@@ -93,7 +118,7 @@ def test_create_pod_from_payload_without_gpu_type_ids_normalizes_payload(monkeyp
         }
     )
 
-    assert res.is_success()
+    assert out == {"id": "pod-1"}
     assert captured == {
         "name": "pod-name",
         "image_name": "img",
@@ -123,7 +148,7 @@ def test_create_pod_from_payload_tries_next_gpu_type_on_capacity_error(monkeypat
 
     monkeypatch.setattr(sdk_adapter.runpod, "create_pod", fake_create_pod, raising=False)
 
-    res = client.create_pod_from_payload(
+    out = client.create_pod_from_payload(
         payload={
             "name": "test",
             "imageName": "img",
@@ -133,13 +158,12 @@ def test_create_pod_from_payload_tries_next_gpu_type_on_capacity_error(monkeypat
         }
     )
 
-    assert res.is_success()
-    assert res.unwrap()["gpuTypeId"] == "GPU-2"
+    assert out["gpuTypeId"] == "GPU-2"
     assert calls[0]["ports"] == "22/tcp,8000/http"
     assert calls[1]["gpu_type_id"] == "GPU-2"
 
 
-def test_create_pod_from_payload_returns_last_capacity_error_when_all_gpu_types_fail(
+def test_create_pod_from_payload_raises_last_capacity_error_when_all_gpu_types_fail(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = RunPodSDKClient(api_key="rk")
@@ -147,21 +171,18 @@ def test_create_pod_from_payload_returns_last_capacity_error_when_all_gpu_types_
 
     def fake_create_pod(**kwargs: Any):
         calls.append(kwargs["gpu_type_id"])
-        return Err(
-            ProviderError(
-                message=f"No available datacenter with requested resources for {kwargs['gpu_type_id']}",
-                code="RUNPOD_SDK_CALL_FAILED",
-            )
+        raise ProviderUnavailableError(
+            detail=f"No available datacenter with requested resources for {kwargs['gpu_type_id']}",
+            context={"code": "RUNPOD_SDK_CALL_FAILED"},
         )
 
     monkeypatch.setattr(client, "create_pod", fake_create_pod)
 
-    res = client.create_pod_from_payload(
-        payload={"name": "test", "imageName": "img", "gpuTypeIds": ["GPU-1", "GPU-2", "GPU-3"]}
-    )
-
-    assert res.is_failure()
-    assert res.unwrap_err().message.endswith("GPU-3")
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.create_pod_from_payload(
+            payload={"name": "test", "imageName": "img", "gpuTypeIds": ["GPU-1", "GPU-2", "GPU-3"]}
+        )
+    assert (ei.value.detail or "").endswith("GPU-3")
     assert calls == ["GPU-1", "GPU-2", "GPU-3"]
 
 
@@ -171,16 +192,18 @@ def test_create_pod_from_payload_does_not_retry_after_non_capacity_error(monkeyp
 
     def fake_create_pod(**kwargs: Any):
         calls.append(kwargs["gpu_type_id"])
-        return Err(ProviderError(message="invalid config", code="RUNPOD_SDK_VALIDATION_ERROR"))
+        raise ProviderUnavailableError(
+            detail="invalid config",
+            context={"code": "RUNPOD_SDK_VALIDATION_ERROR"},
+        )
 
     monkeypatch.setattr(client, "create_pod", fake_create_pod)
 
-    res = client.create_pod_from_payload(
-        payload={"name": "test", "imageName": "img", "gpuTypeIds": ["GPU-1", "GPU-2"]}
-    )
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_VALIDATION_ERROR"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.create_pod_from_payload(
+            payload={"name": "test", "imageName": "img", "gpuTypeIds": ["GPU-1", "GPU-2"]}
+        )
+    assert ei.value.context.get("code") == "RUNPOD_SDK_VALIDATION_ERROR"
     assert calls == ["GPU-1"]
 
 
@@ -200,9 +223,8 @@ def test_start_pod_uses_gpu_count_from_existing_pod(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(sdk_adapter.runpod, "get_pod", fake_get_pod, raising=False)
     monkeypatch.setattr(sdk_adapter.runpod, "resume_pod", fake_resume_pod, raising=False)
 
-    res = client.start_pod(pod_id="pod-1")
+    client.start_pod(pod_id="pod-1")
 
-    assert res.is_success()
     assert calls[1] == ("resume_pod", ("pod-1", 3), {})
 
 
@@ -221,9 +243,8 @@ def test_start_pod_falls_back_to_one_gpu_when_gpu_count_is_invalid(monkeypatch: 
     monkeypatch.setattr(sdk_adapter.runpod, "get_pod", fake_get_pod, raising=False)
     monkeypatch.setattr(sdk_adapter.runpod, "resume_pod", fake_resume_pod, raising=False)
 
-    res = client.start_pod(pod_id="pod-1")
+    client.start_pod(pod_id="pod-1")
 
-    assert res.is_success()
     assert calls[-1] == ("resume_pod", ("pod-1", 1))
 
 
@@ -245,10 +266,9 @@ def test_start_pod_short_circuits_when_get_pod_fails(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(sdk_adapter.runpod, "get_pod", fake_get_pod, raising=False)
     monkeypatch.setattr(sdk_adapter.runpod, "resume_pod", fake_resume_pod, raising=False)
 
-    res = client.start_pod(pod_id="pod-1")
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.start_pod(pod_id="pod-1")
+    assert ei.value.context["code"] == "RUNPOD_SDK_CALL_FAILED"
     assert resume_called is False
 
 
@@ -265,10 +285,9 @@ def test_list_pods_filters_by_params(monkeypatch: pytest.MonkeyPatch) -> None:
         raising=False,
     )
 
-    res = client.list_pods(params={"name": "wanted", "networkVolumeId": "vol-1"})
+    pods = client.list_pods(params={"name": "wanted", "networkVolumeId": "vol-1"})
 
-    assert res.is_success()
-    assert [pod["id"] for pod in res.unwrap()] == ["p1"]
+    assert [pod["id"] for pod in pods] == ["p1"]
 
 
 def test_list_pods_treats_missing_compute_type_as_non_blocking(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -284,10 +303,9 @@ def test_list_pods_treats_missing_compute_type_as_non_blocking(monkeypatch: pyte
         raising=False,
     )
 
-    res = client.list_pods(params={"name": "wanted", "computeType": "GPU"})
+    pods = client.list_pods(params={"name": "wanted", "computeType": "GPU"})
 
-    assert res.is_success()
-    assert [pod["id"] for pod in res.unwrap()] == ["p1"]
+    assert [pod["id"] for pod in pods] == ["p1"]
 
 
 def test_list_pods_ignores_none_expected_filters(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -300,10 +318,9 @@ def test_list_pods_ignores_none_expected_filters(monkeypatch: pytest.MonkeyPatch
         raising=False,
     )
 
-    res = client.list_pods(params={"name": "wanted", "networkVolumeId": None})
+    pods = client.list_pods(params={"name": "wanted", "networkVolumeId": None})
 
-    assert res.is_success()
-    assert [pod["id"] for pod in res.unwrap()] == ["p1"]
+    assert [pod["id"] for pod in pods] == ["p1"]
 
 
 @pytest.mark.parametrize(
@@ -325,13 +342,12 @@ def test_create_pod_from_payload_coerces_ports(
 
     def fake_create_pod(**kwargs: Any):
         captured.update(kwargs)
-        return Ok({"id": "pod-1"})
+        return {"id": "pod-1"}
 
     monkeypatch.setattr(client, "create_pod", fake_create_pod)
 
-    res = client.create_pod_from_payload(payload={"name": "test", "imageName": "img", "ports": raw_ports})
+    client.create_pod_from_payload(payload={"name": "test", "imageName": "img", "ports": raw_ports})
 
-    assert res.is_success()
     if expected_ports is None:
         assert "ports" not in captured
     else:

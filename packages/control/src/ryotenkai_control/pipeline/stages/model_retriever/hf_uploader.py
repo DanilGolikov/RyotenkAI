@@ -32,8 +32,13 @@ from ryotenkai_control.pipeline.stages.model_retriever.constants import (
 from ryotenkai_control.pipeline.stages.model_retriever.hf_errors import (
     classify_hf_upload_error,
 )
+from ryotenkai_shared.errors import (
+    HFAuthFailedError,
+    HFNotFoundError,
+    ModelLoadFailedError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, ModelError, Ok, Result
 
 from ryotenkai_control.pipeline.stages.model_retriever.types import (
     PhaseMetricsResult,
@@ -47,7 +52,38 @@ from ryotenkai_control.pipeline.stages.model_retriever.types import (
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.errors import RyotenkAIError
     from ryotenkai_shared.utils.ssh_client import SSHClient
+
+
+def _failure_to_typed(
+    failure: Any,
+    *,
+    detail_suffix: str = "",
+) -> "RyotenkAIError":
+    """Map a classified :class:`HFUploadFailure` to a typed exception.
+
+    Kind dispatch:
+
+    * ``auth`` → :class:`HFAuthFailedError` (401/403)
+    * ``not_found`` → :class:`HFNotFoundError` (404)
+    * all other kinds (rate_limit / quota / network / transient / unknown /
+      cli_missing / client_error) → :class:`ModelLoadFailedError` carrying
+      the classified ``to_app_error_code()`` value on ``context`` so
+      operators / dashboards can still pattern-match on the granular code.
+    """
+    detail = f"{failure.short_reason}{detail_suffix}"
+    legacy_code = failure.to_app_error_code()
+    context = {
+        "legacy_code": legacy_code,
+        "hf_failure_kind": failure.kind,
+        "operator_action": failure.operator_action,
+    }
+    if failure.kind == "auth":
+        return HFAuthFailedError(detail=detail, context=context)
+    if failure.kind == "not_found":
+        return HFNotFoundError(detail=detail, context=context)
+    return ModelLoadFailedError(detail=detail, context=context)
 
 
 class HFModelUploader:
@@ -94,9 +130,14 @@ class HFModelUploader:
     # HF repo lifecycle
     # ------------------------------------------------------------------
 
-    def ensure_hf_repo_ready(self) -> Result[None, ModelError]:
+    def ensure_hf_repo_ready(self) -> None:
         """
         Ensure HF repo exists and matches requested visibility.
+
+        Raises:
+            HFNotFoundError: when HF upload is not configured.
+            HFAuthFailedError: when the Hub rejects credentials (401).
+            ModelLoadFailedError: for any other Hub-side failure.
 
         IMPORTANT:
         - `create_repo(..., exist_ok=True)` does NOT change visibility of an existing repo.
@@ -104,9 +145,15 @@ class HFModelUploader:
         """
         hf_cfg = self.config.integrations.huggingface
         if not hf_cfg or not hf_cfg.repo_id:
-            return Err(ModelError(message="HuggingFace upload disabled", code="HF_UPLOAD_DISABLED"))
+            raise HFNotFoundError(
+                detail="HuggingFace upload disabled",
+                context={"legacy_code": "HF_UPLOAD_DISABLED"},
+            )
         if not self.hf_repo_id:
-            return Err(ModelError(message="HF repo_id not configured", code="HF_REPO_ID_MISSING"))
+            raise HFNotFoundError(
+                detail="HF repo_id not configured",
+                context={"legacy_code": "HF_REPO_ID_MISSING"},
+            )
 
         try:
             repo_exists = True
@@ -146,7 +193,7 @@ class HFModelUploader:
                     f"{e!s}{hint} (continuing upload)"
                 )
 
-            return Ok(None)
+            return None
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             hint_parts: list[str] = []
@@ -180,12 +227,13 @@ class HFModelUploader:
                     hint_parts.append(f"whoami_check_failed: {who_err!s}")
 
             hint = f" | {' ; '.join(hint_parts)}" if hint_parts else ""
-            return Err(
-                ModelError(
-                    message=f"Failed to prepare HF repo '{self.hf_repo_id}': {e!s}{hint}",
-                    code="HF_REPO_PREPARE_FAILED",
-                )
-            )
+            detail = f"Failed to prepare HF repo '{self.hf_repo_id}': {e!s}{hint}"
+            context: dict[str, Any] = {"legacy_code": "HF_REPO_PREPARE_FAILED"}
+            if status == HTTP_STATUS_UNAUTHORIZED:
+                raise HFAuthFailedError(detail=detail, context=context, cause=e) from e
+            if status == HTTP_STATUS_NOT_FOUND:
+                raise HFNotFoundError(detail=detail, context=context, cause=e) from e
+            raise ModelLoadFailedError(detail=detail, context=context, cause=e) from e
 
     # ------------------------------------------------------------------
     # Checkpoint discovery
@@ -392,38 +440,38 @@ class HFModelUploader:
         context: dict[str, Any] | None = None,
         *,
         card_content: str,
-    ) -> Result[None, ModelError]:
+    ) -> None:
         """
         Upload model directly from remote server to HuggingFace Hub.
 
         Uses SSH + huggingface-cli. Includes 3-attempt retry for transient failures.
-        """
-        try:
-            context = context or {}
-            repo_ready = self.ensure_hf_repo_ready()
-            if repo_ready.is_failure():
-                return Err(repo_ready.unwrap_err())  # type: ignore[union-attr]
 
-            return self._upload_files(context=context, card_content=card_content)
-        except Exception as e:
-            return Err(ModelError(message=f"Direct upload failed: {e!s}", code="HF_UPLOAD_FAILED"))
+        Raises:
+            HFAuthFailedError / HFNotFoundError / ModelLoadFailedError on failure.
+        """
+        context = context or {}
+        # ensure_hf_repo_ready raises typed; propagate.
+        self.ensure_hf_repo_ready()
+        self._upload_files(context=context, card_content=card_content)
 
     def _upload_files(
         self,
         context: dict[str, Any] | None = None,
         *,
         card_content: str = "",
-    ) -> Result[None, ModelError]:
-        """Internal upload (skips repo-ready check, called after ensure_hf_repo_ready)."""
+    ) -> None:
+        """Internal upload (skips repo-ready check, called after ensure_hf_repo_ready).
+
+        Raises:
+            HFAuthFailedError / HFNotFoundError / ModelLoadFailedError per failure mode.
+        """
         try:
             context = context or {}
 
             if not self._ssh_client:
-                return Err(
-                    ModelError(
-                        message="SSH client not initialized",
-                        code="SSH_CLIENT_NOT_INITIALIZED",
-                    )
+                raise ModelLoadFailedError(
+                    detail="SSH client not initialized",
+                    context={"legacy_code": "SSH_CLIENT_NOT_INITIALIZED"},
                 )
 
             ssh_client = self._ssh_client
@@ -536,12 +584,7 @@ class HFModelUploader:
                         f"[HF:UPLOAD] raw stderr excerpt: "
                         f"{last_failure.raw_stderr_excerpt!r}"
                     )
-                    return Err(
-                        ModelError(
-                            message=last_failure.short_reason,
-                            code=last_failure.to_app_error_code(),
-                        )
-                    )
+                    raise _failure_to_typed(last_failure)
 
                 # Retryable: log a single line, sleep, try again.
                 if _attempt < _MAX_ATTEMPTS:
@@ -561,38 +604,47 @@ class HFModelUploader:
                 # All retries exhausted on a retryable failure. Surface
                 # the classified code so callers can react.
                 assert last_failure is not None  # loop must have populated
-                return Err(
-                    ModelError(
-                        message=(
-                            f"{last_failure.short_reason} "
-                            f"(failed after {_MAX_ATTEMPTS} attempts)"
-                        ),
-                        code=last_failure.to_app_error_code(),
-                    )
+                raise _failure_to_typed(
+                    last_failure,
+                    detail_suffix=f" (failed after {_MAX_ATTEMPTS} attempts)",
                 )
 
             ssh_client.exec_command(
                 command=f"rm -rf {upload_dir}", background=False, timeout=MR_SSH_CMD_TIMEOUT
             )
 
-            return Ok(None)
+            return None
 
+        except ModelLoadFailedError:
+            raise
+        except HFAuthFailedError:
+            raise
+        except HFNotFoundError:
+            raise
         except Exception as e:
-            return Err(ModelError(message=f"Direct upload failed: {e!s}", code="HF_UPLOAD_FAILED"))
+            raise ModelLoadFailedError(
+                detail=f"Direct upload failed: {e!s}",
+                context={"legacy_code": "HF_UPLOAD_FAILED"},
+                cause=e,
+            ) from e
 
     # ------------------------------------------------------------------
     # Model size & download
     # ------------------------------------------------------------------
 
-    def get_model_size(self) -> Result[float, ModelError]:
-        """Get model size on remote server in MB."""
+    def get_model_size(self) -> float:
+        """Get model size on remote server in MB.
+
+        Raises:
+            ModelLoadFailedError: when SSH is missing or the remote
+                command fails. Callers may catch and treat as
+                "size unknown".
+        """
         try:
             if not self._ssh_client:
-                return Err(
-                    ModelError(
-                        message="SSH client not initialized",
-                        code="SSH_CLIENT_NOT_INITIALIZED",
-                    )
+                raise ModelLoadFailedError(
+                    detail="SSH client not initialized",
+                    context={"legacy_code": "SSH_CLIENT_NOT_INITIALIZED"},
                 )
 
             remote_output_dir = f"{self._workspace_path}/output"
@@ -602,36 +654,37 @@ class HFModelUploader:
             )
 
             if not success:
-                return Err(
-                    ModelError(
-                        message=f"Size command failed: {stderr}",
-                        code="MODEL_SIZE_CHECK_FAILED",
-                    )
+                raise ModelLoadFailedError(
+                    detail=f"Size command failed: {stderr}",
+                    context={"legacy_code": "MODEL_SIZE_CHECK_FAILED"},
                 )
 
             size_bytes = int(stdout.strip())
             size_mb = size_bytes / (1024 * 1024)
-            return Ok(size_mb)
+            return size_mb
 
+        except ModelLoadFailedError:
+            raise
         except Exception as e:
-            return Err(
-                ModelError(
-                    message=f"Failed to get model size: {e!s}",
-                    code="MODEL_SIZE_CHECK_FAILED",
-                )
-            )
+            raise ModelLoadFailedError(
+                detail=f"Failed to get model size: {e!s}",
+                context={"legacy_code": "MODEL_SIZE_CHECK_FAILED"},
+                cause=e,
+            ) from e
 
-    def download_model(self) -> Result[Path, ModelError]:
-        """Download trained model from remote server using SSHClient."""
+    def download_model(self) -> Path:
+        """Download trained model from remote server using SSHClient.
+
+        Raises:
+            ModelLoadFailedError: when SSH is missing or transfer fails.
+        """
         logger.info("Downloading model files...")
 
         try:
             if not self._ssh_client:
-                return Err(
-                    ModelError(
-                        message="SSH client not initialized",
-                        code="SSH_CLIENT_NOT_INITIALIZED",
-                    )
+                raise ModelLoadFailedError(
+                    detail="SSH client not initialized",
+                    context={"legacy_code": "SSH_CLIENT_NOT_INITIALIZED"},
                 )
 
             # Anchor at the workspace root, not the worker's CWD —
@@ -653,31 +706,30 @@ class HFModelUploader:
 
             logger.info(f"Remote download directory: {remote_download_dir}")
 
-            download_result = self._ssh_client.download_directory(
-                remote_path=remote_download_dir,
-                local_path=local_model_dir,
-            )
-
-            if download_result.is_failure():
-                dl_err = download_result.unwrap_err()  # type: ignore[union-attr]
-                return Err(
-                    ModelError(
-                        message=f"Failed to download model: {dl_err}",
-                        code="MODEL_DOWNLOAD_FAILED",
-                    )
+            try:
+                self._ssh_client.download_directory(
+                    remote_path=remote_download_dir,
+                    local_path=local_model_dir,
                 )
+            except SSHTransferFailedError as exc:
+                raise ModelLoadFailedError(
+                    detail=f"Failed to download model: {exc.detail or exc}",
+                    context={"legacy_code": "MODEL_DOWNLOAD_FAILED"},
+                    cause=exc,
+                ) from exc
 
             logger.info("Model downloaded to local PC")
-            return Ok(local_model_dir)
+            return local_model_dir
 
+        except ModelLoadFailedError:
+            raise
         except Exception as e:
             logger.error(f"Download error: {e}")
-            return Err(
-                ModelError(
-                    message=f"Failed to download model: {e!s}",
-                    code="MODEL_DOWNLOAD_FAILED",
-                )
-            )
+            raise ModelLoadFailedError(
+                detail=f"Failed to download model: {e!s}",
+                context={"legacy_code": "MODEL_DOWNLOAD_FAILED"},
+                cause=e,
+            ) from e
 
     # ------------------------------------------------------------------
     # Misc

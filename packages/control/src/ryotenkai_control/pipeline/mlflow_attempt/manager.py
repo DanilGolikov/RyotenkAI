@@ -12,8 +12,10 @@ Design choices:
 * Setup is wrapped in a ``try`` / partial-cleanup branch to guarantee no
   orphan root/attempt runs if any step after their opening fails
   (mitigation for MLflow double-close risk).
-* Preflight returns ``AppError | None`` instead of raising a bespoke exception,
-  so the orchestrator keeps control over launch-rejection policy.
+* Preflight raises a typed :class:`RyotenkAIError` (:class:`ConfigInvalidError`
+  for missing manager, :class:`ProviderUnavailableError` for connectivity
+  failures) — the orchestrator wraps the typed exception in a
+  :class:`LaunchPreparationError` to drive rejection recording.
 * Teardown accepts two optional hooks to let the orchestrator inject
   reporting side effects (training-metrics aggregation, experiment report)
   without this manager knowing about them.
@@ -24,11 +26,16 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLOW_SOURCE_ORCHESTRATOR
 from ryotenkai_control.pipeline.stages import PipelineContextKeys
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    InternalError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+)
+from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -251,11 +258,26 @@ class MLflowAttemptManager:
 
     # ---- preflight ----------------------------------------------------------
 
-    def ensure_preflight(self) -> AppError | None:
+    def ensure_preflight(self) -> None:
         """Validate that MLflow setup and connectivity are alive.
 
-        Returns an AppError the orchestrator can wrap in a LaunchPreparationError,
-        or None when everything is healthy.
+        Returns ``None`` when everything is healthy. Raises:
+
+        * :class:`ConfigInvalidError` when MLflow setup failed (the
+          manager is missing or inactive — i.e. the config we have
+          does not produce a usable manager).
+        * :class:`ProviderUnavailableError` when connectivity checks
+          fail (HTTP probes, DNS, gateway errors).
+
+        Phase A2 Batch 7 (typed exceptions migration): the previous
+        ``AppError | None`` return shape is gone — callers (e.g. the
+        orchestrator) wrap the typed exception in a
+        :class:`LaunchPreparationError`. The granular legacy
+        identifier (``"MLFLOW_PREFLIGHT_HTTP_ERROR"`` etc.) is
+        preserved under ``context["mlflow_probe_reason"]`` /
+        ``context["legacy_code"]`` so dashboards keyed on the
+        granular code keep working until the gateway underneath
+        also migrates fully.
         """
         mlflow_cfg = self._config.integrations.mlflow
         raw_tracking_uri = getattr(mlflow_cfg, "tracking_uri", None)
@@ -267,14 +289,14 @@ class MLflowAttemptManager:
         )
 
         if self._manager is None or not self._manager.is_active:
-            return AppError(
-                code="MLFLOW_PREFLIGHT_SETUP_FAILED",
-                message=(
+            raise ConfigInvalidError(
+                detail=(
                     "MLflow setup failed "
                     f"(effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
                     f"raw_local_tracking_uri={raw_local_tracking_uri})"
                 ),
-                details={
+                context={
+                    "legacy_code": "MLFLOW_PREFLIGHT_SETUP_FAILED",
                     "effective_uri": tracking_uri,
                     "raw_tracking_uri": raw_tracking_uri,
                     "raw_local_tracking_uri": raw_local_tracking_uri,
@@ -282,24 +304,26 @@ class MLflowAttemptManager:
             )
         if not self._manager.check_mlflow_connectivity():
             gateway_error = self._manager.get_last_connectivity_error()
-            error_code = gateway_error.code if gateway_error is not None else "MLFLOW_PREFLIGHT_UNREACHABLE"
+            error_code, gateway_error_dict, gateway_summary = _summarise_gateway_error(
+                gateway_error
+            )
             error_message = (
                 f"MLflow not reachable (effective_uri={tracking_uri}, raw_tracking_uri={raw_tracking_uri}, "
                 f"raw_local_tracking_uri={raw_local_tracking_uri})"
             )
-            if gateway_error is not None:
-                error_message = f"{error_message}: {gateway_error.message}"
-            return AppError(
-                code=error_code,
-                message=error_message,
-                details={
+            if gateway_summary is not None:
+                error_message = f"{error_message}: {gateway_summary}"
+            raise ProviderUnavailableError(
+                detail=error_message,
+                context={
+                    "legacy_code": error_code,
                     "effective_uri": tracking_uri,
                     "raw_tracking_uri": raw_tracking_uri,
                     "raw_local_tracking_uri": raw_local_tracking_uri,
-                    "gateway_error": gateway_error.to_log_dict() if gateway_error is not None else None,
+                    "gateway_error": gateway_error_dict,
                 },
+                cause=gateway_error if isinstance(gateway_error, Exception) else None,
             )
-        return None
 
     def log_config_artifact(self) -> None:
         """Log the pipeline config file as an MLflow artifact if present."""
@@ -380,8 +404,14 @@ class MLflowAttemptManager:
             self._manager.cleanup()
 
 
-class MLflowManagerNotInitializedError(RuntimeError):
+class MLflowManagerNotInitializedError(InternalError):
     """Raised when an operation needs a ready MLflowManager but none is bootstrapped.
+
+    Phase C: inherits from the shared typed :class:`InternalError`
+    (500, ``INTERNAL_ERROR``) so the RFC 9457 problem+json contract
+    converts it without an ad-hoc adapter. This is the catch-all 500
+    bucket -- a true server-side defect (the manager should have been
+    bootstrapped before any caller asks for it).
 
     Prefer this over ``assert`` — asserts are disabled under ``python -O`` and
     would silently degrade to opaque AttributeError in production.
@@ -412,6 +442,43 @@ def _stringify_tag_value(value: object) -> str:
     if len(s) > _MLFLOW_TAG_VALUE_MAX_CHARS:
         return s[:_MLFLOW_TAG_VALUE_MAX_CHARS] + "…"
     return s
+
+
+def _summarise_gateway_error(
+    gateway_error: RyotenkAIError | None,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Summarise the gateway's stored typed error for diagnostics.
+
+    Phase A2 Batch 5 migrated the gateway to typed
+    :class:`RyotenkAIError` instances (e.g.
+    :class:`ProviderUnavailableError`). Batch 15.5 drops the legacy
+    ``AppError`` duck-type arm — the gateway path is fully typed now.
+
+    Returns ``(code, details_dict, summary_str)`` where:
+
+    * ``code`` — the granular ``mlflow_probe_reason`` (if present in the
+      typed exception's ``context``), else the typed exception's
+      ``ErrorCode.value``, falling back to ``"MLFLOW_PREFLIGHT_UNREACHABLE"``.
+    * ``details_dict`` — JSON-friendly snapshot for ``context["gateway_error"]``.
+    * ``summary_str`` — one-line human description appended to the raised
+      ``ProviderUnavailableError`` detail.
+    """
+    if gateway_error is None:
+        return "MLFLOW_PREFLIGHT_UNREACHABLE", None, None
+    # Typed :class:`RyotenkAIError` — prefer the carried
+    # ``mlflow_probe_reason`` (legacy ``MLFLOW_*`` discriminator) over the
+    # coarser ``ErrorCode`` so dashboards / tests pinned on the granular
+    # code keep working.
+    probe_reason = gateway_error.context.get("mlflow_probe_reason")
+    code = str(probe_reason) if probe_reason else gateway_error.code.value
+    summary = gateway_error.detail or gateway_error.title
+    details = {
+        "code": gateway_error.code.value,
+        "message": summary,
+        "context": dict(gateway_error.context),
+        "gateway_error_class": type(gateway_error).__name__,
+    }
+    return code, details, summary
 
 
 __all__ = [

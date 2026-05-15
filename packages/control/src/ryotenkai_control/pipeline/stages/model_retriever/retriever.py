@@ -15,8 +15,11 @@ from typing import TYPE_CHECKING, Any
 from ryotenkai_control.pipeline.stages.model_retriever.constants import MR_SSH_PORT_DEFAULT
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_shared.errors import (
+    ModelLoadFailedError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import AppError, Err, ModelError, Ok, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from ryotenkai_control.pipeline.stages.model_retriever.hf_uploader import HFModelUploader
@@ -160,8 +163,16 @@ class ModelRetriever(PipelineStage):
     # Stage entry point
     # ------------------------------------------------------------------
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
-        """Retrieve model and clean up."""
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Retrieve model and clean up.
+
+        Returns:
+            Updated pipeline context dict on success.
+
+        Raises:
+            ModelLoadFailedError / HFAuthFailedError / HFNotFoundError:
+                per failure mode in HF upload / local download.
+        """
         deployer_context = context.get(StageNames.GPU_DEPLOYER, {})
 
         self._resource_id = deployer_context.get("resource_id")
@@ -176,11 +187,9 @@ class ModelRetriever(PipelineStage):
         provider_info = deployer_context.get("provider_info", {})
 
         if not ssh_host:
-            return Err(
-                ModelError(
-                    message="No SSH connection info found in context (GPU Deployer stage may have failed)",
-                    code="MISSING_SSH_INFO",
-                )
+            raise ModelLoadFailedError(
+                detail="No SSH connection info found in context (GPU Deployer stage may have failed)",
+                context={"legacy_code": "MISSING_SSH_INFO"},
             )
 
         logger.info(
@@ -211,20 +220,22 @@ class ModelRetriever(PipelineStage):
             except Exception as e:
                 logger.debug(f"[RETRIEVER] Failed to close SSH ControlMaster: {e}")
 
-    def _execute_retrieval(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
-        """Run model retrieval logic (HF upload + optional local download)."""
+    def _execute_retrieval(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Run model retrieval logic (HF upload + optional local download).
+
+        Raises:
+            ModelLoadFailedError: when both HF upload and local download fail,
+                or the model is too large to fall back to local.
+        """
         local_model_path = None
         hf_uploaded = False
 
         model_size_mb: float | None = None
-        size_result = self._get_model_size()
-        if size_result.is_success():
-            size_value = size_result.unwrap()  # type: ignore[union-attr]
-            model_size_mb = float(size_value) if size_value is not None else None
+        try:
+            model_size_mb = float(self._get_model_size())
             if model_size_mb is not None:
                 logger.info(f"Model size: {model_size_mb:.1f} MB")
-        else:
-            size_err = size_result.unwrap_err()  # type: ignore[union-attr]
+        except RyotenkAIError as size_err:
             logger.warning(f"Model size check unavailable: {size_err}. Proceeding with download.")
 
         upload_duration = 0.0
@@ -235,18 +246,18 @@ class ModelRetriever(PipelineStage):
                 self._callbacks.on_hf_upload_started(hf_repo_id_str)
             upload_start = time.time()
             try:
-                upload_result = self._upload_to_hf_from_remote(context=context)
-            except TypeError:
-                upload_result = self._upload_to_hf_from_remote()
-            upload_duration = time.time() - upload_start
-            if upload_result.is_success():
+                try:
+                    self._upload_to_hf_from_remote(context=context)
+                except TypeError:
+                    self._upload_to_hf_from_remote()
+                upload_duration = time.time() - upload_start
                 logger.info(f"Model uploaded to HF Hub: {hf_repo_id_str} ({upload_duration:.1f}s)")
                 hf_uploaded = True
                 if self._callbacks.on_hf_upload_completed:
                     self._callbacks.on_hf_upload_completed(hf_repo_id_str, upload_duration)
-            else:
-                err_msg_raw = upload_result.unwrap_err()  # type: ignore[union-attr]
-                err_msg = str(err_msg_raw) if err_msg_raw is not None else "Unknown error"
+            except RyotenkAIError as upload_exc:
+                upload_duration = time.time() - upload_start
+                err_msg = upload_exc.detail or str(upload_exc)
                 logger.warning(f"HF upload failed: {err_msg}")
                 if self._callbacks.on_hf_upload_failed:
                     self._callbacks.on_hf_upload_failed(hf_repo_id_str, err_msg)
@@ -261,40 +272,39 @@ class ModelRetriever(PipelineStage):
 
             if model_size_mb is not None and model_size_mb > max_size_mb:
                 logger.error(f"Model too large ({model_size_mb:.1f}MB > {max_size_mb}MB)")
-                return Err(
-                    ModelError(
-                        message=(
-                            f"Model retrieval failed: HF upload failed, "
-                            f"model too large for local download ({model_size_mb:.1f}MB > {max_size_mb}MB). "
-                            "TODO: Add backup storage support."
-                        ),
-                        code="MODEL_TOO_LARGE_FOR_LOCAL",
-                        details={"model_size_mb": model_size_mb, "max_size_mb": max_size_mb},
-                    )
+                raise ModelLoadFailedError(
+                    detail=(
+                        f"Model retrieval failed: HF upload failed, "
+                        f"model too large for local download "
+                        f"({model_size_mb:.1f}MB > {max_size_mb}MB). "
+                        "TODO: Add backup storage support."
+                    ),
+                    context={
+                        "legacy_code": "MODEL_TOO_LARGE_FOR_LOCAL",
+                        "model_size_mb": model_size_mb,
+                        "max_size_mb": max_size_mb,
+                    },
                 )
 
             size_info = f"{model_size_mb:.1f}MB" if model_size_mb is not None else "size unknown"
             logger.info(f"Fallback: Downloading locally ({size_info})...")
             if self._callbacks.on_local_download_started:
                 self._callbacks.on_local_download_started(model_size_mb or 0.0)
-            download_result = self._download_model()
-            if download_result.is_failure():
-                err_msg_raw = download_result.unwrap_err()  # type: ignore[union-attr]
-                err_msg = str(err_msg_raw) if err_msg_raw is not None else "Unknown error"
-                logger.error(f"Download failed: {err_msg}")
-                if self._callbacks.on_local_download_failed:
-                    self._callbacks.on_local_download_failed(err_msg)
-                return Err(
-                    ModelError(
-                        message="Model retrieval failed: HF upload failed, local download failed",
-                        code="MODEL_RETRIEVAL_FAILED",
-                    )
-                )
-            else:
-                local_model_path = download_result.unwrap()
+            try:
+                local_model_path = self._download_model()
                 logger.info(f"Model saved locally: {local_model_path}")
                 if self._callbacks.on_local_download_completed:
                     self._callbacks.on_local_download_completed(str(local_model_path))
+            except RyotenkAIError as dl_exc:
+                err_msg = dl_exc.detail or str(dl_exc)
+                logger.error(f"Download failed: {err_msg}")
+                if self._callbacks.on_local_download_failed:
+                    self._callbacks.on_local_download_failed(err_msg)
+                raise ModelLoadFailedError(
+                    detail="Model retrieval failed: HF upload failed, local download failed",
+                    context={"legacy_code": "MODEL_RETRIEVAL_FAILED"},
+                    cause=dl_exc,
+                ) from dl_exc
 
         # Phase 12.A.1 — best-effort buffered MLflow metrics replay.
         # Runs AFTER HF upload / local download (so adapters are safe)
@@ -323,18 +333,16 @@ class ModelRetriever(PipelineStage):
                 str(local_model_path) if local_model_path else None,
             )
 
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "local_model_path": str(local_model_path) if local_model_path else None,
-                    "hf_repo_id": self.hf_repo_id if hf_uploaded else None,
-                    "hf_uploaded": hf_uploaded,
-                    "provider_name": self._provider_name,
-                    "model_size_mb": model_size_mb,
-                    "upload_duration_seconds": upload_duration if hf_uploaded else None,
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "local_model_path": str(local_model_path) if local_model_path else None,
+                "hf_repo_id": self.hf_repo_id if hf_uploaded else None,
+                "hf_uploaded": hf_uploaded,
+                "provider_name": self._provider_name,
+                "model_size_mb": model_size_mb,
+                "upload_duration_seconds": upload_duration if hf_uploaded else None,
+            },
         )
     # ------------------------------------------------------------------
     # Phase 12.A.1 — metrics buffer retrieval + replay
@@ -526,7 +534,7 @@ class ModelRetriever(PipelineStage):
 
     def _execute_mock(
         self, context: dict[str, Any], resource_id: str
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Mock execution for testing without real model retrieval."""
         logger.info(f"[MOCK] Downloading model from {self._provider_name}: {resource_id}")
         time.sleep(1)
@@ -541,16 +549,14 @@ class ModelRetriever(PipelineStage):
         logger.info(f"[MOCK] Model uploaded to HF Hub: {self.hf_repo_id}")
         logger.info(f"[MOCK] Cleanup handled by {self._provider_name} provider")
 
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "local_model_path": str(mock_model_path),
-                    "hf_repo_id": self.hf_repo_id,
-                    "provider_name": self._provider_name,
-                    "mock": True,
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "local_model_path": str(mock_model_path),
+                "hf_repo_id": self.hf_repo_id,
+                "provider_name": self._provider_name,
+                "mock": True,
+            },
         )
 
     # ------------------------------------------------------------------
@@ -560,18 +566,18 @@ class ModelRetriever(PipelineStage):
     def _upload_to_hf_from_remote(
         self,
         context: dict[str, Any] | None = None,
-    ) -> Result[None, ModelError]:
+    ) -> None:
         """Backward-compat delegate → HFModelUploader.upload_to_hf_from_remote.
 
         Calls self._ensure_hf_repo_ready() first so tests can mock it.
         Generates the model card here so test mocks bypass card generation.
-        Wraps in try/except to satisfy tests expecting "direct upload failed" on exceptions.
+
+        Raises:
+            HFAuthFailedError / HFNotFoundError / ModelLoadFailedError per failure mode.
         """
         try:
             # Repo ready check goes through the retriever method so tests can mock it
-            ready_result = self._ensure_hf_repo_ready()
-            if ready_result.is_failure():
-                return Err(ready_result.unwrap_err())  # type: ignore[union-attr]
+            self._ensure_hf_repo_ready()
 
             remote_output_dir = f"{self._workspace_path}/output"
             phase_result = self._uploader.extract_phase_metrics(
@@ -592,28 +598,42 @@ class ModelRetriever(PipelineStage):
                 provider_training_cfg=self._provider_training_cfg,
             )
             # Bypass internal repo-ready check since we already ran it above
-            return self._uploader._upload_files(
+            self._uploader._upload_files(
                 context=context, card_content=card_content
             )
+            return None
+        except RyotenkAIError:
+            raise
         except Exception as e:
-            return Err(
-                ModelError(
-                    message=f"Direct upload failed: {e!s}",
-                    code="HF_UPLOAD_FAILED",
-                )
-            )
+            raise ModelLoadFailedError(
+                detail=f"Direct upload failed: {e!s}",
+                context={"legacy_code": "HF_UPLOAD_FAILED"},
+                cause=e,
+            ) from e
 
-    def _download_model(self) -> Result[Path, ModelError]:
-        """Backward-compat delegate → HFModelUploader.download_model."""
+    def _download_model(self) -> Path:
+        """Backward-compat delegate → HFModelUploader.download_model.
+
+        Raises:
+            ModelLoadFailedError: on download failure.
+        """
         return self._uploader.download_model()
 
-    def _get_model_size(self) -> Result[float, ModelError]:
-        """Backward-compat delegate → HFModelUploader.get_model_size."""
+    def _get_model_size(self) -> float:
+        """Backward-compat delegate → HFModelUploader.get_model_size.
+
+        Raises:
+            ModelLoadFailedError: when size probe fails.
+        """
         return self._uploader.get_model_size()
 
-    def _ensure_hf_repo_ready(self) -> Result[None, ModelError]:
-        """Backward-compat delegate → HFModelUploader.ensure_hf_repo_ready."""
-        return self._uploader.ensure_hf_repo_ready()
+    def _ensure_hf_repo_ready(self) -> None:
+        """Backward-compat delegate → HFModelUploader.ensure_hf_repo_ready.
+
+        Raises:
+            HFAuthFailedError / HFNotFoundError / ModelLoadFailedError per failure mode.
+        """
+        self._uploader.ensure_hf_repo_ready()
 
     def _resolve_checkpoint(self, remote_output_dir: str) -> str:
         """Backward-compat delegate → HFModelUploader.resolve_checkpoint."""

@@ -35,12 +35,12 @@ from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import Co
 from ryotenkai_control.pipeline.stages.managers.deployment.dependency_installer import DependencyInstaller
 from ryotenkai_control.pipeline.stages.managers.deployment.file_uploader import FileUploader
 from ryotenkai_control.pipeline.stages.managers.deployment.training_launcher import TrainingLauncher
+from ryotenkai_shared.errors import PipelineStageFailedError, RyotenkAIError
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from ryotenkai_providers.training.interfaces import IGPUProvider
     from ryotenkai_shared.config import PipelineConfig, Secrets
-    from ryotenkai_shared.utils.result import AppError, Result
     from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
@@ -91,30 +91,73 @@ class TrainingDeploymentManager:
             component.set_workspace(workspace_path)
         logger.debug(f"[DEPLOY] Workspace: {self._workspace}")
 
-    def deploy_code(self, ssh_client: SSHClient) -> Result[None, AppError]:
+    def deploy_code(self, ssh_client: SSHClient) -> None:
         """Pre-launch SSH rsync of the four pod-relevant
         ``ryotenkai_*`` packages. Replaces the legacy ``deploy_files``
         step that used to chain config/dataset upload before code
         sync — files now upload via HTTP after uvicorn is up
-        (``start_training`` orchestrates that)."""
-        return self._code_syncer.sync(ssh_client)
+        (``start_training`` orchestrates that).
 
-    def install_dependencies(self, ssh_client: SSHClient) -> Result[None, AppError]:
-        """Verify training-runtime dependencies on the remote target."""
-        return self._deps_installer.install(ssh_client)
+        Phase A2 Batch 9 (2026-05-15): migrated from
+        ``Result[None, AppError]`` to raise-based. Returns ``None`` on
+        success; propagates :class:`SSHTransferFailedError` (or
+        :class:`PipelineStageFailedError` for unexpected failures)
+        from :meth:`CodeSyncer.sync`.
+        """
+        try:
+            self._code_syncer.sync(ssh_client)
+        except RyotenkAIError:
+            raise
+        except Exception as exc:
+            raise PipelineStageFailedError(
+                detail=f"code sync failed: {exc}",
+                context={"reason": "CODE_SYNC_FAILED"},
+                cause=exc,
+            ) from exc
+
+    def install_dependencies(self, ssh_client: SSHClient) -> None:
+        """Verify training-runtime dependencies on the remote target.
+
+        Phase A2 Batch 9: returns ``None`` on success; propagates
+        typed exceptions from :meth:`DependencyInstaller.install`.
+        """
+        try:
+            self._deps_installer.install(ssh_client)
+        except RyotenkAIError:
+            raise
+        except Exception as exc:
+            raise PipelineStageFailedError(
+                detail=f"dependency install failed: {exc}",
+                context={"reason": "DEPS_INSTALL_FAILED"},
+                cause=exc,
+            ) from exc
 
     def start_training(
         self,
         ssh_client: SSHClient,
         context: dict[str, Any],
         provider: IGPUProvider | None = None,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Spawn the training process on the remote target.
 
         Now also performs HTTP file upload between the /healthz wait
         and POST /jobs (Phase 3 PR-3.3). Delegates to TrainingLauncher.
+
+        Phase A2 Batch 9: returns the launcher's metadata dict on
+        success; propagates typed exceptions from
+        :meth:`TrainingLauncher.start_training` (see its docstring for
+        the failure-mode → exception type table).
         """
-        return self._launcher.start_training(ssh_client, context, provider)
+        try:
+            return self._launcher.start_training(ssh_client, context, provider)
+        except RyotenkAIError:
+            raise
+        except Exception as exc:
+            raise PipelineStageFailedError(
+                detail=f"training start failed: {exc}",
+                context={"reason": "TRAINING_START_FAILED"},
+                cause=exc,
+            ) from exc
 
 
 __all__ = ["TrainingDeploymentManager"]

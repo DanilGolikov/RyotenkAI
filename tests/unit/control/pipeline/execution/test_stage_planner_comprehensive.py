@@ -161,7 +161,7 @@ class TestNegative:
             context={StageNames.GPU_DEPLOYER: {"ssh_host": "h", "ssh_port": 22}},
         )
         assert err is not None
-        assert err.code == "MISSING_TRAINING_MONITOR_PREREQUISITES"
+        assert err.context["legacy_code"] == "MISSING_TRAINING_MONITOR_PREREQUISITES"
 
     def test_prereq_training_monitor_non_dict_gpu_context(self, planner: StagePlanner) -> None:
         err = planner.validate_stage_prerequisites(
@@ -177,7 +177,7 @@ class TestNegative:
             start_stage_name=StageNames.INFERENCE_DEPLOYER,
             context={StageNames.MODEL_RETRIEVER: {}},
         )
-        assert err.code == "MISSING_INFERENCE_PREREQUISITES"
+        assert err.context["legacy_code"] == "MISSING_INFERENCE_PREREQUISITES"
 
 
 # =============================================================================
@@ -328,7 +328,7 @@ class TestDependencyErrors:
                 context={StageNames.INFERENCE_DEPLOYER: {"endpoint_url": "http://x"}},
             )
         assert err is not None
-        assert err.code == "INFERENCE_RUNTIME_NOT_HEALTHY"
+        assert err.context["legacy_code"] == "INFERENCE_RUNTIME_NOT_HEALTHY"
 
 
 # =============================================================================

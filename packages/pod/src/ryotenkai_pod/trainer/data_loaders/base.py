@@ -14,14 +14,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_LOCAL
+from ryotenkai_shared.errors import DatasetLoadFailedError
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
-    from ryotenkai_shared.utils.result import DataLoaderError, Result
 
 
 class BaseDatasetLoader(ABC):
@@ -111,7 +110,7 @@ class BaseDatasetLoader(ABC):
     def load_for_phase(
         self,
         phase: StrategyPhaseConfig,
-    ) -> Result[Dataset, DataLoaderError]:
+    ) -> Dataset:
         """
         Load dataset for a training phase.
 
@@ -121,15 +120,15 @@ class BaseDatasetLoader(ABC):
             phase: Strategy phase configuration with dataset reference
 
         Returns:
-            Result with loaded dataset or DataLoaderError
+            Loaded dataset.
 
-        Example:
-            result = loader.load_for_phase(phase_config)
-            if result.is_success():
-                dataset = result.unwrap()
+        Raises:
+            DatasetLoadFailedError: on any loader failure (missing
+                dataset config, unsupported source kind, file not found,
+                or underlying loader exception). Legacy error codes are
+                preserved on ``context["legacy_code"]`` for back-compat
+                triage.
         """
-        from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
-
         from ryotenkai_shared.config import DatasetSourceLocal
 
         try:
@@ -137,14 +136,15 @@ class BaseDatasetLoader(ABC):
             dataset_config = self.config.get_dataset_for_strategy(phase)
             source = dataset_config.source
             if not isinstance(source, DatasetSourceLocal):
-                return Err(
-                    DataLoaderError(
-                        message=(
-                            "BaseDatasetLoader.load_for_phase supports only local datasets "
-                            f"(got source.kind={source.kind!r}); use MultiSourceDatasetLoader"
-                        ),
-                        code="DATA_LOADER_LOCAL_ONLY",
-                    )
+                raise DatasetLoadFailedError(
+                    detail=(
+                        "BaseDatasetLoader.load_for_phase supports only local datasets "
+                        f"(got source.kind={source.kind!r}); use MultiSourceDatasetLoader"
+                    ),
+                    context={
+                        "legacy_code": "DATA_LOADER_LOCAL_ONLY",
+                        "source_kind": source.kind,
+                    },
                 )
 
             train_path = source.local_paths.train
@@ -162,24 +162,46 @@ class BaseDatasetLoader(ABC):
             if not self.validate_source(train_path_str):
                 error_msg = f"Dataset source not found: {train_path} (resolved: {train_path_str})"
                 logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-                return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_FILE_NOT_FOUND"))
+                raise DatasetLoadFailedError(
+                    detail=error_msg,
+                    context={
+                        "legacy_code": "DATA_LOADER_FILE_NOT_FOUND",
+                        "train_path": train_path,
+                        "resolved": train_path_str,
+                    },
+                )
 
             # Load dataset
             logger.info(f"   Loading dataset: {train_path} (resolved: {train_path_str})")
             dataset = self.load(train_path_str, split="train", max_samples=max_samples)
 
             logger.debug(f"[{self._log_prefix}:LOADED] samples={len(dataset)}")
-            return Ok(dataset)
+            return dataset
+
+        except DatasetLoadFailedError:
+            # Already-typed exception (own raise above) — surface as-is.
+            raise
 
         except KeyError as e:
             error_msg = f"Dataset '{phase.dataset}' not found in config: {e}"
             logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_DATASET_NOT_FOUND"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "DATA_LOADER_DATASET_NOT_FOUND",
+                    "phase_dataset": getattr(phase, "dataset", None),
+                },
+                cause=e,
+            )
 
         except Exception as e:
             error_msg = f"Failed to load dataset: {e}"
             logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_LOAD_FAILED"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={"legacy_code": "DATA_LOADER_LOAD_FAILED"},
+                cause=e,
+            )
 
     @staticmethod
     def _apply_max_samples(

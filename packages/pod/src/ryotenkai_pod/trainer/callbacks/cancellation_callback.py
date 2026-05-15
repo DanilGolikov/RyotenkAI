@@ -9,8 +9,9 @@ sees the flag and keeps stepping until the orchestrator-level
    after ``--grace`` seconds; trainer needs to checkpoint + exit
    cleanly *before* that).
 2. Closes nested MLflow runs as ``FAILED`` instead of ``KILLED``
-   because ``run_result.is_failure()`` doesn't distinguish "trainer
-   never saw the signal" from "trainer crashed".
+   because a raised :class:`RyotenkAIError` (post-A2 migration) does
+   not distinguish "trainer never saw the signal" from "trainer
+   crashed".
 3. Loses any metrics buffered by ``ResilientMLflowTransport`` during
    an MLflow flap — those records sit on the pod's disk until the
    next live ``log_metric`` arrives, which after stop never happens.

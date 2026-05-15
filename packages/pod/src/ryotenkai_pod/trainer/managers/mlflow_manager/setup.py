@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.infrastructure.mlflow.environment import MLflowEnvironment
 from ryotenkai_shared.infrastructure.mlflow.gateway import MLflowGateway, NullMLflowGateway
 from ryotenkai_shared.infrastructure.mlflow.uri_resolver import resolve_mlflow_uris
@@ -185,7 +186,7 @@ class MLflowSetupMixin:
     def get_raw_local_tracking_uri(self) -> str | None:
         return getattr(self._mlflow_config, "local_tracking_uri", None)  # type: ignore[attr-defined]
 
-    def get_last_connectivity_error(self) -> Any:
+    def get_last_connectivity_error(self) -> RyotenkAIError | None:
         return self._gateway.last_connectivity_error  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------

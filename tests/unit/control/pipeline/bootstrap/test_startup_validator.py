@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ryotenkai_control.pipeline.bootstrap import StartupValidationError, StartupValidator
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import StrategyChainInvalidError
 
 
 def _mk_config(
@@ -81,7 +81,7 @@ class TestPositive:
         cfg = _mk_config(strategies=strategies)
         with patch(
             "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
-            return_value=Ok(None),
+            return_value=None,
         ):
             StartupValidator.check_strategy_chain(config=cfg)
 
@@ -109,7 +109,7 @@ class TestNegative:
         cfg = _mk_config(strategies=strategies)
         with patch(
             "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
-            return_value=Err("incompatible chain"),
+            side_effect=StrategyChainInvalidError(detail="incompatible chain"),
         ), pytest.raises(StartupValidationError, match="Invalid strategy chain"):
             StartupValidator.check_strategy_chain(config=cfg)
 

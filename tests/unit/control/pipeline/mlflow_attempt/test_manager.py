@@ -126,39 +126,77 @@ def test_get_run_id_none_when_both_empty(manager_under_test: MLflowAttemptManage
 # -----------------------------------------------------------------------------
 
 
-def test_preflight_returns_setup_failed_when_no_manager(manager_under_test: MLflowAttemptManager) -> None:
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "MLFLOW_PREFLIGHT_SETUP_FAILED"
+def test_preflight_raises_setup_failed_when_no_manager(manager_under_test: MLflowAttemptManager) -> None:
+    from ryotenkai_shared.errors import ConfigInvalidError
+
+    with pytest.raises(ConfigInvalidError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_SETUP_FAILED"
 
 
-def test_preflight_returns_unreachable_when_connectivity_fails(manager_under_test: MLflowAttemptManager) -> None:
+def test_preflight_raises_unreachable_when_connectivity_fails(manager_under_test: MLflowAttemptManager) -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     mgr = MagicMock()
     mgr.is_active = True
     mgr.get_runtime_tracking_uri.return_value = "http://fake"
     mgr.check_mlflow_connectivity.return_value = False
     mgr.get_last_connectivity_error.return_value = None
     manager_under_test._manager = mgr
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "MLFLOW_PREFLIGHT_UNREACHABLE"
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_UNREACHABLE"
 
 
 def test_preflight_surfaces_gateway_error_code(manager_under_test: MLflowAttemptManager) -> None:
+    """Phase A2 Batch 7: ``ensure_preflight`` raises typed exceptions.
+
+    The granular MLFLOW_* identifier (carried under
+    ``context["mlflow_probe_reason"]`` on the gateway error) is
+    surfaced under ``context["legacy_code"]`` on the raised
+    :class:`ProviderUnavailableError`.
+    """
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     mgr = MagicMock()
     mgr.is_active = True
     mgr.get_runtime_tracking_uri.return_value = "http://fake"
     mgr.check_mlflow_connectivity.return_value = False
-    gateway_err = MagicMock()
-    gateway_err.code = "GW_SPECIFIC"
-    gateway_err.message = "specific reason"
-    gateway_err.to_log_dict.return_value = {"code": "GW_SPECIFIC"}
+    gateway_err = ProviderUnavailableError(
+        detail="specific reason",
+        context={"mlflow_probe_reason": "MLFLOW_PREFLIGHT_HTTP_ERROR"},
+    )
     mgr.get_last_connectivity_error.return_value = gateway_err
     manager_under_test._manager = mgr
-    err = manager_under_test.ensure_preflight()
-    assert err is not None
-    assert err.code == "GW_SPECIFIC"
-    assert "specific reason" in err.message
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    assert excinfo.value.context.get("legacy_code") == "MLFLOW_PREFLIGHT_HTTP_ERROR"
+    assert "specific reason" in (excinfo.value.detail or "")
+    assert (
+        excinfo.value.context["gateway_error"]["gateway_error_class"]
+        == "ProviderUnavailableError"
+    )
+
+
+def test_preflight_surfaces_typed_specific_code_from_gateway(manager_under_test: MLflowAttemptManager) -> None:
+    """Phase A2 Batch 15.5: gateway path is fully typed. A typed gateway
+    error WITHOUT ``mlflow_probe_reason`` falls back to its
+    ``ErrorCode.value`` for the legacy_code surface."""
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
+    mgr = MagicMock()
+    mgr.is_active = True
+    mgr.get_runtime_tracking_uri.return_value = "http://fake"
+    mgr.check_mlflow_connectivity.return_value = False
+    mgr.get_last_connectivity_error.return_value = ProviderUnavailableError(
+        detail="legacy reason",
+    )
+    manager_under_test._manager = mgr
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        manager_under_test.ensure_preflight()
+    # No mlflow_probe_reason → wire code surfaces as legacy_code
+    assert excinfo.value.context.get("legacy_code") == "PROVIDER_UNAVAILABLE"
+    assert "legacy reason" in (excinfo.value.detail or "")
 
 
 def test_preflight_returns_none_when_healthy(manager_under_test: MLflowAttemptManager) -> None:

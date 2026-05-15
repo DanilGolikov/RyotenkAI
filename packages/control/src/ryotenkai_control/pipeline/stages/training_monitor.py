@@ -16,7 +16,10 @@ Public surface preserved 1:1 so :mod:`src.pipeline.orchestrator`
 keeps working without changes:
 - :class:`TrainingMonitor` constructor signature
 - :class:`TrainingMonitorEventCallbacks` dataclass
-- ``execute(context) -> Result[dict, AppError]`` return shape
+
+Return shape (post Phase A2 Batch 10): ``execute(context) -> dict``;
+raises typed :class:`RyotenkAIError` (``TrainingFailedError`` /
+``InternalError``) on failure.
 
 Async strategy: same as the launcher — sync facade wrapping a
 ``asyncio.run`` islet around the WebSocket consumer.
@@ -44,8 +47,12 @@ from ryotenkai_shared.constants import (
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
+from ryotenkai_shared.errors import (
+    InternalError,
+    RyotenkAIError,
+    TrainingFailedError,
+)
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
-from ryotenkai_shared.utils.result import AppError, Err, Ok, Result, TrainingError
 # Phase 3 PR-3.2 (transport-unification-v2): SSHClient removed from
 # this module. Training monitor's runtime path is HTTP-only after
 # PR-2.3 migrated LogManager → LogFetcher; the third tuple slot of
@@ -135,9 +142,9 @@ class TrainingMonitor(PipelineStage):
     runner's event stream until the FSM lands in a terminal state.
 
     Terminal-state mapping (runner FSM → monitor outcome):
-    - ``completed`` → ``Ok({status: "completed", duration_seconds})``
-    - ``failed`` → ``Err(TrainingError("...", code="TRAINING_FAILED"))``
-    - ``cancelled`` → ``Err(TrainingError("...", code="TRAINING_CANCELLED"))``
+    - ``completed`` → returns ``{status: "completed", duration_seconds}``
+    - ``failed`` → raises :class:`TrainingFailedError` (legacy code ``TRAINING_FAILED``)
+    - ``cancelled`` → raises :class:`TrainingFailedError` (legacy code ``TRAINING_CANCELLED``)
 
     Tunnel lifecycle: closed in ``finally`` regardless of outcome —
     leaving ``ssh -L`` alive after the monitor exits would leak a
@@ -214,7 +221,7 @@ class TrainingMonitor(PipelineStage):
 
     # --- public entry point ---------------------------------------------
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """Subscribe to the runner's WebSocket; return on terminal state.
 
         The launcher contract guarantees ``context["job_client"]``,
@@ -222,6 +229,14 @@ class TrainingMonitor(PipelineStage):
         on success. If they're missing it means TrainingLauncher
         didn't run (or ran with the legacy flow), and we fail loud
         rather than silently mock-mode.
+
+        Returns:
+            Terminal-state dict (``status="completed"``, ``duration_seconds``,
+            etc.) on success.
+
+        Raises:
+            TrainingFailedError: any terminal non-success state from the runner.
+            InternalError: launcher wiring missing from the pipeline context.
         """
         # ---- mock fast-path (kept for in-process integration tests)
         deployer_context = context.get(StageNames.GPU_DEPLOYER, {})
@@ -232,7 +247,7 @@ class TrainingMonitor(PipelineStage):
                 self._callbacks.on_training_started()
             if self._callbacks.on_training_completed:
                 self._callbacks.on_training_completed(0.0)
-            return Ok({"status": "completed", "duration_seconds": 0.0, "mock": True})
+            return {"status": "completed", "duration_seconds": 0.0, "mock": True}
 
         # ---- real flow: pull the launcher-provided handles
         client: JobClient | None = context.get("job_client")
@@ -244,15 +259,13 @@ class TrainingMonitor(PipelineStage):
         self._tunnel = tunnel
         self._heartbeat_service = context.get("control_plane_heartbeat")
         if client is None or job_id is None:
-            return Err(
-                TrainingError(
-                    message=(
-                        "TrainingMonitor: context is missing job_client / "
-                        "job_id — TrainingLauncher must have run first "
-                        "(Phase 6.3a contract)."
-                    ),
-                    code="MONITOR_LAUNCHER_NOT_WIRED",
+            raise InternalError(
+                detail=(
+                    "TrainingMonitor: context is missing job_client / "
+                    "job_id — TrainingLauncher must have run first "
+                    "(Phase 6.3a contract)."
                 ),
+                context={"legacy_code": "MONITOR_LAUNCHER_NOT_WIRED"},
             )
 
         logger.info(f"[MONITOR] Subscribing to runner events for job {job_id!r}")
@@ -286,29 +299,30 @@ class TrainingMonitor(PipelineStage):
         # An exception escaping ``_watch`` propagates up the stack
         # cleanly — orchestrator's reverse-order cleanup() will still
         # tear down the captured handles.
-        watch_result = asyncio.run(
-            self._watch_and_download(client, job_id, self._log_manager, self._runner_log_manager),
-        )
-
-        # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
-        # terminal markers:
-        #
-        # * ``cancelled.marker`` (Phase 9.C) — written when the
-        #   CancellationCallback's 5-second flush deadline fires.
-        #   The runner SIGKILLed the trainer before HF MLflow
-        #   callback could close the run; MLflow shows RUNNING.
-        #   Reconcile to ``KILLED``.
-        # * ``completion.marker`` (Phase 11.A) — written on every
-        #   natural completion, regardless of flush outcome. If
-        #   Mac was asleep when HF MLflow callback ran, ``end_run``
-        #   timed out and the run is stuck in RUNNING. Reconcile
-        #   to ``FINISHED``.
-        #
-        # If both markers exist (rare race), cancellation wins —
-        # explicit user-stop overrides natural completion.
-        #
-        # Best-effort throughout: any failure logs and moves on.
-        self._reconcile_terminal_marker_if_present(context)
+        try:
+            watch_result = asyncio.run(
+                self._watch_and_download(client, job_id, self._log_manager, self._runner_log_manager),
+            )
+        finally:
+            # Phase 9.C / Phase 11.A — Mac-side reconciliation for both
+            # terminal markers:
+            #
+            # * ``cancelled.marker`` (Phase 9.C) — written when the
+            #   CancellationCallback's 5-second flush deadline fires.
+            #   The runner SIGKILLed the trainer before HF MLflow
+            #   callback could close the run; MLflow shows RUNNING.
+            #   Reconcile to ``KILLED``.
+            # * ``completion.marker`` (Phase 11.A) — written on every
+            #   natural completion, regardless of flush outcome. If
+            #   Mac was asleep when HF MLflow callback ran, ``end_run``
+            #   timed out and the run is stuck in RUNNING. Reconcile
+            #   to ``FINISHED``.
+            #
+            # If both markers exist (rare race), cancellation wins —
+            # explicit user-stop overrides natural completion.
+            #
+            # Best-effort throughout: any failure logs and moves on.
+            self._reconcile_terminal_marker_if_present(context)
 
         return watch_result
 
@@ -630,7 +644,7 @@ class TrainingMonitor(PipelineStage):
     def _recover_pod_if_needed(
         self,
         exc: JobClientError,
-    ) -> Result[dict[str, Any], AppError] | None:
+    ) -> RyotenkAIError | None:
         """Best-effort RunPod SDK wake-up for a stopped pod.
 
         When the WS subscription dies with :class:`JobClientError`,
@@ -643,14 +657,10 @@ class TrainingMonitor(PipelineStage):
 
         Returns:
             ``None`` — recovery did not apply (non-runpod / no
-              resource id / no SDK key), caller should fall through
-              to the original ``Err``.
-            ``Err`` — pod is in a terminal state or wake-up failed;
-              the caller should propagate this.
-            ``Err(MONITOR_POD_RECOVERED)`` — wake-up succeeded; the
-              monitor cannot itself rebuild the upstream tunnel +
-              JobClient (those belong to TrainingLauncher), so we
-              surface a clear actionable error instead of looping.
+              resource id / no SDK key); caller should raise its
+              original error.
+            :class:`RyotenkAIError` — pod was either terminal or
+              recovered; the caller should raise this directly.
 
         Capped at :data:`_RECOVERY_ATTEMPT_CAP` per stage execution to
         prevent a flapping pod from trapping us in a tight loop.
@@ -672,15 +682,13 @@ class TrainingMonitor(PipelineStage):
         if not isinstance(self._provider, IRecoveryProbeProvider):
             return None
         if self._recovery_attempts >= self._RECOVERY_ATTEMPT_CAP:
-            return Err(
-                TrainingError(
-                    message=(
-                        f"runner connection lost ({exc}); "
-                        "pod recovery exhausted after "
-                        f"{self._RECOVERY_ATTEMPT_CAP} attempts"
-                    ),
-                    code="MONITOR_RECOVERY_EXHAUSTED",
+            return TrainingFailedError(
+                detail=(
+                    f"runner connection lost ({exc}); "
+                    "pod recovery exhausted after "
+                    f"{self._RECOVERY_ATTEMPT_CAP} attempts"
                 ),
+                context={"legacy_code": "MONITOR_RECOVERY_EXHAUSTED"},
             )
         self._recovery_attempts += 1
 
@@ -690,39 +698,39 @@ class TrainingMonitor(PipelineStage):
             exc,
             self._resource_id,
         )
-        recovery_result = self._provider.attempt_recovery(
-            resource_id=self._resource_id,
-        )
-        if recovery_result.is_err():
-            err = recovery_result.unwrap_err()
-            # Map provider error codes to monitor codes for backwards
-            # compatibility of operator-facing error vocabulary.
+        try:
+            status = self._provider.attempt_recovery(
+                resource_id=self._resource_id,
+            )
+        except RyotenkAIError as recovery_err:
+            # Map provider context.legacy_code values back to the
+            # monitor's operator-facing error vocabulary for
+            # back-compatibility.
             code_map = {
                 "POD_PROBE_FAILED": "MONITOR_POD_PROBE_FAILED",
                 "POD_TERMINAL": "MONITOR_POD_TERMINATED",
                 "POD_WAKE_FAILED": "MONITOR_POD_WAKE_FAILED",
             }
-            return Err(
-                TrainingError(
-                    message=err.message,
-                    code=code_map.get(err.code or "", "MONITOR_RECOVERY_FAILED"),
-                ),
+            provider_code = (recovery_err.context or {}).get("legacy_code", "")
+            return TrainingFailedError(
+                detail=recovery_err.detail or str(recovery_err),
+                context={
+                    "legacy_code": code_map.get(provider_code, "MONITOR_RECOVERY_FAILED"),
+                },
+                cause=recovery_err,
             )
-        status = recovery_result.unwrap()
         if status == ProviderStatus.CONNECTED:
             # Pod was already running; WS failure unrelated. Caller
             # surfaces the original error.
             return None
         # Pod was stopped, woke back up — pipeline restart needed.
-        return Err(
-            TrainingError(
-                message=(
-                    f"pod {self._resource_id} was stopped (likely "
-                    "laptop sleep); woke it back up — restart the "
-                    "pipeline to resume training"
-                ),
-                code="MONITOR_POD_RECOVERED",
+        return TrainingFailedError(
+            detail=(
+                f"pod {self._resource_id} was stopped (likely "
+                "laptop sleep); woke it back up — restart the "
+                "pipeline to resume training"
             ),
+            context={"legacy_code": "MONITOR_POD_RECOVERED"},
         )
 
     # --- post-mortem diagnostics ---------------------------------------
@@ -921,7 +929,7 @@ class TrainingMonitor(PipelineStage):
         job_id: str,
         log_manager: LogFetcher | None,
         runner_log_manager: LogFetcher | None = None,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Run :meth:`_watch` with a parallel periodic-download task.
 
         The downloader is spawned only when the trainer
@@ -978,13 +986,12 @@ class TrainingMonitor(PipelineStage):
         self,
         client: JobClient,
         job_id: str,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Iterate over WS events; dispatch callbacks; return on terminal.
 
         Reconnect / replay-truncation are handled by
         :meth:`JobClient.subscribe_events` itself; we only catch the
-        exit conditions and translate them to the monitor's
-        ``Result`` shape.
+        exit conditions and translate them to dict (success) or raise.
         """
         try:
             async for event in client.subscribe_events(
@@ -1003,19 +1010,19 @@ class TrainingMonitor(PipelineStage):
             # Stream ended cleanly without a terminal kind — treat as
             # a server-side bug; the runner is supposed to close only
             # on FSM terminal.
-            return Err(
-                TrainingError(
-                    message="runner closed the event stream before reaching terminal state",
-                    code="MONITOR_STREAM_EOF",
-                ),
+            raise TrainingFailedError(
+                detail="runner closed the event stream before reaching terminal state",
+                context={"legacy_code": "MONITOR_STREAM_EOF"},
             )
-        except JobNotFoundError:
-            return Err(
-                TrainingError(
-                    message=f"runner reports unknown job {job_id!r} " "(pod restart wiped state?)",
-                    code="MONITOR_JOB_NOT_FOUND",
+        except JobNotFoundError as exc:
+            raise TrainingFailedError(
+                detail=(
+                    f"runner reports unknown job {job_id!r} "
+                    "(pod restart wiped state?)"
                 ),
-            )
+                context={"legacy_code": "MONITOR_JOB_NOT_FOUND"},
+                cause=exc,
+            ) from exc
         except ReplayTruncatedError:
             # Buffer rolled past the offset we asked for. Refetch the
             # current snapshot, treat it as authoritative, and call
@@ -1025,24 +1032,22 @@ class TrainingMonitor(PipelineStage):
         except JobClientError as exc:
             recovery = self._recover_pod_if_needed(exc)
             if recovery is not None:
-                # Recovery attempted — return a structured Result the
-                # caller (orchestrator) can use to decide whether to
-                # restart the stage. We deliberately do NOT loop and
-                # rebuild handles inline: that requires re-running the
-                # launcher (tunnel+client+job_id), which is the
-                # orchestrator's job.
-                return recovery
-            return Err(
-                TrainingError(
-                    message=f"runner client error: {exc}",
-                    code="MONITOR_CLIENT_ERROR",
-                ),
-            )
+                # Recovery produced a typed exception — raise it.
+                # We deliberately do NOT loop and rebuild handles
+                # inline: that requires re-running the launcher
+                # (tunnel+client+job_id), which is the orchestrator's
+                # job.
+                raise recovery
+            raise TrainingFailedError(
+                detail=f"runner client error: {exc}",
+                context={"legacy_code": "MONITOR_CLIENT_ERROR"},
+                cause=exc,
+            ) from exc
 
     def _dispatch_event(
         self,
         event: dict[str, Any],
-    ) -> Result[dict[str, Any], AppError] | None:
+    ) -> dict[str, Any] | None:
         """Fire callbacks; return a terminal Result or ``None`` to keep
         listening.
 
@@ -1167,8 +1172,8 @@ class TrainingMonitor(PipelineStage):
     def _handle_trainer_exited(
         self,
         payload: dict[str, Any],
-    ) -> Result[dict[str, Any], AppError]:
-        """Translate a ``trainer_exited`` event to a terminal Result.
+    ) -> dict[str, Any]:
+        """Translate a ``trainer_exited`` event to a terminal dict (or raise).
 
         Payload shape (per :class:`Supervisor._reap`):
         ``{exit_code, signal, cancellation_requested}``. The trainer's
@@ -1195,24 +1200,22 @@ class TrainingMonitor(PipelineStage):
         if exit_code == 0 and not cancelled:
             if self._callbacks.on_training_completed:
                 self._callbacks.on_training_completed(duration)
-            return Ok(
-                {
-                    "status": "completed",
-                    "duration_seconds": duration,
-                    "duration_human": str(timedelta(seconds=int(duration))),
-                    # Phase 11.C-2 — hint for stage_execution_loop's
-                    # _capture_pod_status_if_present. Maps to PodTerminator's
-                    # default Phase 11.B outcome on natural completion:
-                    # podStop ⇒ ``"stopped"``. ``PodAvailabilityProbe`` is
-                    # the live source of truth; this just speeds up CLI /
-                    # Web UI hints by avoiding a RunPod GraphQL query for
-                    # the common case.
-                    "pod_terminal_state": "stopped",
-                }
-            )
+            return {
+                "status": "completed",
+                "duration_seconds": duration,
+                "duration_human": str(timedelta(seconds=int(duration))),
+                # Phase 11.C-2 — hint for stage_execution_loop's
+                # _capture_pod_status_if_present. Maps to PodTerminator's
+                # default Phase 11.B outcome on natural completion:
+                # podStop ⇒ ``"stopped"``. ``PodAvailabilityProbe`` is
+                # the live source of truth; this just speeds up CLI /
+                # Web UI hints by avoiding a RunPod GraphQL query for
+                # the common case.
+                "pod_terminal_state": "stopped",
+            }
 
         if cancelled:
-            return self._fail(
+            self._fail(
                 f"training cancelled (exit_code={exit_code}, signal={signal_name})",
                 duration,
                 code="TRAINING_CANCELLED",
@@ -1223,38 +1226,44 @@ class TrainingMonitor(PipelineStage):
             # ``on_process_died`` per legacy contract.
             if self._callbacks.on_process_died:
                 self._callbacks.on_process_died(duration)
-            return self._fail("trainer process died (no exit code)", duration)
+            self._fail("trainer process died (no exit code)", duration)
 
-        return self._fail(
+        self._fail(
             f"trainer exited non-zero (exit_code={exit_code}, signal={signal_name})",
             duration,
         )
+        # Unreachable — _fail always raises; keeps type checker happy.
+        raise AssertionError("_fail must raise")
 
     def _terminal_from_state(
         self,
         state: str,
         payload: dict[str, Any],
-    ) -> Result[dict[str, Any], AppError]:
-        """Backstop: derive terminal Result from a bare FSM state event."""
+    ) -> dict[str, Any]:
+        """Backstop: derive terminal dict from a bare FSM state event.
+
+        Raises ``TrainingFailedError`` for non-success terminal states.
+        """
         duration = max(0.0, time.time() - self._training_start_time)
         message = payload.get("message") if isinstance(payload, dict) else None
 
         if state == _TERMINAL_COMPLETED:
             if self._callbacks.on_training_completed:
                 self._callbacks.on_training_completed(duration)
-            return Ok({"status": "completed", "duration_seconds": duration})
+            return {"status": "completed", "duration_seconds": duration}
 
         if state == _TERMINAL_CANCELLED:
-            return self._fail(
+            self._fail(
                 f"training cancelled ({message or 'no detail'})",
                 duration,
                 code="TRAINING_CANCELLED",
             )
 
-        return self._fail(
+        self._fail(
             f"training failed ({message or 'no detail'})",
             duration,
         )
+        raise AssertionError("_fail must raise")  # unreachable
 
     def _fail(
         self,
@@ -1262,22 +1271,28 @@ class TrainingMonitor(PipelineStage):
         duration: float,
         *,
         code: str = "TRAINING_FAILED",
-    ) -> Result[dict[str, Any], AppError]:
-        """Common path for FAILED / CANCELLED → ``Err`` translation."""
+    ) -> None:
+        """Common path for FAILED / CANCELLED → typed ``TrainingFailedError`` raise.
+
+        Always raises — never returns. Callbacks are fired before the raise.
+        """
         if self._callbacks.on_training_failed:
             try:
                 self._callbacks.on_training_failed(message, duration)
             except Exception as exc:
                 logger.debug(f"[MONITOR] on_training_failed raised: {exc}")
-        return Err(TrainingError(message=message, code=code))
+        raise TrainingFailedError(
+            detail=message,
+            context={"legacy_code": code},
+        )
 
     async def _fallback_to_status(
         self,
         client: JobClient,
         job_id: str,
-    ) -> Result[dict[str, Any], AppError]:
+    ) -> dict[str, Any]:
         """Buffer rolled past us — refetch :meth:`JobClient.get_status`
-        and translate the snapshot to a terminal Result.
+        and translate the snapshot to a terminal dict (or raise).
 
         We deliberately do NOT try to resume subscribing here —
         events between the truncation and ``get_status`` are gone,
@@ -1288,23 +1303,23 @@ class TrainingMonitor(PipelineStage):
         try:
             snap = await client.get_status(job_id)
         except JobClientError as exc:
-            return Err(
-                TrainingError(
-                    message=("WebSocket replay buffer rolled over and " f"GET /jobs/{job_id} failed: {exc}"),
-                    code="MONITOR_STATUS_FETCH_FAILED",
+            raise TrainingFailedError(
+                detail=(
+                    "WebSocket replay buffer rolled over and "
+                    f"GET /jobs/{job_id} failed: {exc}"
                 ),
-            )
+                context={"legacy_code": "MONITOR_STATUS_FETCH_FAILED"},
+                cause=exc,
+            ) from exc
 
         state = (snap.get("state") or "").lower()
         if state in _TERMINAL_STATES:
             return self._terminal_from_state(state, snap)
-        return Err(
-            TrainingError(
-                message=(
-                    f"WebSocket replay truncated and FSM is still "
-                    f"non-terminal ({state!r}); cannot resume "
-                    "monitoring without losing events"
-                ),
-                code="MONITOR_REPLAY_TRUNCATED",
+        raise TrainingFailedError(
+            detail=(
+                f"WebSocket replay truncated and FSM is still "
+                f"non-terminal ({state!r}); cannot resume "
+                "monitoring without losing events"
             ),
+            context={"legacy_code": "MONITOR_REPLAY_TRUNCATED"},
         )

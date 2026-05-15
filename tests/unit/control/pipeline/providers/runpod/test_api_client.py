@@ -1,6 +1,8 @@
+"""Tests for the raise-based :class:`RunPodAPIClient` (Phase A2 Batch 11)."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -12,31 +14,52 @@ from ryotenkai_providers.runpod.training.api_client import (
     build_pod_launch_kwargs,
 )
 from ryotenkai_shared.constants import RUNTIME_IMAGE
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 
 @dataclass
 class FakeSDK:
-    create_result: Any = None
-    get_result: Any = None
-    delete_result: Any = None
+    """Canonical fake for ``RunPodSDKClient`` — raise-based contract.
 
-    def create_pod(self, **kwargs: Any):
-        return self.create_result
+    Each ``*_value`` field holds the return value to deliver on success;
+    each ``*_exc`` field, when set, is raised instead. Either-or per call.
+    """
 
-    def get_pod(self, *, pod_id: str):
-        return self.get_result
+    create_value: dict[str, Any] | None = None
+    create_exc: BaseException | None = None
+    get_value: dict[str, Any] | None = None
+    get_exc: BaseException | None = None
+    delete_exc: BaseException | None = None
+    stop_exc: BaseException | None = None
+    start_exc: BaseException | None = None
 
-    def delete_pod(self, *, pod_id: str):
-        return self.delete_result
+    def create_pod(self, **kwargs: Any) -> dict[str, Any]:
+        if self.create_exc is not None:
+            raise self.create_exc
+        assert self.create_value is not None
+        return self.create_value
+
+    def get_pod(self, *, pod_id: str) -> dict[str, Any]:
+        if self.get_exc is not None:
+            raise self.get_exc
+        assert self.get_value is not None
+        return self.get_value
+
+    def delete_pod(self, *, pod_id: str) -> None:
+        if self.delete_exc is not None:
+            raise self.delete_exc
+
+    def stop_pod(self, *, pod_id: str) -> None:
+        if self.stop_exc is not None:
+            raise self.stop_exc
+
+    def start_pod(self, *, pod_id: str) -> None:
+        if self.start_exc is not None:
+            raise self.start_exc
 
 
 def _mk_cfg(*, training_overrides: dict[str, Any] | None = None) -> RunPodProviderConfig:
-    """Build a minimal valid RunPodProviderConfig for tests.
-
-    Image name is no longer a config field (Phase 6.6); it's pinned in
-    ``ryotenkai_shared.constants.RUNTIME_IMAGE``.
-    """
+    """Build a minimal valid RunPodProviderConfig for tests."""
     training: dict[str, Any] = {"gpu_type": "NVIDIA A40"}
     if training_overrides:
         training.update(training_overrides)
@@ -60,52 +83,36 @@ def test_create_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
         "costPerHr": 0.79,
         "machine": {"podHostId": "host-1"},
     }
-    # create_pod now enriches with a follow-up get_pod call; give the fake
-    # SDK the same payload so the enriched branch doesn't crash on ``None``.
-    fake_sdk = FakeSDK(create_result=Ok(pod_payload), get_result=Ok(pod_payload))
+    fake_sdk = FakeSDK(create_value=pod_payload, get_value=pod_payload)
     monkeypatch.setattr(client, "_sdk", fake_sdk)
 
-    cfg = _mk_cfg()
-    res = client.create_pod(cfg)
+    data = client.create_pod(_mk_cfg())
 
-    assert res.is_success()
-    data = res.unwrap()
     assert data["pod_id"] == "pod-1"
     assert data["machine"] == "host-1"
     assert data["cost_per_hr"] == 0.79
 
 
-def test_create_pod_graphql_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_pod_propagates_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(create_result=Err(ProviderError(message="no capacity", code="RUNPOD_SDK_CALL_FAILED"))),
+        FakeSDK(create_exc=ProviderUnavailableError(detail="no capacity", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
     )
 
-    res = client.create_pod(_mk_cfg())
-    assert res.is_failure()
-    assert "no capacity" in str(res.unwrap_err())
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.create_pod(_mk_cfg())
+    assert "no capacity" in (ei.value.detail or "")
 
 
-def test_create_pod_missing_id(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_pod_missing_id_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
-    monkeypatch.setattr(client, "_sdk", FakeSDK(create_result=Ok({})))
+    monkeypatch.setattr(client, "_sdk", FakeSDK(create_value={}))
 
-    res = client.create_pod(_mk_cfg())
-    assert res.is_failure()
-
-
-def test_create_pod_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
-    monkeypatch.setattr(
-        client,
-        "_sdk",
-        FakeSDK(create_result=Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-
-    res = client.create_pod(_mk_cfg())
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.create_pod(_mk_cfg())
+    assert ei.value.context.get("code") == "RUNPOD_POD_DATA_MISSING"
 
 
 def test_query_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,36 +120,34 @@ def test_query_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(get_result=Ok({"id": "pod-1", "desiredStatus": "RUNNING", "runtime": {"uptimeInSeconds": 1}})),
+        FakeSDK(get_value={"id": "pod-1", "desiredStatus": "RUNNING", "runtime": {"uptimeInSeconds": 1}}),
     )
 
-    res = client.query_pod("pod-1")
-    assert res.is_success()
-    assert res.unwrap()["id"] == "pod-1"
+    pod = client.query_pod("pod-1")
+    assert pod["id"] == "pod-1"
 
 
-def test_query_pod_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_pod_sdk_error_attaches_pod_id(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(get_result=Err(ProviderError(message="net down", code="RUNPOD_SDK_CALL_FAILED"))),
+        FakeSDK(get_exc=ProviderUnavailableError(detail="net down", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
     )
 
-    res = client.query_pod("pod-1")
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.query_pod("pod-1")
+    assert ei.value.context.get("pod_id") == "pod-1"
 
 
-def test_query_pod_empty_payload_returns_data_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_query_pod_empty_payload_raises_data_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
-    monkeypatch.setattr(client, "_sdk", FakeSDK(get_result=Ok({})))
+    monkeypatch.setattr(client, "_sdk", FakeSDK(get_value={}))
 
-    res = client.query_pod("pod-1")
-
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_POD_DATA_MISSING"
-    assert err.details == {"pod_id": "pod-1"}
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.query_pod("pod-1")
+    assert ei.value.context["code"] == "RUNPOD_POD_DATA_MISSING"
+    assert ei.value.context["pod_id"] == "pod-1"
 
 
 def test_terminate_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -150,11 +155,11 @@ def test_terminate_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(delete_result=Err(ProviderError(message="net down", code="RUNPOD_SDK_CALL_FAILED"))),
+        FakeSDK(delete_exc=ProviderUnavailableError(detail="net down", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
     )
 
-    res = client.terminate_pod("pod-1")
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        client.terminate_pod("pod-1")
 
 
 def test_terminate_pod_wraps_error_with_pod_details(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,16 +167,18 @@ def test_terminate_pod_wraps_error_with_pod_details(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(delete_result=Err(ProviderError(message="permission denied", code="RUNPOD_SDK_CALL_FAILED"))),
+        FakeSDK(
+            delete_exc=ProviderUnavailableError(
+                detail="permission denied", context={"code": "RUNPOD_SDK_CALL_FAILED"}
+            )
+        ),
     )
 
-    res = client.terminate_pod("pod-9")
-
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.message == "Failed to terminate pod: permission denied"
-    assert err.code == "RUNPOD_SDK_CALL_FAILED"
-    assert err.details == {"pod_id": "pod-9"}
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.terminate_pod("pod-9")
+    assert "permission denied" in (ei.value.detail or "")
+    assert ei.value.context.get("code") == "RUNPOD_SDK_CALL_FAILED"
+    assert ei.value.context.get("pod_id") == "pod-9"
 
 
 def test_get_ssh_info_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,36 +187,33 @@ def test_get_ssh_info_success(monkeypatch: pytest.MonkeyPatch) -> None:
         client,
         "_sdk",
         FakeSDK(
-            get_result=Ok(
-                {
-                    "id": "pod-1",
-                    "runtime": {
-                        "ports": [
-                            {"ip": "1.2.3.4", "privatePort": 123, "publicPort": 111},
-                            {"ip": "5.6.7.8", "privatePort": 22, "publicPort": 2222, "isIpPublic": True},
-                        ]
-                    },
-                }
-            )
+            get_value={
+                "id": "pod-1",
+                "runtime": {
+                    "ports": [
+                        {"ip": "1.2.3.4", "privatePort": 123, "publicPort": 111},
+                        {"ip": "5.6.7.8", "privatePort": 22, "publicPort": 2222, "isIpPublic": True},
+                    ]
+                },
+            }
         ),
     )
 
-    res = client.get_ssh_info("pod-1")
-    assert res.is_success()
-    assert res.unwrap() == {"host": "5.6.7.8", "port": 2222}
+    out = client.get_ssh_info("pod-1")
+    assert out == {"host": "5.6.7.8", "port": 2222}
 
 
-def test_get_ssh_info_no_ssh_port(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_ssh_info_no_ssh_port_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(get_result=Ok({"id": "pod-1", "runtime": {"ports": [{"privatePort": 80}]}})),
+        FakeSDK(get_value={"id": "pod-1", "runtime": {"ports": [{"privatePort": 80}]}}),
     )
 
-    res = client.get_ssh_info("pod-1")
-    assert res.is_failure()
-    assert "SSH over exposed TCP" in str(res.unwrap_err())
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.get_ssh_info("pod-1")
+    assert ei.value.context.get("code") == "RUNPOD_SSH_PORT_UNAVAILABLE"
 
 
 def test_get_ssh_info_propagates_query_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,13 +221,12 @@ def test_get_ssh_info_propagates_query_error(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         client,
         "_sdk",
-        FakeSDK(get_result=Err(ProviderError(message="sdk unavailable", code="RUNPOD_SDK_CALL_FAILED"))),
+        FakeSDK(get_exc=ProviderUnavailableError(detail="sdk unavailable", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
     )
 
-    res = client.get_ssh_info("pod-1")
-
-    assert res.is_failure()
-    assert res.unwrap_err().details == {"pod_id": "pod-1"}
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.get_ssh_info("pod-1")
+    assert ei.value.context.get("pod_id") == "pod-1"
 
 
 def test_get_ssh_info_ignores_non_public_or_invalid_ssh_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -232,32 +235,28 @@ def test_get_ssh_info_ignores_non_public_or_invalid_ssh_mapping(monkeypatch: pyt
         client,
         "_sdk",
         FakeSDK(
-            get_result=Ok(
-                {
-                    "id": "pod-1",
-                    "runtime": {
-                        "ports": [
-                            {"ip": "10.0.0.1", "privatePort": 22, "publicPort": 2222, "isIpPublic": False},
-                            {"ip": "", "privatePort": 22, "publicPort": 3333, "isIpPublic": True},
-                        ]
-                    },
-                }
-            )
+            get_value={
+                "id": "pod-1",
+                "runtime": {
+                    "ports": [
+                        {"ip": "10.0.0.1", "privatePort": 22, "publicPort": 2222, "isIpPublic": False},
+                        {"ip": "", "privatePort": 22, "publicPort": 3333, "isIpPublic": True},
+                    ]
+                },
+            }
         ),
     )
 
-    res = client.get_ssh_info("pod-1")
-    assert res.is_failure()
-    assert "SSH over exposed TCP" in str(res.unwrap_err())
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.get_ssh_info("pod-1")
+    assert ei.value.context.get("code") == "RUNPOD_SSH_PORT_UNAVAILABLE"
 
 
-def test_extract_exposed_ssh_info_returns_runtime_not_available_for_missing_runtime() -> None:
-    res = RunPodAPIClient.extract_exposed_ssh_info({"id": "pod-1"}, pod_id="pod-1")
-
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_RUNTIME_NOT_AVAILABLE"
-    assert err.details == {"pod_id": "pod-1"}
+def test_extract_exposed_ssh_info_raises_runtime_not_available_for_missing_runtime() -> None:
+    with pytest.raises(ProviderUnavailableError) as ei:
+        RunPodAPIClient.extract_exposed_ssh_info({"id": "pod-1"}, pod_id="pod-1")
+    assert ei.value.context["code"] == "RUNPOD_RUNTIME_NOT_AVAILABLE"
+    assert ei.value.context["pod_id"] == "pod-1"
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +268,6 @@ def test_runpod_docker_args_is_empty_string() -> None:
     """Pod is intentionally INERT at boot — entrypoint.sh handles
     PUBLIC_KEY and sshd, then sleeps. The Mac launches uvicorn via
     SSH-exec from runner_launcher, NOT through ``docker_args``.
-
-    Regression guard: setting ``docker_args`` to anything non-empty
-    used to silently shadow the image's CMD and prevent uvicorn from
-    being launched at all (RunPod CMD-override semantics). Keep it
-    empty.
     """
     assert RUNPOD_DOCKER_ARGS == ""
 
@@ -282,7 +276,6 @@ def test_build_pod_launch_kwargs_contains_config_values() -> None:
     cfg = _mk_cfg(training_overrides={"ports": "8888/http,22/tcp"})
     kwargs = build_pod_launch_kwargs(cfg, "test-pod", "ssh-ed25519 AAAA...")
     assert kwargs["gpu_type_id"] == "NVIDIA A40"
-    # Image is pinned in RUNTIME_IMAGE (Phase 6.6) — no longer a YAML field.
     assert kwargs["image_name"] == RUNTIME_IMAGE
     assert kwargs["name"] == "test-pod"
     assert kwargs["env"]["PUBLIC_KEY"] == "ssh-ed25519 AAAA..."
@@ -301,3 +294,31 @@ def test_build_pod_launch_kwargs_truncates_long_name() -> None:
     long_name = "x" * 200
     kwargs = build_pod_launch_kwargs(cfg, long_name, None)
     assert kwargs["name"] == "x" * 80
+
+
+def test_stop_pod_propagates_typed_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard: ``stop_pod`` re-raises with ``pod_id`` context."""
+    client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
+    monkeypatch.setattr(
+        client,
+        "_sdk",
+        FakeSDK(stop_exc=ProviderUnavailableError(detail="x", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
+    )
+
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.stop_pod("pod-stop-1")
+    assert ei.value.context.get("pod_id") == "pod-stop-1"
+
+
+def test_resume_pod_propagates_typed_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard: ``resume_pod`` re-raises with ``pod_id`` context."""
+    client = RunPodAPIClient(api_base_url="https://api.runpod.io", api_key="rk")
+    monkeypatch.setattr(
+        client,
+        "_sdk",
+        FakeSDK(start_exc=ProviderUnavailableError(detail="x", context={"code": "RUNPOD_SDK_CALL_FAILED"})),
+    )
+
+    with pytest.raises(ProviderUnavailableError) as ei:
+        client.resume_pod("pod-r-1")
+    assert ei.value.context.get("pod_id") == "pod-r-1"

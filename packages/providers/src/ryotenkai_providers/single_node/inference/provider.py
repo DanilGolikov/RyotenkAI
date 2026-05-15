@@ -43,10 +43,17 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    EngineConfigInvalidError,
+    InferenceUnavailableError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from ryotenkai_shared.utils.constants import LOG_OUTPUT_LONG_CHARS, LOG_OUTPUT_SHORT_CHARS
 from ryotenkai_shared.utils.logger import get_run_log_dir, logger
-from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from .artifacts import CHAT_SCRIPT as _CHAT_SCRIPT
@@ -166,16 +173,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
         # Engine validates its own invariants (replaces inline gating in
         # the old __init__: e.g. merge_before_deploy=True for vLLM).
-        validate_result = self._engine.validate_config(self._engine_cfg)
-        if validate_result.is_err():
+        # As of Phase A2 Batch 2, ``validate_config`` returns None on
+        # success and raises ``EngineConfigInvalidError`` on failure;
+        # we translate to the provider's legacy ``ProviderRegistryError``
+        # at the boundary (provider-side migration is Batch 11/12).
+        # The engine's ``context["reason"]`` subcode is preserved as the
+        # ProviderRegistryError ``code`` (upper-cased) so legacy tests
+        # asserting on ``VLLM_LIVE_LORA_NOT_SUPPORTED`` etc. keep matching.
+        try:
+            self._engine.validate_config(self._engine_cfg)
+        except EngineConfigInvalidError as engine_err:
             from ryotenkai_providers.registry import ProviderRegistryError
 
-            err = validate_result.unwrap_err()
-            raise ProviderRegistryError(
-                message=err.message,
-                code=err.code or "PROVIDER_ENGINE_CONFIG_INVALID",
-                details=err.details,
+            subcode = engine_err.context.get("reason", "")
+            translated_code = (
+                str(subcode).upper() if subcode else "PROVIDER_ENGINE_CONFIG_INVALID"
             )
+            raise ProviderRegistryError(
+                message=engine_err.detail or str(engine_err),
+                code=translated_code,
+                details=dict(engine_err.context),
+            ) from engine_err
 
         self._ssh_client: SSHClient | None = None
         self._endpoint_info: EndpointInfo | None = None
@@ -202,25 +220,28 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         trust_remote_code: bool = False,
         lora_path: str | None = None,
         keep_running: bool = False,  # noqa: ARG002
-    ) -> Result[EndpointInfo, InferenceError]:
+    ) -> EndpointInfo:
+        """Provision the vLLM endpoint on the single-node host.
+
+        Raises:
+            ConfigInvalidError: invariants violated (merge_before_deploy
+                false, adapter not a directory).
+            InferenceUnavailableError: SSH connect / health check /
+                docker / merge / vLLM launch failure.
+        """
         self._run_id = run_id
 
         # MVP safety: we do not support native LoRA in vLLM yet.
         if not self._engine_cfg.merge_before_deploy:
-            return Err(
-                InferenceError(
-                    message=(
-                        "inference.engines.vllm.merge_before_deploy=false is not supported in MVP. "
-                        "Set it to true (merge) to serve the trained adapter reliably."
-                    ),
-                    code="SINGLENODE_LORA_MERGE_REQUIRED",
-                )
+            raise ConfigInvalidError(
+                detail=(
+                    "inference.engines.vllm.merge_before_deploy=false is not supported in MVP. "
+                    "Set it to true (merge) to serve the trained adapter reliably."
+                ),
+                context={"reason": "SINGLENODE_LORA_MERGE_REQUIRED"},
             )
 
-        ssh_res = self._connect_ssh()
-        if ssh_res.is_failure():
-            err = ssh_res.unwrap_err()
-            return Err(InferenceError(message=str(err), code="SINGLENODE_SSH_CONNECT_FAILED"))
+        self._connect_ssh()
 
         assert self._ssh_client is not None
         ssh = self._ssh_client
@@ -231,11 +252,9 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         )
         if not health.passed:
             errs = "; ".join(health.errors or ["Unknown error"])
-            return Err(
-                InferenceError(
-                    message=f"Inference node health checks failed: {errs}",
-                    code="SINGLENODE_HEALTH_CHECK_FAILED",
-                )
+            raise InferenceUnavailableError(
+                detail=f"Inference node health checks failed: {errs}",
+                context={"reason": "SINGLENODE_HEALTH_CHECK_FAILED"},
             )
 
         workspace = self._serve_cfg.workspace.rstrip("/")
@@ -251,11 +270,9 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         for d in (workspace, hf_cache, f"{workspace}/runs", run_dir):
             ok, dir_err = ssh.create_directory(d)
             if not ok:
-                return Err(
-                    InferenceError(
-                        message=f"Failed to create remote directory '{d}': {dir_err}",
-                        code="SINGLENODE_DIR_CREATE_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"Failed to create remote directory '{d}': {dir_err}",
+                    context={"reason": "SINGLENODE_DIR_CREATE_FAILED"},
                 )
 
         # Resolve adapter reference
@@ -266,31 +283,26 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         local_adapter = Path(adapter_ref).expanduser()
         if local_adapter.exists():
             if not local_adapter.is_dir():
-                return Err(
-                    InferenceError(
-                        message=f"Adapter local path must be a directory, got: {local_adapter}",
-                        code="SINGLENODE_ADAPTER_NOT_DIR",
-                    )
+                raise ConfigInvalidError(
+                    detail=f"Adapter local path must be a directory, got: {local_adapter}",
+                    context={"reason": "SINGLENODE_ADAPTER_NOT_DIR"},
                 )
 
             ok, dir_err = ssh.create_directory(adapter_dir)
             if not ok:
-                return Err(
-                    InferenceError(
-                        message=f"Failed to create remote adapter dir '{adapter_dir}': {dir_err}",
-                        code="SINGLENODE_DIR_CREATE_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"Failed to create remote adapter dir '{adapter_dir}': {dir_err}",
+                    context={"reason": "SINGLENODE_DIR_CREATE_FAILED"},
                 )
 
-            up = ssh.upload_directory(local_path=local_adapter, remote_path=adapter_dir)
-            if up.is_failure():
-                up_err = up.unwrap_err()
-                return Err(
-                    InferenceError(
-                        message=f"Failed to upload adapter to inference node: {up_err}",
-                        code="SINGLENODE_ADAPTER_UPLOAD_FAILED",
-                    )
-                )
+            try:
+                ssh.upload_directory(local_path=local_adapter, remote_path=adapter_dir)
+            except SSHTransferFailedError as exc:
+                raise InferenceUnavailableError(
+                    detail=f"Failed to upload adapter to inference node: {exc.detail or exc}",
+                    context={"reason": "SINGLENODE_ADAPTER_UPLOAD_FAILED"},
+                    cause=exc,
+                ) from exc
             adapter_ref_for_merge = adapter_dir
 
         # PR-16: ask the engine what preparation work it needs (LoRA merge,
@@ -308,29 +320,30 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             # pass through unchanged. Engine decides whether to merge.
             adapter_path_in_container = adapter_ref_for_merge
 
-        prep_result = self._engine.prepare_model(
-            cfg=self._engine_cfg,
-            base_model=base_model_id,
-            adapter_path_in_container=adapter_path_in_container,
-            workspace_host_path=workspace,
-            run_id=run_id,
-            trust_remote_code=trust_remote_code,
-        )
-        if prep_result.is_err():
-            err = prep_result.unwrap_err()
-            return Err(
-                InferenceError(
-                    message=err.message,
-                    code=err.code or "SINGLENODE_PREPARE_PLAN_BUILD_FAILED",
-                )
+        # Engine.prepare_model returns PreparePlan directly and raises
+        # EngineConfigInvalidError on engine-boundary errors (Phase A2
+        # Batch 2). Batch 12 surfaces the typed error directly through
+        # the provider boundary (no translation to legacy InferenceError).
+        try:
+            plan = self._engine.prepare_model(
+                cfg=self._engine_cfg,
+                base_model=base_model_id,
+                adapter_path_in_container=adapter_path_in_container,
+                workspace_host_path=workspace,
+                run_id=run_id,
+                trust_remote_code=trust_remote_code,
             )
-        plan = prep_result.unwrap()
+        except EngineConfigInvalidError as engine_err:
+            raise InferenceUnavailableError(
+                detail=engine_err.detail or str(engine_err),
+                context={"reason": "SINGLENODE_PREPARE_PLAN_BUILD_FAILED"},
+                cause=engine_err,
+            ) from engine_err
 
-        run_res = self._run_prepare_plan(
-            ssh=ssh, plan=plan, run_id=run_id, workspace_host_path=workspace
+        # _run_prepare_plan raises InferenceUnavailableError on failure.
+        self._run_prepare_plan(
+            ssh=ssh, plan=plan, run_id=run_id, workspace_host_path=workspace,
         )
-        if run_res.is_failure():
-            return Err(run_res.unwrap_err())
 
         # Engine config for this deployment (avoid mutating global PipelineConfig).
         engine_cfg = self._engine_cfg.model_copy()
@@ -346,19 +359,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 model_source, workspace_host_path=workspace
             )
 
-        start_res = self._start_engine_container(
+        # _start_engine_container raises InferenceUnavailableError on failure.
+        self._start_engine_container(
             ssh=ssh,
             engine_cfg=engine_cfg,
             workspace_host_path=workspace,
             model_path_in_container=container_model_path,
         )
-        if start_res.is_failure():
-            start_err = start_res.unwrap_err()
-            return Err(
-                start_err
-                if isinstance(start_err, InferenceError)
-                else InferenceError(message=str(start_err), code="SINGLENODE_VLLM_START_FAILED")
-            )
 
         # Endpoint is bound on node to serve.host:serve.port, but MVP expects local access via SSH tunnel.
         port = self._serve_cfg.port
@@ -405,7 +412,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         )
 
         logger.info(f"✅ Inference deployed (single_node/vLLM): {endpoint_url} (use SSH tunnel)")
-        return Ok(self._endpoint_info)
+        return self._endpoint_info
 
     def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None:
         # Backward-compatible internal name (used across provider internals)
@@ -419,18 +426,21 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         try:
             if not self._ssh_client:
                 return
-            logs_res = self._docker.logs(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10)
-            if logs_res.is_ok():
-                stdout = logs_res.unwrap()
-                if stdout:
-                    local_path.parent.mkdir(parents=True, exist_ok=True)
-                    local_path.write_text(stdout, encoding=_ENCODING_UTF8)
+            # Docker logs surface raises on failure (Phase A2 Batch 4);
+            # this method is best-effort — swallow the exception in the
+            # outer ``except`` rather than propagating.
+            stdout = self._docker.logs(
+                self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=10
+            )
+            if stdout:
+                local_path.parent.mkdir(parents=True, exist_ok=True)
+                local_path.write_text(stdout, encoding=_ENCODING_UTF8)
         except Exception as e:
             logger.debug(f"Failed to collect inference logs: {e}")
 
     def build_inference_artifacts(
         self, *, ctx: InferenceArtifactsContext
-    ) -> Result[InferenceArtifacts, InferenceError]:
+    ) -> InferenceArtifacts:
         ssh_cfg = self._ssh_cfg
         ssh_block = {
             "alias": ssh_cfg.alias,
@@ -493,31 +503,49 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             },
         }
 
-        return Ok(
-            InferenceArtifacts(
-                manifest=manifest,
-                chat_script=_CHAT_SCRIPT,
-                readme=_render_readme(
-                    manifest_filename=INFERENCE_MANIFEST_FILENAME, endpoint_url=ctx.endpoint.endpoint_url
-                ),
-            )
+        return InferenceArtifacts(
+            manifest=manifest,
+            chat_script=_CHAT_SCRIPT,
+            readme=_render_readme(
+                manifest_filename=INFERENCE_MANIFEST_FILENAME, endpoint_url=ctx.endpoint.endpoint_url
+            ),
         )
 
-    def undeploy(self) -> Result[None, InferenceError]:
-        if not self._ssh_client:
-            return Ok(None)
+    def undeploy(self) -> None:
+        """Tear down the inference container (best-effort).
 
-        _ = self._docker.rm_force(self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        Single-node's contract is "always succeed" — docker-daemon
+        failures are swallowed (logged at DEBUG), endpoint state is
+        always cleared.
+        """
+        if not self._ssh_client:
+            return
+
+        try:
+            self._docker.rm_force(
+                self._ssh_client, container_name=self._CONTAINER_NAME, timeout_seconds=60
+            )
+        except (ProviderUnavailableError, ConfigInvalidError) as exc:
+            logger.debug(f"Best-effort container teardown failed: {exc}")
         self._endpoint_info = None
-        return Ok(None)
 
-    def health_check(self) -> Result[bool, InferenceError]:
+    def health_check(self) -> bool:
+        """Probe whether the vLLM endpoint is ready.
+
+        Returns:
+            True iff ``/v1/models`` responds 200.
+
+        Raises:
+            InferenceUnavailableError: SSH client missing (deploy not
+                called), or healthcheck command failed at transport
+                level. ``context["legacy_code"]`` distinguishes
+                ``SINGLENODE_NOT_DEPLOYED`` vs
+                ``SINGLENODE_HEALTH_CHECK_COMMAND_FAILED``.
+        """
         if not self._ssh_client:
-            return Err(
-                InferenceError(
-                    message="SSH client not initialized (deploy was not called)",
-                    code="SINGLENODE_NOT_DEPLOYED",
-                )
+            raise InferenceUnavailableError(
+                detail="SSH client not initialized (deploy was not called)",
+                context={"reason": "SINGLENODE_NOT_DEPLOYED"},
             )
 
         # IMPORTANT: Check on REMOTE host, not localhost
@@ -528,18 +556,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         ok, stdout, stderr = self._ssh_client.exec_command(cmd, timeout=10, silent=True)
 
         if not ok:
-            return Err(
-                InferenceError(
-                    message=f"Health check command failed: {stderr[:LOG_OUTPUT_SHORT_CHARS]}",
-                    code="SINGLENODE_HEALTH_CHECK_COMMAND_FAILED",
-                )
+            raise InferenceUnavailableError(
+                detail=f"Health check command failed: {stderr[:LOG_OUTPUT_SHORT_CHARS]}",
+                context={"reason": "SINGLENODE_HEALTH_CHECK_COMMAND_FAILED"},
             )
 
         # Check output: "1" = ready, "0" = not ready
-        if stdout.strip() == "1":
-            return Ok(True)
-
-        return Ok(False)  # Service not ready yet
+        return stdout.strip() == "1"
 
     def get_capabilities(self) -> InferenceCapabilities:
         return InferenceCapabilities(
@@ -552,25 +575,27 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
     def get_endpoint_info(self) -> EndpointInfo | None:
         return self._endpoint_info
 
-    def activate_for_eval(self) -> Result[str, InferenceError]:
+    def activate_for_eval(self) -> str:
         """
         Single-node: endpoint is already live after deploy() — return existing URL.
 
         No additional startup needed; SSH tunnel and vLLM container were started
         during deploy(). Evaluation can immediately use the endpoint.
+
+        Raises:
+            InferenceUnavailableError: deploy() was not called before
+                activate (no endpoint to return).
         """
         endpoint = self._endpoint_info
         if endpoint is None or endpoint.endpoint_url is None:
-            return Err(
-                InferenceError(
-                    message="single_node: activate_for_eval called but endpoint is not deployed. Call deploy() first.",
-                    code="SINGLENODE_NOT_DEPLOYED",
-                )
+            raise InferenceUnavailableError(
+                detail="single_node: activate_for_eval called but endpoint is not deployed. Call deploy() first.",
+                context={"reason": "SINGLENODE_NOT_DEPLOYED"},
             )
         logger.info(f"[EVAL] single_node endpoint ready for evaluation: {endpoint.endpoint_url}")
-        return Ok(endpoint.endpoint_url)
+        return endpoint.endpoint_url
 
-    def deactivate_after_eval(self) -> Result[None, InferenceError]:
+    def deactivate_after_eval(self) -> None:
         """
         Single-node: no-op — endpoint lifecycle is managed by the user (via generated scripts).
 
@@ -579,7 +604,6 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         - The generated stop-script handles teardown on user request.
         """
         logger.info("[EVAL] single_node: deactivate_after_eval is a no-op (endpoint managed externally)")
-        return Ok(None)
 
     # ---------------------------------------------------------------------
     # Internals
@@ -619,15 +643,20 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         s = value.strip()
         return s.startswith("${") and s.endswith("}")
 
-    def _connect_ssh(self) -> Result[None, InferenceError]:
+    def _connect_ssh(self) -> None:
         """
         Connect to inference node via SSH.
 
         NEW (v3): SSH config comes from providers.single_node.connect.ssh
         No fallback logic needed - single source of truth.
+
+        Raises:
+            InferenceUnavailableError: configuration / transport
+                failure. Subcodes carried in
+                ``context["reason"]``.
         """
         if self._ssh_client is not None:
-            return Ok(None)
+            return
 
         try:
             ssh_cfg = self._ssh_cfg
@@ -639,28 +668,22 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
 
             host = ssh_cfg.alias or ssh_cfg.host
             if not host:
-                return Err(
-                    InferenceError(
-                        message="SSH host is not configured in providers.single_node.connect.ssh",
-                        code="SINGLENODE_SSH_HOST_NOT_CONFIGURED",
-                    )
+                raise InferenceUnavailableError(
+                    detail="SSH host is not configured in providers.single_node.connect.ssh",
+                    context={"reason": "SINGLENODE_SSH_HOST_NOT_CONFIGURED"},
                 )
 
             if self._looks_like_unresolved_env(host):
-                return Err(
-                    InferenceError(
-                        message=f"SSH host looks like unresolved env placeholder: {host}",
-                        code="SINGLENODE_SSH_HOST_UNRESOLVED_ENV",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"SSH host looks like unresolved env placeholder: {host}",
+                    context={"reason": "SINGLENODE_SSH_HOST_UNRESOLVED_ENV"},
                 )
 
             username = None if ssh_cfg.alias else ssh_cfg.user
             if username and self._looks_like_unresolved_env(username):
-                return Err(
-                    InferenceError(
-                        message=f"SSH user looks like unresolved env placeholder: {username}",
-                        code="SINGLENODE_SSH_USER_UNRESOLVED_ENV",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"SSH user looks like unresolved env placeholder: {username}",
+                    context={"reason": "SINGLENODE_SSH_USER_UNRESOLVED_ENV"},
                 )
 
             self._ssh_client = SSHClient(
@@ -677,29 +700,43 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             )
             if not ok:
                 self._ssh_client = None
-                return Err(
-                    InferenceError(
-                        message=f"SSH connection failed: {err}",
-                        code="SINGLENODE_SSH_CONNECT_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"SSH connection failed: {err}",
+                    context={"reason": "SINGLENODE_SSH_CONNECT_FAILED"},
                 )
-
-            return Ok(None)
+        except RyotenkAIError:
+            self._ssh_client = None
+            raise
         except Exception as e:
             self._ssh_client = None
-            return Err(InferenceError(message=f"SSH initialization failed: {e!s}", code="SINGLENODE_SSH_INIT_FAILED"))
+            raise InferenceUnavailableError(
+                detail=f"SSH initialization failed: {e!s}",
+                context={"reason": "SINGLENODE_SSH_INIT_FAILED"},
+                cause=e,
+            ) from e
 
     def _ensure_docker_image(
         self,
         *,
         ssh: SSHClient,
         image: str,
-    ) -> Result[None, InferenceError]:
-        res = self._docker.ensure_image(ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT)
-        if res.is_failure():
-            err = res.unwrap_err()
-            return Err(InferenceError(message=str(err), code="SINGLENODE_DOCKER_IMAGE_FAILED"))
-        return Ok(None)
+    ) -> None:
+        """Ensure the docker image is available on the host.
+
+        Raises:
+            InferenceUnavailableError: pull failed (translated from
+                the docker client's ``ProviderUnavailableError``).
+        """
+        try:
+            self._docker.ensure_image(
+                ssh=ssh, image=image, pull_timeout_seconds=PULL_TIMEOUT,
+            )
+        except ProviderUnavailableError as exc:
+            raise InferenceUnavailableError(
+                detail=str(exc.detail or exc),
+                context={"reason": "SINGLENODE_DOCKER_IMAGE_FAILED"},
+                cause=exc,
+            ) from exc
 
     @staticmethod
     def _host_to_container(
@@ -731,7 +768,7 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         plan: "PreparePlan",
         run_id: str,
         workspace_host_path: str,
-    ) -> Result[None, InferenceError]:
+    ) -> None:
         """Execute every :class:`PrepareStep` in ``plan`` sequentially.
 
         For each step:
@@ -757,17 +794,15 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         from ryotenkai_providers.inference.launch import format_prepare_step
 
         if not plan.steps:
-            return Ok(None)
+            return
 
         if plan.spec_version != 1:
-            return Err(
-                InferenceError(
-                    message=(
-                        f"Provider does not support PreparePlan spec_version="
-                        f"{plan.spec_version}. Upgrade ryotenkai_providers."
-                    ),
-                    code="SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    f"Provider does not support PreparePlan spec_version="
+                    f"{plan.spec_version}. Upgrade ryotenkai_providers."
+                ),
+                context={"reason": "SINGLENODE_PREPARE_SPEC_VERSION_UNSUPPORTED"},
             )
 
         engine_serve_image = _resolve_engine_image(self._engine_cfg.kind)
@@ -810,9 +845,10 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 )
 
             # 1. Pull image (idempotent — docker layer cache makes this cheap).
-            ensure_res = self._ensure_docker_image(ssh=ssh, image=image)
-            if ensure_res.is_failure():
-                err_msg = str(ensure_res.unwrap_err())
+            try:
+                self._ensure_docker_image(ssh=ssh, image=image)
+            except RyotenkAIError as exc:
+                err_msg = exc.detail or str(exc)
                 if self._mlflow_manager:
                     self._mlflow_manager.log_event_error(
                         f"Prepare step failed (image pull): {step.name}",
@@ -821,12 +857,11 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         step_name=step.name,
                         step_index=index,
                     )
-                return Err(
-                    InferenceError(
-                        message=f"Prepare step {step.name!r} image not available: {err_msg}",
-                        code="SINGLENODE_PREPARE_IMAGE_PULL_FAILED",
-                    )
-                )
+                raise InferenceUnavailableError(
+                    detail=f"Prepare step {step.name!r} image not available: {err_msg}",
+                    context={"reason": "SINGLENODE_PREPARE_IMAGE_PULL_FAILED"},
+                    cause=exc,
+                ) from exc
 
             # 2. Clean each declared output (host-side, via volume mapping).
             for container_output in step.outputs:
@@ -858,11 +893,9 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         step_name=step.name,
                         step_index=index,
                     )
-                return Err(
-                    InferenceError(
-                        message=f"Prepare container start failed for {step.name!r}: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
-                        code="SINGLENODE_PREPARE_CONTAINER_START_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"Prepare container start failed for {step.name!r}: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
+                    context={"reason": "SINGLENODE_PREPARE_CONTAINER_START_FAILED"},
                 )
 
             # 4. Poll: collect logs, watch exit, enforce timeout.
@@ -871,7 +904,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
             started_polling = time.time()
             while True:
                 if time.time() - started_polling > step.timeout_seconds:
-                    _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+                    # Best-effort cleanup on timeout — swallow Docker errors.
+                    try:
+                        self._docker.rm_force(
+                            ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S
+                        )
+                    except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                        logger.debug(f"Timeout-path cleanup rm_force failed: {exc}")
                     if self._mlflow_manager:
                         self._mlflow_manager.log_event_error(
                             f"Prepare step timed out: {step.name}",
@@ -881,36 +920,49 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                             step_index=index,
                             timeout_seconds=step.timeout_seconds,
                         )
-                    return Err(
-                        InferenceError(
-                            message=f"Prepare step {step.name!r} timed out after {step.timeout_seconds}s",
-                            code="SINGLENODE_PREPARE_TIMEOUT",
-                        )
+                    raise InferenceUnavailableError(
+                        detail=f"Prepare step {step.name!r} timed out after {step.timeout_seconds}s",
+                        context={"reason": "SINGLENODE_PREPARE_TIMEOUT"},
                     )
                 is_running = self._docker.is_container_running(
                     ssh, name_filter=container_name, timeout_seconds=5
                 )
-                logs_res = self._docker.logs(ssh, container_name=container_name, timeout_seconds=10)
-                if logs_res.is_ok():
-                    logs_content = logs_res.unwrap()
-                    if logs_content:
-                        try:
-                            prepare_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
-                        except OSError as e:
-                            logger.warning(f"Failed to write prepare logs to {prepare_log_path}: {e}")
-                        if step.success_marker and step.success_marker in logs_content:
-                            marker_seen = True
-                if not is_running:
-                    exit_res = self._docker.container_exit_code(
-                        ssh, container_name=container_name, timeout_seconds=5
+                # logs() now raises on failure (Phase A2 Batch 4) — best-effort
+                # in the polling loop: a transient docker-daemon error must not
+                # abort the poll, just skip log capture for this iteration.
+                logs_content = ""
+                try:
+                    logs_content = self._docker.logs(
+                        ssh, container_name=container_name, timeout_seconds=10
                     )
-                    if exit_res.is_ok():
-                        exit_code = exit_res.unwrap()
+                except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                    logger.debug(f"Polling-loop logs fetch failed: {exc}")
+                if logs_content:
+                    try:
+                        prepare_log_path.write_text(logs_content, encoding=_ENCODING_UTF8)
+                    except OSError as e:
+                        logger.warning(f"Failed to write prepare logs to {prepare_log_path}: {e}")
+                    if step.success_marker and step.success_marker in logs_content:
+                        marker_seen = True
+                if not is_running:
+                    # container_exit_code raises on failure — fall through to
+                    # exit_code=None which the next block treats as failure.
+                    try:
+                        exit_code = self._docker.container_exit_code(
+                            ssh, container_name=container_name, timeout_seconds=5
+                        )
+                    except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                        logger.debug(f"container_exit_code lookup failed: {exc}")
                     break
                 time.sleep(_PREPARE_POLL_INTERVAL_S)
 
             # 5. Cleanup container regardless of outcome.
-            _ = self._docker.rm_force(ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S)
+            try:
+                self._docker.rm_force(
+                    ssh, container_name=container_name, timeout_seconds=_QUICK_CMD_TIMEOUT_S
+                )
+            except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                logger.debug(f"Post-step cleanup rm_force failed: {exc}")
 
             step_duration = time.time() - step_started_at
 
@@ -926,14 +978,12 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         duration_seconds=step_duration,
                         exit_code=exit_code,
                     )
-                return Err(
-                    InferenceError(
-                        message=(
-                            f"Prepare step {step.name!r} failed with exit code "
-                            f"{exit_code}. Check {prepare_log_path}"
-                        ),
-                        code="SINGLENODE_PREPARE_CONTAINER_FAILED",
-                    )
+                raise InferenceUnavailableError(
+                    detail=(
+                        f"Prepare step {step.name!r} failed with exit code "
+                        f"{exit_code}. Check {prepare_log_path}"
+                    ),
+                    context={"reason": "SINGLENODE_PREPARE_CONTAINER_FAILED"},
                 )
 
             # 7. Validate success marker (when declared).
@@ -947,14 +997,12 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                         step_index=index,
                         duration_seconds=step_duration,
                     )
-                return Err(
-                    InferenceError(
-                        message=(
-                            f"Prepare step {step.name!r} did not emit success "
-                            f"marker {step.success_marker!r}. Check {prepare_log_path}"
-                        ),
-                        code="SINGLENODE_PREPARE_NO_SUCCESS_MARKER",
-                    )
+                raise InferenceUnavailableError(
+                    detail=(
+                        f"Prepare step {step.name!r} did not emit success "
+                        f"marker {step.success_marker!r}. Check {prepare_log_path}"
+                    ),
+                    context={"reason": "SINGLENODE_PREPARE_NO_SUCCESS_MARKER"},
                 )
 
             # 8. Validate success artifact (when declared).
@@ -980,15 +1028,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                             step_index=index,
                             duration_seconds=step_duration,
                         )
-                    return Err(
-                        InferenceError(
-                            message=(
-                                f"Prepare step {step.name!r} reported success but artifact "
-                                f"was not found on host. Expected: {host_artifact}. "
-                                f"Directory:\n{ls_stdout[:_DIR_LISTING_MAX_CHARS]}"
-                            ),
-                            code="SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND",
-                        )
+                    raise InferenceUnavailableError(
+                        detail=(
+                            f"Prepare step {step.name!r} reported success but artifact "
+                            f"was not found on host. Expected: {host_artifact}. "
+                            f"Directory:\n{ls_stdout[:_DIR_LISTING_MAX_CHARS]}"
+                        ),
+                        context={"reason": "SINGLENODE_PREPARE_ARTIFACTS_NOT_FOUND"},
                     )
 
             if self._mlflow_manager:
@@ -1011,7 +1057,6 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
                 duration_seconds=plan_duration,
                 step_count=len(plan.steps),
             )
-        return Ok(None)
 
     @staticmethod
     def _container_to_host(
@@ -1039,7 +1084,13 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         engine_cfg: VLLMEngineConfig,
         workspace_host_path: str,
         model_path_in_container: str,
-    ) -> Result[None, InferenceError]:
+    ) -> None:
+        """Pull image and start the vLLM serving container.
+
+        Raises:
+            InferenceUnavailableError: image pull failed or docker run
+                returned non-zero.
+        """
         host_bind = self._provider_cfg.inference.serve.host
         port = self._provider_cfg.inference.serve.port
 
@@ -1048,18 +1099,17 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         serve_image = _resolve_engine_image(self._engine_cfg.kind)
 
         # Ensure serve image is available
-        ensure_res = self._ensure_docker_image(
-            ssh=ssh,
-            image=serve_image,
-        )
-        if ensure_res.is_failure():
-            ensure_err = ensure_res.unwrap_err()
-            return Err(
-                InferenceError(
-                    message=f"Serve image not available: {ensure_err}",
-                    code="SINGLENODE_SERVE_IMAGE_PULL_FAILED",
-                )
+        try:
+            self._ensure_docker_image(
+                ssh=ssh,
+                image=serve_image,
             )
+        except RyotenkAIError as exc:
+            raise InferenceUnavailableError(
+                detail=f"Serve image not available: {exc.detail or exc}",
+                context={"reason": "SINGLENODE_SERVE_IMAGE_PULL_FAILED"},
+                cause=exc,
+            ) from exc
 
         # Engine returns a structured LaunchSpec; provider formats it into a
         # docker shell command. A k8s provider would translate the same spec
@@ -1076,24 +1126,28 @@ class SingleNodeInferenceProvider(ProviderBase, IInferenceProvider):
         )
         run_cmd = format_docker_run(spec, host_bind=host_bind)
 
-        # Stop old container (if exists) and start new one
-        _ = self._docker.rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        # Stop old container (if exists) and start new one — best-effort.
+        try:
+            self._docker.rm_force(ssh, container_name=self._CONTAINER_NAME, timeout_seconds=60)
+        except (ProviderUnavailableError, ConfigInvalidError) as exc:
+            logger.debug(f"Pre-start container cleanup failed: {exc}")
 
         ok, _stdout, stderr = ssh.exec_command(run_cmd, timeout=PULL_TIMEOUT, silent=False)
         if not ok:
-            _ = self._docker.logs(
-                ssh,
-                container_name=self._CONTAINER_NAME,
-                tail=LOG_OUTPUT_SHORT_CHARS,
-                timeout_seconds=60,
-            )
-            return Err(
-                InferenceError(
-                    message=f"Failed to start vLLM container: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
-                    code="SINGLENODE_VLLM_START_FAILED",
+            # Best-effort log fetch for diagnostics — discard exceptions.
+            try:
+                self._docker.logs(
+                    ssh,
+                    container_name=self._CONTAINER_NAME,
+                    tail=LOG_OUTPUT_SHORT_CHARS,
+                    timeout_seconds=60,
                 )
+            except (ProviderUnavailableError, ConfigInvalidError) as exc:
+                logger.debug(f"Diagnostic logs fetch failed: {exc}")
+            raise InferenceUnavailableError(
+                detail=f"Failed to start vLLM container: {stderr[:LOG_OUTPUT_LONG_CHARS]}",
+                context={"reason": "SINGLENODE_VLLM_START_FAILED"},
             )
-        return Ok(None)
 
     @staticmethod
     def _write_runtime_json_best_effort(

@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
     from contextlib import AbstractContextManager
 
+    from ryotenkai_shared.errors import RyotenkAIError
+
 
 @runtime_checkable
 class IMLflowManager(Protocol):
@@ -65,7 +67,7 @@ class IMLflowManager(Protocol):
 
     def get_runtime_tracking_uri(self) -> str: ...
 
-    def get_last_connectivity_error(self) -> Any: ...
+    def get_last_connectivity_error(self) -> RyotenkAIError | None: ...
 
     # ------------------------------------------------------------------
     # Run lifecycle

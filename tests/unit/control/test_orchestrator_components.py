@@ -76,9 +76,13 @@ class TestDatasetLoader:
         loader = DatasetLoader(mock_config)
         phase = StrategyPhaseConfig(strategy_type="sft", dataset="default")
 
-        result = loader.load_for_phase(phase)
-        assert result.is_failure()
-        assert "not found" in str(result.unwrap_err()).lower()
+        # Post-Batch-14: ``load_for_phase`` raises ``DatasetLoadFailedError``
+        # instead of returning ``Err``.
+        from ryotenkai_shared.errors import DatasetLoadFailedError
+
+        with pytest.raises(DatasetLoadFailedError) as exc_info:
+            loader.load_for_phase(phase)
+        assert "not found" in (exc_info.value.detail or "").lower()
 
 
 class TestMetricsCollector:
@@ -308,7 +312,10 @@ class TestStrategyOrchestratorFacade:
         assert orchestrator.buffer is None
 
     def test_run_chain_no_strategies(self, mock_model, mock_tokenizer, mock_config, mock_memory_manager):
-        """Test run_chain with no strategies returns error."""
+        """Test run_chain with no strategies raises typed error.
+
+        Post-Batch-14: returns by raising ``StrategyChainInvalidError``.
+        """
         mock_config.training.get_strategy_chain.return_value = []
 
         orchestrator = StrategyOrchestrator(
@@ -318,9 +325,11 @@ class TestStrategyOrchestratorFacade:
             memory_manager=mock_memory_manager,
         )
 
-        result = orchestrator.run_chain()
-        assert result.is_failure()
-        assert "No strategies configured" in str(result.error)
+        from ryotenkai_shared.errors import StrategyChainInvalidError
+
+        with pytest.raises(StrategyChainInvalidError) as exc_info:
+            orchestrator.run_chain()
+        assert "No strategies configured" in (exc_info.value.detail or "")
 
     def test_repr_not_initialized(self, mock_model, mock_tokenizer, mock_config, mock_memory_manager):
         """Test __repr__ when not initialized."""

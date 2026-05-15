@@ -11,6 +11,19 @@ Architecture:
 
 Consumers:
     MLflowManager, SystemPromptLoader, MLflowAdapter, ExperimentReportGenerator
+
+Phase A2 Batch 5 (typed exceptions migration):
+    ``last_connectivity_error`` is a *stored property* of type
+    :class:`RyotenkAIError` (or ``None``). When :meth:`check_connectivity`
+    fails internally it constructs the appropriate typed exception
+    (:class:`ProviderUnavailableError` for transient HTTP / timeout /
+    connection failures, :class:`ConfigInvalidError` for caller-side
+    issues such as a missing CA bundle) and stores it. The probe itself
+    NEVER raises — diagnostic accumulation pattern (per plan Decision 1).
+    The original granular probe-failure identifier (e.g.
+    ``"MLFLOW_PREFLIGHT_HTTP_ERROR"``) is preserved under
+    ``error.context["mlflow_probe_reason"]`` so callers that previously
+    inspected ``error.code`` for granularity continue to function.
 """
 
 from __future__ import annotations
@@ -23,10 +36,25 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextvars import copy_context
 from typing import Any, Protocol
 
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.logger import get_logger
-from ryotenkai_shared.utils.result import AppError, ConfigError
 
 logger = get_logger(__name__)
+
+# Granular MLflow-probe failure identifiers preserved under
+# ``error.context["mlflow_probe_reason"]`` for backward-debug visibility.
+# These are NOT ``ErrorCode`` values — they are diagnostic discriminators
+# inside the carried context.
+PROBE_REASON_HTTP_ERROR = "MLFLOW_PREFLIGHT_HTTP_ERROR"
+PROBE_REASON_TIMEOUT = "MLFLOW_PREFLIGHT_TIMEOUT"
+PROBE_REASON_CONNECTION_FAILED = "MLFLOW_PREFLIGHT_CONNECTION_FAILED"
+PROBE_REASON_TLS_CERT_VERIFY_FAILED = "MLFLOW_TLS_CERT_VERIFY_FAILED"
+PROBE_REASON_TLS_CA_BUNDLE_INVALID = "MLFLOW_TLS_CA_BUNDLE_INVALID"
+
 
 class IMLflowGateway(Protocol):
     """
@@ -42,8 +70,13 @@ class IMLflowGateway(Protocol):
         ...
 
     @property
-    def last_connectivity_error(self) -> AppError | None:
-        """Last connectivity probe error, if any."""
+    def last_connectivity_error(self) -> RyotenkAIError | None:
+        """Last connectivity probe error, if any.
+
+        Stored property (Decision 1): a typed exception instance is held
+        as a *value* so callers can read it without try/except. The probe
+        itself does not raise.
+        """
         ...
 
     def get_client(self) -> Any:
@@ -75,7 +108,8 @@ class IMLflowGateway(Protocol):
             timeout: Max seconds for the connectivity probe.
 
         Returns:
-            True if reachable, False otherwise.
+            True if reachable, False otherwise. NEVER raises — diagnostics
+            are accumulated on :attr:`last_connectivity_error` instead.
         """
         ...
 
@@ -100,7 +134,7 @@ class MLflowGateway:
         """
         self._uri = tracking_uri
         self._ca_bundle_path = ca_bundle_path
-        self._last_connectivity_error: AppError | None = None
+        self._last_connectivity_error: RyotenkAIError | None = None
 
         logger.debug(
             "[MLFLOW:GATEWAY] Initialized with URI=%r (ca_bundle_path=%r)",
@@ -117,7 +151,7 @@ class MLflowGateway:
         return self._uri
 
     @property
-    def last_connectivity_error(self) -> AppError | None:
+    def last_connectivity_error(self) -> RyotenkAIError | None:
         return self._last_connectivity_error
 
     def get_client(self) -> Any:
@@ -165,6 +199,11 @@ class MLflowGateway:
 
         Uses stdlib urllib (no SDK overhead) so this call can be safely
         used before the MLflow module is imported.
+
+        Never raises: a typed :class:`RyotenkAIError` is stored on
+        :attr:`last_connectivity_error` when the probe finds a problem.
+        Returns ``True`` when the server is reachable (HTTP < 500) and
+        ``False`` otherwise.
         """
         if not self._uri or not self._uri.startswith("http"):
             self._last_connectivity_error = None
@@ -181,27 +220,37 @@ class MLflowGateway:
                 return response.status < 500
         except urllib.error.HTTPError as exc:
             if exc.code >= 500:
-                self._last_connectivity_error = AppError(
-                    message=f"MLflow connectivity probe returned HTTP {exc.code} for {self._uri}",
-                    code="MLFLOW_PREFLIGHT_HTTP_ERROR",
-                    details={"status_code": exc.code, "tracking_uri": self._uri},
+                self._last_connectivity_error = ProviderUnavailableError(
+                    detail=f"MLflow connectivity probe returned HTTP {exc.code} for {self._uri}",
+                    context={
+                        "mlflow_probe_reason": PROBE_REASON_HTTP_ERROR,
+                        "status_code": exc.code,
+                        "tracking_uri": self._uri,
+                    },
                 )
             else:
                 self._last_connectivity_error = None
             return exc.code < 500  # 4xx means server is reachable
         except ssl.SSLCertVerificationError as exc:
-            self._last_connectivity_error = AppError(
-                message=f"MLflow TLS certificate verification failed for {self._uri}: {exc}",
-                code="MLFLOW_TLS_CERT_VERIFY_FAILED",
-                details={"tracking_uri": self._uri},
+            self._last_connectivity_error = ProviderUnavailableError(
+                detail=f"MLflow TLS certificate verification failed for {self._uri}: {exc}",
+                context={
+                    "mlflow_probe_reason": PROBE_REASON_TLS_CERT_VERIFY_FAILED,
+                    "tracking_uri": self._uri,
+                },
+                cause=exc,
             )
             logger.debug(f"[MLFLOW:GATEWAY] Connectivity check failed: {exc}")
             return False
         except FileNotFoundError as exc:
-            self._last_connectivity_error = ConfigError(
-                message=f"MLflow CA bundle file not found: {self._ca_bundle_path}",
-                code="MLFLOW_TLS_CA_BUNDLE_INVALID",
-                details={"tracking_uri": self._uri, "ca_bundle_path": self._ca_bundle_path},
+            self._last_connectivity_error = ConfigInvalidError(
+                detail=f"MLflow CA bundle file not found: {self._ca_bundle_path}",
+                context={
+                    "mlflow_probe_reason": PROBE_REASON_TLS_CA_BUNDLE_INVALID,
+                    "tracking_uri": self._uri,
+                    "ca_bundle_path": self._ca_bundle_path,
+                },
+                cause=exc,
             )
             logger.debug(f"[MLFLOW:GATEWAY] Connectivity check failed: {exc}")
             return False
@@ -217,24 +266,42 @@ class MLflowGateway:
             return ssl.create_default_context(cafile=self._ca_bundle_path)
         return ssl.create_default_context()
 
-    def _map_connectivity_error(self, exc: OSError | TimeoutError | urllib.error.URLError) -> AppError:
+    def _map_connectivity_error(
+        self, exc: OSError | TimeoutError | urllib.error.URLError
+    ) -> RyotenkAIError:
+        """Map a low-level transport exception to a typed RyotenkAIError.
+
+        All resulting errors are :class:`ProviderUnavailableError` —
+        transient/upstream/transport failures are infrastructure-level
+        (5xx semantics). The granular discriminator (TLS / timeout /
+        connection-failed) is preserved on ``context["mlflow_probe_reason"]``.
+        """
         reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
         if isinstance(reason, ssl.SSLCertVerificationError):
-            return AppError(
-                message=f"MLflow TLS certificate verification failed for {self._uri}: {reason}",
-                code="MLFLOW_TLS_CERT_VERIFY_FAILED",
-                details={"tracking_uri": self._uri},
+            return ProviderUnavailableError(
+                detail=f"MLflow TLS certificate verification failed for {self._uri}: {reason}",
+                context={
+                    "mlflow_probe_reason": PROBE_REASON_TLS_CERT_VERIFY_FAILED,
+                    "tracking_uri": self._uri,
+                },
+                cause=exc,
             )
         if isinstance(reason, TimeoutError):
-            return AppError(
-                message=f"MLflow connectivity probe timed out for {self._uri}",
-                code="MLFLOW_PREFLIGHT_TIMEOUT",
-                details={"tracking_uri": self._uri},
+            return ProviderUnavailableError(
+                detail=f"MLflow connectivity probe timed out for {self._uri}",
+                context={
+                    "mlflow_probe_reason": PROBE_REASON_TIMEOUT,
+                    "tracking_uri": self._uri,
+                },
+                cause=exc,
             )
-        return AppError(
-            message=f"MLflow connectivity probe failed for {self._uri}: {reason}",
-            code="MLFLOW_PREFLIGHT_CONNECTION_FAILED",
-            details={"tracking_uri": self._uri},
+        return ProviderUnavailableError(
+            detail=f"MLflow connectivity probe failed for {self._uri}: {reason}",
+            context={
+                "mlflow_probe_reason": PROBE_REASON_CONNECTION_FAILED,
+                "tracking_uri": self._uri,
+            },
+            cause=exc,
         )
 
 
@@ -251,7 +318,7 @@ class NullMLflowGateway:
         return ""
 
     @property
-    def last_connectivity_error(self) -> AppError | None:
+    def last_connectivity_error(self) -> RyotenkAIError | None:
         return None
 
     def get_client(self) -> None:
@@ -268,4 +335,9 @@ __all__ = [
     "IMLflowGateway",
     "MLflowGateway",
     "NullMLflowGateway",
+    "PROBE_REASON_CONNECTION_FAILED",
+    "PROBE_REASON_HTTP_ERROR",
+    "PROBE_REASON_TIMEOUT",
+    "PROBE_REASON_TLS_CA_BUNDLE_INVALID",
+    "PROBE_REASON_TLS_CERT_VERIFY_FAILED",
 ]

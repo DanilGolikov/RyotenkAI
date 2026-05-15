@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ryotenkai_engines.vllm.config import VLLMEngineConfig
 
 from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import CodeSyncer
 from ryotenkai_shared.config import (
@@ -22,8 +22,7 @@ from ryotenkai_shared.config import (
     QLoRAConfig,
     TrainingOnlyConfig,
 )
-from ryotenkai_engines.vllm.config import VLLMEngineConfig
-from ryotenkai_shared.utils.result import Failure, Ok, ProviderError
+from ryotenkai_shared.errors import SSHTransferFailedError
 
 pytestmark = pytest.mark.unit
 
@@ -91,134 +90,9 @@ def syncer(base_config: PipelineConfig, secrets: DummySecrets) -> CodeSyncer:
     return s
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_success(syncer: CodeSyncer):
-    for module in CodeSyncer.REQUIRED_MODULES:
-        assert Path(module).exists(), f"Expected REQUIRED_MODULES entry to exist locally: {module}"
-
-    ssh_client = MagicMock()
-    ssh_client.ssh_base_opts = None
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "OK", "")
-
-    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
-        result = syncer.sync(ssh_client)
-
-    assert result.is_ok()
-    assert mock_run.call_count == 1
-    rsync_cmd = mock_run.call_args[0][0]
-    assert "rsync" in rsync_cmd
-    for module in CodeSyncer.REQUIRED_MODULES:
-        assert module in rsync_cmd
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_rsync_failure_tar_fallback(syncer: CodeSyncer):
-    ssh_client = MagicMock()
-    ssh_client.ssh_base_opts = None
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "OK", "")
-
-    failing = SimpleNamespace(returncode=1, stdout="", stderr="rsync failed")
-
-    with (
-        patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
-        patch.object(syncer, "_sync_module_tar", return_value=Ok(None)) as mock_tar,
-    ):
-        result = syncer.sync(ssh_client)
-
-    assert result.is_ok()
-    assert mock_tar.call_count == len(CodeSyncer.REQUIRED_MODULES)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_module_tar_dir_verify_exists_on_failure_returns_ok(syncer: CodeSyncer):
-    module = "src/training"
-    assert Path(module).exists()
-
-    ssh_client = MagicMock()
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "EXISTS", "")
-
-    failing = SimpleNamespace(returncode=1, stdout="", stderr="tar failed")
-
-    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
-        result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
-
-    assert result.is_ok()
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_module_tar_dir_verify_missing_returns_err(syncer: CodeSyncer):
-    module = "src/training"
-    assert Path(module).exists()
-
-    ssh_client = MagicMock()
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
-    ssh_client.exec_command.return_value = (False, "", "")
-
-    failing = SimpleNamespace(returncode=1, stdout="", stderr="tar failed")
-
-    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing):
-        result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
-
-    assert result.is_err()
-    assert f"Failed to sync {module}" in str(result.unwrap_err())
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_skips_missing_module_and_still_ok(syncer: CodeSyncer, monkeypatch):
-    missing_module = "src/definitely_missing_module_xyz"
-    assert not Path(missing_module).exists()
-
-    monkeypatch.setattr(CodeSyncer, "REQUIRED_MODULES", [missing_module])
-
-    ssh_client = MagicMock()
-    ssh_client._is_alias_mode = True
-    ssh_client.ssh_target = "pc"
-    ssh_client.key_path = ""
-    ssh_client.port = 22
-    ssh_client.exec_command.return_value = (True, "OK", "")
-
-    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed) as mock_run:
-        result = syncer.sync(ssh_client)
-
-    assert result.is_ok()
-    assert mock_run.call_count == 0
-
-
 def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
+    """Phase A2 Batch 9 (raise-based): tar-fallback failure raises
+    :class:`SSHTransferFailedError` rather than returning ``Err``."""
     ssh_client = MagicMock()
     ssh_client._is_alias_mode = True
     ssh_client.ssh_target = "pc"
@@ -228,32 +102,17 @@ def test_sync_tar_fallback_failure_is_returned(syncer: CodeSyncer):
 
     failing = SimpleNamespace(returncode=1, stdout="", stderr="rsync failed")
 
+    def _raise_tar_failure(*args, **kwargs):
+        raise SSHTransferFailedError(detail="tar failed", context={"reason": "TAR_FAILED"})
+
     with (
         patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=failing),
-        patch.object(syncer, "_sync_module_tar", return_value=Failure(ProviderError(message="tar failed", code="TAR_FAILED"))),
+        patch.object(syncer, "_sync_module_tar", side_effect=_raise_tar_failure),
+        pytest.raises(SSHTransferFailedError) as exc_info,
     ):
-        result = syncer.sync(ssh_client)
+        syncer.sync(ssh_client)
 
-    assert result.is_err()
-    assert "tar failed" in str(result.unwrap_err())
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_sync_module_tar_file_success_returns_ok(syncer: CodeSyncer):
-    module = "src/__init__.py"
-    assert Path(module).exists()
-
-    ssh_client = SimpleNamespace(_is_alias_mode=True, ssh_target="pc", key_path="", port=22)
-
-    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    with patch("ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run", return_value=completed):
-        result = syncer._sync_module_tar(ssh_client, module=module, ssh_opts="-o StrictHostKeyChecking=no")
-
-    assert result.is_ok()
+    assert "tar failed" in str(exc_info.value)
 
 
 def test_set_workspace_propagates():
@@ -268,25 +127,6 @@ def test_set_workspace_propagates():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="xfail-debt:code-syncer-attr-drift — Pre-existing failure pre-packagization: CodeSyncer class attributes/signature drifted post-packagization; legacy tests reference removed class members.",
-)
-def test_required_modules_ships_full_src_tree() -> None:
-    """Phase 0 PR-0.3: ``REQUIRED_MODULES`` is the literal one-entry list
-    ``["src"]``. The deploy step ships the entire ``src/`` tree minus
-    ``EXCLUDE_PATTERNS``; transitive imports therefore always travel
-    with the trainer regardless of which subpackage references them.
-
-    This replaces the pre-2026-05-02 selective whitelist that drifted
-    every time someone added a transitive ``src.*`` import (e.g. the
-    16-crash chain in run_20260502_113553_r8rul where
-    ``src.providers.runpod.training.provider`` imported
-    ``src.pipeline`` and the whitelist did not cover it).
-    """
-    assert CodeSyncer.REQUIRED_MODULES == ["src"]
-
-
 def test_excludes_cover_dev_and_test_artefacts() -> None:
     """The "ship everything" policy is only safe if the exclude list
     keeps real noise off the pod: tests, byte-caches, and markdown.
@@ -294,3 +134,55 @@ def test_excludes_cover_dev_and_test_artefacts() -> None:
     """
     expected = {"__pycache__", "*.pyc", "tests", "*.md"}
     assert expected.issubset(set(CodeSyncer.EXCLUDE_PATTERNS))
+
+
+# ---------------------------------------------------------------------------
+# Phase A2 Batch 9 — raise-based contract coverage
+# ---------------------------------------------------------------------------
+
+
+def test_sync_success_returns_none(syncer: CodeSyncer):
+    """Positive: a green rsync run returns ``None`` (no Result wrapper)."""
+    ssh_client = MagicMock()
+    ssh_client._is_alias_mode = True
+    ssh_client.ssh_target = "pc"
+    ssh_client.key_path = ""
+    ssh_client.port = 22
+    ssh_client.exec_command.return_value = (True, "OK", "")
+
+    completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with patch(
+        "ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run",
+        return_value=completed,
+    ):
+        result = syncer.sync(ssh_client)
+
+    assert result is None
+
+
+def test_sync_tar_fallback_path_raises_ssh_transfer_failed_with_context(syncer: CodeSyncer):
+    """Boundary: the raised exception carries the canonical
+    ``reason``/``local``/``dest`` context for diagnostic surfacing."""
+    ssh_client = MagicMock()
+    ssh_client._is_alias_mode = True
+    ssh_client.ssh_target = "pc"
+    ssh_client.key_path = ""
+    ssh_client.port = 22
+    # First call: mkdir -p; subsequent: verify dirs missing → raise.
+    ssh_client.exec_command.return_value = (False, "", "")
+
+    failing = SimpleNamespace(returncode=1, stdout="", stderr="rsync failed")
+
+    with (
+        patch(
+            "ryotenkai_control.pipeline.stages.managers.deployment.code_syncer.subprocess.run",
+            return_value=failing,
+        ),
+        pytest.raises(SSHTransferFailedError) as exc_info,
+    ):
+        syncer.sync(ssh_client)
+
+    assert "Failed to sync" in str(exc_info.value)
+    assert exc_info.value.context.get("tar_returncode") == 1
+    assert "remote_dir" in exc_info.value.context

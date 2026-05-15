@@ -1,5 +1,14 @@
 """
 RunPod training client backed by the official Python SDK.
+
+Phase A2 Batch 11 (2026-05-15): migrated from ``Result[T, ProviderError]``
+to raise-based typed exceptions
+(:class:`ProviderUnavailableError` for transport/parse failures;
+``RUNPOD_POD_DATA_MISSING`` / ``RUNPOD_RUNTIME_NOT_AVAILABLE`` /
+``RUNPOD_SSH_PORT_UNAVAILABLE`` codes preserved via the exception
+``context`` dict). The public ``RunPodProvider`` facade catches typed
+exceptions and translates them back into ``Result[T, ProviderError]``
+for :class:`IGPUProvider` Protocol conformance.
 """
 
 from __future__ import annotations
@@ -10,8 +19,8 @@ from typing import TYPE_CHECKING, Any
 from ryotenkai_providers.runpod.models import PodSnapshot, read_ssh_public_key
 from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
 from ryotenkai_shared.constants import RUNTIME_IMAGE
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 _POD_ID_KEY = "pod_id"
 
@@ -81,7 +90,13 @@ def build_pod_launch_kwargs(
 
 
 class RunPodAPIClient:
-    """Training pod lifecycle client backed by ``runpod`` SDK."""
+    """Training pod lifecycle client backed by ``runpod`` SDK.
+
+    Phase A2 Batch 11: raise-based contract. Methods return ``T`` and
+    raise typed exceptions (subclasses of :class:`RyotenkAIError`) on
+    failure. The public facade catches and translates to ``Result`` for
+    Protocol conformance.
+    """
 
     def __init__(self, api_base_url: str, api_key: str):
         self.api_base = api_base_url
@@ -94,7 +109,7 @@ class RunPodAPIClient:
         config: RunPodProviderConfig,
         *,
         pod_name: str | None = None,
-    ) -> Result[dict[str, Any], ProviderError]:
+    ) -> dict[str, Any]:
         """Create a new RunPod training pod using the SDK."""
         logger.info("📦 Creating RunPod pod via RunPod SDK...")
 
@@ -105,20 +120,22 @@ class RunPodAPIClient:
         logger.debug(f"[RUNPOD:CONFIG] image={RUNTIME_IMAGE}, template_id={train_cfg.template_id}")
         logger.info(f"📦 Using Docker image: {RUNTIME_IMAGE}")
 
-        result = self._sdk.create_pod(**sdk_kwargs)
-        if result.is_failure():
-            return Err(result.unwrap_err())  # type: ignore[union-attr]
-
-        pod_data = result.unwrap()
+        pod_data = self._sdk.create_pod(**sdk_kwargs)
         if not pod_data or not pod_data.get("id"):
-            return Err(ProviderError(message=f"Failed to create pod: {pod_data}", code="RUNPOD_POD_DATA_MISSING"))
+            raise ProviderUnavailableError(
+                detail=f"Failed to create pod: {pod_data}",
+                context={"code": "RUNPOD_POD_DATA_MISSING"},
+            )
 
         pod_id = str(pod_data["id"])
-        enriched = self._sdk.get_pod(pod_id=pod_id)
-        if enriched.is_ok() and enriched.unwrap():
-            pod_data = enriched.unwrap()
+        try:
+            enriched = self._sdk.get_pod(pod_id=pod_id)
+        except Exception:
+            enriched = None
+        if enriched:
+            pod_data = enriched
 
-        return Ok(self._log_and_build_create_result(pod_data, train_cfg))
+        return self._log_and_build_create_result(pod_data, train_cfg)
 
     @staticmethod
     def _log_and_build_create_result(pod_data: dict[str, Any], train_cfg: Any) -> dict[str, Any]:
@@ -153,46 +170,43 @@ class RunPodAPIClient:
             "gpu_type": gpu_type,
         }
 
-    def query_pod(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        """Query pod status using the SDK."""
-        result = self._sdk.get_pod(pod_id=pod_id)
-        if result.is_failure():
-            err = result.unwrap_err()  # type: ignore[union-attr]
-            return Err(
-                ProviderError(
-                    message=f"Failed to query pod: {err.message}",
-                    code=err.code,
-                    details={_POD_ID_KEY: pod_id},
-                )
-            )
+    def query_pod(self, pod_id: str) -> dict[str, Any]:
+        """Query pod status using the SDK.
 
-        pod_data = result.unwrap()
+        Raises:
+            ProviderUnavailableError: SDK call failed (transport / 5xx).
+                Carries ``context['code'] == 'RUNPOD_POD_DATA_MISSING'``
+                when the SDK returns an empty payload.
+        """
+        try:
+            pod_data = self._sdk.get_pod(pod_id=pod_id)
+        except ProviderUnavailableError as err:
+            # Re-raise with the pod_id context attached so the facade's
+            # Err(ProviderError(...)) preserves the diagnostic.
+            ctx = {**err.context, _POD_ID_KEY: pod_id}
+            new_detail = f"Failed to query pod: {err.detail or str(err)}"
+            raise ProviderUnavailableError(detail=new_detail, context=ctx) from err
+
         if not pod_data:
-            return Err(
-                ProviderError(
-                    message="No pod data received", code="RUNPOD_POD_DATA_MISSING", details={_POD_ID_KEY: pod_id}
-                )
+            raise ProviderUnavailableError(
+                detail="No pod data received",
+                context={"code": "RUNPOD_POD_DATA_MISSING", _POD_ID_KEY: pod_id},
             )
-        return Ok(pod_data)
+        return pod_data
 
-    def terminate_pod(self, pod_id: str) -> Result[None, ProviderError]:
+    def terminate_pod(self, pod_id: str) -> None:
         """Terminate (delete) pod using the SDK."""
         logger.info(f"🗑️ Terminating pod {pod_id}...")
-        result = self._sdk.delete_pod(pod_id=pod_id)
-        if result.is_failure():
-            err = result.unwrap_err()  # type: ignore[union-attr]
+        try:
+            self._sdk.delete_pod(pod_id=pod_id)
+        except ProviderUnavailableError as err:
             logger.error(f"Failed to terminate pod {pod_id}: {err}")
-            return Err(
-                ProviderError(
-                    message=f"Failed to terminate pod: {err.message}",
-                    code=err.code,
-                    details={_POD_ID_KEY: pod_id},
-                )
-            )
+            ctx = {**err.context, _POD_ID_KEY: pod_id}
+            new_detail = f"Failed to terminate pod: {err.detail or str(err)}"
+            raise ProviderUnavailableError(detail=new_detail, context=ctx) from err
         logger.info(f"✅ Pod {pod_id} terminated")
-        return Ok(None)
 
-    def stop_pod(self, pod_id: str) -> Result[None, ProviderError]:
+    def stop_pod(self, pod_id: str) -> None:
         """Phase 11.C — pause pod (sleep), preserves /workspace.
 
         Mirrors the in-pod runner's :class:`PodTerminator` ``podStop``
@@ -203,89 +217,64 @@ class RunPodAPIClient:
         already sleeping / gone.
         """
         logger.info(f"⏸️  Stopping (sleeping) pod {pod_id}...")
-        result = self._sdk.stop_pod(pod_id=pod_id)
-        if result.is_failure():
-            err = result.unwrap_err()  # type: ignore[union-attr]
+        try:
+            self._sdk.stop_pod(pod_id=pod_id)
+        except ProviderUnavailableError as err:
             logger.error(f"Failed to stop pod {pod_id}: {err}")
-            return Err(
-                ProviderError(
-                    message=f"Failed to stop pod: {err.message}",
-                    code=err.code,
-                    details={_POD_ID_KEY: pod_id},
-                )
-            )
+            ctx = {**err.context, _POD_ID_KEY: pod_id}
+            new_detail = f"Failed to stop pod: {err.detail or str(err)}"
+            raise ProviderUnavailableError(detail=new_detail, context=ctx) from err
         logger.info(f"✅ Pod {pod_id} stopped (sleeping)")
-        return Ok(None)
 
-    def resume_pod(self, pod_id: str) -> Result[None, ProviderError]:
+    def resume_pod(self, pod_id: str) -> None:
         """Phase 11.C — resume pod from sleep state.
 
         Wakes a previously stopped pod (Phase 11.B's ``podStop``
         path) so the orchestrator can re-attach SSH and run
         :class:`ModelRetriever` to pull artifacts off ``/workspace``.
-
-        Failure modes:
-        * Capacity exhausted ⇒ ProviderError with RUNPOD_NO_GPU
-          marker (caller's :func:`resume_pod_with_retry` matches
-          ``_CAPACITY_MARKERS`` to schedule retries).
-        * Pod already running ⇒ SDK returns success — no-op,
-          idempotent.
-        * Pod terminated ⇒ ProviderError with "not found" / "does
-          not exist" message (caller surfaces as POD_GONE).
         """
         logger.info(f"▶️  Resuming pod {pod_id}...")
-        result = self._sdk.start_pod(pod_id=pod_id)
-        if result.is_failure():
-            err = result.unwrap_err()  # type: ignore[union-attr]
+        try:
+            self._sdk.start_pod(pod_id=pod_id)
+        except ProviderUnavailableError as err:
             logger.error(f"Failed to resume pod {pod_id}: {err}")
-            return Err(
-                ProviderError(
-                    message=f"Failed to resume pod: {err.message}",
-                    code=err.code,
-                    details={_POD_ID_KEY: pod_id},
-                )
-            )
+            ctx = {**err.context, _POD_ID_KEY: pod_id}
+            new_detail = f"Failed to resume pod: {err.detail or str(err)}"
+            raise ProviderUnavailableError(detail=new_detail, context=ctx) from err
         logger.info(f"✅ Pod {pod_id} resume request accepted")
-        return Ok(None)
 
-    def get_ssh_info(self, pod_id: str) -> Result[dict[str, Any], ProviderError]:
+    def get_ssh_info(self, pod_id: str) -> dict[str, Any]:
         """Get SSH connection info for a pod."""
-        pod_result = self.query_pod(pod_id)
-        if pod_result.is_failure():
-            return Err(pod_result.unwrap_err())  # type: ignore[union-attr]
-        ssh_info = self.extract_exposed_ssh_info(pod_result.unwrap(), pod_id=pod_id)
-        if ssh_info.is_failure():
-            return Err(ssh_info.unwrap_err())  # type: ignore[union-attr]
-        return Ok(ssh_info.unwrap())
+        pod_data = self.query_pod(pod_id)
+        return self.extract_exposed_ssh_info(pod_data, pod_id=pod_id)
 
     @staticmethod
     def extract_exposed_ssh_info(
         pod_data: dict[str, Any] | None,
         *,
         pod_id: str | None = None,
-    ) -> Result[dict[str, Any], ProviderError]:
-        """Extract automation-grade SSH endpoint from RunPod pod data."""
-        details = {_POD_ID_KEY: pod_id} if pod_id else None
+    ) -> dict[str, Any]:
+        """Extract automation-grade SSH endpoint from RunPod pod data.
+
+        Raises ``ProviderUnavailableError`` (with ``context['code']``
+        carrying the legacy code) when runtime is unavailable or no
+        SSH endpoint is exposed.
+        """
+        details: dict[str, Any] = {_POD_ID_KEY: pod_id} if pod_id else {}
 
         if not pod_data or not pod_data.get("runtime"):
-            return Err(
-                ProviderError(
-                    message="Pod runtime info not available",
-                    code="RUNPOD_RUNTIME_NOT_AVAILABLE",
-                    details=details,
-                )
+            raise ProviderUnavailableError(
+                detail="Pod runtime info not available",
+                context={"code": "RUNPOD_RUNTIME_NOT_AVAILABLE", **details},
             )
 
         snapshot = PodSnapshot.from_graphql(pod_data)
         if snapshot.ssh_endpoint is not None:
-            return Ok({"host": snapshot.ssh_endpoint.host, "port": snapshot.ssh_endpoint.port})
+            return {"host": snapshot.ssh_endpoint.host, "port": snapshot.ssh_endpoint.port}
 
-        return Err(
-            ProviderError(
-                message="SSH over exposed TCP is not available on pod",
-                code="RUNPOD_SSH_PORT_UNAVAILABLE",
-                details=details,
-            )
+        raise ProviderUnavailableError(
+            detail="SSH over exposed TCP is not available on pod",
+            context={"code": "RUNPOD_SSH_PORT_UNAVAILABLE", **details},
         )
 
 

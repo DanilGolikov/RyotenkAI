@@ -1,29 +1,23 @@
-"""
-Unit tests for RunPodPodsRESTClient (src/providers/runpod/inference/pods/api_client.py).
+"""Unit tests for RunPodPodsRESTClient (raise-based, Phase A2 Batch 11).
 
 Coverage:
 - _request_json: success, HTTP error, request exception, empty body, non-JSON body
-- list_pods: success, empty, unexpected type, HTTP error
-- get_pod: success, unexpected type, HTTP error
-- create_pod: success, API error, unexpected type
-- start_pod: success, error
-- stop_pod: success, error
-- delete_pod: success, not found, request exception
-- list_network_volumes: success, unexpected type, HTTP error
-- get_network_volume: success, unexpected type, HTTP error
-- create_network_volume: success, error, unexpected type
+- list_pods: success, empty, unexpected type, error
+- get_pod: success, unexpected type, error
+- create_pod: success, error, unexpected type
+- start_pod / stop_pod / delete_pod: success, error
+- list_network_volumes / get_network_volume / create_network_volume: REST success/error
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
 from ryotenkai_providers.runpod.inference.pods.api_client import RunPodPodsRESTClient
-from ryotenkai_shared.utils.result import Err, Ok
-from ryotenkai_shared.utils.result import ProviderError
+from ryotenkai_shared.errors import ProviderUnavailableError
 
 pytestmark = pytest.mark.unit
 
@@ -60,30 +54,51 @@ def _err_resp(status: int = 500, body: Any = "server error") -> _FakeResp:
 
 @dataclass
 class _FakeSDK:
-    list_result: Any = None
-    get_result: Any = None
-    create_result: Any = None
-    start_result: Any = None
-    stop_result: Any = None
-    delete_result: Any = None
+    """Raise-based fake for ``RunPodSDKClient``."""
+
+    list_value: Any = None
+    list_exc: BaseException | None = None
+    get_value: Any = None
+    get_exc: BaseException | None = None
+    create_value: Any = None
+    create_exc: BaseException | None = None
+    start_exc: BaseException | None = None
+    stop_exc: BaseException | None = None
+    delete_exc: BaseException | None = None
+    captured: dict[str, Any] = field(default_factory=dict)
 
     def list_pods(self, *, params: dict[str, Any] | None = None):
-        return self.list_result
+        self.captured["list_params"] = params
+        if self.list_exc is not None:
+            raise self.list_exc
+        return self.list_value
 
     def get_pod(self, *, pod_id: str):
-        return self.get_result
+        self.captured["get_pod_id"] = pod_id
+        if self.get_exc is not None:
+            raise self.get_exc
+        return self.get_value
 
     def create_pod_from_payload(self, *, payload: dict[str, Any]):
-        return self.create_result
+        self.captured["create_payload"] = payload
+        if self.create_exc is not None:
+            raise self.create_exc
+        return self.create_value
 
     def start_pod(self, *, pod_id: str):
-        return self.start_result
+        self.captured["start_pod_id"] = pod_id
+        if self.start_exc is not None:
+            raise self.start_exc
 
     def stop_pod(self, *, pod_id: str):
-        return self.stop_result
+        self.captured["stop_pod_id"] = pod_id
+        if self.stop_exc is not None:
+            raise self.stop_exc
 
     def delete_pod(self, *, pod_id: str):
-        return self.delete_result
+        self.captured["delete_pod_id"] = pod_id
+        if self.delete_exc is not None:
+            raise self.delete_exc
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +108,10 @@ class _FakeSDK:
 
 def _client() -> RunPodPodsRESTClient:
     return RunPodPodsRESTClient(api_key="test-key", api_base_url="https://rest.runpod.io/v1")
+
+
+def _err(detail: str, code: str = "RUNPOD_SDK_CALL_FAILED") -> ProviderUnavailableError:
+    return ProviderUnavailableError(detail=detail, context={"code": code})
 
 
 def test_client_init_normalizes_base_url_and_auth_header() -> None:
@@ -111,39 +130,36 @@ def test_client_init_normalizes_base_url_and_auth_header() -> None:
 def test_request_json_success_returns_parsed_body(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp({"key": "val"}))
-    res = c._request_json("GET", "/test")
-    assert res.is_success()
-    assert res.unwrap() == {"key": "val"}
+    out = c._request_json("GET", "/test")
+    assert out == {"key": "val"}
 
 
-def test_request_json_http_error_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_request_json_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _err_resp(500))
-    res = c._request_json("GET", "/test")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "RUNPOD_REST_HTTP_ERROR"
-    assert err.details["status_code"] == 500
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c._request_json("GET", "/test")
+    assert ei.value.context["code"] == "RUNPOD_REST_HTTP_ERROR"
+    assert ei.value.context["status_code"] == 500
 
 
-def test_request_json_request_exception_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_request_json_request_exception_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
 
     def _raise(**kw: Any) -> None:
         raise ConnectionError("network down")
 
     monkeypatch.setattr(c.session, "request", _raise)
-    res = c._request_json("GET", "/test")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_REST_REQUEST_FAILED"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c._request_json("GET", "/test")
+    assert ei.value.context["code"] == "RUNPOD_REST_REQUEST_FAILED"
 
 
 def test_request_json_empty_body_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _FakeResp(status_code=200, _text="", _json_data=None))
-    res = c._request_json("DELETE", "/pods/p1")
-    assert res.is_success()
-    assert res.unwrap() is None
+    out = c._request_json("DELETE", "/pods/p1")
+    assert out is None
 
 
 def test_request_json_non_json_body_returns_raw_text(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,18 +169,16 @@ def test_request_json_non_json_body_returns_raw_text(monkeypatch: pytest.MonkeyP
         "request",
         lambda **kw: _FakeResp(status_code=200, _text="plain text", _raise_on_json=True),
     )
-    res = c._request_json("GET", "/test")
-    assert res.is_success()
-    assert res.unwrap() == "plain text"
+    out = c._request_json("GET", "/test")
+    assert out == "plain text"
 
 
 def test_request_json_http_error_includes_method_and_url(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _err_resp(403, "forbidden"))
-    res = c._request_json("POST", "/pods")
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.details["method"] == "POST"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c._request_json("POST", "/pods")
+    assert ei.value.context["method"] == "POST"
 
 
 def test_request_json_passes_headers_params_payload_and_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +191,7 @@ def test_request_json_passes_headers_params_payload_and_timeout(monkeypatch: pyt
 
     monkeypatch.setattr(c.session, "request", fake_request)
 
-    res = c._request_json(
+    c._request_json(
         "POST",
         "/networkvolumes",
         params={"page": 2},
@@ -185,7 +199,6 @@ def test_request_json_passes_headers_params_payload_and_timeout(monkeypatch: pyt
         timeout_seconds=17,
     )
 
-    assert res.is_success()
     assert captured["method"] == "POST"
     assert captured["url"] == "https://rest.runpod.io/v1/networkvolumes"
     assert captured["headers"] == c.headers
@@ -202,77 +215,41 @@ def test_request_json_passes_headers_params_payload_and_timeout(monkeypatch: pyt
 def test_list_pods_returns_list(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     pods = [{"id": "p1", "desiredStatus": "RUNNING"}, {"id": "p2", "desiredStatus": "EXITED"}]
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(list_result=Ok(pods)))
-    res = c.list_pods()
-    assert res.is_success()
-    assert res.unwrap() == pods
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(list_value=pods))
+    assert c.list_pods() == pods
 
 
 def test_list_pods_empty_list(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(list_result=Ok([])))
-    res = c.list_pods()
-    assert res.is_success()
-    assert res.unwrap() == []
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(list_value=[]))
+    assert c.list_pods() == []
 
 
-def test_list_pods_unexpected_dict_type_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_pods_propagates_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(
-            list_result=Err(
-                ProviderError(message="Unexpected runpod SDK get_pods response type: dict", code="RUNPOD_SDK_UNEXPECTED_RESPONSE")
-            )
-        ),
-    )
-    res = c.list_pods()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
-
-
-def test_list_pods_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(list_result=Err(ProviderError(message="unauthorized", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.list_pods()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(list_exc=_err("unauthorized")))
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c.list_pods()
+    assert ei.value.context["code"] == "RUNPOD_SDK_CALL_FAILED"
 
 
 def test_list_pods_passes_params(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    captured: dict[str, Any] = {}
-
-    class _CaptureSDK(_FakeSDK):
-        def list_pods(self, *, params: dict[str, Any] | None = None):
-            captured["params"] = params
-            return Ok([])
-
-    monkeypatch.setattr(c, "_sdk", _CaptureSDK())
+    sdk = _FakeSDK(list_value=[])
+    monkeypatch.setattr(c, "_sdk", sdk)
     c.list_pods(params={"computeType": "GPU", "name": "test-pod"})
-    assert captured.get("params") == {"computeType": "GPU", "name": "test-pod"}
+    assert sdk.captured["list_params"] == {"computeType": "GPU", "name": "test-pod"}
 
 
 def test_create_pod_passes_payload_to_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    captured: dict[str, Any] = {}
+    sdk = _FakeSDK(create_value={"id": "p1"})
+    monkeypatch.setattr(c, "_sdk", sdk)
 
-    class _CaptureSDK(_FakeSDK):
-        def create_pod_from_payload(self, *, payload: dict[str, Any]):
-            captured["payload"] = payload
-            return Ok({"id": "p1"})
+    out = c.create_pod(payload={"name": "pod", "imageName": "img"})
 
-    monkeypatch.setattr(c, "_sdk", _CaptureSDK())
-
-    res = c.create_pod(payload={"name": "pod", "imageName": "img"})
-
-    assert res.is_success()
-    assert captured["payload"] == {"name": "pod", "imageName": "img"}
+    assert out["id"] == "p1"
+    assert sdk.captured["create_payload"] == {"name": "pod", "imageName": "img"}
 
 
 # ---------------------------------------------------------------------------
@@ -283,49 +260,15 @@ def test_create_pod_passes_payload_to_sdk(monkeypatch: pytest.MonkeyPatch) -> No
 def test_get_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     pod = {"id": "p1", "desiredStatus": "RUNNING"}
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(get_result=Ok(pod)))
-    res = c.get_pod(pod_id="p1")
-    assert res.is_success()
-    assert res.unwrap()["id"] == "p1"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(get_value=pod))
+    assert c.get_pod(pod_id="p1") == pod
 
 
-def test_get_pod_unexpected_list_type(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_pod_propagates_sdk_error(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(
-            get_result=Err(
-                ProviderError(message="Unexpected runpod SDK get_pod response type: list", code="RUNPOD_SDK_UNEXPECTED_RESPONSE")
-            )
-        ),
-    )
-    res = c.get_pod(pod_id="p1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
-
-
-def test_get_pod_http_error_404(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(get_result=Err(ProviderError(message="not found", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.get_pod(pod_id="missing")
-    assert res.is_failure()
-
-
-def test_get_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(get_result=Err(ProviderError(message="timeout", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.get_pod(pod_id="p1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(get_exc=_err("not found")))
+    with pytest.raises(ProviderUnavailableError):
+        c.get_pod(pod_id="missing")
 
 
 # ---------------------------------------------------------------------------
@@ -336,174 +279,65 @@ def test_get_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_create_pod_success_returns_pod_dict(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     pod = {"id": "new_pod", "desiredStatus": "RUNNING", "imageName": "img"}
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(create_result=Ok(pod)))
-    res = c.create_pod(payload={"name": "test", "imageName": "img"})
-    assert res.is_success()
-    assert res.unwrap()["id"] == "new_pod"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(create_value=pod))
+    assert c.create_pod(payload={"name": "test", "imageName": "img"})["id"] == "new_pod"
 
 
-def test_create_pod_api_error_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_pod_api_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(create_result=Err(ProviderError(message="bad request", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.create_pod(payload={})
-    assert res.is_failure()
-
-
-def test_create_pod_unexpected_list_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(
-            create_result=Err(
-                ProviderError(message="Unexpected runpod SDK create_pod response type: list", code="RUNPOD_SDK_UNEXPECTED_RESPONSE")
-            )
-        ),
-    )
-    res = c.create_pod(payload={})
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_UNEXPECTED_RESPONSE"
-
-
-def test_create_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(create_result=Err(ProviderError(message="connection reset", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.create_pod(payload={})
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(create_exc=_err("bad request")))
+    with pytest.raises(ProviderUnavailableError):
+        c.create_pod(payload={})
 
 
 # ---------------------------------------------------------------------------
-# start_pod
+# start_pod / stop_pod / delete_pod
 # ---------------------------------------------------------------------------
 
 
 def test_start_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(start_result=Ok(None)))
-    res = c.start_pod(pod_id="p1")
-    assert res.is_success()
-    assert res.unwrap() is None
+    sdk = _FakeSDK()
+    monkeypatch.setattr(c, "_sdk", sdk)
+    c.start_pod(pod_id="p1")
+    assert sdk.captured["start_pod_id"] == "p1"
 
 
-def test_start_pod_error_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_pod_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(start_result=Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.start_pod(pod_id="p1")
-    assert res.is_failure()
-
-
-def test_start_pod_passes_pod_id_to_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    captured: dict[str, Any] = {}
-
-    class _CaptureSDK(_FakeSDK):
-        def start_pod(self, *, pod_id: str):
-            captured["pod_id"] = pod_id
-            return Ok(None)
-
-    monkeypatch.setattr(c, "_sdk", _CaptureSDK())
-
-    res = c.start_pod(pod_id="p9")
-
-    assert res.is_success()
-    assert captured["pod_id"] == "p9"
-
-
-# ---------------------------------------------------------------------------
-# stop_pod
-# ---------------------------------------------------------------------------
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(start_exc=_err("boom")))
+    with pytest.raises(ProviderUnavailableError):
+        c.start_pod(pod_id="p1")
 
 
 def test_stop_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(stop_result=Ok(None)))
-    res = c.stop_pod(pod_id="p1")
-    assert res.is_success()
-    assert res.unwrap() is None
+    sdk = _FakeSDK()
+    monkeypatch.setattr(c, "_sdk", sdk)
+    c.stop_pod(pod_id="p1")
+    assert sdk.captured["stop_pod_id"] == "p1"
 
 
-def test_stop_pod_error_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_stop_pod_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(stop_result=Err(ProviderError(message="boom", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.stop_pod(pod_id="p1")
-    assert res.is_failure()
-
-
-def test_stop_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(stop_result=Err(ProviderError(message="net down", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.stop_pod(pod_id="p1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
-
-
-# ---------------------------------------------------------------------------
-# delete_pod
-# ---------------------------------------------------------------------------
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(stop_exc=_err("boom")))
+    with pytest.raises(ProviderUnavailableError):
+        c.stop_pod(pod_id="p1")
 
 
 def test_delete_pod_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(c, "_sdk", _FakeSDK(delete_result=Ok(None)))
-    res = c.delete_pod(pod_id="p1")
-    assert res.is_success()
-    assert res.unwrap() is None
+    sdk = _FakeSDK()
+    monkeypatch.setattr(c, "_sdk", sdk)
+    c.delete_pod(pod_id="p1")
+    assert sdk.captured["delete_pod_id"] == "p1"
 
 
-def test_delete_pod_not_found_returns_err(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_delete_pod_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(delete_result=Err(ProviderError(message="not found", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.delete_pod(pod_id="missing")
-    assert res.is_failure()
-
-
-def test_delete_pod_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(delete_result=Err(ProviderError(message="server error", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.delete_pod(pod_id="p1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
-
-
-def test_delete_pod_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    c = _client()
-    monkeypatch.setattr(
-        c,
-        "_sdk",
-        _FakeSDK(delete_result=Err(ProviderError(message="timeout", code="RUNPOD_SDK_CALL_FAILED"))),
-    )
-    res = c.delete_pod(pod_id="p1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SDK_CALL_FAILED"
+    monkeypatch.setattr(c, "_sdk", _FakeSDK(delete_exc=_err("server error")))
+    with pytest.raises(ProviderUnavailableError):
+        c.delete_pod(pod_id="p1")
 
 
 # ---------------------------------------------------------------------------
@@ -515,32 +349,28 @@ def test_list_network_volumes_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     volumes = [{"id": "v1", "name": "my-vol"}, {"id": "v2", "name": "other-vol"}]
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp(volumes))
-    res = c.list_network_volumes()
-    assert res.is_success()
-    assert res.unwrap() == volumes
+    assert c.list_network_volumes() == volumes
 
 
 def test_list_network_volumes_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp([]))
-    res = c.list_network_volumes()
-    assert res.is_success()
-    assert res.unwrap() == []
+    assert c.list_network_volumes() == []
 
 
-def test_list_network_volumes_unexpected_dict_type(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_network_volumes_unexpected_dict_type_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp({"volumes": []}))
-    res = c.list_network_volumes()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_UNEXPECTED_RESPONSE"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c.list_network_volumes()
+    assert ei.value.context["code"] == "RUNPOD_UNEXPECTED_RESPONSE"
 
 
-def test_list_network_volumes_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_network_volumes_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _err_resp(403, "forbidden"))
-    res = c.list_network_volumes()
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        c.list_network_volumes()
 
 
 def test_list_network_volumes_calls_expected_rest_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -553,9 +383,8 @@ def test_list_network_volumes_calls_expected_rest_path(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(c.session, "request", fake_request)
 
-    res = c.list_network_volumes()
+    c.list_network_volumes()
 
-    assert res.is_success()
     assert captured["method"] == "GET"
     assert captured["url"].endswith("/networkvolumes")
 
@@ -569,24 +398,22 @@ def test_get_network_volume_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     vol = {"id": "v1", "name": "my-vol", "size": 50}
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp(vol))
-    res = c.get_network_volume(network_volume_id="v1")
-    assert res.is_success()
-    assert res.unwrap()["id"] == "v1"
+    assert c.get_network_volume(network_volume_id="v1")["id"] == "v1"
 
 
-def test_get_network_volume_unexpected_list_type(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_network_volume_unexpected_list_type_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp([{"id": "v1"}]))
-    res = c.get_network_volume(network_volume_id="v1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_UNEXPECTED_RESPONSE"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c.get_network_volume(network_volume_id="v1")
+    assert ei.value.context["code"] == "RUNPOD_UNEXPECTED_RESPONSE"
 
 
-def test_get_network_volume_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_network_volume_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _err_resp(404, "not found"))
-    res = c.get_network_volume(network_volume_id="missing")
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        c.get_network_volume(network_volume_id="missing")
 
 
 def test_get_network_volume_calls_expected_rest_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -599,9 +426,8 @@ def test_get_network_volume_calls_expected_rest_path(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(c.session, "request", fake_request)
 
-    res = c.get_network_volume(network_volume_id="v1")
+    c.get_network_volume(network_volume_id="v1")
 
-    assert res.is_success()
     assert captured["method"] == "GET"
     assert captured["url"].endswith("/networkvolumes/v1")
 
@@ -615,36 +441,35 @@ def test_create_network_volume_success(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     vol = {"id": "v_new", "name": "my-vol", "size": 50, "dataCenterId": "US-KS-2"}
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp(vol))
-    res = c.create_network_volume(payload={"name": "my-vol", "size": 50, "dataCenterId": "US-KS-2"})
-    assert res.is_success()
-    assert res.unwrap()["id"] == "v_new"
+    out = c.create_network_volume(payload={"name": "my-vol", "size": 50, "dataCenterId": "US-KS-2"})
+    assert out["id"] == "v_new"
 
 
-def test_create_network_volume_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_network_volume_http_error_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _err_resp(500))
-    res = c.create_network_volume(payload={})
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        c.create_network_volume(payload={})
 
 
-def test_create_network_volume_unexpected_list_type(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_network_volume_unexpected_list_type_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
     monkeypatch.setattr(c.session, "request", lambda **kw: _ok_resp([{"id": "v"}]))
-    res = c.create_network_volume(payload={})
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_UNEXPECTED_RESPONSE"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c.create_network_volume(payload={})
+    assert ei.value.context["code"] == "RUNPOD_UNEXPECTED_RESPONSE"
 
 
-def test_create_network_volume_request_exception(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_network_volume_request_exception_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     c = _client()
 
     def _raise(**kw: Any) -> None:
         raise ConnectionError("net down")
 
     monkeypatch.setattr(c.session, "request", _raise)
-    res = c.create_network_volume(payload={})
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_REST_REQUEST_FAILED"
+    with pytest.raises(ProviderUnavailableError) as ei:
+        c.create_network_volume(payload={})
+    assert ei.value.context["code"] == "RUNPOD_REST_REQUEST_FAILED"
 
 
 def test_create_network_volume_calls_expected_rest_path_and_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -658,9 +483,8 @@ def test_create_network_volume_calls_expected_rest_path_and_payload(monkeypatch:
     monkeypatch.setattr(c.session, "request", fake_request)
 
     payload = {"name": "my-vol", "size": 50, "dataCenterId": "US-KS-2"}
-    res = c.create_network_volume(payload=payload)
+    c.create_network_volume(payload=payload)
 
-    assert res.is_success()
     assert captured["method"] == "POST"
     assert captured["url"].endswith("/networkvolumes")
     assert captured["json"] == payload

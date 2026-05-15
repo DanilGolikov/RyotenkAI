@@ -277,7 +277,7 @@ def test_prereq_training_monitor_missing_gpu_context(planner: StagePlanner) -> N
         context={},
     )
     assert err is not None
-    assert err.code == "MISSING_TRAINING_MONITOR_PREREQUISITES"
+    assert err.context["legacy_code"] == "MISSING_TRAINING_MONITOR_PREREQUISITES"
 
 
 def test_prereq_training_monitor_ok(planner: StagePlanner) -> None:
@@ -305,7 +305,7 @@ def test_prereq_inference_deployer_missing_retriever(planner: StagePlanner) -> N
         context={},
     )
     assert err is not None
-    assert err.code == "MISSING_INFERENCE_PREREQUISITES"
+    assert err.context["legacy_code"] == "MISSING_INFERENCE_PREREQUISITES"
 
 
 def test_prereq_inference_deployer_accepts_hf_repo(planner: StagePlanner) -> None:
@@ -343,7 +343,7 @@ def test_prereq_model_evaluator_inference_unhealthy(planner: StagePlanner) -> No
             context={StageNames.INFERENCE_DEPLOYER: {"endpoint_url": "http://x"}},
         )
     assert err is not None
-    assert err.code == "INFERENCE_RUNTIME_NOT_HEALTHY"
+    assert err.context["legacy_code"] == "INFERENCE_RUNTIME_NOT_HEALTHY"
 
 
 def test_prereq_model_evaluator_inference_healthy(planner: StagePlanner) -> None:

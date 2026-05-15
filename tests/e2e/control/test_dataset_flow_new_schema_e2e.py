@@ -20,7 +20,6 @@ import pytest
 from ryotenkai_control.pipeline.stages.managers.deployment_manager import TrainingDeploymentManager
 from ryotenkai_shared.config import PipelineConfig
 from ryotenkai_pod.trainer.container import TrainingContainer
-from ryotenkai_shared.utils.result import Ok
 
 
 @dataclass(frozen=True)
@@ -137,13 +136,13 @@ datasets:
     ssh_client = MagicMock()
     ssh_client.exec_command.return_value = (True, "", "")
 
+    # Phase A2: raise-based; helpers return None and raise on failure.
     with (
-        patch.object(deployment._file_uploader, "_upload_files_batch", return_value=Ok(None)) as mock_batch,
-        patch.object(deployment._code_syncer, "sync", return_value=Ok(None)),
+        patch.object(deployment._file_uploader, "_upload_files_batch", return_value=None) as mock_batch,
+        patch.object(deployment._code_syncer, "sync", return_value=None),
     ):
-        res = deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
+        deployment.deploy_files(ssh_client, {"config_path": str(cfg_path)})
 
-    assert res.is_ok()
     files_to_upload: list[tuple[str, str]] = mock_batch.call_args[0][1]
 
     # Extract only dataset uploads (remote_rel under data/)
@@ -175,8 +174,8 @@ datasets:
         phase = cfg.training.strategies[0]
         out = loader.load_for_phase(phase)
 
-    assert out.is_success()
-    loaded_train, loaded_eval = out.unwrap()
+    # Phase A2: load_for_phase returns (train, eval) tuple directly; raises on failure.
+    loaded_train, loaded_eval = out
     assert loaded_train is train_ds
     assert loaded_eval is eval_ds
 

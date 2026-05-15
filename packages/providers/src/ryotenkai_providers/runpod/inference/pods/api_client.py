@@ -5,6 +5,12 @@ Scope:
 - Pod lifecycle via official Python SDK
 - Legacy network volume operations via REST
 - No business logic (no naming, no lifecycle policy decisions)
+
+Phase A2 Batch 11 (2026-05-15): migrated from ``Result[T, ProviderError]``
+to raise-based typed exceptions. The public
+``RunPodPodInferenceProvider`` facade catches typed errors and
+translates them back into ``Result`` for
+:class:`IInferenceProvider` Protocol conformance.
 """
 
 from __future__ import annotations
@@ -26,8 +32,8 @@ from ryotenkai_providers.constants import (
     TIMEOUT_REQUEST_SHORT,
 )
 from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 from .constants import RUNPOD_REST_API_BASE_URL
 
@@ -35,7 +41,12 @@ _UNEXPECTED_RESPONSE_CODE = "RUNPOD_UNEXPECTED_RESPONSE"
 
 
 class RunPodPodsRESTClient:
-    """SDK-backed Pod client + REST-backed legacy Network Volume client."""
+    """SDK-backed Pod client + REST-backed legacy Network Volume client.
+
+    Phase A2 Batch 11: raise-based contract. Methods return ``T`` and
+    raise :class:`ProviderUnavailableError` (with the legacy code on
+    the exception's ``context`` dict) on failure.
+    """
 
     def __init__(self, *, api_key: str, api_base_url: str = RUNPOD_REST_API_BASE_URL):
         self.api_base = str(api_base_url).rstrip("/")
@@ -72,7 +83,7 @@ class RunPodPodsRESTClient:
         params: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
         timeout_seconds: int = TIMEOUT_REQUEST_DEFAULT,
-    ) -> Result[Any, ProviderError]:
+    ) -> Any:
         url = f"{self.api_base}{path}"
         try:
             resp = self.session.request(
@@ -83,14 +94,12 @@ class RunPodPodsRESTClient:
                 json=payload,
                 timeout=timeout_seconds,
             )
-        except Exception as e:
-            return Err(
-                ProviderError(
-                    message=f"RunPod REST request failed: {method} {url}: {e!s}",
-                    code="RUNPOD_REST_REQUEST_FAILED",
-                    details={"method": method, "url": url},
-                )
-            )
+        except Exception as exc:
+            raise ProviderUnavailableError(
+                detail=f"RunPod REST request failed: {method} {url}: {exc!s}",
+                context={"code": "RUNPOD_REST_REQUEST_FAILED", "method": method, "url": url},
+                cause=exc,
+            ) from exc
 
         # Try to parse body even on errors.
         text = (resp.text or "").strip()
@@ -102,85 +111,72 @@ class RunPodPodsRESTClient:
                 data = text
 
         if resp.status_code >= HTTP_STATUS_ERROR_THRESHOLD:
-            return Err(
-                ProviderError(
-                    message=f"RunPod REST HTTP {resp.status_code} for {method} {url}: {data!r}",
-                    code="RUNPOD_REST_HTTP_ERROR",
-                    details={"status_code": resp.status_code, "method": method, "url": url},
-                )
+            raise ProviderUnavailableError(
+                detail=f"RunPod REST HTTP {resp.status_code} for {method} {url}: {data!r}",
+                context={
+                    "code": "RUNPOD_REST_HTTP_ERROR",
+                    "status_code": resp.status_code,
+                    "method": method,
+                    "url": url,
+                },
             )
 
-        return Ok(data)
+        return data
 
     # ---------------------------------------------------------------------
     # Network volumes
     # ---------------------------------------------------------------------
 
-    def list_network_volumes(self) -> Result[list[dict[str, Any]], ProviderError]:
-        res = self._request_json(HTTP_GET, "/networkvolumes", timeout_seconds=TIMEOUT_REQUEST_DEFAULT)
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
+    def list_network_volumes(self) -> list[dict[str, Any]]:
+        val = self._request_json(HTTP_GET, "/networkvolumes", timeout_seconds=TIMEOUT_REQUEST_DEFAULT)
         if isinstance(val, list):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected networkvolumes response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
+            return val
+        raise ProviderUnavailableError(
+            detail=f"Unexpected networkvolumes response type: {type(val).__name__}",
+            context={"code": _UNEXPECTED_RESPONSE_CODE},
         )
 
-    def get_network_volume(self, *, network_volume_id: str) -> Result[dict[str, Any], ProviderError]:
-        res = self._request_json(
+    def get_network_volume(self, *, network_volume_id: str) -> dict[str, Any]:
+        val = self._request_json(
             HTTP_GET, f"/networkvolumes/{network_volume_id}", timeout_seconds=TIMEOUT_REQUEST_DEFAULT
         )
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
         if isinstance(val, dict):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected get_network_volume response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
+            return val
+        raise ProviderUnavailableError(
+            detail=f"Unexpected get_network_volume response type: {type(val).__name__}",
+            context={"code": _UNEXPECTED_RESPONSE_CODE},
         )
 
-    def create_network_volume(self, *, payload: dict[str, Any]) -> Result[dict[str, Any], ProviderError]:
-        res = self._request_json(HTTP_POST, "/networkvolumes", payload=payload, timeout_seconds=TIMEOUT_REQUEST_SHORT)
-        if res.is_failure():
-            return res  # type: ignore[return-value]
-        val = res.unwrap()
+    def create_network_volume(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        val = self._request_json(HTTP_POST, "/networkvolumes", payload=payload, timeout_seconds=TIMEOUT_REQUEST_SHORT)
         if isinstance(val, dict):
-            return Ok(val)
-        return Err(
-            ProviderError(
-                message=f"Unexpected create_network_volume response type: {type(val).__name__}",
-                code=_UNEXPECTED_RESPONSE_CODE,
-            )
+            return val
+        raise ProviderUnavailableError(
+            detail=f"Unexpected create_network_volume response type: {type(val).__name__}",
+            context={"code": _UNEXPECTED_RESPONSE_CODE},
         )
 
     # ---------------------------------------------------------------------
     # Pods (SDK-backed)
     # ---------------------------------------------------------------------
 
-    def list_pods(self, *, params: dict[str, Any] | None = None) -> Result[list[dict[str, Any]], ProviderError]:
+    def list_pods(self, *, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         return self._sdk.list_pods(params=params)
 
-    def get_pod(self, *, pod_id: str) -> Result[dict[str, Any], ProviderError]:
+    def get_pod(self, *, pod_id: str) -> dict[str, Any]:
         return self._sdk.get_pod(pod_id=pod_id)
 
-    def create_pod(self, *, payload: dict[str, Any]) -> Result[dict[str, Any], ProviderError]:
+    def create_pod(self, *, payload: dict[str, Any]) -> dict[str, Any]:
         return self._sdk.create_pod_from_payload(payload=payload)
 
-    def start_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        return self._sdk.start_pod(pod_id=pod_id)
+    def start_pod(self, *, pod_id: str) -> None:
+        self._sdk.start_pod(pod_id=pod_id)
 
-    def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        return self._sdk.stop_pod(pod_id=pod_id)
+    def stop_pod(self, *, pod_id: str) -> None:
+        self._sdk.stop_pod(pod_id=pod_id)
 
-    def delete_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        return self._sdk.delete_pod(pod_id=pod_id)
+    def delete_pod(self, *, pod_id: str) -> None:
+        self._sdk.delete_pod(pod_id=pod_id)
 
 
 __all__ = [

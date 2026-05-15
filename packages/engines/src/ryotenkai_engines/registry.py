@@ -39,7 +39,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ryotenkai_engines.errors import EngineNotRegistered, EngineRegistryError
+from ryotenkai_engines.errors import EngineNotRegisteredError
 from ryotenkai_engines.images import resolve_image
 from ryotenkai_engines.interfaces import BaseEngineConfig, IInferenceEngine
 from ryotenkai_engines.manifest import EngineManifest
@@ -176,10 +176,14 @@ class EngineRegistry:
                     )
                     failures.append(failure)
                     if strict:
-                        raise EngineRegistryError(
-                            failure.reason,
-                            code="ENGINE_ID_FOLDER_MISMATCH",
-                            details={"manifest_path": str(manifest_path)},
+                        raise EngineNotRegisteredError(
+                            detail=failure.reason,
+                            context={
+                                "reason": "engine_id_folder_mismatch",
+                                "manifest_path": str(manifest_path),
+                                "folder": child.name,
+                                "engine_id": manifest.engine.id,
+                            },
                         )
                     continue
 
@@ -195,10 +199,13 @@ class EngineRegistry:
                     )
                     failures.append(failure)
                     if strict:
-                        raise EngineRegistryError(
-                            failure.reason,
-                            code="ENGINE_DUPLICATE",
-                            details={"manifest_path": str(manifest_path)},
+                        raise EngineNotRegisteredError(
+                            detail=failure.reason,
+                            context={
+                                "reason": "engine_duplicate",
+                                "manifest_path": str(manifest_path),
+                                "engine_id": manifest.engine.id,
+                            },
                         )
                     continue
 
@@ -225,10 +232,13 @@ class EngineRegistry:
                 exc_type=type(exc).__name__,
             )
             if strict:
-                raise EngineRegistryError(
-                    failure.reason,
-                    code="ENGINE_MANIFEST_PARSE",
-                    details={"manifest_path": str(manifest_path)},
+                raise EngineNotRegisteredError(
+                    detail=failure.reason,
+                    context={
+                        "reason": "engine_manifest_parse",
+                        "manifest_path": str(manifest_path),
+                    },
+                    cause=exc,
                 ) from exc
             return failure
         try:
@@ -241,10 +251,13 @@ class EngineRegistry:
                 exc_type="ValidationError",
             )
             if strict:
-                raise EngineRegistryError(
-                    failure.reason,
-                    code="ENGINE_MANIFEST_INVALID",
-                    details={"manifest_path": str(manifest_path)},
+                raise EngineNotRegisteredError(
+                    detail=failure.reason,
+                    context={
+                        "reason": "engine_manifest_invalid",
+                        "manifest_path": str(manifest_path),
+                    },
+                    cause=exc,
                 ) from exc
             return failure
         return manifest
@@ -259,12 +272,23 @@ class EngineRegistry:
         """Get the parsed manifest for ``engine_id``.
 
         Raises:
-            EngineNotRegistered: ``engine_id`` is not known to this registry.
+            EngineNotRegisteredError: ``engine_id`` is not known to this registry.
         """
         try:
             return self._manifests[engine_id]
         except KeyError:
-            raise EngineNotRegistered(engine_id, known=self.list()) from None
+            known = self.list()
+            raise EngineNotRegisteredError(
+                detail=(
+                    f"engine {engine_id!r} is not registered. "
+                    f"Known engines: {list(known)!r}."
+                ),
+                context={
+                    "reason": "engine_not_registered",
+                    "engine_id": engine_id,
+                    "known": list(known),
+                },
+            ) from None
 
     def failures(self) -> tuple[LoadFailure, ...]:
         """Manifests that didn't load."""
@@ -276,34 +300,42 @@ class EngineRegistry:
         """Resolve and import the runtime class. Cached.
 
         Raises:
-            EngineNotRegistered: ``engine_id`` is unknown.
-            EngineRegistryError: import fails or class isn't an
-                ``IInferenceEngine``.
+            EngineNotRegisteredError: ``engine_id`` is unknown, the import
+                fails, or the class isn't an ``IInferenceEngine``.
+                ``context["reason"]`` distinguishes the cause
+                (``runtime_invalid`` / ``runtime_id_drift`` / …).
         """
         cls = self._resolve_class(engine_id, role_key="runtime")
         # Runtime-checkable Protocol verification — catches manifests that
         # point at the wrong class entirely.
         if not isinstance(cls, type) or not _is_inference_engine_class(cls):
-            raise EngineRegistryError(
-                message=(
+            raise EngineNotRegisteredError(
+                detail=(
                     f"engine {engine_id!r} entry_points.runtime points at "
                     f"{cls!r}, which does not satisfy IInferenceEngine."
                 ),
-                code="ENGINE_RUNTIME_INVALID",
-                details={"engine_id": engine_id, "resolved": repr(cls)},
+                context={
+                    "reason": "engine_runtime_invalid",
+                    "engine_id": engine_id,
+                    "resolved": repr(cls),
+                },
             )
         # Engine_id sanity: drift detector check at runtime — class.engine_id
         # ClassVar must equal manifest.engine.id.
         manifest = self._manifests[engine_id]
         if getattr(cls, "engine_id", None) != manifest.engine.id:
-            raise EngineRegistryError(
-                message=(
+            raise EngineNotRegisteredError(
+                detail=(
                     f"engine {engine_id!r}: runtime class {cls.__name__} "
                     f"declares engine_id={getattr(cls, 'engine_id', None)!r}, "
                     f"but manifest.engine.id is {manifest.engine.id!r}."
                 ),
-                code="ENGINE_RUNTIME_ID_DRIFT",
-                details={"engine_id": engine_id},
+                context={
+                    "reason": "engine_runtime_id_drift",
+                    "engine_id": engine_id,
+                    "declared": getattr(cls, "engine_id", None),
+                    "manifest": manifest.engine.id,
+                },
             )
         return cls  # type: ignore[return-value]
 
@@ -311,19 +343,23 @@ class EngineRegistry:
         """Resolve and import the config class. Cached.
 
         Raises:
-            EngineNotRegistered: ``engine_id`` is unknown.
-            EngineRegistryError: import fails or class isn't a
-                ``BaseEngineConfig`` subclass.
+            EngineNotRegisteredError: ``engine_id`` is unknown, the import
+                fails, or the class isn't a ``BaseEngineConfig`` subclass.
+                ``context["reason"]`` distinguishes
+                (``config_schema_invalid`` / ``config_kind_drift`` / …).
         """
         cls = self._resolve_class(engine_id, role_key="config_schema")
         if not (isinstance(cls, type) and issubclass(cls, BaseEngineConfig)):
-            raise EngineRegistryError(
-                message=(
+            raise EngineNotRegisteredError(
+                detail=(
                     f"engine {engine_id!r} entry_points.config_schema points "
                     f"at {cls!r}, which is not a BaseEngineConfig subclass."
                 ),
-                code="ENGINE_CONFIG_SCHEMA_INVALID",
-                details={"engine_id": engine_id, "resolved": repr(cls)},
+                context={
+                    "reason": "engine_config_schema_invalid",
+                    "engine_id": engine_id,
+                    "resolved": repr(cls),
+                },
             )
         # Discriminator parity: config class's ``kind`` Literal must equal
         # the engine id. Catches drift where author renamed the engine in
@@ -331,22 +367,37 @@ class EngineRegistry:
         manifest = self._manifests[engine_id]
         kind_literal = _extract_kind_literal(cls)
         if kind_literal is not None and kind_literal != manifest.engine.id:
-            raise EngineRegistryError(
-                message=(
+            raise EngineNotRegisteredError(
+                detail=(
                     f"engine {engine_id!r}: config class {cls.__name__} has "
                     f"kind={kind_literal!r}, but manifest.engine.id is "
                     f"{manifest.engine.id!r}. The Literal['kind'] field "
                     f"MUST match the engine id."
                 ),
-                code="ENGINE_CONFIG_KIND_DRIFT",
-                details={"engine_id": engine_id},
+                context={
+                    "reason": "engine_config_kind_drift",
+                    "engine_id": engine_id,
+                    "kind": kind_literal,
+                    "manifest": manifest.engine.id,
+                },
             )
         return cls
 
     def _resolve_class(self, engine_id: str, *, role_key: str) -> type[Any]:
         """Lazy class resolution with cache. Raises on import failure."""
         if engine_id not in self._manifests:
-            raise EngineNotRegistered(engine_id, known=self.list())
+            known = self.list()
+            raise EngineNotRegisteredError(
+                detail=(
+                    f"engine {engine_id!r} is not registered. "
+                    f"Known engines: {list(known)!r}."
+                ),
+                context={
+                    "reason": "engine_not_registered",
+                    "engine_id": engine_id,
+                    "known": list(known),
+                },
+            )
         cache_key = (engine_id, role_key)
         # Read without lock — dict get is atomic; misses re-acquire.
         if (cached := self._cls_cache.get(cache_key)) is not None:
@@ -358,23 +409,29 @@ class EngineRegistry:
         elif role_key == "config_schema":
             ep = manifest.entry_points.config_schema
         else:
-            raise EngineRegistryError(
-                message=f"unknown entry-point role_key={role_key!r}",
-                code="ENGINE_REGISTRY_BAD_ROLE",
-                details={"role_key": role_key},
+            raise EngineNotRegisteredError(
+                detail=f"unknown entry-point role_key={role_key!r}",
+                context={
+                    "reason": "engine_registry_bad_role",
+                    "role_key": role_key,
+                },
             )
 
         try:
             module = importlib.import_module(ep.module)
             cls = getattr(module, ep.class_name)
         except (ImportError, AttributeError) as exc:
-            raise EngineRegistryError(
-                message=(
+            raise EngineNotRegisteredError(
+                detail=(
                     f"engine {engine_id!r} entry_points.{role_key} locator "
                     f"{ep.module}:{ep.class_name} could not be resolved: {exc}"
                 ),
-                code="ENGINE_LOCATOR_RESOLVE_FAILED",
-                details={"engine_id": engine_id, "role_key": role_key},
+                context={
+                    "reason": "engine_locator_resolve_failed",
+                    "engine_id": engine_id,
+                    "role_key": role_key,
+                },
+                cause=exc,
             ) from exc
 
         with self._lock:

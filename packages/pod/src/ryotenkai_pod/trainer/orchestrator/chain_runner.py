@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel
@@ -29,17 +29,21 @@ class ChainRunner:
     - Iterate over phases from start_phase to end
     - Call PhaseExecutor for each phase
     - Pass model from one phase to next
-    - Log progress and handle errors
+    - Log progress and surface errors via raised exceptions
     - MLflow integration: parent run for entire chain
+
+    Raise contract (post Phase A2 Batch 14):
+    - Success: returns final ``PreTrainedModel``.
+    - Failure: propagates the typed :class:`RyotenkAIError` raised by the
+      underlying :class:`PhaseExecutor`. The MLflow "failed" tags are
+      logged on the way out before the exception is re-raised.
 
     Example:
         runner = ChainRunner(phase_executor, mlflow_manager=mlflow_manager)
-        result = runner.run(
-            strategies=strategies,
-            model=model,
-            buffer=buffer,
-            start_phase=0,
-        )
+        try:
+            model = runner.run(strategies=strategies, model=model, buffer=buffer)
+        except TrainingFailedError as exc:
+            ...
     """
 
     def __init__(
@@ -65,7 +69,7 @@ class ChainRunner:
         model: PreTrainedModel,
         buffer: DataBuffer,
         start_phase: int = 0,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Run the training chain from start_phase to completion.
 
@@ -79,7 +83,10 @@ class ChainRunner:
             start_phase: Phase index to start from (for resume)
 
         Returns:
-            Result[PreTrainedModel, TrainingError]: Final trained model or error
+            Final trained ``PreTrainedModel``.
+
+        Raises:
+            RyotenkAIError: surfaced from the underlying ``PhaseExecutor``.
         """
         total_phases = len(strategies)
         chain_str = " → ".join(s.strategy_type.upper() for s in strategies)
@@ -110,7 +117,7 @@ class ChainRunner:
         buffer: DataBuffer,
         start_phase: int,
         total_phases: int,
-    ) -> Result[PreTrainedModel, TrainingError]:
+    ) -> PreTrainedModel:
         """
         Execute phases sequentially.
 
@@ -131,24 +138,21 @@ class ChainRunner:
 
             # Execute phase (pass upstream_retrained for cascade cache invalidation)
             logger.debug(f"[CR:PHASE_EXECUTING] idx={idx}, upstream_retrained={upstream_retrained}")
-            result = self.phase_executor.execute(
-                phase_idx=idx,
-                phase=phase,
-                model=current_model,
-                buffer=buffer,
-                upstream_retrained=upstream_retrained,
-            )
-
-            # Handle result
-            if result.is_failure():
-                logger.debug(f"[CR:PHASE_FAILED] idx={idx}, error={result.error}")  # type: ignore[union-attr]
+            try:
+                current_model = self.phase_executor.execute(
+                    phase_idx=idx,
+                    phase=phase,
+                    model=current_model,
+                    buffer=buffer,
+                    upstream_retrained=upstream_retrained,
+                )
+            except RyotenkAIError as exc:
+                logger.debug(f"[CR:PHASE_FAILED] idx={idx}, error={exc}")
                 logger.error(f"❌ Phase {idx} ({phase.strategy_type}) failed")
                 # Log failure to MLflow if enabled
                 if self._mlflow_manager is not None:
                     self._mlflow_manager.set_tags({"status": "failed", "failed_phase": str(idx)})
-                return result
-
-            current_model = result.unwrap()
+                raise
 
             # Update cascade flag: if phase was actually trained (not skipped), mark upstream as retrained
             from ryotenkai_pod.trainer.managers.data_buffer import PhaseStatus
@@ -174,7 +178,7 @@ class ChainRunner:
             )
             self._mlflow_manager.set_tags({"status": "completed"})
 
-        return Ok(current_model)
+        return current_model
 
     @staticmethod
     def _log_phase_header(

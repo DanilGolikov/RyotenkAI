@@ -14,9 +14,14 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
 from ryotenkai_control.pipeline.stages.managers import TrainingDeploymentManager
+from ryotenkai_shared.errors import (
+    InternalError,
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHTransferFailedError,
+)
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 # Truncation length for the docker image SHA shown in pipeline logs.
@@ -151,7 +156,7 @@ class GPUDeployer(PipelineStage):
 
         logger.info(f"[DEPLOYER:INIT] GPUDeployer initialized: provider={self._provider_name}")
 
-    def execute(self, context: dict[str, Any]) -> Result[dict[str, Any], AppError]:
+    def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """
         Deploy training job to GPU server.
 
@@ -167,17 +172,22 @@ class GPUDeployer(PipelineStage):
             context: Pipeline context with dataset information
 
         Returns:
-            Result with deployment info or AppError
+            Updated context dict with deployment info.
+
+        Raises:
+            ProviderUnavailableError: provider create / SSH info missing /
+                generic connect failure.
+            SSHConnectionFailedError: pod reached but SSH handshake failed.
+            RyotenkAIError: typed exceptions from the deployment manager
+                (code sync / runtime / start_training) propagate.
         """
         logger.info(f"Deploying training job to {self._provider_name}...")
 
         run = context.get(PipelineContextKeys.RUN)
         if not isinstance(run, RunContext):
-            return Err(
-                ProviderError(
-                    message="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
-                    code="MISSING_RUN_CONTEXT",
-                )
+            raise InternalError(
+                detail="Missing run context: context['run'] must be RunContext (initialized by PipelineOrchestrator)",
+                context={"legacy_code": "MISSING_RUN_CONTEXT"},
             )
 
         # Step 1: Create provider via the manifest-driven registry.
@@ -194,13 +204,12 @@ class GPUDeployer(PipelineStage):
             provider_block=self._provider_config,
             secrets=self.secrets,
         )
-        create_result = get_registry().create_training(self._provider_name, ctx)
-        if create_result.is_failure():
-            provider_err = create_result.unwrap_err()
+        try:
+            self._provider = get_registry().create_training(self._provider_name, ctx)
+        except RyotenkAIError as exc:
             if self._callbacks.on_error:
-                self._callbacks.on_error("provider_create", str(provider_err))
-            return Err(provider_err)
-        self._provider = create_result.unwrap()
+                self._callbacks.on_error("provider_create", exc.detail or str(exc))
+            raise
         # Fire callback
         if self._callbacks.on_provider_created:
             self._callbacks.on_provider_created(self._provider_name, self._provider.provider_type)
@@ -208,23 +217,26 @@ class GPUDeployer(PipelineStage):
         # Step 2: Connect to GPU server
         logger.info(f"Connecting to {self._provider_name}...")
         connect_start = time.time()
-        connect_result = self._provider.connect(run=run)
-        connect_duration = time.time() - connect_start
-
-        if connect_result.is_err():
-            err = connect_result.unwrap_err()  # type: ignore[union-attr]
+        try:
+            ssh_info = cast("SSHConnectionInfo | None", self._provider.connect(run=run))
+        except RyotenkAIError as exc:
             if self._callbacks.on_error:
-                self._callbacks.on_error("connect", str(err))
-            return Err(ProviderError(message=f"Connection failed: {err}", code="PROVIDER_CONNECT_FAILED"))
-
-        ssh_info = cast("SSHConnectionInfo | None", connect_result.unwrap())
+                self._callbacks.on_error("connect", exc.detail or str(exc))
+            raise
+        connect_duration = time.time() - connect_start
 
         if ssh_info is None:
             msg = "SSH info is None"
             if self._callbacks.on_error:
                 self._callbacks.on_error("connect", msg)
             self._handle_error_and_disconnect(msg)
-            return Err(ProviderError(message=msg, code="PROVIDER_SSH_INFO_MISSING"))
+            raise ProviderUnavailableError(
+                detail=msg,
+                context={
+                    "legacy_code": "PROVIDER_SSH_INFO_MISSING",
+                    "provider": self._provider_name,
+                },
+            )
 
         logger.info(f"Connected: {ssh_info}")
 
@@ -254,18 +266,24 @@ class GPUDeployer(PipelineStage):
         # ``start_training`` (post-launch, HTTP). The rsync still
         # happens here because uvicorn cannot start without the
         # synced ``ryotenkai_*`` packages on disk.
+        #
+        # Phase A2 Batch 9 (2026-05-15): the deployment manager's
+        # public surface raises typed exceptions; this caller still
+        # exposes ``Result[dict, AppError]`` upward (Batch 10 will
+        # finish the migration), so each call is wrapped in a typed
+        # → AppError translator at the boundary.
         logger.info("Syncing source code (rsync)...")
         upload_start = time.time()
-        sync_result = self.deployment.deploy_code(ssh_client)
-        upload_duration = time.time() - upload_start
-
-        if sync_result.is_failure():
+        try:
+            self.deployment.deploy_code(ssh_client)
+        except RyotenkAIError as exc:
+            upload_duration = time.time() - upload_start
             logger.error("Code sync failed, disconnecting...")
             self._handle_error_and_disconnect("Code sync failed")
-            sync_err = sync_result.unwrap_err()
             if self._callbacks.on_error:
-                self._callbacks.on_error("upload", str(sync_err))
-            return Err(sync_err)
+                self._callbacks.on_error("upload", exc.detail or str(exc))
+            raise
+        upload_duration = time.time() - upload_start
 
         logger.info(f"Code synced! ({upload_duration:.1f}s)")
         if self._callbacks.on_files_uploaded:
@@ -274,16 +292,16 @@ class GPUDeployer(PipelineStage):
         # Step 6: Verify runtime (docker-only: no host pip/venv installs)
         logger.info("Verifying training runtime (docker-only)...")
         deps_start = time.time()
-        deps_result = self.deployment.install_dependencies(ssh_client)
-        deps_duration = time.time() - deps_start
-
-        if deps_result.is_failure():
+        try:
+            self.deployment.install_dependencies(ssh_client)
+        except RyotenkAIError as exc:
+            deps_duration = time.time() - deps_start
             logger.error("Runtime verification failed, disconnecting...")
             self._handle_error_and_disconnect("Runtime verification failed")
-            deps_err = deps_result.unwrap_err()  # AppError from deployment_manager
             if self._callbacks.on_error:
-                self._callbacks.on_error("deps", str(deps_err))
-            return Err(deps_err)
+                self._callbacks.on_error("deps", exc.detail or str(exc))
+            raise
+        deps_duration = time.time() - deps_start
 
         logger.info(f"Runtime verified! ({deps_duration:.1f}s)")
         if self._callbacks.on_deps_installed:
@@ -302,17 +320,16 @@ class GPUDeployer(PipelineStage):
         if ssh_info.resource_id:
             context["resource_id"] = ssh_info.resource_id
         logger.info("Starting training...")
-        training_result = self.deployment.start_training(ssh_client, context, provider=self._provider)
-
-        if training_result.is_failure():
+        try:
+            training_metadata = self.deployment.start_training(
+                ssh_client, context, provider=self._provider,
+            )
+        except RyotenkAIError as exc:
             logger.error("Training start failed, disconnecting...")
             self._handle_error_and_disconnect("Training start failed")
-            training_err = training_result.unwrap_err()  # AppError from deployment_manager
             if self._callbacks.on_error:
-                self._callbacks.on_error("training_start", str(training_err))
-            return Err(training_err)
-
-        training_metadata = training_result.unwrap()
+                self._callbacks.on_error("training_start", exc.detail or str(exc))
+            raise
         logger.info(f"Training started! Mode: {training_metadata.get('mode', 'unknown')}")
 
         # Log Docker image SHA to MLflow for reproducibility (if available)
@@ -328,37 +345,35 @@ class GPUDeployer(PipelineStage):
         pod_info = self._provider.get_resource_info()
 
         # Return connection info for monitoring
-        return Ok(
-            self.update_context(
-                context,
-                {
-                    "run_name": run.name,
-                    # Provider info
-                    "provider_name": self._provider_name,
-                    "provider_type": self._provider.provider_type,  # "local" or "cloud"
-                    # Provider instance — TrainingMonitor uses it for the
-                    # capability-Protocol gated recovery loop (Phase 14.D+F:
-                    # ``isinstance(provider, IRecoveryProbeProvider)``).
-                    "provider": self._provider,
-                    "resource_id": ssh_info.resource_id,  # pod_id or run_dir
-                    # SSH connection info (for TrainingMonitor)
-                    "ssh_host": ssh_info.host,
-                    "ssh_port": ssh_info.port,
-                    "ssh_user": ssh_info.user,
-                    "ssh_key_path": ssh_info.key_path,
-                    "is_alias_mode": ssh_info.is_alias_mode,  # True if using SSH alias
-                    "workspace_path": ssh_info.workspace_path,
-                    # Timing
-                    "training_started_at": time.time(),
-                    "pod_startup_seconds": connect_duration,
-                    "upload_duration_seconds": upload_duration,
-                    "deps_duration_seconds": deps_duration,
-                    # Pod metadata (RunPod: PodResourceInfo; single_node: None)
-                    "cost_per_hr": getattr(pod_info, "cost_per_hr", None),
-                    "gpu_type": getattr(pod_info, "gpu_type", None),
-                    "gpu_count": getattr(pod_info, "gpu_count", None),
-                },
-            )
+        return self.update_context(
+            context,
+            {
+                "run_name": run.name,
+                # Provider info
+                "provider_name": self._provider_name,
+                "provider_type": self._provider.provider_type,  # "local" or "cloud"
+                # Provider instance — TrainingMonitor uses it for the
+                # capability-Protocol gated recovery loop (Phase 14.D+F:
+                # ``isinstance(provider, IRecoveryProbeProvider)``).
+                "provider": self._provider,
+                "resource_id": ssh_info.resource_id,  # pod_id or run_dir
+                # SSH connection info (for TrainingMonitor)
+                "ssh_host": ssh_info.host,
+                "ssh_port": ssh_info.port,
+                "ssh_user": ssh_info.user,
+                "ssh_key_path": ssh_info.key_path,
+                "is_alias_mode": ssh_info.is_alias_mode,  # True if using SSH alias
+                "workspace_path": ssh_info.workspace_path,
+                # Timing
+                "training_started_at": time.time(),
+                "pod_startup_seconds": connect_duration,
+                "upload_duration_seconds": upload_duration,
+                "deps_duration_seconds": deps_duration,
+                # Pod metadata (RunPod: PodResourceInfo; single_node: None)
+                "cost_per_hr": getattr(pod_info, "cost_per_hr", None),
+                "gpu_type": getattr(pod_info, "gpu_type", None),
+                "gpu_count": getattr(pod_info, "gpu_count", None),
+            },
         )
 
     def get_provider(self) -> IGPUProvider | None:
@@ -468,16 +483,16 @@ class GPUDeployer(PipelineStage):
         if not self._ssh_client:
             return
         try:
-            ok, err = self._ssh_client.download_file(
+            self._ssh_client.download_file(
                 remote_path=remote,
                 local_path=str(local),
             )
-            if ok:
-                logger.info(f"[DEPLOYER] Downloaded {label} → {local}")
-            else:
-                logger.debug(
-                    f"[DEPLOYER] {label} not retrieved (reason='{reason}'): {err}",
-                )
+            logger.info(f"[DEPLOYER] Downloaded {label} → {local}")
+        except SSHTransferFailedError as exc:
+            logger.debug(
+                f"[DEPLOYER] {label} not retrieved (reason='{reason}'): "
+                f"{exc.detail or exc}",
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort
             logger.debug(
                 f"[DEPLOYER] {label} SCP raised (reason='{reason}'): "

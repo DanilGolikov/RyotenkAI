@@ -1,11 +1,19 @@
-"""Integration tests for DatasetValidator with plugin system (NEW schema)."""
+"""Integration tests for DatasetValidator with plugin system (NEW schema).
+
+Phase A2 Batch 8 — raise-based migration. ``execute()`` returns ``dict``
+on success / advisory failure, raises
+:class:`DatasetValidationFailedError` on critical failure.
+"""
 
 from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pytest
+
 from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
 from ryotenkai_shared.config import DatasetConfig, PipelineConfig
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> Mock:
@@ -48,12 +56,11 @@ class TestDatasetValidatorIntegration:
         catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_success()
-        ctx = result.unwrap()
-        assert ctx["validation_status"] == "passed"
-        assert "primary.train.min_samples_main.sample_count" in ctx
+        assert isinstance(result, dict)
+        assert result["validation_status"] == "passed"
+        assert "primary.train.min_samples_main.sample_count" in result
 
-    def test_plugin_mode_failure_is_err_when_critical_enabled(self, tmp_path) -> None:
+    def test_plugin_mode_failure_raises_when_critical_enabled(self, tmp_path) -> None:
         dataset_file = tmp_path / "train.jsonl"
         dataset_file.write_text('{"text": "test"}\n', encoding="utf-8")  # 1 sample
 
@@ -69,9 +76,10 @@ class TestDatasetValidatorIntegration:
 
         catalog.reload()
         validator = DatasetValidator(cfg)
-        result = validator.execute({})
-        assert result.is_failure()
-        assert "validation failed" in str(result.unwrap_err()).lower() or "critical" in str(result.unwrap_err()).lower()
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            validator.execute({})
+        message = str(excinfo.value).lower() + " " + (excinfo.value.detail or "").lower()
+        assert "validation failed" in message or "critical" in message
 
     def test_empty_plugins_skips_plugin_checks_no_hidden_defaults(self, tmp_path) -> None:
         """Empty plugins config → no plugins run, validation passes with no metrics.
@@ -91,11 +99,10 @@ class TestDatasetValidatorIntegration:
         catalog.reload()
         validator = DatasetValidator(cfg)
         result = validator.execute({})
-        assert result.is_success()
-        ctx = result.unwrap()
-        assert ctx["validation_status"] == "passed"
+        assert isinstance(result, dict)
+        assert result["validation_status"] == "passed"
         # No plugin metrics — nothing was checked.
-        assert not any(k.startswith("primary.train.") for k in ctx)
+        assert not any(k.startswith("primary.train.") for k in result)
 
     def test_callbacks_called(self, tmp_path) -> None:
         dataset_file = tmp_path / "train.jsonl"
@@ -121,11 +128,9 @@ class TestDatasetValidatorIntegration:
 
         validator = DatasetValidator(cfg, callbacks=callbacks)
         result = validator.execute({})
-        assert result.is_success()
+        assert isinstance(result, dict)
 
         assert callbacks.on_dataset_loaded.called
         assert callbacks.on_validation_completed.called
         assert callbacks.on_plugin_start.called
         assert callbacks.on_plugin_complete.called
-
-

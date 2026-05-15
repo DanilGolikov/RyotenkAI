@@ -109,7 +109,7 @@ def _make_lib_folder(root: Path, lib_id: str) -> Path:
     (folder / "manifest.toml").write_text(
         f'schema_version = 1\n[lib]\nid = "{lib_id}"\nversion = "1.0.0"\n',
     )
-    (folder / "__init__.py").write_text(f'__version__ = "1.0.0"\n')
+    (folder / "__init__.py").write_text('__version__ = "1.0.0"\n')
     (folder / "extract.py").write_text("def extract(): ...\n")
     cache_dir = folder / "__pycache__"
     cache_dir.mkdir()

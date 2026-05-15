@@ -45,6 +45,7 @@ from ryotenkai_pod.runner.api import logs as logs_api
 from ryotenkai_pod.runner.api import resources as resources_api
 from ryotenkai_pod.runner.api import runtime as runtime_api
 from ryotenkai_pod.runner.api.errors import EXCEPTION_HANDLERS
+from ryotenkai_shared.api import RequestIDMiddleware
 from ryotenkai_shared.observability.cancellation_telemetry import EVENTS_DISK_PRESSURE
 from ryotenkai_pod.runner.event_bus import EventBus
 from ryotenkai_pod.runner.event_journal import (
@@ -431,6 +432,12 @@ def create_app(
         lifespan=_make_lifespan(factory),
         exception_handlers=EXCEPTION_HANDLERS,
     )
+    # Phase C (sharded-stargazing-wigderson, 2026-05-16): mount the
+    # shared RequestIDMiddleware so the runner echoes X-Request-ID
+    # in responses and the contextvar feeds both ProblemDetails and
+    # the log record stamping filter. Same middleware as control API
+    # so the wire-shape and correlation contract are unified.
+    app.add_middleware(RequestIDMiddleware)
 
     @app.get("/healthz", tags=["meta"])
     def healthz() -> dict[str, str]:

@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING, cast
 
 from datasets import Dataset, load_dataset
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE, SOURCE_TYPE_LOCAL
-from ryotenkai_shared.constants import STRATEGY_SFT
 from ryotenkai_pod.trainer.managers.constants import HF_SPLIT_TRAIN
+from ryotenkai_shared.constants import STRATEGY_SFT
+from ryotenkai_shared.errors import (
+    DatasetLoadFailedError,
+    DatasetValidationFailedError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok, Result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,9 +56,7 @@ class DataLoaderManager:
 
     Example:
         loader = DataLoaderManager(config)
-        result = loader.load_datasets()
-        if result.is_success():
-            train_ds, eval_ds = result.unwrap()
+        train_ds, eval_ds = loader.load_datasets()
     """
 
     def __init__(
@@ -75,8 +75,9 @@ class DataLoaderManager:
         self._callbacks = callbacks or DataLoaderEventCallbacks()
 
     def load_datasets(
-        self, strategy_type: str = STRATEGY_SFT  # noqa: ARG002 — kept for API stability
-    ) -> Result[tuple[Dataset, Dataset | None], DataLoaderError]:
+        self,
+        strategy_type: str = STRATEGY_SFT,  # noqa: ARG002 — kept for API stability
+    ) -> tuple[Dataset, Dataset | None]:
         """
         Load training and evaluation datasets.
 
@@ -86,7 +87,13 @@ class DataLoaderManager:
                 the path-resolution contract). Defaults to SFT.
 
         Returns:
-            Result[Tuple[Dataset, Optional[Dataset]], str]: (train, eval) datasets or error
+            ``(train_dataset, eval_dataset)`` tuple. ``eval_dataset`` is
+            ``None`` when not configured.
+
+        Raises:
+            DatasetLoadFailedError: on any loader failure (unknown source
+                kind, file missing, parse error). Legacy error codes are
+                preserved on ``context["legacy_code"]``.
         """
         try:
             # Get default dataset config from registry
@@ -147,11 +154,12 @@ class DataLoaderManager:
                         load_dataset("json", data_files=eval_path, split=HF_SPLIT_TRAIN),
                     )
             else:
-                return Err(
-                    DataLoaderError(
-                        message=f"Unknown dataset source kind: {source.kind!r}",
-                        code="DATA_LOADER_UNKNOWN_SOURCE_KIND",
-                    )
+                raise DatasetLoadFailedError(
+                    detail=f"Unknown dataset source kind: {source.kind!r}",
+                    context={
+                        "legacy_code": "DATA_LOADER_UNKNOWN_SOURCE_KIND",
+                        "source_kind": source.kind,
+                    },
                 )
 
             # Limit samples if specified
@@ -169,11 +177,19 @@ class DataLoaderManager:
                 eval_len = len(eval_dataset) if eval_dataset is not None else None
                 self._callbacks.on_dataset_loaded(len(train_dataset), eval_len)
 
-            return Ok((train_dataset, eval_dataset))
+            return train_dataset, eval_dataset
+
+        except DatasetLoadFailedError:
+            # Already-typed exception — surface as-is.
+            raise
 
         except Exception as e:
             logger.error(f"Failed to load datasets: {e}")
-            return Err(DataLoaderError(message=f"Dataset loading failed: {e!s}", code="DATA_LOADER_LOAD_FAILED"))
+            raise DatasetLoadFailedError(
+                detail=f"Dataset loading failed: {e!s}",
+                context={"legacy_code": "DATA_LOADER_LOAD_FAILED"},
+                cause=e,
+            )
 
     @staticmethod
     def _limit_samples(dataset: Dataset, max_samples: int) -> Dataset:
@@ -214,34 +230,50 @@ class DataLoaderManager:
             sample_keys = list(train_dataset[0].keys())
             logger.info(f"Dataset keys: {sample_keys}")
 
-    def validate_datasets(self, train_dataset: Dataset, eval_dataset: Dataset | None) -> Result[bool, DataLoaderError]:
+    def validate_datasets(self, train_dataset: Dataset, eval_dataset: Dataset | None) -> bool:
         """
-        Validate datasets structure.
+        Validate dataset structure.
 
         Args:
             train_dataset: Training dataset
             eval_dataset: Optional evaluation dataset
 
         Returns:
-            Result[bool, str]: True if valid, error message otherwise
+            ``True`` when both datasets pass validation.
+
+        Raises:
+            DatasetValidationFailedError: train empty, eval empty (when
+                provided), or first-sample is not a dict. Legacy error
+                codes are preserved on ``context["legacy_code"]``.
         """
         try:
             # Check training dataset
             if len(train_dataset) == 0:
-                return Err(DataLoaderError(message="Training dataset is empty", code="DATA_LOADER_EMPTY_TRAIN"))
+                raise DatasetValidationFailedError(
+                    detail="Training dataset is empty",
+                    context={"legacy_code": "DATA_LOADER_EMPTY_TRAIN"},
+                )
 
             # Check evaluation dataset if provided
-            if eval_dataset and len(eval_dataset) == 0:
-                return Err(DataLoaderError(message="Evaluation dataset is empty", code="DATA_LOADER_EMPTY_EVAL"))
+            # NOTE: ``eval_dataset is not None`` (NOT truthiness): an empty
+            # HF Dataset is falsy, so the old ``if eval_dataset and ...`` form
+            # silently skipped the empty-eval check. The bool() membership
+            # bug is fixed in Batch 15.
+            if eval_dataset is not None and len(eval_dataset) == 0:
+                raise DatasetValidationFailedError(
+                    detail="Evaluation dataset is empty",
+                    context={"legacy_code": "DATA_LOADER_EMPTY_EVAL"},
+                )
 
             # Validate first sample structure
             sample = train_dataset[0]
             if not isinstance(sample, dict):
-                return Err(
-                    DataLoaderError(
-                        message="Dataset samples must be dictionaries",
-                        code="DATA_LOADER_INVALID_SAMPLE_FORMAT",
-                    )
+                raise DatasetValidationFailedError(
+                    detail="Dataset samples must be dictionaries",
+                    context={
+                        "legacy_code": "DATA_LOADER_INVALID_SAMPLE_FORMAT",
+                        "sample_type": type(sample).__name__,
+                    },
                 )
 
             logger.info("Datasets validated successfully")
@@ -250,10 +282,18 @@ class DataLoaderManager:
             if self._callbacks.on_dataset_validated:
                 self._callbacks.on_dataset_validated(True)
 
-            return Ok(True)
+            return True
+
+        except DatasetValidationFailedError:
+            # Already-typed exception — surface as-is.
+            raise
 
         except Exception as e:
-            return Err(DataLoaderError(message=f"Dataset validation failed: {e!s}", code="DATA_LOADER_VALIDATE_FAILED"))
+            raise DatasetValidationFailedError(
+                detail=f"Dataset validation failed: {e!s}",
+                context={"legacy_code": "DATA_LOADER_VALIDATE_FAILED"},
+                cause=e,
+            )
 
 
 __all__ = ["DataLoaderManager"]

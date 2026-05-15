@@ -24,7 +24,12 @@ from ryotenkai_pod.trainer.memory_manager import OOMRecoverableError
 from ryotenkai_pod.trainer.metrics_models import TrainingMetricsSnapshot
 from ryotenkai_pod.trainer.orchestrator.phase_executor import PhaseExecutor
 from ryotenkai_shared.config import PhaseHyperparametersConfig, StrategyPhaseConfig
-from ryotenkai_shared.utils.result import Err, Ok
+from ryotenkai_shared.errors import (
+    DatasetLoadFailedError,
+    RyotenkAIError,
+    TrainingFailedError,
+    TrainingOOMError,
+)
 
 # ========================================================================
 # FIXTURES
@@ -83,7 +88,8 @@ def mock_memory_manager() -> MagicMock:
 def mock_dataset_loader() -> MagicMock:
     """Mock IDatasetLoader."""
     loader = MagicMock()
-    loader.load_for_phase.return_value = Ok((MagicMock(__len__=MagicMock(return_value=100)), None))
+    # Post-Batch-14: loaders return (train, eval) tuple directly and raise on failure.
+    loader.load_for_phase.return_value = (MagicMock(__len__=MagicMock(return_value=100)), None)
     return loader
 
 
@@ -142,8 +148,8 @@ def mock_strategy_factory() -> MagicMock:
     factory = MagicMock()
     strategy = MagicMock()
     strategy.__class__.__name__ = "SFTStrategy"
-    strategy.validate_dataset.return_value = Ok(True)
-    strategy.prepare_dataset.return_value = Ok(MagicMock(__len__=MagicMock(return_value=100)))
+    strategy.validate_dataset.return_value = None
+    strategy.prepare_dataset.return_value = MagicMock(__len__=MagicMock(return_value=100))
     factory.create_from_phase.return_value = strategy
     return factory
 
@@ -323,7 +329,7 @@ class TestPhaseExecutorHappyPath:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             mock_buffer.mark_phase_started.assert_called_once_with(0)
             mock_buffer.mark_phase_completed.assert_called_once()
 
@@ -354,7 +360,7 @@ class TestPhaseExecutorHappyPath:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             mock_dataset_loader.load_for_phase.assert_called_once_with(mock_phase_config)
 
     def test_execute_creates_trainer_with_oom_protection(
@@ -381,7 +387,7 @@ class TestPhaseExecutorHappyPath:
                 buffer=mock_buffer,
             )
 
-        assert result.is_success()
+        assert result is not None  # post-Batch-14: returns model directly
         # Check that trainer creation was protected by decorator
         # (Note: with_memory_protection is now a decorator, not context manager)
         mock_trainer_factory.create_from_phase.assert_called_once()
@@ -409,7 +415,7 @@ class TestPhaseExecutorHappyPath:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             trainer = mock_trainer_factory.create_from_phase.return_value
             # Check that save_model was called with checkpoint-final
             expected_checkpoint = Path("/tmp/output/phase_0") / "checkpoint-final"
@@ -433,7 +439,7 @@ class TestPhaseExecutorErrorHandling:
         mock_dataset_loader: MagicMock,
     ):
         """Test handling of dataset load failure."""
-        mock_dataset_loader.load_for_phase.return_value = Err("Failed to load dataset")
+        mock_dataset_loader.load_for_phase.side_effect = DatasetLoadFailedError(detail="Failed to load dataset")
 
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()
@@ -442,15 +448,16 @@ class TestPhaseExecutorErrorHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert str(result.unwrap_err()) == "Failed to load dataset"
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert (exc_info.value.detail or str(exc_info.value)) == "Failed to load dataset"
             mock_buffer.mark_phase_failed.assert_called_once_with(0, "Failed to load dataset")
 
     def test_execute_trainer_creation_failure(
@@ -471,15 +478,16 @@ class TestPhaseExecutorErrorHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "Validation error" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "Validation error" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_failed.assert_called_once()
 
     def test_execute_training_failure_general(
@@ -501,15 +509,16 @@ class TestPhaseExecutorErrorHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "Unexpected error" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "Unexpected error" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_failed.assert_called_once()
 
 
@@ -532,15 +541,16 @@ class TestPhaseExecutorGracefulShutdown:
         """Test shutdown requested before phase starts."""
         mock_shutdown_handler.should_stop.return_value = True
 
-        result = phase_executor.execute(
-            phase_idx=0,
-            phase=mock_phase_config,
-            model=mock_model,
-            buffer=mock_buffer,
-        )
+        with pytest.raises(RyotenkAIError) as exc_info:
+            phase_executor.execute(
+                phase_idx=0,
+                phase=mock_phase_config,
+                model=mock_model,
+                buffer=mock_buffer,
+            )
 
-        assert result.is_failure()
-        assert "Shutdown requested before phase start" in str(result.unwrap_err())
+        assert isinstance(exc_info.value, RyotenkAIError)
+        assert "Shutdown requested before phase start" in (exc_info.value.detail or str(exc_info.value))
         mock_buffer.mark_phase_interrupted.assert_called_once_with(
             0,
             reason="Shutdown requested before phase start",
@@ -566,15 +576,16 @@ class TestPhaseExecutorGracefulShutdown:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "Training interrupted" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "Training interrupted" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_interrupted.assert_called_once()
 
     def test_shutdown_saves_emergency_checkpoint(
@@ -595,14 +606,15 @@ class TestPhaseExecutorGracefulShutdown:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
+            assert isinstance(exc_info.value, RyotenkAIError)
             mock_shutdown_handler.save_emergency_checkpoint.assert_called_once()
 
     def test_keyboard_interrupt_handling(
@@ -624,15 +636,16 @@ class TestPhaseExecutorGracefulShutdown:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "Training interrupted" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "Training interrupted" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_interrupted.assert_called_once()
 
 
@@ -662,15 +675,16 @@ class TestPhaseExecutorOOMHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "OOM error" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "OOM error" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_failed.assert_called_once()
 
     def test_oom_during_training(
@@ -692,15 +706,16 @@ class TestPhaseExecutorOOMHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
-            assert "OOM error" in str(result.unwrap_err())
+            assert isinstance(exc_info.value, RyotenkAIError)
+            assert "OOM error" in (exc_info.value.detail or str(exc_info.value))
             mock_buffer.mark_phase_failed.assert_called_once()
 
     def test_oom_logged_to_mlflow(
@@ -723,14 +738,15 @@ class TestPhaseExecutorOOMHandling:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
+            assert isinstance(exc_info.value, RyotenkAIError)
             mock_mlflow_manager.log_oom.assert_called_once()
             call_args = mock_mlflow_manager.log_oom.call_args
             assert "phase_0_sft" in call_args[1]["operation"]
@@ -769,7 +785,7 @@ class TestPhaseExecutorResumeLogic:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             trainer = mock_trainer_factory.create_from_phase.return_value
             trainer.train.assert_called_once_with(resume_from_checkpoint="/tmp/checkpoint/phase_0")
 
@@ -798,7 +814,7 @@ class TestPhaseExecutorResumeLogic:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             trainer = mock_trainer_factory.create_from_phase.return_value
             trainer.train.assert_called_once_with(resume_from_checkpoint="/specific/checkpoint/path")
 
@@ -827,7 +843,7 @@ class TestPhaseExecutorResumeLogic:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             trainer = mock_trainer_factory.create_from_phase.return_value
             trainer.train.assert_called_once_with(resume_from_checkpoint=None)
 
@@ -862,7 +878,7 @@ class TestPhaseExecutorDataBufferIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             mock_buffer.mark_phase_started.assert_called_once_with(0)
 
     def test_execute_marks_phase_completed_with_metrics(
@@ -891,7 +907,7 @@ class TestPhaseExecutorDataBufferIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             call_args = mock_buffer.mark_phase_completed.call_args
             # phase_idx is positional arg[0], metrics is kwarg
             assert call_args[0][0] == 0
@@ -906,7 +922,7 @@ class TestPhaseExecutorDataBufferIntegration:
         mock_dataset_loader: MagicMock,
     ):
         """Test that phase is marked failed on error."""
-        mock_dataset_loader.load_for_phase.return_value = Err("Dataset not found")
+        mock_dataset_loader.load_for_phase.side_effect = DatasetLoadFailedError(detail="Dataset not found")
 
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()
@@ -915,14 +931,15 @@ class TestPhaseExecutorDataBufferIntegration:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = phase_executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError) as exc_info:
+                phase_executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            assert result.is_failure()
+            assert isinstance(exc_info.value, RyotenkAIError)
             mock_buffer.mark_phase_failed.assert_called_once_with(0, "Dataset not found")
 
     def test_execute_marks_phase_interrupted_on_shutdown(
@@ -936,14 +953,15 @@ class TestPhaseExecutorDataBufferIntegration:
         """Test that phase is marked interrupted on shutdown."""
         mock_shutdown_handler.should_stop.return_value = True
 
-        result = phase_executor.execute(
-            phase_idx=0,
-            phase=mock_phase_config,
-            model=mock_model,
-            buffer=mock_buffer,
-        )
+        with pytest.raises(RyotenkAIError) as exc_info:
+            phase_executor.execute(
+                phase_idx=0,
+                phase=mock_phase_config,
+                model=mock_model,
+                buffer=mock_buffer,
+            )
 
-        assert result.is_failure()
+        assert isinstance(exc_info.value, RyotenkAIError)
         mock_buffer.mark_phase_interrupted.assert_called_once()
 
 
@@ -978,7 +996,7 @@ class TestPhaseExecutorMLflowIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Check that start_run was called with nested=True
             # Note: start_run is called twice - first with nested=True, then with nested=False (to restore parent)
             # Check first call (nested run creation)
@@ -1010,7 +1028,7 @@ class TestPhaseExecutorMLflowIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Check that end_run was called with FINISHED status
             mock_mlflow.end_run.assert_called()
             call_kwargs = mock_mlflow.end_run.call_args[1]
@@ -1040,7 +1058,7 @@ class TestPhaseExecutorMLflowIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Check that params were logged (could be multiple calls)
             mock_mlflow_manager.log_params.assert_called()
             # Check first call which logs phase start params
@@ -1072,7 +1090,7 @@ class TestPhaseExecutorMLflowIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Check that dataset was logged (either create_mlflow_dataset or log_dataset_info)
             assert mock_mlflow_manager.create_mlflow_dataset.called or mock_mlflow_manager.log_dataset_info.called
 
@@ -1104,7 +1122,7 @@ class TestPhaseExecutorMLflowIntegration:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Check that metrics were logged
             mock_mlflow_manager.log_metrics.assert_called()
             logged_metrics = mock_mlflow_manager.log_metrics.call_args[0][0]
@@ -1140,17 +1158,21 @@ class TestPhaseExecutorHelperMethods:
         mock_buffer: MagicMock,
         mock_mlflow_manager: MagicMock,
     ):
-        """Test that _handle_error logs to MLflow."""
+        """Test that _handle_error logs to MLflow.
+
+        Post-Batch-14: ``_handle_error`` raises a typed exception
+        instead of returning ``Err``. We catch and assert side effects.
+        """
         error = ValueError("Test error")
 
-        result = phase_executor._handle_error(
-            buffer=mock_buffer,
-            phase_idx=0,
-            error_type="Validation",
-            error=error,
-        )
+        with pytest.raises(TrainingFailedError):
+            phase_executor._handle_error(
+                buffer=mock_buffer,
+                phase_idx=0,
+                error_type="Validation",
+                error=error,
+            )
 
-        assert result.is_failure()
         mock_mlflow_manager.log_event_error.assert_called_once()
         mock_mlflow_manager.set_tags.assert_called_once()
 
@@ -1174,7 +1196,8 @@ class TestPhaseExecutorEdgeCases:
         """Test execution with empty dataset."""
         # Empty dataset (0 samples)
         empty_dataset = MagicMock(__len__=MagicMock(return_value=0))
-        mock_dataset_loader.load_for_phase.return_value = Ok((empty_dataset, None))
+        # Post-Batch-14: loader returns tuple directly.
+        mock_dataset_loader.load_for_phase.return_value = (empty_dataset, None)
 
         mock_mlflow = MagicMock()
         mock_mlflow.start_run.return_value = MagicMock()
@@ -1191,7 +1214,7 @@ class TestPhaseExecutorEdgeCases:
             )
 
             # Should succeed even with empty dataset
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
 
     def test_execute_without_mlflow_manager(
         self,
@@ -1226,7 +1249,7 @@ class TestPhaseExecutorEdgeCases:
         )
 
         # Should succeed without MLflow
-        assert result.is_success()
+        assert result is not None  # post-Batch-14: returns model directly
 
     def test_execute_without_shutdown_handler(
         self,
@@ -1270,7 +1293,7 @@ class TestPhaseExecutorEdgeCases:
             )
 
             # Should succeed without shutdown handler
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
 
     def test_emergency_checkpoint_fallback_without_handler(
         self,
@@ -1310,15 +1333,14 @@ class TestPhaseExecutorEdgeCases:
         mock_mlflow.enable_system_metrics_logging = MagicMock()
 
         with patch.dict(sys.modules, {"mlflow": mock_mlflow}):
-            result = executor.execute(
-                phase_idx=0,
-                phase=mock_phase_config,
-                model=mock_model,
-                buffer=mock_buffer,
-            )
+            with pytest.raises(RyotenkAIError):
+                executor.execute(
+                    phase_idx=0,
+                    phase=mock_phase_config,
+                    model=mock_model,
+                    buffer=mock_buffer,
+                )
 
-            # Should fail gracefully
-            assert result.is_failure()
             mock_buffer.mark_phase_interrupted.assert_called_once()
             # Emergency checkpoint should be saved via fallback
             trainer.save_model.assert_called()
@@ -1345,7 +1367,7 @@ class TestPhaseExecutorEdgeCases:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Cleanup should be called with keep_last=2
             mock_buffer.cleanup_old_checkpoints.assert_called_once_with(keep_last=2)
 
@@ -1382,7 +1404,7 @@ class TestPhaseExecutorMLflowEdgeCases:
             )
 
             # Should still succeed (MLflow is optional)
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
 
     def test_mlflow_dataset_logging_fallback(
         self,
@@ -1410,7 +1432,7 @@ class TestPhaseExecutorMLflowEdgeCases:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Should fallback to log_dataset_info
             mock_mlflow_manager.log_dataset_info.assert_called_once()
 
@@ -1445,7 +1467,7 @@ class TestPhaseExecutorMLflowEdgeCases:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             mock_mlflow_manager.log_metrics.assert_called()
             logged_metrics = mock_mlflow_manager.log_metrics.call_args[0][0]
             assert "train_loss" in logged_metrics
@@ -1486,7 +1508,7 @@ class TestPhaseExecutorStateManagement:
                 buffer=mock_buffer,
             )
 
-            assert result.is_success()
+            assert result is not None  # post-Batch-14: returns model directly
             # Internal state should be cleared
             assert phase_executor._current_trainer is None
             assert phase_executor._current_output_dir is None
@@ -1514,7 +1536,8 @@ class TestPhaseExecutorStateManagement:
                 model=mock_model,
                 buffer=mock_buffer,
             )
-            assert result1.is_success()
+            # Post-Batch-14: execute returns a model directly (raises on failure).
+            assert result1 is not None
 
             # Execute phase 1
             result2 = phase_executor.execute(
@@ -1523,7 +1546,7 @@ class TestPhaseExecutorStateManagement:
                 model=mock_model,
                 buffer=mock_buffer,
             )
-            assert result2.is_success()
+            assert result2 is not None
 
             # Both phases should be marked as started
             assert mock_buffer.mark_phase_started.call_count == 2

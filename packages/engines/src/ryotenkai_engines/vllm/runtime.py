@@ -31,7 +31,7 @@ from ryotenkai_engines.interfaces import (
     PrepareStep,
 )
 from ryotenkai_engines.vllm.config import VLLMEngineConfig
-from ryotenkai_shared.utils.result import AppError, Err, Ok, Result
+from ryotenkai_shared.errors import EngineConfigInvalidError
 
 # ---------------------------------------------------------------------------
 # Module-level prepare constants — engine concerns (lifted out of the
@@ -165,18 +165,18 @@ class VLLMEngineRuntime:
         workspace_host_path: str,
         run_id: str,
         trust_remote_code: bool,
-    ) -> Result[PreparePlan, AppError]:
+    ) -> PreparePlan:
         """Build a 1-step LoRA-merge plan, or an empty plan if no merge needed.
 
         Three branches:
 
         1. ``cfg.merge_before_deploy=False`` — engine is configured to load
-           LoRA on the fly (post-MVP). Returns ``Ok(PreparePlan.empty())``.
+           LoRA on the fly (post-MVP). Returns :meth:`PreparePlan.empty`.
            ``validate_config`` rejects this today; the branch is here for
            when the MVP gate is lifted.
 
         2. ``adapter_path_in_container is None`` — no adapter was supplied;
-           serve the base model directly. Returns ``Ok(PreparePlan.empty())``.
+           serve the base model directly. Returns :meth:`PreparePlan.empty`.
 
         3. Adapter present + merge required — return a single ``merge_lora``
            step that runs ``/opt/helix/merge_lora.py`` (baked into the
@@ -188,21 +188,28 @@ class VLLMEngineRuntime:
           * polls logs for ``MERGE_SUCCESS``
           * verifies ``{output}/config.json`` exists
           * passes ``plan.final_model_path`` to ``build_launch_spec``
+
+        Raises:
+            EngineConfigInvalidError: ``cfg`` is not a
+                :class:`VLLMEngineConfig` — engine boundary guard.
+                ``context["reason"] = "vllm_config_type_mismatch"``.
         """
         if not isinstance(cfg, VLLMEngineConfig):
-            return Err(
-                AppError(
-                    message=(
-                        f"VLLMEngineRuntime.prepare_model expected "
-                        f"VLLMEngineConfig, got {type(cfg).__name__}"
-                    ),
-                    code="VLLM_CONFIG_TYPE_MISMATCH",
-                )
+            raise EngineConfigInvalidError(
+                detail=(
+                    f"VLLMEngineRuntime.prepare_model expected "
+                    f"VLLMEngineConfig, got {type(cfg).__name__}"
+                ),
+                context={
+                    "reason": "vllm_config_type_mismatch",
+                    "expected": "VLLMEngineConfig",
+                    "got": type(cfg).__name__,
+                },
             )
 
         # Branch 1 + 2 — empty plan, no merge.
         if not cfg.merge_before_deploy or adapter_path_in_container is None:
-            return Ok(PreparePlan.empty())
+            return PreparePlan.empty()
 
         # Branch 3 — single merge step.
         output_in_container = f"/workspace/runs/{run_id}/model"
@@ -235,47 +242,62 @@ class VLLMEngineRuntime:
             timeout_seconds=_MERGE_TIMEOUT_S,
         )
 
-        return Ok(
-            PreparePlan(
-                steps=(merge_step,),
-                final_model_path=output_in_container,
-            )
+        return PreparePlan(
+            steps=(merge_step,),
+            final_model_path=output_in_container,
         )
 
     # ---- validate_config ----
 
-    def validate_config(self, cfg: BaseEngineConfig) -> Result[None, AppError]:
+    def validate_config(self, cfg: BaseEngineConfig) -> None:
         """Engine-side invariants (post-Pydantic).
 
         Today: rejects ``merge_before_deploy=False`` (MVP gate, lifted
         from the legacy ``SingleNodeInferenceProvider.__init__`` so
         every provider gets the same enforcement for free).
 
-        Future: ``cfg.quantization`` cross-check against capabilities
-        is also enforced here once the registry's ``validate_config``
-        wiring lands in PR-7.
+        Also: cross-checks ``cfg.quantization`` against capabilities.
+        Defensive — Pydantic doesn't restrict the string today, so we
+        catch typos here.
+
+        Returns:
+            ``None`` on success.
+
+        Raises:
+            EngineConfigInvalidError: any invariant violation. Each raise
+                site sets a distinct ``context["reason"]`` subcode for
+                callers that need to branch:
+
+                * ``vllm_config_type_mismatch`` — ``cfg`` is not a
+                  ``VLLMEngineConfig`` (defensive engine boundary).
+                * ``vllm_live_lora_not_supported`` — MVP gate; rejects
+                  ``merge_before_deploy=False``.
+                * ``vllm_quantization_unsupported`` — ``cfg.quantization``
+                  not in ``capabilities.supported_quantizations``.
         """
         if not isinstance(cfg, VLLMEngineConfig):
-            return Err(
-                AppError(
-                    message=(
-                        f"VLLMEngineRuntime.validate_config expected "
-                        f"VLLMEngineConfig, got {type(cfg).__name__}"
-                    ),
-                    code="VLLM_CONFIG_TYPE_MISMATCH",
-                )
+            raise EngineConfigInvalidError(
+                detail=(
+                    f"VLLMEngineRuntime.validate_config expected "
+                    f"VLLMEngineConfig, got {type(cfg).__name__}"
+                ),
+                context={
+                    "reason": "vllm_config_type_mismatch",
+                    "expected": "VLLMEngineConfig",
+                    "got": type(cfg).__name__,
+                },
             )
 
         if not cfg.merge_before_deploy:
-            return Err(
-                AppError(
-                    message=(
-                        "vLLM engine MVP requires merge_before_deploy=True. "
-                        "Live LoRA adapter loading (False) is on the roadmap."
-                    ),
-                    code="VLLM_LIVE_LORA_NOT_SUPPORTED",
-                    details={"merge_before_deploy": cfg.merge_before_deploy},
-                )
+            raise EngineConfigInvalidError(
+                detail=(
+                    "vLLM engine MVP requires merge_before_deploy=True. "
+                    "Live LoRA adapter loading (False) is on the roadmap."
+                ),
+                context={
+                    "reason": "vllm_live_lora_not_supported",
+                    "merge_before_deploy": cfg.merge_before_deploy,
+                },
             )
 
         # Quantization cross-check: if user picked a mode, it must be
@@ -284,22 +306,18 @@ class VLLMEngineRuntime:
         if cfg.quantization is not None:
             caps = self.get_capabilities()
             if cfg.quantization not in caps.supported_quantizations:
-                return Err(
-                    AppError(
-                        message=(
-                            f"vLLM does not support quantization "
-                            f"{cfg.quantization!r}. Supported modes: "
-                            f"{list(caps.supported_quantizations)!r}."
-                        ),
-                        code="VLLM_QUANTIZATION_UNSUPPORTED",
-                        details={
-                            "requested": cfg.quantization,
-                            "supported": list(caps.supported_quantizations),
-                        },
-                    )
+                raise EngineConfigInvalidError(
+                    detail=(
+                        f"vLLM does not support quantization "
+                        f"{cfg.quantization!r}. Supported modes: "
+                        f"{list(caps.supported_quantizations)!r}."
+                    ),
+                    context={
+                        "reason": "vllm_quantization_unsupported",
+                        "requested": cfg.quantization,
+                        "supported": list(caps.supported_quantizations),
+                    },
                 )
-
-        return Ok(None)
 
 
 __all__ = ("VLLMEngineRuntime",)

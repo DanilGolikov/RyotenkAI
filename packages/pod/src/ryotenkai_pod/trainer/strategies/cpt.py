@@ -18,9 +18,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.constants import STRATEGY_CPT, STRATEGY_SFT
 from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
-from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
+from ryotenkai_shared.constants import STRATEGY_CPT, STRATEGY_SFT
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -50,17 +50,23 @@ class CPTStrategy(TrainingStrategy):
             "packing": hp.packing,
         }
 
-    def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        """Validate CPT dataset has required TRL column."""
+    def validate_dataset(self, dataset: Dataset) -> None:
+        """Validate CPT dataset has required TRL column.
+
+        Raises:
+            DatasetValidationFailedError: When the 'text' column is missing.
+        """
         columns = dataset.column_names or []
         if "text" not in columns:
-            return Err(
-                StrategyError(
-                    message="CPT requires 'text' column",
-                    code="CPT_MISSING_TEXT_COLUMN",
-                )
+            raise DatasetValidationFailedError(
+                detail="CPT requires 'text' column",
+                context={
+                    "legacy_code": "CPT_MISSING_TEXT_COLUMN",
+                    "strategy": STRATEGY_CPT,
+                    "missing_column": "text",
+                    "available_columns": list(columns),
+                },
             )
-        return Ok(True)
 
     def get_training_objective(self) -> str:
         return "language_modeling"

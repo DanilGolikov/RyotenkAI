@@ -120,8 +120,8 @@ def test_connect_success_creates_run_dir(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(sp, "SSHClient", lambda *a, **k: ssh)
 
     res = p.connect(run=run)
-    assert res.is_success()
-    info = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    info = res
     assert info.workspace_path.endswith(f"/runs/{run.name}")
     assert p.get_status() == ProviderStatus.CONNECTED
 
@@ -149,24 +149,27 @@ def test_connect_already_connected_returns_cached_info(monkeypatch: pytest.Monke
     ssh.dirs.add("/workspace")
 
     first = p.connect(run=run)
-    assert first.is_success()
     second = p.connect(run=run)
-    assert second.is_success()
-    assert second.unwrap() == first.unwrap()
+    # Phase A2 Batch 12: connect returns SSHConnectionInfo, no Result wrapper.
+    assert second == first
 
 
 def test_connect_fails_when_ssh_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ryotenkai_shared.errors import SSHConnectionFailedError
+
     ssh = FakeSSHClient(host="pc", port=22, connection_ok=False)
     monkeypatch.setattr(sp, "SSHClient", lambda *a, **k: ssh)
     monkeypatch.setattr(sp, "SingleNodeHealthCheck", FakeHealthCheck)
 
     p = _mk_provider()
-    res = p.connect(run=_mk_run())
-    assert res.is_failure()
+    with pytest.raises(SSHConnectionFailedError):
+        p.connect(run=_mk_run())
     assert p.get_status() == ProviderStatus.ERROR
 
 
 def test_connect_fails_when_health_checks_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     ssh = FakeSSHClient(host="pc", port=22)
     monkeypatch.setattr(sp, "SSHClient", lambda *a, **k: ssh)
 
@@ -180,12 +183,14 @@ def test_connect_fails_when_health_checks_fail(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(sp, "SingleNodeHealthCheck", _BadHealth)
 
     p = _mk_provider()
-    res = p.connect(run=_mk_run())
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        p.connect(run=_mk_run())
     assert p.get_status() == ProviderStatus.ERROR
 
 
 def test_connect_creates_base_workspace_and_handles_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ryotenkai_shared.errors import SSHConnectionFailedError
+
     # Base workspace missing -> create ok, but run dir creation fails
     ssh = FakeSSHClient(host="pc", port=22)
     monkeypatch.setattr(sp, "SSHClient", lambda *a, **k: ssh)
@@ -205,8 +210,8 @@ def test_connect_creates_base_workspace_and_handles_failures(monkeypatch: pytest
 
     p = _mk_provider()
     # workspace does not exist initially
-    res = p.connect(run=run)
-    assert res.is_failure()
+    with pytest.raises(SSHConnectionFailedError):
+        p.connect(run=run)
     assert any(r == "/workspace" for r in created)
     assert p.get_status() == ProviderStatus.ERROR
 
@@ -220,15 +225,15 @@ def test_disconnect_cleanup_uses_docker_when_enabled(monkeypatch: pytest.MonkeyP
     run = _mk_run()
     ssh.dirs.add("/workspace")
 
-    assert p.connect(run=run).is_success()
-    assert p.disconnect().is_success()
+    p.connect(run=run)  # Phase A2 Batch 12: success implies no raise
+    p.disconnect()  # Phase A2 Batch 12: success implies no raise
     assert p.get_status() == ProviderStatus.AVAILABLE
     assert any("docker run --rm" in c for c in ssh.commands)
 
 
 def test_disconnect_not_connected_is_noop() -> None:
     p = _mk_provider()
-    assert p.disconnect().is_success()
+    p.disconnect()  # Phase A2 Batch 12: success implies no raise
 
 
 def test_disconnect_docker_cleanup_failure_falls_back_to_rm(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -250,10 +255,10 @@ def test_disconnect_docker_cleanup_failure_falls_back_to_rm(monkeypatch: pytest.
     p = _mk_provider(cfg_overrides={"cleanup": {"cleanup_workspace": True, "keep_on_error": False}})
     run = _mk_run()
     ssh.dirs.add("/workspace")
-    assert p.connect(run=run).is_success()
+    p.connect(run=run)  # Phase A2 Batch 12: success implies no raise
 
     ssh.commands.clear()
-    assert p.disconnect().is_success()
+    p.disconnect()  # Phase A2 Batch 12: success implies no raise
     assert any(c == f"rm -rf /workspace/runs/{run.name}" for c in ssh.commands)
 
 
@@ -265,10 +270,10 @@ def test_disconnect_keeps_workspace_on_error(monkeypatch: pytest.MonkeyPatch) ->
     p = _mk_provider(cfg_overrides={"cleanup": {"cleanup_workspace": True, "keep_on_error": True}})
     run = _mk_run()
     ssh.dirs.add("/workspace")
-    assert p.connect(run=run).is_success()
+    p.connect(run=run)  # Phase A2 Batch 12: success implies no raise
 
     p.mark_error()
     ssh.commands.clear()
 
-    assert p.disconnect().is_success()
+    p.disconnect()  # Phase A2 Batch 12: success implies no raise
     assert all("docker run --rm" not in c for c in ssh.commands)

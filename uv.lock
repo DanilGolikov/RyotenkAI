@@ -5878,6 +5878,7 @@ version = "1.0.0"
 source = { editable = "packages/shared" }
 dependencies = [
     { name = "colorlog" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "loguru" },
     { name = "mlflow" },
@@ -5893,6 +5894,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "colorlog", specifier = ">=6.9.0" },
+    { name = "fastapi", specifier = ">=0.115.0,<1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "loguru", specifier = ">=0.7.0,<1.0.0" },
     { name = "mlflow", specifier = ">=3.11.1,<4.0.0" },

@@ -5,6 +5,10 @@ Parametrized over ``[fake, real]``. The ``real`` variant
 requires ``RYOTENKAI_LIVE=1`` plus a reachable Docker host; otherwise
 it ``pytest.skip``s.
 
+Phase A2 Batch 4 (2026-05-14): contract migrated from
+``Result[T, ProviderError]`` to ``T`` returns with raised
+:class:`ProviderUnavailableError` / :class:`ConfigInvalidError`.
+
 Coverage:
 
 * Protocol :func:`isinstance` check.
@@ -27,6 +31,7 @@ from typing import Any
 
 import pytest
 
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.infrastructure.docker import IDockerClient, LocalDockerClient
 from tests._fakes.docker import FakeDockerClient
 
@@ -102,23 +107,23 @@ class TestDockerCompliance:
 
     def test_ensure_image_default_succeeds(self, docker_client: IDockerClient, ssh: Any) -> None:
         fake = _as_fake(docker_client)
-        result = fake.ensure_image(ssh=ssh, image="img:1")
-        assert result.is_ok()
+        # Returns None on success — and the image is registered.
+        assert fake.ensure_image(ssh=ssh, image="img:1") is None
         assert fake.image_exists(ssh, "img:1") is True
 
     def test_ensure_image_can_fail(self, docker_client: IDockerClient, ssh: Any) -> None:
         fake = _as_fake(docker_client)
         fake.set_pull_behaviour("fail")
-        result = fake.ensure_image(ssh=ssh, image="img:1")
-        assert result.is_err()
-        assert result.unwrap_err().code == "DOCKER_PULL_FAILED"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            fake.ensure_image(ssh=ssh, image="img:1")
+        assert exc_info.value.context.get("reason") == "DOCKER_PULL_FAILED"
 
     def test_ensure_image_silently_missing(self, docker_client: IDockerClient, ssh: Any) -> None:
         fake = _as_fake(docker_client)
         fake.set_pull_behaviour("silently_missing")
-        result = fake.ensure_image(ssh=ssh, image="img:1")
-        assert result.is_err()
-        assert result.unwrap_err().code == "DOCKER_IMAGE_NOT_AVAILABLE"
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            fake.ensure_image(ssh=ssh, image="img:1")
+        assert exc_info.value.context.get("reason") == "DOCKER_IMAGE_NOT_AVAILABLE"
 
     # ------------------------------------------------------------------
     # rm_force
@@ -128,16 +133,15 @@ class TestDockerCompliance:
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
-        result = fake.rm_force(ssh, container_name="never-existed")
-        assert result.is_ok()
+        # Idempotent: no exception, no return value.
+        assert fake.rm_force(ssh, container_name="never-existed") is None
 
     def test_rm_force_marks_container_removed(
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
         fake.register_container("c-1", state="running")
-        result = fake.rm_force(ssh, container_name="c-1")
-        assert result.is_ok()
+        fake.rm_force(ssh, container_name="c-1")
         assert fake.is_container_running(ssh, name_filter="c-1") is False
 
     def test_rm_force_failure_injection(
@@ -145,11 +149,10 @@ class TestDockerCompliance:
     ) -> None:
         fake = _as_fake(docker_client)
         fake.fail_next_n_calls("rm_force", 1)
-        result = fake.rm_force(ssh, container_name="c-1")
-        assert result.is_err()
+        with pytest.raises(ProviderUnavailableError):
+            fake.rm_force(ssh, container_name="c-1")
         # Second call recovers.
-        result = fake.rm_force(ssh, container_name="c-1")
-        assert result.is_ok()
+        assert fake.rm_force(ssh, container_name="c-1") is None
 
     # ------------------------------------------------------------------
     # is_container_running
@@ -178,9 +181,7 @@ class TestDockerCompliance:
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
-        result = fake.logs(ssh, container_name="never-existed")
-        assert result.is_ok()
-        assert result.unwrap() == ""
+        assert fake.logs(ssh, container_name="never-existed") == ""
 
     def test_logs_returns_appended_content(
         self, docker_client: IDockerClient, ssh: Any,
@@ -189,10 +190,9 @@ class TestDockerCompliance:
         fake.register_container("c-1")
         fake.append_logs("c-1", "line-1")
         fake.append_logs("c-1", "line-2")
-        result = fake.logs(ssh, container_name="c-1")
-        assert result.is_ok()
-        assert "line-1" in result.unwrap()
-        assert "line-2" in result.unwrap()
+        out = fake.logs(ssh, container_name="c-1")
+        assert "line-1" in out
+        assert "line-2" in out
 
     def test_logs_tail_returns_last_n(
         self, docker_client: IDockerClient, ssh: Any,
@@ -200,17 +200,16 @@ class TestDockerCompliance:
         fake = _as_fake(docker_client)
         for i in range(5):
             fake.append_logs("c-1", f"line-{i}")
-        result = fake.logs(ssh, container_name="c-1", tail=2)
-        assert result.is_ok()
-        assert result.unwrap() == "line-3\nline-4"
+        out = fake.logs(ssh, container_name="c-1", tail=2)
+        assert out == "line-3\nline-4"
 
     def test_logs_failure_injection(
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
         fake.fail_next_n_calls("logs", 1)
-        result = fake.logs(ssh, container_name="c-1")
-        assert result.is_err()
+        with pytest.raises(ProviderUnavailableError):
+            fake.logs(ssh, container_name="c-1")
 
     # ------------------------------------------------------------------
     # container_exit_code
@@ -220,26 +219,22 @@ class TestDockerCompliance:
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
-        result = fake.container_exit_code(ssh, container_name="unknown")
-        assert result.is_ok()
-        assert result.unwrap() == 0
+        assert fake.container_exit_code(ssh, container_name="unknown") == 0
 
     def test_exit_code_reflects_set_value(
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
         fake.set_exit_code("c-1", 137)
-        result = fake.container_exit_code(ssh, container_name="c-1")
-        assert result.is_ok()
-        assert result.unwrap() == 137
+        assert fake.container_exit_code(ssh, container_name="c-1") == 137
 
     def test_exit_code_failure_injection(
         self, docker_client: IDockerClient, ssh: Any,
     ) -> None:
         fake = _as_fake(docker_client)
         fake.fail_next_n_calls("container_exit_code", 1)
-        result = fake.container_exit_code(ssh, container_name="c-1")
-        assert result.is_err()
+        with pytest.raises(ProviderUnavailableError):
+            fake.container_exit_code(ssh, container_name="c-1")
 
     # ------------------------------------------------------------------
     # Call log — assertion surface

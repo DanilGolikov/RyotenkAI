@@ -53,10 +53,10 @@ class LogFetcher:
 
     def __init__(
         self,
-        client: "JobClient",
+        client: JobClient,
         *,
-        name: "LogName",
-        local_path: "Path",
+        name: LogName,
+        local_path: Path,
     ) -> None:
         from ryotenkai_shared.contracts.runner_api.logs import LogName as _LN
 
@@ -75,11 +75,11 @@ class LogFetcher:
     # ----- public surface ------------------------------------------------
 
     @property
-    def local_path(self) -> "Path":
+    def local_path(self) -> Path:
         return self._local_path
 
     @property
-    def name(self) -> "LogName":
+    def name(self) -> LogName:
         return self._name
 
     def download(self, *, silent: bool = True) -> bool:
@@ -92,7 +92,7 @@ class LogFetcher:
         """
         try:
             return asyncio.run(self._download_async(silent=silent))
-        except Exception as exc:  # noqa: BLE001 — defensive (sync seam)
+        except Exception as exc:
             logger.debug(f"[LOG_FETCHER] {self._name.value}: download failed: {exc}")
             return False
 
@@ -114,7 +114,7 @@ class LogFetcher:
         """
         try:
             return asyncio.run(self._get_last_lines_async(n=n))
-        except Exception as exc:  # noqa: BLE001 — defensive
+        except Exception as exc:
             logger.debug(f"[LOG_FETCHER] {self._name.value}: get_last_lines failed: {exc}")
             return []
 
