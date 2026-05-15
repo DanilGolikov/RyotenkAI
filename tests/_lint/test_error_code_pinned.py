@@ -156,9 +156,11 @@ def test_concrete_subclass_status_in_http_range() -> None:
 def test_phase_a1_codes_have_registered_titles() -> None:
     """Every Phase-A1-new ``ErrorCode`` has a real title (not the fallback).
 
-    Pod-runner codes that pre-existed (JOB_NOT_FOUND, etc.) are exempt
-    -- their titles live in ``packages/pod/.../runner/api/errors.py``
-    until Phase B unifies the registries.
+    Phase B merged the pod-runner's titles into the shared
+    ``_DEFAULT_TITLES`` -- now ``test_every_error_code_has_a_title``
+    enforces the stricter "every code" rule; this Phase-A1 sub-test
+    is kept as a regression guard against accidental removal of any
+    A1-era title in a later cleanup.
     """
     missing: list[str] = []
     for code in _PHASE_A1_NEW_CODES:
@@ -179,6 +181,38 @@ def test_phase_a1_codes_have_registered_titles() -> None:
     )
 
 
+def test_every_error_code_has_a_registered_title() -> None:
+    """Phase B contract: **every** :class:`ErrorCode` enum member has
+    a real title in the unified ``_DEFAULT_TITLES`` map.
+
+    Before Phase B, pod-runner codes (JOB_NOT_FOUND etc.) kept their
+    titles in ``packages/pod/.../runner/api/errors.py``; the shared
+    map only covered Phase-A1-new codes. Phase B merged the maps so
+    there is exactly one source of truth -- every new ``ErrorCode``
+    added after this point MUST also add a title here. Otherwise the
+    wire payload falls back to the enum value (e.g. ``"FOO_BAR"``
+    instead of ``"Foo bar"``) which is strictly worse for human
+    readability in dashboards.
+    """
+    missing: list[str] = []
+    for code in ErrorCode:
+        if code not in _DEFAULT_TITLES:
+            missing.append(code.value)
+            continue
+        title = _DEFAULT_TITLES[code]
+        if title == code.value:
+            missing.append(
+                f"{code.value}: title is identical to enum value "
+                "(no human-readable text)"
+            )
+    assert not missing, (
+        "Phase B unified _DEFAULT_TITLES requires every ErrorCode to have "
+        "a registered human-readable title. Add an entry in "
+        "``packages/shared/src/ryotenkai_shared/errors/_render.py`` "
+        "for each:\n  " + "\n  ".join(missing)
+    )
+
+
 def test_default_title_for_returns_registered_title() -> None:
     """``default_title_for(code)`` returns the registered title verbatim."""
     for code, expected in _DEFAULT_TITLES.items():
@@ -188,11 +222,22 @@ def test_default_title_for_returns_registered_title() -> None:
 
 
 def test_default_title_for_falls_back_to_enum_value_for_unregistered() -> None:
-    """An unregistered ``ErrorCode`` falls back to the enum value (no exception)."""
-    # JOB_NOT_FOUND is intentionally not in the Phase A1 _DEFAULT_TITLES
-    # (it lives in pod's map). Verify the fallback path.
-    fallback = default_title_for(ErrorCode.JOB_NOT_FOUND)
-    assert fallback == ErrorCode.JOB_NOT_FOUND.value
+    """An unregistered ``ErrorCode`` falls back to the enum value (no exception).
+
+    Phase B merged every existing code into ``_DEFAULT_TITLES`` (the
+    "every code has a title" sentinel above pins this). To exercise
+    the fallback path without breaking the merged-map invariant we
+    construct a synthetic ``ErrorCode``-shaped sentinel by temporarily
+    deleting a key from ``_DEFAULT_TITLES`` and restoring it. This is
+    a pure inspection of the function's contract -- not a regression
+    against the registered titles.
+    """
+    saved = _DEFAULT_TITLES.pop(ErrorCode.INTERNAL_ERROR)
+    try:
+        fallback = default_title_for(ErrorCode.INTERNAL_ERROR)
+        assert fallback == ErrorCode.INTERNAL_ERROR.value
+    finally:
+        _DEFAULT_TITLES[ErrorCode.INTERNAL_ERROR] = saved
 
 
 def test_concrete_subclass_count_matches_phase_a1_catalog() -> None:

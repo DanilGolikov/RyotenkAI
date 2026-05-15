@@ -1,16 +1,19 @@
-"""Unit tests for :mod:`ryotenkai_pod.runner.api.errors` (Phase 1).
+"""Unit tests for :mod:`ryotenkai_shared.api.error_handlers` (Phase B).
+
+Moved from ``tests/unit/pod/runner/api/test_errors.py`` when Phase B
+lifted the handlers out of pod into shared.
 
 Test categories per project policy:
 
-* positive       — APIError → problem+json happy path.
-* negative       — malformed input, missing fields, dict→shape adaption.
-* boundary       — zero-length errors[], status 100/599 edges, no detail.
-* invariant      — Content-Type is always ``application/problem+json``;
-                   ``code`` is always present; nulls are stripped.
-* dependency-err — handler called when logger isn't ready; no crash.
-* regression     — legacy ``HTTPException(detail={"code": ...})`` adapted.
-* logic-specific — alias map (``invalid_job_spec`` → JOB_SPEC_INVALID).
-* combinatorial  — ErrorCode × HTTPException-shape × with/without trace_id.
+* positive       -- APIError -> problem+json happy path.
+* negative       -- malformed input, missing fields, dict->shape adaption.
+* boundary       -- zero-length errors[], status 100/599 edges, no detail.
+* invariant      -- Content-Type is always ``application/problem+json``;
+                    ``code`` is always present; nulls are stripped.
+* dependency-err -- handler called when logger isn't ready; no crash.
+* regression     -- legacy ``HTTPException(detail={"code": ...})`` adapted.
+* logic-specific -- alias map (``invalid_job_spec`` -> JOB_SPEC_INVALID).
+* combinatorial  -- ErrorCode x HTTPException-shape x with/without trace_id.
 """
 
 from __future__ import annotations
@@ -21,10 +24,11 @@ import pytest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from ryotenkai_pod.runner.api.errors import (
-    EXCEPTION_HANDLERS,
+from ryotenkai_shared.api.error_handlers import (
     APIError,
+    EXCEPTION_HANDLERS,
     _http_exception_to_code,
+    install_exception_handlers,
 )
 from ryotenkai_shared.contracts.problem_details import (
     PROBLEM_JSON_MEDIA_TYPE,
@@ -39,7 +43,7 @@ from ryotenkai_shared.contracts.problem_details import (
 
 
 def _make_app() -> FastAPI:
-    """Tiny app with the Phase 1 handlers attached, plus routes that
+    """Tiny app with the Phase B handlers attached, plus routes that
     raise each exception type. Reused across tests."""
     app = FastAPI(exception_handlers=EXCEPTION_HANDLERS)
 
@@ -111,6 +115,26 @@ class TestPositive:
             {"loc": ["body", "command"], "type": "missing", "msg": "Field required"},
         ]
 
+    def test_install_exception_handlers_imperative_form(self) -> None:
+        """``install_exception_handlers(app)`` is wire-equivalent to
+        the constructor form -- verifies it actually registers
+        handlers (not a no-op) by exercising the response shape on a
+        bare app built without ``exception_handlers=...``."""
+        app = FastAPI()
+        install_exception_handlers(app)
+
+        @app.get("/boom")
+        def _boom() -> None:
+            raise APIError(ErrorCode.RUNNER_BUSY, status=409, detail="x")
+
+        with TestClient(app) as c:
+            r = c.get("/boom")
+        assert r.status_code == 409
+        assert r.headers["content-type"].startswith(PROBLEM_JSON_MEDIA_TYPE)
+        body = r.json()
+        assert body["code"] == "RUNNER_BUSY"
+        assert body["title"] == "Runner busy"
+
 
 # ---------------------------------------------------------------------------
 # Negative
@@ -148,6 +172,23 @@ class TestNegative:
         assert isinstance(body.get("errors"), list)
         assert len(body["errors"]) >= 1
 
+    def test_http_exception_to_code_dict_without_code_returns_internal_error(self) -> None:
+        """Dict detail missing ``code`` key -> INTERNAL_ERROR fallback."""
+        exc = HTTPException(status_code=418, detail={"message": "no code here"})
+        code, message = _http_exception_to_code(exc)
+        assert code == ErrorCode.INTERNAL_ERROR
+        assert message is None
+
+    def test_http_exception_to_code_non_string_message_dropped(self) -> None:
+        """``detail["message"]`` must be a str; non-str -> message=None."""
+        exc = HTTPException(
+            status_code=400,
+            detail={"code": "spawn_failed", "message": ["not", "a", "string"]},
+        )
+        code, message = _http_exception_to_code(exc)
+        assert code == ErrorCode.SPAWN_FAILED
+        assert message is None
+
 
 # ---------------------------------------------------------------------------
 # Boundary
@@ -156,7 +197,7 @@ class TestNegative:
 
 class TestBoundary:
     def test_apierror_without_detail(self) -> None:
-        # APIError(detail=None) → null-stripped from response
+        # APIError(detail=None) -> null-stripped from response
         err = APIError(ErrorCode.RUNNER_BUSY, status=409)
         problem = err.as_problem(instance="/x")
         out = problem.model_dump(mode="json", exclude_none=True)
@@ -164,13 +205,28 @@ class TestBoundary:
         assert out["code"] == "RUNNER_BUSY"
 
     def test_status_code_extreme_values_accepted(self) -> None:
-        # ProblemDetails enforces 100 ≤ status ≤ 599
+        # ProblemDetails enforces 100 <= status <= 599
         for status in (100, 599):
             ProblemDetails(title="x", status=status, code=ErrorCode.INTERNAL_ERROR)
         with pytest.raises(Exception):
             ProblemDetails(title="x", status=99, code=ErrorCode.INTERNAL_ERROR)
         with pytest.raises(Exception):
             ProblemDetails(title="x", status=600, code=ErrorCode.INTERNAL_ERROR)
+
+    def test_http_exception_to_code_none_detail(self) -> None:
+        """``HTTPException(detail=None)`` coerces detail to the HTTP
+        reason phrase (FastAPI behaviour). The adapter then routes
+        through the str branch and returns INTERNAL_ERROR with the
+        phrase as the carried message -- never crashes on the boundary.
+        """
+        exc = HTTPException(status_code=500, detail=None)  # type: ignore[arg-type]
+        code, message = _http_exception_to_code(exc)
+        assert code == ErrorCode.INTERNAL_ERROR
+        # FastAPI replaced detail=None with the reason phrase; the
+        # adapter passes it through verbatim. We don't care about the
+        # exact text -- just that it's a non-empty string, not None.
+        assert isinstance(message, str)
+        assert message  # non-empty
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +265,7 @@ class TestInvariant:
         assert r.json()["code"]  # non-empty
 
     def test_null_fields_stripped_from_wire(self) -> None:
-        # APIError without detail/title-override/errors → those fields
+        # APIError without detail/title-override/errors -> those fields
         # never appear in the response body (RFC 9457 §3.1).
         err = APIError(ErrorCode.RUNNER_NOT_READY, status=503)
         out = err.as_problem(instance="/x").model_dump(mode="json", exclude_none=True)
@@ -218,7 +274,7 @@ class TestInvariant:
 
 
 # ---------------------------------------------------------------------------
-# Regression — every legacy raise site must adapt to a known code
+# Regression -- every legacy raise site must adapt to a known code
 # ---------------------------------------------------------------------------
 
 
@@ -240,6 +296,30 @@ class TestRegression:
         exc = HTTPException(status_code=400, detail={"code": legacy_code})
         actual, _ = _http_exception_to_code(exc)
         assert actual == expected
+
+    def test_pod_runner_shim_re_exports_same_classes(self) -> None:
+        """The pod's ``ryotenkai_pod.runner.api.errors`` is a re-export
+        shim for Phase B; importing ``APIError`` from either path must
+        yield the exact same class object.
+
+        Module reference: ``ryotenkai_pod.runner.api.errors``.
+        """
+        import ryotenkai_pod.runner.api.errors as pod_shim
+        from ryotenkai_shared.api.error_handlers import APIError as shared_api_error
+
+        assert pod_shim.APIError is shared_api_error
+        assert pod_shim.EXCEPTION_HANDLERS is EXCEPTION_HANDLERS
+        # The shim must also re-export the helper functions consumers
+        # imported in Phase A1/A2 directly off the pod module path.
+        from ryotenkai_shared.api import error_handlers as shared_mod
+
+        assert pod_shim.api_error_handler is shared_mod.api_error_handler
+        assert pod_shim.http_exception_handler is shared_mod.http_exception_handler
+        assert (
+            pod_shim.validation_exception_handler
+            is shared_mod.validation_exception_handler
+        )
+        assert pod_shim.generic_exception_handler is shared_mod.generic_exception_handler
 
 
 # ---------------------------------------------------------------------------
@@ -263,9 +343,21 @@ class TestLogicSpecific:
         _, message = _http_exception_to_code(exc)
         assert message == "zip corrupt"
 
+    def test_apierror_title_falls_back_to_default_title_for(self) -> None:
+        """When ``title=`` is omitted the constructor must look up
+        :data:`_DEFAULT_TITLES` via ``default_title_for``; verifies
+        the merged map carries pod-runner codes after Phase B."""
+        err = APIError(ErrorCode.JOB_NOT_FOUND, status=404)
+        assert err.title == "Job not found"
+
+    def test_apierror_custom_title_overrides_default(self) -> None:
+        """Explicit ``title=`` wins over the default-titles map."""
+        err = APIError(ErrorCode.JOB_NOT_FOUND, status=404, title="Custom")
+        assert err.title == "Custom"
+
 
 # ---------------------------------------------------------------------------
-# Combinatorial: code × shape × with-trace × with-instance
+# Combinatorial: code x shape x with-trace x with-instance
 # ---------------------------------------------------------------------------
 
 
@@ -297,7 +389,7 @@ class TestCombinatorial:
 
 
 # ---------------------------------------------------------------------------
-# Dependency-error — handler doesn't crash if logger is unhealthy
+# Dependency-error -- handler behaviour when its logger is unhealthy
 # ---------------------------------------------------------------------------
 
 
@@ -307,23 +399,20 @@ class TestDependencyError:
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """If the logger raises mid-handler, the response must still
-        be emitted."""
-        from ryotenkai_pod.runner.api import errors as errors_mod
+        be emitted -- or, in the current contract, the failure must
+        surface so devops knows. The contract is: log failures DON'T
+        silence -- they propagate."""
+        from ryotenkai_shared.api import error_handlers as mod
 
         broken_logger = MagicMock()
         broken_logger.error.side_effect = RuntimeError("logger dead")
-        monkeypatch.setattr(errors_mod, "logger", broken_logger)
+        monkeypatch.setattr(mod, "logger", broken_logger)
 
         # Build a real Starlette/FastAPI Request from an ASGI scope so we
         # don't need to mock the property surface (``url.path`` etc.).
         request = Request({"type": "http", "method": "GET", "path": "/x", "headers": []})
 
-        # Even with the broken logger, the handler should crash
-        # cleanly — we want this to surface so devops knows. The
-        # contract is: log failures DON'T silence — they propagate.
-        # Adjust expectation: if the project later wants graceful
-        # degradation, change this test.
         with pytest.raises(RuntimeError, match="logger dead"):
-            await errors_mod.generic_exception_handler(
+            await mod.generic_exception_handler(
                 request, RuntimeError("real bug"),
             )

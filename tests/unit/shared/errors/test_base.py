@@ -66,7 +66,10 @@ class TestPositive:
         assert problem.code is ErrorCode.INTERNAL_ERROR
         assert problem.status == 500
         assert problem.detail == "boom"
-        assert problem.title == "Internal server error"
+        # Phase B unified the title map; pod-runner used the
+        # HTTP-standard title-cased phrase ("Internal Server Error")
+        # which now wins for the merged INTERNAL_ERROR entry.
+        assert problem.title == "Internal Server Error"
         assert problem.instance == "/x"
         assert problem.trace_id == "abcd1234"
 
@@ -465,7 +468,8 @@ class TestLogicSpecific:
 
     def test_str_falls_back_to_title_when_no_detail(self) -> None:
         exc = InternalError()
-        assert str(exc) == "INTERNAL_ERROR: Internal server error"
+        # Phase B unified the title map (see TestPositive note above).
+        assert str(exc) == "INTERNAL_ERROR: Internal Server Error"
 
     def test_root_class_module_anchor(self) -> None:
         """RyotenkAIError lives at ryotenkai_shared.errors.base.

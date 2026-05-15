@@ -6,10 +6,17 @@ human-readable title. The title SHOULD NOT change between occurrences
 falls back to the enum value itself when no entry is registered --
 strictly worse for UX but never lies.
 
-Phase A1 seeds entries only for the *new* codes added in this phase
-(see plan Layer 2). The pod-runner's pre-existing titles live in
-``packages/pod/.../runner/api/errors.py::_DEFAULT_TITLES`` and remain
-authoritative for pod codes until Phase B promotes them here.
+Phase A1 seeded entries for the codes introduced by the unified
+:class:`RyotenkAIError` hierarchy. Phase B (sharded-stargazing-
+wigderson, 2026-05-16) merged the pod-runner's parallel
+``_DEFAULT_TITLES`` map into this one so there is a **single source
+of truth** for code -> title mapping across pod and control APIs.
+The pod-runner's old map (``packages/pod/.../runner/api/errors.py``)
+is now a re-export shim that reads from here.
+
+The sentinel ``tests/_lint/test_error_code_pinned.py`` enforces that
+every :class:`ErrorCode` enum member has a real title here (no enum-
+value fallback) -- adding a new code without a title is a CI bug.
 """
 
 from __future__ import annotations
@@ -18,56 +25,88 @@ import secrets
 
 from ryotenkai_shared.contracts.problem_details import ErrorCode
 
-# Phase A1 catalog -- only the codes introduced in this phase are seeded
-# here. Pod-runner codes (JOB_NOT_FOUND, JOB_SPEC_INVALID, ...) keep
-# their titles in ``packages/pod/.../runner/api/errors.py`` until
-# Phase B unifies the registries.
+# Single source of truth for code -> title. Every ErrorCode member MUST
+# appear here; the sentinel ``test_error_code_pinned.py`` blocks
+# additions that omit a title.
 _DEFAULT_TITLES: dict[ErrorCode, str] = {
-    # ----- config ------------------------------------------------------
+    # ----- jobs (pod-runner) -------------------------------------------
+    ErrorCode.JOB_NOT_FOUND: "Job not found",
+    ErrorCode.JOB_STATE_INVALID: "Invalid job state transition",
+    ErrorCode.JOB_SPEC_INVALID: "Job specification invalid",
+    ErrorCode.JOB_IN_PROGRESS: "Job already in progress",
+    ErrorCode.PLUGIN_UNPACK_FAILED: "Plugin payload unpack failed",
+    ErrorCode.SPAWN_FAILED: "Trainer spawn failed",
+    # ----- system / lifecycle (pod-runner) -----------------------------
+    ErrorCode.RUNNER_NOT_READY: "Runner not ready",
+    ErrorCode.RUNNER_BUSY: "Runner busy",
+    # ----- diagnostics (pod-runner) ------------------------------------
+    ErrorCode.DIAGNOSTIC_FAILED: "Diagnostic collection failed",
+    ErrorCode.DIAGNOSTIC_TIMEOUT: "Diagnostic collection timed out",
+    ErrorCode.DIAGNOSTIC_INVALID_INCLUDE: "Invalid diagnostics include parameter",
+    ErrorCode.DIAGNOSTIC_PERMISSION_DENIED: "Diagnostic permission denied",
+    # ----- resources (pod-runner) --------------------------------------
+    ErrorCode.RESOURCES_UNAVAILABLE: "Resource snapshot unavailable",
+    # ----- logs (pod-runner) -------------------------------------------
+    ErrorCode.LOG_NAME_INVALID: "Invalid log name",
+    ErrorCode.LOG_NOT_AVAILABLE: "Log file not available",
+    ErrorCode.LOG_OFFSET_OUT_OF_RANGE: "Log offset out of range",
+    # ----- files (pod-runner) ------------------------------------------
+    ErrorCode.FILE_TARGET_INVALID: "Invalid upload target",
+    ErrorCode.FILE_TOO_LARGE: "Upload exceeds maximum file size",
+    ErrorCode.FILE_WRITE_FAILED: "File write failed",
+    ErrorCode.FILE_HASH_MISMATCH: "File checksum mismatch",
+    # ----- runtime (pod-runner) ----------------------------------------
+    ErrorCode.IMPORT_CHECK_TIMEOUT: "Import check timed out",
+    ErrorCode.IMPORT_CHECK_TOO_MANY_MODULES: "Too many modules in import check",
+    ErrorCode.IMPORT_CHECK_INVALID_MODULE_NAME: "Invalid module name",
+    # ----- internal trainer<->runner enforcement (pod-runner) ----------
+    ErrorCode.LOOPBACK_REQUIRED: "Loopback access required",
+    ErrorCode.NO_ACTIVE_JOB: "No active job",
+    ErrorCode.STOP_NOT_ALLOWED: "Stop request not allowed in current state",
+    # ----- config (Phase A1) -------------------------------------------
     ErrorCode.CONFIG_INVALID: "Configuration invalid",
     ErrorCode.CONFIG_DRIFT: "Configuration drift detected",
     ErrorCode.CONFIG_FILE_NOT_FOUND: "Configuration file not found",
-    # ----- workspace ---------------------------------------------------
+    # ----- workspace (Phase A1) ----------------------------------------
     ErrorCode.PROJECT_NOT_FOUND: "Project not found",
     ErrorCode.PROJECT_ALREADY_EXISTS: "Project already exists",
     ErrorCode.PROVIDER_NOT_FOUND: "Provider not found",
     ErrorCode.INTEGRATION_NOT_FOUND: "Integration not found",
     ErrorCode.WORKSPACE_STORE_FAILED: "Workspace store operation failed",
-    # ----- pipeline state / launch ------------------------------------
+    # ----- pipeline state / launch (Phase A1) --------------------------
     ErrorCode.STATE_LOAD_FAILED: "Pipeline state load failed",
     ErrorCode.STATE_LOCKED: "Pipeline state locked",
     ErrorCode.LAUNCH_IN_PROGRESS: "Launch already in progress",
     ErrorCode.LAUNCH_PREPARATION_FAILED: "Launch preparation failed",
     ErrorCode.PIPELINE_STAGE_FAILED: "Pipeline stage failed",
     ErrorCode.RUN_IS_ACTIVE: "Run is currently active",
-    # ----- training ----------------------------------------------------
+    # ----- training (Phase A1) -----------------------------------------
     ErrorCode.TRAINING_FAILED: "Training failed",
     ErrorCode.TRAINING_OOM: "Training ran out of memory",
     ErrorCode.STRATEGY_CHAIN_INVALID: "Strategy chain validation failed",
-    # ----- dataset / model / inference --------------------------------
+    # ----- dataset / model / inference (Phase A1) ----------------------
     ErrorCode.DATASET_LOAD_FAILED: "Dataset load failed",
     ErrorCode.DATASET_VALIDATION_FAILED: "Dataset validation failed",
     ErrorCode.MODEL_LOAD_FAILED: "Model load failed",
     ErrorCode.INFERENCE_UNAVAILABLE: "Inference service unavailable",
-    # ----- providers ---------------------------------------------------
+    # ----- providers (Phase A1) ----------------------------------------
     ErrorCode.PROVIDER_UNAVAILABLE: "Provider unavailable",
     ErrorCode.PROVIDER_RATE_LIMITED: "Provider rate-limited",
     ErrorCode.PROVIDER_AUTH_FAILED: "Provider authentication failed",
-    # ----- SSH ---------------------------------------------------------
+    # ----- SSH (Phase A1) ----------------------------------------------
     ErrorCode.SSH_CONNECTION_FAILED: "SSH connection failed",
     ErrorCode.SSH_EXEC_FAILED: "SSH command execution failed",
     ErrorCode.SSH_TRANSFER_FAILED: "SSH file transfer failed",
-    # ----- HF Hub ------------------------------------------------------
+    # ----- HF Hub (Phase A1) -------------------------------------------
     ErrorCode.HF_AUTH_FAILED: "Hugging Face authentication failed",
     ErrorCode.HF_NOT_FOUND: "Hugging Face resource not found",
-    # ----- engines -----------------------------------------------------
+    # ----- engines (Phase A1) ------------------------------------------
     ErrorCode.ENGINE_NOT_REGISTERED: "Engine not registered",
     ErrorCode.ENGINE_CONFIG_INVALID: "Engine configuration invalid",
-    # ----- pod-inherited (needed by RyotenkAIError construction) ------
-    # Phase B will move the full pod map here. For now we add only what
-    # our new exception classes need at construction time.
+    # ----- transport (Mac client synthesised) --------------------------
     ErrorCode.TRANSPORT_UNREACHABLE: "Transport unreachable",
-    ErrorCode.INTERNAL_ERROR: "Internal server error",
+    # ----- catch-all ---------------------------------------------------
+    ErrorCode.INTERNAL_ERROR: "Internal Server Error",
 }
 
 
