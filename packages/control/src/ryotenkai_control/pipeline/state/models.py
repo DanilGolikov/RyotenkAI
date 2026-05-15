@@ -4,9 +4,34 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
+from ryotenkai_shared.contracts.pipeline_conditions import Condition
+
 
 def utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _copy_conditions(value: Any) -> list[Condition]:
+    """Deserialise ``conditions[]`` defensively.
+
+    Accepts a list of :class:`Condition` instances (already typed) or
+    of dicts (just loaded from JSON). Invalid entries are silently
+    dropped — the conditions side-channel is observability, never a
+    correctness gate; one malformed entry should not block load of an
+    otherwise-valid attempt.
+    """
+    if not isinstance(value, list):
+        return []
+    out: list[Condition] = []
+    for item in value:
+        if isinstance(item, Condition):
+            out.append(item)
+        elif isinstance(item, dict):
+            try:
+                out.append(Condition.model_validate(item))
+            except Exception:  # noqa: BLE001 — observability fall-through
+                continue
+    return out
 
 
 def _copy_dict(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -68,6 +93,14 @@ class StageRunState:
     started_at: str | None = None
     completed_at: str | None = None
     log_paths: dict[str, str] = field(default_factory=dict)
+    #: Phase G (Layer 10) — k8s/Operator-style conditions[]. Each entry
+    #: is an observation (type + status + reason + message + ts);
+    #: multiple can be true simultaneously. Source of truth for
+    #: lifecycle state remains ``status`` (the FSM); conditions are a
+    #: side-channel for warnings / progress hints. Empty list for
+    #: legacy state.json files — additive field, no schema bump
+    #: required.
+    conditions: list[Condition] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +115,14 @@ class StageRunState:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "log_paths": dict(self.log_paths),
+            # Phase G — empty list ⇒ omit from JSON so legacy diff
+            # tools don't see spurious empty arrays on stages that
+            # haven't emitted any conditions yet.
+            **(
+                {"conditions": [c.model_dump(mode="json") for c in self.conditions]}
+                if self.conditions
+                else {}
+            ),
         }
 
     @classmethod
@@ -98,6 +139,7 @@ class StageRunState:
             started_at=data.get("started_at"),
             completed_at=data.get("completed_at"),
             log_paths=_copy_str_dict(data.get("log_paths")),
+            conditions=_copy_conditions(data.get("conditions")),
         )
 
 

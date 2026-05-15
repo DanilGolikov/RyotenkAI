@@ -62,6 +62,10 @@ from ryotenkai_control.pipeline.state.transitioner import (
     mark_stage_running,
     mark_stage_skipped,
 )
+from ryotenkai_shared.contracts.pipeline_conditions import (
+    ConditionStatus,
+    update_condition,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -319,6 +323,37 @@ class AttemptController:
         if stage_state is None:
             return
         stage_state.log_paths = dict(log_paths)
+        self._persist()
+
+    def record_condition(
+        self,
+        *,
+        stage_name: str,
+        type: str,
+        status: ConditionStatus,
+        reason: str,
+        message: str | None = None,
+    ) -> None:
+        """Phase G — emit a :class:`Condition` onto a stage's
+        ``conditions[]`` side-channel.
+
+        Idempotent via :func:`update_condition` semantics: repeated
+        calls with the same status only refresh ``reason`` / ``message``
+        without bumping ``last_transition_time``. Silently no-ops when
+        the named stage hasn't been recorded yet — emitters should not
+        crash the pipeline if they fire too early.
+        """
+        attempt = self._require_attempt()
+        stage_state = attempt.stage_runs.get(stage_name)
+        if stage_state is None:
+            return
+        update_condition(
+            stage_state.conditions,
+            type=type,
+            status=status,
+            reason=reason,
+            message=message,
+        )
         self._persist()
 
     # ------------------------------------------------------------------

@@ -100,6 +100,10 @@ def _stage_run_to_schema(stage_run: Any, started_fallback: str | None = None) ->
         started_at=stage_run.started_at,
         completed_at=stage_run.completed_at,
         duration_seconds=duration,
+        # Phase G — pass through conditions[] so the API surface and
+        # Web UI can render observability hints without re-reading
+        # pipeline_state.json directly.
+        conditions=list(getattr(stage_run, "conditions", []) or []),
     )
 
 
