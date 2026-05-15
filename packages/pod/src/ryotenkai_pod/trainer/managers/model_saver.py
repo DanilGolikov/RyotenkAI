@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ryotenkai_shared.errors import ModelLoadFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, TrainingError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,10 +52,8 @@ class ModelSaverManager:
 
     Example:
         saver = ModelSaverManager()
-        result = saver.save_model(model, tokenizer, "output/model")
-        if result.is_success():
-            path = result.unwrap()
-            print(f"Model saved to {path}")
+        path = saver.save_model(model, tokenizer, "output/model")
+        print(f"Model saved to {path}")
     """
 
     def __init__(
@@ -75,7 +73,7 @@ class ModelSaverManager:
 
     def save_model(
         self, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, output_dir: str, save_tokenizer: bool = True
-    ) -> Result[str, TrainingError]:
+    ) -> str:
         """
         Save model and tokenizer.
 
@@ -86,7 +84,12 @@ class ModelSaverManager:
             save_tokenizer: Whether to save tokenizer
 
         Returns:
-            Result[str, TrainingError]: Output path or error
+            Output path where the model was written.
+
+        Raises:
+            ModelLoadFailedError: model/tokenizer artefact write failed
+                (disk full, permission denied, transformers/save bug).
+                Legacy error codes preserved on ``context["legacy_code"]``.
         """
         try:
             output_path = Path(output_dir)
@@ -112,15 +115,22 @@ class ModelSaverManager:
             if self._callbacks.on_model_saved:
                 self._callbacks.on_model_saved(str(output_path))
 
-            return Ok(str(output_path))
+            return str(output_path)
 
         except Exception as e:
             logger.error(f"Failed to save model: {e}")
-            return Err(TrainingError(message=f"Model save failed: {e!s}", code="MODEL_SAVE_FAILED"))
+            raise ModelLoadFailedError(
+                detail=f"Model save failed: {e!s}",
+                context={
+                    "legacy_code": "MODEL_SAVE_FAILED",
+                    "output_dir": output_dir,
+                },
+                cause=e,
+            )
 
     def save_checkpoint(
         self, model: PreTrainedModel, checkpoint_dir: str, step: int | None = None, epoch: int | None = None
-    ) -> Result[str, TrainingError]:
+    ) -> str:
         """
         Save a training checkpoint.
 
@@ -131,7 +141,11 @@ class ModelSaverManager:
             epoch: Optional epoch number
 
         Returns:
-            Result[str, TrainingError]: Checkpoint path or error
+            Filesystem path to the checkpoint directory.
+
+        Raises:
+            ModelLoadFailedError: checkpoint write failed. Legacy error
+                codes preserved on ``context["legacy_code"]``.
         """
         try:
             # Generate checkpoint name
@@ -159,13 +173,22 @@ class ModelSaverManager:
             if self._callbacks.on_checkpoint_saved:
                 self._callbacks.on_checkpoint_saved(str(checkpoint_path), step, epoch)
 
-            return Ok(str(checkpoint_path))
+            return str(checkpoint_path)
 
         except Exception as e:
             logger.error(f"Failed to save checkpoint: {e}")
-            return Err(TrainingError(message=f"Checkpoint save failed: {e!s}", code="CHECKPOINT_SAVE_FAILED"))
+            raise ModelLoadFailedError(
+                detail=f"Checkpoint save failed: {e!s}",
+                context={
+                    "legacy_code": "CHECKPOINT_SAVE_FAILED",
+                    "checkpoint_dir": checkpoint_dir,
+                    "step": step,
+                    "epoch": epoch,
+                },
+                cause=e,
+            )
 
-    def cleanup_checkpoints(self, checkpoint_dir: str, keep_last_n: int = 3) -> Result[int, TrainingError]:
+    def cleanup_checkpoints(self, checkpoint_dir: str, keep_last_n: int = 3) -> int:
         """
         Clean up old checkpoints, keeping only the last N.
 
@@ -174,13 +197,20 @@ class ModelSaverManager:
             keep_last_n: Number of checkpoints to keep
 
         Returns:
-            Result[int, str]: Number of checkpoints deleted or error
+            Number of checkpoints deleted (``0`` if the directory does
+            not exist).
+
+        Raises:
+            ModelLoadFailedError: directory listing failed. Per-checkpoint
+                ``rmtree`` failures are logged at WARNING and do NOT
+                escalate (best-effort cleanup, matches pre-migration
+                semantics).
         """
         try:
             checkpoint_path = Path(checkpoint_dir)
 
             if not checkpoint_path.exists():
-                return Ok(0)
+                return 0
 
             # Find all checkpoint directories
             checkpoints = sorted(
@@ -207,11 +237,18 @@ class ModelSaverManager:
                 if self._callbacks.on_cleanup_completed:
                     self._callbacks.on_cleanup_completed(deleted)
 
-            return Ok(deleted)
+            return deleted
 
         except Exception as e:
             logger.error(f"Failed to cleanup checkpoints: {e}")
-            return Err(TrainingError(message=f"Checkpoint cleanup failed: {e!s}", code="CHECKPOINT_CLEANUP_FAILED"))
+            raise ModelLoadFailedError(
+                detail=f"Checkpoint cleanup failed: {e!s}",
+                context={
+                    "legacy_code": "CHECKPOINT_CLEANUP_FAILED",
+                    "checkpoint_dir": checkpoint_dir,
+                },
+                cause=e,
+            )
 
 
 __all__ = ["ModelSaverManager"]

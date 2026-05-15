@@ -12,18 +12,66 @@ Single Responsibility: Load datasets from HuggingFace Hub.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from datasets import load_dataset
 
-from ryotenkai_shared.config.datasets.constants import SOURCE_TYPE_HUGGINGFACE
 from ryotenkai_pod.trainer.data_loaders.base import BaseDatasetLoader
+from ryotenkai_shared.errors import (
+    DatasetLoadFailedError,
+    HFAuthFailedError,
+    HFNotFoundError,
+)
 from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from datasets import Dataset
 
     from ryotenkai_shared.config import PipelineConfig
+
+
+# Tokens used to classify huggingface_hub exception messages into typed
+# domain exceptions. Kept as module-level constants so the mapping is
+# explicit (and mutation-testable).
+_HF_AUTH_TOKENS = ("401", "unauthor", "forbidden", "403", "auth", "token")
+_HF_NOT_FOUND_TOKENS = ("404", "not found", "does not exist", "no such")
+
+
+def _classify_hf_failure(
+    source: str,
+    exc: Exception,
+) -> DatasetLoadFailedError | HFAuthFailedError | HFNotFoundError:
+    """Translate a raw huggingface_hub/datasets exception to a typed one.
+
+    Keeps the classification in one place so both ``load()`` and
+    ``load_for_phase()`` produce the same shape for the same underlying
+    failure.
+
+    Args:
+        source: HF dataset identifier (for ``detail``/``context``).
+        exc: original exception raised by the HF stack.
+
+    Returns:
+        A concrete typed exception (caller decides whether to raise).
+    """
+    msg = str(exc).lower()
+    if any(tok in msg for tok in _HF_AUTH_TOKENS):
+        return HFAuthFailedError(
+            detail=f"HuggingFace authentication failed for dataset '{source}': {exc}",
+            context={"dataset": source, "legacy_code": "DATA_LOADER_HF_AUTH_FAILED"},
+            cause=exc,
+        )
+    if any(tok in msg for tok in _HF_NOT_FOUND_TOKENS):
+        return HFNotFoundError(
+            detail=f"HuggingFace dataset not found: '{source}': {exc}",
+            context={"dataset": source, "legacy_code": "DATA_LOADER_HF_DATASET_NOT_FOUND"},
+            cause=exc,
+        )
+    return DatasetLoadFailedError(
+        detail=f"Failed to load HuggingFace dataset '{source}': {exc}",
+        context={"dataset": source, "legacy_code": "DATA_LOADER_LOAD_FAILED"},
+        cause=exc,
+    )
 
 
 class HuggingFaceDatasetLoader(BaseDatasetLoader):
@@ -48,8 +96,8 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
         # Load with subset
         dataset = loader.load("databricks/dolly-15k", split="train", max_samples=1000)
 
-        # Load for training phase (if train_path is HF dataset ID)
-        result = loader.load_for_phase(phase_config)
+        # Load for training phase (raises DatasetLoadFailedError on failure)
+        dataset = loader.load_for_phase(phase_config)
     """
 
     def __init__(self, config: PipelineConfig, token: str | None = None):
@@ -97,7 +145,9 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
             Loaded dataset
 
         Raises:
-            ValueError: If dataset not found or access denied
+            HFAuthFailedError: token rejected / unauthorised access.
+            HFNotFoundError: dataset id / revision does not exist.
+            DatasetLoadFailedError: any other HF / parse failure.
         """
         logger.debug(f"[{self._log_prefix}:LOADING] dataset={source}, split={split}, subset={subset}")
 
@@ -122,7 +172,7 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
         except Exception as e:
             error_msg = f"Failed to load HuggingFace dataset '{source}': {e}"
             logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-            raise ValueError(error_msg) from e
+            raise _classify_hf_failure(source, e) from e
 
     def validate_source(self, source: str) -> bool:
         """
@@ -153,20 +203,24 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
     # OVERRIDE FOR HUGGINGFACE-SPECIFIC LOADING
     # =========================================================================
 
-    def load_for_phase(self, phase) -> Any:
+    def load_for_phase(self, phase) -> Dataset:
         """
         Load HuggingFace dataset for a training phase.
 
-        Uses hf_dataset_id from DatasetConfig instead of train_path.
+        Uses ``hf_dataset_id`` from ``DatasetConfig`` (not ``train_path``).
 
         Args:
             phase: Strategy phase configuration
 
         Returns:
-            Result with loaded dataset or DataLoaderError
-        """
-        from ryotenkai_shared.utils.result import DataLoaderError, Err, Ok
+            Loaded dataset.
 
+        Raises:
+            HFAuthFailedError: token rejected when loading dataset.
+            HFNotFoundError: dataset id not found on the Hub.
+            DatasetLoadFailedError: misconfigured source, missing
+                ``train_id``, missing dataset config, or other load error.
+        """
         from ryotenkai_shared.config import DatasetSourceHF
 
         try:
@@ -175,14 +229,12 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
             source = dataset_config.source
 
             if not isinstance(source, DatasetSourceHF):
-                return Err(
-                    DataLoaderError(
-                        message=(
-                            f"HuggingFaceDatasetLoader requires source.kind='huggingface'; "
-                            f"got {source.kind!r}"
-                        ),
-                        code="DATA_LOADER_HF_SOURCE_MISSING",
-                    )
+                raise DatasetLoadFailedError(
+                    detail=(f"HuggingFaceDatasetLoader requires source.kind='huggingface'; got {source.kind!r}"),
+                    context={
+                        "legacy_code": "DATA_LOADER_HF_SOURCE_MISSING",
+                        "source_kind": source.kind,
+                    },
                 )
 
             dataset_id = source.train_id
@@ -191,7 +243,10 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
             if not dataset_id:
                 error_msg = "source_hf.train_id is required for HuggingFace source"
                 logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-                return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_HF_TRAIN_ID_MISSING"))
+                raise DatasetLoadFailedError(
+                    detail=error_msg,
+                    context={"legacy_code": "DATA_LOADER_HF_TRAIN_ID_MISSING"},
+                )
 
             logger.debug(f"[{self._log_prefix}:PHASE_LOAD] dataset={dataset_id}, split=train")
 
@@ -199,24 +254,45 @@ class HuggingFaceDatasetLoader(BaseDatasetLoader):
             if not self.validate_source(dataset_id):
                 error_msg = f"HuggingFace dataset not found: {dataset_id}"
                 logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-                return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_HF_DATASET_NOT_FOUND"))
+                raise HFNotFoundError(
+                    detail=error_msg,
+                    context={
+                        "dataset": dataset_id,
+                        "legacy_code": "DATA_LOADER_HF_DATASET_NOT_FOUND",
+                    },
+                )
 
             # Load dataset
             logger.info(f"   Loading HuggingFace dataset: {dataset_id}")
             dataset = self.load(dataset_id, split="train", max_samples=max_samples, subset=None)
 
             logger.debug(f"[{self._log_prefix}:LOADED] samples={len(dataset)}")
-            return Ok(dataset)
+            return dataset
+
+        except (DatasetLoadFailedError, HFAuthFailedError, HFNotFoundError):
+            # Already-typed exception — surface as-is.
+            raise
 
         except KeyError as e:
             error_msg = f"Dataset '{phase.dataset}' not found in config: {e}"
             logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_DATASET_NOT_FOUND"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={
+                    "legacy_code": "DATA_LOADER_DATASET_NOT_FOUND",
+                    "phase_dataset": getattr(phase, "dataset", None),
+                },
+                cause=e,
+            )
 
         except Exception as e:
             error_msg = f"Failed to load HuggingFace dataset: {e}"
             logger.error(f"[{self._log_prefix}:ERROR] {error_msg}")
-            return Err(DataLoaderError(message=error_msg, code="DATA_LOADER_LOAD_FAILED"))
+            raise DatasetLoadFailedError(
+                detail=error_msg,
+                context={"legacy_code": "DATA_LOADER_LOAD_FAILED"},
+                cause=e,
+            )
 
     # =========================================================================
     # ADDITIONAL METHODS

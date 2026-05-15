@@ -172,7 +172,7 @@ class TestJsonDatasetLoader:
         mock_phase: MagicMock,
         temp_jsonl_file: str,
     ) -> None:
-        """Load dataset for training phase."""
+        """Load dataset for training phase — returns Dataset directly (post Batch 15)."""
         from ryotenkai_shared.config import DatasetSourceLocal
         from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
 
@@ -188,10 +188,8 @@ class TestJsonDatasetLoader:
         mock_config.get_dataset_for_strategy.return_value = dataset_config
 
         loader = JsonDatasetLoader(config=mock_config)
-        result = loader.load_for_phase(mock_phase)
+        dataset = loader.load_for_phase(mock_phase)
 
-        assert result.is_success()
-        dataset = result.unwrap()
         assert len(dataset) == 5
 
     def test_load_for_phase_file_not_found(
@@ -199,9 +197,10 @@ class TestJsonDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Return error for missing dataset."""
+        """Missing dataset raises DatasetLoadFailedError (DATA_LOADER_FILE_NOT_FOUND)."""
         from ryotenkai_shared.config import DatasetSourceLocal
         from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+        from ryotenkai_shared.errors import DatasetLoadFailedError
 
         dataset_config = MagicMock()
         dataset_config.source = DatasetSourceLocal(
@@ -214,10 +213,10 @@ class TestJsonDatasetLoader:
         mock_config.get_dataset_for_strategy.return_value = dataset_config
 
         loader = JsonDatasetLoader(config=mock_config)
-        result = loader.load_for_phase(mock_phase)
-
-        assert result.is_failure()
-        assert "not found" in str(result.error).lower()
+        with pytest.raises(DatasetLoadFailedError) as excinfo:
+            loader.load_for_phase(mock_phase)
+        assert "not found" in (excinfo.value.detail or "").lower()
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_FILE_NOT_FOUND"
 
     def test_get_file_info_existing(self, temp_jsonl_file: str) -> None:
         """Get info for existing file."""
@@ -339,18 +338,56 @@ class TestHuggingFaceDatasetLoader:
         mock_dataset.select.assert_called_once()
 
     @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
-    def test_load_error(
+    def test_load_error_raises_hf_not_found(
         self,
         mock_load_dataset: MagicMock,
         mock_config: MagicMock,
     ) -> None:
-        """Handle load error."""
+        """A 'not found' message from the HF stack is classified as HFNotFoundError."""
+        from ryotenkai_shared.errors import HFNotFoundError
+
         mock_load_dataset.side_effect = Exception("Dataset not found")
 
         loader = HuggingFaceDatasetLoader(config=mock_config)
 
-        with pytest.raises(ValueError, match="Failed to load HuggingFace dataset"):
+        with pytest.raises(HFNotFoundError) as excinfo:
             loader.load("nonexistent/dataset")
+        assert excinfo.value.context.get("dataset") == "nonexistent/dataset"
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_HF_DATASET_NOT_FOUND"
+
+    @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
+    def test_load_error_raises_hf_auth_failed(
+        self,
+        mock_load_dataset: MagicMock,
+        mock_config: MagicMock,
+    ) -> None:
+        """A '401 Unauthorized' message from the HF stack is classified as HFAuthFailedError."""
+        from ryotenkai_shared.errors import HFAuthFailedError
+
+        mock_load_dataset.side_effect = Exception("401 Unauthorized: bad token")
+
+        loader = HuggingFaceDatasetLoader(config=mock_config)
+
+        with pytest.raises(HFAuthFailedError) as excinfo:
+            loader.load("private/repo")
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_HF_AUTH_FAILED"
+
+    @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
+    def test_load_error_raises_dataset_load_failed_fallback(
+        self,
+        mock_load_dataset: MagicMock,
+        mock_config: MagicMock,
+    ) -> None:
+        """Unclassified failure falls back to DatasetLoadFailedError."""
+        from ryotenkai_shared.errors import DatasetLoadFailedError
+
+        mock_load_dataset.side_effect = Exception("schema mismatch in column 'text'")
+
+        loader = HuggingFaceDatasetLoader(config=mock_config)
+
+        with pytest.raises(DatasetLoadFailedError) as excinfo:
+            loader.load("some/dataset")
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_LOAD_FAILED"
 
     @patch("huggingface_hub.dataset_info")
     def test_validate_source_exists(
@@ -454,7 +491,7 @@ class TestHuggingFaceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Test: load_for_phase successfully loads HF dataset."""
+        """``load_for_phase`` returns the Dataset directly on success."""
         from ryotenkai_shared.config import DatasetSourceHF
 
         # Setup mock dataset
@@ -470,10 +507,8 @@ class TestHuggingFaceDatasetLoader:
 
         with patch.object(HuggingFaceDatasetLoader, "validate_source", return_value=True):
             loader = HuggingFaceDatasetLoader(config=mock_config)
-            result = loader.load_for_phase(mock_phase)
+            dataset = loader.load_for_phase(mock_phase)
 
-        assert result.is_success()
-        dataset = result.unwrap()
         assert dataset == mock_dataset
 
     def test_load_for_phase_missing_dataset_id(
@@ -481,22 +516,24 @@ class TestHuggingFaceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Test: load_for_phase fails when source is not a HF source."""
+        """Non-HF source → DatasetLoadFailedError(DATA_LOADER_HF_SOURCE_MISSING)."""
         from ryotenkai_shared.config import DatasetSourceLocal
         from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
+        from ryotenkai_shared.errors import DatasetLoadFailedError
 
         dataset_config = MagicMock()
-        # Local source — HF loader should reject it via isinstance check.
         dataset_config.source = DatasetSourceLocal(
             local_paths=DatasetLocalPaths(train="x.jsonl"),
         )
         mock_config.get_dataset_for_strategy.return_value = dataset_config
 
         loader = HuggingFaceDatasetLoader(config=mock_config)
-        result = loader.load_for_phase(mock_phase)
+        with pytest.raises(DatasetLoadFailedError) as excinfo:
+            loader.load_for_phase(mock_phase)
 
-        assert result.is_failure()
-        assert "requires source.kind='huggingface'" in str(result.unwrap_err())
+        assert "requires source.kind='huggingface'" in (excinfo.value.detail or "")
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_HF_SOURCE_MISSING"
+        assert excinfo.value.context.get("source_kind") == "local"
 
     @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
     def test_load_for_phase_dataset_not_found(
@@ -505,8 +542,9 @@ class TestHuggingFaceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Test: load_for_phase fails if dataset doesn't exist."""
+        """validate_source==False → HFNotFoundError(DATA_LOADER_HF_DATASET_NOT_FOUND)."""
         from ryotenkai_shared.config import DatasetSourceHF
+        from ryotenkai_shared.errors import HFNotFoundError
 
         dataset_config = MagicMock()
         dataset_config.source = DatasetSourceHF(train_id="nonexistent/dataset")
@@ -514,10 +552,11 @@ class TestHuggingFaceDatasetLoader:
 
         with patch.object(HuggingFaceDatasetLoader, "validate_source", return_value=False):
             loader = HuggingFaceDatasetLoader(config=mock_config)
-            result = loader.load_for_phase(mock_phase)
+            with pytest.raises(HFNotFoundError) as excinfo:
+                loader.load_for_phase(mock_phase)
 
-        assert result.is_failure()
-        assert "not found" in str(result.unwrap_err()).lower()
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_HF_DATASET_NOT_FOUND"
+        assert excinfo.value.context.get("dataset") == "nonexistent/dataset"
 
     @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
     def test_load_for_phase_key_error(
@@ -526,14 +565,17 @@ class TestHuggingFaceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Test: load_for_phase handles KeyError gracefully."""
+        """KeyError in config → DatasetLoadFailedError(DATA_LOADER_DATASET_NOT_FOUND)."""
+        from ryotenkai_shared.errors import DatasetLoadFailedError
+
         mock_config.get_dataset_for_strategy.side_effect = KeyError("dataset not in config")
 
         loader = HuggingFaceDatasetLoader(config=mock_config)
-        result = loader.load_for_phase(mock_phase)
+        with pytest.raises(DatasetLoadFailedError) as excinfo:
+            loader.load_for_phase(mock_phase)
 
-        assert result.is_failure()
-        assert "not found in config" in str(result.unwrap_err())
+        assert "not found in config" in (excinfo.value.detail or "")
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_DATASET_NOT_FOUND"
 
     @patch("ryotenkai_pod.trainer.data_loaders.hf_loader.load_dataset")
     def test_load_for_phase_general_exception(
@@ -542,10 +584,11 @@ class TestHuggingFaceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Test: load_for_phase handles general exceptions."""
+        """Unclassified HF failure during load() bubbles up as DatasetLoadFailedError."""
         from ryotenkai_shared.config import DatasetSourceHF
+        from ryotenkai_shared.errors import DatasetLoadFailedError
 
-        mock_load_dataset.side_effect = Exception("Unexpected error")
+        mock_load_dataset.side_effect = Exception("schema mismatch")
 
         dataset_config = MagicMock()
         dataset_config.source = DatasetSourceHF(train_id="test/dataset")
@@ -554,10 +597,30 @@ class TestHuggingFaceDatasetLoader:
 
         with patch.object(HuggingFaceDatasetLoader, "validate_source", return_value=True):
             loader = HuggingFaceDatasetLoader(config=mock_config)
-            result = loader.load_for_phase(mock_phase)
+            with pytest.raises(DatasetLoadFailedError) as excinfo:
+                loader.load_for_phase(mock_phase)
 
-        assert result.is_failure()
-        assert "Failed to load" in str(result.unwrap_err())
+        assert "Failed to load HuggingFace dataset" in (excinfo.value.detail or "")
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_LOAD_FAILED"
+
+    def test_load_for_phase_missing_train_id_raises(
+        self,
+        mock_config: MagicMock,
+        mock_phase: MagicMock,
+    ) -> None:
+        """Empty train_id → DatasetLoadFailedError(DATA_LOADER_HF_TRAIN_ID_MISSING)."""
+        from ryotenkai_shared.config import DatasetSourceHF
+        from ryotenkai_shared.errors import DatasetLoadFailedError
+
+        dataset_config = MagicMock()
+        dataset_config.source = DatasetSourceHF(train_id="")
+        dataset_config.max_samples = None
+        mock_config.get_dataset_for_strategy.return_value = dataset_config
+
+        loader = HuggingFaceDatasetLoader(config=mock_config)
+        with pytest.raises(DatasetLoadFailedError) as excinfo:
+            loader.load_for_phase(mock_phase)
+        assert excinfo.value.context.get("legacy_code") == "DATA_LOADER_HF_TRAIN_ID_MISSING"
 
 
 # =============================================================================
@@ -573,10 +636,10 @@ class TestMultiSourceDatasetLoader:
         mock_config: MagicMock,
         mock_phase: MagicMock,
     ) -> None:
-        """Local dataset phases should be routed to JsonDatasetLoader."""
+        """Local dataset phases should be routed to JsonDatasetLoader. Returns whatever the
+        delegated loader returns (post Batch 15: a Dataset / unwrapped payload)."""
         from ryotenkai_shared.config import DatasetSourceLocal
         from ryotenkai_shared.config.datasets.sources import DatasetLocalPaths
-        from ryotenkai_shared.utils.result import Ok
 
         # Ensure config reports local — typed source so .source.kind dispatch works.
         dataset_config = MagicMock()
@@ -585,14 +648,17 @@ class TestMultiSourceDatasetLoader:
         )
         mock_config.get_dataset_for_strategy.return_value = dataset_config
 
+        payload = [{"x": 1}]
         mock_json_loader = MagicMock()
-        mock_json_loader.load_for_phase.return_value = Ok([{"x": 1}])
+        mock_json_loader.load_for_phase.return_value = payload
 
-        with patch("ryotenkai_pod.trainer.data_loaders.json_loader.JsonDatasetLoader", return_value=mock_json_loader) as mock_cls:
+        with patch(
+            "ryotenkai_pod.trainer.data_loaders.json_loader.JsonDatasetLoader", return_value=mock_json_loader
+        ) as mock_cls:
             loader = MultiSourceDatasetLoader(config=mock_config)
             result = loader.load_for_phase(mock_phase)
 
-            assert result.is_success()
+            assert result is payload
             mock_cls.assert_called_once_with(mock_config)
             mock_json_loader.load_for_phase.assert_called_once_with(mock_phase)
 
@@ -603,20 +669,22 @@ class TestMultiSourceDatasetLoader:
     ) -> None:
         """HuggingFace dataset phases should be routed to HuggingFaceDatasetLoader."""
         from ryotenkai_shared.config import DatasetSourceHF
-        from ryotenkai_shared.utils.result import Ok
 
         dataset_config = MagicMock()
         dataset_config.source = DatasetSourceHF(train_id="org/ds")
         mock_config.get_dataset_for_strategy.return_value = dataset_config
 
+        payload = [{"instruction": "x", "output": "y"}]
         mock_hf_loader = MagicMock()
-        mock_hf_loader.load_for_phase.return_value = Ok([{"instruction": "x", "output": "y"}])
+        mock_hf_loader.load_for_phase.return_value = payload
 
-        with patch("ryotenkai_pod.trainer.data_loaders.hf_loader.HuggingFaceDatasetLoader", return_value=mock_hf_loader) as mock_cls:
+        with patch(
+            "ryotenkai_pod.trainer.data_loaders.hf_loader.HuggingFaceDatasetLoader", return_value=mock_hf_loader
+        ) as mock_cls:
             loader = MultiSourceDatasetLoader(config=mock_config)
             result = loader.load_for_phase(mock_phase)
 
-            assert result.is_success()
+            assert result is payload
             mock_cls.assert_called_once_with(mock_config)
             mock_hf_loader.load_for_phase.assert_called_once_with(mock_phase)
 

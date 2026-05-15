@@ -20,28 +20,27 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 from ryotenkai_pod.trainer.constants import (
     CATEGORY_TRAINING,
-    TRUNCATE_ERROR_MSG,
-    TRUNCATE_ERROR_SHORT,
     TAG_PHASE_IDX,
     TAG_STRATEGY_TYPE,
+    TRUNCATE_ERROR_MSG,
+    TRUNCATE_ERROR_SHORT,
 )
+from ryotenkai_pod.trainer.memory_manager import MemoryManager, OOMRecoverableError
 from ryotenkai_pod.trainer.trainers.factory import TrainerFactory
 from ryotenkai_shared.errors import (
-    DatasetLoadFailedError,
     RyotenkAIError,
     TrainingFailedError,
     TrainingOOMError,
 )
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_pod.trainer.memory_manager import MemoryManager, OOMRecoverableError
 
 if TYPE_CHECKING:
     from transformers import PreTrainedModel, PreTrainedTokenizer
 
+    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, ITrainerFactory
     from ryotenkai_pod.trainer.managers.data_buffer import DataBuffer
     from ryotenkai_pod.trainer.orchestrator.shutdown_handler import ShutdownHandler
     from ryotenkai_shared.config import PipelineConfig, StrategyPhaseConfig
-    from ryotenkai_pod.trainer.container import IDatasetLoader, IMLflowManager, ITrainerFactory
 
 
 # Legacy "interrupted" code preserved on the exception's ``context`` so the
@@ -89,9 +88,7 @@ class PhaseTrainingRunner:
         self._mlflow_manager = mlflow_manager
         self.shutdown_handler = shutdown_handler
 
-        self.trainer_factory: ITrainerFactory = (
-            trainer_factory if trainer_factory is not None else TrainerFactory()
-        )
+        self.trainer_factory: ITrainerFactory = trainer_factory if trainer_factory is not None else TrainerFactory()
 
         # Tracking for emergency checkpoints
         self._current_trainer: Any | None = None
@@ -129,7 +126,9 @@ class PhaseTrainingRunner:
             logger.info(f"   Output: {output_dir}")
 
             train_dataset, eval_dataset = self._load_datasets(phase_idx, phase, buffer)
-            logger.info(f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples")
+            logger.info(
+                f"   Dataset loaded: {len(train_dataset) if hasattr(train_dataset, '__len__') else '?'} samples"
+            )
 
             if self._mlflow_manager:
                 self._mlflow_manager.log_event_info(
@@ -208,15 +207,11 @@ class PhaseTrainingRunner:
             self.handle_error(buffer, phase_idx, "Validation", e)
 
         except KeyboardInterrupt:
-            self.handle_graceful_shutdown(
-                buffer, phase_idx, self._current_trainer, self._current_output_dir
-            )
+            self.handle_graceful_shutdown(buffer, phase_idx, self._current_trainer, self._current_output_dir)
 
         except Exception as e:
             if self._should_stop():
-                self.handle_graceful_shutdown(
-                    buffer, phase_idx, self._current_trainer, self._current_output_dir
-                )
+                self.handle_graceful_shutdown(buffer, phase_idx, self._current_trainer, self._current_output_dir)
             self.handle_error(buffer, phase_idx, "Unexpected", e)
 
         finally:
@@ -238,44 +233,23 @@ class PhaseTrainingRunner:
         phase: StrategyPhaseConfig,
         buffer: DataBuffer,
     ) -> tuple[Any, Any]:
-        """Call the dataset loader and adapt its return shape.
+        """Call the dataset loader and surface typed failures.
 
-        The Batch 14 contract: typed loaders (``orchestrator/dataset_loader.py
-        .DatasetLoader``) return ``(train, eval)`` tuples and raise
-        :class:`DatasetLoadFailedError` on failure. Batch 15 will migrate
-        the ``data_loaders/*`` package; until then those loaders still
-        return ``Result[..., DataLoaderError]``. This shim handles both
-        return shapes so training_runner stays green across the seam.
+        Contract (post-Batch 15): every loader registered as
+        :class:`IDatasetLoader` raises :class:`RyotenkAIError` subclasses
+        on failure and returns the loaded payload on success
+        (typically a ``(train, eval)`` tuple, but the runner stays
+        shape-agnostic — downstream consumers handle the unpack).
 
-        On loader failure this method marks the phase failed and raises
-        :class:`DatasetLoadFailedError`.
+        On loader failure this method marks the phase failed (preserving
+        the on-disk state contract) and re-raises without wrapping so the
+        ``__cause__`` chain is preserved.
         """
         try:
-            dataset_result = self.dataset_loader.load_for_phase(phase)
+            return self.dataset_loader.load_for_phase(phase)
         except RyotenkAIError as exc:
-            # New-style: loader raised a typed exception. Mark the phase
-            # failed (preserving the existing on-disk state contract) and
-            # re-raise without wrapping so the cause chain is preserved.
-            buffer.mark_phase_failed(
-                phase_idx, exc.detail or str(exc)
-            )
+            buffer.mark_phase_failed(phase_idx, exc.detail or str(exc))
             raise
-
-        # Legacy ``Result``-returning loader (Batch 15 territory).
-        if hasattr(dataset_result, "is_failure"):
-            if dataset_result.is_failure():
-                err = dataset_result.error  # type: ignore[union-attr]
-                err_msg = str(err)
-                buffer.mark_phase_failed(phase_idx, err_msg)
-                legacy_code = getattr(err, "code", "DATA_LOADER_LOAD_FAILED")
-                raise DatasetLoadFailedError(
-                    detail=err_msg,
-                    context={"legacy_code": legacy_code, "phase_idx": phase_idx},
-                )
-            return dataset_result.unwrap()
-
-        # Already a (train, eval) tuple from a typed loader.
-        return dataset_result
 
     def _should_stop(self) -> bool:
         if self.shutdown_handler is not None:
@@ -372,9 +346,7 @@ class PhaseTrainingRunner:
         trained_model = protected_train(self, phase_idx, trainer, resume_checkpoint, _buffer)
 
         if self._should_stop():
-            logger.warning(
-                f"[PE:TRAIN_INTERRUPTED] phase={phase_idx} - shutdown requested during training"
-            )
+            logger.warning(f"[PE:TRAIN_INTERRUPTED] phase={phase_idx} - shutdown requested during training")
         else:
             logger.debug(f"[PE:TRAIN_COMPLETE] phase={phase_idx}")
 
@@ -423,8 +395,7 @@ class PhaseTrainingRunner:
             if mlflow_dataset is not None:
                 self._mlflow_manager.log_dataset_input(mlflow_dataset, context="training")
                 logger.debug(
-                    f"[PE:MLFLOW_DATASET_LINKED] name={dataset_name}, "
-                    f"source={source_uri}, samples={num_samples}"
+                    f"[PE:MLFLOW_DATASET_LINKED] name={dataset_name}, source={source_uri}, samples={num_samples}"
                 )
             else:
                 self._mlflow_manager.log_dataset_info(
@@ -567,4 +538,4 @@ class PhaseTrainingRunner:
         )
 
 
-__all__ = ["PhaseTrainingRunner", "TRAINING_INTERRUPTED_LEGACY_CODE"]
+__all__ = ["TRAINING_INTERRUPTED_LEGACY_CODE", "PhaseTrainingRunner"]
