@@ -24,7 +24,6 @@ from ryotenkai_control.data.validation.standalone import (
 )
 from ryotenkai_shared.errors import DatasetValidationFailedError
 
-
 # ---------------------------------------------------------------------------
 # run_plugins
 # ---------------------------------------------------------------------------
@@ -304,18 +303,23 @@ def test_check_dataset_format_returns_empty_for_no_phases():
 
 
 class _StubFromPhase:
-    """Mimics StrategyFactory.create_from_phase().validate_dataset()."""
+    """Mimics StrategyFactory.create_from_phase().validate_dataset().
+
+    Phase A2 Batch 13: strategy.validate_dataset() returns ``None`` on
+    success and raises :class:`DatasetValidationFailedError` on failure.
+    """
 
     def __init__(self, ok: bool, message: str = ""):
         self.ok = ok
         self.message = message
 
     def validate_dataset(self, dataset):
-        from ryotenkai_shared.utils.result import DatasetError, Err, Ok
-
         if self.ok:
-            return Ok(None)
-        return Err(DatasetError(message=self.message, code="X"))
+            return None
+        raise DatasetValidationFailedError(
+            detail=self.message,
+            context={"legacy_code": "X"},
+        )
 
 
 def test_check_dataset_format_aggregates_per_strategy(monkeypatch):

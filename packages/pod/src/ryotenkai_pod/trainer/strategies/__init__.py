@@ -19,7 +19,6 @@ Example:
     prepared = strategy.prepare_dataset(dataset, tokenizer)
 """
 
-from ryotenkai_shared.constants import STRATEGY_DESCRIPTIONS  # backward-compat re-export
 from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
 from ryotenkai_pod.trainer.strategies.base_rl import BaseRLStrategy
 from ryotenkai_pod.trainer.strategies.cot import CoTStrategy
@@ -35,6 +34,7 @@ from ryotenkai_pod.trainer.strategies.grpo import GRPOStrategy
 from ryotenkai_pod.trainer.strategies.orpo import ORPOStrategy
 from ryotenkai_pod.trainer.strategies.sapo import SAPOStrategy
 from ryotenkai_pod.trainer.strategies.sft import SFTStrategy
+from ryotenkai_shared.constants import STRATEGY_DESCRIPTIONS  # backward-compat re-export
 
 __all__ = [
     "DEFAULT_BATCH_SIZES",

@@ -17,6 +17,7 @@ from ryotenkai_pod.trainer.strategies.base import StrategyMetadata
 from ryotenkai_pod.trainer.strategies.cot import CoTStrategy
 from ryotenkai_pod.trainer.strategies.cpt import CPTStrategy
 from ryotenkai_pod.trainer.strategies.sft import SFTStrategy
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 # =============================================================================
 # FIXTURES
@@ -83,41 +84,42 @@ class TestSFTStrategy:
         """
         Given: Dataset with messages field
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["messages"]
 
-        result = sft_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
-        assert result.unwrap() is True
+        # Should not raise
+        assert sft_strategy.validate_dataset(mock_dataset) is None
 
     def test_validate_dataset_with_text(self, sft_strategy):
         """
         Given: Dataset with text field
         When: validate_dataset is called
-        Then: Returns Ok(True) - SFT now accepts text format too!
+        Then: Returns None - SFT now accepts text format too!
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["text"]
 
-        result = sft_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
+        # Should not raise
+        assert sft_strategy.validate_dataset(mock_dataset) is None
 
     def test_validate_dataset_missing_fields(self, sft_strategy):
         """
         Given: Dataset without any valid field
         When: validate_dataset is called
-        Then: Returns Err
+        Then: Raises DatasetValidationFailedError with SFT legacy code
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["random_field"]  # No valid field
 
-        result = sft_strategy.validate_dataset(mock_dataset)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            sft_strategy.validate_dataset(mock_dataset)
 
-        assert result.is_failure()
+        exc = excinfo.value
+        assert exc.context.get("legacy_code") == "SFT_MISSING_REQUIRED_COLUMN"
+        assert exc.context.get("available_columns") == ["random_field"]
+        assert "messages" in exc.detail or "text" in exc.detail
 
     def test_get_training_objective(self, sft_strategy):
         """
@@ -165,29 +167,30 @@ class TestCPTStrategy:
         """
         Given: Dataset with text field
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["text"]
 
-        result = cpt_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
-        assert result.unwrap() is True
+        # Should not raise
+        assert cpt_strategy.validate_dataset(mock_dataset) is None
 
     def test_validate_dataset_missing_text(self, cpt_strategy):
         """
         Given: Dataset without text field
         When: validate_dataset is called
-        Then: Returns Err
+        Then: Raises DatasetValidationFailedError with CPT legacy code
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["content"]  # Wrong field name
 
-        result = cpt_strategy.validate_dataset(mock_dataset)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            cpt_strategy.validate_dataset(mock_dataset)
 
-        assert result.is_failure()
-        assert "text" in str(result.unwrap_err())
+        exc = excinfo.value
+        assert exc.context.get("legacy_code") == "CPT_MISSING_TEXT_COLUMN"
+        assert exc.context.get("missing_column") == "text"
+        assert "text" in exc.detail
 
     def test_get_training_objective(self, cpt_strategy):
         """
@@ -236,40 +239,39 @@ class TestCoTStrategy:
         """
         Given: Dataset with messages field (ChatML format)
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["messages"]
 
-        result = cot_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
+        assert cot_strategy.validate_dataset(mock_dataset) is None
 
     def test_validate_dataset_with_text(self, cot_strategy):
         """
         Given: Dataset with text field
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["text"]
 
-        result = cot_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
+        assert cot_strategy.validate_dataset(mock_dataset) is None
 
     def test_validate_dataset_missing_required_columns(self, cot_strategy):
         """
         Given: Dataset without messages or text
         When: validate_dataset is called
-        Then: Returns Err
+        Then: Raises DatasetValidationFailedError with CoT legacy code
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["instruction", "answer"]  # Legacy format not accepted
 
-        result = cot_strategy.validate_dataset(mock_dataset)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            cot_strategy.validate_dataset(mock_dataset)
 
-        assert result.is_failure()
+        exc = excinfo.value
+        assert exc.context.get("legacy_code") == "COT_MISSING_REQUIRED_COLUMNS"
+        assert exc.context.get("expected_one_of") == ["messages", "text"]
 
 
 # =============================================================================
@@ -400,18 +402,18 @@ class TestStrategyInterface:
         assert hasattr(cot_strategy, "get_metadata")
         assert hasattr(cot_strategy, "get_trainer_type")
 
-    def test_all_strategies_return_result(self, sft_strategy, cpt_strategy, cot_strategy):
+    def test_all_strategies_raise_on_missing_columns(self, sft_strategy, cpt_strategy, cot_strategy):
         """
-        Given: All strategies
+        Given: All strategies given an empty-columns dataset
         When: validate_dataset is called
-        Then: Returns Result type (Ok or Err)
+        Then: Each raises DatasetValidationFailedError (uniform contract)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = []
 
         for strategy in [sft_strategy, cpt_strategy, cot_strategy]:
-            result = strategy.validate_dataset(mock_dataset)
-            assert hasattr(result, "is_success") or hasattr(result, "is_failure")
+            with pytest.raises(DatasetValidationFailedError):
+                strategy.validate_dataset(mock_dataset)
 
 
 # =============================================================================
@@ -495,26 +497,21 @@ class TestORPOStrategy:
         """
         Given: Dataset with valid chosen/rejected message pairs
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         ds = _make_preference_dataset()
-        result = orpo_strategy.validate_dataset(ds)
-
-        assert result.is_success()
-        assert result.unwrap() is True
+        assert orpo_strategy.validate_dataset(ds) is None
 
     def test_validate_dataset_empty_chosen_list_boundary(self, orpo_strategy):
         """
         Given: Dataset where chosen/rejected are empty lists
         When: validate_dataset is called
-        Then: Returns Ok(True) — skips per-message structure checks
+        Then: Returns None — skips per-message structure checks
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"chosen": [], "rejected": []}])
-        result = orpo_strategy.validate_dataset(ds)
-
-        assert result.is_success()
+        assert orpo_strategy.validate_dataset(ds) is None
 
     # --- validate_dataset: error branches ---
 
@@ -522,29 +519,31 @@ class TestORPOStrategy:
         """
         Given: Dataset with only 'rejected' column
         When: validate_dataset is called
-        Then: Returns Err with code ORPO_MISSING_CHOSEN_COLUMN
+        Then: Raises DatasetValidationFailedError with legacy_code ORPO_MISSING_CHOSEN_COLUMN
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"rejected": [{"role": "user", "content": "Q"}]}])
-        result = orpo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            orpo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "ORPO_MISSING_CHOSEN_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "ORPO_MISSING_CHOSEN_COLUMN"
+        assert excinfo.value.context.get("missing_column") == "chosen"
 
     def test_validate_dataset_missing_rejected_column(self, orpo_strategy):
         """
         Given: Dataset with only 'chosen' column
         When: validate_dataset is called
-        Then: Returns Err with code ORPO_MISSING_REJECTED_COLUMN
+        Then: Raises DatasetValidationFailedError with legacy_code ORPO_MISSING_REJECTED_COLUMN
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"chosen": [{"role": "user", "content": "Q"}]}])
-        result = orpo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            orpo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "ORPO_MISSING_REJECTED_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "ORPO_MISSING_REJECTED_COLUMN"
+        assert excinfo.value.context.get("missing_column") == "rejected"
 
     # --- build_config_kwargs ---
 
@@ -613,26 +612,21 @@ class TestDPOStrategy:
         """
         Given: Dataset with valid chosen/rejected message pairs
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         ds = _make_preference_dataset()
-        result = dpo_strategy.validate_dataset(ds)
-
-        assert result.is_success()
-        assert result.unwrap() is True
+        assert dpo_strategy.validate_dataset(ds) is None
 
     def test_validate_dataset_empty_chosen_list_boundary(self, dpo_strategy):
         """
         Given: Dataset where chosen/rejected are empty lists (boundary case)
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"chosen": [], "rejected": []}])
-        result = dpo_strategy.validate_dataset(ds)
-
-        assert result.is_success()
+        assert dpo_strategy.validate_dataset(ds) is None
 
     # --- validate_dataset: error branches ---
 
@@ -640,29 +634,31 @@ class TestDPOStrategy:
         """
         Given: Dataset missing 'chosen' column
         When: validate_dataset is called
-        Then: Returns Err with code DPO_MISSING_CHOSEN_COLUMN
+        Then: Raises DatasetValidationFailedError with legacy_code DPO_MISSING_CHOSEN_COLUMN
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"rejected": [{"role": "user", "content": "Q"}]}])
-        result = dpo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            dpo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "DPO_MISSING_CHOSEN_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "DPO_MISSING_CHOSEN_COLUMN"
+        assert excinfo.value.context.get("missing_column") == "chosen"
 
     def test_validate_dataset_missing_rejected_column(self, dpo_strategy):
         """
         Given: Dataset missing 'rejected' column
         When: validate_dataset is called
-        Then: Returns Err with code DPO_MISSING_REJECTED_COLUMN
+        Then: Raises DatasetValidationFailedError with legacy_code DPO_MISSING_REJECTED_COLUMN
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"chosen": [{"role": "user", "content": "Q"}]}])
-        result = dpo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            dpo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "DPO_MISSING_REJECTED_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "DPO_MISSING_REJECTED_COLUMN"
+        assert excinfo.value.context.get("missing_column") == "rejected"
 
     # --- build_config_kwargs ---
 
@@ -726,10 +722,10 @@ class TestDPOStrategy:
         from datasets import Dataset
 
         ds = Dataset.from_list([{"instruction": "Q", "response": "A"}])
-        result = dpo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            dpo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "DPO_MISSING_CHOSEN_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "DPO_MISSING_CHOSEN_COLUMN"
 
 
 # =============================================================================
@@ -746,29 +742,27 @@ class TestSAPOStrategy:
         """
         Given: Dataset with 'prompt' column
         When: validate_dataset is called
-        Then: Returns Ok(True)
+        Then: Returns None (no exception)
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"prompt": "Explain gravity", "reference_answer": "QUERY ExplainGravity () => RETURN 1"}])
-        result = sapo_strategy.validate_dataset(ds)
-
-        assert result.is_success()
-        assert result.unwrap() is True
+        assert sapo_strategy.validate_dataset(ds) is None
 
     def test_validate_dataset_missing_prompt(self, sapo_strategy):
         """
         Given: Dataset without 'prompt' column
         When: validate_dataset is called
-        Then: Returns Err with code RL_MISSING_PROMPT_COLUMN
+        Then: Raises DatasetValidationFailedError with legacy_code RL_MISSING_PROMPT_COLUMN
         """
         from datasets import Dataset
 
         ds = Dataset.from_list([{"instruction": "Q", "answer": "A"}])
-        result = sapo_strategy.validate_dataset(ds)
+        with pytest.raises(DatasetValidationFailedError) as excinfo:
+            sapo_strategy.validate_dataset(ds)
 
-        assert result.is_failure()
-        assert result.unwrap_err().code == "RL_MISSING_PROMPT_COLUMN"
+        assert excinfo.value.context.get("legacy_code") == "RL_MISSING_PROMPT_COLUMN"
+        assert excinfo.value.context.get("missing_column") == "prompt"
 
     # --- build_config_kwargs ---
 
@@ -871,14 +865,12 @@ class TestSFTStrategyExtended:
         """
         Given: Dataset with both messages and text columns
         When: validate_dataset is called
-        Then: Returns Ok (matches on messages)
+        Then: Returns None (matches on messages)
         """
         mock_dataset = MagicMock()
         mock_dataset.column_names = ["messages", "text"]
 
-        result = sft_strategy.validate_dataset(mock_dataset)
-
-        assert result.is_success()
+        assert sft_strategy.validate_dataset(mock_dataset) is None
 
 
 # =============================================================================

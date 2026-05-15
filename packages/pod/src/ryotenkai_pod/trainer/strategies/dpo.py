@@ -18,10 +18,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.constants import STRATEGY_DPO
 from ryotenkai_pod.trainer.strategies.base import StrategyMetadata, TrainingStrategy
+from ryotenkai_shared.constants import STRATEGY_DPO
+from ryotenkai_shared.errors import DatasetValidationFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from datasets import Dataset
@@ -70,34 +70,42 @@ class DPOStrategy(TrainingStrategy):
 
         return trainer_kwargs
 
-    def post_build_config_hook(self, config: Any, **context: Any) -> None:  # noqa: ARG002
+    def post_build_config_hook(self, config: Any, **context: Any) -> None:
         """No-op: TRL DPOTrainer handles PeftModel reference logprobs natively.
 
         When a PeftModel is passed without ref_model, TRL temporarily disables the
         adapter to compute reference logprobs. No manual adapter name wiring needed.
         """
 
-    def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        """Validate DPO dataset has required TRL columns."""
+    def validate_dataset(self, dataset: Dataset) -> None:
+        """Validate DPO dataset has required TRL columns.
+
+        Raises:
+            DatasetValidationFailedError: When 'chosen' or 'rejected' column is missing.
+        """
         columns = dataset.column_names or []
 
         if "chosen" not in columns:
-            return Err(
-                StrategyError(
-                    message="DPO requires 'chosen' column with preferred responses",
-                    code="DPO_MISSING_CHOSEN_COLUMN",
-                )
+            raise DatasetValidationFailedError(
+                detail="DPO requires 'chosen' column with preferred responses",
+                context={
+                    "legacy_code": "DPO_MISSING_CHOSEN_COLUMN",
+                    "strategy": STRATEGY_DPO,
+                    "missing_column": "chosen",
+                    "available_columns": list(columns),
+                },
             )
 
         if "rejected" not in columns:
-            return Err(
-                StrategyError(
-                    message="DPO requires 'rejected' column with dispreferred responses",
-                    code="DPO_MISSING_REJECTED_COLUMN",
-                )
+            raise DatasetValidationFailedError(
+                detail="DPO requires 'rejected' column with dispreferred responses",
+                context={
+                    "legacy_code": "DPO_MISSING_REJECTED_COLUMN",
+                    "strategy": STRATEGY_DPO,
+                    "missing_column": "rejected",
+                    "available_columns": list(columns),
+                },
             )
-
-        return Ok(True)
 
     def get_training_objective(self) -> str:
         return "preference_optimization"

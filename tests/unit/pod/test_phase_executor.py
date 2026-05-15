@@ -142,7 +142,7 @@ def mock_strategy_factory() -> MagicMock:
     factory = MagicMock()
     strategy = MagicMock()
     strategy.__class__.__name__ = "SFTStrategy"
-    strategy.validate_dataset.return_value = Ok(True)
+    strategy.validate_dataset.return_value = None
     strategy.prepare_dataset.return_value = Ok(MagicMock(__len__=MagicMock(return_value=100)))
     factory.create_from_phase.return_value = strategy
     return factory

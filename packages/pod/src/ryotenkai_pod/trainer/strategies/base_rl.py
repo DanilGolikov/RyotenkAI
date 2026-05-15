@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from ryotenkai_pod.trainer.constants import COL_PROMPT
 from ryotenkai_pod.trainer.strategies.base import TrainingStrategy
+from ryotenkai_shared.errors import DatasetValidationFailedError
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, Result, StrategyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -111,20 +111,28 @@ class BaseRLStrategy(TrainingStrategy, ABC):
     # Dataset contract — prompt column required (canonical TRL format)
     # ------------------------------------------------------------------
 
-    def validate_dataset(self, dataset: Dataset) -> Result[bool, StrategyError]:
-        """Validate RL dataset has required TRL column."""
+    def validate_dataset(self, dataset: Dataset) -> None:
+        """Validate RL dataset has required TRL column.
+
+        Raises:
+            DatasetValidationFailedError: When required prompt column is missing.
+        """
         columns = dataset.column_names or []
 
         if COL_PROMPT not in columns:
-            return Err(
-                StrategyError(
-                    message=f"Dataset must contain '{COL_PROMPT}' column for RL training (GRPOTrainer requirement)",
-                    code="RL_MISSING_PROMPT_COLUMN",
-                )
+            raise DatasetValidationFailedError(
+                detail=(
+                    f"Dataset must contain '{COL_PROMPT}' column for RL "
+                    f"training (GRPOTrainer requirement)"
+                ),
+                context={
+                    "legacy_code": "RL_MISSING_PROMPT_COLUMN",
+                    "missing_column": COL_PROMPT,
+                    "available_columns": list(columns),
+                },
             )
 
         logger.debug("[BaseRL] Dataset format validated: '%s' column present", COL_PROMPT)
-        return Ok(True)
 
     # ------------------------------------------------------------------
     # Prompt preparation — RL strategies drive the LLM from prompts, so

@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from ryotenkai_pod.trainer.strategies.dpo import DPOStrategy
 from ryotenkai_pod.trainer.strategies.orpo import ORPOStrategy
 from ryotenkai_pod.trainer.strategies.sapo import SAPOStrategy
+from ryotenkai_shared.errors import DatasetValidationFailedError
 
 
 @dataclass
@@ -26,13 +29,16 @@ class _PairDataset:
 def test_dpo_validate_dataset_missing_rejected() -> None:
     s = DPOStrategy(MagicMock())
     ds = _PairDataset(column_names=["chosen"], sample={})
-    assert s.validate_dataset(ds).is_failure()
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        s.validate_dataset(ds)
+    assert excinfo.value.context.get("legacy_code") == "DPO_MISSING_REJECTED_COLUMN"
 
 
 def test_dpo_validate_dataset_valid_columns() -> None:
     s = DPOStrategy(MagicMock())
     ds = _PairDataset(column_names=["chosen", "rejected"], sample={})
-    assert s.validate_dataset(ds).is_success()
+    # No exception means success.
+    assert s.validate_dataset(ds) is None
 
 
 def test_dpo_build_trainer_kwargs_uses_ref_model_when_provided() -> None:
@@ -61,7 +67,7 @@ def test_orpo_validate_dataset() -> None:
         column_names=["chosen", "rejected"],
         sample={},
     )
-    assert s.validate_dataset(ds).is_success()
+    assert s.validate_dataset(ds) is None
 
 
 @dataclass
@@ -72,16 +78,15 @@ class _SAPODataset:
 def test_sapo_validate_dataset_requires_prompt() -> None:
     s = SAPOStrategy(MagicMock())
     ds = _SAPODataset(column_names=[])
-    result = s.validate_dataset(ds)
-    assert result.is_failure()
-    assert result.unwrap_err().code == "RL_MISSING_PROMPT_COLUMN"
+    with pytest.raises(DatasetValidationFailedError) as excinfo:
+        s.validate_dataset(ds)
+    assert excinfo.value.context.get("legacy_code") == "RL_MISSING_PROMPT_COLUMN"
 
 
 def test_sapo_validate_dataset_with_prompt() -> None:
     s = SAPOStrategy(MagicMock())
     ds = _SAPODataset(column_names=["prompt", "reference_answer"])
-    result = s.validate_dataset(ds)
-    assert result.is_success()
+    assert s.validate_dataset(ds) is None
 
 
 def test_sapo_build_trainer_kwargs_returns_empty_without_injected_reward() -> None:

@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ryotenkai_shared.constants import STRATEGY_GRPO
 from ryotenkai_pod.trainer.strategies.base import StrategyMetadata
 from ryotenkai_pod.trainer.strategies.base_rl import BaseRLStrategy
+from ryotenkai_shared.constants import STRATEGY_GRPO
 
 
 class GRPOStrategy(BaseRLStrategy):

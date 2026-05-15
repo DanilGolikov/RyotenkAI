@@ -100,17 +100,18 @@ def check_dataset_format(
                 cause=exc,
             ) from exc
 
-        check = strategy.validate_dataset(dataset)
-        # ``strategy.validate_dataset`` still returns the legacy ``Result``
-        # shape — Phase A2 Batch 10 migrates strategies themselves. Until
-        # then, duck-type the failure branch.
-        if check.is_failure():
-            err = check.unwrap_err()
+        # Phase A2 Batch 13: ``strategy.validate_dataset`` now raises
+        # ``DatasetValidationFailedError`` instead of returning a ``Result``.
+        # Catch here because this function aggregates per-strategy outcomes
+        # rather than short-circuiting on the first failure.
+        try:
+            strategy.validate_dataset(dataset)
+        except DatasetValidationFailedError as err:
             out.append(
                 FormatCheckResult(
                     strategy_type=strategy_type,
                     ok=False,
-                    message=err.message,
+                    message=err.detail,
                 )
             )
         else:
