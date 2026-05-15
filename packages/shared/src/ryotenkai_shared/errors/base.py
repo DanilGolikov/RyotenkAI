@@ -72,7 +72,20 @@ class RyotenkAIError(Exception):
 
     @property
     def title(self) -> str:
-        """Short human-readable title (per RFC 9457 §3, stable per code)."""
+        """Short human-readable title (per RFC 9457 §3, stable per code).
+
+        Order of preference:
+
+        1. ``_wire_title`` -- set by :meth:`from_problem` so wire-parsed
+           exceptions preserve the title the server emitted (the server
+           may carry a more specific title than ``_DEFAULT_TITLES``).
+        2. ``title_default`` ClassVar -- subclass override.
+        3. :func:`default_title_for` -- registry lookup keyed on
+           :attr:`code` (covers every :class:`ErrorCode` member).
+        """
+        wire = getattr(self, "_wire_title", None)
+        if wire:
+            return wire
         return self.title_default or default_title_for(self.code)
 
     def as_problem(
@@ -110,6 +123,14 @@ class RyotenkAIError(Exception):
         registry keyed on :class:`ErrorCode`; unknown codes fall back
         to :class:`InternalError` so callers can still ``isinstance``
         against :class:`RyotenkAIError`.
+
+        Round-trip fidelity: the instance also stores ``code``,
+        ``status``, and ``title`` from the wire payload so callers
+        querying ``exc.code`` / ``exc.status`` see what the server sent,
+        not the (potentially mismatched) ClassVar default of the
+        fallback class. Without this, an unknown :class:`ErrorCode`
+        member arriving on the wire would silently coerce to
+        ``INTERNAL_ERROR`` even though the body said otherwise.
         """
         # Local import to avoid a cycle: _factory imports the concrete
         # subclasses from this module's sibling files.
@@ -117,6 +138,16 @@ class RyotenkAIError(Exception):
 
         target_cls = code_to_class(problem.code)
         inst = target_cls(detail=problem.detail, context={})
+        # Shadow the ClassVar with per-instance attributes so callers
+        # see the wire-level values (round-trip fidelity for codes that
+        # don't have a registered subclass; e.g. JOB_NOT_FOUND).
+        inst.code = problem.code  # type: ignore[misc]
+        inst.status = problem.status  # type: ignore[misc]
+        inst._wire_title = problem.title  # type: ignore[attr-defined]
+        # Refresh the Exception args so str(exc) reflects the wire-level
+        # code/detail too (the ClassVar default was baked in by
+        # super().__init__ above before we shadowed it).
+        inst.args = (f"{problem.code.value}: {problem.detail or problem.title}",)
         # Mirror wire-side state for round-trip fidelity. Stored on the
         # instance (not class) because the class is shared across
         # occurrences and trace_id/request_id are per-occurrence.

@@ -25,7 +25,7 @@ from ryotenkai_shared.utils.clients.job_client import (
     JobNotFoundError,
     ReplayTruncatedError,
 )
-from ryotenkai_shared.utils.clients.problem_details import APIException
+from ryotenkai_shared.errors.base import RyotenkAIError
 
 # Each async class opts in below via @pytest.mark.asyncio. The
 # synchronous URL-scheme tests stay unmarked.
@@ -187,13 +187,14 @@ class TestSubmitJob:
     async def test_non_2xx_raises_problem_details(self) -> None:
         # Phase 3 PR-3.3: non-2xx responses are parsed via
         # ``parse_problem_details``. Plain-text bodies surface as
-        # ``TransportError`` (subclass of ``APIException``).
+        # ``TransportError`` (subclass of ``RyotenkAIError``).
         client = _client_with_handler(
             lambda _r: httpx.Response(409, text="busy"),
         )
         try:
-            with pytest.raises(APIException, match="409"):
+            with pytest.raises(RyotenkAIError) as excinfo:
                 await client.submit_job({"job_id": "x", "command": ["x"]})
+            assert excinfo.value.status == 409
         finally:
             await client.aclose()
 
@@ -239,11 +240,12 @@ class TestGetStatus:
 
     async def test_500_raises_problem_details(self) -> None:
         # Phase 3 PR-3.3: non-2xx → parse_problem_details. Text body
-        # → TransportError (APIException subclass).
+        # → TransportError (RyotenkAIError subclass).
         client = _client_with_handler(lambda _r: httpx.Response(500, text="boom"))
         try:
-            with pytest.raises(APIException, match="500"):
+            with pytest.raises(RyotenkAIError) as excinfo:
                 await client.get_status("j-1")
+            assert excinfo.value.status == 500
         finally:
             await client.aclose()
 

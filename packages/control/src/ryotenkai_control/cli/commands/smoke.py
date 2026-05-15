@@ -22,6 +22,8 @@ from typing import Annotated
 
 import typer
 
+from ryotenkai_control.cli.errors import wrap_command
+
 smoke_app = typer.Typer(
     no_args_is_help=True,
     help="Run a directory of configs as a batch smoke suite.",
@@ -33,6 +35,7 @@ smoke_app = typer.Typer(
 
 
 @smoke_app.callback(invoke_without_command=True)
+@wrap_command
 def smoke_cmd(
     config_dir: Annotated[
         Path,

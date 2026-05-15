@@ -47,7 +47,7 @@ from ryotenkai_pod.runner.api.deps import (
     get_plugin_unpacker,
     get_supervisor,
 )
-from ryotenkai_pod.runner.api.errors import APIError
+from ryotenkai_shared.api.error_handlers import APIError
 from ryotenkai_pod.runner.plugin_unpacker import PluginUnpackError
 from ryotenkai_pod.runner.state import (
     JobState,

@@ -297,29 +297,28 @@ class TestRegression:
         actual, _ = _http_exception_to_code(exc)
         assert actual == expected
 
-    def test_pod_runner_shim_re_exports_same_classes(self) -> None:
-        """The pod's ``ryotenkai_pod.runner.api.errors`` is a re-export
-        shim for Phase B; importing ``APIError`` from either path must
-        yield the exact same class object.
-
-        Module reference: ``ryotenkai_pod.runner.api.errors``.
+    def test_pod_runner_imports_resolve_from_shared(self) -> None:
+        """Phase F deleted ``ryotenkai_pod.runner.api.errors`` shim;
+        the pod runner now imports :class:`APIError` and
+        :data:`EXCEPTION_HANDLERS` directly from
+        :mod:`ryotenkai_shared.api.error_handlers`. This sentinel
+        regression-guards that the shared symbols are still importable
+        from the canonical path and that the shim is gone.
         """
-        import ryotenkai_pod.runner.api.errors as pod_shim
-        from ryotenkai_shared.api.error_handlers import APIError as shared_api_error
+        import importlib
 
-        assert pod_shim.APIError is shared_api_error
-        assert pod_shim.EXCEPTION_HANDLERS is EXCEPTION_HANDLERS
-        # The shim must also re-export the helper functions consumers
-        # imported in Phase A1/A2 directly off the pod module path.
-        from ryotenkai_shared.api import error_handlers as shared_mod
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("ryotenkai_pod.runner.api.errors")
 
-        assert pod_shim.api_error_handler is shared_mod.api_error_handler
-        assert pod_shim.http_exception_handler is shared_mod.http_exception_handler
-        assert (
-            pod_shim.validation_exception_handler
-            is shared_mod.validation_exception_handler
+        from ryotenkai_shared.api.error_handlers import (
+            APIError as shared_api_error,
         )
-        assert pod_shim.generic_exception_handler is shared_mod.generic_exception_handler
+        from ryotenkai_shared.api.error_handlers import (
+            EXCEPTION_HANDLERS as shared_handlers,
+        )
+
+        assert shared_api_error is APIError
+        assert shared_handlers is EXCEPTION_HANDLERS
 
 
 # ---------------------------------------------------------------------------

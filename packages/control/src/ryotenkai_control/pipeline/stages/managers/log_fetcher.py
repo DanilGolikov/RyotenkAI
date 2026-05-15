@@ -121,7 +121,7 @@ class LogFetcher:
     # ----- async core ----------------------------------------------------
 
     async def _download_async(self, *, silent: bool) -> bool:
-        from ryotenkai_shared.utils.clients.problem_details import APIException
+        from ryotenkai_shared.errors.base import RyotenkAIError
 
         try:
             chunk = await self._client.read_log(
@@ -129,7 +129,7 @@ class LogFetcher:
                 offset=self._offset,
                 limit_bytes=DEFAULT_RANGE_CHUNK_BYTES,
             )
-        except APIException as exc:
+        except RyotenkAIError as exc:
             from ryotenkai_shared.contracts.problem_details import ErrorCode
 
             if exc.code == ErrorCode.LOG_NOT_AVAILABLE:

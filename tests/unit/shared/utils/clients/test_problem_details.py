@@ -1,10 +1,10 @@
 """Unit tests for the Mac-side problem+json parser (Phase 1 PR-1.3).
 
 Test categories:
-* positive       — proper problem+json → typed APIException
+* positive       — proper problem+json → typed RyotenkAIError
 * negative       — malformed JSON, missing fields → TransportError
 * boundary       — empty body, status 100/599
-* invariant      — every parser output is APIException-compatible
+* invariant      — every parser output is RyotenkAIError-compatible
 * dependency-err — schema validation failure stays surfaced
 * regression     — Content-Type detection is case-insensitive
 * logic-specific — TransportError carries TRANSPORT_UNREACHABLE
@@ -23,11 +23,8 @@ from ryotenkai_shared.contracts.problem_details import (
     ErrorCode,
     ProblemDetails,
 )
-from ryotenkai_shared.utils.clients.problem_details import (
-    APIException,
-    TransportError,
-    parse_problem_details,
-)
+from ryotenkai_shared.errors.base import RyotenkAIError, TransportError
+from ryotenkai_shared.utils.clients.problem_details import parse_problem_details
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,7 +57,7 @@ def _problem_body(**kwargs) -> bytes:  # type: ignore[no-untyped-def]
 
 
 class TestPositive:
-    def test_runner_problem_json_parses_into_apiexception(self) -> None:
+    def test_runner_problem_json_parses_into_ryotenkai_error(self) -> None:
         response = _make_response(
             content_type=PROBLEM_JSON_MEDIA_TYPE,
             body=_problem_body(
@@ -70,7 +67,7 @@ class TestPositive:
             status_code=404,
         )
         exc = parse_problem_details(response)
-        assert isinstance(exc, APIException)
+        assert isinstance(exc, RyotenkAIError)
         assert not isinstance(exc, TransportError)
         assert exc.code == ErrorCode.JOB_NOT_FOUND
         assert exc.status == 404
@@ -145,7 +142,7 @@ class TestInvariant:
         (PROBLEM_JSON_MEDIA_TYPE, b"corrupt", 500),
         ("", b"", 599),  # tunnel-down style
     ])
-    def test_parser_always_returns_apiexception(
+    def test_parser_always_returns_ryotenkai_error(
         self, content_type: str, body: bytes, status: int,
     ) -> None:
         response = _make_response(
@@ -153,8 +150,8 @@ class TestInvariant:
         )
         exc = parse_problem_details(response)
         # Either typed runner-issued OR TransportError — but always
-        # APIException so callers can ``isinstance(exc, APIException)``.
-        assert isinstance(exc, APIException)
+        # RyotenkAIError so callers can ``isinstance(exc, RyotenkAIError)``.
+        assert isinstance(exc, RyotenkAIError)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +202,10 @@ class TestLogicSpecific:
         assert exc.code == ErrorCode.TRANSPORT_UNREACHABLE
         assert exc.status == 502
 
-    def test_str_representation_includes_code_and_status(self) -> None:
+    def test_str_representation_includes_code_and_detail(self) -> None:
+        # Phase F: unified RyotenkAIError str format is
+        # ``f"{code.value}: {detail or title}"`` -- status is exposed
+        # via ``exc.status`` and not duplicated in the str repr.
         response = _make_response(
             content_type=PROBLEM_JSON_MEDIA_TYPE,
             body=_problem_body(
@@ -217,8 +217,8 @@ class TestLogicSpecific:
         exc = parse_problem_details(response)
         s = str(exc)
         assert "JOB_NOT_FOUND" in s
-        assert "404" in s
         assert "d" in s
+        assert exc.status == 404
 
 
 # ---------------------------------------------------------------------------

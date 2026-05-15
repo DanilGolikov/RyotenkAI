@@ -25,7 +25,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import DryRunOpt, ForceOpt, RequiredConfigOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 from ryotenkai_community.constants import ALL_PLUGIN_KINDS
 
@@ -44,6 +44,7 @@ plugin_app = typer.Typer(
 
 
 @plugin_app.command("ls")
+@wrap_command
 def ls_cmd(
     ctx: typer.Context,
     kind: Annotated[
@@ -84,6 +85,7 @@ def ls_cmd(
 
 
 @plugin_app.command("show")
+@wrap_command
 def show_cmd(
     ctx: typer.Context,
     kind: Annotated[str, typer.Argument(help="Plugin kind.")],
@@ -112,6 +114,7 @@ def show_cmd(
 
 
 @plugin_app.command("scaffold")
+@wrap_command
 def scaffold_cmd(
     kind: Annotated[
         str,
@@ -196,6 +199,7 @@ def scaffold_cmd(
 
 
 @plugin_app.command("sync")
+@wrap_command
 def sync_cmd(
     path: Annotated[
         Path,
@@ -250,6 +254,7 @@ def sync_cmd(
 
 
 @plugin_app.command("sync-envs")
+@wrap_command
 def sync_envs_cmd(
     path: Annotated[
         Path,
@@ -289,6 +294,7 @@ def sync_envs_cmd(
 
 
 @plugin_app.command("pack")
+@wrap_command
 def pack_cmd(
     path: Annotated[
         Path,
@@ -322,6 +328,7 @@ def pack_cmd(
 
 
 @plugin_app.command("validate")
+@wrap_command
 def validate_cmd(
     ctx: typer.Context,
     path: Annotated[
@@ -383,6 +390,7 @@ def validate_cmd(
 
 
 @plugin_app.command("install")
+@wrap_command
 def install_cmd(
     source: Annotated[
         str | None,
@@ -468,6 +476,7 @@ _PREFLIGHT_EXIT: dict[Literal["ok", "missing_envs", "instance_errors", "catalog_
 
 
 @plugin_app.command("preflight")
+@wrap_command
 def preflight_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,
@@ -548,6 +557,7 @@ def preflight_cmd(
 
 
 @plugin_app.command("stale")
+@wrap_command
 def stale_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,

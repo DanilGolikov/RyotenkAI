@@ -332,10 +332,10 @@ class JobClient:
         """``GET /api/v1/jobs/{id}`` — current snapshot for ``job_id``.
 
         Raises:
-            JobNotFoundError: subclass of APIException kept as a typed
+            JobNotFoundError: subclass of RyotenkAIError kept as a typed
                 marker for the very common "is the runner aware of
                 this job" decision.
-            APIException: any other 4xx/5xx, typed via
+            RyotenkAIError: any other 4xx/5xx, typed via
                 :func:`parse_problem_details`. Switch on
                 ``exc.code == ErrorCode.JOB_STATE_INVALID`` etc.
             JobClientError: pure transport failure (no server response).
@@ -421,7 +421,7 @@ class JobClient:
                 all blocks.
 
         Raises:
-            APIException: any non-2xx response — typed via
+            RyotenkAIError: any non-2xx response — typed via
                 :func:`parse_problem_details`.
             JobClientError: transport-level failure where the
                 connection itself died (no httpx.Response to parse).
@@ -463,7 +463,7 @@ class JobClient:
         to do with the failed list.
 
         Raises:
-            APIException: 422 if the module list violates the regex
+            RyotenkAIError: 422 if the module list violates the regex
                 or size cap.
             JobClientError: tunnel/network failure.
         """
@@ -511,7 +511,7 @@ class JobClient:
                 more than the default 30 s.
 
         Raises:
-            APIException: typed via :func:`parse_problem_details`
+            RyotenkAIError: typed via :func:`parse_problem_details`
                 — ``FILE_TOO_LARGE``, ``FILE_TARGET_INVALID``,
                 ``FILE_WRITE_FAILED``.
             JobClientError: tunnel/network failure.
@@ -562,7 +562,7 @@ class JobClient:
                 runner enforces 10 MB max).
 
         Raises:
-            APIException: typed via :func:`parse_problem_details` —
+            RyotenkAIError: typed via :func:`parse_problem_details` —
                 ``LOG_NOT_AVAILABLE``, ``LOG_NAME_INVALID``,
                 ``LOG_OFFSET_OUT_OF_RANGE``.
             JobClientError: transport-level failure.
@@ -612,7 +612,7 @@ class JobClient:
         the first 30 s before any WS event fires.
 
         Raises:
-            APIException: any non-2xx response (typed via
+            RyotenkAIError: any non-2xx response (typed via
                 :func:`parse_problem_details`).
             JobClientError: transport-level failure.
         """

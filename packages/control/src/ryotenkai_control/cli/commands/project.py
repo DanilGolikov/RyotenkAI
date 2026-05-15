@@ -18,7 +18,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import DryRunOpt, YesOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 project_app = typer.Typer(
@@ -47,6 +47,7 @@ def _registry():  # type: ignore[no-untyped-def]
 
 
 @project_app.command("ls")
+@wrap_command
 def ls_cmd(ctx: typer.Context) -> None:
     """List registered projects."""
     from ryotenkai_control.api.services import project_service
@@ -68,6 +69,7 @@ def ls_cmd(ctx: typer.Context) -> None:
 
 
 @project_app.command("show")
+@wrap_command
 def show_cmd(
     ctx: typer.Context,
     project_id: Annotated[str, typer.Argument(help="Project id.")],
@@ -105,6 +107,7 @@ def show_cmd(
 
 
 @project_app.command("use")
+@wrap_command
 def use_cmd(
     project_id: Annotated[str, typer.Argument(help="Project id to make active.")],
     dry_run: DryRunOpt = False,
@@ -129,6 +132,7 @@ def use_cmd(
 
 
 @project_app.command("current")
+@wrap_command
 def current_cmd(ctx: typer.Context) -> None:
     """Print the persisted current project (if any)."""
     from ryotenkai_control.cli_state import context_store
@@ -157,6 +161,7 @@ def current_cmd(ctx: typer.Context) -> None:
 
 
 @project_app.command("create")
+@wrap_command
 def create_cmd(
     name: Annotated[str, typer.Argument(help="Human-readable project name.")],
     project_id: Annotated[
@@ -202,6 +207,7 @@ def create_cmd(
 
 
 @project_app.command("rm")
+@wrap_command
 def rm_cmd(
     project_id: Annotated[str, typer.Argument(help="Project id.")],
     yes: YesOpt = False,
@@ -236,6 +242,7 @@ def rm_cmd(
 
 
 @project_app.command("env")
+@wrap_command
 def env_cmd(
     ctx: typer.Context,
     project_id: Annotated[str, typer.Argument(help="Project id.")],
@@ -263,6 +270,7 @@ def env_cmd(
 
 
 @project_app.command("run")
+@wrap_command
 def run_cmd(
     project_id: Annotated[
         str | None,

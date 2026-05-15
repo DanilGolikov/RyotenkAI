@@ -19,7 +19,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import DryRunOpt, RunDirArg, YesOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 runs_app = typer.Typer(
@@ -37,6 +37,7 @@ runs_app = typer.Typer(
 
 
 @runs_app.command("ls")
+@wrap_command
 def ls_cmd(
     ctx: typer.Context,
     runs_dir: Annotated[
@@ -120,6 +121,7 @@ def ls_cmd(
 
 
 @runs_app.command("inspect")
+@wrap_command
 def inspect_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -216,6 +218,7 @@ def _stage_payload(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped
 
 
 @runs_app.command("logs")
+@wrap_command
 def logs_cmd(
     run_dir: RunDirArg,
     attempt: Annotated[
@@ -277,6 +280,7 @@ def logs_cmd(
 
 
 @runs_app.command("status")
+@wrap_command
 def status_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -373,6 +377,7 @@ def status_cmd(
 
 
 @runs_app.command("diff")
+@wrap_command
 def diff_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -445,6 +450,7 @@ def diff_cmd(
 
 
 @runs_app.command("report")
+@wrap_command
 def report_cmd(
     run_dir: RunDirArg,
     output: Annotated[
@@ -490,6 +496,7 @@ def report_cmd(
 
 
 @runs_app.command("rm")
+@wrap_command
 def rm_cmd(
     run_dir: RunDirArg,
     mode: Annotated[
