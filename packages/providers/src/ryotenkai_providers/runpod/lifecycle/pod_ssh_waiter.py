@@ -20,17 +20,22 @@ terminate the in-flight pod. This is intentional layer-separation; the
 waiter's job is "is the pod ready or stuck?", not "what to do on
 cancel?".
 
-Error codes (frozen):
+Phase A2 Batch 11 (2026-05-15): migrated from
+``Result[PodSnapshot, ProviderError]`` to raise-based — ``wait``
+returns ``PodSnapshot`` and raises
+:class:`ProviderUnavailableError` on terminal pod state, no exposed
+TCP, or total-timeout. The underlying ``query_pod_snapshot`` now
+raises typed exceptions; the waiter catches them, classifies
+``RUNPOD_POD_DATA_MISSING`` as terminal (re-raise immediately), and
+treats anything else as transient (continue polling).
+
+Error codes (frozen, carried on ``context['code']`` of the typed
+exception):
 
 * ``RUNPOD_POD_FAILED`` — snapshot reports a terminal status.
 * ``RUNPOD_NO_EXPOSED_TCP`` — RUNNING with ports allocated but no SSH
-  endpoint after ``no_exposed_tcp_grace_s``. (Pre-existing — community
-  cloud machines that don't support exposed TCP. Specific symptom that
-  doesn't recover on the same pod, so we recreate immediately.)
-* ``RUNPOD_POD_TIMEOUT`` — total deadline exceeded. This is the catch-
-  all for "pod didn't come up in time" — including the legacy "RUNNING
-  with port_count == 0 for the whole window" case. The retry policy
-  on the provider side recreates the pod when this fires.
+  endpoint after ``no_exposed_tcp_grace_s``.
+* ``RUNPOD_POD_TIMEOUT`` — total deadline exceeded.
 * Pass-through query errors propagate unchanged (e.g.
   ``RUNPOD_POD_DATA_MISSING``).
 """
@@ -42,6 +47,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from ryotenkai_shared.errors import (
+    ProviderUnavailableError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_providers.runpod.lifecycle.policy import (
     TRAINING_PROFILE,
@@ -50,7 +59,6 @@ from ryotenkai_providers.runpod.lifecycle.policy import (
 from ryotenkai_providers.runpod.lifecycle.tcp_probe import default_tcp_probe
 from ryotenkai_providers.runpod.models import PodSnapshot
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 #: Codes from the underlying ``query_pod_snapshot`` that the waiter
 #: treats as terminal (no point retrying — abort fast). Anything else
@@ -66,11 +74,11 @@ class PodQuery(Protocol):
     """The single read-only method the waiter needs.
 
     Both ``RunPodTrainingPodControl`` and ``RunPodInferencePodControl``
-    already expose this method (the inference one was added in the
-    previous commit for symmetry).
+    expose this method. Phase A2 Batch 11: returns ``PodSnapshot``
+    directly and raises typed exceptions on failure.
     """
 
-    def query_pod_snapshot(self, pod_id: str) -> Result[PodSnapshot, ProviderError]: ...
+    def query_pod_snapshot(self, pod_id: str) -> PodSnapshot: ...
 
 
 #: Log callback signature: ``(level, message)``.
@@ -112,13 +120,15 @@ class PodSshWaiter:
     #: tests inject deterministic fakes.
     tcp_probe: TcpProbeFn = default_tcp_probe
 
-    def wait(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
+    def wait(self, pod_id: str) -> PodSnapshot:
         """Block until the pod is SSH-ready or fails / times out.
 
-        Returns ``Ok(snapshot)`` when the pod reaches RUNNING with an
-        SSH endpoint AND (when enabled) the SSH port accepts a TCP
-        connection. Returns ``Err(...)`` for terminal pod state, RunPod
-        platform stuck-states, or total-timeout.
+        Returns the SSH-ready ``PodSnapshot`` on success.
+
+        Raises :class:`ProviderUnavailableError` on terminal pod state,
+        RunPod platform stuck-states, or total-timeout. Pass-through
+        terminal query errors (``RUNPOD_POD_DATA_MISSING``) propagate
+        unchanged.
 
         Re-raises :class:`PipelineCancelled` from the cancel-aware
         sleep on Ctrl+C — the provider catches it on its own boundary.
@@ -131,49 +141,41 @@ class PodSshWaiter:
         while True:
             now = self.clock()
             if now >= deadline:
-                return self._timeout_err(pod_id)
+                raise self._timeout_err(pod_id)
 
-            query_result = self.query.query_pod_snapshot(pod_id)
-            if query_result.is_failure():
-                err = query_result.unwrap_err()
-                if err.code in _TERMINAL_QUERY_CODES:
-                    return Err(err)
-                self.log("warning", f"[POD_WAIT] query failed (will retry): {err.message}")
+            try:
+                snapshot = self.query.query_pod_snapshot(pod_id)
+            except RyotenkAIError as err:
+                code = err.context.get("code") if err.context else None
+                if code in _TERMINAL_QUERY_CODES:
+                    raise
+                self.log("warning", f"[POD_WAIT] query failed (will retry): {err.detail or err}")
                 self.sleep(self.policy.poll_interval_s)
                 continue
 
-            snapshot = query_result.unwrap()
-
             if snapshot.is_terminal:
-                return self._terminal_err(pod_id, snapshot)
+                raise self._terminal_err(pod_id, snapshot)
 
             tcp_ok = None
             if snapshot.is_ready:
                 if not self.policy.tcp_probe_enabled:
-                    return Ok(snapshot)
+                    return snapshot
                 ssh = snapshot.ssh_endpoint
                 # Defensive: ``is_ready`` already guarantees ssh is set.
                 assert ssh is not None
                 if self.tcp_probe(ssh.host, ssh.port, self.policy.tcp_probe_timeout_s):
-                    return Ok(snapshot)
+                    return snapshot
                 tcp_ok = False
 
             # Early-bailout for the one state we know doesn't self-heal:
             # ports allocated but SSH endpoint never shows up. Empirically
             # caused by community-cloud nodes that don't support exposed
             # TCP — keeping this matches pre-refactor behaviour.
-            #
-            # Note: ``RUNNING with port_count == 0`` does NOT have an
-            # early bailout. The platform sometimes takes the full timeout
-            # window to allocate ports; cutting short here forced a retry
-            # half-way through what would otherwise have been a successful
-            # boot. Let ``RUNPOD_POD_TIMEOUT`` handle the genuinely-stuck
-            # case, and let the provider retry on that.
             if snapshot.status == "RUNNING" and snapshot.port_count > 0 and snapshot.ssh_endpoint is None:
                 if ports_without_ssh_since is None:
                     ports_without_ssh_since = now
                 elif now - ports_without_ssh_since >= self.policy.no_exposed_tcp_grace_s:
-                    return self._no_exposed_tcp_err(pod_id, snapshot)
+                    raise self._no_exposed_tcp_err(pod_id, snapshot)
             else:
                 ports_without_ssh_since = None
 
@@ -195,37 +197,40 @@ class PodSshWaiter:
     # stays readable.
     # ------------------------------------------------------------------
 
-    def _timeout_err(self, pod_id: str) -> Result[PodSnapshot, ProviderError]:
-        return Err(
-            ProviderError(
-                message=f"Timeout waiting for pod to be ready ({self.policy.total_timeout_s}s)",
-                code="RUNPOD_POD_TIMEOUT",
-                details={"pod_id": pod_id, "timeout": self.policy.total_timeout_s},
-            )
+    def _timeout_err(self, pod_id: str) -> ProviderUnavailableError:
+        return ProviderUnavailableError(
+            detail=f"Timeout waiting for pod to be ready ({self.policy.total_timeout_s}s)",
+            context={
+                "code": "RUNPOD_POD_TIMEOUT",
+                "pod_id": pod_id,
+                "timeout": self.policy.total_timeout_s,
+            },
         )
 
     @staticmethod
-    def _terminal_err(pod_id: str, snapshot: PodSnapshot) -> Result[PodSnapshot, ProviderError]:
-        return Err(
-            ProviderError(
-                message=f"Pod entered failed state: {snapshot.status}",
-                code="RUNPOD_POD_FAILED",
-                details={"pod_id": pod_id, "status": snapshot.status},
-            )
+    def _terminal_err(pod_id: str, snapshot: PodSnapshot) -> ProviderUnavailableError:
+        return ProviderUnavailableError(
+            detail=f"Pod entered failed state: {snapshot.status}",
+            context={
+                "code": "RUNPOD_POD_FAILED",
+                "pod_id": pod_id,
+                "status": snapshot.status,
+            },
         )
 
-    def _no_exposed_tcp_err(self, pod_id: str, snapshot: PodSnapshot) -> Result[PodSnapshot, ProviderError]:
-        return Err(
-            ProviderError(
-                message=(
-                    f"Pod has {snapshot.port_count} port(s) but no SSH over exposed TCP "
-                    f"after {self.policy.no_exposed_tcp_grace_s}s. This machine likely "
-                    "doesn't support exposed TCP ports (community cloud limitation). "
-                    "Pod will be recreated."
-                ),
-                code="RUNPOD_NO_EXPOSED_TCP",
-                details={"pod_id": pod_id, "port_count": snapshot.port_count},
-            )
+    def _no_exposed_tcp_err(self, pod_id: str, snapshot: PodSnapshot) -> ProviderUnavailableError:
+        return ProviderUnavailableError(
+            detail=(
+                f"Pod has {snapshot.port_count} port(s) but no SSH over exposed TCP "
+                f"after {self.policy.no_exposed_tcp_grace_s}s. This machine likely "
+                "doesn't support exposed TCP ports (community cloud limitation). "
+                "Pod will be recreated."
+            ),
+            context={
+                "code": "RUNPOD_NO_EXPOSED_TCP",
+                "pod_id": pod_id,
+                "port_count": snapshot.port_count,
+            },
         )
 
     @staticmethod

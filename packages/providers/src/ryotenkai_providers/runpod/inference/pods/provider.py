@@ -38,8 +38,23 @@ from ryotenkai_providers.inference.interfaces import (
     InferenceEventLogger,
     PipelineReadinessMode,
 )
+from ryotenkai_shared.errors import RyotenkAIError
 from ryotenkai_shared.utils.logger import logger
 from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
+
+
+def _typed_to_inference_error(exc: RyotenkAIError, *, default_code: str) -> InferenceError:
+    """Translate a typed Batch-11 exception into a legacy ``InferenceError``.
+
+    Phase A2 Batch 11 boundary helper. Preserves the legacy ``code``
+    carried on ``exc.context['code']`` (when present), falling back to
+    ``default_code`` otherwise.
+    """
+    legacy_code = exc.context.get("code") if exc.context else None
+    return InferenceError(
+        message=exc.detail or str(exc),
+        code=legacy_code or default_code,
+    )
 
 from ...pod_control import RunPodInferencePodControl
 from .api_client import RunPodPodsRESTClient
@@ -454,11 +469,11 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         # Policy: stop instead of delete (reuse like a personal PC).
         if not self._pod_control or not self._pod_id:
             return Ok(None)
-        res = self._pod_control.stop_pod(pod_id=self._pod_id)
-        if res.is_failure():
-            stop_err = res.unwrap_err()
-            return Err(InferenceError(message=str(stop_err), code="RUNPOD_POD_STOP_FAILED"))
-        return Ok(None)
+        try:
+            self._pod_control.stop_pod(pod_id=self._pod_id)
+            return Ok(None)
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_STOP_FAILED"))
 
     def health_check(self) -> Result[bool, InferenceError]:
         # Pipeline health_check is not meaningful for a stopped pod.
@@ -470,11 +485,11 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                     code="RUNPOD_NOT_DEPLOYED",
                 )
             )
-        res = self._api.get_pod(pod_id=self._pod_id)
-        if res.is_failure():
-            api_err = res.unwrap_err()
-            return Err(InferenceError(message=str(api_err), code="RUNPOD_POD_GET_FAILED"))
-        return Ok(True)
+        try:
+            self._api.get_pod(pod_id=self._pod_id)
+            return Ok(True)
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_GET_FAILED"))
 
     def get_capabilities(self) -> InferenceCapabilities:
         return InferenceCapabilities(
@@ -579,7 +594,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
         try:
-            session_res = pod_session.activate(
+            session = pod_session.activate(
                 api=pod_control,
                 pod_id=pod_id,
                 **params,
@@ -602,15 +617,10 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 )
             self._pod_id = None
             raise
-        if session_res.is_failure():
-            return Err(
-                InferenceError(
-                    message=str(session_res.unwrap_err()),  # type: ignore[union-attr]
-                    code="RUNPOD_EVAL_ACTIVATE_FAILED",
-                )
-            )
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_EVAL_ACTIVATE_FAILED"))
 
-        self._eval_session = session_res.unwrap()
+        self._eval_session = session
         return Ok(self._eval_session.endpoint_url)
 
     def deactivate_after_eval(self) -> Result[None, InferenceError]:
@@ -639,12 +649,12 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                     "[CLEANUP] activate_for_eval was not called but pod %s exists — deleting to avoid billing.",
                     pod_id,
                 )
-                del_res = pod_control.delete_pod(pod_id=pod_id)
-                if del_res.is_failure():
-                    del_err = del_res.unwrap_err()
+                try:
+                    pod_control.delete_pod(pod_id=pod_id)
+                except RyotenkAIError as exc:
                     return Err(
                         InferenceError(
-                            message=f"deactivate_after_eval fallback delete failed: {del_err}",
+                            message=f"deactivate_after_eval fallback delete failed: {exc}",
                             code="RUNPOD_POD_DELETE_FAILED",
                         )
                     )
@@ -655,16 +665,17 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
 
         from ryotenkai_providers.runpod.inference.pods import pod_session
 
-        result = pod_session.deactivate(
-            api=pod_control,
-            state=eval_session,
-            key_path=key_path,
-        )
-        self._eval_session = None
-        if result.is_failure():
-            err = result.unwrap_err()
-            return Err(InferenceError(message=str(err), code="RUNPOD_EVAL_DEACTIVATE_FAILED"))
-        return Ok(None)
+        try:
+            pod_session.deactivate(
+                api=pod_control,
+                state=eval_session,
+                key_path=key_path,
+            )
+            self._eval_session = None
+            return Ok(None)
+        except RyotenkAIError as exc:
+            self._eval_session = None
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_EVAL_DEACTIVATE_FAILED"))
 
     # ---------------------------------------------------------------------
     # Internals
@@ -715,13 +726,14 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
 
         # Prefer explicit id if provided.
         if cfg.id:
-            get_res = self._api.get_network_volume(network_volume_id=str(cfg.id))
-            if get_res.is_success():
-                vol_by_id = get_res.unwrap()
+            try:
+                vol_by_id = self._api.get_network_volume(network_volume_id=str(cfg.id))
                 vol_id = str(vol_by_id.get(KEY_ID) or "").strip()
                 if vol_id:
                     self._network_volume_meta = vol_by_id if isinstance(vol_by_id, dict) else None
                     return Ok(vol_id)
+            except RyotenkAIError:
+                pass
             return Err(
                 InferenceError(
                     message=f"runpod: network volume id not found or inaccessible: {cfg.id!r}",
@@ -729,11 +741,10 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 )
             )
 
-        list_res = self._api.list_network_volumes()
-        if list_res.is_failure():
-            list_err = list_res.unwrap_err()
-            return Err(InferenceError(message=str(list_err), code="RUNPOD_VOLUME_LIST_FAILED"))
-        volumes = list_res.unwrap()
+        try:
+            volumes = self._api.list_network_volumes()
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_VOLUME_LIST_FAILED"))
 
         sel_res = _select_by_name(volumes=volumes, name=cfg.name, data_center_id=cfg.data_center_id)
         if sel_res.is_failure():
@@ -783,10 +794,10 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         for attempt in range(1, max_attempts + 1):
             # Before a new create attempt, re-check if the previous attempt actually succeeded server-side.
             if attempt > 1:
-                list_res0 = self._api.list_network_volumes()
-                if list_res0.is_success():
+                try:
+                    listed = self._api.list_network_volumes()
                     sel0 = _select_by_name(
-                        volumes=list_res0.unwrap(),
+                        volumes=listed,
                         name=cfg.name,
                         data_center_id=data_center_id,
                     )
@@ -802,23 +813,24 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                                 return Ok(vol_id0)
                     else:
                         return Err(sel0.unwrap_err())  # type: ignore[return-value]
+                except RyotenkAIError:
+                    pass
 
-            create_res = self._api.create_network_volume(payload=payload)
-            if create_res.is_success():
-                created = create_res.unwrap()
+            try:
+                created = self._api.create_network_volume(payload=payload)
                 vol_id = str(created.get(KEY_ID) or "").strip()
                 if vol_id:
                     self._network_volume_meta = created if isinstance(created, dict) else None
                     return Ok(vol_id)
                 last_err = f"runpod: create_network_volume succeeded but id is missing: {created!r}"
-            else:
-                last_err = str(create_res.unwrap_err())
+            except RyotenkAIError as exc:
+                last_err = exc.detail or str(exc)
 
             # Re-check by deterministic key: name (+ datacenter as tie-breaker).
-            list_res2 = self._api.list_network_volumes()
-            if list_res2.is_success():
+            try:
+                listed2 = self._api.list_network_volumes()
                 sel2 = _select_by_name(
-                    volumes=list_res2.unwrap(),
+                    volumes=listed2,
                     name=cfg.name,
                     data_center_id=data_center_id,
                 )
@@ -835,6 +847,8 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                             return Ok(vol_id2)
                 else:
                     return Err(sel2.unwrap_err())  # type: ignore[return-value]
+            except RyotenkAIError:
+                pass
 
             if attempt < max_attempts:
                 sleep_s = min(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)), _RETRY_SLEEP_CAP_SEC)
@@ -883,11 +897,10 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         }
         if network_volume_id:
             params["networkVolumeId"] = network_volume_id
-        pods_res = self._api.list_pods(params=params)
-        if pods_res.is_failure():
-            pods_err = pods_res.unwrap_err()
-            return Err(InferenceError(message=str(pods_err), code="RUNPOD_POD_LIST_FAILED"))
-        pods = pods_res.unwrap()
+        try:
+            pods = self._api.list_pods(params=params)
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_LIST_FAILED"))
 
         # Prefer an already stopped pod; otherwise reuse running and stop later.
         chosen: dict[str, Any] | None = None
@@ -972,9 +985,8 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         for attempt in range(1, max_attempts + 1):
             # Before a new create attempt, re-check if the previous attempt actually succeeded server-side.
             if attempt > 1:
-                pods_res0 = self._api.list_pods(params=params)
-                if pods_res0.is_success():
-                    pods0 = pods_res0.unwrap()
+                try:
+                    pods0 = self._api.list_pods(params=params)
                     for p in pods0:
                         pod_id = str(p.get(KEY_ID) or "").strip()
                         if pod_id:
@@ -983,21 +995,21 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                                 "Proceeding with discovered id."
                             )
                             return Ok((pod_id, name_val))
+                except RyotenkAIError:
+                    pass
 
-            create_res = self._api.create_pod(payload=payload)
-            if create_res.is_success():
-                pod = create_res.unwrap()
+            try:
+                pod = self._api.create_pod(payload=payload)
                 pod_id = str(pod.get(KEY_ID) or "").strip()
                 if pod_id:
                     return Ok((pod_id, name_val))
                 last_err = f"runpod: create_pod succeeded but id is missing: {pod!r}"
-            else:
-                last_err = str(create_res.unwrap_err())
+            except RyotenkAIError as exc:
+                last_err = exc.detail or str(exc)
 
             # Re-check by deterministic name + network volume (create may have succeeded).
-            pods_res2 = self._api.list_pods(params=params)
-            if pods_res2.is_success():
-                pods2 = pods_res2.unwrap()
+            try:
+                pods2 = self._api.list_pods(params=params)
                 for p in pods2:
                     pod_id = str(p.get(KEY_ID) or "").strip()
                     if pod_id:
@@ -1006,6 +1018,8 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                             "but pod now exists (name+volume match). Proceeding with discovered id."
                         )
                         return Ok((pod_id, name_val))
+            except RyotenkAIError:
+                pass
 
             if attempt < max_attempts:
                 sleep_s = min(RETRY_BACKOFF_FACTOR * (2 ** (attempt - 1)), _RETRY_SLEEP_CAP_SEC)
@@ -1035,18 +1049,17 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
     def _stop_pod_if_running(self, *, pod_id: str) -> Result[None, InferenceError]:
         assert self._api is not None
         assert self._pod_control is not None
-        get_res = self._api.get_pod(pod_id=pod_id)
-        if get_res.is_failure():
-            get_err = get_res.unwrap_err()
-            return Err(InferenceError(message=str(get_err), code="RUNPOD_POD_GET_FAILED"))
-        pod = get_res.unwrap()
+        try:
+            pod = self._api.get_pod(pod_id=pod_id)
+        except RyotenkAIError as exc:
+            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_GET_FAILED"))
         status = str(pod.get("desiredStatus") or "")
         if status == "RUNNING":
             logger.info(f"🛑 Stopping RunPod Pod after provisioning: {pod_id}")
-            stop_res = self._pod_control.stop_pod(pod_id=pod_id)
-            if stop_res.is_failure():
-                stop_err = stop_res.unwrap_err()
-                return Err(InferenceError(message=str(stop_err), code="RUNPOD_POD_STOP_FAILED"))
+            try:
+                self._pod_control.stop_pod(pod_id=pod_id)
+            except RyotenkAIError as exc:
+                return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_STOP_FAILED"))
         return Ok(None)
 
     def _resolve_llm_manifest_block(self) -> dict[str, Any]:

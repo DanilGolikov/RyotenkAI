@@ -1,24 +1,11 @@
 """
-Unit tests for RunPodPodInferenceProvider (src/providers/runpod/inference/pods/provider.py).
+Unit tests for RunPodPodInferenceProvider (Phase A2 Batch 11).
 
-Coverage:
-- deploy(): local path, missing API key, missing SSH key, no volume success,
-            with volume success, keep_running=True, volume ensure failure,
-            pod ensure failure, stop failure
-- undeploy(): no api/pod_id (noop), success, failure
-- health_check(): not deployed, pod found (ok), pod get failure
-- activate_for_eval(): no api, no pod_id, empty adapter_ref, success, session failure
-- deactivate_after_eval(): no api (noop), no session+no pod (noop),
-                           no session+pod (delete success/fail),
-                           session deactivate success/fail
-- _ensure_pod(): existing stopped pod, existing running pod,
-                 no pods → create, create returns pod on retry, create fails all
-- _stop_pod_if_running(): running → stop, not running → skip, get failure, stop failure
-- provider_name / provider_type properties
-- get_pipeline_readiness_mode
-- collect_startup_logs
-- get_capabilities
-- get_endpoint_info
+Internal API stack now raises typed exceptions
+(``ProviderUnavailableError`` etc.); the provider facade catches them
+and returns ``Result[T, InferenceError]`` for Protocol conformance.
+StubApi raises-on-action: each ``*_actions`` field is a queue of
+``None|dict|list`` (returned) or ``BaseException`` (raised).
 """
 
 from __future__ import annotations
@@ -33,8 +20,13 @@ import pytest
 from ryotenkai_shared.config.inference.schema import InferenceConfig
 from ryotenkai_shared.config.providers.runpod import RunPodProviderConfig
 from ryotenkai_shared.constants import PROVIDER_RUNPOD
-from ryotenkai_providers.inference.interfaces import EndpointInfo, InferenceArtifactsContext, PipelineReadinessMode
+from ryotenkai_providers.inference.interfaces import (
+    EndpointInfo,
+    InferenceArtifactsContext,
+    PipelineReadinessMode,
+)
 from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.result import Err, InferenceError, Ok, ProviderError
 
 pytestmark = pytest.mark.unit
@@ -42,91 +34,86 @@ pytestmark = pytest.mark.unit
 
 # ---------------------------------------------------------------------------
 # Manifest fixture
-#
-# ``RunPodPodInferenceProvider.provider_name`` / ``provider_type`` return the
-# class-level ``_manifest_provider_name`` / ``_manifest_provider_type`` ClassVars
-# that ``ProviderRegistry`` normally sets when it loads the provider's manifest.
-# Tests in this file build providers via ``__new__`` and never go through the
-# registry, so those ClassVars stay at the empty-string defaults. The fixture
-# sets them explicitly so the public properties return ``"runpod"`` as
-# production would. Idempotent — repeated calls overwrite with the same values.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
 def _attach_runpod_pod_provider_manifest() -> None:
-    """Attach manifest ClassVars to RunPodPodInferenceProvider for the test session."""
     RunPodPodInferenceProvider._manifest_provider_id = PROVIDER_RUNPOD
     RunPodPodInferenceProvider._manifest_provider_name = PROVIDER_RUNPOD
     RunPodPodInferenceProvider._manifest_provider_type = PROVIDER_RUNPOD
 
 
 # ---------------------------------------------------------------------------
-# Stub API
+# Stub API — raise-based contract
 # ---------------------------------------------------------------------------
+
+
+def _next(queue: list[Any], default: Any) -> Any:
+    """Pop next action; raise if BaseException, else return."""
+    if not queue:
+        return default
+    action = queue.pop(0)
+    if isinstance(action, BaseException):
+        raise action
+    return action
 
 
 @dataclass
 class StubApi:
-    """Thin stub for RunPodPodsRESTClient, driven by queued results."""
+    """Raise-based stub for RunPodPodsRESTClient.
 
-    list_pods_results: list[Any] = field(default_factory=list)
-    get_pod_results: list[Any] = field(default_factory=list)
-    create_pod_results: list[Any] = field(default_factory=list)
-    stop_pod_results: list[Any] = field(default_factory=list)
-    start_pod_results: list[Any] = field(default_factory=list)
-    delete_pod_results: list[Any] = field(default_factory=list)
-    list_network_volumes_results: list[Any] = field(default_factory=list)
-    get_network_volume_results: list[Any] = field(default_factory=list)
-    create_network_volume_results: list[Any] = field(default_factory=list)
+    Each ``*_actions`` queue holds ``None|dict|list`` (returned) or
+    ``BaseException`` instances (raised). Empty queue → ``default``.
+    """
+
+    list_pods_actions: list[Any] = field(default_factory=list)
+    get_pod_actions: list[Any] = field(default_factory=list)
+    create_pod_actions: list[Any] = field(default_factory=list)
+    stop_pod_actions: list[Any] = field(default_factory=list)
+    start_pod_actions: list[Any] = field(default_factory=list)
+    delete_pod_actions: list[Any] = field(default_factory=list)
+    list_network_volumes_actions: list[Any] = field(default_factory=list)
+    get_network_volume_actions: list[Any] = field(default_factory=list)
+    create_network_volume_actions: list[Any] = field(default_factory=list)
 
     created_pod_payloads: list[dict[str, Any]] = field(default_factory=list)
 
     def list_pods(self, *, params: dict[str, Any] | None = None) -> Any:
-        if self.list_pods_results:
-            return self.list_pods_results.pop(0)
-        return Ok([])  # type: ignore[call-arg]
+        return _next(self.list_pods_actions, [])
 
     def get_pod(self, *, pod_id: str) -> Any:
-        if self.get_pod_results:
-            return self.get_pod_results.pop(0)
-        return Ok({"id": pod_id, "desiredStatus": "EXITED"})  # type: ignore[call-arg]
+        return _next(self.get_pod_actions, {"id": pod_id, "desiredStatus": "EXITED"})
 
     def create_pod(self, *, payload: dict[str, Any]) -> Any:
         self.created_pod_payloads.append(payload)
-        if self.create_pod_results:
-            return self.create_pod_results.pop(0)
-        return Ok({"id": "pod_created"})  # type: ignore[call-arg]
+        return _next(self.create_pod_actions, {"id": "pod_created"})
 
     def stop_pod(self, *, pod_id: str) -> Any:
-        if self.stop_pod_results:
-            return self.stop_pod_results.pop(0)
-        return Ok(None)  # type: ignore[call-arg]
+        return _next(self.stop_pod_actions, None)
 
     def start_pod(self, *, pod_id: str) -> Any:
-        if self.start_pod_results:
-            return self.start_pod_results.pop(0)
-        return Ok(None)  # type: ignore[call-arg]
+        return _next(self.start_pod_actions, None)
 
     def delete_pod(self, *, pod_id: str) -> Any:
-        if self.delete_pod_results:
-            return self.delete_pod_results.pop(0)
-        return Ok(None)  # type: ignore[call-arg]
+        return _next(self.delete_pod_actions, None)
 
     def list_network_volumes(self) -> Any:
-        if self.list_network_volumes_results:
-            return self.list_network_volumes_results.pop(0)
-        return Ok([])  # type: ignore[call-arg]
+        return _next(self.list_network_volumes_actions, [])
 
     def get_network_volume(self, *, network_volume_id: str) -> Any:
-        if self.get_network_volume_results:
-            return self.get_network_volume_results.pop(0)
-        return Ok({"id": network_volume_id, "name": "vol"})  # type: ignore[call-arg]
+        return _next(
+            self.get_network_volume_actions, {"id": network_volume_id, "name": "vol"}
+        )
 
     def create_network_volume(self, *, payload: dict[str, Any]) -> Any:
-        if self.create_network_volume_results:
-            return self.create_network_volume_results.pop(0)
-        return Ok({"id": "nv_created", "name": payload.get("name")})  # type: ignore[call-arg]
+        return _next(
+            self.create_network_volume_actions, {"id": "nv_created", "name": payload.get("name")}
+        )
+
+
+def _exc(detail: str, code: str = "RUNPOD_SDK_CALL_FAILED") -> ProviderUnavailableError:
+    return ProviderUnavailableError(detail=detail, context={"code": code})
 
 
 # ---------------------------------------------------------------------------
@@ -145,15 +132,10 @@ def _mk_provider(
     adapter_ref: str = "hf-org/my-model",
     eval_session: Any | None = None,
 ) -> RunPodPodInferenceProvider:
-    """Build a RunPodPodInferenceProvider via __new__, bypassing __init__."""
     volume_cfg_raw: dict[str, Any] | None = None
     if with_volume:
         volume_cfg_raw = {"id": "vol-123", "name": "my-vol", "size_gb": 50, "data_center_id": "US-KS-2"}
 
-    # NB: ``image_name`` was removed from RunPodTraining/PodConfig in
-    # Phase 6.6 (image is pinned in code, not YAML). The fixture originally
-    # passed it and silently broke when the schema tightened — repaired
-    # here so the activate_for_eval cancellation tests below can run.
     prov_cfg = RunPodProviderConfig(
         connect={"ssh": {"key_path": key_path}},
         cleanup={},
@@ -211,7 +193,7 @@ def test_get_pipeline_readiness_mode_is_skip() -> None:
 
 def test_collect_startup_logs_is_noop(tmp_path: Path) -> None:
     p = _mk_provider()
-    p.collect_startup_logs(local_path=tmp_path)  # must not raise
+    p.collect_startup_logs(local_path=tmp_path)
 
 
 def test_get_capabilities() -> None:
@@ -271,13 +253,13 @@ def test_deploy_missing_ssh_key_file_returns_err(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# deploy() — full flow (patching RunPodPodsRESTClient + internals)
+# deploy() — full flow
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="xfail-debt:runpod-pods-deploy-tunnel-drift — Pre-existing failure post-packagization: deploy() now intentionally returns endpoint_url=None until activate_for_eval opens the SSH tunnel (was http://127.0.0.1:8000/v1 in legacy contract); test still asserts the legacy URL.",
+    reason="xfail-debt:runpod-pods-deploy-tunnel-drift — Pre-existing failure post-packagization: deploy() now intentionally returns endpoint_url=None until activate_for_eval opens the SSH tunnel.",
 )
 def test_deploy_success_no_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key_file = tmp_path / "id_ed25519"
@@ -317,7 +299,7 @@ def test_deploy_keep_running_skips_stop(tmp_path: Path, monkeypatch: pytest.Monk
 
     res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama", keep_running=True)
     assert res.is_success()
-    assert not stop_called  # stop must NOT be called when keep_running=True
+    assert not stop_called
 
 
 def test_deploy_with_volume_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -454,13 +436,11 @@ def test_undeploy_success_stops_pod() -> None:
 
 
 def test_undeploy_stop_failure_returns_err() -> None:
-    api = StubApi(
-        stop_pod_results=[Err(ProviderError(message="stop failed", code="RUNPOD_STOP"))]
-    )
+    api = StubApi(stop_pod_actions=[_exc("stop failed", code="RUNPOD_STOP")])
     p = _mk_provider(api=api, pod_id="pod-1")
     res = p.undeploy()
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_STOP_FAILED"
+    assert res.unwrap_err().code == "RUNPOD_STOP"
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +463,7 @@ def test_health_check_no_pod_id_returns_err() -> None:
 
 
 def test_health_check_pod_found_returns_true() -> None:
-    api = StubApi(get_pod_results=[Ok({"id": "pod-1", "desiredStatus": "EXITED"})])  # type: ignore[call-arg]
+    api = StubApi(get_pod_actions=[{"id": "pod-1", "desiredStatus": "EXITED"}])
     p = _mk_provider(api=api, pod_id="pod-1")
     res = p.health_check()
     assert res.is_success()
@@ -491,13 +471,11 @@ def test_health_check_pod_found_returns_true() -> None:
 
 
 def test_health_check_get_pod_failure_returns_err() -> None:
-    api = StubApi(
-        get_pod_results=[Err(ProviderError(message="not found", code="RUNPOD_NOT_FOUND"))]
-    )
+    api = StubApi(get_pod_actions=[_exc("not found", code="RUNPOD_NOT_FOUND")])
     p = _mk_provider(api=api, pod_id="pod-1")
     res = p.health_check()
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_GET_FAILED"
+    assert res.unwrap_err().code == "RUNPOD_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +520,7 @@ def test_activate_for_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
-        lambda **kw: Ok(fake_session),  # type: ignore[call-arg]
+        lambda **kw: fake_session,
     )
 
     res = p.activate_for_eval()
@@ -554,31 +532,28 @@ def test_activate_for_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> N
 def test_activate_for_eval_session_failure_returns_inference_err(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="hf-org/model")
 
+    def _raise(**_kw: Any) -> None:
+        raise _exc("ssh fail", code="SSH_FAIL")
+
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
-        lambda **kw: Err(ProviderError(message="ssh fail", code="SSH_FAIL")),
+        _raise,
     )
 
     res = p.activate_for_eval()
     assert res.is_failure()
     err = res.unwrap_err()
     assert isinstance(err, InferenceError)
-    assert err.code == "RUNPOD_EVAL_ACTIVATE_FAILED"
+    # Provider preserves the typed exception's code via context['code'].
+    assert err.code == "SSH_FAIL"
 
 
 def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ctrl+C during pod-wait / merge / vLLM-startup → catch
-    PipelineCancelled, delete the running pod synchronously, re-raise.
-
-    Without this hook the in-flight pod would leak until the orchestrator's
-    deferred cleanup-in-reverse caught up — bad UX (user sees a billing
-    pod still running after Ctrl+C).
-    """
     from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
-    api = StubApi(delete_pod_results=[Ok(None)])
+    api = StubApi(delete_pod_actions=[None])
     p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
 
     def raise_cancelled(**_kw: object) -> None:
@@ -592,21 +567,16 @@ def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
     with pytest.raises(PipelineCancelled):
         p.activate_for_eval()
 
-    # Pod was synchronously deleted before re-raise.
-    assert api.delete_pod_results == []  # consumed
+    assert api.delete_pod_actions == []
     assert p._pod_id is None
 
 
 def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Best-effort delete on cancel — if delete itself fails, we still
-    re-raise PipelineCancelled (don't mask the user's intent)."""
     from ryotenkai_shared.utils.cancellation import PipelineCancelled
 
-    api = StubApi(
-        delete_pod_results=[Err(ProviderError(message="boom", code="DELETE_FAIL"))],
-    )
+    api = StubApi(delete_pod_actions=[_exc("boom", code="DELETE_FAIL")])
     p = _mk_provider(api=api, pod_id="pod-1", adapter_ref="hf-org/model")
 
     def raise_cancelled(**_kw: object) -> None:
@@ -624,19 +594,18 @@ def test_activate_for_eval_pipeline_cancelled_swallows_delete_failure(
 def test_activate_for_eval_session_inference_error_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="hf-org/model")
 
-    from ryotenkai_shared.utils.result import ProviderError
+    def _raise(**_kw: Any) -> None:
+        raise _exc("vllm error", code="VLLM_FAIL")
 
-    orig_err = ProviderError(message="vllm error", code="VLLM_FAIL")
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.inference.pods.pod_session.activate",
-        lambda **kw: Err(orig_err),
+        _raise,
     )
 
     res = p.activate_for_eval()
     assert res.is_failure()
     err = res.unwrap_err()
-    # pod_session errors are always wrapped into InferenceError at provider boundary
-    assert err.code == "RUNPOD_EVAL_ACTIVATE_FAILED"
+    assert err.code == "VLLM_FAIL"
     assert "vllm error" in err.message
 
 
@@ -671,9 +640,7 @@ def test_deactivate_after_eval_no_session_with_pod_deletes_pod() -> None:
 
 
 def test_deactivate_after_eval_no_session_delete_failure_returns_err() -> None:
-    api = StubApi(
-        delete_pod_results=[Err(ProviderError(message="delete fail", code="DELETE_FAIL"))]
-    )
+    api = StubApi(delete_pod_actions=[_exc("delete fail", code="DELETE_FAIL")])
     p = _mk_provider(api=api, pod_id="pod-1")
     p._eval_session = None
 
@@ -688,7 +655,7 @@ def test_deactivate_after_eval_session_success(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.inference.pods.pod_session.deactivate",
-        lambda **kw: Ok(None),  # type: ignore[call-arg]
+        lambda **kw: None,
     )
 
     res = p.deactivate_after_eval()
@@ -700,14 +667,18 @@ def test_deactivate_after_eval_session_failure_returns_err(monkeypatch: pytest.M
     fake_session = SimpleNamespace(endpoint_url="http://127.0.0.1:8000/v1")
     p = _mk_provider(api=StubApi(), pod_id="pod-1", eval_session=fake_session)
 
+    def _raise(**_kw: Any) -> None:
+        raise _exc("deactivate fail", code="DEACT_FAIL")
+
     monkeypatch.setattr(
         "ryotenkai_providers.runpod.inference.pods.pod_session.deactivate",
-        lambda **kw: Err(ProviderError(message="deactivate fail", code="DEACT_FAIL")),
+        _raise,
     )
 
     res = p.deactivate_after_eval()
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_EVAL_DEACTIVATE_FAILED"
+    # Provider preserves the typed code via context['code'].
+    assert res.unwrap_err().code == "DEACT_FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -716,9 +687,7 @@ def test_deactivate_after_eval_session_failure_returns_err(monkeypatch: pytest.M
 
 
 def test_ensure_pod_reuses_existing_stopped_pod() -> None:
-    api = StubApi(
-        list_pods_results=[Ok([{"id": "pod-stopped", "desiredStatus": "EXITED"}])]  # type: ignore[call-arg]
-    )
+    api = StubApi(list_pods_actions=[[{"id": "pod-stopped", "desiredStatus": "EXITED"}]])
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
     assert res.is_success()
@@ -728,13 +697,11 @@ def test_ensure_pod_reuses_existing_stopped_pod() -> None:
 
 def test_ensure_pod_prefers_stopped_over_running() -> None:
     api = StubApi(
-        list_pods_results=[
-            Ok(  # type: ignore[call-arg]
-                [
-                    {"id": "pod-running", "desiredStatus": "RUNNING"},
-                    {"id": "pod-stopped", "desiredStatus": "EXITED"},
-                ]
-            )
+        list_pods_actions=[
+            [
+                {"id": "pod-running", "desiredStatus": "RUNNING"},
+                {"id": "pod-stopped", "desiredStatus": "EXITED"},
+            ]
         ]
     )
     p = _mk_provider(api=api)
@@ -745,9 +712,7 @@ def test_ensure_pod_prefers_stopped_over_running() -> None:
 
 
 def test_ensure_pod_falls_back_to_running_pod() -> None:
-    api = StubApi(
-        list_pods_results=[Ok([{"id": "pod-running", "desiredStatus": "RUNNING"}])]  # type: ignore[call-arg]
-    )
+    api = StubApi(list_pods_actions=[[{"id": "pod-running", "desiredStatus": "RUNNING"}]])
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
     assert res.is_success()
@@ -757,11 +722,8 @@ def test_ensure_pod_falls_back_to_running_pod() -> None:
 
 def test_ensure_pod_creates_new_when_none_exist(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[
-            Ok([]),  # type: ignore[call-arg]  # initial list → empty
-            Ok([]),  # type: ignore[call-arg]  # post-create re-check → empty (create succeeded directly)
-        ],
-        create_pod_results=[Ok({"id": "pod-new"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], []],
+        create_pod_actions=[{"id": "pod-new"}],
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
@@ -772,11 +734,11 @@ def test_ensure_pod_creates_new_when_none_exist(tmp_path: Path) -> None:
 
 def test_ensure_pod_create_fails_but_pod_appears_on_relist(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[
-            Ok([]),  # type: ignore[call-arg]  # initial list
-            Ok([{"id": "pod-appeared", "desiredStatus": "RUNNING"}]),  # type: ignore[call-arg]  # post-create relist
+        list_pods_actions=[
+            [],  # initial list
+            [{"id": "pod-appeared", "desiredStatus": "RUNNING"}],  # post-create relist
         ],
-        create_pod_results=[Err(ProviderError(message="timeout", code="TIMEOUT"))],
+        create_pod_actions=[_exc("timeout", code="TIMEOUT")],
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
@@ -786,25 +748,23 @@ def test_ensure_pod_create_fails_but_pod_appears_on_relist(tmp_path: Path) -> No
 
 
 def test_ensure_pod_list_failure_returns_err() -> None:
-    api = StubApi(
-        list_pods_results=[Err(ProviderError(message="list failed", code="LIST_FAIL"))]
-    )
+    api = StubApi(list_pods_actions=[_exc("list failed", code="LIST_FAIL")])
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_LIST_FAILED"
+    # Code preserved on the wrapped InferenceError.
+    assert res.unwrap_err().code == "LIST_FAIL"
 
 
 def test_ensure_pod_all_create_attempts_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # All create and list attempts return failure / empty
     call_count = [0]
 
     def _list_pods(**kw: Any) -> Any:
         call_count[0] += 1
-        return Ok([])  # type: ignore[call-arg]
+        return []
 
     api = StubApi(
-        create_pod_results=[Err(ProviderError(message="fail", code="FAIL"))] * 8,
+        create_pod_actions=[_exc("fail", code="FAIL")] * 8,
     )
     api.list_pods = _list_pods  # type: ignore[method-assign]
 
@@ -817,10 +777,9 @@ def test_ensure_pod_all_create_attempts_fail(monkeypatch: pytest.MonkeyPatch, tm
 
 def test_ensure_pod_with_network_volume_includes_volume_id(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[Ok([])],  # type: ignore[call-arg]
-        create_pod_results=[Ok({"id": "pod-vol-new"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], []],
+        create_pod_actions=[{"id": "pod-vol-new"}],
     )
-    api.list_pods_results.append(Ok([]))  # post-create relist  # type: ignore[call-arg]
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id="vol-abc", key_path=tmp_path / "key")
     assert res.is_success()
@@ -829,8 +788,8 @@ def test_ensure_pod_with_network_volume_includes_volume_id(tmp_path: Path) -> No
 
 def test_ensure_pod_uses_deterministic_name_for_volume(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[Ok([]), Ok([])],  # type: ignore[call-arg]
-        create_pod_results=[Ok({"id": "pod-vol-new"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], []],
+        create_pod_actions=[{"id": "pod-vol-new"}],
     )
     p = _mk_provider(api=api)
 
@@ -847,10 +806,9 @@ def test_ensure_pod_uses_deterministic_name_for_volume(tmp_path: Path) -> None:
 
 def test_ensure_pod_without_volume_uses_volume_in_gb(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[Ok([])],  # type: ignore[call-arg]
-        create_pod_results=[Ok({"id": "pod-ephemeral"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], []],
+        create_pod_actions=[{"id": "pod-ephemeral"}],
     )
-    api.list_pods_results.append(Ok([]))  # type: ignore[call-arg]
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
     assert res.is_success()
@@ -861,8 +819,8 @@ def test_ensure_pod_without_volume_uses_volume_in_gb(tmp_path: Path) -> None:
 
 def test_ensure_pod_without_volume_uses_ephemeral_name(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[Ok([]), Ok([])],  # type: ignore[call-arg]
-        create_pod_results=[Ok({"id": "pod-ephemeral"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], []],
+        create_pod_actions=[{"id": "pod-ephemeral"}],
     )
     p = _mk_provider(api=api)
 
@@ -875,9 +833,7 @@ def test_ensure_pod_without_volume_uses_ephemeral_name(tmp_path: Path) -> None:
 
 
 def test_ensure_pod_pod_without_id_returns_err() -> None:
-    api = StubApi(
-        list_pods_results=[Ok([{"desiredStatus": "EXITED"}])]  # type: ignore[call-arg]  # no "id" field
-    )
+    api = StubApi(list_pods_actions=[[{"desiredStatus": "EXITED"}]])  # no "id" field
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
     assert res.is_failure()
@@ -886,11 +842,8 @@ def test_ensure_pod_pod_without_id_returns_err() -> None:
 
 def test_ensure_pod_create_success_without_id_but_relist_finds_pod(tmp_path: Path) -> None:
     api = StubApi(
-        list_pods_results=[
-            Ok([]),  # type: ignore[call-arg]
-            Ok([{"id": "pod-after-relist", "desiredStatus": "RUNNING"}]),  # type: ignore[call-arg]
-        ],
-        create_pod_results=[Ok({"desiredStatus": "RUNNING"})],  # type: ignore[call-arg]
+        list_pods_actions=[[], [{"id": "pod-after-relist", "desiredStatus": "RUNNING"}]],
+        create_pod_actions=[{"desiredStatus": "RUNNING"}],  # no id
     )
     p = _mk_provider(api=api)
 
@@ -907,8 +860,8 @@ def test_ensure_pod_create_success_without_id_but_relist_finds_pod(tmp_path: Pat
 
 def test_stop_pod_if_running_running_pod_calls_stop() -> None:
     api = StubApi(
-        get_pod_results=[Ok({"id": "pod-1", "desiredStatus": "RUNNING"})],  # type: ignore[call-arg]
-        stop_pod_results=[Ok(None)],  # type: ignore[call-arg]
+        get_pod_actions=[{"id": "pod-1", "desiredStatus": "RUNNING"}],
+        stop_pod_actions=[None],
     )
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
@@ -916,35 +869,30 @@ def test_stop_pod_if_running_running_pod_calls_stop() -> None:
 
 
 def test_stop_pod_if_running_stopped_pod_skips_stop() -> None:
-    api = StubApi(
-        get_pod_results=[Ok({"id": "pod-1", "desiredStatus": "EXITED"})],  # type: ignore[call-arg]
-    )
+    api = StubApi(get_pod_actions=[{"id": "pod-1", "desiredStatus": "EXITED"}])
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
     assert res.is_success()
-    # No stop_pod call was consumed from the queue
-    assert len(api.stop_pod_results) == 0
+    assert len(api.stop_pod_actions) == 0
 
 
 def test_stop_pod_if_running_get_failure_returns_err() -> None:
-    api = StubApi(
-        get_pod_results=[Err(ProviderError(message="get failed", code="GET_FAIL"))]
-    )
+    api = StubApi(get_pod_actions=[_exc("get failed", code="GET_FAIL")])
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_GET_FAILED"
+    assert res.unwrap_err().code == "GET_FAIL"
 
 
 def test_stop_pod_if_running_stop_failure_returns_err() -> None:
     api = StubApi(
-        get_pod_results=[Ok({"id": "pod-1", "desiredStatus": "RUNNING"})],  # type: ignore[call-arg]
-        stop_pod_results=[Err(ProviderError(message="stop failed", code="STOP_FAIL"))],
+        get_pod_actions=[{"id": "pod-1", "desiredStatus": "RUNNING"}],
+        stop_pod_actions=[_exc("stop failed", code="STOP_FAIL")],
     )
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_STOP_FAILED"
+    assert res.unwrap_err().code == "STOP_FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -955,11 +903,7 @@ def test_stop_pod_if_running_stop_failure_returns_err() -> None:
 def test_ensure_network_volume_by_id_success() -> None:
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
-    api = StubApi(
-        get_network_volume_results=[
-            Ok({"id": "vol-123", "name": "my-vol"})  # type: ignore[call-arg]
-        ]
-    )
+    api = StubApi(get_network_volume_actions=[{"id": "vol-123", "name": "my-vol"}])
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id="vol-123", name="my-vol", size_gb=50)
     res = p._ensure_network_volume()
@@ -970,11 +914,7 @@ def test_ensure_network_volume_by_id_success() -> None:
 def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
-    api = StubApi(
-        get_network_volume_results=[
-            Err(ProviderError(message="not found", code="NOT_FOUND"))
-        ]
-    )
+    api = StubApi(get_network_volume_actions=[_exc("not found", code="NOT_FOUND")])
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id="bad-id", name="my-vol", size_gb=50)
     res = p._ensure_network_volume()
@@ -985,27 +925,23 @@ def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
 def test_ensure_network_volume_list_failure_returns_err() -> None:
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
-    api = StubApi(
-        list_network_volumes_results=[Err(ProviderError(message="list fail", code="LIST_FAIL"))]
-    )
+    api = StubApi(list_network_volumes_actions=[_exc("list fail", code="LIST_FAIL")])
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
     res = p._ensure_network_volume()
     assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_LIST_FAILED"
+    assert res.unwrap_err().code == "LIST_FAIL"
 
 
 def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
-        list_network_volumes_results=[
-            Ok(  # type: ignore[call-arg]
-                [
-                    {"id": "vol-123", "name": "my-vol", "dataCenterId": "US-KS-2"},
-                    {"id": "vol-999", "name": "my-vol", "dataCenterId": "EU-RO-1"},
-                ]
-            )
+        list_network_volumes_actions=[
+            [
+                {"id": "vol-123", "name": "my-vol", "dataCenterId": "US-KS-2"},
+                {"id": "vol-999", "name": "my-vol", "dataCenterId": "EU-RO-1"},
+            ]
         ]
     )
     p = _mk_provider(api=api)
@@ -1022,13 +958,11 @@ def test_ensure_network_volume_returns_ambiguous_when_multiple_name_matches() ->
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
-        list_network_volumes_results=[
-            Ok(  # type: ignore[call-arg]
-                [
-                    {"id": "vol-1", "name": "my-vol", "dataCenterId": "US-KS-2"},
-                    {"id": "vol-2", "name": "my-vol", "dataCenterId": "US-KS-2"},
-                ]
-            )
+        list_network_volumes_actions=[
+            [
+                {"id": "vol-1", "name": "my-vol", "dataCenterId": "US-KS-2"},
+                {"id": "vol-2", "name": "my-vol", "dataCenterId": "US-KS-2"},
+            ]
         ]
     )
     p = _mk_provider(api=api)
@@ -1041,7 +975,7 @@ def test_ensure_network_volume_returns_ambiguous_when_multiple_name_matches() ->
 
 
 def test_ensure_network_volume_missing_data_center_returns_err_before_create() -> None:
-    api = StubApi(list_network_volumes_results=[Ok([])])  # type: ignore[call-arg]
+    api = StubApi(list_network_volumes_actions=[[]])
     p = _mk_provider(api=api)
     p._volume_cfg = SimpleNamespace(id=None, name="my-vol", size_gb=50, data_center_id=None)
 
@@ -1055,7 +989,7 @@ def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_er
     from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 
     api = StubApi(
-        list_network_volumes_results=[Ok([{"name": "my-vol", "dataCenterId": "US-KS-2"}])]  # type: ignore[call-arg]
+        list_network_volumes_actions=[[{"name": "my-vol", "dataCenterId": "US-KS-2"}]]
     )
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
@@ -1071,11 +1005,11 @@ def test_ensure_network_volume_create_success_without_id_but_relist_finds_volume
 
     monkeypatch.setattr("time.sleep", lambda s: None)
     api = StubApi(
-        list_network_volumes_results=[
-            Ok([]),  # type: ignore[call-arg]
-            Ok([{"id": "vol-after", "name": "my-vol", "dataCenterId": "US-KS-2"}]),  # type: ignore[call-arg]
+        list_network_volumes_actions=[
+            [],
+            [{"id": "vol-after", "name": "my-vol", "dataCenterId": "US-KS-2"}],
         ],
-        create_network_volume_results=[Ok({"name": "my-vol"})],  # type: ignore[call-arg]
+        create_network_volume_actions=[{"name": "my-vol"}],  # no id
     )
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")

@@ -12,6 +12,7 @@ from ryotenkai_providers.runpod.models import PodSnapshot, SshEndpoint
 from ryotenkai_providers.runpod.training.provider import RunPodProvider
 from ryotenkai_providers.training.interfaces import ProviderStatus
 from ryotenkai_shared.config import Secrets
+from ryotenkai_shared.errors import ProviderUnavailableError
 from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
 
 from tests._fakes.provider_context import attach_manifest_capabilities, make_provider_context
@@ -37,29 +38,45 @@ def _ready_snapshot(*, ssh: SshEndpoint | None = _SSH_OK) -> PodSnapshot:
 
 @dataclass
 class StubAPI:
-    create_result: Result[dict[str, Any], ProviderError] = Ok({"pod_id": "pod-1", "machine": "host-1"})  # type: ignore[call-arg]
+    """Raise-based stub: ``create_value`` returned, ``create_exc`` raised."""
+
+    create_value: dict[str, Any] | None = field(
+        default_factory=lambda: {"pod_id": "pod-1", "machine": "host-1"}
+    )
+    create_exc: BaseException | None = None
 
     def create_pod(self, config, *, pod_name: str | None = None):
         _ = config
         _ = pod_name
-        return self.create_result
+        if self.create_exc is not None:
+            raise self.create_exc
+        assert self.create_value is not None
+        return self.create_value
 
 
 @dataclass
 class StubCleanup:
+    """Raise-based stub: success when ``cleanup_pod`` returns None."""
+
     cleaned: list[str] = field(default_factory=list)
 
-    def cleanup_pod(self, pod_id: str) -> Result[None, ProviderError]:
+    def cleanup_pod(self, pod_id: str) -> None:
         self.cleaned.append(pod_id)
-        return Ok(None)
+        return None
 
 
 @dataclass
 class StubLifecycle:
-    result: Result[PodSnapshot, ProviderError]
+    """Raise-based stub: ``snapshot`` returned, ``exc`` raised."""
 
-    def wait_for_ready(self, pod_id: str, timeout: int = 300, max_retries: int = 3) -> Result[PodSnapshot, ProviderError]:
-        return self.result
+    snapshot: PodSnapshot | None = None
+    exc: BaseException | None = None
+
+    def wait_for_ready(self, pod_id: str, timeout: int = 300, max_retries: int = 3) -> PodSnapshot:
+        if self.exc is not None:
+            raise self.exc
+        assert self.snapshot is not None
+        return self.snapshot
 
 
 class FakeSSHClient:
@@ -110,7 +127,7 @@ def test_connect_success(monkeypatch: pytest.MonkeyPatch) -> None:
     p = _mk_provider()
     p._api_client = StubAPI()
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
 
     res = p.connect(run=_mk_run())
     assert res.is_success()
@@ -143,7 +160,7 @@ def test_connect_uses_hardcoded_workspace_for_run_workspace(monkeypatch: pytest.
     p = _mk_provider()
     p._api_client = StubAPI()
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
 
     res = p.connect(run=_mk_run())
     assert res.is_success()
@@ -159,7 +176,7 @@ def test_connect_fails_when_snapshot_has_no_ssh_endpoint(monkeypatch: pytest.Mon
     p._api_client = StubAPI()
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot(ssh=None)))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot(ssh=None))
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -199,9 +216,9 @@ def test_connect_create_pod_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
 
     p = _mk_provider()
-    p._api_client = StubAPI(create_result=Err("no capacity"))
+    p._api_client = StubAPI(create_exc=ProviderUnavailableError(detail="no capacity", context={"code": "NO_CAP"}))
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -214,22 +231,22 @@ def test_connect_invalid_pod_info_and_missing_machine(monkeypatch: pytest.Monkey
     monkeypatch.setattr(rp, "SSHClient", FakeSSHClient)
 
     p = _mk_provider()
-    p._api_client = StubAPI(create_result=Ok({"x": 1}))
+    p._api_client = StubAPI(create_value={"x": 1})
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
     assert p.connect(run=_mk_run()).is_failure()
 
     p = _mk_provider()
-    p._api_client = StubAPI(create_result=Ok({"pod_id": "pod-1"}))
+    p._api_client = StubAPI(create_value={"pod_id": "pod-1"})
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
     assert p.connect(run=_mk_run()).is_success()
 
     p = _mk_provider()
-    p._api_client = StubAPI(create_result=Ok({"pod_id": "pod-1"}))
+    p._api_client = StubAPI(create_value={"pod_id": "pod-1"})
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot(ssh=None)))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot(ssh=None))
     assert p.connect(run=_mk_run()).is_failure()
     assert cleanup.cleaned == ["pod-1"]
 
@@ -245,7 +262,7 @@ def test_connect_ssh_test_connection_failure_triggers_cleanup(monkeypatch: pytes
     p._api_client = StubAPI()
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -263,7 +280,7 @@ def test_connect_health_check_failure_triggers_cleanup(monkeypatch: pytest.Monke
     p._api_client = StubAPI()
     cleanup = StubCleanup()
     p._cleanup_manager = cleanup
-    p._lifecycle = StubLifecycle(result=Ok(_ready_snapshot()))
+    p._lifecycle = StubLifecycle(snapshot=_ready_snapshot())
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()
@@ -295,7 +312,8 @@ def test_connect_wait_for_ready_failure_triggers_cleanup(monkeypatch: pytest.Mon
     p = _mk_provider()
     p._api_client = StubAPI()
     p._cleanup_manager = StubCleanup()
-    p._lifecycle = StubLifecycle(result=Err("timeout"))
+    # Non-recreatable error code → exits the recreate loop after one cleanup.
+    p._lifecycle = StubLifecycle(exc=ProviderUnavailableError(detail="other", context={"code": "RUNPOD_OTHER"}))
 
     res = p.connect(run=_mk_run())
     assert res.is_failure()

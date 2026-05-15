@@ -2,10 +2,13 @@
 RunPod Python SDK adapter for pod lifecycle.
 
 This module centralizes interaction with the official ``runpod`` package while
-preserving project-level contracts:
-- Result-based return values
-- structured ProviderError objects
-- explicit payload normalization for existing provider code
+preserving project-level contracts. Phase A2 Batch 11 (2026-05-15):
+migrated from Result-based returns to raise-based typed exceptions
+(:class:`ProviderUnavailableError` / :class:`ProviderRateLimitedError` /
+:class:`ProviderAuthFailedError`). The public RunPod provider facade
+catches these and translates back into ``Result[T, ProviderError]`` so
+:class:`IGPUProvider` / :class:`IInferenceProvider` Protocol contracts
+remain unchanged until Batch 12 migrates the Protocols themselves.
 """
 
 from __future__ import annotations
@@ -17,7 +20,11 @@ from typing import Any
 
 import runpod
 
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.errors import (
+    ProviderAuthFailedError,
+    ProviderRateLimitedError,
+    ProviderUnavailableError,
+)
 
 _RUNPOD_SDK_CALL_FAILED = "RUNPOD_SDK_CALL_FAILED"
 _RUNPOD_SDK_VALIDATION_ERROR = "RUNPOD_SDK_VALIDATION_ERROR"
@@ -45,6 +52,17 @@ CAPACITY_MARKERS = (
 # the leading underscore. Will be removed when Phase 12 lands.
 _CAPACITY_MARKERS = CAPACITY_MARKERS
 
+_AUTH_MARKERS = (
+    "unauthorized",
+    "401",
+    "403",
+    "invalid api key",
+    "authentication failed",
+    "permission denied",
+)
+
+_RATE_LIMIT_MARKERS = ("rate limit", "429")
+
 _SDK_LOCK = threading.Lock()
 
 
@@ -69,27 +87,61 @@ def is_capacity_error_message(msg: str) -> bool:
     return any(marker in lower for marker in CAPACITY_MARKERS)
 
 
-def _is_capacity_error(err: ProviderError) -> bool:
-    """Internal helper — operates on ProviderError. Kept for backwards
-    compat with ``create_pod_from_payload``'s retry loop."""
-    return is_capacity_error_message(err.message)
+def _is_capacity_error_str(msg: str) -> bool:
+    """Internal helper for ``create_pod_from_payload`` retry loop."""
+    return is_capacity_error_message(msg)
+
+
+def _classify_sdk_exception(exc: BaseException, fn_name: str) -> Exception:
+    """Map an SDK exception to a typed :class:`RyotenkAIError`.
+
+    Inspects the message text against ``_AUTH_MARKERS`` /
+    ``_RATE_LIMIT_MARKERS`` / ``CAPACITY_MARKERS``. Falls through to
+    :class:`ProviderUnavailableError` (the catch-all transient
+    classification — caller can retry).
+    """
+    msg = str(exc).lower()
+    detail = f"runpod SDK call failed in {fn_name}: {exc}"
+    context = {"function": fn_name}
+    if any(marker in msg for marker in _AUTH_MARKERS):
+        return ProviderAuthFailedError(
+            detail=detail,
+            context={**context, "code": _RUNPOD_SDK_CALL_FAILED},
+            cause=exc if isinstance(exc, Exception) else None,
+        )
+    if any(marker in msg for marker in _RATE_LIMIT_MARKERS):
+        return ProviderRateLimitedError(
+            detail=detail,
+            context={**context, "code": _RUNPOD_SDK_CALL_FAILED},
+            cause=exc if isinstance(exc, Exception) else None,
+        )
+    return ProviderUnavailableError(
+        detail=detail,
+        context={**context, "code": _RUNPOD_SDK_CALL_FAILED},
+        cause=exc if isinstance(exc, Exception) else None,
+    )
 
 
 class RunPodSDKClient:
-    """Thin Result-based adapter over the official ``runpod`` Python SDK."""
+    """Thin raise-based adapter over the official ``runpod`` Python SDK.
+
+    Phase A2 Batch 11: methods return ``T`` and raise
+    :class:`ProviderUnavailableError` / :class:`ProviderRateLimitedError`
+    / :class:`ProviderAuthFailedError` on SDK failure. The public
+    provider facade (``RunPodProvider`` / ``RunPodPodInferenceProvider``)
+    catches these and wraps them as ``Err(ProviderError(...))`` for
+    Protocol conformance.
+    """
 
     def __init__(self, *, api_key: str):
         self._api_key = api_key
 
-    def _call_sdk(self, fn_name: str, *args: Any, **kwargs: Any) -> Result[Any, ProviderError]:
+    def _call_sdk(self, fn_name: str, *args: Any, **kwargs: Any) -> Any:
         fn = getattr(runpod, fn_name, None)
         if fn is None:
-            return Err(
-                ProviderError(
-                    message=f"runpod SDK function is not available: {fn_name}",
-                    code=_RUNPOD_SDK_CALL_FAILED,
-                    details={"function": fn_name},
-                )
+            raise ProviderUnavailableError(
+                detail=f"runpod SDK function is not available: {fn_name}",
+                context={"function": fn_name, "code": _RUNPOD_SDK_CALL_FAILED},
             )
 
         previous_api_key = getattr(runpod, "api_key", None)
@@ -98,57 +150,38 @@ class RunPodSDKClient:
                 runpod.api_key = self._api_key
                 # The SDK prints some internals (e.g. create_pod raw_response).
                 with contextlib.redirect_stdout(io.StringIO()):
-                    result = fn(*args, **kwargs)
-            return Ok(result)
+                    return fn(*args, **kwargs)
         except ValueError as exc:
-            return Err(
-                ProviderError(
-                    message=f"runpod SDK validation failed in {fn_name}: {exc}",
-                    code=_RUNPOD_SDK_VALIDATION_ERROR,
-                    details={"function": fn_name},
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=f"runpod SDK validation failed in {fn_name}: {exc}",
+                context={"function": fn_name, "code": _RUNPOD_SDK_VALIDATION_ERROR},
+                cause=exc,
+            ) from exc
         except Exception as exc:
-            return Err(
-                ProviderError(
-                    message=f"runpod SDK call failed in {fn_name}: {exc}",
-                    code=_RUNPOD_SDK_CALL_FAILED,
-                    details={"function": fn_name},
-                )
-            )
+            raise _classify_sdk_exception(exc, fn_name) from exc
         finally:
             with contextlib.suppress(Exception):
                 runpod.api_key = previous_api_key
 
-    def get_pod(self, *, pod_id: str) -> Result[dict[str, Any], ProviderError]:
-        result = self._call_sdk("get_pod", pod_id)
-        if result.is_failure():
-            return result  # type: ignore[return-value]
-        value = result.unwrap()
+    def get_pod(self, *, pod_id: str) -> dict[str, Any]:
+        value = self._call_sdk("get_pod", pod_id)
         if isinstance(value, dict):
-            return Ok(value)
-        return Err(
-            ProviderError(
-                message=f"Unexpected runpod SDK get_pod response type: {type(value).__name__}",
-                code=_RUNPOD_SDK_UNEXPECTED_RESPONSE,
-            )
+            return value
+        raise ProviderUnavailableError(
+            detail=f"Unexpected runpod SDK get_pod response type: {type(value).__name__}",
+            context={"code": _RUNPOD_SDK_UNEXPECTED_RESPONSE},
         )
 
-    def list_pods(self, *, params: dict[str, Any] | None = None) -> Result[list[dict[str, Any]], ProviderError]:
-        result = self._call_sdk("get_pods")
-        if result.is_failure():
-            return result  # type: ignore[return-value]
-        value = result.unwrap()
+    def list_pods(self, *, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        value = self._call_sdk("get_pods")
         if not isinstance(value, list):
-            return Err(
-                ProviderError(
-                    message=f"Unexpected runpod SDK get_pods response type: {type(value).__name__}",
-                    code=_RUNPOD_SDK_UNEXPECTED_RESPONSE,
-                )
+            raise ProviderUnavailableError(
+                detail=f"Unexpected runpod SDK get_pods response type: {type(value).__name__}",
+                context={"code": _RUNPOD_SDK_UNEXPECTED_RESPONSE},
             )
         if not params:
-            return Ok(value)
-        return Ok([pod for pod in value if self._pod_matches_filters(pod, params)])
+            return value
+        return [pod for pod in value if self._pod_matches_filters(pod, params)]
 
     @staticmethod
     def _pod_matches_filters(pod: dict[str, Any], params: dict[str, Any]) -> bool:
@@ -173,21 +206,16 @@ class RunPodSDKClient:
                 return False
         return True
 
-    def create_pod(self, **sdk_kwargs: Any) -> Result[dict[str, Any], ProviderError]:
-        result = self._call_sdk("create_pod", **sdk_kwargs)
-        if result.is_failure():
-            return result  # type: ignore[return-value]
-        value = result.unwrap()
+    def create_pod(self, **sdk_kwargs: Any) -> dict[str, Any]:
+        value = self._call_sdk("create_pod", **sdk_kwargs)
         if isinstance(value, dict):
-            return Ok(value)
-        return Err(
-            ProviderError(
-                message=f"Unexpected runpod SDK create_pod response type: {type(value).__name__}",
-                code=_RUNPOD_SDK_UNEXPECTED_RESPONSE,
-            )
+            return value
+        raise ProviderUnavailableError(
+            detail=f"Unexpected runpod SDK create_pod response type: {type(value).__name__}",
+            context={"code": _RUNPOD_SDK_UNEXPECTED_RESPONSE},
         )
 
-    def create_pod_from_payload(self, *, payload: dict[str, Any]) -> Result[dict[str, Any], ProviderError]:
+    def create_pod_from_payload(self, *, payload: dict[str, Any]) -> dict[str, Any]:
         gpu_type_ids_raw = payload.get("gpuTypeIds")
         gpu_type_ids = [str(item).strip() for item in gpu_type_ids_raw or [] if str(item).strip()]
 
@@ -220,53 +248,37 @@ class RunPodSDKClient:
         if not gpu_type_ids:
             return self.create_pod(**sdk_kwargs)
 
-        last_err: ProviderError | None = None
+        last_exc: Exception | None = None
         for gpu_type_id in gpu_type_ids:
-            attempt_result = self.create_pod(gpu_type_id=gpu_type_id, **sdk_kwargs)
-            if attempt_result.is_success():
-                return attempt_result
+            try:
+                return self.create_pod(gpu_type_id=gpu_type_id, **sdk_kwargs)
+            except Exception as exc:
+                last_exc = exc
+                if not _is_capacity_error_str(str(exc)):
+                    raise
 
-            err = attempt_result.unwrap_err()  # type: ignore[union-attr]
-            last_err = err
-            if not _is_capacity_error(err):
-                return attempt_result
-
-        return Err(
-            last_err
-            or ProviderError(
-                message="runpod SDK create_pod failed for all requested GPU types",
-                code=_RUNPOD_SDK_CALL_FAILED,
-            )
+        if last_exc is not None:
+            raise last_exc
+        raise ProviderUnavailableError(
+            detail="runpod SDK create_pod failed for all requested GPU types",
+            context={"code": _RUNPOD_SDK_CALL_FAILED},
         )
 
-    def stop_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        result = self._call_sdk("stop_pod", pod_id)
-        if result.is_failure():
-            return Err(result.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+    def stop_pod(self, *, pod_id: str) -> None:
+        self._call_sdk("stop_pod", pod_id)
 
-    def start_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        pod_result = self.get_pod(pod_id=pod_id)
-        if pod_result.is_failure():
-            return Err(pod_result.unwrap_err())  # type: ignore[union-attr]
-
-        pod = pod_result.unwrap()
+    def start_pod(self, *, pod_id: str) -> None:
+        pod = self.get_pod(pod_id=pod_id)
         gpu_count_raw = pod.get("gpuCount")
         try:
             gpu_count = int(gpu_count_raw) if gpu_count_raw is not None else 1
         except (TypeError, ValueError):
             gpu_count = 1
 
-        result = self._call_sdk("resume_pod", pod_id, gpu_count)
-        if result.is_failure():
-            return Err(result.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+        self._call_sdk("resume_pod", pod_id, gpu_count)
 
-    def delete_pod(self, *, pod_id: str) -> Result[None, ProviderError]:
-        result = self._call_sdk("terminate_pod", pod_id)
-        if result.is_failure():
-            return Err(result.unwrap_err())  # type: ignore[union-attr]
-        return Ok(None)
+    def delete_pod(self, *, pod_id: str) -> None:
+        self._call_sdk("terminate_pod", pod_id)
 
 
 __all__ = ["RunPodSDKClient"]
