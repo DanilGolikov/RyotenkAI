@@ -186,12 +186,11 @@ class TestDockerPullTimeout:
             (True, "", ""),  # docker image inspect (verification) → found
         ]
 
-        result = provider._ensure_docker_image(
+        # Phase A2 Batch 12: _ensure_docker_image raises on failure, returns None on success.
+        provider._ensure_docker_image(
             ssh=mock_ssh,
             image="test-image:v1.0",
         )
-
-        assert result.is_success()
 
         # Check that docker pull was called with timeout=1200
         pull_call = mock_ssh.exec_command.call_args_list[1]
@@ -245,12 +244,11 @@ class TestDockerImageVerification:
         ]
 
         with patch("time.sleep") as mock_sleep:
-            result = provider._ensure_docker_image(
+            # Phase A2 Batch 12: _ensure_docker_image raises on failure, returns None on success.
+            provider._ensure_docker_image(
                 ssh=mock_ssh,
                 image="test-image:v1.0",
             )
-
-            assert result.is_success()
 
             # CRITICAL: sleep(2) must be called after pull
             mock_sleep.assert_called_once_with(2)
@@ -277,14 +275,16 @@ class TestDockerImageVerification:
             (False, "", ""),
         ]
 
-        with patch("time.sleep"):
-            result = provider._ensure_docker_image(
-                ssh=mock_ssh,
-                image="test-image:v1.0",
-            )
+        from ryotenkai_shared.errors import InferenceUnavailableError
 
-            assert result.is_failure()
-            error_msg = str(result.unwrap_err())
+        with patch("time.sleep"):
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._ensure_docker_image(
+                    ssh=mock_ssh,
+                    image="test-image:v1.0",
+                )
+
+            error_msg = str(exc_info.value.detail or exc_info.value)
 
             # CRITICAL: Error message should mention that image is not available after pull
             assert "not available in Docker registry" in error_msg
@@ -306,8 +306,8 @@ class TestEnsureDockerImageIfNotPresent:
             (True, "", ""),  # docker image inspect -> found
         ]
 
-        res = provider._ensure_docker_image(ssh=mock_ssh, image="test-image:v1.0")
-        assert res.is_success()
+        # Phase A2 Batch 12: _ensure_docker_image raises on failure, returns None on success.
+        provider._ensure_docker_image(ssh=mock_ssh, image="test-image:v1.0")
         assert mock_ssh.exec_command.call_count == 1
 
 
@@ -325,17 +325,20 @@ class TestHealthCheckBugFix:
 
     def test_health_check_with_uninitialized_ssh_client(self, mock_config):
         """Test that health_check fails when SSH client is not initialized."""
+        from ryotenkai_shared.errors import InferenceUnavailableError
+
         provider = self._create_provider(mock_config)
         # Don't call _connect_ssh(), so _ssh_client is None
 
-        result = provider.health_check()
-
-        assert result.is_failure()
-        error_msg = str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider.health_check()
+        error_msg = str(exc_info.value.detail or exc_info.value)
         assert "SSH client not initialized" in error_msg
 
     def test_health_check_command_fails(self, mock_config):
-        """Test that health_check returns Err when SSH command fails."""
+        """Test that health_check raises when SSH command fails."""
+        from ryotenkai_shared.errors import InferenceUnavailableError
+
         provider = self._create_provider(mock_config)
 
         # Mock SSH client directly
@@ -345,16 +348,14 @@ class TestHealthCheckBugFix:
         # Mock: health check command fails (connection refused)
         mock_ssh.exec_command.return_value = (False, "", "Connection refused")
 
-        result = provider.health_check()
-
-        # Should return Err (not Ok(False)!)
-        assert result.is_failure()
-        error_msg = str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider.health_check()
+        error_msg = str(exc_info.value.detail or exc_info.value)
         assert "Health check command failed" in error_msg
         assert "Connection refused" in error_msg
 
     def test_health_check_success_with_ok_in_stdout(self, mock_config):
-        """Test that health_check returns Ok(True) when service is ready."""
+        """Test that health_check returns True when service is ready."""
         provider = self._create_provider(mock_config)
 
         # Mock SSH client directly
@@ -364,15 +365,11 @@ class TestHealthCheckBugFix:
         # Mock: health check succeeds
         mock_ssh.exec_command.return_value = (True, "1", "")
 
-        result = provider.health_check()
-
-        # Should return Ok(True)
-        assert result.is_success()
-        is_healthy = result.unwrap()
-        assert is_healthy is True
+        # Phase A2 Batch 12: health_check returns bool.
+        assert provider.health_check() is True
 
     def test_health_check_command_succeeds_but_service_not_ready(self, mock_config):
-        """Test that health_check returns Ok(False) when command succeeds but no 'OK' in output."""
+        """Test that health_check returns False when command succeeds but no 'OK' in output."""
         provider = self._create_provider(mock_config)
 
         # Mock SSH client directly
@@ -382,12 +379,8 @@ class TestHealthCheckBugFix:
         # Mock: command succeeds but service not ready (returns "0")
         mock_ssh.exec_command.return_value = (True, "0", "")
 
-        result = provider.health_check()
-
-        # Should return Ok(False), not Err
-        assert result.is_success()
-        is_healthy = result.unwrap()
-        assert is_healthy is False
+        # Phase A2 Batch 12: health_check returns bool.
+        assert provider.health_check() is False
 
     def test_health_check_uses_config_host_port(self, mock_config):
         """Test that health_check uses host and port from provider config."""
@@ -424,12 +417,8 @@ class TestHealthCheckBugFix:
         # Mock: output with other digits (not exact "1")
         mock_ssh.exec_command.return_value = (True, "Some debug info\n10\nMore info", "")
 
-        result = provider.health_check()
-
-        # Should return Ok(False) because "10" != "1" (exact match required)
-        assert result.is_success()
-        is_healthy = result.unwrap()
-        assert is_healthy is False
+        # Phase A2 Batch 12: health_check returns False (no exact match).
+        assert provider.health_check() is False
 
     @staticmethod
     def _create_provider(config):

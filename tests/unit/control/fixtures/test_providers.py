@@ -89,11 +89,17 @@ class TestOverrides:
 
 class TestFailingVariant:
     def test_connect_returns_err(self) -> None:
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
         provider = FailingGPUProvider()
-        result = provider.connect(run=None)
-        assert result.is_failure()
+        # Phase A2 Batch 12: connect raises on failure.
+        with pytest.raises(ProviderUnavailableError):
+            provider.connect(run=None)
 
     def test_check_gpu_returns_err(self) -> None:
+        from ryotenkai_shared.errors import ProviderUnavailableError
+
         provider = FailingGPUProvider()
-        result = provider.check_gpu()
-        assert result.is_failure()
+        # Phase A2 Batch 12: check_gpu raises on failure.
+        with pytest.raises(ProviderUnavailableError):
+            provider.check_gpu()

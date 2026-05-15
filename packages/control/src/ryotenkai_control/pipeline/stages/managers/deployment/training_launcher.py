@@ -451,17 +451,20 @@ class TrainingLauncher:
         :class:`PodTerminator`). The dataclass still carries those
         fields for compatibility but we ignore them here.
 
-        Provider interface here still returns ``Result`` — providers
-        migrate in Phase A2 Batch 11-12. Until then this method
-        translates the legacy ``is_err()`` shape to a ``None``-on-fail
-        flag for the caller.
+        Phase A2 Batch 12: provider now raises typed exceptions on
+        failure. We catch and translate to ``None`` for the caller's
+        ``None``-on-fail contract.
         """
         if provider is None:
             return TrainingScriptHooks.empty()
-        result = provider.prepare_training_script_hooks(ssh_client, context)
-        if result.is_err():
+        try:
+            return provider.prepare_training_script_hooks(ssh_client, context)
+        except RyotenkAIError as exc:
+            logger.warning(
+                "[LAUNCHER] provider hooks preparation failed: %s",
+                exc.detail or exc,
+            )
             return None
-        return result.unwrap()
 
     def _persist_job_submission(
         self,

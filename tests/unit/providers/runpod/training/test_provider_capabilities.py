@@ -268,24 +268,24 @@ class TestLifecycleActions:
         provider = _mk_provider()
         delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "terminate_pod", delegate)
-        result = provider.terminate(resource_id="pod-abc", reason="user_stop")
-        assert result.is_success()
+        # Phase A2 Batch 12: terminate() raises on failure, returns None on success.
+        provider.terminate(resource_id="pod-abc", reason="user_stop")
         delegate.assert_called_once_with("pod-abc")
 
     def test_pause_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = _mk_provider()
         delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "stop_pod", delegate)
-        result = provider.pause(resource_id="pod-abc")
-        assert result.is_success()
+        # Phase A2 Batch 12: pause() raises on failure, returns None on success.
+        provider.pause(resource_id="pod-abc")
         delegate.assert_called_once_with(pod_id="pod-abc")
 
     def test_resume_delegates(self, monkeypatch: pytest.MonkeyPatch) -> None:
         provider = _mk_provider()
         delegate = MagicMock(return_value=None)
         monkeypatch.setattr(provider._api_client, "start_pod", delegate)
-        result = provider.resume(resource_id="pod-abc")
-        assert result.is_success()
+        # Phase A2 Batch 12: resume() raises on failure, returns None on success.
+        provider.resume(resource_id="pod-abc")
         delegate.assert_called_once_with(pod_id="pod-abc")
 
 
@@ -304,8 +304,9 @@ class TestDependencyErrors:
             "terminate_pod",
             MagicMock(side_effect=ProviderUnavailableError(detail="api down", context={"code": "X"})),
         )
-        result = provider.terminate(resource_id="pod-abc", reason="x")
-        assert result.is_failure()
+        # Phase A2 Batch 12: terminate() raises ProviderUnavailableError on transport failure.
+        with pytest.raises(ProviderUnavailableError, match="api down"):
+            provider.terminate(resource_id="pod-abc", reason="x")
 
 
 # ---------------------------------------------------------------------------

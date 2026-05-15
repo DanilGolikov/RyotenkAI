@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from ryotenkai_shared.pipeline_context import RunContext
     from ryotenkai_providers.runpod.models import PodResourceInfo
     from ryotenkai_shared.utils.pod_layout import PodLayout
-    from ryotenkai_shared.utils.result import AppError, ProviderError, Result
     from ryotenkai_shared.utils.ssh_client import SSHClient
 
 
@@ -396,16 +395,28 @@ class IRecoveryProbeProvider(Protocol):
 
     def attempt_recovery(
         self, *, resource_id: str,
-    ) -> Result[ProviderStatus, ProviderError]:
+    ) -> ProviderStatus:
         """Probe the resource and try to bring it back online.
 
-        Idempotent — already-running resources return ``Ok(CONNECTED)``
-        without side effects. Caller is responsible for the retry budget;
-        this method is ONE attempt.
+        Idempotent — already-running resources return
+        :data:`ProviderStatus.CONNECTED` without side effects. Caller
+        is responsible for the retry budget; this method is ONE
+        attempt.
 
         Args:
             resource_id: Provider-specific resource identifier
                 (e.g. RunPod ``pod_id``).
+
+        Returns:
+            Fresh :class:`ProviderStatus` after the recovery attempt
+            (typically ``CONNECTED`` after the pod woke up).
+
+        Raises:
+            ProviderUnavailableError: probe or wake-up failed
+                (transient / permanent backend error). Carries
+                ``context["legacy_code"]`` in
+                ``{"POD_PROBE_FAILED", "POD_TERMINAL", "POD_WAKE_FAILED"}``
+                so callers can branch on the specific failure mode.
         """
         ...
 
@@ -497,7 +508,7 @@ class IGPUProvider(Protocol):
         """Provider type: 'local' or 'cloud'."""
         ...
 
-    def connect(self, *, run: RunContext) -> Result[SSHConnectionInfo, ProviderError]:
+    def connect(self, *, run: RunContext) -> SSHConnectionInfo:
         """
         Connect to GPU server.
 
@@ -511,12 +522,17 @@ class IGPUProvider(Protocol):
             - Returns SSH connection info
 
         Returns:
-            Ok(SSHConnectionInfo): Connection established
-            Err(ProviderError): Structured provider error
+            SSHConnectionInfo when the connection is established.
+
+        Raises:
+            ProviderUnavailableError: backend create / wait failed,
+                SSH info missing, generic transport error.
+            SSHConnectionFailedError: SSH handshake failed after pod
+                creation succeeded.
         """
         ...
 
-    def disconnect(self) -> Result[None, ProviderError]:
+    def disconnect(self) -> None:
         """
         Disconnect from GPU server.
 
@@ -528,9 +544,9 @@ class IGPUProvider(Protocol):
             - No-op (server stays on)
             - Just marks provider as disconnected
 
-        Returns:
-            Ok(None): Disconnected successfully
-            Err(ProviderError): Structured provider error (non-fatal for local)
+        Raises:
+            ProviderUnavailableError: cleanup failure (best-effort —
+                callers typically swallow on cleanup paths).
         """
         ...
 
@@ -543,15 +559,18 @@ class IGPUProvider(Protocol):
         """
         ...
 
-    def check_gpu(self) -> Result[GPUInfo, ProviderError]:
+    def check_gpu(self) -> GPUInfo:
         """
         Check GPU availability and specs via nvidia-smi.
 
         Should be called after connect() to validate GPU.
 
         Returns:
-            Ok(GPUInfo): GPU information
-            Err(ProviderError): Structured provider error (GPU not found, nvidia-smi failed, etc.)
+            GPUInfo for the connected pod / host.
+
+        Raises:
+            ProviderUnavailableError: GPU not found, nvidia-smi failed,
+                output parse failure, or provider is not connected.
         """
         ...
 
@@ -568,7 +587,7 @@ class IGPUProvider(Protocol):
         self,
         ssh_client: SSHClient,
         context: dict[str, Any],
-    ) -> Result[TrainingScriptHooks, AppError]:
+    ) -> TrainingScriptHooks:
         """
         Prepare provider-specific customizations for the training launch script.
 
@@ -579,7 +598,7 @@ class IGPUProvider(Protocol):
             - Return bash snippets to inject before/after the Python invocation.
 
         Default behavior (for providers with nothing to contribute): return
-        ``Ok(TrainingScriptHooks.empty())``.
+        ``TrainingScriptHooks.empty()``.
 
         Args:
             ssh_client: Connected SSH client to the pod/server.
@@ -587,8 +606,10 @@ class IGPUProvider(Protocol):
                 ``workspace``, etc.).
 
         Returns:
-            Ok(TrainingScriptHooks): Customizations to apply.
-            Err(AppError): Upload or configuration failure — deployment
+            TrainingScriptHooks customizations to apply.
+
+        Raises:
+            RyotenkAIError: upload or configuration failure — deployment
                 manager will abort training launch.
         """
         ...
@@ -761,26 +782,30 @@ class ITerminalActionProvider(Protocol):
 
     def terminate(
         self, *, resource_id: str, reason: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Permanently delete the resource (irreversible).
 
         Used by the runner's terminal-hook decision matrix (Phase
         14.B) when ``terminal_state="cancelled"`` (user-stop) or
         ``volume_kind=NETWORK`` (RunPod constraint).
 
-        Idempotent — already-gone resources return ``Ok``.
+        Idempotent — already-gone resources return cleanly.
 
         Args:
             resource_id: Identifier of the resource to terminate
                 (e.g. RunPod ``pod_id``).
             reason: Operator-visible reason string for telemetry +
                 logs (e.g. ``"user_stop"`` / ``"failed_safety"``).
+
+        Raises:
+            ProviderUnavailableError: backend rejected the terminate
+                request (transient / permanent).
         """
         ...
 
     def pause(
         self, *, resource_id: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Stop the resource preserving its workspace.
 
         Phase 14.A. RunPod calls ``podStop``; resources can be
@@ -788,19 +813,28 @@ class ITerminalActionProvider(Protocol):
         is NEVER callable (single_node does not implement this
         Protocol).
 
-        Idempotent — already-stopped resources return ``Ok``.
+        Idempotent — already-stopped resources return cleanly.
+
+        Raises:
+            ProviderUnavailableError: backend rejected the pause.
         """
         ...
 
     def resume(
         self, *, resource_id: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Wake a previously :meth:`pause`-d resource.
 
         Phase 14.A. RunPod calls ``podResume``. Caller is responsible
-        for capacity-aware retry — this method does ONE attempt
-        and returns its outcome. Phase 14.C's
-        :class:`LaunchResumeService` orchestrates the budget loop.
+        for capacity-aware retry — this method does ONE attempt.
+        Phase 14.C's :class:`LaunchResumeService` orchestrates the
+        budget loop.
+
+        Raises:
+            ProviderUnavailableError: capacity-exhausted / transport
+                error / hard failure. The
+                :class:`ICapacityErrorClassifier` Protocol (when
+                implemented) lets the caller distinguish.
         """
         ...
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from ryotenkai_providers.training.interfaces import GPUInfo
-from ryotenkai_shared.utils.result import Err, Ok, ProviderError, Result
+from ryotenkai_shared.errors import ProviderUnavailableError, RyotenkAIError
 
 if TYPE_CHECKING:
     from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -72,7 +72,7 @@ class SingleNodeHealthCheck:
         """
         self.ssh = ssh_client
 
-    def check_gpu(self) -> Result[GPUInfo, ProviderError]:
+    def check_gpu(self) -> GPUInfo:
         """
         Check GPU availability via nvidia-smi.
 
@@ -83,8 +83,15 @@ class SingleNodeHealthCheck:
             - Driver version
 
         Returns:
-            Ok(GPUInfo): GPU information
-            Err(ProviderError): Error
+            GPUInfo describing the detected device.
+
+        Raises:
+            ProviderUnavailableError: nvidia-smi failed, returned
+                empty output, or output couldn't be parsed.
+                ``context["legacy_code"]`` distinguishes:
+                ``SINGLENODE_NVIDIA_SMI_FAILED`` /
+                ``SINGLENODE_NO_GPU_DETECTED`` /
+                ``SINGLENODE_NVIDIA_SMI_PARSE_ERROR``.
         """
         logger.debug("🔍 Checking GPU via nvidia-smi...")
 
@@ -93,32 +100,32 @@ class SingleNodeHealthCheck:
         success, stdout, stderr = self.ssh.exec_command(cmd, timeout=_HEALTH_CMD_TIMEOUT, silent=True)
 
         if not success:
-            return Err(ProviderError(message=f"nvidia-smi failed: {stderr}", code="SINGLENODE_NVIDIA_SMI_FAILED"))
+            raise ProviderUnavailableError(
+                detail=f"nvidia-smi failed: {stderr}",
+                context={"legacy_code": "SINGLENODE_NVIDIA_SMI_FAILED"},
+            )
 
         if not stdout.strip():
-            return Err(
-                ProviderError(
-                    message="nvidia-smi returned empty output - no GPU detected",
-                    code="SINGLENODE_NO_GPU_DETECTED",
-                )
+            raise ProviderUnavailableError(
+                detail="nvidia-smi returned empty output - no GPU detected",
+                context={"legacy_code": "SINGLENODE_NO_GPU_DETECTED"},
             )
 
         # Parse output (format: "name, total_mb, free_mb, driver")
         try:
             lines = [line.strip() for line in stdout.strip().split("\n") if line.strip()]
             if not lines:
-                return Err(
-                    ProviderError(message="No GPU found in nvidia-smi output", code="SINGLENODE_NO_GPU_DETECTED")
+                raise ProviderUnavailableError(
+                    detail="No GPU found in nvidia-smi output",
+                    context={"legacy_code": "SINGLENODE_NO_GPU_DETECTED"},
                 )
 
             # Take first GPU
             parts = [p.strip() for p in lines[0].split(",")]
             if len(parts) < 4:
-                return Err(
-                    ProviderError(
-                        message=f"Unexpected nvidia-smi format: {lines[0]}",
-                        code="SINGLENODE_NVIDIA_SMI_PARSE_ERROR",
-                    )
+                raise ProviderUnavailableError(
+                    detail=f"Unexpected nvidia-smi format: {lines[0]}",
+                    context={"legacy_code": "SINGLENODE_NVIDIA_SMI_PARSE_ERROR"},
                 )
 
             gpu_name = parts[0]
@@ -140,15 +147,14 @@ class SingleNodeHealthCheck:
 
             logger.info(f"✅ GPU detected: {gpu_name} ({vram_total}MB total, {vram_free}MB free, CUDA {cuda_version})")
 
-            return Ok(gpu_info)
+            return gpu_info
 
         except (ValueError, IndexError) as e:
-            return Err(
-                ProviderError(
-                    message=f"Failed to parse nvidia-smi output: {e}\nOutput: {stdout}",
-                    code="SINGLENODE_NVIDIA_SMI_PARSE_ERROR",
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=f"Failed to parse nvidia-smi output: {e}\nOutput: {stdout}",
+                context={"legacy_code": "SINGLENODE_NVIDIA_SMI_PARSE_ERROR"},
+                cause=e,
+            ) from e
 
     def _get_cuda_version(self) -> str:
         """Get CUDA version from nvcc or nvidia-smi."""
@@ -172,15 +178,22 @@ class SingleNodeHealthCheck:
 
         return "unknown"
 
-    def check_docker(self) -> Result[str, ProviderError]:
+    def check_docker(self) -> str:
         """
         Check Docker availability and version.
 
         Docker is REQUIRED for single_node (docker-only execution).
 
         Returns:
-            Ok(str): Docker version string (e.g., "24.0.7")
-            Err(ProviderError): Error
+            Docker version string (e.g., "24.0.7").
+
+        Raises:
+            ProviderUnavailableError: docker not installed, daemon not
+                running, or GPU runtime not configured.
+                ``context["legacy_code"]`` distinguishes:
+                ``SINGLENODE_DOCKER_NOT_INSTALLED`` /
+                ``SINGLENODE_DOCKER_DAEMON_NOT_RUNNING`` /
+                ``SINGLENODE_DOCKER_NO_GPU_SUPPORT``.
         """
         logger.debug("🔍 Checking Docker...")
 
@@ -201,8 +214,9 @@ class SingleNodeHealthCheck:
                 "   curl -fsSL https://get.docker.com | sh\n"
                 "   sudo usermod -aG docker $USER"
             )
-            return Err(
-                ProviderError(message=f"Docker not installed. {install_hint}", code="SINGLENODE_DOCKER_NOT_INSTALLED")
+            raise ProviderUnavailableError(
+                detail=f"Docker not installed. {install_hint}",
+                context={"legacy_code": "SINGLENODE_DOCKER_NOT_INSTALLED"},
             )
 
         # Parse version: "Docker version 24.0.7, build afdd53b"
@@ -237,11 +251,9 @@ class SingleNodeHealthCheck:
                 "  systemctl --user restart docker.service\n"
                 "  docker context use rootless"
             )
-            return Err(
-                ProviderError(
-                    message=f"Docker {version} installed but daemon not running (default/rootless). {hint}",
-                    code="SINGLENODE_DOCKER_DAEMON_NOT_RUNNING",
-                )
+            raise ProviderUnavailableError(
+                detail=f"Docker {version} installed but daemon not running (default/rootless). {hint}",
+                context={"legacy_code": "SINGLENODE_DOCKER_DAEMON_NOT_RUNNING"},
             )
 
         # Check nvidia-docker (GPU support) via docker info
@@ -264,35 +276,34 @@ class SingleNodeHealthCheck:
                     " For rootless Docker, ensure NVIDIA runtime is configured in "
                     "$HOME/.config/docker/daemon.json and restart docker.service (user)."
                 )
-            return Err(
-                ProviderError(
-                    message=f"Docker {version} installed but GPU support (nvidia runtime) not available. {hint}{extra}",
-                    code="SINGLENODE_DOCKER_NO_GPU_SUPPORT",
-                )
+            raise ProviderUnavailableError(
+                detail=f"Docker {version} installed but GPU support (nvidia runtime) not available. {hint}{extra}",
+                context={"legacy_code": "SINGLENODE_DOCKER_NO_GPU_SUPPORT"},
             )
 
         logger.info(f"✅ Docker {version} with GPU support (context={active_context})")
-        return Ok(version)
+        return version
 
-    def _get_docker_root_dir(self) -> Result[str, ProviderError]:
+    def _get_docker_root_dir(self) -> str:
         """
         Get Docker root directory on the remote host (where images/layers are stored).
 
         NOTE: Docker pulls write temporary blobs under DockerRootDir/tmp (e.g., /var/lib/docker/tmp/...).
+
+        Raises:
+            ProviderUnavailableError: docker info command failed.
         """
         cmd = 'docker info --format "{{.DockerRootDir}}" 2>/dev/null'
         success, stdout, stderr = self.ssh.exec_command(cmd, timeout=10, silent=True)
         if not success or not stdout.strip():
             details = (stderr or stdout or "").strip()[:_HEALTH_STDERR_TRUNCATE]
-            return Err(
-                ProviderError(
-                    message=f"Failed to detect Docker root dir (DockerRootDir). Details: {details or 'empty'}",
-                    code="SINGLENODE_DOCKER_ROOT_DIR_FAILED",
-                )
+            raise ProviderUnavailableError(
+                detail=f"Failed to detect Docker root dir (DockerRootDir). Details: {details or 'empty'}",
+                context={"legacy_code": "SINGLENODE_DOCKER_ROOT_DIR_FAILED"},
             )
-        return Ok(stdout.strip())
+        return stdout.strip()
 
-    def check_disk_space(self, path: str = "/", *, min_free_gb: float | None = None) -> Result[float, ProviderError]:
+    def check_disk_space(self, path: str = "/", *, min_free_gb: float | None = None) -> float:
         """
         Check available disk space.
 
@@ -301,8 +312,11 @@ class SingleNodeHealthCheck:
             min_free_gb: Minimum required free space (GB). Defaults to MIN_DISK_FREE_GB.
 
         Returns:
-            Ok(float): Free space in GB
-            Err(ProviderError): Error
+            Free space in GB.
+
+        Raises:
+            ProviderUnavailableError: df command failed, parse failed,
+                or below minimum threshold.
         """
         # If path doesn't exist, check the parent or fall back to root
         check_path = path
@@ -325,24 +339,29 @@ class SingleNodeHealthCheck:
         success, stdout, stderr = self.ssh.exec_command(cmd, timeout=10, silent=True)
 
         if not success or not stdout.strip():
-            return Err(ProviderError(message=f"Disk space check failed: {stderr}", code="SINGLENODE_DISK_CHECK_FAILED"))
+            raise ProviderUnavailableError(
+                detail=f"Disk space check failed: {stderr}",
+                context={"legacy_code": "SINGLENODE_DISK_CHECK_FAILED"},
+            )
 
         try:
             free_gb = float(stdout.strip())
-        except ValueError:
-            return Err(ProviderError(message=f"Cannot parse disk space: {stdout}", code="SINGLENODE_DISK_PARSE_ERROR"))
+        except ValueError as e:
+            raise ProviderUnavailableError(
+                detail=f"Cannot parse disk space: {stdout}",
+                context={"legacy_code": "SINGLENODE_DISK_PARSE_ERROR"},
+                cause=e,
+            ) from e
 
         required = float(min_free_gb) if min_free_gb is not None else float(self.MIN_DISK_FREE_GB)
         if free_gb < required:
-            return Err(
-                ProviderError(
-                    message=f"Insufficient disk space: {free_gb:.1f}GB free, minimum {required:.0f}GB required",
-                    code="SINGLENODE_DISK_INSUFFICIENT",
-                )
+            raise ProviderUnavailableError(
+                detail=f"Insufficient disk space: {free_gb:.1f}GB free, minimum {required:.0f}GB required",
+                context={"legacy_code": "SINGLENODE_DISK_INSUFFICIENT"},
             )
 
         logger.info(f"✅ Disk space: {free_gb:.1f}GB free at {check_path}")
-        return Ok(free_gb)
+        return free_gb
 
     def run_all_checks(
         self,
@@ -363,53 +382,50 @@ class SingleNodeHealthCheck:
         warnings: list[str] = []
 
         # GPU check
-        gpu_result = self.check_gpu()
-        gpu_info = gpu_result.unwrap() if gpu_result.is_success() else None
-        if gpu_result.is_failure():
-            err = gpu_result.unwrap_err()
-            errors.append(str(err) if err is not None else "Unknown GPU error")
+        gpu_info: GPUInfo | None
+        try:
+            gpu_info = self.check_gpu()
+        except RyotenkAIError as exc:
+            gpu_info = None
+            errors.append(exc.detail or str(exc))
 
         # Docker check
-        docker_version = None
+        docker_version: str | None = None
         docker_available = False
-        docker_result = self.check_docker()
-
-        if docker_result.is_success():
-            docker_version = docker_result.unwrap()
+        try:
+            docker_version = self.check_docker()
             docker_available = True
-        else:
-            err = docker_result.unwrap_err()
-            errors.append(str(err) if err is not None else "Unknown Docker error")
+        except RyotenkAIError as exc:
+            errors.append(exc.detail or str(exc))
 
         # Disk space check
-        disk_result = self.check_disk_space(workspace_path, min_free_gb=self.MIN_DISK_FREE_GB)
-        disk_free_gb = disk_result.unwrap() if disk_result.is_success() else None
-        if disk_result.is_failure():
-            err = disk_result.unwrap_err()
-            errors.append(str(err) if err is not None else "Unknown disk space error")
+        disk_free_gb: float | None
+        try:
+            disk_free_gb = self.check_disk_space(workspace_path, min_free_gb=self.MIN_DISK_FREE_GB)
+        except RyotenkAIError as exc:
+            disk_free_gb = None
+            errors.append(exc.detail or str(exc))
 
         # Docker disk space check (critical for docker-only execution: images are stored under DockerRootDir)
-        docker_root_dir = None
-        docker_disk_free_gb = None
+        docker_root_dir: str | None = None
+        docker_disk_free_gb: float | None = None
         if docker_available:
-            root_res = self._get_docker_root_dir()
-            if root_res.is_success():
-                docker_root_dir = root_res.unwrap()
-                docker_disk_res = self.check_disk_space(
-                    docker_root_dir,
-                    min_free_gb=self.MIN_DOCKER_DISK_FREE_GB,
-                )
-                docker_disk_free_gb = docker_disk_res.unwrap() if docker_disk_res.is_success() else None
-                if docker_disk_res.is_failure():
-                    derr = docker_disk_res.unwrap_err()
+            try:
+                docker_root_dir = self._get_docker_root_dir()
+            except RyotenkAIError as exc:
+                errors.append(exc.detail or str(exc))
+            else:
+                try:
+                    docker_disk_free_gb = self.check_disk_space(
+                        docker_root_dir,
+                        min_free_gb=self.MIN_DOCKER_DISK_FREE_GB,
+                    )
+                except RyotenkAIError as derr:
                     msg = (
                         f"Insufficient disk space for Docker storage (DockerRootDir={docker_root_dir}): "
-                        f"{derr if derr is not None else 'unknown'}"
+                        f"{derr.detail or derr}"
                     )
                     errors.append(msg)
-            else:
-                rerr = root_res.unwrap_err()
-                errors.append(str(rerr) if rerr is not None else "Failed to detect DockerRootDir")
 
         # Determine if passed
         passed = len(errors) == 0

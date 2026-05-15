@@ -88,25 +88,22 @@ class _FakeAPIClient:
         self.resume_calls: list[str] = []
 
     def query_pod(self, pod_id: str) -> Any:
+        """Phase A2 Batch 12: returns raw dict on success, raises on failure."""
         self.query_calls.append(pod_id)
         if self._query_raises is not None:
             raise self._query_raises
-        result = MagicMock()
-        result.is_failure.return_value = False
-        result.unwrap.return_value = self._query_response
-        return result
+        return self._query_response
 
     def resume_pod(self, pod_id: str) -> Any:
+        """Phase A2 Batch 12: returns None on success, raises on failure."""
         self.resume_calls.append(pod_id)
-        result = MagicMock()
-        if self._resume_ok:
-            result.is_failure.return_value = False
-            result.unwrap.return_value = None
-        else:
-            result.is_failure.return_value = True
-            err = SimpleNamespace(message=self._resume_capacity_msg or "fatal error")
-            result.unwrap_err.return_value = err
-        return result
+        if not self._resume_ok:
+            from ryotenkai_shared.errors import ProviderUnavailableError
+            raise ProviderUnavailableError(
+                detail=self._resume_capacity_msg or "fatal error",
+                context={},
+            )
+        return None
 
 
 class _FakeRunPodProvider:
@@ -490,10 +487,6 @@ class TestLogicSpecific:
             == PodAvailability.SLEEPING_RESUMABLE.value
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="xfail-debt:resume-service-signature-drift — Pre-existing failure pre-packagization: RunPodProvider.from_resume_metadata signature changed (now requires extra kwarg).",
-    )
     def test_default_resolver_uses_env_for_runpod(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:

@@ -147,14 +147,14 @@ def _default_resolve_lifecycle_provider(
     from ryotenkai_providers.registry import get_registry
 
     api_key = os.environ.get("RUNPOD_API_KEY")
-    result = get_registry().create_resume_provider(
-        provider_name, api_key=api_key
-    )
-    if result.is_success():
-        return result.unwrap()
-    # Unknown provider / unavailable resume / missing creds — service
-    # surfaces the right "skipped" message based on outcome elsewhere.
-    return None
+    try:
+        return get_registry().create_resume_provider(
+            provider_name, api_key=api_key,
+        )
+    except Exception:
+        # Unknown provider / unavailable resume / missing creds — service
+        # surfaces the right "skipped" message based on outcome elsewhere.
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +337,10 @@ class LaunchResumeService:
             )
 
         def _query_pod(pod_id: str) -> dict[str, Any]:
-            result = api_client.query_pod(pod_id)
-            if hasattr(result, "is_failure") and result.is_failure():
-                raise RuntimeError(result.unwrap_err().message)
-            return result.unwrap() if hasattr(result, "unwrap") else result
+            # Phase A2 Batch 11+12: ``api_client.query_pod`` raises a
+            # typed exception on transport failure and returns the raw
+            # dict on success — no more Result shape to unwrap.
+            return api_client.query_pod(pod_id)
 
         probe = PodAvailabilityProbe(query_pod=_query_pod)
         return probe.probe(metadata)
@@ -361,14 +361,17 @@ class LaunchResumeService:
             ),
         )
 
-        # Provider's resume() method (Phase 14.A
-        # ITerminalActionProvider) returns Result[None, ProviderError].
-        # resume_pod_with_retry expects a callable returning
-        # bool/Awaitable[bool] that raises on transport failure.
+        # Provider's resume() method (Phase A2 Batch 12) raises typed
+        # exceptions directly. resume_pod_with_retry expects a
+        # callable returning bool/Awaitable[bool] that raises on
+        # transport failure — propagate exceptions as RuntimeError so
+        # the existing retry helper's capacity-classifier logic still
+        # sees a RuntimeError shape.
         async def _resume_call(pod_id: str) -> bool:
-            result = provider.resume(resource_id=pod_id)
-            if hasattr(result, "is_failure") and result.is_failure():
-                raise RuntimeError(result.unwrap_err().message)
+            try:
+                provider.resume(resource_id=pod_id)
+            except Exception as exc:
+                raise RuntimeError(str(exc)) from exc
             return True
 
         # Capacity-error classification via capability Protocol — replaces

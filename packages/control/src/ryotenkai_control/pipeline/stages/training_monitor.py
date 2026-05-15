@@ -698,25 +698,27 @@ class TrainingMonitor(PipelineStage):
             exc,
             self._resource_id,
         )
-        recovery_result = self._provider.attempt_recovery(
-            resource_id=self._resource_id,
-        )
-        if recovery_result.is_err():
-            err = recovery_result.unwrap_err()
-            # Map provider error codes to monitor codes for backwards
-            # compatibility of operator-facing error vocabulary.
+        try:
+            status = self._provider.attempt_recovery(
+                resource_id=self._resource_id,
+            )
+        except RyotenkAIError as recovery_err:
+            # Map provider context.legacy_code values back to the
+            # monitor's operator-facing error vocabulary for
+            # back-compatibility.
             code_map = {
                 "POD_PROBE_FAILED": "MONITOR_POD_PROBE_FAILED",
                 "POD_TERMINAL": "MONITOR_POD_TERMINATED",
                 "POD_WAKE_FAILED": "MONITOR_POD_WAKE_FAILED",
             }
+            provider_code = (recovery_err.context or {}).get("legacy_code", "")
             return TrainingFailedError(
-                detail=err.message,
+                detail=recovery_err.detail or str(recovery_err),
                 context={
-                    "legacy_code": code_map.get(err.code or "", "MONITOR_RECOVERY_FAILED"),
+                    "legacy_code": code_map.get(provider_code, "MONITOR_RECOVERY_FAILED"),
                 },
+                cause=recovery_err,
             )
-        status = recovery_result.unwrap()
         if status == ProviderStatus.CONNECTED:
             # Pod was already running; WS failure unrelated. Caller
             # surfaces the original error.

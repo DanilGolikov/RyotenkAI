@@ -25,7 +25,10 @@ from ryotenkai_shared.config.providers.single_node import (
     SingleNodeTrainingConfig,
 )
 from ryotenkai_shared.config.providers.ssh import SSHConfig
-from ryotenkai_shared.utils.result import Err, InferenceError, Ok
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    InferenceUnavailableError,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -207,8 +210,8 @@ class TestLooksLikeUnresolvedEnv:
 class TestConnectSSH:
     def test_already_connected_returns_ok(self, provider):
         provider._ssh_client = Mock()
-        result = provider._connect_ssh()
-        assert result.is_success()
+        # Phase A2 Batch 12: _connect_ssh raises on failure, returns None on success.
+        provider._connect_ssh()
 
     def test_no_host_returns_error(self, provider):
         # Bypass pydantic validation by overriding _ssh_cfg directly
@@ -218,49 +221,48 @@ class TestConnectSSH:
         mock_ssh_cfg.key_path = None
         mock_ssh_cfg.key_env = None
         provider._ssh_cfg = mock_ssh_cfg
-        result = provider._connect_ssh()
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_HOST_NOT_CONFIGURED" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider._connect_ssh()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_HOST_NOT_CONFIGURED"
 
     def test_unresolved_env_host_returns_error(self, provider_cfg, engine_cfg, secrets):
         provider_cfg.connect.ssh.alias = None
         provider_cfg.connect.ssh.host = "${MY_HOST}"
         p = _mk_provider(provider_cfg, engine_cfg, secrets)
-        result = p._connect_ssh()
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_HOST_UNRESOLVED_ENV" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            p._connect_ssh()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_HOST_UNRESOLVED_ENV"
 
     def test_unresolved_env_user_returns_error(self, provider_cfg, engine_cfg, secrets):
         provider_cfg.connect.ssh.alias = None
         provider_cfg.connect.ssh.host = "192.168.1.100"
         provider_cfg.connect.ssh.user = "${MY_USER}"
         p = _mk_provider(provider_cfg, engine_cfg, secrets)
-        result = p._connect_ssh()
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_USER_UNRESOLVED_ENV" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            p._connect_ssh()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_USER_UNRESOLVED_ENV"
 
     def test_ssh_connection_failure_clears_client(self, provider):
         mock_ssh_instance = Mock()
         mock_ssh_instance.test_connection.return_value = (False, "timeout")
         with patch.object(_mod, "SSHClient", return_value=mock_ssh_instance):
-            result = provider._connect_ssh()
-        assert result.is_failure()
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._connect_ssh()
         assert provider._ssh_client is None
-        assert "SINGLENODE_SSH_CONNECT_FAILED" in str(result.unwrap_err())
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_CONNECT_FAILED"
 
     def test_ssh_connect_success(self, provider):
         mock_ssh_instance = Mock()
         mock_ssh_instance.test_connection.return_value = (True, "")
         with patch.object(_mod, "SSHClient", return_value=mock_ssh_instance):
-            result = provider._connect_ssh()
-        assert result.is_success()
+            provider._connect_ssh()
         assert provider._ssh_client is mock_ssh_instance
 
     def test_ssh_init_exception_returns_error(self, provider):
         with patch.object(_mod, "SSHClient", side_effect=RuntimeError("boom")):
-            result = provider._connect_ssh()
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_INIT_FAILED" in str(result.unwrap_err())
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider._connect_ssh()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_INIT_FAILED"
         assert provider._ssh_client is None
 
     def test_key_env_fallback(self, provider_cfg, engine_cfg, secrets, monkeypatch):
@@ -280,8 +282,7 @@ class TestConnectSSH:
             return mock_ssh_instance
 
         with patch.object(_mod, "SSHClient", side_effect=_fake_ssh):
-            result = p._connect_ssh()
-        assert result.is_success()
+            p._connect_ssh()
         assert captured.get("key_path") == "/home/user/.ssh/id_rsa"
 
 
@@ -308,34 +309,38 @@ class TestDeploy:
             "live lora" in exc_info.value.message.lower()
 
     def test_deploy_fails_when_ssh_connect_fails(self, provider):
+        # Phase A2 Batch 12: _connect_ssh raises on failure; deploy propagates it.
         with patch.object(provider, "_connect_ssh") as mock_conn:
-            mock_conn.return_value = Err(InferenceError(message="no connection", code="X"))
-            result = provider.deploy("model", run_id="r1", base_model_id="base")
-        assert result.is_failure()
-        assert "SINGLENODE_SSH_CONNECT_FAILED" in str(result.unwrap_err())
+            mock_conn.side_effect = InferenceUnavailableError(
+                detail="no connection",
+                context={"reason": "SINGLENODE_SSH_CONNECT_FAILED"},
+            )
+            with pytest.raises(InferenceUnavailableError) as exc_info:
+                provider.deploy("model", run_id="r1", base_model_id="base")
+        assert exc_info.value.context.get("reason") == "SINGLENODE_SSH_CONNECT_FAILED"
 
     def test_deploy_fails_when_health_check_fails(self, provider):
         mock_ssh = Mock()
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=False, errors=["GPU missing"])
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                result = provider.deploy("model", run_id="r1", base_model_id="base")
-        assert result.is_failure()
-        assert "SINGLENODE_HEALTH_CHECK_FAILED" in str(result.unwrap_err())
+                with pytest.raises(InferenceUnavailableError) as exc_info:
+                    provider.deploy("model", run_id="r1", base_model_id="base")
+        assert exc_info.value.context.get("reason") == "SINGLENODE_HEALTH_CHECK_FAILED"
 
     def test_deploy_fails_when_dir_creation_fails(self, provider):
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (False, "permission denied")
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                result = provider.deploy("model", run_id="r1", base_model_id="base")
-        assert result.is_failure()
-        assert "SINGLENODE_DIR_CREATE_FAILED" in str(result.unwrap_err())
+                with pytest.raises(InferenceUnavailableError) as exc_info:
+                    provider.deploy("model", run_id="r1", base_model_id="base")
+        assert exc_info.value.context.get("reason") == "SINGLENODE_DIR_CREATE_FAILED"
 
     def test_deploy_fails_when_local_adapter_not_dir(self, provider, tmp_path):
         adapter_file = tmp_path / "adapter.bin"
@@ -343,19 +348,19 @@ class TestDeploy:
 
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (True, "")
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                result = provider.deploy(
-                    str(adapter_file),
-                    run_id="r1",
-                    base_model_id="base",
-                    lora_path=str(adapter_file),
-                )
-        assert result.is_failure()
-        assert "SINGLENODE_ADAPTER_NOT_DIR" in str(result.unwrap_err())
+                with pytest.raises(ConfigInvalidError) as exc_info:
+                    provider.deploy(
+                        str(adapter_file),
+                        run_id="r1",
+                        base_model_id="base",
+                        lora_path=str(adapter_file),
+                    )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_ADAPTER_NOT_DIR"
 
     def test_deploy_fails_when_adapter_upload_fails(self, provider, tmp_path):
         from ryotenkai_shared.errors import SSHTransferFailedError
@@ -371,80 +376,84 @@ class TestDeploy:
             context={"op": "upload_directory"},
         )
 
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):
-                result = provider.deploy(
-                    str(adapter_dir),
-                    run_id="r1",
-                    base_model_id="base",
-                    lora_path=str(adapter_dir),
-                )
-        assert result.is_failure()
-        assert "SINGLENODE_ADAPTER_UPLOAD_FAILED" in str(result.unwrap_err())
+                with pytest.raises(InferenceUnavailableError) as exc_info:
+                    provider.deploy(
+                        str(adapter_dir),
+                        run_id="r1",
+                        base_model_id="base",
+                        lora_path=str(adapter_dir),
+                    )
+        assert exc_info.value.context.get("reason") == "SINGLENODE_ADAPTER_UPLOAD_FAILED"
 
     def test_deploy_fails_when_merge_fails(self, provider):
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (True, "")
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health), patch.object(
                 provider,
                 "_run_prepare_plan",
-                return_value=Err(InferenceError(message="merge failed", code="MERGE_ERR")),
+                side_effect=InferenceUnavailableError(
+                    detail="merge failed",
+                    context={"reason": "MERGE_ERR"},
+                ),
             ):
-                result = provider.deploy(
-                    "hf/model",
-                    run_id="r1",
-                    base_model_id="base",
-                )
-        assert result.is_failure()
+                with pytest.raises(InferenceUnavailableError):
+                    provider.deploy(
+                        "hf/model",
+                        run_id="r1",
+                        base_model_id="base",
+                    )
 
     def test_deploy_fails_when_vllm_start_fails(self, provider):
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (True, "")
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):  # noqa: SIM117
-                with patch.object(provider, "_run_prepare_plan", return_value=Ok(None)):
+                with patch.object(provider, "_run_prepare_plan", return_value=None):
                     with patch.object(
                         provider,
                         "_start_engine_container",
-                        return_value=Err(InferenceError(message="vllm failed", code="VLLM_ERR")),
+                        side_effect=InferenceUnavailableError(
+                            detail="vllm failed",
+                            context={"reason": "VLLM_ERR"},
+                        ),
                     ):
-                        result = provider.deploy(
-                            "hf/model",
-                            run_id="r1",
-                            base_model_id="base",
-                        )
-        assert result.is_failure()
+                        with pytest.raises(InferenceUnavailableError):
+                            provider.deploy(
+                                "hf/model",
+                                run_id="r1",
+                                base_model_id="base",
+                            )
 
     def test_deploy_success_returns_endpoint_info(self, provider):
         mock_ssh = Mock()
         mock_ssh.create_directory.return_value = (True, "")
         mock_ssh.exec_command.return_value = (True, "", "")
 
-        with patch.object(provider, "_connect_ssh", return_value=Ok(None)):
+        with patch.object(provider, "_connect_ssh", return_value=None):
             provider._ssh_client = mock_ssh
             mock_health = Mock()
             mock_health.run_all_checks.return_value = Mock(passed=True, errors=None)
             with patch.object(_mod, "SingleNodeHealthCheck", return_value=mock_health):  # noqa: SIM117
-                with patch.object(provider, "_run_prepare_plan", return_value=Ok(None)):
-                    with patch.object(provider, "_start_engine_container", return_value=Ok(None)):
-                        result = provider.deploy(
+                with patch.object(provider, "_run_prepare_plan", return_value=None):
+                    with patch.object(provider, "_start_engine_container", return_value=None):
+                        endpoint = provider.deploy(
                             "hf/model",
                             run_id="r1",
                             base_model_id="meta-llama/Llama-2-7b",
                         )
 
-        assert result.is_success()
-        endpoint = result.unwrap()
         assert endpoint.endpoint_url.startswith("http://127.0.0.1:8000")
         assert endpoint.engine == "vllm"
         assert provider.get_endpoint_info() is endpoint
@@ -465,41 +474,36 @@ class TestDeploy:
 class TestHealthCheck:
     def test_returns_err_when_no_ssh_client(self, provider):
         provider._ssh_client = None
-        result = provider.health_check()
-        assert result.is_failure()
-        assert "SINGLENODE_NOT_DEPLOYED" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider.health_check()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_NOT_DEPLOYED"
 
     def test_returns_err_when_command_fails(self, provider):
         mock_ssh = Mock()
         mock_ssh.exec_command.return_value = (False, "", "Connection refused")
         provider._ssh_client = mock_ssh
-        result = provider.health_check()
-        assert result.is_failure()
-        assert "SINGLENODE_HEALTH_CHECK_COMMAND_FAILED" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider.health_check()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_HEALTH_CHECK_COMMAND_FAILED"
 
     def test_returns_ok_true_when_output_is_1(self, provider):
         mock_ssh = Mock()
         mock_ssh.exec_command.return_value = (True, "1", "")
         provider._ssh_client = mock_ssh
-        result = provider.health_check()
-        assert result.is_success()
-        assert result.unwrap() is True
+        # Phase A2 Batch 12: health_check returns bool.
+        assert provider.health_check() is True
 
     def test_returns_ok_false_when_output_is_0(self, provider):
         mock_ssh = Mock()
         mock_ssh.exec_command.return_value = (True, "0", "")
         provider._ssh_client = mock_ssh
-        result = provider.health_check()
-        assert result.is_success()
-        assert result.unwrap() is False
+        assert provider.health_check() is False
 
     def test_returns_ok_false_for_partial_match(self, provider):
         mock_ssh = Mock()
         mock_ssh.exec_command.return_value = (True, "10", "")
         provider._ssh_client = mock_ssh
-        result = provider.health_check()
-        assert result.is_success()
-        assert result.unwrap() is False
+        assert provider.health_check() is False
 
 
 # ---------------------------------------------------------------------------
@@ -509,16 +513,15 @@ class TestHealthCheck:
 class TestUndeploy:
     def test_undeploy_without_ssh_client(self, provider):
         provider._ssh_client = None
-        result = provider.undeploy()
-        assert result.is_success()
+        # Phase A2 Batch 12: undeploy returns None on success.
+        provider.undeploy()
 
     def test_undeploy_with_ssh_client_calls_docker_rm(self, provider, fake_docker):
         mock_ssh = Mock()
         provider._ssh_client = mock_ssh
         from ryotenkai_providers.inference.interfaces import EndpointInfo
         provider._endpoint_info = Mock(spec=EndpointInfo)
-        result = provider.undeploy()
-        assert result.is_success()
+        provider.undeploy()
         assert provider._endpoint_info is None
         assert len(fake_docker.calls_for("rm_force")) == 1
 
@@ -590,9 +593,8 @@ class TestBuildInferenceArtifacts:
     def test_artifacts_with_alias(self, provider):
         ctx = self._mk_ctx(provider)
         with patch.object(provider, "_resolve_llm_manifest_block", return_value={"system_prompt": None, "system_prompt_source": None}):
-            result = provider.build_inference_artifacts(ctx=ctx)
-        assert result.is_success()
-        arts = result.unwrap()
+            # Phase A2 Batch 12: build_inference_artifacts returns InferenceArtifacts.
+            arts = provider.build_inference_artifacts(ctx=ctx)
         assert "test-node" in arts.manifest["endpoint"]["tunnel_hint"]
 
     def test_artifacts_without_alias(self, provider_cfg, engine_cfg, secrets):
@@ -618,9 +620,7 @@ class TestBuildInferenceArtifacts:
             endpoint=endpoint,
         )
         with patch.object(p, "_resolve_llm_manifest_block", return_value={"system_prompt": None, "system_prompt_source": None}):
-            result = p.build_inference_artifacts(ctx=ctx)
-        assert result.is_success()
-        arts = result.unwrap()
+            arts = p.build_inference_artifacts(ctx=ctx)
         assert "myuser@10.0.0.1" in arts.manifest["endpoint"]["tunnel_hint"]
 
 
@@ -631,9 +631,9 @@ class TestBuildInferenceArtifacts:
 class TestEvalLifecycle:
     def test_activate_for_eval_without_endpoint_fails(self, provider):
         provider._endpoint_info = None
-        result = provider.activate_for_eval()
-        assert result.is_failure()
-        assert "SINGLENODE_NOT_DEPLOYED" in str(result.unwrap_err())
+        with pytest.raises(InferenceUnavailableError) as exc_info:
+            provider.activate_for_eval()
+        assert exc_info.value.context.get("reason") == "SINGLENODE_NOT_DEPLOYED"
 
     def test_activate_for_eval_returns_url(self, provider):
         from ryotenkai_providers.inference.interfaces import EndpointInfo
@@ -646,13 +646,13 @@ class TestEvalLifecycle:
             health_url="http://127.0.0.1:8000/v1/models",
             resource_id="c",
         )
-        result = provider.activate_for_eval()
-        assert result.is_success()
-        assert "8000" in result.unwrap()
+        # Phase A2 Batch 12: activate_for_eval returns URL string.
+        url = provider.activate_for_eval()
+        assert "8000" in url
 
     def test_deactivate_after_eval_is_noop(self, provider):
-        result = provider.deactivate_after_eval()
-        assert result.is_success()
+        # Phase A2 Batch 12: deactivate_after_eval returns None.
+        provider.deactivate_after_eval()
 
 
 # ---------------------------------------------------------------------------

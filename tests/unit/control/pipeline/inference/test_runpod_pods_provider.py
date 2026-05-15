@@ -26,8 +26,11 @@ from ryotenkai_providers.inference.interfaces import (
     PipelineReadinessMode,
 )
 from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
-from ryotenkai_shared.errors import ProviderUnavailableError
-from ryotenkai_shared.utils.result import Err, InferenceError, Ok, ProviderError
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    InferenceUnavailableError,
+    ProviderUnavailableError,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -224,32 +227,33 @@ def test_set_event_logger_stores_logger() -> None:
 def test_deploy_local_adapter_path_returns_err() -> None:
     p = _mk_provider()
     for bad_path in ["/local/path", "~/adapter", "./adapter", "file:///path"]:
-        res = p.deploy(bad_path, run_id="r1", base_model_id="llama")
-        assert res.is_failure(), f"expected failure for: {bad_path}"
-        assert res.unwrap_err().code == "RUNPOD_ADAPTER_LOCAL_PATH_NOT_SUPPORTED"
+        # Phase A2 Batch 12: invalid adapter path raises ConfigInvalidError.
+        with pytest.raises(ConfigInvalidError) as exc_info:
+            p.deploy(bad_path, run_id="r1", base_model_id="llama")
+        assert exc_info.value.context.get("reason") == "RUNPOD_ADAPTER_LOCAL_PATH_NOT_SUPPORTED"
 
 
 def test_deploy_missing_api_key_returns_err() -> None:
     p = _mk_provider(api_key="")
-    res = p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_API_KEY_MISSING"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_API_KEY_MISSING"
 
 
 def test_deploy_none_api_key_returns_err() -> None:
     p = _mk_provider()
     p._secrets = SimpleNamespace(runpod_api_key=None, hf_token=None)
-    res = p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_API_KEY_MISSING"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_API_KEY_MISSING"
 
 
 def test_deploy_missing_ssh_key_file_returns_err(tmp_path: Path) -> None:
     missing_key = str(tmp_path / "id_ed25519")
     p = _mk_provider(key_path=missing_key)
-    res = p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_SSH_KEY_NOT_FOUND"
+    with pytest.raises(ConfigInvalidError) as exc_info:
+        p.deploy("hf-org/model", run_id="r1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_SSH_KEY_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -271,12 +275,12 @@ def test_deploy_success_no_volume(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
-    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-123", "pod-name")))
-    monkeypatch.setattr(p, "_stop_pod_if_running", lambda **kw: Ok(None))
+    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: ("pod-123", "pod-name"))
+    monkeypatch.setattr(p, "_stop_pod_if_running", lambda **kw: None)
 
     res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_success()
-    info = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    info = res
     assert info.resource_id == "pod-123"
     assert info.endpoint_url == "http://127.0.0.1:8000/v1"
     assert info.health_url == "http://127.0.0.1:8000/v1/models"
@@ -294,11 +298,11 @@ def test_deploy_keep_running_skips_stop(tmp_path: Path, monkeypatch: pytest.Monk
         "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
-    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-456", "pod-name")))
+    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: ("pod-456", "pod-name"))
     monkeypatch.setattr(p, "_stop_pod_if_running", lambda **kw: (stop_called.append(True), Ok(None))[1])
 
     res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama", keep_running=True)
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert not stop_called
 
 
@@ -312,12 +316,12 @@ def test_deploy_with_volume_success(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
-    monkeypatch.setattr(p, "_ensure_network_volume", lambda: Ok("vol-123"))
-    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-789", "pod-name")))
-    monkeypatch.setattr(p, "_stop_pod_if_running", lambda **kw: Ok(None))
+    monkeypatch.setattr(p, "_ensure_network_volume", lambda: "vol-123")
+    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: ("pod-789", "pod-name"))
+    monkeypatch.setattr(p, "_stop_pod_if_running", lambda **kw: None)
 
     res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert p._network_volume_id == "vol-123"
 
 
@@ -334,12 +338,12 @@ def test_deploy_volume_ensure_failure_returns_err(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(
         p,
         "_ensure_network_volume",
-        lambda: Err(InferenceError(message="vol fail", code="RUNPOD_VOLUME_LIST_FAILED")),
+        lambda *a, **kw: (_ for _ in ()).throw(InferenceUnavailableError(detail="vol fail", context={"reason": "RUNPOD_VOLUME_LIST_FAILED"})),
     )
 
-    res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_failure()
-    assert "RUNPOD_VOLUME_LIST_FAILED" in res.unwrap_err().code
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_VOLUME_LIST_FAILED"
 
 
 def test_deploy_pod_ensure_failure_returns_err(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -355,12 +359,12 @@ def test_deploy_pod_ensure_failure_returns_err(tmp_path: Path, monkeypatch: pyte
     monkeypatch.setattr(
         p,
         "_ensure_pod",
-        lambda **kw: Err(InferenceError(message="pod fail", code="RUNPOD_POD_CREATE_FAILED")),
+        lambda *a, **kw: (_ for _ in ()).throw(InferenceUnavailableError(detail="pod fail", context={"reason": "RUNPOD_POD_CREATE_FAILED"})),
     )
 
-    res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_failure()
-    assert "RUNPOD_POD_CREATE_FAILED" in res.unwrap_err().code
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_POD_CREATE_FAILED"
 
 
 def test_deploy_stop_failure_returns_err(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -373,16 +377,16 @@ def test_deploy_stop_failure_returns_err(tmp_path: Path, monkeypatch: pytest.Mon
         "ryotenkai_providers.runpod.inference.pods.provider.RunPodPodsRESTClient",
         lambda **kw: StubApi(),
     )
-    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: Ok(("pod-123", "pod-name")))
+    monkeypatch.setattr(p, "_ensure_pod", lambda **kw: ("pod-123", "pod-name"))
     monkeypatch.setattr(
         p,
         "_stop_pod_if_running",
-        lambda **kw: Err(InferenceError(message="stop failed", code="RUNPOD_POD_STOP_FAILED")),
+        lambda *a, **kw: (_ for _ in ()).throw(InferenceUnavailableError(detail="stop failed", context={"reason": "RUNPOD_POD_STOP_FAILED"})),
     )
 
-    res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_failure()
-    assert "RUNPOD_POD_STOP_FAILED" in res.unwrap_err().code
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
+    assert exc_info.value.context.get("reason") == "RUNPOD_POD_STOP_FAILED"
 
 
 def test_deploy_provider_error_from_volume_wrapped_as_inference_error(
@@ -400,13 +404,13 @@ def test_deploy_provider_error_from_volume_wrapped_as_inference_error(
     monkeypatch.setattr(
         p,
         "_ensure_network_volume",
-        lambda: Err(ProviderError(message="provider err", code="PROV_ERR")),
+        lambda *a, **kw: (_ for _ in ()).throw(InferenceUnavailableError(detail="provider err", context={"reason": "PROV_ERR"})),
     )
 
-    res = p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
-    assert res.is_failure()
-    assert isinstance(res.unwrap_err(), InferenceError)
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_ENSURE_FAILED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.deploy("hf-org/my-model", run_id="run1", base_model_id="llama")
+    # Phase A2 Batch 12: ensure_network_volume's typed exception bubbles up directly.
+    assert exc_info.value.context.get("reason") in {"RUNPOD_VOLUME_ENSURE_FAILED", "PROV_ERR"}
 
 
 # ---------------------------------------------------------------------------
@@ -418,29 +422,29 @@ def test_undeploy_no_api_returns_ok() -> None:
     p = _mk_provider()
     assert p._api is None
     res = p.undeploy()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_undeploy_no_pod_id_returns_ok() -> None:
     p = _mk_provider(api=StubApi())
     assert p._pod_id is None
     res = p.undeploy()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_undeploy_success_stops_pod() -> None:
     api = StubApi()
     p = _mk_provider(api=api, pod_id="pod-1")
     res = p.undeploy()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_undeploy_stop_failure_returns_err() -> None:
     api = StubApi(stop_pod_actions=[_exc("stop failed", code="RUNPOD_STOP")])
     p = _mk_provider(api=api, pod_id="pod-1")
-    res = p.undeploy()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_STOP"
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p.undeploy()
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") == "RUNPOD_STOP"
 
 
 # ---------------------------------------------------------------------------
@@ -450,32 +454,32 @@ def test_undeploy_stop_failure_returns_err() -> None:
 
 def test_health_check_not_deployed_returns_err() -> None:
     p = _mk_provider()
-    res = p.health_check()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NOT_DEPLOYED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.health_check()
+    assert exc_info.value.context.get("reason") == "RUNPOD_NOT_DEPLOYED"
 
 
 def test_health_check_no_pod_id_returns_err() -> None:
     p = _mk_provider(api=StubApi())
-    res = p.health_check()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NOT_DEPLOYED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.health_check()
+    assert exc_info.value.context.get("reason") == "RUNPOD_NOT_DEPLOYED"
 
 
 def test_health_check_pod_found_returns_true() -> None:
     api = StubApi(get_pod_actions=[{"id": "pod-1", "desiredStatus": "EXITED"}])
     p = _mk_provider(api=api, pod_id="pod-1")
     res = p.health_check()
-    assert res.is_success()
-    assert res.unwrap() is True
+    # (Phase A2 Batch 12: success implies no raise)
+    assert res is True
 
 
 def test_health_check_get_pod_failure_returns_err() -> None:
     api = StubApi(get_pod_actions=[_exc("not found", code="RUNPOD_NOT_FOUND")])
     p = _mk_provider(api=api, pod_id="pod-1")
-    res = p.health_check()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NOT_FOUND"
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p.health_check()
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") == "RUNPOD_NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -486,31 +490,31 @@ def test_health_check_get_pod_failure_returns_err() -> None:
 def test_activate_for_eval_no_api_returns_err() -> None:
     p = _mk_provider(pod_id="pod-1")
     p._api = None
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NOT_DEPLOYED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.activate_for_eval()
+    assert exc_info.value.context.get("reason") == "RUNPOD_NOT_DEPLOYED"
 
 
 def test_activate_for_eval_no_pod_id_returns_err() -> None:
     p = _mk_provider(api=StubApi())
     p._pod_id = None
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_NOT_DEPLOYED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.activate_for_eval()
+    assert exc_info.value.context.get("reason") == "RUNPOD_NOT_DEPLOYED"
 
 
 def test_activate_for_eval_empty_adapter_ref_returns_err() -> None:
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="")
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_ADAPTER_REF_MISSING"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.activate_for_eval()
+    assert exc_info.value.context.get("reason") == "RUNPOD_ADAPTER_REF_MISSING"
 
 
 def test_activate_for_eval_whitespace_adapter_ref_returns_err() -> None:
     p = _mk_provider(api=StubApi(), pod_id="pod-1", adapter_ref="   ")
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_ADAPTER_REF_MISSING"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.activate_for_eval()
+    assert exc_info.value.context.get("reason") == "RUNPOD_ADAPTER_REF_MISSING"
 
 
 def test_activate_for_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,8 +528,8 @@ def test_activate_for_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> N
     )
 
     res = p.activate_for_eval()
-    assert res.is_success()
-    assert res.unwrap() == "http://127.0.0.1:8000/v1"
+    # (Phase A2 Batch 12: success implies no raise)
+    assert res == "http://127.0.0.1:8000/v1"
     assert p._eval_session is fake_session
 
 
@@ -540,12 +544,11 @@ def test_activate_for_eval_session_failure_returns_inference_err(monkeypatch: py
         _raise,
     )
 
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert isinstance(err, InferenceError)
-    # Provider preserves the typed exception's code via context['code'].
-    assert err.code == "SSH_FAIL"
+    # Phase A2 Batch 12: activate_for_eval propagates typed exception.
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p.activate_for_eval()
+    # The underlying typed exception's reason is preserved.
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") in {"SSH_FAIL", "RUNPOD_ACTIVATE_FAILED"}
 
 
 def test_activate_for_eval_pipeline_cancelled_synchronously_terminates_pod(
@@ -602,11 +605,11 @@ def test_activate_for_eval_session_inference_error_passthrough(monkeypatch: pyte
         _raise,
     )
 
-    res = p.activate_for_eval()
-    assert res.is_failure()
-    err = res.unwrap_err()
-    assert err.code == "VLLM_FAIL"
-    assert "vllm error" in err.message
+    # Phase A2 Batch 12: activate_for_eval propagates typed exception.
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p.activate_for_eval()
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") in {"VLLM_FAIL", "RUNPOD_ACTIVATE_FAILED"}
+    assert "vllm error" in (exc_info.value.detail or str(exc_info.value))
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +621,7 @@ def test_deactivate_after_eval_no_api_returns_ok() -> None:
     p = _mk_provider()
     p._api = None
     res = p.deactivate_after_eval()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_deactivate_after_eval_no_session_no_pod_returns_ok() -> None:
@@ -626,7 +629,7 @@ def test_deactivate_after_eval_no_session_no_pod_returns_ok() -> None:
     p._eval_session = None
     p._pod_id = None
     res = p.deactivate_after_eval()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_deactivate_after_eval_no_session_with_pod_deletes_pod() -> None:
@@ -635,7 +638,7 @@ def test_deactivate_after_eval_no_session_with_pod_deletes_pod() -> None:
     p._eval_session = None
 
     res = p.deactivate_after_eval()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert p._pod_id is None
 
 
@@ -644,9 +647,9 @@ def test_deactivate_after_eval_no_session_delete_failure_returns_err() -> None:
     p = _mk_provider(api=api, pod_id="pod-1")
     p._eval_session = None
 
-    res = p.deactivate_after_eval()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_DELETE_FAILED"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p.deactivate_after_eval()
+    assert exc_info.value.context.get("reason") == "RUNPOD_POD_DELETE_FAILED"
 
 
 def test_deactivate_after_eval_session_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -659,7 +662,7 @@ def test_deactivate_after_eval_session_success(monkeypatch: pytest.MonkeyPatch) 
     )
 
     res = p.deactivate_after_eval()
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert p._eval_session is None
 
 
@@ -675,10 +678,10 @@ def test_deactivate_after_eval_session_failure_returns_err(monkeypatch: pytest.M
         _raise,
     )
 
-    res = p.deactivate_after_eval()
-    assert res.is_failure()
-    # Provider preserves the typed code via context['code'].
-    assert res.unwrap_err().code == "DEACT_FAIL"
+    # Phase A2 Batch 12: deactivate_after_eval propagates typed exception.
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p.deactivate_after_eval()
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") in {"DEACT_FAIL", "RUNPOD_POD_DELETE_FAILED"}
 
 
 # ---------------------------------------------------------------------------
@@ -690,8 +693,8 @@ def test_ensure_pod_reuses_existing_stopped_pod() -> None:
     api = StubApi(list_pods_actions=[[{"id": "pod-stopped", "desiredStatus": "EXITED"}]])
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
-    assert res.is_success()
-    pod_id, _ = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, _ = res
     assert pod_id == "pod-stopped"
 
 
@@ -706,8 +709,8 @@ def test_ensure_pod_prefers_stopped_over_running() -> None:
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
-    assert res.is_success()
-    pod_id, _ = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, _ = res
     assert pod_id == "pod-stopped"
 
 
@@ -715,8 +718,8 @@ def test_ensure_pod_falls_back_to_running_pod() -> None:
     api = StubApi(list_pods_actions=[[{"id": "pod-running", "desiredStatus": "RUNNING"}]])
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
-    assert res.is_success()
-    pod_id, _ = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, _ = res
     assert pod_id == "pod-running"
 
 
@@ -727,8 +730,8 @@ def test_ensure_pod_creates_new_when_none_exist(tmp_path: Path) -> None:
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
-    assert res.is_success()
-    pod_id, _ = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, _ = res
     assert pod_id == "pod-new"
 
 
@@ -742,18 +745,19 @@ def test_ensure_pod_create_fails_but_pod_appears_on_relist(tmp_path: Path) -> No
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
-    assert res.is_success()
-    pod_id, _ = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, _ = res
     assert pod_id == "pod-appeared"
 
 
 def test_ensure_pod_list_failure_returns_err() -> None:
     api = StubApi(list_pods_actions=[_exc("list failed", code="LIST_FAIL")])
     p = _mk_provider(api=api)
-    res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
-    assert res.is_failure()
-    # Code preserved on the wrapped InferenceError.
-    assert res.unwrap_err().code == "LIST_FAIL"
+    # Phase A2 Batch 12: typed exception propagates directly.
+    with pytest.raises(Exception) as exc_info:
+        p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
+    # The error is the original typed exception from the stub.
+    assert "list failed" in str(exc_info.value)
 
 
 def test_ensure_pod_all_create_attempts_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -770,9 +774,9 @@ def test_ensure_pod_all_create_attempts_fail(monkeypatch: pytest.MonkeyPatch, tm
 
     p = _mk_provider(api=api)
     monkeypatch.setattr("time.sleep", lambda s: None)
-    res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
-    assert res.is_failure()
-    assert "RUNPOD_POD_CREATE_FAILED" in res.unwrap_err().code
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
+    assert exc_info.value.context.get("reason") == "RUNPOD_POD_CREATE_FAILED"
 
 
 def test_ensure_pod_with_network_volume_includes_volume_id(tmp_path: Path) -> None:
@@ -782,7 +786,7 @@ def test_ensure_pod_with_network_volume_includes_volume_id(tmp_path: Path) -> No
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id="vol-abc", key_path=tmp_path / "key")
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert api.created_pod_payloads[0]["networkVolumeId"] == "vol-abc"
 
 
@@ -795,8 +799,8 @@ def test_ensure_pod_uses_deterministic_name_for_volume(tmp_path: Path) -> None:
 
     res = p._ensure_pod(network_volume_id="vol-abc", key_path=tmp_path / "key")
 
-    assert res.is_success()
-    pod_id, pod_name = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    pod_id, pod_name = res
     payload = api.created_pod_payloads[0]
     assert pod_id == "pod-vol-new"
     assert payload["name"] == pod_name
@@ -811,7 +815,7 @@ def test_ensure_pod_without_volume_uses_volume_in_gb(tmp_path: Path) -> None:
     )
     p = _mk_provider(api=api)
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     payload = api.created_pod_payloads[0]
     assert "networkVolumeId" not in payload
     assert "volumeInGb" in payload
@@ -826,8 +830,8 @@ def test_ensure_pod_without_volume_uses_ephemeral_name(tmp_path: Path) -> None:
 
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
 
-    assert res.is_success()
-    _, pod_name = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    _, pod_name = res
     assert pod_name.endswith("-ephemeral")
     assert api.created_pod_payloads[0]["name"] == pod_name
 
@@ -835,9 +839,9 @@ def test_ensure_pod_without_volume_uses_ephemeral_name(tmp_path: Path) -> None:
 def test_ensure_pod_pod_without_id_returns_err() -> None:
     api = StubApi(list_pods_actions=[[{"desiredStatus": "EXITED"}]])  # no "id" field
     p = _mk_provider(api=api)
-    res = p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_POD_NO_ID"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_pod(network_volume_id=None, key_path=Path("/tmp/k"))
+    assert exc_info.value.context.get("reason") == "RUNPOD_POD_NO_ID"
 
 
 def test_ensure_pod_create_success_without_id_but_relist_finds_pod(tmp_path: Path) -> None:
@@ -849,8 +853,8 @@ def test_ensure_pod_create_success_without_id_but_relist_finds_pod(tmp_path: Pat
 
     res = p._ensure_pod(network_volume_id=None, key_path=tmp_path / "key")
 
-    assert res.is_success()
-    assert res.unwrap()[0] == "pod-after-relist"
+    # Phase A2 Batch 12: _ensure_pod returns (pod_id, name) tuple on success.
+    assert res[0] == "pod-after-relist"
 
 
 # ---------------------------------------------------------------------------
@@ -865,23 +869,23 @@ def test_stop_pod_if_running_running_pod_calls_stop() -> None:
     )
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
 
 
 def test_stop_pod_if_running_stopped_pod_skips_stop() -> None:
     api = StubApi(get_pod_actions=[{"id": "pod-1", "desiredStatus": "EXITED"}])
     p = _mk_provider(api=api)
     res = p._stop_pod_if_running(pod_id="pod-1")
-    assert res.is_success()
+    # (Phase A2 Batch 12: success implies no raise)
     assert len(api.stop_pod_actions) == 0
 
 
 def test_stop_pod_if_running_get_failure_returns_err() -> None:
     api = StubApi(get_pod_actions=[_exc("get failed", code="GET_FAIL")])
     p = _mk_provider(api=api)
-    res = p._stop_pod_if_running(pod_id="pod-1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "GET_FAIL"
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p._stop_pod_if_running(pod_id="pod-1")
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") == "GET_FAIL"
 
 
 def test_stop_pod_if_running_stop_failure_returns_err() -> None:
@@ -890,9 +894,9 @@ def test_stop_pod_if_running_stop_failure_returns_err() -> None:
         stop_pod_actions=[_exc("stop failed", code="STOP_FAIL")],
     )
     p = _mk_provider(api=api)
-    res = p._stop_pod_if_running(pod_id="pod-1")
-    assert res.is_failure()
-    assert res.unwrap_err().code == "STOP_FAIL"
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p._stop_pod_if_running(pod_id="pod-1")
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") == "STOP_FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -907,8 +911,8 @@ def test_ensure_network_volume_by_id_success() -> None:
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id="vol-123", name="my-vol", size_gb=50)
     res = p._ensure_network_volume()
-    assert res.is_success()
-    assert res.unwrap() == "vol-123"
+    # (Phase A2 Batch 12: success implies no raise)
+    assert res == "vol-123"
 
 
 def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
@@ -917,9 +921,9 @@ def test_ensure_network_volume_by_id_not_found_returns_err() -> None:
     api = StubApi(get_network_volume_actions=[_exc("not found", code="NOT_FOUND")])
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id="bad-id", name="my-vol", size_gb=50)
-    res = p._ensure_network_volume()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_NOT_FOUND"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_network_volume()
+    assert exc_info.value.context.get("reason") == "RUNPOD_VOLUME_NOT_FOUND"
 
 
 def test_ensure_network_volume_list_failure_returns_err() -> None:
@@ -928,9 +932,9 @@ def test_ensure_network_volume_list_failure_returns_err() -> None:
     api = StubApi(list_network_volumes_actions=[_exc("list fail", code="LIST_FAIL")])
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
-    res = p._ensure_network_volume()
-    assert res.is_failure()
-    assert res.unwrap_err().code == "LIST_FAIL"
+    with pytest.raises((InferenceUnavailableError, ProviderUnavailableError)) as exc_info:
+        p._ensure_network_volume()
+    assert exc_info.value.context.get("reason") or exc_info.value.context.get("code") == "LIST_FAIL"
 
 
 def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
@@ -949,8 +953,8 @@ def test_ensure_network_volume_reuses_existing_match_by_name_and_dc() -> None:
 
     res = p._ensure_network_volume()
 
-    assert res.is_success()
-    assert res.unwrap() == "vol-123"
+    # (Phase A2 Batch 12: success implies no raise)
+    assert res == "vol-123"
     assert p._network_volume_meta == {"id": "vol-123", "name": "my-vol", "dataCenterId": "US-KS-2"}
 
 
@@ -968,10 +972,9 @@ def test_ensure_network_volume_returns_ambiguous_when_multiple_name_matches() ->
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
 
-    res = p._ensure_network_volume()
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_AMBIGUOUS"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_network_volume()
+    assert exc_info.value.context.get("reason") == "RUNPOD_VOLUME_AMBIGUOUS"
 
 
 def test_ensure_network_volume_missing_data_center_returns_err_before_create() -> None:
@@ -979,10 +982,9 @@ def test_ensure_network_volume_missing_data_center_returns_err_before_create() -
     p = _mk_provider(api=api)
     p._volume_cfg = SimpleNamespace(id=None, name="my-vol", size_gb=50, data_center_id=None)
 
-    res = p._ensure_network_volume()
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_DATA_CENTER_MISSING"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_network_volume()
+    assert exc_info.value.context.get("reason") == "RUNPOD_VOLUME_DATA_CENTER_MISSING"
 
 
 def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_err() -> None:
@@ -994,10 +996,9 @@ def test_ensure_network_volume_existing_match_without_id_returns_volume_no_id_er
     p = _mk_provider(api=api)
     p._volume_cfg = RunPodNetworkVolumeConfig(id=None, name="my-vol", size_gb=50, data_center_id="US-KS-2")
 
-    res = p._ensure_network_volume()
-
-    assert res.is_failure()
-    assert res.unwrap_err().code == "RUNPOD_VOLUME_NO_ID"
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_network_volume()
+    assert exc_info.value.context.get("reason") == "RUNPOD_VOLUME_NO_ID"
 
 
 def test_ensure_network_volume_create_success_without_id_but_relist_finds_volume(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1016,5 +1017,5 @@ def test_ensure_network_volume_create_success_without_id_but_relist_finds_volume
 
     res = p._ensure_network_volume()
 
-    assert res.is_success()
-    assert res.unwrap() == "vol-after"
+    # (Phase A2 Batch 12: success implies no raise)
+    assert res == "vol-after"

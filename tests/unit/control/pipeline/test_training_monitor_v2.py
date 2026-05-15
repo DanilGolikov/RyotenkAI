@@ -1077,17 +1077,20 @@ class TestPodResilience:
         # Phase 14.D+F: ``_recover_pod_if_needed`` now goes through the
         # provider's :class:`IRecoveryProbeProvider.attempt_recovery`
         # capability instead of hitting RunPod's SDK directly. A
-        # terminal pod surfaces as ``Err(ProviderError(POD_TERMINAL))``
-        # from the provider, which the monitor maps to
+        # terminal pod surfaces as a ``ProviderUnavailableError`` raised
+        # by the provider (Phase A2 Batch 12), which the monitor maps to
         # ``MONITOR_POD_TERMINATED``.
-        from ryotenkai_shared.utils.result import Err, ProviderError
+        from ryotenkai_shared.errors import ProviderUnavailableError
 
         calls: list[str] = []
 
         class _FakeProvider:
             def attempt_recovery(self, *, resource_id):
                 calls.append(resource_id)
-                return Err(ProviderError(message="pod terminal", code="POD_TERMINAL"))
+                raise ProviderUnavailableError(
+                    detail="pod terminal",
+                    context={"legacy_code": "POD_TERMINAL"},
+                )
 
         monitor = make_monitor_with_log_manager(
             _provider=_FakeProvider(),
@@ -1133,12 +1136,12 @@ class TestPodResilience:
         assert result is None
 
     def test_stopped_pod_triggers_wake_up(self) -> None:
-        # A successful wake-up returns a fresh :class:`ProviderStatus`
+        # Phase A2 Batch 12: a successful wake-up returns a fresh
+        # :class:`ProviderStatus` directly (no Result wrapper). A status
         # that is NOT ``CONNECTED`` (the pod woke up but the runner SSH
-        # session has to be re-established by the orchestrator); the
-        # monitor surfaces this as ``MONITOR_POD_RECOVERED`` so the
-        # orchestrator knows to restart the launcher.
-        from ryotenkai_shared.utils.result import Ok
+        # session has to be re-established by the orchestrator) surfaces
+        # as ``MONITOR_POD_RECOVERED`` so the orchestrator knows to
+        # restart the launcher.
         from ryotenkai_providers.training.interfaces import ProviderStatus
 
         calls: list[str] = []
@@ -1146,7 +1149,7 @@ class TestPodResilience:
         class _FakeProvider:
             def attempt_recovery(self, *, resource_id):
                 calls.append(resource_id)
-                return Ok(ProviderStatus.AVAILABLE)
+                return ProviderStatus.AVAILABLE
 
         monitor = make_monitor_with_log_manager(
             _provider=_FakeProvider(),
@@ -1160,15 +1163,19 @@ class TestPodResilience:
         assert calls == ["pod-1"]
 
     def test_wake_up_failure_surfaces_specific_code(self) -> None:
-        # A wake-up rejection from the provider (rate-limited start,
-        # transient SDK failure, …) surfaces as
-        # ``Err(ProviderError(POD_WAKE_FAILED))``; the monitor maps the
-        # provider code to ``MONITOR_POD_WAKE_FAILED``.
-        from ryotenkai_shared.utils.result import Err, ProviderError
+        # Phase A2 Batch 12: a wake-up rejection from the provider
+        # (rate-limited start, transient SDK failure, …) is raised as
+        # ``ProviderUnavailableError`` (carrying
+        # ``context["legacy_code"]=POD_WAKE_FAILED``); the monitor maps
+        # the provider code to ``MONITOR_POD_WAKE_FAILED``.
+        from ryotenkai_shared.errors import ProviderUnavailableError
 
         class _FakeProvider:
             def attempt_recovery(self, *, resource_id):
-                return Err(ProviderError(message="rate limit", code="POD_WAKE_FAILED"))
+                raise ProviderUnavailableError(
+                    detail="rate limit",
+                    context={"legacy_code": "POD_WAKE_FAILED"},
+                )
 
         monitor = make_monitor_with_log_manager(
             _provider=_FakeProvider(),

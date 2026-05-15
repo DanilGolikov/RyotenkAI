@@ -65,13 +65,12 @@ from ryotenkai_providers.manifest import (
     ProviderManifest,
     ProviderRole,
 )
-from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import (
-    Err,
-    Ok,
-    ProviderError,
-    Result,
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    ProviderNotFoundError,
+    ProviderUnavailableError,
 )
+from ryotenkai_shared.utils.logger import logger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -499,19 +498,22 @@ class ProviderRegistry:
 
     def create_training(
         self, provider_id: str, ctx: ProviderContext
-    ) -> Result[IGPUProvider, ProviderError]:
+    ) -> IGPUProvider:
         """Instantiate the training-side provider.
 
-        Returns ``Err(PROVIDER_ROLE_MISMATCH)`` if the manifest doesn't
-        declare ``training``, ``Err(PROVIDER_NOT_REGISTERED)`` for unknown
-        ids — never raises for these expected cases. Caller composes
-        cleanly (``.unwrap()`` / ``.unwrap_or_else(...)``).
+        Raises:
+            ProviderNotFoundError: unknown ``provider_id`` (
+                ``context["legacy_code"]`` =
+                ``"PROVIDER_NOT_REGISTERED"`` or
+                ``"PROVIDER_ROLE_MISMATCH"``).
+            ProviderUnavailableError: provider class resolution /
+                construction failed.
         """
         return self._create_role(provider_id, ctx, role="training")
 
     def create_inference(
         self, provider_id: str, ctx: ProviderContext
-    ) -> Result[IInferenceProvider, ProviderError]:
+    ) -> IInferenceProvider:
         """Instantiate the inference-side provider. See :meth:`create_training`."""
         return self._create_role(provider_id, ctx, role="inference")
 
@@ -521,73 +523,79 @@ class ProviderRegistry:
         ctx: ProviderContext,
         *,
         role: ProviderRole,
-    ) -> Result[Any, ProviderError]:
-        """Shared body of create_training / create_inference."""
+    ) -> Any:
+        """Shared body of create_training / create_inference.
+
+        Raises:
+            ProviderNotFoundError: unknown id or role mismatch.
+            ProviderUnavailableError: locator resolution failed,
+                construction failed.
+        """
         if provider_id not in self._manifests:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"provider {provider_id!r} is not registered. "
-                        f"Known: {self.list()!r}."
-                    ),
-                    code="PROVIDER_NOT_REGISTERED",
-                    details={"provider_id": provider_id, "known": list(self.list())},
-                )
+            raise ProviderNotFoundError(
+                detail=(
+                    f"provider {provider_id!r} is not registered. "
+                    f"Known: {self.list()!r}."
+                ),
+                context={
+                    "legacy_code": "PROVIDER_NOT_REGISTERED",
+                    "provider_id": provider_id,
+                    "known": list(self.list()),
+                },
             )
         manifest = self._manifests[provider_id]
         if role not in manifest.provider.roles:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"provider {provider_id!r} does not declare role "
-                        f"{role!r}. Declared roles: "
-                        f"{list(manifest.provider.roles)!r}."
-                    ),
-                    code="PROVIDER_ROLE_MISMATCH",
-                    details={
-                        "provider_id": provider_id,
-                        "requested_role": role,
-                        "declared_roles": list(manifest.provider.roles),
-                    },
-                )
+            raise ProviderNotFoundError(
+                detail=(
+                    f"provider {provider_id!r} does not declare role "
+                    f"{role!r}. Declared roles: "
+                    f"{list(manifest.provider.roles)!r}."
+                ),
+                context={
+                    "legacy_code": "PROVIDER_ROLE_MISMATCH",
+                    "provider_id": provider_id,
+                    "requested_role": role,
+                    "declared_roles": list(manifest.provider.roles),
+                },
             )
         try:
             cls = self._resolve_class(provider_id, role_key=role)
         except ProviderRegistryError as exc:
-            return Err(
-                ProviderError(
-                    message=str(exc),
-                    code=exc.code or "PROVIDER_LOCATOR_RESOLVE_FAILED",
-                    details=exc.details or {"provider_id": provider_id},
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=str(exc),
+                context={
+                    "legacy_code": exc.code or "PROVIDER_LOCATOR_RESOLVE_FAILED",
+                    "provider_id": provider_id,
+                    **(exc.details or {}),
+                },
+                cause=exc,
+            ) from exc
         # Construct — provider classes accept ProviderContext per the
         # unified signature contract.
         try:
             instance = cls(ctx)
         except Exception as exc:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"provider {provider_id!r} {role} class "
-                        f"{cls.__name__} raised during construction: {exc}"
-                    ),
-                    code="PROVIDER_CONSTRUCTION_FAILED",
-                    details={
-                        "provider_id": provider_id,
-                        "role": role,
-                        "exc_type": type(exc).__name__,
-                    },
-                )
-            )
-        return Ok(instance)
+            raise ProviderUnavailableError(
+                detail=(
+                    f"provider {provider_id!r} {role} class "
+                    f"{cls.__name__} raised during construction: {exc}"
+                ),
+                context={
+                    "legacy_code": "PROVIDER_CONSTRUCTION_FAILED",
+                    "provider_id": provider_id,
+                    "role": role,
+                    "exc_type": type(exc).__name__,
+                },
+                cause=exc,
+            ) from exc
+        return instance
 
     def create_resume_provider(
         self,
         provider_id: str,
         *,
         api_key: str | None = None,
-    ) -> Result[ITerminalActionProvider, ProviderError]:
+    ) -> ITerminalActionProvider:
         """Cheap construction for the resume path.
 
         The resume service needs only the lifecycle methods on a provider
@@ -598,30 +606,33 @@ class ProviderRegistry:
         only the credentials it needs — the registry calls it directly,
         no :class:`ProviderContext` involved.
 
-        Returns ``Err(PROVIDER_RESUME_UNAVAILABLE)`` if the manifest
-        doesn't declare ``resume_factory`` — clean skip for callers.
+        Raises:
+            ProviderNotFoundError: unknown ``provider_id``.
+            ProviderUnavailableError: manifest doesn't declare
+                ``resume_factory`` (``legacy_code="PROVIDER_RESUME_UNAVAILABLE"``)
+                or factory could not be resolved.
         """
         if provider_id not in self._manifests:
-            return Err(
-                ProviderError(
-                    message=f"provider {provider_id!r} is not registered.",
-                    code="PROVIDER_NOT_REGISTERED",
-                    details={"provider_id": provider_id},
-                )
+            raise ProviderNotFoundError(
+                detail=f"provider {provider_id!r} is not registered.",
+                context={
+                    "legacy_code": "PROVIDER_NOT_REGISTERED",
+                    "provider_id": provider_id,
+                },
             )
         manifest = self._manifests[provider_id]
         rf = manifest.entry_points.resume_factory
         if rf is None:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"provider {provider_id!r} does not declare "
-                        f"entry_points.resume_factory — resume bypass "
-                        f"is unavailable."
-                    ),
-                    code="PROVIDER_RESUME_UNAVAILABLE",
-                    details={"provider_id": provider_id},
-                )
+            raise ProviderUnavailableError(
+                detail=(
+                    f"provider {provider_id!r} does not declare "
+                    f"entry_points.resume_factory — resume bypass "
+                    f"is unavailable."
+                ),
+                context={
+                    "legacy_code": "PROVIDER_RESUME_UNAVAILABLE",
+                    "provider_id": provider_id,
+                },
             )
         try:
             module = importlib.import_module(rf.module)
@@ -630,17 +641,19 @@ class ProviderRegistry:
             factory = getattr(owner_cls, method_name)
             instance = factory(api_key=api_key) if api_key is not None else factory()
         except (ImportError, AttributeError) as exc:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"provider {provider_id!r} resume_factory locator "
-                        f"{rf.module}:{rf.classmethod} could not be resolved: {exc}"
-                    ),
-                    code="PROVIDER_RESUME_LOCATOR_FAILED",
-                    details={"provider_id": provider_id, "exc_type": type(exc).__name__},
-                )
-            )
-        return Ok(instance)
+            raise ProviderUnavailableError(
+                detail=(
+                    f"provider {provider_id!r} resume_factory locator "
+                    f"{rf.module}:{rf.classmethod} could not be resolved: {exc}"
+                ),
+                context={
+                    "legacy_code": "PROVIDER_RESUME_LOCATOR_FAILED",
+                    "provider_id": provider_id,
+                    "exc_type": type(exc).__name__,
+                },
+                cause=exc,
+            ) from exc
+        return instance
 
     def resolve_pod_lifecycle_client_cls(
         self, provider_id: str

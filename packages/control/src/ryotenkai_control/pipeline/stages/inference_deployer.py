@@ -127,8 +127,9 @@ class InferenceDeployer(PipelineStage):
 
         # Manifest-driven registry replaces the legacy
         # ``InferenceProviderFactory.create(config, secrets)`` if/elif
-        # chain. Same surface — Result-based, ``Err`` on unknown
-        # provider id or role mismatch.
+        # chain. Batch 12: registry raises typed exceptions directly;
+        # callers propagate (or translate to a stage-specific
+        # InferenceUnavailableError if context matters).
         from ryotenkai_providers.registry import ProviderContext, get_registry
 
         provider_id = self.config.inference.provider or ""
@@ -137,8 +138,8 @@ class InferenceDeployer(PipelineStage):
             try:
                 provider_block = self.config.get_provider_config(provider_id)
             except (KeyError, ValueError):
-                # Surface as Err below — registry will produce a clean
-                # PROVIDER_NOT_REGISTERED with the right error message.
+                # Registry will raise ProviderNotFoundError with the
+                # right error message when we call create_inference.
                 provider_block = None
         ctx = ProviderContext(
             provider_id=provider_id,
@@ -146,13 +147,14 @@ class InferenceDeployer(PipelineStage):
             provider_block=provider_block,
             secrets=self.secrets,
         )
-        create_result = get_registry().create_inference(provider_id, ctx)
-        if create_result.is_failure():
+        try:
+            provider = get_registry().create_inference(provider_id, ctx)
+        except RyotenkAIError as exc:
             raise InferenceUnavailableError(
-                detail=str(create_result.unwrap_err()),
+                detail=exc.detail or str(exc),
                 context={"legacy_code": "INFERENCE_PROVIDER_CREATE_FAILED"},
-            )
-        provider = create_result.unwrap()
+                cause=exc,
+            ) from exc
         self._provider = provider
 
         # Explicit interface: no provider-private attribute injection
@@ -169,19 +171,18 @@ class InferenceDeployer(PipelineStage):
         # read by the provider directly from cfg.inference.engine — no
         # longer plumbed through the generic deploy() API. The provider
         # knows the typed engine config via the registry.
-        deploy_res = provider.deploy(
-            model_source=model_source,
-            run_id=run_name,  # Canonical run name (single source of truth)
-            base_model_id=base_model_id,
-            trust_remote_code=self.config.model.trust_remote_code,
-            lora_path=None if inf_cfg.common.lora.adapter_path == "auto" else inf_cfg.common.lora.adapter_path,
-            # Skip the stop-after-provisioning if eval will activate the pod right after.
-            keep_running=eval_enabled,
-        )
-
         pod_provisioning_failed = False
-        if deploy_res.is_failure():
-            deploy_err = deploy_res.unwrap_err()  # type: ignore[union-attr]
+        try:
+            endpoint = provider.deploy(
+                model_source=model_source,
+                run_id=run_name,  # Canonical run name (single source of truth)
+                base_model_id=base_model_id,
+                trust_remote_code=self.config.model.trust_remote_code,
+                lora_path=None if inf_cfg.common.lora.adapter_path == "auto" else inf_cfg.common.lora.adapter_path,
+                # Skip the stop-after-provisioning if eval will activate the pod right after.
+                keep_running=eval_enabled,
+            )
+        except RyotenkAIError as deploy_err:
             # No GPU capacity available (RunPod HTTP 500).
             # Treat as a soft failure: skip health check and generate manifest + chat script
             # anyway — the pod will be created on first chat session launch.
@@ -207,11 +208,10 @@ class InferenceDeployer(PipelineStage):
                 )
             else:
                 raise InferenceUnavailableError(
-                    detail=str(deploy_err),
+                    detail=deploy_err.detail or str(deploy_err),
                     context={"legacy_code": "INFERENCE_DEPLOY_FAILED"},
-                )
-        else:
-            endpoint = deploy_res.unwrap()
+                    cause=deploy_err,
+                ) from deploy_err
 
         # Readiness (provider-defined policy)
         if not pod_provisioning_failed and inf_cfg.common.health_check.enabled:
@@ -220,8 +220,15 @@ class InferenceDeployer(PipelineStage):
                 try:
                     self._wait_for_healthy(provider, event_logger=event_logger)
                 except RyotenkAIError:
-                    # Best-effort cleanup on error
-                    _ = provider.undeploy()
+                    # Best-effort cleanup on error — swallow secondary errors
+                    # so the original failure isn't masked.
+                    try:
+                        provider.undeploy()
+                    except RyotenkAIError as undeploy_exc:
+                        logger.debug(
+                            f"[INFERENCE] post-failure undeploy errored "
+                            f"(non-fatal): {undeploy_exc}"
+                        )
                     raise
             elif readiness == PipelineReadinessMode.SKIP:
                 logger.info(
@@ -246,25 +253,26 @@ class InferenceDeployer(PipelineStage):
                     ),
                     context={"legacy_code": "INFERENCE_EVAL_NOT_SUPPORTED"},
                 )
-            activate_res = provider.activate_for_eval()
-            if activate_res.is_failure():
+            try:
+                eval_endpoint_url = provider.activate_for_eval()
+            except RyotenkAIError as activate_err:
                 # Release the partially-provisioned pod inline; relying on
                 # stage cleanup() alone is fragile — a downstream stage
                 # could still abort the cleanup chain.
-                deactivate_res = provider.deactivate_after_eval()
-                if deactivate_res.is_failure():
+                try:
+                    provider.deactivate_after_eval()
+                except RyotenkAIError as deactivate_err:
                     logger.warning(
                         "[INFERENCE] post-failure deactivate also errored "
-                        f"(non-fatal): {deactivate_res.unwrap_err()}"  # type: ignore[union-attr]
+                        f"(non-fatal): {deactivate_err}"
                     )
-                activate_err = activate_res.unwrap_err()  # type: ignore[union-attr]
                 raise InferenceUnavailableError(
                     detail=(
                         f"failed to activate inference endpoint for evaluation: {activate_err}"
                     ),
                     context={"legacy_code": "INFERENCE_ACTIVATION_FAILED"},
-                )
-            eval_endpoint_url = activate_res.unwrap()
+                    cause=activate_err,
+                ) from activate_err
             logger.info(f"✅ Inference endpoint ready for evaluation: {eval_endpoint_url}")
         elif eval_enabled and pod_provisioning_failed:
             # Eval was requested but the pod could not be provisioned
@@ -333,9 +341,10 @@ class InferenceDeployer(PipelineStage):
             return
 
         logger.info("[CLEANUP] Inference: evaluation was enabled — calling deactivate_after_eval()")
-        result = self._provider.deactivate_after_eval()
-        if result.is_failure():
-            logger.warning(f"[CLEANUP] deactivate_after_eval warning: {result.unwrap_err()}")
+        try:
+            self._provider.deactivate_after_eval()
+        except RyotenkAIError as exc:
+            logger.warning(f"[CLEANUP] deactivate_after_eval warning: {exc}")
         else:
             logger.info("[CLEANUP] Inference endpoint deactivated successfully")
 
@@ -399,9 +408,11 @@ class InferenceDeployer(PipelineStage):
             provider.collect_startup_logs(local_path=startup_log_path)
 
             # Health check
-            res = provider.health_check()
-            if res.is_success():
-                ok = res.unwrap()
+            try:
+                ok = provider.health_check()
+            except RyotenkAIError as exc:
+                last_state = f"error:{exc.detail or exc}"
+            else:
                 if ok:
                     # Final log collection on success
                     provider.collect_startup_logs(local_path=startup_log_path)
@@ -420,8 +431,6 @@ class InferenceDeployer(PipelineStage):
 
                     return None
                 last_state = "not_ready"
-            else:
-                last_state = f"error:{res.unwrap_err()}"  # type: ignore[union-attr]
 
             # Cancel-aware sleep so Ctrl+C during a long health-check
             # window (can be minutes for cold-starting vLLM) wakes the
@@ -480,14 +489,14 @@ class InferenceDeployer(PipelineStage):
             model_source=model_source,
             endpoint=endpoint,
         )
-        artifacts_res = provider.build_inference_artifacts(ctx=artifacts_ctx)
-        if artifacts_res.is_failure():
-            artifacts_err = artifacts_res.unwrap_err()  # type: ignore[union-attr]  # str from provider
+        try:
+            artifacts = provider.build_inference_artifacts(ctx=artifacts_ctx)
+        except RyotenkAIError as exc:
             raise InferenceUnavailableError(
-                detail=str(artifacts_err),
+                detail=exc.detail or str(exc),
                 context={"legacy_code": "INFERENCE_ARTIFACTS_BUILD_FAILED"},
-            )
-        artifacts = artifacts_res.unwrap()
+                cause=exc,
+            ) from exc
 
         inference_dir = log_dir / INFERENCE_DIRNAME
         inference_dir.mkdir(parents=True, exist_ok=True)

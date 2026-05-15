@@ -38,23 +38,12 @@ from ryotenkai_providers.inference.interfaces import (
     InferenceEventLogger,
     PipelineReadinessMode,
 )
-from ryotenkai_shared.errors import RyotenkAIError
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    InferenceUnavailableError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.utils.logger import logger
-from ryotenkai_shared.utils.result import Err, InferenceError, Ok, Result
-
-
-def _typed_to_inference_error(exc: RyotenkAIError, *, default_code: str) -> InferenceError:
-    """Translate a typed Batch-11 exception into a legacy ``InferenceError``.
-
-    Phase A2 Batch 11 boundary helper. Preserves the legacy ``code``
-    carried on ``exc.context['code']`` (when present), falling back to
-    ``default_code`` otherwise.
-    """
-    legacy_code = exc.context.get("code") if exc.context else None
-    return InferenceError(
-        message=exc.detail or str(exc),
-        code=legacy_code or default_code,
-    )
 
 from ...pod_control import RunPodInferencePodControl
 from .api_client import RunPodPodsRESTClient
@@ -120,14 +109,12 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         self._inf_cfg = config.inference
         self._engine_cfg = self._inf_cfg.engine
         if self._engine_cfg.kind not in self.SUPPORTED_ENGINES:
-            from ryotenkai_shared.utils.result import ProviderError
-
-            raise ProviderError(
-                message=(
+            raise ConfigInvalidError(
+                detail=(
                     f"engine {self._engine_cfg.kind!r} not supported by "
                     f"{type(self).__name__}; supported: {sorted(self.SUPPORTED_ENGINES)}"
                 ),
-                code="PROVIDER_ENGINE_NOT_SUPPORTED",
+                context={"reason": "PROVIDER_ENGINE_NOT_SUPPORTED"},
             )
 
         provider_cfg_raw = self._cfg.get_provider_config(PROVIDER_RUNPOD)
@@ -190,7 +177,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         trust_remote_code: bool = False,
         lora_path: str | None = None,
         keep_running: bool = False,
-    ) -> Result[EndpointInfo, InferenceError]:
+    ) -> EndpointInfo:
         """
         Prepare a stopped Pod for interactive inference.
 
@@ -203,30 +190,32 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         Engine-specific tuning (quantization, max_model_len, etc.) is read
         directly from ``self._engine_cfg`` (the typed engine config from
         the discriminated union) — no longer plumbed through deploy().
+
+        Raises:
+            ConfigInvalidError: adapter ref looks like a local path,
+                or RUNPOD_API_KEY missing, or SSH key not found.
+            InferenceUnavailableError: provider provisioning failed
+                (volume / pod create / stop).
         """
 
         _ = (run_id, trust_remote_code)  # reserved for deterministic naming later
 
         adapter_ref = (lora_path or model_source or "").strip()
         if adapter_ref.startswith(("/", "~", ".", "file:")):
-            return Err(
-                InferenceError(
-                    message=(
-                        "runpod: adapter_ref looks like a local filesystem path on the orchestrator and cannot be used. "
-                        "Upload the adapter to Hugging Face (preferred) or use a provider that can access local paths."
-                    ),
-                    code="RUNPOD_ADAPTER_LOCAL_PATH_NOT_SUPPORTED",
-                )
+            raise ConfigInvalidError(
+                detail=(
+                    "runpod: adapter_ref looks like a local filesystem path on the orchestrator and cannot be used. "
+                    "Upload the adapter to Hugging Face (preferred) or use a provider that can access local paths."
+                ),
+                context={"reason": "RUNPOD_ADAPTER_LOCAL_PATH_NOT_SUPPORTED"},
             )
         self._adapter_ref = adapter_ref  # Resolved model source for activate_for_eval (merge LoRA)
 
         api_key = getattr(self._secrets, "runpod_api_key", None)
         if not api_key:
-            return Err(
-                InferenceError(
-                    message="RUNPOD_API_KEY is missing (required for runpod inference provider)",
-                    code="RUNPOD_API_KEY_MISSING",
-                )
+            raise ConfigInvalidError(
+                detail="RUNPOD_API_KEY is missing (required for runpod inference provider)",
+                context={"reason": "RUNPOD_API_KEY_MISSING"},
             )
 
         api_key_str = str(api_key)
@@ -236,11 +225,9 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         # Fail-fast: SSH key path must exist locally (used later by scripts).
         key_path = Path(str(self._provider_cfg.connect.ssh.key_path)).expanduser()
         if not key_path.exists():
-            return Err(
-                InferenceError(
-                    message=f"runpod: SSH key not found at: {key_path}",
-                    code="RUNPOD_SSH_KEY_NOT_FOUND",
-                )
+            raise ConfigInvalidError(
+                detail=f"runpod: SSH key not found at: {key_path}",
+                context={"reason": "RUNPOD_SSH_KEY_NOT_FOUND"},
             )
 
         # Warn if both network volume and pod volume are configured (network volume wins per RunPod API).
@@ -253,27 +240,11 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         # 1) Ensure network volume exists (optional)
         network_volume_id: str | None = None
         if self._volume_cfg is not None:
-            vol_res = self._ensure_network_volume()
-            if vol_res.is_failure():
-                vol_err = vol_res.unwrap_err()
-                return Err(
-                    vol_err
-                    if isinstance(vol_err, InferenceError)
-                    else InferenceError(message=str(vol_err), code="RUNPOD_VOLUME_ENSURE_FAILED")
-                )
-            network_volume_id = vol_res.unwrap()
+            network_volume_id = self._ensure_network_volume()
             self._network_volume_id = network_volume_id
 
         # 2) Ensure pod exists
-        pod_res = self._ensure_pod(network_volume_id=network_volume_id, key_path=key_path)
-        if pod_res.is_failure():
-            pod_err = pod_res.unwrap_err()
-            return Err(
-                pod_err
-                if isinstance(pod_err, InferenceError)
-                else InferenceError(message=str(pod_err), code="RUNPOD_POD_ENSURE_FAILED")
-            )
-        pod_id, pod_name = pod_res.unwrap()
+        pod_id, pod_name = self._ensure_pod(network_volume_id=network_volume_id, key_path=key_path)
         self._pod_id = pod_id
         self._pod_name = pod_name
 
@@ -287,14 +258,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 network_volume_id or "none (pod volume)",
             )
         else:
-            stop_res = self._stop_pod_if_running(pod_id=pod_id)
-            if stop_res.is_failure():
-                stop_err = stop_res.unwrap_err()
-                return Err(
-                    stop_err
-                    if isinstance(stop_err, InferenceError)
-                    else InferenceError(message=str(stop_err), code="RUNPOD_POD_STOP_FAILED")
-                )
+            self._stop_pod_if_running(pod_id=pod_id)
             logger.info(
                 "✅ RunPod Pod prepared (stopped): pod_id=%s volume_id=%s",
                 pod_id,
@@ -315,7 +279,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             health_url=None,
             resource_id=pod_id,
         )
-        return Ok(self._endpoint_info)
+        return self._endpoint_info
 
     def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None:
         # Currently unused for pods (kept for interface uniformity).
@@ -332,14 +296,18 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
 
     def build_inference_artifacts(
         self, *, ctx: InferenceArtifactsContext
-    ) -> Result[InferenceArtifacts, InferenceError]:
+    ) -> InferenceArtifacts:
+        """Render the manifest + chat script + README for the deployment.
+
+        Raises:
+            InferenceUnavailableError: pod_id missing from prior
+                :meth:`deploy` call.
+        """
         pod_id = self._pod_id or ctx.endpoint.resource_id
         if not (isinstance(pod_id, str) and pod_id.strip()):
-            return Err(
-                InferenceError(
-                    message=f"runpod: cannot determine pod_id from EndpointInfo: {ctx.endpoint!r}",
-                    code="RUNPOD_POD_ID_MISSING",
-                )
+            raise InferenceUnavailableError(
+                detail=f"runpod: cannot determine pod_id from EndpointInfo: {ctx.endpoint!r}",
+                context={"reason": "RUNPOD_POD_ID_MISSING"},
             )
         pod_id = pod_id.strip()
 
@@ -454,42 +422,42 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             ),
         }
 
-        return Ok(
-            InferenceArtifacts(
-                manifest=manifest,
-                chat_script=_CHAT_SCRIPT,
-                readme=_render_readme(
-                    manifest_filename=INFERENCE_MANIFEST_FILENAME,
-                    endpoint_url=ctx.endpoint.endpoint_url or f"http://127.0.0.1:{serve_port}/v1",
-                ),
-            )
+        return InferenceArtifacts(
+            manifest=manifest,
+            chat_script=_CHAT_SCRIPT,
+            readme=_render_readme(
+                manifest_filename=INFERENCE_MANIFEST_FILENAME,
+                endpoint_url=ctx.endpoint.endpoint_url or f"http://127.0.0.1:{serve_port}/v1",
+            ),
         )
 
-    def undeploy(self) -> Result[None, InferenceError]:
-        # Policy: stop instead of delete (reuse like a personal PC).
-        if not self._pod_control or not self._pod_id:
-            return Ok(None)
-        try:
-            self._pod_control.stop_pod(pod_id=self._pod_id)
-            return Ok(None)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_STOP_FAILED"))
+    def undeploy(self) -> None:
+        """Stop the pod (policy: stop instead of delete — reuse like a personal PC).
 
-    def health_check(self) -> Result[bool, InferenceError]:
-        # Pipeline health_check is not meaningful for a stopped pod.
-        # We treat "pod exists" as healthy at provisioning time.
+        Raises:
+            InferenceUnavailableError: pod stop call failed.
+        """
+        if not self._pod_control or not self._pod_id:
+            return
+        self._pod_control.stop_pod(pod_id=self._pod_id)
+
+    def health_check(self) -> bool:
+        """Probe pod existence (pipeline health is not meaningful for a stopped pod).
+
+        Returns:
+            True when ``GET /pods/<id>`` succeeds.
+
+        Raises:
+            InferenceUnavailableError: client not initialised (deploy
+                was not called) or get_pod transport failed.
+        """
         if not self._api or not self._pod_id:
-            return Err(
-                InferenceError(
-                    message="RunPod Pods client not initialized (deploy was not called)",
-                    code="RUNPOD_NOT_DEPLOYED",
-                )
+            raise InferenceUnavailableError(
+                detail="RunPod Pods client not initialized (deploy was not called)",
+                context={"reason": "RUNPOD_NOT_DEPLOYED"},
             )
-        try:
-            self._api.get_pod(pod_id=self._pod_id)
-            return Ok(True)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_GET_FAILED"))
+        self._api.get_pod(pod_id=self._pod_id)
+        return True
 
     def get_capabilities(self) -> InferenceCapabilities:
         return InferenceCapabilities(
@@ -547,7 +515,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             "vllm_cfg": self._engine_cfg.model_dump(mode="python", exclude_none=True),  # noqa: WPS226
         }
 
-    def activate_for_eval(self) -> Result[str, InferenceError]:
+    def activate_for_eval(self) -> str:
         """
         Bring up the pod for evaluation:
         1. Start pod
@@ -557,35 +525,33 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         5. Start vLLM
         6. Wait for /v1/models health
         7. Return live endpoint URL
+
+        Raises:
+            InferenceUnavailableError: provider not deployed, missing
+                adapter ref, or pod_session activate failed.
         """
         pod_control = getattr(self, "_pod_control", None)
         pod_id = getattr(self, "_pod_id", None)
         adapter_ref = getattr(self, "_adapter_ref", None)
 
         if pod_control is None:
-            return Err(
-                InferenceError(
-                    message="runpod_pods: activate_for_eval called before deploy() — API client not initialized",
-                    code="RUNPOD_NOT_DEPLOYED",
-                )
+            raise InferenceUnavailableError(
+                detail="runpod_pods: activate_for_eval called before deploy() — API client not initialized",
+                context={"reason": "RUNPOD_NOT_DEPLOYED"},
             )
         if not pod_id:
-            return Err(
-                InferenceError(
-                    message="runpod_pods: activate_for_eval called before deploy() — pod_id not set",
-                    code="RUNPOD_NOT_DEPLOYED",
-                )
+            raise InferenceUnavailableError(
+                detail="runpod_pods: activate_for_eval called before deploy() — pod_id not set",
+                context={"reason": "RUNPOD_NOT_DEPLOYED"},
             )
         if not (isinstance(adapter_ref, str) and adapter_ref.strip()):
-            return Err(
-                InferenceError(
-                    message=(
-                        "runpod_pods: activate_for_eval requires resolved model_source (HF repo or path). "
-                        "deploy() stores it from InferenceDeployer._resolve_model_source; ensure model_source=auto "
-                        "and ModelRetriever provides hf_repo_id or local_model_path."
-                    ),
-                    code="RUNPOD_ADAPTER_REF_MISSING",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    "runpod_pods: activate_for_eval requires resolved model_source (HF repo or path). "
+                    "deploy() stores it from InferenceDeployer._resolve_model_source; ensure model_source=auto "
+                    "and ModelRetriever provides hf_repo_id or local_model_path."
+                ),
+                context={"reason": "RUNPOD_ADAPTER_REF_MISSING"},
             )
 
         params = self._build_eval_session_params()
@@ -617,13 +583,11 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 )
             self._pod_id = None
             raise
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_EVAL_ACTIVATE_FAILED"))
 
         self._eval_session = session
-        return Ok(self._eval_session.endpoint_url)
+        return self._eval_session.endpoint_url
 
-    def deactivate_after_eval(self) -> Result[None, InferenceError]:
+    def deactivate_after_eval(self) -> None:
         """
         Shut down the evaluation session:
         1. Kill vLLM process inside the pod
@@ -633,6 +597,10 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         Fallback: if activate_for_eval() was never called but a pod was already
         provisioned (e.g. Ctrl+C between deploy() and activate_for_eval()), the
         pod is deleted directly via API to avoid ongoing GPU billing.
+
+        Raises:
+            InferenceUnavailableError: pod delete / session
+                deactivate transport failed.
         """
         pod_control = getattr(self, "_pod_control", None)
         pod_id = getattr(self, "_pod_id", None)
@@ -640,7 +608,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
 
         if pod_control is None:
             # deploy() was never called — nothing to clean up.
-            return Ok(None)
+            return
 
         if eval_session is None:
             # activate_for_eval() was not called, but a pod may already exist.
@@ -652,14 +620,13 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 try:
                     pod_control.delete_pod(pod_id=pod_id)
                 except RyotenkAIError as exc:
-                    return Err(
-                        InferenceError(
-                            message=f"deactivate_after_eval fallback delete failed: {exc}",
-                            code="RUNPOD_POD_DELETE_FAILED",
-                        )
-                    )
+                    raise InferenceUnavailableError(
+                        detail=f"deactivate_after_eval fallback delete failed: {exc}",
+                        context={"reason": "RUNPOD_POD_DELETE_FAILED"},
+                        cause=exc,
+                    ) from exc
                 self._pod_id = None
-            return Ok(None)
+            return
 
         key_path = Path(str(self._provider_cfg.connect.ssh.key_path)).expanduser()
 
@@ -672,16 +639,21 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 key_path=key_path,
             )
             self._eval_session = None
-            return Ok(None)
-        except RyotenkAIError as exc:
+        except RyotenkAIError:
             self._eval_session = None
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_EVAL_DEACTIVATE_FAILED"))
+            raise
 
     # ---------------------------------------------------------------------
     # Internals
     # ---------------------------------------------------------------------
 
-    def _ensure_network_volume(self) -> Result[str, InferenceError]:
+    def _ensure_network_volume(self) -> str:
+        """Resolve or create the network volume; return its id.
+
+        Raises:
+            InferenceUnavailableError: list/create transport failed,
+                ambiguous match, or exhausted retries.
+        """
         assert self._api is not None
         assert self._volume_cfg is not None  # only called when volume is configured
         cfg = self._volume_cfg
@@ -691,7 +663,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
             volumes: list[dict[str, Any]],
             name: str,
             data_center_id: str | None = None,
-        ) -> Result[dict[str, Any] | None, InferenceError]:
+        ) -> dict[str, Any] | None:
             matches_name: list[dict[str, Any]] = []
             for v in volumes:
                 if str(v.get("name") or "") != name:
@@ -704,24 +676,22 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 matches = matches_name
 
             if not matches:
-                return Ok(None)
+                return None
 
             if len(matches) == 1:
-                return Ok(matches[0])
+                return matches[0]
 
             ids = [str(v.get(KEY_ID) or "").strip() for v in matches]
             ids = [x for x in ids if x]
             preview = ", ".join(ids[:5])
             more = "" if len(ids) <= 5 else f" (+{len(ids) - 5} more)"
-            return Err(
-                InferenceError(
-                    message=(
-                        "runpod: multiple network volumes found with the same name (and datacenter filter, if set). "
-                        "Set providers.runpod.inference.volume.id explicitly. "
-                        f"name={name!r} ids=[{preview}{more}]"
-                    ),
-                    code="RUNPOD_VOLUME_AMBIGUOUS",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    "runpod: multiple network volumes found with the same name (and datacenter filter, if set). "
+                    "Set providers.runpod.inference.volume.id explicitly. "
+                    f"name={name!r} ids=[{preview}{more}]"
+                ),
+                context={"reason": "RUNPOD_VOLUME_AMBIGUOUS"},
             )
 
         # Prefer explicit id if provided.
@@ -731,49 +701,37 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 vol_id = str(vol_by_id.get(KEY_ID) or "").strip()
                 if vol_id:
                     self._network_volume_meta = vol_by_id if isinstance(vol_by_id, dict) else None
-                    return Ok(vol_id)
+                    return vol_id
             except RyotenkAIError:
                 pass
-            return Err(
-                InferenceError(
-                    message=f"runpod: network volume id not found or inaccessible: {cfg.id!r}",
-                    code="RUNPOD_VOLUME_NOT_FOUND",
-                )
+            raise InferenceUnavailableError(
+                detail=f"runpod: network volume id not found or inaccessible: {cfg.id!r}",
+                context={"reason": "RUNPOD_VOLUME_NOT_FOUND"},
             )
 
-        try:
-            volumes = self._api.list_network_volumes()
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_VOLUME_LIST_FAILED"))
+        volumes = self._api.list_network_volumes()
 
-        sel_res = _select_by_name(volumes=volumes, name=cfg.name, data_center_id=cfg.data_center_id)
-        if sel_res.is_failure():
-            return Err(sel_res.unwrap_err())  # type: ignore[return-value]
-        selected = sel_res.unwrap()
+        selected = _select_by_name(volumes=volumes, name=cfg.name, data_center_id=cfg.data_center_id)
         if selected is not None:
             vol_id = str(selected.get(KEY_ID) or "").strip()
             if not vol_id:
-                return Err(
-                    InferenceError(
-                        message=f"runpod: unexpected network volume object without id: {selected!r}",
-                        code="RUNPOD_VOLUME_NO_ID",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"runpod: unexpected network volume object without id: {selected!r}",
+                    context={"reason": "RUNPOD_VOLUME_NO_ID"},
                 )
             self._network_volume_meta = selected
-            return Ok(vol_id)
+            return vol_id
 
         data_center_id = str(cfg.data_center_id or "").strip()
         if not data_center_id:
-            return Err(
-                InferenceError(
-                    message=(
-                        "runpod: network volume not found and auto-create requires providers.runpod.inference.volume.data_center_id "
-                        "(RunPod REST API requires dataCenterId at creation time). "
-                        "Set it to a valid RunPod datacenter id (e.g. US-KS-2) or create the volume manually and set providers.runpod.inference.volume.id. "
-                        f"name={cfg.name!r}"
-                    ),
-                    code="RUNPOD_VOLUME_DATA_CENTER_MISSING",
-                )
+            raise InferenceUnavailableError(
+                detail=(
+                    "runpod: network volume not found and auto-create requires providers.runpod.inference.volume.data_center_id "
+                    "(RunPod REST API requires dataCenterId at creation time). "
+                    "Set it to a valid RunPod datacenter id (e.g. US-KS-2) or create the volume manually and set providers.runpod.inference.volume.id. "
+                    f"name={cfg.name!r}"
+                ),
+                context={"reason": "RUNPOD_VOLUME_DATA_CENTER_MISSING"},
             )
 
         logger.info(
@@ -801,18 +759,14 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                         name=cfg.name,
                         data_center_id=data_center_id,
                     )
-                    if sel0.is_success():
-                        vol0 = sel0.unwrap()
-                        if isinstance(vol0, dict):
-                            vol_id0 = str(vol0.get(KEY_ID) or "").strip()
-                            if vol_id0:
-                                self._network_volume_meta = vol0
-                                logger.warning(
-                                    "runpod: network volume appears after previous create attempt. Proceeding with discovered id."
-                                )
-                                return Ok(vol_id0)
-                    else:
-                        return Err(sel0.unwrap_err())  # type: ignore[return-value]
+                    if isinstance(sel0, dict):
+                        vol_id0 = str(sel0.get(KEY_ID) or "").strip()
+                        if vol_id0:
+                            self._network_volume_meta = sel0
+                            logger.warning(
+                                "runpod: network volume appears after previous create attempt. Proceeding with discovered id."
+                            )
+                            return vol_id0
                 except RyotenkAIError:
                     pass
 
@@ -821,7 +775,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 vol_id = str(created.get(KEY_ID) or "").strip()
                 if vol_id:
                     self._network_volume_meta = created if isinstance(created, dict) else None
-                    return Ok(vol_id)
+                    return vol_id
                 last_err = f"runpod: create_network_volume succeeded but id is missing: {created!r}"
             except RyotenkAIError as exc:
                 last_err = exc.detail or str(exc)
@@ -834,19 +788,15 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                     name=cfg.name,
                     data_center_id=data_center_id,
                 )
-                if sel2.is_success():
-                    vol2 = sel2.unwrap()
-                    if isinstance(vol2, dict):
-                        vol_id2 = str(vol2.get(KEY_ID) or "").strip()
-                        if vol_id2:
-                            self._network_volume_meta = vol2
-                            logger.warning(
-                                "runpod: create_network_volume did not return a usable response, "
-                                "but volume now exists. Proceeding with discovered id."
-                            )
-                            return Ok(vol_id2)
-                else:
-                    return Err(sel2.unwrap_err())  # type: ignore[return-value]
+                if isinstance(sel2, dict):
+                    vol_id2 = str(sel2.get(KEY_ID) or "").strip()
+                    if vol_id2:
+                        self._network_volume_meta = sel2
+                        logger.warning(
+                            "runpod: create_network_volume did not return a usable response, "
+                            "but volume now exists. Proceeding with discovered id."
+                        )
+                        return vol_id2
             except RyotenkAIError:
                 pass
 
@@ -868,14 +818,18 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                     last_err,
                 )
 
-        return Err(
-            InferenceError(
-                message=f"runpod: failed to create network volume after {max_attempts} attempts: {last_err}",
-                code="RUNPOD_VOLUME_CREATE_FAILED",
-            )
+        raise InferenceUnavailableError(
+            detail=f"runpod: failed to create network volume after {max_attempts} attempts: {last_err}",
+            context={"reason": "RUNPOD_VOLUME_CREATE_FAILED"},
         )
 
-    def _ensure_pod(self, *, network_volume_id: str | None, key_path: Path) -> Result[tuple[str, str], InferenceError]:
+    def _ensure_pod(self, *, network_volume_id: str | None, key_path: Path) -> tuple[str, str]:
+        """Resolve or create the inference pod; return (pod_id, name).
+
+        Raises:
+            InferenceUnavailableError: list/create transport failed,
+                returned pod without id, or exhausted retries.
+        """
         assert self._api is not None
         pod_cfg = self._pod_cfg
         # Image is pinned per engine (Phase 6.6); compute it once
@@ -897,10 +851,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         }
         if network_volume_id:
             params["networkVolumeId"] = network_volume_id
-        try:
-            pods = self._api.list_pods(params=params)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_LIST_FAILED"))
+        pods = self._api.list_pods(params=params)
 
         # Prefer an already stopped pod; otherwise reuse running and stop later.
         chosen: dict[str, Any] | None = None
@@ -917,13 +868,11 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
         if chosen is not None:
             pod_id = str(chosen.get(KEY_ID) or "").strip()
             if not pod_id:
-                return Err(
-                    InferenceError(
-                        message=f"runpod: unexpected pod object without id: {chosen!r}",
-                        code="RUNPOD_POD_NO_ID",
-                    )
+                raise InferenceUnavailableError(
+                    detail=f"runpod: unexpected pod object without id: {chosen!r}",
+                    context={"reason": "RUNPOD_POD_NO_ID"},
                 )
-            return Ok((pod_id, name_val))
+            return (pod_id, name_val)
 
         # No pod found → create a new one.
         public_key = ""
@@ -994,7 +943,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                                 "runpod: inference pod appears after previous create attempt (name+volume match). "
                                 "Proceeding with discovered id."
                             )
-                            return Ok((pod_id, name_val))
+                            return (pod_id, name_val)
                 except RyotenkAIError:
                     pass
 
@@ -1002,7 +951,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                 pod = self._api.create_pod(payload=payload)
                 pod_id = str(pod.get(KEY_ID) or "").strip()
                 if pod_id:
-                    return Ok((pod_id, name_val))
+                    return (pod_id, name_val)
                 last_err = f"runpod: create_pod succeeded but id is missing: {pod!r}"
             except RyotenkAIError as exc:
                 last_err = exc.detail or str(exc)
@@ -1017,7 +966,7 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                             "runpod: pod create did not return a usable response, "
                             "but pod now exists (name+volume match). Proceeding with discovered id."
                         )
-                        return Ok((pod_id, name_val))
+                        return (pod_id, name_val)
             except RyotenkAIError:
                 pass
 
@@ -1039,28 +988,24 @@ class RunPodPodInferenceProvider(ProviderBase, IInferenceProvider):
                     last_err,
                 )
 
-        return Err(
-            InferenceError(
-                message=f"runpod: failed to create inference pod after {max_attempts} attempts: {last_err}",
-                code="RUNPOD_POD_CREATE_FAILED",
-            )
+        raise InferenceUnavailableError(
+            detail=f"runpod: failed to create inference pod after {max_attempts} attempts: {last_err}",
+            context={"reason": "RUNPOD_POD_CREATE_FAILED"},
         )
 
-    def _stop_pod_if_running(self, *, pod_id: str) -> Result[None, InferenceError]:
+    def _stop_pod_if_running(self, *, pod_id: str) -> None:
+        """Stop the pod when running; idempotent if already stopped.
+
+        Raises:
+            InferenceUnavailableError: get/stop transport failed.
+        """
         assert self._api is not None
         assert self._pod_control is not None
-        try:
-            pod = self._api.get_pod(pod_id=pod_id)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_GET_FAILED"))
+        pod = self._api.get_pod(pod_id=pod_id)
         status = str(pod.get("desiredStatus") or "")
         if status == "RUNNING":
             logger.info(f"🛑 Stopping RunPod Pod after provisioning: {pod_id}")
-            try:
-                self._pod_control.stop_pod(pod_id=pod_id)
-            except RyotenkAIError as exc:
-                return Err(_typed_to_inference_error(exc, default_code="RUNPOD_POD_STOP_FAILED"))
-        return Ok(None)
+            self._pod_control.stop_pod(pod_id=pod_id)
 
     def _resolve_llm_manifest_block(self) -> dict[str, Any]:
         """

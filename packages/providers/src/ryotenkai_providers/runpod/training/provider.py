@@ -11,7 +11,11 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_shared.constants import PROVIDER_RUNPOD, RUNTIME_PROVIDER_ENV_VAR
-from ryotenkai_shared.errors import RyotenkAIError
+from ryotenkai_shared.errors import (
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHConnectionFailedError,
+)
 from ryotenkai_shared.utils.cancellation import PipelineCancelled
 from ryotenkai_providers.training.interfaces import (
     AvailabilityVerdict,
@@ -29,28 +33,7 @@ from ryotenkai_providers.training.interfaces import (
 )
 from ryotenkai_shared.constants import RUNTIME_IMAGE
 from ryotenkai_shared.utils.pod_layout import PodLayout
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
-
-
-def _typed_to_provider_error(exc: RyotenkAIError) -> ProviderError:
-    """Translate a typed Batch-11 exception into the legacy ``ProviderError`` shape.
-
-    Phase A2 Batch 11 boundary helper. The internal RunPod stack now
-    raises ``RyotenkAIError`` subclasses; ``IGPUProvider`` /
-    ``IInferenceProvider`` Protocol surfaces still return
-    ``Result[T, ProviderError]`` until Batch 12 migrates them. This
-    helper preserves the legacy ``code`` carried on
-    ``exc.context['code']`` (when present), falling back to the
-    ``ErrorCode`` enum value otherwise.
-    """
-    legacy_code = exc.context.get("code") if exc.context else None
-    details = {k: v for k, v in (exc.context or {}).items() if k != "code"}
-    return ProviderError(
-        message=exc.detail or str(exc),
-        code=legacy_code or exc.code.value,
-        details=details or None,
-    )
 
 from ..models import PodResourceInfo
 from ..pod_control import RunPodTrainingPodControl
@@ -244,7 +227,7 @@ class RunPodProvider(
     # is first resolved. Hand-overriding is forbidden by an invariant
     # test (single source of truth = manifest).
 
-    def connect(self, *, run: RunContext) -> Result[SSHConnectionInfo, ProviderError]:
+    def connect(self, *, run: RunContext) -> SSHConnectionInfo:
         """
         Connect to RunPod by creating a new pod.
 
@@ -255,12 +238,19 @@ class RunPodProvider(
             4. Return connection info
 
         Returns:
-            Ok(SSHConnectionInfo): Connection established
-            Err(ProviderError): Structured provider error
+            SSHConnectionInfo when the connection is established.
+
+        Raises:
+            ProviderUnavailableError: pod create / SSH info missing /
+                generic connect failure.
+            SSHConnectionFailedError: pod reached but SSH handshake
+                failed, key missing, mkdir failed.
+            RyotenkAIError: any other typed exception bubbling up from
+                the internal stack.
         """
         if self._status == ProviderStatus.CONNECTED and self._ssh_connection_info:
             logger.warning("[PROVIDER:CONNECT] Already connected")
-            return Ok(self._ssh_connection_info)
+            return self._ssh_connection_info
 
         self._status = ProviderStatus.CONNECTING
         self._had_error = False
@@ -269,12 +259,9 @@ class RunPodProvider(
         try:
             # Step 1+2: Create pod and wait for ready (with pod recreation on failure).
             pod_name = f"ryotenkai-train-{run.name}"
-            create_wait_result = self._create_and_wait_for_pod(pod_name)
-            if create_wait_result.is_failure():
-                self._status = ProviderStatus.ERROR
-                return Err(create_wait_result.unwrap_err())  # type: ignore[union-attr]
-
-            snapshot, resource_info = create_wait_result.unwrap()
+            # _create_and_wait_for_pod raises ProviderUnavailableError on
+            # failure (Batch 12 migration) — propagate directly.
+            snapshot, resource_info = self._create_and_wait_for_pod(pod_name)
             self._pod_info = resource_info
             logger.info("✅ Pod is ready!")
 
@@ -285,23 +272,18 @@ class RunPodProvider(
             if not Path(key_path).exists():
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(
-                    ProviderError(
-                        message=f"SSH key not found at: {key_path}",
-                        code="SSH_KEY_NOT_FOUND",
-                        details={"key_path": key_path},
-                    )
+                raise SSHConnectionFailedError(
+                    detail=f"SSH key not found at: {key_path}",
+                    context={"reason": "SSH_KEY_NOT_FOUND", "key_path": key_path},
                 )
 
             ssh_ep = snapshot.ssh_endpoint
             if ssh_ep is None:
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(
-                    ProviderError(
-                        message="Pod reported ready but SSH endpoint is missing",
-                        code="RUNPOD_SSH_INFO_INVALID",
-                    )
+                raise ProviderUnavailableError(
+                    detail="Pod reported ready but SSH endpoint is missing",
+                    context={"reason": "RUNPOD_SSH_INFO_INVALID"},
                 )
 
             ssh_client = SSHClient(host=ssh_ep.host, port=ssh_ep.port, username="root", key_path=key_path)
@@ -311,17 +293,21 @@ class RunPodProvider(
             if not success:
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(ProviderError(message=f"SSH connection failed: {error}", code="SSH_CONNECTION_FAILED"))
+                raise SSHConnectionFailedError(
+                    detail=f"SSH connection failed: {error}",
+                    context={"reason": "SSH_CONNECTION_FAILED"},
+                )
 
             logger.info("✅ SSH is ready!")
 
-            # Minimal training health check (fail-fast).
-            gpu_check = self._check_gpu_via_ssh(ssh_client)
-            if gpu_check.is_err():
+            # Minimal training health check (fail-fast). Raises
+            # ProviderUnavailableError on failure (Batch 12 migration).
+            try:
+                self._gpu_info = self._check_gpu_via_ssh(ssh_client)
+            except RyotenkAIError:
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(gpu_check.unwrap_err())  # type: ignore[union-attr]
-            self._gpu_info = gpu_check.unwrap()
+                raise
 
             # Create run-scoped workspace inside the pod.
             base = "/workspace"
@@ -331,16 +317,18 @@ class RunPodProvider(
             if not ok_root:
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(
-                    ProviderError(message=f"Failed to create runs root on pod: {err_root}", code="SSH_MKDIR_FAILED")
+                raise SSHConnectionFailedError(
+                    detail=f"Failed to create runs root on pod: {err_root}",
+                    context={"reason": "SSH_MKDIR_FAILED"},
                 )
 
             ok_run, err_run = ssh_client.create_directory(run_workspace)
             if not ok_run:
                 self._status = ProviderStatus.ERROR
                 self._safe_cleanup_pod(pod_id)
-                return Err(
-                    ProviderError(message=f"Failed to create run workspace on pod: {err_run}", code="SSH_MKDIR_FAILED")
+                raise SSHConnectionFailedError(
+                    detail=f"Failed to create run workspace on pod: {err_run}",
+                    context={"reason": "SSH_MKDIR_FAILED"},
                 )
 
             self._ssh_connection_info = SSHConnectionInfo(
@@ -355,7 +343,7 @@ class RunPodProvider(
             self._status = ProviderStatus.CONNECTED
             logger.info(f"[PROVIDER:CONNECTED] {self._ssh_connection_info}")
 
-            return Ok(self._ssh_connection_info)
+            return self._ssh_connection_info
 
         except PipelineCancelled:
             # Cancel signal arrived mid-connect (most likely during
@@ -376,19 +364,32 @@ class RunPodProvider(
                 logger.warning("[PROVIDER:CONNECT] cancelled during connect — no pod to clean up")
             raise
 
+        except RyotenkAIError:
+            # Typed exceptions from the internal stack propagate
+            # without translation. Status / cleanup already handled
+            # by the raising helper or the surrounding try/except.
+            self._status = ProviderStatus.ERROR
+            self._had_error = True
+            raise
+
         except Exception as e:
             self._status = ProviderStatus.ERROR
             self._had_error = True
             if self._pod_id:
                 self._safe_cleanup_pod(self._pod_id)
             logger.error(f"[PROVIDER:ERROR] Connection failed: {e}")
-            return Err(
-                ProviderError(
-                    message=str(e), code="RUNPOD_CONNECT_UNEXPECTED_ERROR", details={"exception_type": type(e).__name__}
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=str(e),
+                context={
+                    "reason": "RUNPOD_CONNECT_UNEXPECTED_ERROR",
+                    "exception_type": type(e).__name__,
+                },
+                cause=e,
+            ) from e
 
-    def _create_and_wait_for_pod(self, pod_name: str) -> Result[tuple[PodSnapshot, PodResourceInfo], ProviderError]:
+    def _create_and_wait_for_pod(
+        self, pod_name: str,
+    ) -> tuple[PodSnapshot, PodResourceInfo]:
         """Create a pod and wait for it to become ready.
 
         If the pod fails to get SSH exposed TCP (community cloud limitation),
@@ -397,26 +398,34 @@ class RunPodProvider(
         Side-effect: ``self._pod_id`` is kept in sync with the current pod so
         that the SIGINT handler in ``connect()`` can always clean up.
 
-        Phase A2 Batch 11: catches typed exceptions from the internal
-        stack (``self._api_client.create_pod`` / ``self._lifecycle.wait_for_ready``
-        now raise) and wraps them into ``Err(ProviderError(...))`` to
-        preserve the :class:`IGPUProvider` Protocol contract.
+        Phase A2 Batch 12: typed exceptions from the internal stack
+        propagate directly. The wait-for-ready loop catches the
+        recreatable subset (per ``_RECREATABLE_ERRORS``) and retries;
+        anything else (auth, hard failure) bubbles up immediately.
+
+        Raises:
+            ProviderUnavailableError: pod creation failed, invalid pod
+                info, exhausted retries.
+            RyotenkAIError: hard failure from the internal stack
+                (non-recreatable codes).
         """
-        last_err: ProviderError | None = None
+        last_exc: RyotenkAIError | None = None
 
         for attempt in range(1, _POD_CREATE_MAX_RETRIES + 1):
             if attempt > 1:
                 logger.info(f"🔄 Pod creation attempt {attempt}/{_POD_CREATE_MAX_RETRIES}")
 
-            try:
-                raw_info = self._api_client.create_pod(config=self._config, pod_name=pod_name)
-            except RyotenkAIError as exc:
-                return Err(_typed_to_provider_error(exc))
+            # create_pod raises typed exceptions; propagate auth/quota
+            # errors immediately (no point retrying an invalid API key).
+            raw_info = self._api_client.create_pod(config=self._config, pod_name=pod_name)
 
             resource_info = PodResourceInfo.from_create_response(raw_info)
 
             if not resource_info.pod_id:
-                return Err(ProviderError(message="Invalid pod info returned", code="RUNPOD_INVALID_POD_INFO"))
+                raise ProviderUnavailableError(
+                    detail="Invalid pod info returned",
+                    context={"reason": "RUNPOD_INVALID_POD_INFO"},
+                )
 
             pod_id = resource_info.pod_id
             self._pod_id = pod_id  # kept for SIGINT safety in connect()
@@ -424,28 +433,28 @@ class RunPodProvider(
 
             try:
                 snapshot = self._lifecycle.wait_for_ready(pod_id)
-                return Ok((snapshot, resource_info))
+                return (snapshot, resource_info)
             except RyotenkAIError as exc:
-                last_err = _typed_to_provider_error(exc)
+                last_exc = exc
 
-            if last_err.code not in _RECREATABLE_ERRORS or attempt >= _POD_CREATE_MAX_RETRIES:
+            legacy_code = (last_exc.context or {}).get("code") if last_exc else None
+            if legacy_code not in _RECREATABLE_ERRORS or attempt >= _POD_CREATE_MAX_RETRIES:
                 self._safe_cleanup_pod(pod_id)
                 self._pod_id = None
                 break
 
             logger.warning(
-                f"[PROVIDER] Pod {pod_id} failed ({last_err.code}), "
+                f"[PROVIDER] Pod {pod_id} failed ({legacy_code}), "
                 f"terminating and trying a new one ({attempt}/{_POD_CREATE_MAX_RETRIES})..."
             )
             self._safe_cleanup_pod(pod_id)
             self._pod_id = None
 
-        return Err(
-            last_err
-            or ProviderError(
-                message=f"Pod creation failed after {_POD_CREATE_MAX_RETRIES} attempts",
-                code="RUNPOD_POD_NOT_READY",
-            )
+        if last_exc is not None:
+            raise last_exc
+        raise ProviderUnavailableError(
+            detail=f"Pod creation failed after {_POD_CREATE_MAX_RETRIES} attempts",
+            context={"reason": "RUNPOD_POD_NOT_READY"},
         )
 
     def _safe_cleanup_pod(self, pod_id: str) -> None:
@@ -466,7 +475,7 @@ class RunPodProvider(
         self._status = ProviderStatus.ERROR
         logger.warning("[PROVIDER:ERROR] Marked as error state")
 
-    def disconnect(self) -> Result[None, ProviderError]:
+    def disconnect(self) -> None:
         """
         Disconnect from RunPod by terminating the pod.
 
@@ -475,9 +484,10 @@ class RunPodProvider(
             - cleanup.auto_delete_pod=False: Keep pod running
             - cleanup.keep_pod_on_error=True: Keep pod if there was an error
 
-        Returns:
-            Ok(None): Disconnected successfully
-            Err(ProviderError): Structured provider error
+        Best-effort: pod terminate failures are logged but never raised
+        — callers (orchestrator cleanup) must not let a stale pod
+        prevent shutdown completion. The original RunPod console is the
+        operator's ground truth.
         """
         # Allow cleanup from CONNECTING state when pod_id is already set.
         # This handles SIGINT arriving mid-connect (e.g. during wait_for_ready):
@@ -485,14 +495,14 @@ class RunPodProvider(
         connecting_with_pod = self._status == ProviderStatus.CONNECTING and bool(self._pod_id)
         if self._status not in (ProviderStatus.CONNECTED, ProviderStatus.ERROR) and not connecting_with_pod:
             logger.debug("[PROVIDER:DISCONNECT] Not connected, nothing to do")
-            return Ok(None)
+            return
 
         was_error = self._had_error or self._status == ProviderStatus.ERROR
         self._status = ProviderStatus.DISCONNECTING
 
         if not self._pod_id:
             self._status = ProviderStatus.AVAILABLE
-            return Ok(None)
+            return
 
         # Check if we should keep the pod
         should_terminate = self._config.cleanup.auto_delete_pod
@@ -503,12 +513,6 @@ class RunPodProvider(
 
         if should_terminate:
             logger.info(f"[PROVIDER:DISCONNECT] Terminating pod {self._pod_id}...")
-            # Previously the Result was discarded and "✅ Pod terminated" was
-            # printed unconditionally. That masked real cleanup failures
-            # (pod already gone after platform-side eviction, network blip,
-            # auth expiry) — the operator saw a clean shutdown message even
-            # when the API returned an error. Surface failures explicitly
-            # so we don't leak orphan pods quietly.
             try:
                 self._cleanup_manager.cleanup_pod(self._pod_id)
                 logger.info("✅ Pod terminated")
@@ -531,83 +535,78 @@ class RunPodProvider(
         self._had_error = False
         self._status = ProviderStatus.AVAILABLE
 
-        return Ok(None)
-
     def get_status(self) -> ProviderStatus:
         """Get current provider status."""
         return self._status
 
     @staticmethod
-    def _check_gpu_via_ssh(ssh_client: SSHClient) -> Result[GPUInfo, ProviderError]:
+    def _check_gpu_via_ssh(ssh_client: SSHClient) -> GPUInfo:
         cmd = "nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv,noheader,nounits"
         success, stdout, stderr = ssh_client.exec_command(cmd, timeout=_GPU_CHECK_TIMEOUT, silent=True)
         if not success:
             stderr = (stderr or "").strip()
             stdout = (stdout or "").strip()
             details = stderr or stdout or "unknown error"
-            return Err(
-                ProviderError(
-                    message=f"Training health check failed: nvidia-smi error: {details}", code=_GPU_CHECK_FAILED_CODE
-                )
+            raise ProviderUnavailableError(
+                detail=f"Training health check failed: nvidia-smi error: {details}",
+                context={"reason": _GPU_CHECK_FAILED_CODE},
             )
 
         lines = [ln.strip() for ln in (stdout or "").splitlines() if ln.strip()]
         if not lines:
-            return Err(
-                ProviderError(
-                    message="Training health check failed: nvidia-smi returned empty output",
-                    code=_GPU_CHECK_FAILED_CODE,
-                )
+            raise ProviderUnavailableError(
+                detail="Training health check failed: nvidia-smi returned empty output",
+                context={"reason": _GPU_CHECK_FAILED_CODE},
             )
 
         # Use the first GPU line for detailed metrics; also infer GPU count.
         first = lines[0]
         parts = [p.strip() for p in first.split(",")]
         if len(parts) < 4:
-            return Err(
-                ProviderError(
-                    message=f"Training health check failed: unexpected nvidia-smi format: {first}",
-                    code=_GPU_CHECK_FAILED_CODE,
-                )
+            raise ProviderUnavailableError(
+                detail=f"Training health check failed: unexpected nvidia-smi format: {first}",
+                context={"reason": _GPU_CHECK_FAILED_CODE},
             )
 
         try:
-            return Ok(
-                GPUInfo(
-                    name=parts[0],
-                    vram_total_mb=int(float(parts[1])),
-                    vram_free_mb=int(float(parts[2])),
-                    cuda_version="unknown",
-                    driver_version=parts[3],
-                    gpu_count=len(lines),
-                )
+            return GPUInfo(
+                name=parts[0],
+                vram_total_mb=int(float(parts[1])),
+                vram_free_mb=int(float(parts[2])),
+                cuda_version="unknown",
+                driver_version=parts[3],
+                gpu_count=len(lines),
             )
         except (TypeError, ValueError) as e:
-            return Err(
-                ProviderError(
-                    message=f"Training health check failed: failed to parse nvidia-smi output: {e}",
-                    code=_GPU_CHECK_FAILED_CODE,
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=f"Training health check failed: failed to parse nvidia-smi output: {e}",
+                context={"reason": _GPU_CHECK_FAILED_CODE},
+                cause=e,
+            ) from e
 
-    def check_gpu(self) -> Result[GPUInfo, ProviderError]:
-        """Check GPU availability on the pod."""
+    def check_gpu(self) -> GPUInfo:
+        """Check GPU availability on the pod.
+
+        Raises:
+            ProviderUnavailableError: not connected, nvidia-smi
+                failure, or parse failure.
+        """
         if self._gpu_info:
-            return Ok(self._gpu_info)
+            return self._gpu_info
 
         if self._status != ProviderStatus.CONNECTED or not self._ssh_connection_info:
-            return Err(ProviderError(message="Not connected. Call connect() first.", code="PROVIDER_NOT_CONNECTED"))
+            raise ProviderUnavailableError(
+                detail="Not connected. Call connect() first.",
+                context={"reason": "PROVIDER_NOT_CONNECTED"},
+            )
 
         ssh_client = SSHClient(
             host=self._ssh_connection_info.host,
             port=self._ssh_connection_info.port,
             username=self._ssh_connection_info.user,
         )
-        gpu_check = self._check_gpu_via_ssh(ssh_client)
-        if gpu_check.is_err():
-            return Err(gpu_check.unwrap_err())  # type: ignore[union-attr]
-        self._gpu_info = gpu_check.unwrap()
-        return Ok(self._gpu_info)
+        self._gpu_info = self._check_gpu_via_ssh(ssh_client)
+        return self._gpu_info
 
     def get_capabilities(self) -> ProviderCapabilities:
         """Manifest-derived capabilities + runtime ``gpu_name``/``gpu_vram_gb``.
@@ -646,7 +645,7 @@ class RunPodProvider(
 
     def attempt_recovery(
         self, *, resource_id: str,
-    ) -> Result[ProviderStatus, ProviderError]:
+    ) -> ProviderStatus:
         """Probe + wake a pod whose runner connection was lost.
 
         Replaces the inline RunPod-specific recovery logic in the
@@ -657,14 +656,20 @@ class RunPodProvider(
         semantics inherit the Protocol and the recovery path lights up
         for free.
 
-        Idempotent semantics:
-        * Pod RUNNING (not actually stopped) → ``Ok(CONNECTED)`` —
-          caller should investigate the WS failure separately.
-        * Pod STOPPED / starting → request ``start_pod`` and return
-          ``Ok(AVAILABLE)`` — the pipeline must be restarted.
-        * Pod terminal → ``Err("POD_TERMINAL")``.
-        * Probe failure → ``Err("POD_PROBE_FAILED")``.
-        * Wake-up failure → ``Err("POD_WAKE_FAILED")``.
+        Returns:
+            * ``ProviderStatus.CONNECTED`` — pod is already RUNNING;
+              caller should investigate the WS failure separately.
+            * ``ProviderStatus.AVAILABLE`` — pod was STOPPED / starting
+              and a wake-up was successfully requested; the pipeline
+              must be restarted.
+
+        Raises:
+            ProviderUnavailableError: probe failure
+                (``POD_PROBE_FAILED``), pod reached terminal state
+                (``POD_TERMINAL``), or wake-up failure
+                (``POD_WAKE_FAILED``). The ``context["legacy_code"]``
+                carries the specific subcode for callers that branch
+                on the failure mode.
         """
         from ryotenkai_providers.runpod.models import PodSnapshot
         from ryotenkai_providers.runpod.sdk_adapter import RunPodSDKClient
@@ -673,33 +678,30 @@ class RunPodProvider(
         try:
             pod_data = sdk.get_pod(pod_id=resource_id)
         except RyotenkAIError as exc:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"runner connection lost and pod probe failed: {exc}"
-                    ),
-                    code="POD_PROBE_FAILED",
-                    details={"pod_id": resource_id},
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=f"runner connection lost and pod probe failed: {exc}",
+                context={"legacy_code": "POD_PROBE_FAILED", "pod_id": resource_id},
+                cause=exc,
+            ) from exc
         snapshot = PodSnapshot.from_graphql(pod_data)
         if snapshot.is_terminal:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"pod {resource_id} reached terminal state "
-                        f"({snapshot.status}); cannot resume"
-                    ),
-                    code="POD_TERMINAL",
-                    details={"pod_id": resource_id, "status": snapshot.status},
-                )
+            raise ProviderUnavailableError(
+                detail=(
+                    f"pod {resource_id} reached terminal state "
+                    f"({snapshot.status}); cannot resume"
+                ),
+                context={
+                    "legacy_code": "POD_TERMINAL",
+                    "pod_id": resource_id,
+                    "status": snapshot.status,
+                },
             )
         if snapshot.is_ready:
             logger.info(
                 "[PROVIDER:RECOVERY] pod %s is RUNNING — WS failure unrelated",
                 resource_id,
             )
-            return Ok(ProviderStatus.CONNECTED)
+            return ProviderStatus.CONNECTED
         # Stopped / starting — wake.
         logger.warning(
             "[PROVIDER:RECOVERY] pod %s is %s — requesting SDK wake-up",
@@ -709,16 +711,12 @@ class RunPodProvider(
         try:
             sdk.start_pod(pod_id=resource_id)
         except RyotenkAIError as exc:
-            return Err(
-                ProviderError(
-                    message=(
-                        f"pod {resource_id} was stopped and wake-up failed: {exc}"
-                    ),
-                    code="POD_WAKE_FAILED",
-                    details={"pod_id": resource_id},
-                )
-            )
-        return Ok(ProviderStatus.AVAILABLE)
+            raise ProviderUnavailableError(
+                detail=f"pod {resource_id} was stopped and wake-up failed: {exc}",
+                context={"legacy_code": "POD_WAKE_FAILED", "pod_id": resource_id},
+                cause=exc,
+            ) from exc
+        return ProviderStatus.AVAILABLE
 
     # ------------------------------------------------------------------
     # ICapacityErrorClassifier — message-based error categorisation
@@ -892,51 +890,51 @@ class RunPodProvider(
         *,
         resource_id: str,
         reason: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Permanently delete the pod via ``podTerminate``.
 
         Phase 14.A. Delegates to the existing
         :meth:`RunPodTrainingPodControl.terminate_pod`. Idempotent —
-        already-gone pods return ``Ok``.
+        already-gone pods complete cleanly.
 
         ``reason`` is currently logged but not forwarded to the
         GraphQL call (RunPod doesn't accept a reason field). Phase
         14.B's :class:`PodTerminator` will pipe it into telemetry.
+
+        Raises:
+            ProviderUnavailableError: backend rejected the terminate
+                call (propagated from the internal stack).
         """
         logger.info(
             "[PROVIDER:TERMINATE] pod=%s reason=%s",
             resource_id,
             reason,
         )
-        try:
-            self._api_client.terminate_pod(resource_id)
-            return Ok(None)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_provider_error(exc))
+        self._api_client.terminate_pod(resource_id)
 
     def pause(
         self,
         *,
         resource_id: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Stop the pod via ``podStop`` (preserves /workspace).
 
         Phase 14.A. Delegates to the existing
         :meth:`RunPodTrainingPodControl.stop_pod`. Idempotent —
-        already-stopped pods return ``Ok``.
+        already-stopped pods complete cleanly.
+
+        Raises:
+            ProviderUnavailableError: backend rejected the stop call
+                (propagated from the internal stack).
         """
         logger.info("[PROVIDER:PAUSE] pod=%s", resource_id)
-        try:
-            self._api_client.stop_pod(pod_id=resource_id)
-            return Ok(None)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_provider_error(exc))
+        self._api_client.stop_pod(pod_id=resource_id)
 
     def resume(
         self,
         *,
         resource_id: str,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Wake a stopped pod via ``podResume``.
 
         Phase 14.A. Delegates to the existing
@@ -944,13 +942,14 @@ class RunPodProvider(
         ``podResume`` mutation lives there). Single attempt — caller
         orchestrates capacity-aware retry (Phase 14.C
         :class:`LaunchResumeService`).
+
+        Raises:
+            ProviderUnavailableError: capacity exhaustion / transport
+                error / hard failure (propagated from the internal
+                stack).
         """
         logger.info("[PROVIDER:RESUME] pod=%s", resource_id)
-        try:
-            self._api_client.start_pod(pod_id=resource_id)
-            return Ok(None)
-        except RyotenkAIError as exc:
-            return Err(_typed_to_provider_error(exc))
+        self._api_client.start_pod(pod_id=resource_id)
 
     def get_pod_id(self) -> str | None:
         """Get current pod ID."""
@@ -968,7 +967,7 @@ class RunPodProvider(
         self,
         ssh_client: SSHClient,
         context: dict[str, Any],
-    ) -> Result[TrainingScriptHooks, AppError]:
+    ) -> TrainingScriptHooks:
         """Forward auto-stop credentials to the in-pod runner via env.
 
         Phase 6.5 simplification: the legacy hooks uploaded
@@ -1003,16 +1002,16 @@ class RunPodProvider(
         cleanup = self._config.cleanup
         if not cleanup.auto_stop_after_training:
             logger.info("[PROVIDER:HOOKS] auto_stop_after_training disabled")
-            return Ok(TrainingScriptHooks.empty())
+            return TrainingScriptHooks.empty()
 
         resource_id = context.get("resource_id") or self._pod_id
         if not resource_id:
             logger.warning("[PROVIDER:HOOKS] resource_id (pod_id) unknown — skipping auto-stop env")
-            return Ok(TrainingScriptHooks.empty())
+            return TrainingScriptHooks.empty()
 
         if not self._api_key:
             logger.warning("[PROVIDER:HOOKS] RunPod API key missing — skipping auto-stop env")
-            return Ok(TrainingScriptHooks.empty())
+            return TrainingScriptHooks.empty()
 
         env_vars = {
             "RUNPOD_API_KEY": self._api_key,
@@ -1024,7 +1023,7 @@ class RunPodProvider(
         }
 
         logger.info(f"[PROVIDER:HOOKS] Auto-stop env wired for pod {resource_id}")
-        return Ok(TrainingScriptHooks(env_vars=env_vars))
+        return TrainingScriptHooks(env_vars=env_vars)
 
     def __repr__(self) -> str:
         status = self._status.value

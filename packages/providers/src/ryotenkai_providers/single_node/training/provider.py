@@ -24,8 +24,12 @@ from ryotenkai_providers.training.interfaces import (
     TrainingScriptHooks,
     VolumeKind,
 )
+from ryotenkai_shared.errors import (
+    ProviderUnavailableError,
+    RyotenkAIError,
+    SSHConnectionFailedError,
+)
 from ryotenkai_shared.utils.pod_layout import PodLayout
-from ryotenkai_shared.utils.result import AppError, Err, Ok, ProviderError, Result
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
 from .config import SingleNodeProviderConfig
@@ -96,7 +100,7 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
     # ProviderBase — manifest-derived. See RunPodProvider for the same
     # pattern.
 
-    def connect(self, *, run: RunContext) -> Result[SSHConnectionInfo, ProviderError]:
+    def connect(self, *, run: RunContext) -> SSHConnectionInfo:
         """
         Connect to local PC via SSH.
 
@@ -108,13 +112,19 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             5. Return connection info
 
         Returns:
-            Ok(SSHConnectionInfo): Connection established
-            Err(ProviderError): Error
+            SSHConnectionInfo on successful connection.
+
+        Raises:
+            SSHConnectionFailedError: alias / explicit SSH connection
+                failed, or run-directory creation failed.
+            ProviderUnavailableError: health checks failed (GPU,
+                Docker, disk), workspace creation failed, or
+                unexpected error.
         """
         if self._status == ProviderStatus.CONNECTED:
             logger.warning("[PROVIDER:CONNECT] Already connected")
             if self._ssh_connection_info:
-                return Ok(self._ssh_connection_info)
+                return self._ssh_connection_info
 
         self._status = ProviderStatus.CONNECTING
 
@@ -170,11 +180,9 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                     else:
                         self._ssh_client = None
                         self._status = ProviderStatus.ERROR
-                        return Err(
-                            ProviderError(
-                                message="SSH alias connection failed and no explicit fallback (host+user) is configured",
-                                code="SINGLENODE_SSH_ALIAS_FAILED",
-                            )
+                        raise SSHConnectionFailedError(
+                            detail="SSH alias connection failed and no explicit fallback (host+user) is configured",
+                            context={"legacy_code": "SINGLENODE_SSH_ALIAS_FAILED"},
                         )
 
             if self._ssh_client is None:
@@ -196,8 +204,9 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             # Test connection
             if not success:
                 self._status = ProviderStatus.ERROR
-                return Err(
-                    ProviderError(message=f"SSH connection failed: {error}", code="SINGLENODE_SSH_CONNECT_FAILED")
+                raise SSHConnectionFailedError(
+                    detail=f"SSH connection failed: {error}",
+                    context={"legacy_code": "SINGLENODE_SSH_CONNECT_FAILED"},
                 )
 
             # Run health checks (docker-only)
@@ -209,11 +218,9 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             if not health_result.passed:
                 self._status = ProviderStatus.ERROR
                 errors = health_result.errors or ["Unknown error"]
-                return Err(
-                    ProviderError(
-                        message=f"Health checks failed: {'; '.join(errors)}",
-                        code="SINGLENODE_HEALTH_CHECK_FAILED",
-                    )
+                raise ProviderUnavailableError(
+                    detail=f"Health checks failed: {'; '.join(errors)}",
+                    context={"legacy_code": "SINGLENODE_HEALTH_CHECK_FAILED"},
                 )
 
             # Store GPU info
@@ -228,11 +235,9 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 success, error = self._ssh_client.create_directory(self._config.workspace_path)
                 if not success:
                     self._status = ProviderStatus.ERROR
-                    return Err(
-                        ProviderError(
-                            message=f"Failed to create workspace: {error}",
-                            code="SINGLENODE_WORKSPACE_CREATE_FAILED",
-                        )
+                    raise ProviderUnavailableError(
+                        detail=f"Failed to create workspace: {error}",
+                        context={"legacy_code": "SINGLENODE_WORKSPACE_CREATE_FAILED"},
                     )
 
             # Create isolated run directory
@@ -246,11 +251,9 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             success, error = self._ssh_client.create_directory(self._run_dir)
             if not success:
                 self._status = ProviderStatus.ERROR
-                return Err(
-                    ProviderError(
-                        message=f"Failed to create run directory: {error}",
-                        code="SINGLENODE_RUN_DIR_CREATE_FAILED",
-                    )
+                raise SSHConnectionFailedError(
+                    detail=f"Failed to create run directory: {error}",
+                    context={"legacy_code": "SINGLENODE_RUN_DIR_CREATE_FAILED"},
                 )
 
             # Create subdirectories
@@ -274,13 +277,25 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             logger.info(f"[PROVIDER:CONNECTED] {self._ssh_connection_info}")
             logger.info(f"📂 Run directory: {self._run_dir}")
 
-            return Ok(self._ssh_connection_info)
+            return self._ssh_connection_info
+
+        except RyotenkAIError:
+            # Typed exceptions from health-check / SSH layers propagate
+            # without translation. Status / error-marking is set by the
+            # raising helper above.
+            self._status = ProviderStatus.ERROR
+            self._had_error = True
+            raise
 
         except Exception as e:
             self._status = ProviderStatus.ERROR
             self._had_error = True
             logger.error(f"[PROVIDER:ERROR] Connection failed: {e}")
-            return Err(ProviderError(message=str(e), code="SINGLENODE_CONNECT_UNEXPECTED_ERROR"))
+            raise ProviderUnavailableError(
+                detail=str(e),
+                context={"legacy_code": "SINGLENODE_CONNECT_UNEXPECTED_ERROR"},
+                cause=e,
+            ) from e
 
     def _preempt_inference_container(self) -> None:
         """
@@ -319,7 +334,7 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         container_name: str,
         *,
         ssh_command_timeout: int = 10,
-    ) -> Result[None, ProviderError]:
+    ) -> None:
         """Phase 9.B — terminate the training docker container, fail-soft.
 
         Parity with the in-pod ``PodTerminator`` for RunPod:
@@ -334,12 +349,12 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
           is safe.
         * Hard timeout — SSH command is bounded by
           ``ssh_command_timeout`` (default 10s). If the remote host
-          is unreachable or hung, the call returns Err rather than
-          blocking indefinitely.
-        * Best-effort — errors are returned as Err for the caller to
-          log + escalate to ops; the cleanup chain continues either
-          way (the orchestrator's _cleanup_resources is wrapped in
-          its own exception handler).
+          is unreachable or hung, raises rather than blocking
+          indefinitely.
+        * Best-effort — errors are raised for the caller to log +
+          escalate to ops; the cleanup chain continues either way
+          (the orchestrator's _cleanup_resources is wrapped in its
+          own exception handler).
 
         Args:
             container_name: Full docker container name to remove
@@ -353,18 +368,21 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 interaction on a healthy host with margin; tunable
                 for slower networks if it ever surfaces as a flake.
 
-        Returns:
-            ``Ok(None)`` when the container is verifiably gone.
-            ``Err(ProviderError)`` when the SSH client is missing,
-            the command failed, or we couldn't verify removal. The
-            error code distinguishes the cases.
+        Raises:
+            ProviderUnavailableError: SSH client missing, command
+                failed, transport failed, or container still present
+                after rm. ``context["legacy_code"]`` distinguishes
+                cases:
+                ``SINGLENODE_CLEANUP_NO_SSH`` /
+                ``SINGLENODE_CLEANUP_INVALID_NAME`` /
+                ``SINGLENODE_CLEANUP_SSH_TRANSPORT`` /
+                ``SINGLENODE_CLEANUP_DOCKER_RM_FAILED`` /
+                ``SINGLENODE_CLEANUP_VERIFY_FAILED``.
         """
         if self._ssh_client is None:
-            return Err(
-                ProviderError(
-                    message=("cleanup_after_run called before connect — " "no SSH client to drive docker rm"),
-                    code="SINGLENODE_CLEANUP_NO_SSH",
-                )
+            raise ProviderUnavailableError(
+                detail="cleanup_after_run called before connect — no SSH client to drive docker rm",
+                context={"legacy_code": "SINGLENODE_CLEANUP_NO_SSH"},
             )
 
         # Validate the container name shape — must match the prefix
@@ -374,14 +392,12 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         # handles quoting — but explicit narrow allowlist is
         # cleaner and surfaces typos early.
         if not container_name or any(ch in container_name for ch in (" ", ";", "&", "|", "$", "`", "\n")):
-            return Err(
-                ProviderError(
-                    message=(
-                        f"cleanup_after_run: invalid container_name "
-                        f"{container_name!r} — must be a single shell token"
-                    ),
-                    code="SINGLENODE_CLEANUP_INVALID_NAME",
-                )
+            raise ProviderUnavailableError(
+                detail=(
+                    f"cleanup_after_run: invalid container_name "
+                    f"{container_name!r} — must be a single shell token"
+                ),
+                context={"legacy_code": "SINGLENODE_CLEANUP_INVALID_NAME"},
             )
 
         # Idempotent removal: ``|| true`` makes the command succeed
@@ -395,19 +411,16 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 silent=False,
             )
         except Exception as exc:
-            return Err(
-                ProviderError(
-                    message=(f"cleanup_after_run: SSH transport failed: {exc}"),
-                    code="SINGLENODE_CLEANUP_SSH_TRANSPORT",
-                )
-            )
+            raise ProviderUnavailableError(
+                detail=f"cleanup_after_run: SSH transport failed: {exc}",
+                context={"legacy_code": "SINGLENODE_CLEANUP_SSH_TRANSPORT"},
+                cause=exc,
+            ) from exc
 
         if not ok:
-            return Err(
-                ProviderError(
-                    message=(f"docker rm -f {container_name} failed: " f"{(stderr or '')[:200]}"),
-                    code="SINGLENODE_CLEANUP_DOCKER_RM_FAILED",
-                )
+            raise ProviderUnavailableError(
+                detail=f"docker rm -f {container_name} failed: {(stderr or '')[:200]}",
+                context={"legacy_code": "SINGLENODE_CLEANUP_DOCKER_RM_FAILED"},
             )
 
         # Verify the container is actually gone. ``docker ps -a -q`` lists
@@ -427,25 +440,23 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
                 container_name,
                 exc,
             )
-            return Ok(None)
+            return
 
         if ok_v and stdout_v.strip():
-            return Err(
-                ProviderError(
-                    message=(
-                        f"docker rm reported success but container " f"{container_name!r} still listed by docker ps"
-                    ),
-                    code="SINGLENODE_CLEANUP_VERIFY_FAILED",
-                )
+            raise ProviderUnavailableError(
+                detail=(
+                    f"docker rm reported success but container "
+                    f"{container_name!r} still listed by docker ps"
+                ),
+                context={"legacy_code": "SINGLENODE_CLEANUP_VERIFY_FAILED"},
             )
 
         logger.info(
             "[PROVIDER:CLEANUP] training container %s removed",
             container_name,
         )
-        return Ok(None)
 
-    def disconnect(self) -> Result[None, ProviderError]:
+    def disconnect(self) -> None:
         """
         Disconnect from local PC.
 
@@ -453,13 +464,13 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
             - cleanup_workspace=True: Delete run directory
             - keep_on_error=True: Keep workspace if there was an error
 
-        Returns:
-            Ok(None): Disconnected
-            Err(ProviderError): Error during cleanup
+        Best-effort: filesystem cleanup failures are logged, never
+        raised — callers must not let a stale workspace prevent
+        pipeline shutdown.
         """
         if self._status not in (ProviderStatus.CONNECTED, ProviderStatus.ERROR):
             logger.debug("[PROVIDER:DISCONNECT] Not connected, nothing to do")
-            return Ok(None)
+            return
 
         self._status = ProviderStatus.DISCONNECTING
         logger.info("[PROVIDER:DISCONNECT] Disconnecting...")
@@ -508,8 +519,6 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         self._status = ProviderStatus.AVAILABLE
         logger.info("[PROVIDER:DISCONNECTED] Connection closed, server is still running")
 
-        return Ok(None)
-
     def mark_error(self) -> None:
         """
         Mark that an error occurred during training.
@@ -524,7 +533,7 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         """Get current provider status."""
         return self._status
 
-    def check_gpu(self) -> Result[GPUInfo, ProviderError]:
+    def check_gpu(self) -> GPUInfo:
         """
         Check GPU availability.
 
@@ -532,16 +541,22 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         Otherwise, attempts to connect first.
 
         Returns:
-            Ok(GPUInfo): GPU information
-            Err(ProviderError): Error
+            GPUInfo for the connected host.
+
+        Raises:
+            ProviderUnavailableError: not connected, nvidia-smi
+                failure, or parse failure.
         """
         # Return cached info if available
         if self._gpu_info:
-            return Ok(self._gpu_info)
+            return self._gpu_info
 
         # Must be connected
         if self._status != ProviderStatus.CONNECTED or not self._ssh_client:
-            return Err(ProviderError(message="Not connected. Call connect() first.", code="SINGLENODE_NOT_CONNECTED"))
+            raise ProviderUnavailableError(
+                detail="Not connected. Call connect() first.",
+                context={"legacy_code": "SINGLENODE_NOT_CONNECTED"},
+            )
 
         # Run GPU check
         health_checker = SingleNodeHealthCheck(self._ssh_client)
@@ -641,10 +656,10 @@ class SingleNodeProvider(ProviderBase, IGPUProvider):
         self,
         ssh_client: SSHClient,
         context: dict[str, Any],
-    ) -> Result[TrainingScriptHooks, AppError]:
+    ) -> TrainingScriptHooks:
         """Single-node has no cloud lifecycle concerns — empty hooks."""
         del ssh_client, context
-        return Ok(TrainingScriptHooks.empty())
+        return TrainingScriptHooks.empty()
 
     def get_ssh_client(self) -> SSHClient | None:
         """Get SSH client for direct operations."""

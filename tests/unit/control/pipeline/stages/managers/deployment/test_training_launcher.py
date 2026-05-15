@@ -438,18 +438,18 @@ class TestStartTrainingErrors:
     def test_provider_hooks_failure_raises_provider_unavailable(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When ``provider.prepare_training_script_hooks`` returns an
-        ``Err``-shaped Result (legacy contract), the launcher raises
+        """When ``provider.prepare_training_script_hooks`` raises a typed
+        exception (Batch 12 contract), the launcher catches and re-raises as
         :class:`ProviderUnavailableError` with ``reason="PROVIDER_HOOKS_FAILED"``."""
         from ryotenkai_shared.errors import ProviderUnavailableError
 
         _stub_launch_runner(monkeypatch)
-        # Provider's hook returns an Err-shaped Result (legacy).
+        # Provider's hook raises a typed exception (Batch 12 contract).
         provider = MagicMock()
         provider.required_runtime_env_vars.return_value = {"RYOTENKAI_RUNTIME_PROVIDER": "runpod"}
-        provider.prepare_training_script_hooks.return_value = SimpleNamespace(
-            is_err=lambda: True,
-            unwrap_err=lambda: SimpleNamespace(message="boom"),
+        provider.prepare_training_script_hooks.side_effect = ProviderUnavailableError(
+            detail="boom",
+            context={"reason": "PROVIDER_HOOK_INTERNAL_ERROR"},
         )
         provider.pod_layout_for_run.return_value = _launcher_mod.PodLayout.from_root(
             __import__("pathlib").PurePosixPath("/workspace/runs/r1"),

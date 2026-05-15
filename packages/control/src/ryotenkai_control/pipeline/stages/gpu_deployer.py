@@ -18,7 +18,6 @@ from ryotenkai_shared.errors import (
     InternalError,
     ProviderUnavailableError,
     RyotenkAIError,
-    SSHConnectionFailedError,
     SSHTransferFailedError,
 )
 from ryotenkai_shared.pipeline_context import RunContext
@@ -205,19 +204,12 @@ class GPUDeployer(PipelineStage):
             provider_block=self._provider_config,
             secrets=self.secrets,
         )
-        create_result = get_registry().create_training(self._provider_name, ctx)
-        if create_result.is_failure():
-            provider_err = create_result.unwrap_err()
+        try:
+            self._provider = get_registry().create_training(self._provider_name, ctx)
+        except RyotenkAIError as exc:
             if self._callbacks.on_error:
-                self._callbacks.on_error("provider_create", str(provider_err))
-            raise ProviderUnavailableError(
-                detail=f"Provider create failed: {provider_err}",
-                context={
-                    "legacy_code": getattr(provider_err, "code", "PROVIDER_CREATE_FAILED"),
-                    "provider": self._provider_name,
-                },
-            )
-        self._provider = create_result.unwrap()
+                self._callbacks.on_error("provider_create", exc.detail or str(exc))
+            raise
         # Fire callback
         if self._callbacks.on_provider_created:
             self._callbacks.on_provider_created(self._provider_name, self._provider.provider_type)
@@ -225,32 +217,13 @@ class GPUDeployer(PipelineStage):
         # Step 2: Connect to GPU server
         logger.info(f"Connecting to {self._provider_name}...")
         connect_start = time.time()
-        connect_result = self._provider.connect(run=run)
-        connect_duration = time.time() - connect_start
-
-        if connect_result.is_err():
-            err = connect_result.unwrap_err()  # type: ignore[union-attr]
+        try:
+            ssh_info = cast("SSHConnectionInfo | None", self._provider.connect(run=run))
+        except RyotenkAIError as exc:
             if self._callbacks.on_error:
-                self._callbacks.on_error("connect", str(err))
-            # Heuristic split: SSH-shaped errors → SSHConnectionFailedError;
-            # everything else → ProviderUnavailableError. Provider-level
-            # boundary translation is finalised in Batch 11-12.
-            err_code = getattr(err, "code", "") or ""
-            ctx = {
-                "legacy_code": "PROVIDER_CONNECT_FAILED",
-                "provider": self._provider_name,
-            }
-            if "SSH" in err_code or "ssh" in str(err).lower():
-                raise SSHConnectionFailedError(
-                    detail=f"Connection failed: {err}",
-                    context=ctx,
-                )
-            raise ProviderUnavailableError(
-                detail=f"Connection failed: {err}",
-                context=ctx,
-            )
-
-        ssh_info = cast("SSHConnectionInfo | None", connect_result.unwrap())
+                self._callbacks.on_error("connect", exc.detail or str(exc))
+            raise
+        connect_duration = time.time() - connect_start
 
         if ssh_info is None:
             msg = "SSH info is None"

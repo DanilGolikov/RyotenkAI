@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from ryotenkai_shared.config.providers.runpod.inference import RunPodNetworkVolumeConfig
 from ryotenkai_providers.runpod.inference.pods.provider import RunPodPodInferenceProvider
-from ryotenkai_shared.errors import ProviderUnavailableError
+from ryotenkai_shared.errors import InferenceUnavailableError, ProviderUnavailableError
 
 pytestmark = pytest.mark.unit
 
@@ -73,8 +73,9 @@ def test_network_volume_autocreate_uses_config_datacenter() -> None:
     cfg = RunPodNetworkVolumeConfig(id=None, name="vol", data_center_id="EU-RO-1", size_gb=50)
     p = _mk_provider(api=api, volume_cfg=cfg)
 
-    res = p._ensure_network_volume()
-    assert res.is_success()
+    # Phase A2 Batch 12: _ensure_network_volume returns id string on success, raises on failure.
+    vol_id = p._ensure_network_volume()
+    assert isinstance(vol_id, str) and vol_id
     assert api.created_payloads[0]["dataCenterId"] == "EU-RO-1"
 
 
@@ -94,9 +95,8 @@ def test_network_volume_create_failure_but_volume_appears_after_relist() -> None
     cfg = RunPodNetworkVolumeConfig(id=None, name="vol", data_center_id="US-KS-2", size_gb=50)
     p = _mk_provider(api=api, volume_cfg=cfg)
 
-    res = p._ensure_network_volume()
-    assert res.is_success()
-    assert res.unwrap() == "nv_found"
+    vol_id = p._ensure_network_volume()
+    assert vol_id == "nv_found"
     assert isinstance(p._network_volume_meta, dict)
     assert p._network_volume_meta.get("id") == "nv_found"
 
@@ -113,9 +113,9 @@ def test_network_volume_multiple_matches_by_name_requires_id() -> None:
     cfg = RunPodNetworkVolumeConfig(id=None, name="vol", data_center_id="EU-RO-1", size_gb=50)
     p = _mk_provider(api=api, volume_cfg=cfg)
 
-    res = p._ensure_network_volume()
-    assert res.is_failure()
-    msg = str(res.unwrap_err())
+    with pytest.raises(InferenceUnavailableError) as exc_info:
+        p._ensure_network_volume()
+    msg = str(exc_info.value.detail or exc_info.value)
     assert "multiple network volumes" in msg
     assert "providers.runpod.inference.volume.id" in msg
 
@@ -132,6 +132,5 @@ def test_network_volume_multiple_matches_can_disambiguate_by_config_datacenter()
     cfg = RunPodNetworkVolumeConfig(id=None, name="vol", data_center_id="EU-RO-1", size_gb=50)
     p = _mk_provider(api=api, volume_cfg=cfg)
 
-    res = p._ensure_network_volume()
-    assert res.is_success()
-    assert res.unwrap() == "nv_eu"
+    vol_id = p._ensure_network_volume()
+    assert vol_id == "nv_eu"

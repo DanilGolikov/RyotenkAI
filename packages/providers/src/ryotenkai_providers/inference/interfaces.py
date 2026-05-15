@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ryotenkai_shared.utils.result import InferenceError, Result
-
 
 class PipelineReadinessMode(StrEnum):
     """
@@ -150,7 +148,15 @@ class IInferenceProvider(Protocol):
         trust_remote_code: bool = False,
         lora_path: str | None = None,
         keep_running: bool = False,
-    ) -> Result[EndpointInfo, InferenceError]: ...
+    ) -> EndpointInfo:
+        """Provision the inference endpoint and return its descriptor.
+
+        Raises:
+            InferenceUnavailableError: provider provisioning failed
+                (transient / permanent).
+            ConfigInvalidError: invalid model_source / adapter ref.
+        """
+        ...
 
     def set_event_logger(self, event_logger: InferenceEventLogger | None) -> None: ...
 
@@ -160,17 +166,40 @@ class IInferenceProvider(Protocol):
 
     def build_inference_artifacts(
         self, *, ctx: InferenceArtifactsContext
-    ) -> Result[InferenceArtifacts, InferenceError]: ...
+    ) -> InferenceArtifacts:
+        """Render the manifest, chat script, and README content.
 
-    def undeploy(self) -> Result[None, InferenceError]: ...
+        Raises:
+            InferenceUnavailableError: provider cannot build artifacts
+                (missing pod metadata, etc.).
+        """
+        ...
 
-    def health_check(self) -> Result[bool, InferenceError]: ...
+    def undeploy(self) -> None:
+        """Stop the inference endpoint (best-effort teardown).
+
+        Raises:
+            InferenceUnavailableError: backend rejected stop request.
+        """
+        ...
+
+    def health_check(self) -> bool:
+        """Probe endpoint readiness.
+
+        Returns:
+            True iff the endpoint is reachable and serving.
+
+        Raises:
+            InferenceUnavailableError: provider not deployed / probe
+                transport failed.
+        """
+        ...
 
     def get_capabilities(self) -> InferenceCapabilities: ...
 
     def get_endpoint_info(self) -> EndpointInfo | None: ...
 
-    def activate_for_eval(self) -> Result[str, InferenceError]:
+    def activate_for_eval(self) -> str:
         """
         Bring up a live inference endpoint specifically for the evaluation stage.
 
@@ -178,12 +207,15 @@ class IInferenceProvider(Protocol):
         only if ``get_capabilities().supports_activate_for_eval`` is ``True``.
 
         Returns:
-            Ok(endpoint_url) — active OpenAI-compatible base URL ready to receive requests.
-            Err(InferenceError) — startup failed (transient or permanent).
-                InferenceDeployer **fails the stage** with code
-                ``INFERENCE_ACTIVATION_FAILED`` and explicitly calls
-                ``deactivate_after_eval`` to release the resource. The
-                pipeline does NOT continue with a phantom endpoint.
+            Active OpenAI-compatible base URL ready to receive requests.
+
+        Raises:
+            InferenceUnavailableError: startup failed (transient or
+                permanent). InferenceDeployer **fails the stage** with
+                code ``INFERENCE_ACTIVATION_FAILED`` and explicitly
+                calls ``deactivate_after_eval`` to release the
+                resource. The pipeline does NOT continue with a
+                phantom endpoint.
 
         Contract:
         - Provider is responsible for all startup details (SSH tunnel, vLLM launch, etc.).
@@ -193,7 +225,7 @@ class IInferenceProvider(Protocol):
         """
         ...
 
-    def deactivate_after_eval(self) -> Result[None, InferenceError]:
+    def deactivate_after_eval(self) -> None:
         """
         Shut down and clean up the inference endpoint after evaluation completes.
 
@@ -207,5 +239,9 @@ class IInferenceProvider(Protocol):
         - runpod_pods: delete the Pod (preserves Network Volume); cost-critical.
 
         Best-effort: failures are logged but never mask an upstream error.
+
+        Raises:
+            InferenceUnavailableError: backend rejected cleanup
+                (callers typically swallow on cleanup paths).
         """
         ...

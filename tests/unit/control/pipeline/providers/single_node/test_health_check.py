@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from ryotenkai_providers.single_node.training.health_check import SingleNodeHealthCheck
-from ryotenkai_shared.utils.result import Err
 
 
 @dataclass
@@ -31,8 +32,8 @@ def test_check_gpu_success_parses_nvidia_smi() -> None:
     hc = SingleNodeHealthCheck(ssh)
 
     res = hc.check_gpu()
-    assert res.is_success()
-    gpu = res.unwrap()
+    # (Phase A2 Batch 12: success implies no raise)
+    gpu = res
     assert gpu.name == "NVIDIA A40"
     assert gpu.vram_total_mb == 46080
     assert gpu.vram_free_mb == 45000
@@ -41,6 +42,8 @@ def test_check_gpu_success_parses_nvidia_smi() -> None:
 
 
 def test_check_gpu_invalid_format() -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     script = {
         "nvidia-smi --query-gpu=name,memory.total,memory.free,driver_version --format=csv,noheader,nounits": (
             True,
@@ -52,20 +55,22 @@ def test_check_gpu_invalid_format() -> None:
     ssh = FakeSSH(script=script, calls=[])
     hc = SingleNodeHealthCheck(ssh)
 
-    res = hc.check_gpu()
-    assert res.is_failure()
-    assert "Unexpected" in str(res.unwrap_err())
+    with pytest.raises(ProviderUnavailableError) as exc_info:
+        hc.check_gpu()
+    assert "Unexpected" in str(exc_info.value.detail or exc_info.value)
 
 
 def test_check_docker_failure_when_missing() -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     # docker --version fails
     script = {
         "docker --version": (False, "", "not found"),
     }
     ssh = FakeSSH(script=script, calls=[])
     hc = SingleNodeHealthCheck(ssh)
-    res = hc.check_docker()
-    assert res.is_failure()
+    with pytest.raises(ProviderUnavailableError):
+        hc.check_docker()
 
 
 def test_check_docker_success_with_gpu_support() -> None:
@@ -77,9 +82,8 @@ def test_check_docker_success_with_gpu_support() -> None:
     }
     ssh = FakeSSH(script=script, calls=[])
     hc = SingleNodeHealthCheck(ssh)
-    res = hc.check_docker()
-    assert res.is_success()
-    assert res.unwrap() == "24.0.7"
+    # (Phase A2 Batch 12: success implies no raise)
+    assert hc.check_docker() == "24.0.7"
 
 
 def test_check_disk_space_falls_back_to_parent_when_path_missing() -> None:
@@ -91,9 +95,8 @@ def test_check_disk_space_falls_back_to_parent_when_path_missing() -> None:
     }
     ssh = FakeSSH(script=script, calls=[])
     hc = SingleNodeHealthCheck(ssh)
-    res = hc.check_disk_space(path)
-    assert res.is_success()
-    assert res.unwrap() == 50.0
+    # (Phase A2 Batch 12: success implies no raise)
+    assert hc.check_disk_space(path) == 50.0
 
 
 def test_run_all_checks_fails_when_docker_root_dir_low_space() -> None:
@@ -126,11 +129,21 @@ def test_run_all_checks_fails_when_docker_root_dir_low_space() -> None:
 
 
 def test_run_all_checks_turns_failures_into_errors() -> None:
+    from ryotenkai_shared.errors import ProviderUnavailableError
+
     hc = SingleNodeHealthCheck(FakeSSH(script={}, calls=[]))
-    # Patch individual checks via monkeypatching methods for determinism
-    hc.check_gpu = lambda: Err("gpu")  # type: ignore[method-assign]
-    hc.check_docker = lambda: Err("docker")  # type: ignore[method-assign]
-    hc.check_disk_space = lambda *a, **k: Err("disk")  # type: ignore[method-assign]
+    # Patch individual checks via monkeypatching methods — they raise
+    # (Phase A2 Batch 12 contract) and ``run_all_checks`` translates
+    # exceptions into entries in ``result.errors``.
+    def _raise_gpu():
+        raise ProviderUnavailableError(detail="gpu", context={})
+    def _raise_docker():
+        raise ProviderUnavailableError(detail="docker", context={})
+    def _raise_disk(*a, **k):
+        raise ProviderUnavailableError(detail="disk", context={})
+    hc.check_gpu = _raise_gpu  # type: ignore[method-assign]
+    hc.check_docker = _raise_docker  # type: ignore[method-assign]
+    hc.check_disk_space = _raise_disk  # type: ignore[method-assign]
 
     result = hc.run_all_checks(workspace_path="/")
     assert result.passed is False
