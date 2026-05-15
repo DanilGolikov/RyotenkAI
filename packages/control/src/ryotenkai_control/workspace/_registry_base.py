@@ -35,6 +35,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Protocol, TypeVar
 
+from ryotenkai_shared.errors import WorkspaceStoreFailedError
 from ryotenkai_shared.utils.atomic_fs import (
     atomic_write_json,
     atomic_write_text,
@@ -62,11 +63,24 @@ def default_workspace_root() -> Path:
 
 
 class WorkspaceRegistryError(RuntimeError):
-    """Base class for workspace-registry failures (recoverable)."""
+    """Base class for workspace-registry failures (recoverable).
+
+    Phase C kept this as a plain ``RuntimeError`` (not yet wired into
+    the typed hierarchy) because the only raise sites are CLI-side and
+    surface through ``die()`` rather than the HTTP layer. Migrating it
+    would force every catch site to update; left for a future cleanup.
+    """
 
 
-class WorkspaceStoreError(RuntimeError):
-    """Base class for workspace-store failures (recoverable)."""
+class WorkspaceStoreError(WorkspaceStoreFailedError):
+    """Base class for workspace-store failures (recoverable).
+
+    Phase C: inherits from the shared typed
+    :class:`WorkspaceStoreFailedError` (500, ``WORKSPACE_STORE_FAILED``)
+    so the RFC 9457 problem+json contract converts it without an
+    ad-hoc adapter. Subclasses (``ProviderStoreError`` etc.) keep
+    their historical names so existing catch sites work unchanged.
+    """
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from ryotenkai_control.pipeline.constants import MLFLOW_CATEGORY_PIPELINE, MLFLO
 from ryotenkai_control.pipeline.stages import PipelineContextKeys
 from ryotenkai_shared.errors import (
     ConfigInvalidError,
+    InternalError,
     ProviderUnavailableError,
     RyotenkAIError,
 )
@@ -403,8 +404,14 @@ class MLflowAttemptManager:
             self._manager.cleanup()
 
 
-class MLflowManagerNotInitializedError(RuntimeError):
+class MLflowManagerNotInitializedError(InternalError):
     """Raised when an operation needs a ready MLflowManager but none is bootstrapped.
+
+    Phase C: inherits from the shared typed :class:`InternalError`
+    (500, ``INTERNAL_ERROR``) so the RFC 9457 problem+json contract
+    converts it without an ad-hoc adapter. This is the catch-all 500
+    bucket -- a true server-side defect (the manager should have been
+    bootstrapped before any caller asks for it).
 
     Prefer this over ``assert`` — asserts are disabled under ``python -O`` and
     would silently degrade to opaque AttributeError in production.

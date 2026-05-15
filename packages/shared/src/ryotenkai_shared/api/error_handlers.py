@@ -44,6 +44,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from ryotenkai_shared.api.request_id import current_request_id
 from ryotenkai_shared.contracts.problem_details import (
     PROBLEM_JSON_MEDIA_TYPE,
     ErrorCode,
@@ -51,6 +52,7 @@ from ryotenkai_shared.contracts.problem_details import (
     ProblemDetails,
 )
 from ryotenkai_shared.errors._render import _DEFAULT_TITLES, default_title_for
+from ryotenkai_shared.errors.base import RyotenkAIError
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,7 @@ __all__ = [
     "generic_exception_handler",
     "http_exception_handler",
     "install_exception_handlers",
+    "ryotenkai_error_handler",
     "validation_exception_handler",
 ]
 
@@ -85,11 +88,29 @@ def _build_response(problem: ProblemDetails) -> JSONResponse:
     string value (``"JOB_NOT_FOUND"``) and not the Python repr.
     ``exclude_none=True`` per RFC 9457 §3.1 -- null fields are stripped
     from the wire to keep responses clean.
+
+    Phase C: also stamp the ``X-Request-ID`` response header from the
+    same :data:`REQUEST_ID` contextvar that feeds
+    ``problem.request_id``. The middleware also adds the header on
+    the happy path; setting it here covers the catch-all exception
+    case where Starlette's :class:`ServerErrorMiddleware` (which sits
+    OUTSIDE our middleware in the stack) sends the response using
+    its own outer ``send`` -- bypassing our send-wrapper. Doing it on
+    the response object is the canonical fix because every middleware
+    above us preserves response headers.
     """
+    headers: dict[str, str] = {}
+    if problem.request_id:
+        # REQUEST_ID_HEADER name matches the middleware's spelling so
+        # the happy-path and the error path produce identical wire shape.
+        from ryotenkai_shared.api.request_id import REQUEST_ID_HEADER
+
+        headers[REQUEST_ID_HEADER] = problem.request_id
     return JSONResponse(
         status_code=problem.status,
         media_type=PROBLEM_JSON_MEDIA_TYPE,
         content=problem.model_dump(mode="json", exclude_none=True),
+        headers=headers or None,
     )
 
 
@@ -141,6 +162,7 @@ class APIError(Exception):
         *,
         instance: str | None = None,
         trace_id: str | None = None,
+        request_id: str | None = None,
     ) -> ProblemDetails:
         return ProblemDetails(
             title=self.title,
@@ -149,6 +171,7 @@ class APIError(Exception):
             instance=instance,
             code=self.code,
             trace_id=trace_id,
+            request_id=request_id,
             errors=self.errors,
         )
 
@@ -156,11 +179,16 @@ class APIError(Exception):
 async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
     """``APIError`` -> ``application/problem+json`` (the happy path)."""
     trace_id = _new_trace_id()
+    request_id = current_request_id()
     logger.info(
-        "[API_ERROR] %s code=%s status=%d detail=%r trace_id=%s",
-        request.url.path, exc.code.value, exc.status, exc.detail, trace_id,
+        "[API_ERROR] %s code=%s status=%d detail=%r trace_id=%s request_id=%s",
+        request.url.path, exc.code.value, exc.status, exc.detail, trace_id, request_id,
     )
-    problem = exc.as_problem(instance=request.url.path, trace_id=trace_id)
+    problem = exc.as_problem(
+        instance=request.url.path,
+        trace_id=trace_id,
+        request_id=request_id,
+    )
     return _build_response(problem)
 
 
@@ -236,9 +264,10 @@ async def http_exception_handler(
     """
     code, message = _http_exception_to_code(exc)
     trace_id = _new_trace_id()
+    request_id = current_request_id()
     logger.info(
-        "[HTTP_EXCEPTION] %s status=%d adapted_code=%s trace_id=%s",
-        request.url.path, exc.status_code, code.value, trace_id,
+        "[HTTP_EXCEPTION] %s status=%d adapted_code=%s trace_id=%s request_id=%s",
+        request.url.path, exc.status_code, code.value, trace_id, request_id,
     )
     problem = ProblemDetails(
         title=default_title_for(code),
@@ -247,6 +276,7 @@ async def http_exception_handler(
         instance=request.url.path,
         code=code,
         trace_id=trace_id,
+        request_id=request_id,
     )
     return _build_response(problem)
 
@@ -282,10 +312,11 @@ async def validation_exception_handler(
     control API surface.
     """
     trace_id = _new_trace_id()
+    request_id = current_request_id()
     field_errors = [_coerce_field_error(e) for e in exc.errors()]
     logger.info(
-        "[VALIDATION_ERROR] %s fields=%d trace_id=%s",
-        request.url.path, len(field_errors), trace_id,
+        "[VALIDATION_ERROR] %s fields=%d trace_id=%s request_id=%s",
+        request.url.path, len(field_errors), trace_id, request_id,
     )
     problem = ProblemDetails(
         title=default_title_for(ErrorCode.JOB_SPEC_INVALID),
@@ -294,13 +325,54 @@ async def validation_exception_handler(
         instance=request.url.path,
         code=ErrorCode.JOB_SPEC_INVALID,
         trace_id=trace_id,
+        request_id=request_id,
         errors=field_errors,
     )
     return _build_response(problem)
 
 
 # ---------------------------------------------------------------------------
-# 4. Catch-all -- server bugs
+# 4. RyotenkAIError -- typed unified hierarchy (Phase A/C)
+# ---------------------------------------------------------------------------
+
+
+async def ryotenkai_error_handler(
+    request: Request, exc: RyotenkAIError,
+) -> JSONResponse:
+    """``RyotenkAIError`` subclass -> ``application/problem+json``.
+
+    Phase C: route handlers (control API + pod runner) raise typed
+    domain/infrastructure errors directly; this handler picks them up
+    via :meth:`RyotenkAIError.as_problem`, attaches the per-request
+    trace_id / request_id, and emits the unified wire shape. No
+    bespoke ``HTTPException`` adapter needed at raise sites.
+
+    The MRO-lookup in Starlette's exception-handler dispatch picks
+    the most specific registered handler -- so :class:`APIError` (a
+    legacy pod-side exception) keeps :func:`api_error_handler`
+    because it's registered separately, and Pydantic
+    :class:`RequestValidationError` keeps its own handler because
+    it's not a :class:`RyotenkAIError`. Everything else under the
+    unified hierarchy lands here.
+    """
+    trace_id = _new_trace_id()
+    request_id = current_request_id()
+    logger.info(
+        "[RYOTENKAI_ERROR] %s class=%s code=%s status=%d detail=%r "
+        "trace_id=%s request_id=%s",
+        request.url.path, type(exc).__name__, exc.code.value, exc.status,
+        exc.detail, trace_id, request_id,
+    )
+    problem = exc.as_problem(
+        instance=request.url.path,
+        trace_id=trace_id,
+        request_id=request_id,
+    )
+    return _build_response(problem)
+
+
+# ---------------------------------------------------------------------------
+# 5. Catch-all -- server bugs
 # ---------------------------------------------------------------------------
 
 
@@ -316,9 +388,10 @@ async def generic_exception_handler(
     operator can grep the server log.
     """
     trace_id = _new_trace_id()
+    request_id = current_request_id()
     logger.error(
-        "[INTERNAL_ERROR] %s exc=%s trace_id=%s",
-        request.url.path, type(exc).__name__, trace_id,
+        "[INTERNAL_ERROR] %s exc=%s trace_id=%s request_id=%s",
+        request.url.path, type(exc).__name__, trace_id, request_id,
         exc_info=exc,
     )
     problem = ProblemDetails(
@@ -328,6 +401,7 @@ async def generic_exception_handler(
         instance=request.url.path,
         code=ErrorCode.INTERNAL_ERROR,
         trace_id=trace_id,
+        request_id=request_id,
     )
     return _build_response(problem)
 
@@ -345,6 +419,7 @@ async def generic_exception_handler(
 # (Phase C, ``ryotenkai_control.api.main``) consume this dict directly.
 EXCEPTION_HANDLERS: dict[Any, Any] = {
     APIError: api_error_handler,
+    RyotenkAIError: ryotenkai_error_handler,
     HTTPException: http_exception_handler,
     RequestValidationError: validation_exception_handler,
     Exception: generic_exception_handler,

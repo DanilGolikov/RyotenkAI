@@ -25,6 +25,7 @@ from ryotenkai_control.workspace.projects.adapter import (
     build_subprocess_extra_env,
     resolve_project_launch_inputs_from_run_dir,
 )
+from ryotenkai_shared.errors import LaunchInProgressError
 
 
 # Default actor for Web-launched runs. When auth lands, replace with
@@ -106,9 +107,17 @@ def interrupt(run_dir: Path) -> InterruptResponse:
     return InterruptResponse(interrupted=True, pid=pid, reason=None)
 
 
-class LaunchAlreadyRunningError(RuntimeError):
+class LaunchAlreadyRunningError(LaunchInProgressError):
+    """A launch is already running for this run.
+
+    Phase C: inherits from the shared typed ``LaunchInProgressError``
+    (409, ``LAUNCH_IN_PROGRESS``) so it round-trips through the
+    RFC 9457 problem+json contract without an ad-hoc adapter. ``.pid``
+    is preserved for back-compat with router-side handling code.
+    """
+
     def __init__(self, pid: int) -> None:
-        super().__init__(f"run already active with pid={pid}")
+        super().__init__(f"run already active with pid={pid}", context={"pid": pid})
         self.pid = pid
 
 

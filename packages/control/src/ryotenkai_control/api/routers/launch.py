@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from ryotenkai_control.api.dependencies import resolve_run_dir
@@ -13,6 +13,7 @@ from ryotenkai_control.api.schemas.launch import (
     RestartPointsResponse,
 )
 from ryotenkai_control.api.services import launch_service
+from ryotenkai_shared.errors import JobSpecInvalidError
 
 router = APIRouter(prefix="/runs/{run_id:path}", tags=["launch"])
 
@@ -26,7 +27,7 @@ def restart_points(
     try:
         return launch_service.list_restart_points(run_dir, resolved_config)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise JobSpecInvalidError(str(exc)) from exc
 
 
 @router.get("/default-launch-mode")
@@ -39,15 +40,14 @@ async def launch(
     body: LaunchRequestSchema,
     run_dir: Path = Depends(resolve_run_dir),
 ) -> LaunchResponse:
+    # Phase C: ``LaunchAlreadyRunningError`` is a typed ``DomainError``
+    # (409, ``LAUNCH_IN_PROGRESS``) and propagates through the shared
+    # exception handler without an ad-hoc adapter here. Bare
+    # ``ValueError`` becomes a typed ``JobSpecInvalidError``.
     try:
         return await run_in_threadpool(launch_service.launch, run_dir, body)
-    except launch_service.LaunchAlreadyRunningError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "run_already_running", "pid": exc.pid, "message": str(exc)},
-        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise JobSpecInvalidError(str(exc)) from exc
 
 
 @router.post("/interrupt", response_model=InterruptResponse)

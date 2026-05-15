@@ -94,31 +94,6 @@ if TYPE_CHECKING:
 DEFAULT_WORKSPACE = "/workspace"
 
 
-class _FileUploadFailed(Exception):
-    """Internal — propagates an HTTP file-upload typed error out of
-    the async island in :meth:`_submit_via_tunnel` so the sync caller
-    can re-raise without losing the original ``code``/``context``.
-
-    Phase A2 Batch 9 (2026-05-15): the carried payload is now a
-    :class:`RyotenkAIError` (typed exception) rather than the legacy
-    ``AppError``. The async caller catches this, the sync caller
-    re-raises the inner exception.
-    """
-
-    def __init__(self, typed_error: RyotenkAIError) -> None:
-        super().__init__(str(typed_error.detail or typed_error))
-        self.typed_error = typed_error
-
-
-class _ImportCheckFailed(Exception):
-    """Internal — same role as :class:`_FileUploadFailed` for the
-    HTTP import-check gate (PR-2.5 endpoint, PR-3.3 migration).
-    """
-
-    def __init__(self, typed_error: RyotenkAIError) -> None:
-        super().__init__(str(typed_error.detail or typed_error))
-        self.typed_error = typed_error
-
 # How long we wait for the runner's /healthz to start returning 200
 # after the SSH tunnel comes up. The runner boots with sshd in
 # parallel so the tunnel may be open before uvicorn is. Each probe
@@ -355,12 +330,14 @@ class TrainingLauncher:
                     upload_context=upload_context,
                 ),
             )
-        except _ImportCheckFailed as exc:
-            logger.error("[LAUNCHER] HTTP import-check failed: %s", exc.typed_error)
-            raise exc.typed_error from exc
-        except _FileUploadFailed as exc:
-            logger.error("[LAUNCHER] HTTP file upload failed: %s", exc.typed_error)
-            raise exc.typed_error from exc
+        except RyotenkAIError as exc:
+            # Phase C: typed errors raised inside the async island
+            # propagate verbatim. Previously wrapped in private
+            # ``_FileUploadFailed`` / ``_ImportCheckFailed`` Exceptions
+            # carrying ``typed_error``; deleted because ``asyncio.run``
+            # already preserves typed exceptions across the boundary.
+            logger.error("[LAUNCHER] typed error from async submission: %s", exc)
+            raise
         except SSHTunnelError as exc:
             logger.exception("[LAUNCHER] SSH tunnel open failed")
             raise ProviderUnavailableError(
@@ -692,16 +669,11 @@ class TrainingLauncher:
             await self._verify_imports_async(client)
             # HTTP file upload between /healthz and submit.
             # _upload_files_async raises typed errors directly on
-            # failure; we wrap them in _FileUploadFailed so the sync
-            # caller can re-raise without ``BaseException`` swallowing
-            # the cleanup path.
+            # failure; ``asyncio.run`` propagates them as-is to the
+            # sync caller, which surfaces a typed problem+json body
+            # via the shared exception handlers.
             if self._file_uploader is not None and upload_context is not None:
-                try:
-                    await self._upload_files_async(
-                        client, upload_context,
-                    )
-                except RyotenkAIError as exc:
-                    raise _FileUploadFailed(exc) from exc
+                await self._upload_files_async(client, upload_context)
             await client.submit_job(job_spec, plugins_payload=plugins_payload or None)
             return tunnel, client
         except BaseException:
@@ -722,10 +694,9 @@ class TrainingLauncher:
         PYTHONPATH; new mechanism — HTTP, structured per-module
         report, no shell-output parsing.
 
-        Raises :class:`_ImportCheckFailed` carrying a
-        :class:`TrainingFailedError` when one or more modules fail.
-        The sync caller re-raises the typed payload outside the async
-        island.
+        Raises :class:`TrainingFailedError` when one or more modules
+        fail to import. The typed error propagates verbatim out of
+        the async island via ``asyncio.run``.
         """
         from ryotenkai_control.pipeline.stages.managers.deployment.code_syncer import (
             REQUIRED_SRC_MODULES,
@@ -733,13 +704,13 @@ class TrainingLauncher:
 
         try:
             report = await client.check_imports(REQUIRED_SRC_MODULES)
+        except RyotenkAIError:
+            raise
         except Exception as exc:
-            raise _ImportCheckFailed(
-                TrainingFailedError(
-                    detail=f"runner import-check call failed: {exc}",
-                    context={"reason": "IMPORT_GATE_ERROR"},
-                    cause=exc,
-                )
+            raise TrainingFailedError(
+                detail=f"runner import-check call failed: {exc}",
+                context={"reason": "IMPORT_GATE_ERROR"},
+                cause=exc,
             ) from exc
         if report.all_importable:
             logger.info(
@@ -749,19 +720,17 @@ class TrainingLauncher:
             return
         failed = report.failed
         details = {r.module: r.error for r in report.results if not r.importable}
-        raise _ImportCheckFailed(
-            TrainingFailedError(
-                detail=(
-                    f"Post-sync import check failed. Modules not importable "
-                    f"on pod: {failed}. Action: ensure these modules exist "
-                    f"in your local checkout before deploy."
-                ),
-                context={
-                    "reason": "IMPORT_GATE_FAILED",
-                    "failed_modules": failed,
-                    "errors": details,
-                },
+        raise TrainingFailedError(
+            detail=(
+                f"Post-sync import check failed. Modules not importable "
+                f"on pod: {failed}. Action: ensure these modules exist "
+                f"in your local checkout before deploy."
             ),
+            context={
+                "reason": "IMPORT_GATE_FAILED",
+                "failed_modules": failed,
+                "errors": details,
+            },
         )
 
     async def _upload_files_async(

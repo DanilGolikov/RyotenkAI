@@ -87,6 +87,48 @@ class _StageContextFilter(logging.Filter):
         return ctx == self._stage_name
 
 
+class RequestIDLogFilter(logging.Filter):
+    """Stamp ``record.request_id`` from the request-scope ContextVar.
+
+    Phase C (sharded-stargazing-wigderson, 2026-05-16): when a FastAPI
+    request flows through :class:`ryotenkai_shared.api.RequestIDMiddleware`,
+    the middleware stores the per-request id in
+    :data:`ryotenkai_shared.api.REQUEST_ID`. This filter reads that
+    contextvar at log-record build time and attaches the value to
+    every record as ``record.request_id`` (``"-"`` outside a request
+    scope so the formatter never sees ``AttributeError``).
+
+    Wire end-to-end: middleware sets the contextvar -> handlers read
+    it into ProblemDetails -> this filter stamps it into the log
+    record -> operators can grep ``request_id=<id>`` and find both
+    the response body and every server-side log line for that
+    request. Sentinel
+    ``tests/_lint/test_logger_carries_request_id.py`` enforces that
+    this filter is installed on the ryotenkai logger.
+
+    The filter NEVER drops records (always returns True); its sole
+    job is field injection.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Local import keeps the logger module ``shared.api``-free at
+        # import time -- avoids a hard dep on FastAPI/Starlette for
+        # any consumer of ``shared.utils.logger`` that doesn't need
+        # the request-id feature (e.g. tests that bootstrap logging
+        # without spinning up an ASGI app).
+        from ryotenkai_shared.api.request_id import REQUEST_ID
+
+        rid = REQUEST_ID.get()
+        record.request_id = rid if rid is not None else "-"
+        return True
+
+
+# Module-level singleton -- attaching the same filter instance to
+# multiple loggers is safe (logging.Filter has no per-attach state)
+# and avoids construction noise during pytest log-capture replays.
+_REQUEST_ID_FILTER = RequestIDLogFilter()
+
+
 class _ExcludeRyotenkaiFilter(logging.Filter):
     """Reject records whose logger starts with ``ryotenkai``.
 
@@ -136,6 +178,17 @@ def setup_logger(
 
     # Remove existing handlers
     base_logger.handlers.clear()
+
+    # Phase C: stamp ``record.request_id`` so the per-request id
+    # flows from the middleware into every log line. Attached at the
+    # logger (not the handler) so all current and future handlers
+    # see it -- including stage-scoped handlers added later by
+    # ``stage_logging_context`` and the aggregated pipeline.log
+    # FileHandler on root. Idempotent: the same singleton filter is
+    # re-attached on each ``setup_logger`` call; logging deduplicates
+    # by identity so this is safe.
+    if _REQUEST_ID_FILTER not in base_logger.filters:
+        base_logger.addFilter(_REQUEST_ID_FILTER)
 
     # Console handler: use sys.__stderr__ to avoid captured streams being closed
     # and to share the same console stream as tqdm progress bars.
@@ -255,6 +308,15 @@ def _seal_root_logger() -> None:
 
 _strip_third_party_console_handlers()
 _seal_root_logger()
+
+# Phase C: also stamp request_id on the ROOT logger so third-party
+# library logs (mlflow, transformers, httpx, ...) carry the same
+# correlation id when emitted inside a request scope. Idempotent --
+# the filter is added once at module import; subsequent imports
+# (e.g. during pytest collection) reuse the same logger and skip.
+_root_logger = logging.getLogger()
+if _REQUEST_ID_FILTER not in _root_logger.filters:
+    _root_logger.addFilter(_REQUEST_ID_FILTER)
 
 console = Console()  # Rich console for UI
 

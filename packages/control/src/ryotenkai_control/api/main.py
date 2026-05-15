@@ -9,7 +9,6 @@ from fastapi.staticfiles import StaticFiles
 
 from ryotenkai_control.api.config import ApiSettings
 from ryotenkai_control.api.dependencies import get_settings
-from ryotenkai_control.api.exceptions import install_exception_handlers
 from ryotenkai_control.api.routers import (
     attempts,
     datasets,
@@ -28,6 +27,7 @@ from ryotenkai_control.api.routers import (
 )
 from ryotenkai_control.api.routers.health import router as health_router
 from ryotenkai_control.api.ws.log_stream import router as ws_router
+from ryotenkai_shared.api import EXCEPTION_HANDLERS, RequestIDMiddleware
 
 API_V1_PREFIX = "/api/v1"
 
@@ -44,6 +44,17 @@ def _stable_operation_id(route: APIRoute) -> str:
 
 
 def configure_app(app: FastAPI, settings: ApiSettings) -> None:
+    # Phase C: RequestIDMiddleware sits at the BOTTOM of the
+    # middleware stack -- in Starlette, the middleware added LAST
+    # is the OUTERMOST wrapper, meaning it sees the request first
+    # and the response last. We want CORS to be the outermost wrap
+    # (so CORS headers always land on the response, even on errors),
+    # and RequestIDMiddleware to wrap closer to the route handler
+    # so REQUEST_ID is populated by the time the exception handlers
+    # run. ``add_middleware`` calls -> RequestIDMiddleware first,
+    # then CORSMiddleware on top, giving the desired ordering:
+    # CORS (outer) -> RequestID -> route -> RequestID -> CORS.
+    app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -51,8 +62,6 @@ def configure_app(app: FastAPI, settings: ApiSettings) -> None:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    install_exception_handlers(app)
 
     # Order matters: runs.router uses /runs/{run_id:path} which would
     # swallow anything deeper — mount specific paths first.
@@ -93,6 +102,12 @@ def _resolve_dist_dir(web_dist_dir: Path) -> Path:
 
 def create_app(settings: ApiSettings | None = None) -> FastAPI:
     effective_settings = settings or get_settings()
+    # Phase C (sharded-stargazing-wigderson, 2026-05-16): swap the
+    # legacy 4-handler ``{detail, code}`` shape for the shared RFC
+    # 9457 ``application/problem+json`` wire by passing
+    # ``exception_handlers=EXCEPTION_HANDLERS`` at construction time.
+    # The synchronous-constructor form mitigates RP20 (handlers must
+    # be registered before the first request can race the boot).
     app = FastAPI(
         title="RyotenkAI Web API",
         version="v0.1.0",
@@ -102,6 +117,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
             "launches pipeline runs as detached subprocesses."
         ),
         generate_unique_id_function=_stable_operation_id,
+        exception_handlers=EXCEPTION_HANDLERS,
     )
     app.state.settings = effective_settings
     configure_app(app, effective_settings)

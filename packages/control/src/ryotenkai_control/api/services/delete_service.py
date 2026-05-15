@@ -5,6 +5,7 @@ from pathlib import Path
 from ryotenkai_control.api.schemas.delete import DeleteIssueSchema, DeleteResultSchema
 from ryotenkai_control.pipeline.deletion import DeleteMode, DeleteResult, RunDeleter
 from ryotenkai_control.pipeline.launch import is_process_alive, read_lock_pid
+from ryotenkai_shared.errors import RunIsActiveError as _SharedRunIsActiveError
 
 
 def _result_to_schema(result: DeleteResult) -> DeleteResultSchema:
@@ -34,9 +35,20 @@ def delete_run(run_dir: Path, mode: str, *, deleter: RunDeleter | None = None) -
     return _result_to_schema(result)
 
 
-class RunIsActiveError(RuntimeError):
+class RunIsActiveError(_SharedRunIsActiveError):
+    """Run is active and cannot be deleted.
+
+    Phase C: inherits from the shared typed error so the control API
+    error handlers (RFC 9457 problem+json) can convert it without a
+    bespoke ``HTTPException`` adapter. ``.pid`` is preserved for back-
+    compat with router-side handling code.
+    """
+
     def __init__(self, pid: int) -> None:
-        super().__init__(f"run is active (pid={pid}), interrupt before deleting")
+        super().__init__(
+            f"run is active (pid={pid}), interrupt before deleting",
+            context={"pid": pid},
+        )
         self.pid = pid
 
 

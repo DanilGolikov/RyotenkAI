@@ -55,8 +55,13 @@ def test_delete_run_rejects_when_active(client, seed_running_run, monkeypatch) -
     monkeypatch.setattr(delete_service, "is_process_alive", lambda pid: True)
 
     response = client.delete("/api/v1/runs/run_delete_3")
+    # Phase C: RFC 9457 problem+json wire shape. Body is a flat
+    # ProblemDetails (not nested in ``detail``); the machine-readable
+    # ``code`` is the shared ``RUN_IS_ACTIVE`` (was ``run_active``).
     assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "run_active"
+    body = response.json()
+    assert body["code"] == "RUN_IS_ACTIVE"
+    assert body["status"] == 409
 
 
 def test_config_validate_reads_yaml(client, tmp_path: Path, monkeypatch) -> None:

@@ -33,11 +33,16 @@ from ryotenkai_control.workspace.projects.registry import (
     ProjectRegistryError,
 )
 from ryotenkai_control.workspace.projects.store import ProjectStore
+from ryotenkai_shared.errors import ProjectNotFoundError as _SharedProjectNotFoundError
 
 
-class ProjectNotFoundError(LookupError):
+class ProjectNotFoundError(_SharedProjectNotFoundError):
     """Raised when a ``project_id`` doesn't resolve to a registered project.
 
+    Phase C: inherits from the shared typed ``ProjectNotFoundError``
+    (404, ``PROJECT_NOT_FOUND``) so the RFC 9457 problem+json
+    contract converts it without an ad-hoc adapter. ``.project_id``
+    is preserved for back-compat with call sites that introspect it.
     Surfaces as a clean ``die()`` in the CLI top-level handler.
     """
 
@@ -45,7 +50,7 @@ class ProjectNotFoundError(LookupError):
         msg = f"project not found: {project_id!r}"
         if hint:
             msg = f"{msg} ({hint})"
-        super().__init__(msg)
+        super().__init__(msg, context={"project_id": project_id})
         self.project_id = project_id
 
 
