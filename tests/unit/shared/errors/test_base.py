@@ -293,13 +293,18 @@ class TestDependencyErrors:
 
         Realistic scenario: Mac client is older than the server and
         encounters a new code it has no typed class for.
+
+        Post-Phase G fix-up: most pod-runner codes (JOB_NOT_FOUND etc.)
+        now have typed classes. ``DIAGNOSTIC_FAILED`` is one of the few
+        codes that lives only in the registry and on the wire (the pod
+        currently surfaces per-block failures inline in the 200
+        response rather than via a top-level error). It's a stable
+        unmapped code for this fallback test.
         """
-        # JOB_NOT_FOUND has no class in the Phase A1 ``errors`` module
-        # (pod-owned code; Phase B will add it). Verify the fallback.
         problem = ProblemDetails(
             title="x",
-            status=404,
-            code=ErrorCode.JOB_NOT_FOUND,
+            status=502,
+            code=ErrorCode.DIAGNOSTIC_FAILED,
         )
         exc = RyotenkAIError.from_problem(problem)
         assert isinstance(exc, InternalError)
@@ -327,8 +332,11 @@ class TestDependencyErrors:
         assert code_to_class(ErrorCode.PROVIDER_UNAVAILABLE) is ProviderUnavailableError
         assert code_to_class(ErrorCode.TRANSPORT_UNREACHABLE) is TransportError
         assert code_to_class(ErrorCode.INTERNAL_ERROR) is InternalError
-        # Unknown / unregistered (pod-owned) code falls back to InternalError.
-        assert code_to_class(ErrorCode.JOB_NOT_FOUND) is InternalError
+        # Unregistered code (no typed subclass) falls back to InternalError.
+        # DIAGNOSTIC_FAILED lives only in the wire registry; the pod
+        # surfaces per-block failures inline rather than via a top-level
+        # error, so no typed class exists for it.
+        assert code_to_class(ErrorCode.DIAGNOSTIC_FAILED) is InternalError
 
 
 # ---------------------------------------------------------------------------
