@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, ValidationError
 
 from ryotenkai_control.api.schemas.plugin import (
@@ -11,6 +11,10 @@ from ryotenkai_control.api.schemas.plugin import (
 )
 from ryotenkai_control.api.services import plugin_service
 from ryotenkai_control.reports.plugins.defaults import DEFAULT_REPORT_SECTIONS
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    PluginNotFoundError,
+)
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
@@ -68,14 +72,18 @@ def preflight(request: PreflightRequest) -> PreflightResponse:
             {k: v for k, v in err.items() if k != "ctx"}
             for err in exc.errors(include_url=False)
         ]
-        raise HTTPException(status_code=422, detail=errors) from exc
+        raise ConfigInvalidError(
+            detail="preflight validation failed",
+            context={"errors": errors},
+            cause=exc,
+        ) from exc
 
 
 @router.get("/{kind}", response_model=PluginListResponse)
 def list_plugins(kind: PluginKind) -> PluginListResponse:
     if kind not in _KINDS:
-        raise HTTPException(
-            status_code=404,
+        raise PluginNotFoundError(
             detail=f"unknown plugin kind {kind!r}; expected one of {list(_KINDS)}",
+            context={"kind": kind},
         )
     return plugin_service.list_plugins(kind)

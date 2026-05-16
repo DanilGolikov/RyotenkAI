@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from ryotenkai_control.api.dependencies import get_project_registry
 from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
@@ -24,12 +24,16 @@ from ryotenkai_control.api.schemas.project import (
 from ryotenkai_control.api.services import project_service
 from ryotenkai_control.api.services.project_service import ProjectServiceError
 from ryotenkai_control.workspace.projects import ProjectRegistry
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    ProjectNotFoundError,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def _raise_400(exc: ProjectServiceError) -> None:
-    raise HTTPException(status_code=400, detail=str(exc))
+    raise ConfigInvalidError(detail=str(exc), cause=exc)
 
 
 @router.get("", response_model=list[ProjectSummary])
@@ -51,7 +55,7 @@ def create_project(
             description=body.description,
         )
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ConfigInvalidError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{project_id}", response_model=ProjectDetail)
@@ -62,7 +66,7 @@ def get_project(
     try:
         return project_service.get_detail(registry, project_id)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.put("/{project_id}/description", response_model=ProjectDetail)
@@ -74,7 +78,7 @@ def update_description(
     try:
         return project_service.update_description(registry, project_id, body.description)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.delete("/{project_id}", status_code=204)
@@ -90,9 +94,12 @@ def delete_project(
             registry, project_id, delete_files=delete_files
         )
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ConfigInvalidError(detail=str(exc), cause=exc) from exc
     if not removed:
-        raise HTTPException(status_code=404, detail=f"project {project_id!r} not registered")
+        raise ProjectNotFoundError(
+            detail=f"project {project_id!r} not registered",
+            context={"project_id": project_id},
+        )
 
 
 @router.get("/{project_id}/config", response_model=ConfigResponse)
@@ -103,7 +110,7 @@ def get_config(
     try:
         return project_service.get_config(registry, project_id)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.put("/{project_id}/config", response_model=SaveConfigResponse)
@@ -115,7 +122,7 @@ def save_config(
     try:
         snapshot = project_service.save_config(registry, project_id, body.yaml)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
     return SaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -127,7 +134,7 @@ def get_project_env(
     try:
         return ProjectEnvResponse(env=project_service.read_env(registry, project_id))
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.put("/{project_id}/env", response_model=ProjectEnvResponse)
@@ -141,7 +148,7 @@ def save_project_env(
             env=project_service.write_env(registry, project_id, body.env),
         )
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.post("/{project_id}/config/validate", response_model=ConfigValidationResult)
@@ -153,7 +160,7 @@ def validate_config(
     try:
         return project_service.validate_yaml(registry, project_id, body.yaml)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{project_id}/config/versions", response_model=ConfigVersionsResponse)
@@ -164,7 +171,7 @@ def list_versions(
     try:
         return project_service.list_versions(registry, project_id)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{project_id}/config/versions/{filename}", response_model=ConfigVersionDetail)
@@ -176,7 +183,7 @@ def read_version(
     try:
         text = project_service.read_version(registry, project_id, filename)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
     return ConfigVersionDetail(filename=filename, yaml=text)
 
 
@@ -189,7 +196,7 @@ def restore_version(
     try:
         snapshot = project_service.restore_version(registry, project_id, filename)
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
     return SaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -208,7 +215,7 @@ def toggle_favorite(
             registry, project_id, filename, favorite=body.favorite
         )
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
     return ToggleFavoriteResponse(favorite_versions=favorites)
 
 
@@ -237,7 +244,7 @@ def list_runs(
             registry, project_id, status=status, limit=limit,
         )
     except ProjectServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProjectNotFoundError(detail=str(exc), cause=exc) from exc
 
     # Defensive: malformed rows (e.g., corrupt pipeline_state.json that
     # the scanner managed to surface anyway) are dropped rather than

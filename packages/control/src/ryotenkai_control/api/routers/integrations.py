@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from ryotenkai_control.api.dependencies import get_integration_registry, get_token_crypto
 from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
@@ -23,6 +23,11 @@ from ryotenkai_control.api.schemas.integration import (
 from ryotenkai_control.api.services import integration_service
 from ryotenkai_control.api.services.connection_test import test_integration
 from ryotenkai_control.api.services.integration_service import IntegrationServiceError
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    IntegrationNotFoundError,
+    ProjectDirectoryMissingError,
+)
 from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto, read_token_file
 from ryotenkai_control.workspace.integrations import IntegrationRegistry, IntegrationStore
 
@@ -56,7 +61,7 @@ def create_integration(
             description=body.description,
         )
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ConfigInvalidError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{integration_id}", response_model=IntegrationDetail)
@@ -67,7 +72,7 @@ def get_integration(
     try:
         return integration_service.get_detail(registry, integration_id)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.delete("/{integration_id}", status_code=204)
@@ -77,8 +82,9 @@ def delete_integration(
 ) -> None:
     removed = integration_service.unregister(registry, integration_id)
     if not removed:
-        raise HTTPException(
-            status_code=404, detail=f"integration {integration_id!r} not registered"
+        raise IntegrationNotFoundError(
+            detail=f"integration {integration_id!r} not registered",
+            context={"integration_id": integration_id},
         )
 
 
@@ -90,7 +96,7 @@ def get_config(
     try:
         return integration_service.get_config(registry, integration_id)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.put("/{integration_id}/config", response_model=IntegrationSaveConfigResponse)
@@ -102,7 +108,7 @@ def save_config(
     try:
         snapshot = integration_service.save_config(registry, integration_id, body.yaml)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
     return IntegrationSaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -117,7 +123,7 @@ def validate_config(
     try:
         return integration_service.validate_yaml(registry, integration_id, body.yaml)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get(
@@ -130,7 +136,7 @@ def list_versions(
     try:
         return integration_service.list_versions(registry, integration_id)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get(
@@ -145,7 +151,7 @@ def read_version(
     try:
         text = integration_service.read_version(registry, integration_id, filename)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
     return IntegrationConfigVersionDetail(filename=filename, yaml=text)
 
 
@@ -161,7 +167,7 @@ def restore_version(
     try:
         snapshot = integration_service.restore_version(registry, integration_id, filename)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
     return IntegrationSaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -179,7 +185,7 @@ def set_token(
     try:
         integration_service.set_token(registry, integration_id, body.token, crypto)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.delete("/{integration_id}/token", status_code=204)
@@ -190,7 +196,7 @@ def delete_token(
     try:
         integration_service.delete_token(registry, integration_id)
     except IntegrationServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.post("/{integration_id}/test-connection", response_model=ConnectionTestResult)
@@ -202,12 +208,13 @@ def test_connection(
     try:
         entry = registry.resolve(integration_id)
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise IntegrationNotFoundError(detail=str(exc), cause=exc) from exc
 
     store = IntegrationStore(Path(entry.path))
     if not store.exists():
-        raise HTTPException(
-            status_code=404, detail=f"integration workspace missing: {store.root}"
+        raise ProjectDirectoryMissingError(
+            detail=f"integration workspace missing: {store.root}",
+            context={"integration_id": integration_id},
         )
 
     yaml_text = store.current_yaml_text()

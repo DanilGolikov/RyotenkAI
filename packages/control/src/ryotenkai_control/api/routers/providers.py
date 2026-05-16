@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from ryotenkai_control.api.dependencies import get_provider_registry, get_token_crypto
 from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
@@ -24,6 +24,11 @@ from ryotenkai_control.api.services.connection_test import test_provider
 from ryotenkai_control.api.services.provider_service import ProviderServiceError
 from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto, read_token_file
 from ryotenkai_control.workspace.providers import ProviderRegistry, ProviderStore
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    ProjectDirectoryMissingError,
+    ProviderNotFoundError,
+)
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -55,7 +60,7 @@ def create_provider(
             description=body.description,
         )
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ConfigInvalidError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{provider_id}", response_model=ProviderDetail)
@@ -66,7 +71,7 @@ def get_provider(
     try:
         return provider_service.get_detail(registry, provider_id)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.delete("/{provider_id}", status_code=204)
@@ -76,7 +81,10 @@ def delete_provider(
 ) -> None:
     removed = provider_service.unregister(registry, provider_id)
     if not removed:
-        raise HTTPException(status_code=404, detail=f"provider {provider_id!r} not registered")
+        raise ProviderNotFoundError(
+            detail=f"provider {provider_id!r} not registered",
+            context={"provider_id": provider_id},
+        )
 
 
 @router.get("/{provider_id}/config", response_model=ProviderConfigResponse)
@@ -87,7 +95,7 @@ def get_config(
     try:
         return provider_service.get_config(registry, provider_id)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.put("/{provider_id}/config", response_model=ProviderSaveConfigResponse)
@@ -99,7 +107,7 @@ def save_config(
     try:
         snapshot = provider_service.save_config(registry, provider_id, body.yaml)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
     return ProviderSaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -112,7 +120,7 @@ def validate_config(
     try:
         return provider_service.validate_yaml(registry, provider_id, body.yaml)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/{provider_id}/config/versions", response_model=ProviderConfigVersionsResponse)
@@ -123,7 +131,7 @@ def list_versions(
     try:
         return provider_service.list_versions(registry, provider_id)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.get(
@@ -138,7 +146,7 @@ def read_version(
     try:
         text = provider_service.read_version(registry, provider_id, filename)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
     return ProviderConfigVersionDetail(filename=filename, yaml=text)
 
 
@@ -154,7 +162,7 @@ def restore_version(
     try:
         snapshot = provider_service.restore_version(registry, provider_id, filename)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
     return ProviderSaveConfigResponse(ok=True, snapshot_filename=snapshot)
 
 
@@ -172,7 +180,7 @@ def set_token(
     try:
         provider_service.set_token(registry, provider_id, body.token, crypto)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.delete("/{provider_id}/token", status_code=204)
@@ -183,7 +191,7 @@ def delete_token(
     try:
         provider_service.delete_token(registry, provider_id)
     except ProviderServiceError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
 
 @router.post("/{provider_id}/test-connection", response_model=ConnectionTestResult)
@@ -195,12 +203,13 @@ def test_connection(
     try:
         entry = registry.resolve(provider_id)
     except Exception as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise ProviderNotFoundError(detail=str(exc), cause=exc) from exc
 
     store = ProviderStore(Path(entry.path))
     if not store.exists():
-        raise HTTPException(
-            status_code=404, detail=f"provider workspace missing: {store.root}"
+        raise ProjectDirectoryMissingError(
+            detail=f"provider workspace missing: {store.root}",
+            context={"provider_id": provider_id},
         )
 
     yaml_text = store.current_yaml_text()

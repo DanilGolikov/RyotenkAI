@@ -99,8 +99,14 @@ def client(settings: ApiSettings) -> Iterator[TestClient]:
     """Minimal FastAPI app with only the jobs router mounted.
 
     Avoids importing ``src.api.main`` (which pulls in the full router
-    set including datasets, requiring the heavy ``datasets`` package)."""
-    app = FastAPI()
+    set including datasets, requiring the heavy ``datasets`` package).
+    Mounts the unified ``EXCEPTION_HANDLERS`` so typed
+    :class:`RyotenkAIError` raises render as RFC 9457 problem+json
+    (post-Phase G fix-up: control routers no longer use raw
+    ``HTTPException``)."""
+    from ryotenkai_shared.api import EXCEPTION_HANDLERS
+
+    app = FastAPI(exception_handlers=EXCEPTION_HANDLERS)
     app.include_router(jobs_router.router, prefix="/api/v1")
     app.dependency_overrides[get_settings] = lambda: settings
     with TestClient(app) as test_client:
@@ -183,7 +189,8 @@ class TestStatus:
 
         response = client.get(f"/api/v1/runs/{run_id}/job/status")
         assert response.status_code == 404
-        assert response.json()["detail"]["code"] == "no_attempts"
+        # Post-Phase G fix-up: RFC 9457 problem+json with typed code.
+        assert response.json()["code"] == "NO_ATTEMPTS"
 
     def test_unknown_attempt_returns_404(
         self, client: TestClient, settings: ApiSettings,
@@ -194,7 +201,7 @@ class TestStatus:
 
         response = client.get(f"/api/v1/runs/{run_id}/job/status?attempt=99")
         assert response.status_code == 404
-        assert response.json()["detail"]["code"] == "attempt_not_found"
+        assert response.json()["code"] == "ATTEMPT_NOT_FOUND"
 
     def test_missing_submission_returns_404(
         self, client: TestClient, settings: ApiSettings,
@@ -206,7 +213,7 @@ class TestStatus:
 
         response = client.get(f"/api/v1/runs/{run_id}/job/status")
         assert response.status_code == 404
-        assert response.json()["detail"]["code"] == "job_submission_missing"
+        assert response.json()["code"] == "JOB_SUBMISSION_MISSING"
 
     def test_runner_failure_maps_to_502(
         self, client: TestClient, settings: ApiSettings,
@@ -223,7 +230,7 @@ class TestStatus:
             response = client.get(f"/api/v1/runs/{run_id}/job/status")
 
         assert response.status_code == 502
-        assert response.json()["detail"]["code"] == "runner_unreachable"
+        assert response.json()["code"] == "RUNNER_UNREACHABLE"
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +366,7 @@ class TestStop:
             response = client.post(f"/api/v1/runs/{run_id}/job/stop")
 
         assert response.status_code == 502
-        assert response.json()["detail"]["code"] == "runner_unreachable"
+        assert response.json()["code"] == "RUNNER_UNREACHABLE"
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +564,7 @@ class TestDependencyErrors:
 
         response = client.get("/api/v1/runs/run-x/job/status")
         assert response.status_code == 404
-        assert response.json()["detail"]["code"] == "job_submission_missing"
+        assert response.json()["code"] == "JOB_SUBMISSION_MISSING"
 
     def test_status_unwraps_arbitrary_runner_exception(
         self, client: TestClient, settings: ApiSettings,
@@ -569,7 +576,7 @@ class TestDependencyErrors:
             response = client.get("/api/v1/runs/run-x/job/status")
         # Any uncategorised runner error → 502 (cannot reach runner).
         assert response.status_code == 502
-        assert "boom" in response.json()["detail"]["message"]
+        assert "boom" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -682,16 +689,17 @@ class TestLogs:
         assert len(body["events"]) == 1
         assert body["events"][0]["payload"]["kind"] == "stderr"
 
-    def test_invalid_stream_returns_422(
+    def test_invalid_stream_returns_400(
         self, client: TestClient, settings: ApiSettings,
     ) -> None:
         # Empty filter (no valid streams selected) is a misconfig —
         # the endpoint refuses rather than silently returning nothing.
+        # Post-Phase G fix-up: maps to CONFIG_INVALID (400, user-fixable).
         run_dir = settings.runs_dir / "run-x"
         _make_submission_file(run_dir)
         response = client.get("/api/v1/runs/run-x/job/logs?stream=stdin")
-        assert response.status_code == 422
-        assert response.json()["detail"]["code"] == "invalid_stream_filter"
+        assert response.status_code == 400
+        assert response.json()["code"] == "CONFIG_INVALID"
 
     def test_limit_caps_emitted_lines(
         self, client: TestClient, settings: ApiSettings,

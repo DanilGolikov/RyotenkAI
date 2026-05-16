@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ryotenkai_control.api.dependencies import get_runs_dir
@@ -19,6 +19,7 @@ from ryotenkai_control.api.schemas.config_preset import (
 )
 from ryotenkai_control.api.schemas.config_validate import ConfigValidationResult
 from ryotenkai_control.api.services import config_service
+from ryotenkai_shared.errors import ConfigFileNotFoundError, PresetNotFoundError
 
 router = APIRouter(prefix="/config", tags=["config"])
 
@@ -41,7 +42,10 @@ class DefaultConfigResponse(BaseModel):
 def validate(body: ConfigValidateRequest) -> ConfigValidationResult:
     config_path = Path(body.config_path).expanduser().resolve()
     if not config_path.exists():
-        raise HTTPException(status_code=404, detail=f"config file not found: {config_path}")
+        raise ConfigFileNotFoundError(
+            detail=f"config file not found: {config_path}",
+            context={"config_path": str(config_path)},
+        )
     return config_service.validate_config(config_path)
 
 
@@ -123,7 +127,11 @@ def preview_preset(preset_id: str, body: PresetPreviewRequest) -> PresetPreviewR
     try:
         loaded = next(p for p in catalog.presets() if p.manifest.preset.id == preset_id)
     except StopIteration as exc:
-        raise HTTPException(status_code=404, detail=f"preset not found: {preset_id}") from exc
+        raise PresetNotFoundError(
+            detail=f"preset not found: {preset_id}",
+            context={"preset_id": preset_id},
+            cause=exc,
+        ) from exc
 
     # Gather environment facts that the pure apply function doesn't discover on its own.
     try:
