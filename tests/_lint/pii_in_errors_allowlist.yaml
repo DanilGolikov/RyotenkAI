@@ -1,0 +1,20 @@
+# Allow-listed raise sites that look like PII leakage but aren't.
+#
+# Entries are relative paths under packages/. Each entry is matched
+# against violations as ``<rel-path>:<lineno>`` or ``<rel-path>``
+# (line-agnostic — preferred when the file is small and reshuffles
+# wouldn't invalidate the allowance).
+#
+# Format:
+#   entries:
+#     - path: <rel-path>
+#       lineno: <optional int>  # omit to allow any line in the file
+#       reason: <human-readable justification>
+#
+# Adding an entry is the escape hatch when an f-string genuinely names a
+# variable from the ``_PII_VARIABLE_NAMES`` set but the value is NOT
+# actually PII — e.g. a config-driven public field that happens to be
+# called ``token`` (OAuth client_id, etc.). Prefer the structured
+# ``context=`` parameter (which is separately sanitisable) whenever
+# possible.
+entries: []
