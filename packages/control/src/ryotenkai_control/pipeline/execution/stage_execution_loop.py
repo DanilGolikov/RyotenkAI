@@ -30,7 +30,8 @@ Error boundary
 Phase A2 Batch 6 migrated the loop from ``Result[T, AppError]`` to raise-
 based: ``run_attempt`` returns :class:`PipelineContext` on full success
 and raises a typed :class:`RyotenkAIError` on failure. The orchestrator
-adapts to ``Result`` at its outer boundary for backward compat.
+returns a plain dict and re-raises :class:`RyotenkAIError` -- Result is
+fully gone (Phase A2 finale, commit ``e27619b``).
 
 * ``KeyboardInterrupt``      → raises :class:`PipelineStageFailedError`
                                 with ``context["legacy_code"] = "PIPELINE_INTERRUPTED"``
@@ -174,7 +175,7 @@ class StageExecutionLoop:
         Raises:
             RyotenkAIError: on stage failure / prereq violation / state I/O
                 / unexpected exception / KeyboardInterrupt. The orchestrator
-                catches and adapts to its outer ``Result`` boundary.
+                catches it, finalises the run, and re-raises.
             SystemExit: re-raised verbatim so the runner's exit code is
                 preserved.
         """

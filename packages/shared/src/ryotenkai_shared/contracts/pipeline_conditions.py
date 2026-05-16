@@ -103,7 +103,12 @@ class Condition(BaseModel):
     which a single FSM status cannot express.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # ``frozen=True`` makes :class:`Condition` immutable after
+    # construction so the CamelCase ``reason`` validator cannot be
+    # bypassed by post-hoc attribute assignment. Updates go through
+    # :func:`update_condition`, which substitutes a fresh model
+    # instance via ``model_copy``.
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: str = Field(
         description=(
@@ -190,13 +195,31 @@ def update_condition(
         The same list that was passed in (mutation already applied).
     """
     transition_time = now if now is not None else datetime.now(UTC)
-    for existing in conditions:
+    for i, existing in enumerate(conditions):
         if existing.type == type:
+            # :class:`Condition` is frozen. Construct a fresh model
+            # via the public constructor so the CamelCase validators
+            # re-run on the new ``reason``. ``model_copy(update=...)``
+            # SKIPS field validators in pydantic v2, which would let
+            # callers slip a non-CamelCase reason through this seam.
             if existing.status != status:
-                existing.status = status
-                existing.last_transition_time = transition_time
-            existing.reason = reason
-            existing.message = message
+                conditions[i] = Condition(
+                    type=type,
+                    status=status,
+                    reason=reason,
+                    message=message,
+                    last_transition_time=transition_time,
+                )
+            else:
+                # k8s convention: do NOT bump last_transition_time when
+                # status is unchanged. Only refresh reason/message.
+                conditions[i] = Condition(
+                    type=type,
+                    status=existing.status,
+                    reason=reason,
+                    message=message,
+                    last_transition_time=existing.last_transition_time,
+                )
             return conditions
     conditions.append(
         Condition(

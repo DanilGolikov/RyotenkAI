@@ -20,8 +20,10 @@ import sys
 
 from fastapi import APIRouter
 
-from ryotenkai_shared.api.error_handlers import APIError
-from ryotenkai_shared.contracts.problem_details import ErrorCode
+from ryotenkai_shared.errors import (
+    ImportCheckInvalidModuleNameError,
+    ImportCheckTooManyModulesError,
+)
 from ryotenkai_shared.contracts.runner_api.runtime import (
     MAX_MODULES_PER_REQUEST,
     ImportCheckReport,
@@ -43,12 +45,12 @@ _PER_MODULE_TIMEOUT_S = 30.0
 
 def _validate_module_name(name: str) -> None:
     if not _MODULE_NAME_RE.fullmatch(name):
-        raise APIError(
-            ErrorCode.IMPORT_CHECK_INVALID_MODULE_NAME, status=422,
+        raise ImportCheckInvalidModuleNameError(
             detail=(
                 f"module name {name!r} does not match "
                 f"[a-z_.][a-z_0-9.]* — refusing to subprocess-import."
             ),
+            context={"module_name": name},
         )
 
 
@@ -105,12 +107,12 @@ def check_imports(request: ImportCheckRequest) -> ImportCheckReport:
       import; client decides what to do (CodeSyncer halts pipeline).
     """
     if len(request.modules) > MAX_MODULES_PER_REQUEST:
-        raise APIError(
-            ErrorCode.IMPORT_CHECK_TOO_MANY_MODULES, status=422,
+        raise ImportCheckTooManyModulesError(
             detail=(
                 f"got {len(request.modules)} modules, max is "
                 f"{MAX_MODULES_PER_REQUEST}"
             ),
+            context={"modules_count": len(request.modules), "max": MAX_MODULES_PER_REQUEST},
         )
 
     for name in request.modules:

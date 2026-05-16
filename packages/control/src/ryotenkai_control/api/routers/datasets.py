@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from ryotenkai_control.api.dependencies import DatasetRequestContext, resolve_dataset_key
@@ -30,6 +30,12 @@ from ryotenkai_control.data.validation.standalone import (
     StandalonePluginRun,
     check_dataset_format,
     run_plugins,
+)
+from ryotenkai_shared.errors import (
+    ConfigInvalidError,
+    DatasetLoadFailedError,
+    DatasetsLibraryMissingError,
+    HFLoadFailedError,
 )
 from ryotenkai_shared.utils.logger import logger
 
@@ -138,11 +144,17 @@ def preview_dataset(
     try:
         page = _preview_page(loader, ctx.project_root, cfg, split=split, offset=offset, limit=limit)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"path_not_found: {exc}") from exc
+        raise DatasetLoadFailedError(
+            detail=f"path_not_found: {exc}",
+            cause=exc,
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise ConfigInvalidError(detail=str(exc), cause=exc) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"hf_load_failed: {exc}") from exc
+        raise HFLoadFailedError(
+            detail=f"hf_load_failed: {exc}",
+            cause=exc,
+        ) from exc
     duration_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
         "[API:DATASETS] preview project=%s key=%s split=%s offset=%d limit=%d → %d rows in %dms",
@@ -201,14 +213,23 @@ def validate_dataset(
     try:
         from datasets import Dataset
     except ImportError as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=f"datasets_missing: {exc}") from exc
+        raise DatasetsLibraryMissingError(
+            detail=f"datasets_missing: {exc}",
+            cause=exc,
+        ) from exc
 
     try:
         dataset = _load_for_validation(ctx.project_root, cfg, split=body.split, max_samples=body.max_samples)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"path_not_found: {exc}") from exc
+        raise DatasetLoadFailedError(
+            detail=f"path_not_found: {exc}",
+            cause=exc,
+        ) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=f"load_failed: {exc}") from exc
+        raise HFLoadFailedError(
+            detail=f"load_failed: {exc}",
+            cause=exc,
+        ) from exc
     if not isinstance(dataset, Dataset):
         # IterableDataset path — wrap into a list-backed Dataset so
         # plugins that expect column metadata work uniformly.

@@ -159,7 +159,7 @@ class IDatasetLoader(Protocol):
     def load_for_phase(
         self,
         phase: Any,  # StrategyPhaseConfig
-    ) -> Any:  # Result[Dataset, str]
+    ) -> Any:  # Dataset (raises RyotenkAIError on failure)
         """Load dataset for a training phase."""
         ...
 

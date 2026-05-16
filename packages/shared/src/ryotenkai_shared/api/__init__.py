@@ -15,9 +15,7 @@ copy-pasting.
 """
 
 from ryotenkai_shared.api.error_handlers import (
-    APIError,
     EXCEPTION_HANDLERS,
-    api_error_handler,
     generic_exception_handler,
     http_exception_handler,
     install_exception_handlers,
@@ -33,12 +31,10 @@ from ryotenkai_shared.api.request_id import (
 )
 
 __all__ = [
-    "APIError",
     "EXCEPTION_HANDLERS",
     "REQUEST_ID",
     "REQUEST_ID_HEADER",
     "RequestIDMiddleware",
-    "api_error_handler",
     "current_request_id",
     "generate_request_id",
     "generic_exception_handler",

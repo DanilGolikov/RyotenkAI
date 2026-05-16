@@ -241,16 +241,20 @@ def test_default_title_for_falls_back_to_enum_value_for_unregistered() -> None:
 
 
 def test_concrete_subclass_count_matches_phase_a1_catalog() -> None:
-    """Phase A1 ships exactly the 32 concrete subclasses listed in the plan.
+    """Concrete subclass count regression test.
 
-    Regression test: makes adding a NEW subclass in a later phase
-    (which is fine) visible by failing this test until the constant
-    below is bumped. That forces a conscious update to the catalog.
+    Phase A1 shipped 35 concrete subclasses. The post-Phase G fix-up
+    batch (APIError retirement + HTTPException migration + watchdog)
+    added 38 more (pod-runner classes that used to raise via APIError,
+    control-API classes for typed HTTPException replacements, plus
+    TrainingTimeoutError for the supervisor watchdog) for a total of
+    73. Bumping this count requires a conscious update so we notice
+    when somebody adds or removes a typed exception.
     """
-    expected_phase_a1_concrete_count = 35  # 21 domain + 12 infra + InternalError + TransportError
+    expected_concrete_count = 73
     actual = len(_concrete_subclasses())
-    assert actual == expected_phase_a1_concrete_count, (
-        f"Phase A1 ships {expected_phase_a1_concrete_count} concrete subclasses; "
-        f"got {actual}. If you added or removed a subclass in this phase, "
-        "bump the expected count here and update the plan."
+    assert actual == expected_concrete_count, (
+        f"Expected {expected_concrete_count} concrete subclasses; "
+        f"got {actual}. If you added or removed a subclass, bump the "
+        "expected count here and update the plan."
     )

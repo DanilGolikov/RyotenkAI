@@ -136,17 +136,107 @@ class InferenceUnavailableError(InfrastructureError):
     status: ClassVar[int] = 503
 
 
+# ---------------------------------------------------------------------------
+# Pod runner system / lifecycle (formerly raised via APIError)
+# ---------------------------------------------------------------------------
+
+
+class RunnerNotReadyError(InfrastructureError):
+    """Runner accessed before its app.state finished initialising."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.RUNNER_NOT_READY
+    status: ClassVar[int] = 503
+
+
+class RunnerBusyError(InfrastructureError):
+    """Runner is busy serving another request (transient back-off)."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.RUNNER_BUSY
+    status: ClassVar[int] = 503
+
+
+class SpawnFailedError(InfrastructureError):
+    """Trainer subprocess could not be exec()'d."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.SPAWN_FAILED
+    status: ClassVar[int] = 422
+
+
+class FileWriteFailedError(InfrastructureError):
+    """Atomic file write failed (disk full, permission denied, rename)."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.FILE_WRITE_FAILED
+    status: ClassVar[int] = 502
+
+
+class ResourcesUnavailableError(InfrastructureError):
+    """``GET /resources`` snapshot provider raised — GPU/RAM probe failed."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.RESOURCES_UNAVAILABLE
+    status: ClassVar[int] = 502
+
+
+# ---------------------------------------------------------------------------
+# Control API infra failures (formerly raised via raw HTTPException)
+# ---------------------------------------------------------------------------
+
+
+class RunnerUnreachableError(InfrastructureError):
+    """SSH tunnel or runner HTTP call failed (transient 502)."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.RUNNER_UNREACHABLE
+    status: ClassVar[int] = 502
+
+
+class ReportGenerationFailedError(InfrastructureError):
+    """Report compose / MLflow probe failed transiently."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.REPORT_GENERATION_FAILED
+    status: ClassVar[int] = 503
+
+
+class HFLoadFailedError(InfrastructureError):
+    """HF Hub dataset preview/load failed (HTTP 502 upstream)."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.HF_LOAD_FAILED
+    status: ClassVar[int] = 502
+
+
+class DatasetsLibraryMissingError(InfrastructureError):
+    """The optional ``datasets`` library is not installed at runtime."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.DATASETS_LIBRARY_MISSING
+    status: ClassVar[int] = 500
+
+
+class TrainingTimeoutError(InfrastructureError):
+    """Trainer subprocess exceeded the supervisor's wall-clock watchdog."""
+
+    code: ClassVar[ErrorCode] = ErrorCode.TRAINING_TIMEOUT
+    status: ClassVar[int] = 500
+
+
 __all__ = [
+    "DatasetsLibraryMissingError",
+    "FileWriteFailedError",
+    "HFLoadFailedError",
     "InferenceUnavailableError",
     "LaunchPreparationError",
     "ModelLoadFailedError",
     "PipelineStageFailedError",
     "ProviderRateLimitedError",
     "ProviderUnavailableError",
+    "ReportGenerationFailedError",
+    "ResourcesUnavailableError",
+    "RunnerBusyError",
+    "RunnerNotReadyError",
+    "RunnerUnreachableError",
     "SSHConnectionFailedError",
     "SSHExecFailedError",
     "SSHTransferFailedError",
+    "SpawnFailedError",
     "TrainingFailedError",
     "TrainingOOMError",
+    "TrainingTimeoutError",
     "WorkspaceStoreFailedError",
 ]

@@ -113,6 +113,23 @@ TerminalHook = Callable[[str], Awaitable[None]]
 DEFAULT_GRACE_SECONDS = 30.0
 
 
+# Wall-clock timeout for the trainer subprocess. If the child runs
+# longer than this (without an external cancellation) the supervisor's
+# watchdog escalates to SIGTERM then SIGKILL and publishes a
+# ``trainer_exited`` event with ``code=TRAINING_TIMEOUT``. Override
+# via ``RYOTENKAI_TRAINER_TIMEOUT`` (seconds). 6h covers the longest
+# fine-tunes we run; pipelines that genuinely need longer should set
+# the env var explicitly so the failure mode is intentional.
+TRAINER_WALL_TIMEOUT_SECONDS: float = float(
+    os.environ.get("RYOTENKAI_TRAINER_TIMEOUT", str(6 * 3600))
+)
+
+# Grace period between watchdog SIGTERM and SIGKILL. Short by design —
+# at this point the trainer has already exceeded its budget; we just
+# want it gone. Tests override via :data:`Supervisor._watchdog_grace`.
+TRAINER_WATCHDOG_KILL_GRACE_SECONDS: float = 30.0
+
+
 class SupervisorError(RuntimeError):
     """Base for supervisor-specific errors."""
 
@@ -137,6 +154,8 @@ class Supervisor:
         *,
         terminal_hook: TerminalHook | None = None,
         stdio_log_path: Path | None = None,
+        wall_timeout_seconds: float | None = None,
+        watchdog_kill_grace_seconds: float | None = None,
     ) -> None:
         self._fsm = fsm
         self._bus = bus
@@ -146,6 +165,26 @@ class Supervisor:
         self._stderr_task: asyncio.Task[None] | None = None
         self._wait_task: asyncio.Task[None] | None = None
         self._escalation_task: asyncio.Task[None] | None = None
+        # Watchdog config + task handle. Constructor params override the
+        # module-level defaults so tests can pin tiny timeouts without
+        # racing the env var.
+        self._wall_timeout: float = (
+            wall_timeout_seconds
+            if wall_timeout_seconds is not None
+            else TRAINER_WALL_TIMEOUT_SECONDS
+        )
+        self._watchdog_grace: float = (
+            watchdog_kill_grace_seconds
+            if watchdog_kill_grace_seconds is not None
+            else TRAINER_WATCHDOG_KILL_GRACE_SECONDS
+        )
+        self._watchdog_task: asyncio.Task[None] | None = None
+        # Set by the watchdog when it fires; the reap path consults it
+        # to publish ``trainer_exited`` with code=TRAINING_TIMEOUT
+        # instead of the generic SIGKILL heuristic.
+        self._watchdog_fired: bool = False
+        # Captured for the synthetic exit-payload's ``wall_seconds`` field.
+        self._spawn_started_at_monotonic: float | None = None
         # Set when ``request_stop`` runs; consulted by the natural-exit
         # handler so it knows whether to land in ``cancelled`` or
         # ``failed`` on a non-zero exit.
@@ -326,6 +365,22 @@ class Supervisor:
             name="supervisor.reap",
         )
 
+        # Wall-clock watchdog. Runs concurrently with the reap task and
+        # races ``proc.wait()`` against ``self._wall_timeout``. If the
+        # timeout fires first, escalate SIGTERM -> SIGKILL and mark
+        # ``self._watchdog_fired`` so the reap path can publish a
+        # typed ``TRAINING_TIMEOUT`` event. ``None`` timeout disables
+        # the watchdog (tests use it to opt out cleanly).
+        import time as _time
+
+        self._spawn_started_at_monotonic = _time.monotonic()
+        self._watchdog_fired = False
+        if self._wall_timeout > 0:
+            self._watchdog_task = asyncio.create_task(
+                self._watchdog(self._wall_timeout),
+                name="supervisor.watchdog",
+            )
+
         self._fsm.transition(JobState.RUNNING, message="trainer_spawned")
         self._bus.publish(
             "trainer_spawned",
@@ -420,6 +475,83 @@ class Supervisor:
             )
             self._signal_group(signal.SIGKILL)
 
+    async def _watchdog(self, wall_timeout_seconds: float) -> None:
+        """Zombie-trainer watchdog: kill the subprocess after a wall-clock
+        timeout and synthesise a ``TRAINING_TIMEOUT`` exit payload.
+
+        Runs concurrently with :meth:`_reap`. Races ``proc.wait()``
+        against the timeout:
+
+        - **wait returns first**: trainer exited naturally (or via a
+          user-initiated stop). Nothing to do; the reap path owns the
+          final FSM transition.
+        - **timeout fires first**: trainer is hung. Publish
+          ``watchdog_timeout``, send SIGTERM to the process group, wait
+          up to :data:`self._watchdog_grace` seconds, then SIGKILL.
+          Set :attr:`self._watchdog_fired` so the reap path replaces
+          the SIGKILL-heuristic ``TRAINING_OOM`` synthesis with a
+          ``TRAINING_TIMEOUT`` payload carrying the real cause.
+
+        Cancellation: the reap path calls :meth:`_cancel_watchdog` when
+        the subprocess exits naturally so we don't hold the supervisor
+        instance alive past job teardown.
+        """
+        if self._proc is None:  # pragma: no cover — defensive
+            return
+        try:
+            await asyncio.wait_for(
+                self._proc.wait(), timeout=wall_timeout_seconds,
+            )
+            # Process exited within budget — nothing to do; reap path
+            # owns the terminal transition.
+            return
+        except asyncio.CancelledError:
+            # Reap path or shutdown cancelled us — we lost the race
+            # legitimately. Don't escalate.
+            raise
+        except TimeoutError:
+            pass
+
+        # Timeout fired. Mark before signalling so the reap path's
+        # post-mortem (which can run as soon as proc dies) sees the
+        # flag and synthesises the right payload.
+        self._watchdog_fired = True
+        self._bus.publish(
+            "watchdog_timeout",
+            {
+                "wall_timeout_seconds": wall_timeout_seconds,
+                "grace_seconds": self._watchdog_grace,
+            },
+        )
+        self._signal_group(signal.SIGTERM)
+
+        if self._proc is None:  # pragma: no cover — defensive race
+            return
+
+        try:
+            await asyncio.wait_for(
+                self._proc.wait(), timeout=self._watchdog_grace,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            # SIGTERM didn't take. Final escalation.
+            self._signal_group(signal.SIGKILL)
+
+    def _cancel_watchdog(self) -> None:
+        """Cancel the watchdog task if it's still alive (no-op otherwise).
+
+        Called from :meth:`_reap` once the subprocess exits naturally
+        so we don't keep a dangling task on the loop. Safe to call
+        multiple times.
+        """
+        task = self._watchdog_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        self._watchdog_task = None
+
     async def shutdown(self) -> None:
         """Lifespan-exit hook — kill the trainer and wait for terminal state.
 
@@ -445,16 +577,18 @@ class Supervisor:
                     asyncio.shield(self._wait_task), timeout=10.0,
                 )
 
-        # Anything still alive (pumps, escalation task) — cancel.
+        # Anything still alive (pumps, escalation task, watchdog) — cancel.
         for task in (
             self._stdout_task,
             self._stderr_task,
             self._escalation_task,
+            self._watchdog_task,
         ):
             if task is not None and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+        self._watchdog_task = None
 
         # Close the stdio capture file last — pumps must drain into it
         # before the handle goes away. Suppressing because a closed
@@ -582,10 +716,18 @@ class Supervisor:
         #      common cgroup-OOM scenario where atexit doesn't run).
         #      Other non-zero rc gets ``INTERNAL_ERROR`` with the rc
         #      stamped into the message.
+        # Post-Phase G watchdog: if the watchdog fired, override
+        # everything else with a typed TRAINING_TIMEOUT payload.
         exit_payload = _read_exit_payload(self._workdir)
         synthesized_payload = exit_payload is None and not self._cancellation_requested and (
             rc != 0
         )
+
+        import time as _time
+
+        wall_seconds: float | None = None
+        if self._spawn_started_at_monotonic is not None:
+            wall_seconds = _time.monotonic() - self._spawn_started_at_monotonic
 
         trainer_exited_event = _build_trainer_exited_event(
             rc=rc,
@@ -593,7 +735,13 @@ class Supervisor:
             cancellation_requested=self._cancellation_requested,
             payload=exit_payload,
             synthesize_if_missing=synthesized_payload,
+            watchdog_fired=self._watchdog_fired,
+            wall_seconds=wall_seconds,
+            wall_timeout_seconds=self._wall_timeout,
         )
+
+        # Watchdog task served its purpose; release the handle.
+        self._cancel_watchdog()
 
         # Publish first, transition second — ensures the WS subscriber
         # sees the final event slot before the FSM closes. Payload stays
@@ -719,6 +867,9 @@ def _build_trainer_exited_event(
     cancellation_requested: bool,
     payload,  # TrainerExitPayload | None
     synthesize_if_missing: bool,
+    watchdog_fired: bool = False,
+    wall_seconds: float | None = None,
+    wall_timeout_seconds: float | None = None,
 ) -> dict:
     """Build the ``trainer_exited`` event body (Phase D, schema_version=2).
 
@@ -730,11 +881,16 @@ def _build_trainer_exited_event(
     * ``message`` — single-line human description; ``None`` on success.
     * ``traceback_summary`` — sanitised tail; ``None`` when no
       traceback was available (incl. SIGKILL paths).
-    * ``wall_seconds`` — copied from the payload if present.
+    * ``wall_seconds`` — copied from the payload if present, else
+      measured by the supervisor from spawn to reap.
     * ``payload_source`` — one of ``"trainer_file"``, ``"sigkill_heuristic"``,
-      ``"missing"``, or ``"none"`` (rc==0 and clean exit).
-      Lets the control side distinguish trusted typed signals from
-      synthesised ones.
+      ``"watchdog_timeout"``, ``"missing"``, or ``"none"``. Lets the
+      control side distinguish trusted typed signals from synthesised ones.
+
+    Post-Phase G watchdog: when ``watchdog_fired=True`` (zombie trainer
+    SIGKILLed by the wall-clock watchdog), the synthesised payload uses
+    :class:`ErrorCode.TRAINING_TIMEOUT` so dashboards can group on it
+    independently from the SIGKILL-OOM heuristic.
     """
     from ryotenkai_shared.contracts.problem_details import ErrorCode
 
@@ -746,7 +902,7 @@ def _build_trainer_exited_event(
         "code": None,
         "message": None,
         "traceback_summary": None,
-        "wall_seconds": None,
+        "wall_seconds": wall_seconds,
         "payload_source": "none",
     }
 
@@ -754,8 +910,26 @@ def _build_trainer_exited_event(
         body["code"] = payload.code.value
         body["message"] = payload.message
         body["traceback_summary"] = payload.traceback_summary
-        body["wall_seconds"] = payload.wall_seconds
+        # Prefer the trainer's self-reported wall time when available;
+        # supervisor-measured wall_seconds is a fallback.
+        if payload.wall_seconds is not None:
+            body["wall_seconds"] = payload.wall_seconds
         body["payload_source"] = "trainer_file"
+        return body
+
+    # Watchdog wins over the SIGKILL heuristic — it owns the SIGKILL,
+    # so the typed reason is TRAINING_TIMEOUT regardless of rc.
+    if watchdog_fired:
+        body["code"] = ErrorCode.TRAINING_TIMEOUT.value
+        timeout_repr = (
+            f"{wall_timeout_seconds:.0f}s"
+            if wall_timeout_seconds is not None else "wall-clock"
+        )
+        body["message"] = (
+            f"trainer wall-clock timeout ({timeout_repr}) exceeded; "
+            f"exit_code={rc}"
+        )
+        body["payload_source"] = "watchdog_timeout"
         return body
 
     if not synthesize_if_missing:

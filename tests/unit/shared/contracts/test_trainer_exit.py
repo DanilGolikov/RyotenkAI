@@ -1,11 +1,12 @@
-"""Tests for :mod:`ryotenkai_shared.contracts.trainer_exit` (Phase D).
+"""Tests for :mod:`ryotenkai_shared.contracts.trainer_exit` (Phase D + Phase G).
 
-Seven test classes — covering the Pydantic model, the on-disk
+Eight test classes — covering the Pydantic model, the on-disk
 atomic write, the regex-based traceback sanitiser, the JSON
-round-trip, and behaviour invariants enumerated in the plan.
+round-trip, security regressions, behaviour invariants, and the
+Phase-G PII / secret redaction extensions.
 
 This module also exercises the security boundary
-(``sanitize_traceback`` strips paths) so the
+(``sanitize_traceback`` strips paths + IPs + emails + secrets) so the
 ``test_no_traceback_in_context`` sentinel can rely on it.
 """
 
@@ -388,3 +389,155 @@ class TestInvariants:
         # would break the "fail closed on unknown fields" invariant the
         # supervisor relies on for forward-compat.
         assert TrainerExitPayload.model_config["extra"] == "forbid"
+
+
+# ---------------------------------------------------------------------------
+# Class 8: Phase-G PII / secret redaction (extended sanitiser)
+# ---------------------------------------------------------------------------
+
+
+class TestSanitizerPIIRedaction:
+    """Phase-G extensions to :func:`sanitize_traceback`.
+
+    Beyond filesystem paths, the sanitiser MUST also strip:
+
+    * Email addresses
+    * IPv4 addresses
+    * ``KEY=value`` / ``key: value`` secret assignments (env-var dumps
+      captured by stderr, ``os.environ`` repr in handlers, etc.)
+
+    Parametrised across the four PII / secret classes so each
+    redaction is its own row in the test report.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "must_not_contain", "must_contain"),
+        [
+            # ----- email -----
+            pytest.param(
+                "user alice@example.com hit a bug",
+                "alice@example.com",
+                "<email>",
+                id="email-plain",
+            ),
+            pytest.param(
+                "operator: bob.smith+work@sub.example.co.uk denied",
+                "bob.smith+work@sub.example.co.uk",
+                "<email>",
+                id="email-with-plus-and-subdomain",
+            ),
+            # ----- IPv4 -----
+            pytest.param(
+                "Connection to 10.0.42.17 refused",
+                "10.0.42.17",
+                "<ip>",
+                id="ipv4-private",
+            ),
+            pytest.param(
+                "host 192.168.1.1 unreachable",
+                "192.168.1.1",
+                "<ip>",
+                id="ipv4-router",
+            ),
+            # ----- KEY=VALUE secret -----
+            pytest.param(
+                "env: API_KEY=sk-abcdef123",
+                "sk-abcdef123",
+                "<redacted>",
+                id="secret-api-key-equals",
+            ),
+            pytest.param(
+                "auth { token: xoxb-1234567890 }",
+                "xoxb-1234567890",
+                "<redacted>",
+                id="secret-token-colon",
+            ),
+            pytest.param(
+                'config password="hunter2"',
+                "hunter2",
+                "<redacted>",
+                id="secret-password-quoted",
+            ),
+            pytest.param(
+                "header client_secret = abc.def.ghi",
+                "abc.def.ghi",
+                "<redacted>",
+                id="secret-client-secret",
+            ),
+        ],
+    )
+    def test_redacts_pii_class(
+        self,
+        raw: str,
+        must_not_contain: str,
+        must_contain: str,
+    ) -> None:
+        result = sanitize_traceback(raw)
+        assert must_not_contain not in result, (
+            f"sanitiser leaked {must_not_contain!r} in output: {result!r}"
+        )
+        assert must_contain in result, (
+            f"sanitiser produced unexpected output {result!r}; "
+            f"expected substring {must_contain!r}"
+        )
+
+    def test_combined_email_path_and_ip_all_redacted(self) -> None:
+        """Realistic mixed traceback: path + email + IP + secret.
+
+        Pins ordering — the secret pattern fires before the email
+        pattern so a secret with an email-looking value is fully
+        replaced rather than half-collapsed.
+        """
+        tb = (
+            "Traceback (most recent call last):\n"
+            '  File "/Users/alice/run.py", line 5, in f\n'
+            "    request to 10.0.0.1 from user alice@example.com failed\n"
+            "    env: API_KEY=topsecret123\n"
+            "    upstream auth_token: xoxb-99887766\n"
+        )
+        result = sanitize_traceback(tb)
+        # All sensitive substrings stripped.
+        assert "/Users/alice" not in result
+        assert "10.0.0.1" not in result
+        assert "alice@example.com" not in result
+        assert "topsecret123" not in result
+        assert "xoxb-99887766" not in result
+        # Structural / diagnostic skeleton preserved.
+        assert "Traceback" in result
+        assert "<home>/" in result
+        assert "<ip>" in result
+        assert "<email>" in result
+        # Note: the secret pattern matches ``api[_-]?key`` / ``token``;
+        # the redaction marker substring is ``<redacted>``.
+        assert "<redacted>" in result
+
+    def test_secret_redaction_preserves_key_name(self) -> None:
+        """The redaction keeps the key name so logs still say which secret leaked."""
+        result = sanitize_traceback("API_KEY=verysecret")
+        # Either uppercase or lowercase preserved depending on regex
+        # casing; the important invariant is that ``api_key`` survives
+        # and the value does not.
+        assert "verysecret" not in result
+        assert "api" in result.lower() and "key" in result.lower()
+
+    def test_non_pii_text_passes_through_unchanged(self) -> None:
+        """A traceback with NO PII must round-trip identical.
+
+        Defensive: a regex that accidentally matched generic identifiers
+        would corrupt non-PII tracebacks. Pin the no-op behaviour.
+        """
+        tb = "ValueError: bad input at step 3 of 5"
+        assert sanitize_traceback(tb) == tb
+
+    def test_version_string_matches_ip_regex_acceptable_collateral(self) -> None:
+        """Version strings like ``1.2.3.4`` look like IPv4 — collateral OK.
+
+        The redacted form (``<ip>``) is strictly safer than letting an
+        actual IP through, and version strings show up in only a few
+        contexts (typically `__version__` repr). Documented as
+        accepted false-positive collateral.
+        """
+        result = sanitize_traceback("torch version 2.1.0.4 detected")
+        # Doesn't crash, and the version was indeed redacted.
+        assert "2.1.0.4" not in result
+        assert "<ip>" in result

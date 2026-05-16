@@ -21,7 +21,6 @@ from ryotenkai_shared.contracts.pipeline_conditions import (
     update_condition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Class 1 — Model construction + Pydantic field validation
 # ---------------------------------------------------------------------------
@@ -388,3 +387,191 @@ class TestStandardTypesAndSerialisation:
             "OOMRisk",
             "RateLimited",
         )
+
+
+# ---------------------------------------------------------------------------
+# Class 8 — Immutability: ``Condition`` is frozen, validators cannot be
+# bypassed by attribute assignment.
+# ---------------------------------------------------------------------------
+
+
+def _make_condition(**overrides: object) -> Condition:
+    defaults: dict[str, object] = {
+        "type": "Progressing",
+        "status": ConditionStatus.TRUE,
+        "reason": "StageStarted",
+        "last_transition_time": datetime(2026, 5, 16, tzinfo=UTC),
+    }
+    defaults.update(overrides)
+    return Condition(**defaults)  # type: ignore[arg-type]
+
+
+class TestImmutabilityPositive:
+    """Reads still work; only mutation is blocked."""
+
+    def test_constructed_field_values_remain_readable(self) -> None:
+        c = _make_condition(reason="AsExpected")
+        # Reads are unaffected by frozen=True.
+        assert c.reason == "AsExpected"
+        assert c.type == "Progressing"
+        assert c.status is ConditionStatus.TRUE
+
+    def test_repr_and_dict_still_work(self) -> None:
+        c = _make_condition()
+        d = c.model_dump()
+        assert d["type"] == "Progressing"
+
+
+class TestImmutabilityNegative:
+    """Mutation raises :class:`ValidationError` — validators cannot be bypassed."""
+
+    def test_setting_reason_directly_raises_validation_error(self) -> None:
+        c = _make_condition(reason="AsExpected")
+        with pytest.raises(ValidationError):
+            c.reason = "snake_case"  # type: ignore[misc]
+
+    def test_setting_status_directly_raises_validation_error(self) -> None:
+        c = _make_condition()
+        with pytest.raises(ValidationError):
+            c.status = ConditionStatus.FALSE  # type: ignore[misc]
+
+    def test_setting_type_directly_raises_validation_error(self) -> None:
+        c = _make_condition()
+        with pytest.raises(ValidationError):
+            c.type = "Different"  # type: ignore[misc]
+
+    def test_setting_last_transition_time_directly_raises_validation_error(
+        self,
+    ) -> None:
+        c = _make_condition()
+        with pytest.raises(ValidationError):
+            c.last_transition_time = datetime(2030, 1, 1, tzinfo=UTC)  # type: ignore[misc]
+
+
+class TestImmutabilityBoundary:
+    """Edge cases around the immutability contract."""
+
+    def test_setting_unknown_attribute_raises_validation_error(self) -> None:
+        # frozen=True covers known fields; ``extra="forbid"`` covers
+        # unknown attributes. Together: nothing leaks through.
+        c = _make_condition()
+        with pytest.raises(ValidationError):
+            c.bogus = "x"  # type: ignore[attr-defined]
+
+    def test_model_copy_returns_a_distinct_instance(self) -> None:
+        # ``model_copy`` is the supported alternative to mutation. It
+        # returns a new instance rather than touching the existing one.
+        c = _make_condition()
+        c2 = c.model_copy(update={"reason": "AsExpected"})
+        assert c is not c2
+        # Original remains untouched.
+        assert c.reason == "StageStarted"
+
+
+class TestImmutabilityInvariants:
+    """Cross-cutting invariants that hold for every Condition instance."""
+
+    def test_every_field_is_frozen(self) -> None:
+        c = _make_condition()
+        for attr, new_value in [
+            ("type", "Other"),
+            ("status", ConditionStatus.FALSE),
+            ("reason", "AsExpected"),
+            ("last_transition_time", datetime(2030, 1, 1, tzinfo=UTC)),
+            ("message", "x"),
+        ]:
+            with pytest.raises(ValidationError):
+                setattr(c, attr, new_value)
+
+
+class TestImmutabilityDependencyErrors:
+    """``update_condition`` is the documented seam for state changes."""
+
+    def test_update_condition_replaces_entry_not_mutates_in_place(self) -> None:
+        # The replacement must be a new instance (frozen entries
+        # cannot be mutated, so this is also a regression guard
+        # against accidentally trying to mutate via the helper).
+        conditions: list[Condition] = []
+        update_condition(
+            conditions,
+            type="Progressing",
+            status=ConditionStatus.TRUE,
+            reason="StageStarted",
+        )
+        original = conditions[0]
+        update_condition(
+            conditions,
+            type="Progressing",
+            status=ConditionStatus.FALSE,
+            reason="StageFailed",
+        )
+        # The list now contains a NEW Condition instance (frozen entries
+        # are replaced via the constructor, not mutated).
+        assert conditions[0] is not original
+        assert conditions[0].status is ConditionStatus.FALSE
+        assert conditions[0].reason == "StageFailed"
+
+
+class TestImmutabilityRegressions:
+    """Guards against bypass paths that emerged before frozen=True."""
+
+    def test_camel_case_validator_runs_on_helper_replacement(self) -> None:
+        # Before frozen=True, a caller could write
+        # ``c.reason = "snake_case"`` and skip the CamelCase validator.
+        # The helper now constructs a fresh instance, which re-runs the
+        # validator. Verify by attempting to push a bad reason through
+        # ``update_condition``.
+        conditions: list[Condition] = []
+        update_condition(
+            conditions,
+            type="Progressing",
+            status=ConditionStatus.TRUE,
+            reason="AsExpected",
+        )
+        with pytest.raises(ValidationError):
+            update_condition(
+                conditions,
+                type="Progressing",
+                status=ConditionStatus.FALSE,
+                reason="snake_case",
+            )
+
+    def test_camel_case_validator_runs_on_same_status_refresh(self) -> None:
+        # Same as above but for the no-status-change branch (which
+        # only refreshes ``reason`` and ``message``). That branch must
+        # also re-validate.
+        conditions: list[Condition] = []
+        update_condition(
+            conditions,
+            type="Progressing",
+            status=ConditionStatus.TRUE,
+            reason="AsExpected",
+        )
+        with pytest.raises(ValidationError):
+            update_condition(
+                conditions,
+                type="Progressing",
+                status=ConditionStatus.TRUE,
+                reason="snake_case",
+            )
+
+
+class TestImmutabilityLogicSpecific:
+    """Pydantic v2 ``frozen=True`` raises ``ValidationError`` (not TypeError)."""
+
+    def test_assignment_error_is_validation_error_not_type_error(self) -> None:
+        # Pydantic v2 surfaces frozen-instance assignment as
+        # ValidationError; the test pins this so a future migration
+        # to a different framework can't silently switch the error
+        # type and break callers that catch on it.
+        c = _make_condition()
+        with pytest.raises(ValidationError):
+            c.reason = "AsExpected"  # type: ignore[misc]
+
+    def test_message_is_also_frozen(self) -> None:
+        # ``message`` is optional and was the only field that didn't
+        # have a dedicated validator pre-Phase-G. It still must be
+        # immutable so the model is uniformly frozen.
+        c = _make_condition(message="initial")
+        with pytest.raises(ValidationError):
+            c.message = "updated"  # type: ignore[misc]

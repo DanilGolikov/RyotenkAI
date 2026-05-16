@@ -28,10 +28,19 @@ Lifecycle
 
 Security
 --------
-Tracebacks pass through :func:`sanitize_traceback` which strips
-absolute filesystem paths (``/Users/.../site-packages/``,
-``/home/.../``, ``/tmp/...``) and caps at 30 lines so the wire
-payload never leaks server environment topology.
+Tracebacks pass through :func:`sanitize_traceback` which strips:
+
+* Absolute filesystem paths (``/Users/.../site-packages/``,
+  ``/home/.../``, ``/tmp/...``) — leaks operator usernames + venv
+  locations.
+* IPv4 addresses — leaks internal cluster topology.
+* Email addresses — PII.
+* Common ``KEY=VALUE`` secret assignments (``API_KEY=...``,
+  ``token: ...``, ``password = ...``) — secret value redacted while
+  keeping the variable name so the diagnostic is still useful.
+
+…and caps at 30 lines so the wire payload never leaks server
+environment topology.
 """
 
 from __future__ import annotations
@@ -69,7 +78,22 @@ TRAINER_EXIT_SCHEMA_VERSION: Final[int] = 1
 # Regex patterns for traceback sanitization. Order matters: longest /
 # most specific patterns first so they consume the trailing path
 # remainder before the generic ``/Users/<user>/`` rule fires.
-_PATH_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+#
+# Phase-G hardening (2026-05-16) extends the strip beyond filesystem
+# paths to also redact:
+# * Email addresses (RFC-5322 simplified — common form only)
+# * IPv4 addresses (operator topology leak)
+# * ``KEY=VALUE`` style secret assignments (env var dumps captured by
+#   subprocess.CalledProcessError stderr, ``os.environ`` repr in a
+#   handler, etc.)
+#
+# Ordering rationale: file-path patterns FIRST (they're the most
+# specific match and consume substrings that the generic patterns
+# would otherwise partially match). Then the structured-secret
+# pattern (``KEY=value``) so an email inside a redacted secret value
+# is not double-replaced. Email + IP last (least specific).
+_SANITIZATION_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # ----- filesystem paths --------------------------------------------
     # site-packages on a virtualenv (Mac / Linux / Windows-via-WSL)
     (re.compile(r"/(?:Users|home)/[^/]+/[^/]*\.venv/lib/python[^/]+/site-packages/"), "<sp>/"),
     (re.compile(r"/(?:Users|home)/[^/]+/[^/]*site-packages/"), "<sp>/"),
@@ -80,7 +104,33 @@ _PATH_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"/home/[^/]+/"), "<home>/"),
     (re.compile(r"/tmp/[^\s\"']+"), "<tmp>"),
     (re.compile(r"/var/folders/[^\s\"']+"), "<tmp>"),
+    # ----- secret assignments (``KEY=VALUE`` / ``key: value``) ----------
+    # Matches ``API_KEY=abc123``, ``token: xxx``, ``password = "p"``.
+    # Case-insensitive on the key name; the value is greedy up to
+    # whitespace / quote so a stray comma or ``\n`` ends it.
+    (
+        re.compile(
+            r"(?i)\b(api[_-]?key|api[_-]?token|access[_-]?token|"
+            r"refresh[_-]?token|auth[_-]?token|token|password|passwd|"
+            r"pwd|secret|client[_-]?secret)\s*[=:]\s*['\"]?[^\s'\"\n,;]+"
+        ),
+        r"\1=<redacted>",
+    ),
+    # ----- email addresses ---------------------------------------------
+    # Simplified RFC 5322: local-part [A-Za-z0-9._%+-]+ @ domain.tld
+    (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<email>"),
+    # ----- IPv4 addresses ----------------------------------------------
+    # Loose match: four 1-3 digit octets joined by dots. Doesn't
+    # validate octet range (no point — false-positive on a version
+    # string like ``1.2.3.4`` is acceptable; the redacted form is
+    # still meaningful).
+    (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "<ip>"),
 )
+
+# Legacy alias retained so external imports of ``_PATH_PATTERNS`` keep
+# working through Phase-G transition. Will be removed once nothing
+# outside this module references it.
+_PATH_PATTERNS = _SANITIZATION_PATTERNS
 
 # Hard cap on traceback length (lines). Keeps the on-wire payload
 # small and bounds the supervisor's :meth:`Path.read_text` work.
@@ -117,7 +167,7 @@ def sanitize_traceback(
         return ""
 
     cleaned = tb
-    for pattern, replacement in _PATH_PATTERNS:
+    for pattern, replacement in _SANITIZATION_PATTERNS:
         cleaned = pattern.sub(replacement, cleaned)
 
     # Strip stray control chars (defensive — Python tracebacks never

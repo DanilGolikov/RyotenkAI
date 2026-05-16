@@ -1,23 +1,24 @@
 """RFC 9457 ``application/problem+json`` handlers for shared FastAPI surfaces.
 
-Phase B (sharded-stargazing-wigderson, 2026-05-16) lifted these four
+Phase B (sharded-stargazing-wigderson, 2026-05-16) lifted these
 handlers out of ``ryotenkai_pod.runner.api.errors`` so the control-plane
-API (Phase C) can register the same wire shape. Covers four exception
-types:
+API (Phase C) can register the same wire shape. Post-Phase G fix-up
+retired the legacy :class:`APIError` class (every pod-runner raise
+site now raises a typed :class:`RyotenkAIError` subclass directly).
 
-1. :class:`APIError` -- typed runner-side exception raised by route
-   handlers that have decided to communicate a specific
-   :class:`ErrorCode`. (Predates :class:`RyotenkAIError`; kept for
-   pod-runner compatibility. Production code that goes through the
-   unified hierarchy raises :class:`RyotenkAIError` subclasses instead,
-   which are converted in the same handler path because they expose
-   ``.as_problem()`` and ``.status`` ClassVars.)
-2. ``fastapi.HTTPException`` -- legacy bare-dict raise sites. Adapter
-   :func:`http_exception_handler` maps them to ``problem+json`` so
-   wire shape is unified.
+Covers four exception types:
+
+1. :class:`RyotenkAIError` -- the unified typed root. The
+   :func:`ryotenkai_error_handler` renders any subclass via
+   :meth:`RyotenkAIError.as_problem` to RFC 9457 problem+json.
+2. ``fastapi.HTTPException`` -- legacy bare-dict raise sites kept only
+   for FastAPI's own internal 4xx surfaces (e.g. router 405). Adapter
+   :func:`http_exception_handler` maps them to ``problem+json`` so wire
+   shape is unified. New code MUST raise a typed :class:`RyotenkAIError`
+   instead; sentinel ``tests/_lint/test_no_naked_httpexception.py``
+   enforces this.
 3. ``fastapi.exceptions.RequestValidationError`` -- Pydantic validation
-   on request bodies. Maps to ``JOB_SPEC_INVALID`` (or domain-specific
-   422 when the route raises one explicitly first) with field-level
+   on request bodies. Maps to ``JOB_SPEC_INVALID`` with field-level
    errors.
 4. Generic ``Exception`` -- server bugs. 500 ``INTERNAL_ERROR``,
    traceback logged at ERROR but **never** in the response body
@@ -57,9 +58,7 @@ from ryotenkai_shared.errors.base import RyotenkAIError
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "APIError",
     "EXCEPTION_HANDLERS",
-    "api_error_handler",
     "generic_exception_handler",
     "http_exception_handler",
     "install_exception_handlers",
@@ -69,15 +68,16 @@ __all__ = [
 
 
 def _new_trace_id() -> str:
-    """Short opaque correlation id (8 hex chars) emitted in both the
-    response body and the server log. 8 chars * 16 alphabet = ~32
-    bits, plenty for human-friendly grep'ing during a single run.
+    """Short opaque correlation id (16 hex chars, 64 bits) emitted in
+    both the response body and the server log. 64 bits is safe for
+    billions of events (birthday paradox at ~4 billion samples) --
+    suitable for long-running pipelines.
 
     Phase B kept this as a private helper (the same primitive is
     re-exported from :mod:`ryotenkai_shared.errors._render` as
-    ``new_trace_id``; both delegate to ``secrets.token_hex(4)``).
+    ``new_trace_id``; both delegate to ``secrets.token_hex(8)``).
     """
-    return secrets.token_hex(4)
+    return secrets.token_hex(8)
 
 
 def _build_response(problem: ProblemDetails) -> JSONResponse:
@@ -115,85 +115,7 @@ def _build_response(problem: ProblemDetails) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
-# 1. APIError -- typed runner-side exception (pre-RyotenkAIError legacy)
-# ---------------------------------------------------------------------------
-
-
-class APIError(Exception):
-    """Typed exception used by pod route handlers to communicate a
-    specific :class:`ErrorCode`.
-
-    Construction shape::
-
-        raise APIError(
-            ErrorCode.JOB_NOT_FOUND, status=404,
-            detail=f"job_id={requested!r} is not active",
-        )
-
-    The handler may also pass ``title=...`` to override the default
-    from :data:`_DEFAULT_TITLES` (in
-    :mod:`ryotenkai_shared.errors._render`) and ``errors=[...]`` for
-    field-level failures.
-
-    Phase A1/A2 introduced :class:`RyotenkAIError` as the unified root
-    for new raise sites. ``APIError`` remains for the in-pod runner
-    handlers that pre-date the unification; Phase F will retire it
-    once those sites are migrated to ``RyotenkAIError`` subclasses.
-    """
-
-    def __init__(
-        self,
-        code: ErrorCode,
-        *,
-        status: int,
-        detail: str | None = None,
-        title: str | None = None,
-        errors: list[FieldError] | None = None,
-    ) -> None:
-        super().__init__(f"{code.value}: {detail or ''}")
-        self.code: ErrorCode = code
-        self.status: int = status
-        self.detail: str | None = detail
-        self.title: str = title or default_title_for(code)
-        self.errors: list[FieldError] | None = errors
-
-    def as_problem(
-        self,
-        *,
-        instance: str | None = None,
-        trace_id: str | None = None,
-        request_id: str | None = None,
-    ) -> ProblemDetails:
-        return ProblemDetails(
-            title=self.title,
-            status=self.status,
-            detail=self.detail,
-            instance=instance,
-            code=self.code,
-            trace_id=trace_id,
-            request_id=request_id,
-            errors=self.errors,
-        )
-
-
-async def api_error_handler(request: Request, exc: APIError) -> JSONResponse:
-    """``APIError`` -> ``application/problem+json`` (the happy path)."""
-    trace_id = _new_trace_id()
-    request_id = current_request_id()
-    logger.info(
-        "[API_ERROR] %s code=%s status=%d detail=%r trace_id=%s request_id=%s",
-        request.url.path, exc.code.value, exc.status, exc.detail, trace_id, request_id,
-    )
-    problem = exc.as_problem(
-        instance=request.url.path,
-        trace_id=trace_id,
-        request_id=request_id,
-    )
-    return _build_response(problem)
-
-
-# ---------------------------------------------------------------------------
-# 2. HTTPException adapter (universal -- covers legacy raise sites)
+# 1. HTTPException adapter -- kept for FastAPI's own raises (405 etc.)
 # ---------------------------------------------------------------------------
 
 
@@ -254,13 +176,13 @@ def _http_exception_to_code(exc: HTTPException) -> tuple[ErrorCode, str | None]:
 async def http_exception_handler(
     request: Request, exc: HTTPException,
 ) -> JSONResponse:
-    """Adapter -- legacy ``HTTPException`` -> ``problem+json``.
+    """Adapter -- ``HTTPException`` -> ``problem+json``.
 
-    Universally applied so the wire shape is unified for both the pod
-    runner (RP17 mitigation) and the control API (Phase C). PR-3.3
-    will rewrite the legacy raise sites to use :class:`APIError`
-    directly, after which this handler becomes a no-op for our own
-    code (still kept for FastAPI's own 400/422/etc. raises).
+    With the post-Phase G fix-up, in-repo raise sites no longer use raw
+    ``HTTPException`` (sentinel ``tests/_lint/test_no_naked_httpexception.py``
+    enforces this). The handler is retained for FastAPI's OWN raises
+    (router 405, path-param coercion bypassing the validation handler,
+    third-party middleware that hasn't been migrated).
     """
     code, message = _http_exception_to_code(exc)
     trace_id = _new_trace_id()
@@ -348,9 +270,7 @@ async def ryotenkai_error_handler(
     bespoke ``HTTPException`` adapter needed at raise sites.
 
     The MRO-lookup in Starlette's exception-handler dispatch picks
-    the most specific registered handler -- so :class:`APIError` (a
-    legacy pod-side exception) keeps :func:`api_error_handler`
-    because it's registered separately, and Pydantic
+    the most specific registered handler -- so Pydantic
     :class:`RequestValidationError` keeps its own handler because
     it's not a :class:`RyotenkAIError`. Everything else under the
     unified hierarchy lands here.
@@ -418,7 +338,6 @@ async def generic_exception_handler(
 # Both pod runner (``ryotenkai_pod.runner.main``) and control API
 # (Phase C, ``ryotenkai_control.api.main``) consume this dict directly.
 EXCEPTION_HANDLERS: dict[Any, Any] = {
-    APIError: api_error_handler,
     RyotenkAIError: ryotenkai_error_handler,
     HTTPException: http_exception_handler,
     RequestValidationError: validation_exception_handler,

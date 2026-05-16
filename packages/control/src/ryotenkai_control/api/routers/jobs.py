@@ -32,9 +32,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from ryotenkai_control.api.dependencies import resolve_run_dir
+from ryotenkai_shared.errors import (
+    AttemptNotFoundError,
+    ConfigInvalidError,
+    JobSubmissionMissingError,
+    NoAttemptsError,
+    RunnerUnreachableError,
+)
 
 router = APIRouter(prefix="/runs/{run_id:path}/job", tags=["job"])
 
@@ -56,22 +63,18 @@ def _latest_attempt_dir(run_dir: Path, attempt: int | None) -> Path:
         else 0,
     )
     if not runs:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "no_attempts",
-                "message": f"no attempts/ subdirectories under {run_dir}",
-            },
+        raise NoAttemptsError(
+            detail=f"no attempts/ subdirectories under {run_dir}",
+            context={"run_dir": str(run_dir)},
         )
     if attempt is None:
         return runs[-1]
     target = run_dir / "attempts" / f"attempt_{attempt}"
     if not target.is_dir():
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "attempt_not_found",
-                "message": f"attempt_{attempt} not found",
+        raise AttemptNotFoundError(
+            detail=f"attempt_{attempt} not found",
+            context={
+                "attempt": attempt,
                 "available": [p.name for p in runs],
             },
         )
@@ -87,12 +90,10 @@ def _load_submission(attempt_dir: Path) -> Any:
     try:
         return load_job_submission(attempt_dir)
     except JobSubmissionLoadError as exc:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "job_submission_missing",
-                "message": str(exc),
-            },
+        raise JobSubmissionMissingError(
+            detail=str(exc),
+            context={"attempt_dir": str(attempt_dir)},
+            cause=exc,
         ) from exc
 
 
@@ -144,9 +145,9 @@ async def get_status(
     try:
         snapshot = await _with_runner(submission, _go)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "runner_unreachable", "message": str(exc)},
+        raise RunnerUnreachableError(
+            detail=str(exc),
+            cause=exc,
         ) from exc
     return {"submission": submission.to_dict(), "snapshot": snapshot}
 
@@ -231,15 +232,12 @@ async def get_logs(
     if not streams:
         # Empty stream filter is a misconfiguration — refuse rather
         # than silently return no logs forever.
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "invalid_stream_filter",
-                "message": (
-                    "stream must contain one or more of "
-                    f"{_DEFAULT_LOG_STREAMS}"
-                ),
-            },
+        raise ConfigInvalidError(
+            detail=(
+                "stream must contain one or more of "
+                f"{_DEFAULT_LOG_STREAMS}"
+            ),
+            context={"streams": list(stream)},
         )
 
     async def _go(client, job_id):  # type: ignore[no-untyped-def]
@@ -289,7 +287,7 @@ async def stop_job(
     try:
         return await _with_runner(submission, _go)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "runner_unreachable", "message": str(exc)},
+        raise RunnerUnreachableError(
+            detail=str(exc),
+            cause=exc,
         ) from exc

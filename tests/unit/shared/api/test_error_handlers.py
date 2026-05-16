@@ -1,17 +1,23 @@
-"""Unit tests for :mod:`ryotenkai_shared.api.error_handlers` (Phase B).
+"""Unit tests for :mod:`ryotenkai_shared.api.error_handlers`.
 
-Moved from ``tests/unit/pod/runner/api/test_errors.py`` when Phase B
-lifted the handlers out of pod into shared.
+Originally lifted from ``tests/unit/pod/runner/api/test_errors.py`` in
+Phase B; the post-Phase G fix-up retired the :class:`APIError` class
+and migrated every raise site to a typed :class:`RyotenkAIError`
+subclass. The test categories below now cover the four remaining
+handlers: ``ryotenkai_error_handler``, ``http_exception_handler``
+(kept for FastAPI's own raises), ``validation_exception_handler``,
+and ``generic_exception_handler``.
 
 Test categories per project policy:
 
-* positive       -- APIError -> problem+json happy path.
+* positive       -- typed RyotenkAIError -> problem+json happy path.
 * negative       -- malformed input, missing fields, dict->shape adaption.
 * boundary       -- zero-length errors[], status 100/599 edges, no detail.
 * invariant      -- Content-Type is always ``application/problem+json``;
                     ``code`` is always present; nulls are stripped.
 * dependency-err -- handler called when logger isn't ready; no crash.
-* regression     -- legacy ``HTTPException(detail={"code": ...})`` adapted.
+* regression     -- legacy ``HTTPException(detail={"code": ...})`` adapted;
+                    ``APIError`` symbol must not reappear.
 * logic-specific -- alias map (``invalid_job_spec`` -> JOB_SPEC_INVALID).
 * combinatorial  -- ErrorCode x HTTPException-shape x with/without trace_id.
 """
@@ -25,7 +31,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 
 from ryotenkai_shared.api.error_handlers import (
-    APIError,
     EXCEPTION_HANDLERS,
     _http_exception_to_code,
     install_exception_handlers,
@@ -36,6 +41,12 @@ from ryotenkai_shared.contracts.problem_details import (
     FieldError,
     ProblemDetails,
 )
+from ryotenkai_shared.errors import (
+    JobNotFoundError,
+    JobSpecInvalidError,
+    RunnerBusyError,
+    RunnerNotReadyError,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,20 +54,18 @@ from ryotenkai_shared.contracts.problem_details import (
 
 
 def _make_app() -> FastAPI:
-    """Tiny app with the Phase B handlers attached, plus routes that
-    raise each exception type. Reused across tests."""
+    """Tiny app with the unified handlers attached, plus routes that raise
+    each exception type. Reused across tests."""
     app = FastAPI(exception_handlers=EXCEPTION_HANDLERS)
 
-    @app.get("/raise-api-error")
-    def _raise_api_error() -> None:
-        raise APIError(
-            ErrorCode.JOB_NOT_FOUND, status=404, detail="job xyz is gone",
-        )
+    @app.get("/raise-typed-error")
+    def _raise_typed() -> None:
+        raise JobNotFoundError(detail="job xyz is gone")
 
-    @app.get("/raise-api-error-with-fields")
-    def _raise_api_error_with_fields() -> None:
-        raise APIError(
-            ErrorCode.JOB_SPEC_INVALID, status=422, detail="invalid spec",
+    @app.get("/raise-typed-with-fields")
+    def _raise_typed_with_fields() -> None:
+        raise JobSpecInvalidError(
+            detail="invalid spec",
             errors=[FieldError(loc=["body", "command"], type="missing", msg="Field required")],
         )
 
@@ -91,9 +100,9 @@ def _make_app() -> FastAPI:
 
 
 class TestPositive:
-    def test_apierror_returns_problem_json(self) -> None:
+    def test_typed_error_returns_problem_json(self) -> None:
         with TestClient(_make_app()) as c:
-            r = c.get("/raise-api-error")
+            r = c.get("/raise-typed-error")
         assert r.status_code == 404
         assert r.headers["content-type"].startswith(PROBLEM_JSON_MEDIA_TYPE)
         body = r.json()
@@ -101,13 +110,13 @@ class TestPositive:
         assert body["status"] == 404
         assert body["title"] == "Job not found"
         assert body["detail"] == "job xyz is gone"
-        assert body["instance"] == "/raise-api-error"
-        assert "trace_id" in body  # 8-hex generated each call
-        assert len(body["trace_id"]) == 8
+        assert body["instance"] == "/raise-typed-error"
+        assert "trace_id" in body
+        assert len(body["trace_id"]) == 16
 
-    def test_apierror_with_field_errors(self) -> None:
+    def test_typed_error_with_field_errors(self) -> None:
         with TestClient(_make_app()) as c:
-            r = c.get("/raise-api-error-with-fields")
+            r = c.get("/raise-typed-with-fields")
         assert r.status_code == 422
         body = r.json()
         assert body["code"] == "JOB_SPEC_INVALID"
@@ -116,20 +125,20 @@ class TestPositive:
         ]
 
     def test_install_exception_handlers_imperative_form(self) -> None:
-        """``install_exception_handlers(app)`` is wire-equivalent to
-        the constructor form -- verifies it actually registers
-        handlers (not a no-op) by exercising the response shape on a
-        bare app built without ``exception_handlers=...``."""
+        """``install_exception_handlers(app)`` is wire-equivalent to the
+        constructor form -- verifies it actually registers handlers (not
+        a no-op) by exercising the response shape on a bare app built
+        without ``exception_handlers=...``."""
         app = FastAPI()
         install_exception_handlers(app)
 
         @app.get("/boom")
         def _boom() -> None:
-            raise APIError(ErrorCode.RUNNER_BUSY, status=409, detail="x")
+            raise RunnerBusyError(detail="x")
 
         with TestClient(app) as c:
             r = c.get("/boom")
-        assert r.status_code == 409
+        assert r.status_code == 503
         assert r.headers["content-type"].startswith(PROBLEM_JSON_MEDIA_TYPE)
         body = r.json()
         assert body["code"] == "RUNNER_BUSY"
@@ -159,7 +168,6 @@ class TestNegative:
         assert "unknown code" in (body.get("detail") or "")
 
     def test_pydantic_validation_returns_problem_json(self) -> None:
-        # Sending non-JSON gives RequestValidationError
         with TestClient(_make_app()) as c:
             r = c.post(
                 "/validate-pydantic",
@@ -173,14 +181,12 @@ class TestNegative:
         assert len(body["errors"]) >= 1
 
     def test_http_exception_to_code_dict_without_code_returns_internal_error(self) -> None:
-        """Dict detail missing ``code`` key -> INTERNAL_ERROR fallback."""
         exc = HTTPException(status_code=418, detail={"message": "no code here"})
         code, message = _http_exception_to_code(exc)
         assert code == ErrorCode.INTERNAL_ERROR
         assert message is None
 
     def test_http_exception_to_code_non_string_message_dropped(self) -> None:
-        """``detail["message"]`` must be a str; non-str -> message=None."""
         exc = HTTPException(
             status_code=400,
             detail={"code": "spawn_failed", "message": ["not", "a", "string"]},
@@ -196,16 +202,14 @@ class TestNegative:
 
 
 class TestBoundary:
-    def test_apierror_without_detail(self) -> None:
-        # APIError(detail=None) -> null-stripped from response
-        err = APIError(ErrorCode.RUNNER_BUSY, status=409)
+    def test_typed_error_without_detail(self) -> None:
+        err = JobNotFoundError()
         problem = err.as_problem(instance="/x")
         out = problem.model_dump(mode="json", exclude_none=True)
         assert "detail" not in out
-        assert out["code"] == "RUNNER_BUSY"
+        assert out["code"] == "JOB_NOT_FOUND"
 
     def test_status_code_extreme_values_accepted(self) -> None:
-        # ProblemDetails enforces 100 <= status <= 599
         for status in (100, 599):
             ProblemDetails(title="x", status=status, code=ErrorCode.INTERNAL_ERROR)
         with pytest.raises(Exception):
@@ -214,19 +218,11 @@ class TestBoundary:
             ProblemDetails(title="x", status=600, code=ErrorCode.INTERNAL_ERROR)
 
     def test_http_exception_to_code_none_detail(self) -> None:
-        """``HTTPException(detail=None)`` coerces detail to the HTTP
-        reason phrase (FastAPI behaviour). The adapter then routes
-        through the str branch and returns INTERNAL_ERROR with the
-        phrase as the carried message -- never crashes on the boundary.
-        """
         exc = HTTPException(status_code=500, detail=None)  # type: ignore[arg-type]
         code, message = _http_exception_to_code(exc)
         assert code == ErrorCode.INTERNAL_ERROR
-        # FastAPI replaced detail=None with the reason phrase; the
-        # adapter passes it through verbatim. We don't care about the
-        # exact text -- just that it's a non-empty string, not None.
         assert isinstance(message, str)
-        assert message  # non-empty
+        assert message
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +232,8 @@ class TestBoundary:
 
 class TestInvariant:
     @pytest.mark.parametrize("path,expected_status", [
-        ("/raise-api-error", 404),
-        ("/raise-api-error-with-fields", 422),
+        ("/raise-typed-error", 404),
+        ("/raise-typed-with-fields", 422),
         ("/raise-http-legacy-dict", 409),
         ("/raise-http-legacy-string", 500),
         ("/raise-http-unknown-code", 400),
@@ -254,7 +250,7 @@ class TestInvariant:
         )
 
     @pytest.mark.parametrize("path", [
-        "/raise-api-error",
+        "/raise-typed-error",
         "/raise-http-legacy-dict",
         "/raise-bare-exception",
     ])
@@ -262,12 +258,10 @@ class TestInvariant:
         with TestClient(_make_app(), raise_server_exceptions=False) as c:
             r = c.get(path)
         assert "code" in r.json()
-        assert r.json()["code"]  # non-empty
+        assert r.json()["code"]
 
     def test_null_fields_stripped_from_wire(self) -> None:
-        # APIError without detail/title-override/errors -> those fields
-        # never appear in the response body (RFC 9457 §3.1).
-        err = APIError(ErrorCode.RUNNER_NOT_READY, status=503)
+        err = RunnerNotReadyError()
         out = err.as_problem(instance="/x").model_dump(mode="json", exclude_none=True)
         for field in ("detail", "errors", "trace_id", "request_id"):
             assert field not in out, f"{field} should be null-stripped"
@@ -281,7 +275,7 @@ class TestInvariant:
 class TestRegression:
     @pytest.mark.parametrize("legacy_code,expected", [
         ("job_not_found", ErrorCode.JOB_NOT_FOUND),
-        ("invalid_job_spec", ErrorCode.JOB_SPEC_INVALID),       # alias map
+        ("invalid_job_spec", ErrorCode.JOB_SPEC_INVALID),
         ("plugin_unpack_failed", ErrorCode.PLUGIN_UNPACK_FAILED),
         ("job_in_progress", ErrorCode.JOB_IN_PROGRESS),
         ("spawn_failed", ErrorCode.SPAWN_FAILED),
@@ -299,25 +293,28 @@ class TestRegression:
 
     def test_pod_runner_imports_resolve_from_shared(self) -> None:
         """Phase F deleted ``ryotenkai_pod.runner.api.errors`` shim;
-        the pod runner now imports :class:`APIError` and
-        :data:`EXCEPTION_HANDLERS` directly from
-        :mod:`ryotenkai_shared.api.error_handlers`. This sentinel
-        regression-guards that the shared symbols are still importable
-        from the canonical path and that the shim is gone.
+        post-Phase G fix-up retired ``APIError`` itself. The runner now
+        raises typed :class:`RyotenkAIError` subclasses directly. This
+        sentinel regression-guards both: the legacy shim stays gone, and
+        ``APIError`` is no longer exported from
+        :mod:`ryotenkai_shared.api.error_handlers`.
         """
         import importlib
 
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module("ryotenkai_pod.runner.api.errors")
 
-        from ryotenkai_shared.api.error_handlers import (
-            APIError as shared_api_error,
+        from ryotenkai_shared.api import error_handlers as mod
+
+        assert not hasattr(mod, "APIError"), (
+            "APIError must not be re-introduced; raise sites use "
+            "RyotenkAIError subclasses instead."
         )
+
         from ryotenkai_shared.api.error_handlers import (
             EXCEPTION_HANDLERS as shared_handlers,
         )
 
-        assert shared_api_error is APIError
         assert shared_handlers is EXCEPTION_HANDLERS
 
 
@@ -342,17 +339,12 @@ class TestLogicSpecific:
         _, message = _http_exception_to_code(exc)
         assert message == "zip corrupt"
 
-    def test_apierror_title_falls_back_to_default_title_for(self) -> None:
-        """When ``title=`` is omitted the constructor must look up
-        :data:`_DEFAULT_TITLES` via ``default_title_for``; verifies
-        the merged map carries pod-runner codes after Phase B."""
-        err = APIError(ErrorCode.JOB_NOT_FOUND, status=404)
+    def test_typed_error_title_defaults_via_render(self) -> None:
+        """The title is pulled from ``_DEFAULT_TITLES`` via the base
+        ``RyotenkAIError.title`` property; verifies the merged map
+        carries pod-runner codes."""
+        err = JobNotFoundError()
         assert err.title == "Job not found"
-
-    def test_apierror_custom_title_overrides_default(self) -> None:
-        """Explicit ``title=`` wins over the default-titles map."""
-        err = APIError(ErrorCode.JOB_NOT_FOUND, status=404, title="Custom")
-        assert err.title == "Custom"
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +370,6 @@ class TestCombinatorial:
             instance="/x" if with_instance else None,
         )
         wire = problem.model_dump(mode="json", exclude_none=True)
-        # Re-parse to assert wire shape is itself a valid input
         round_tripped = ProblemDetails.model_validate(wire)
         assert round_tripped.code == code
         assert round_tripped.title == "t"
@@ -397,18 +388,16 @@ class TestDependencyError:
     async def test_generic_handler_does_not_propagate_logger_failure(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If the logger raises mid-handler, the response must still
-        be emitted -- or, in the current contract, the failure must
-        surface so devops knows. The contract is: log failures DON'T
-        silence -- they propagate."""
+        """If the logger raises mid-handler, the response must still be
+        emitted -- or, in the current contract, the failure must surface
+        so devops knows. The contract is: log failures DON'T silence --
+        they propagate."""
         from ryotenkai_shared.api import error_handlers as mod
 
         broken_logger = MagicMock()
         broken_logger.error.side_effect = RuntimeError("logger dead")
         monkeypatch.setattr(mod, "logger", broken_logger)
 
-        # Build a real Starlette/FastAPI Request from an ASGI scope so we
-        # don't need to mock the property surface (``url.path`` etc.).
         request = Request({"type": "http", "method": "GET", "path": "/x", "headers": []})
 
         with pytest.raises(RuntimeError, match="logger dead"):

@@ -103,6 +103,26 @@ _DEFAULT_TITLES: dict[ErrorCode, str] = {
     # ----- engines (Phase A1) ------------------------------------------
     ErrorCode.ENGINE_NOT_REGISTERED: "Engine not registered",
     ErrorCode.ENGINE_CONFIG_INVALID: "Engine configuration invalid",
+    # ----- post-APIError migration -------------------------------------
+    ErrorCode.PERMISSION_DENIED: "Permission denied",
+    ErrorCode.RUN_NOT_FOUND: "Run not found",
+    ErrorCode.NO_ATTEMPTS: "No attempts recorded",
+    ErrorCode.ATTEMPT_NOT_FOUND: "Attempt not found",
+    ErrorCode.ATTEMPT_INVALID: "Attempt invalid",
+    ErrorCode.JOB_SUBMISSION_MISSING: "Job submission record missing",
+    ErrorCode.RUNNER_UNREACHABLE: "Runner unreachable",
+    ErrorCode.PROJECT_DIRECTORY_MISSING: "Project directory missing",
+    ErrorCode.DATASET_NOT_FOUND: "Dataset not found",
+    ErrorCode.PLUGIN_NOT_FOUND: "Plugin not found",
+    ErrorCode.PRESET_NOT_FOUND: "Preset not found",
+    ErrorCode.INTEGRATION_TYPE_INVALID: "Integration type invalid",
+    ErrorCode.LOG_FILE_RANGE_INVALID: "Log file range invalid",
+    ErrorCode.REPORT_GENERATION_FAILED: "Report generation failed",
+    ErrorCode.HF_LOAD_FAILED: "Hugging Face dataset load failed",
+    ErrorCode.DATASETS_LIBRARY_MISSING: "Datasets library missing",
+    ErrorCode.PROVIDER_TOKEN_INVALID: "Provider token invalid",
+    ErrorCode.CLIENT_DISCONNECT: "Client disconnected mid-upload",
+    ErrorCode.TRAINING_TIMEOUT: "Training wall-clock timeout exceeded",
     # ----- transport (Mac client synthesised) --------------------------
     ErrorCode.TRANSPORT_UNREACHABLE: "Transport unreachable",
     # ----- catch-all ---------------------------------------------------
@@ -122,9 +142,11 @@ def default_title_for(code: ErrorCode) -> str:
 
 
 def new_trace_id() -> str:
-    """Short opaque correlation id (8 hex chars).
+    """Short opaque correlation id (16 hex chars, 64 bits).
 
     Mirrors the pod runner's ``_new_trace_id``. Phase B unifies both
-    sources to this single implementation.
+    sources to this single implementation. 64 bits is safe for
+    billions of events (birthday paradox at ~4 billion samples) --
+    suitable for long-running pipelines.
     """
-    return secrets.token_hex(4)
+    return secrets.token_hex(8)

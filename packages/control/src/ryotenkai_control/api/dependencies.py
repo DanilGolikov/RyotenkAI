@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from fastapi import Depends, HTTPException
+from fastapi import Depends
 
 from ryotenkai_control.api.config import ApiSettings
 from ryotenkai_control.workspace.projects import ProjectRegistry, ProjectStore
@@ -14,6 +14,14 @@ from ryotenkai_control.workspace.projects.registry import ProjectRegistryError
 from ryotenkai_control.workspace.integrations import IntegrationRegistry
 from ryotenkai_control.workspace.providers import ProviderRegistry
 from ryotenkai_control.pipeline.state import PipelineStateStore
+from ryotenkai_shared.errors import (
+    AttemptInvalidError,
+    ConfigInvalidError,
+    DatasetNotFoundError,
+    ProjectDirectoryMissingError,
+    ProjectNotFoundError,
+    RunNotFoundError,
+)
 
 if TYPE_CHECKING:
     from ryotenkai_shared.utils.crypto.token_crypto import TokenCrypto
@@ -43,13 +51,22 @@ def resolve_run_dir(run_id: str, runs_dir: Path = Depends(get_runs_dir)) -> Path
     middleware) must still be safe.
     """
     if not run_id or ".." in run_id.replace("\\", "/").split("/"):
-        raise HTTPException(status_code=400, detail="invalid_run_id")
+        raise AttemptInvalidError(
+            detail="invalid_run_id",
+            context={"run_id": run_id},
+        )
     runs_root = runs_dir.resolve()
     run_dir = (runs_root / run_id).resolve()
     if not run_dir.is_relative_to(runs_root):
-        raise HTTPException(status_code=400, detail="run_id_outside_runs_dir")
+        raise AttemptInvalidError(
+            detail="run_id_outside_runs_dir",
+            context={"run_id": run_id},
+        )
     if not run_dir.exists() or not run_dir.is_dir():
-        raise HTTPException(status_code=404, detail="run_not_found")
+        raise RunNotFoundError(
+            detail=f"run not found: {run_id}",
+            context={"run_id": run_id},
+        )
     return run_dir
 
 
@@ -105,41 +122,57 @@ def resolve_dataset_key(
         422 — dataset block can't be parsed into ``DatasetConfig``
     """
     if not project_id or "/" in project_id or "\\" in project_id or ".." in project_id:
-        raise HTTPException(status_code=400, detail="invalid_project_id")
+        raise AttemptInvalidError(
+            detail="invalid_project_id",
+            context={"project_id": project_id},
+        )
     if not dataset_key or "/" in dataset_key or "\\" in dataset_key or ".." in dataset_key:
-        raise HTTPException(status_code=400, detail="invalid_dataset_key")
+        raise AttemptInvalidError(
+            detail="invalid_dataset_key",
+            context={"dataset_key": dataset_key},
+        )
 
     try:
         entry = registry.resolve(project_id)
     except ProjectRegistryError as exc:
-        raise HTTPException(status_code=404, detail=f"project_not_found: {exc}") from exc
+        raise ProjectNotFoundError(
+            detail=f"project_not_found: {exc}",
+            context={"project_id": project_id},
+            cause=exc,
+        ) from exc
 
     project_root = Path(entry.path)
     store = ProjectStore(project_root)
     if not store.exists():
-        raise HTTPException(status_code=404, detail="project_directory_missing")
+        raise ProjectDirectoryMissingError(
+            detail="project_directory_missing",
+            context={"project_id": project_id},
+        )
 
     yaml_text = store.current_yaml_text()
     try:
         parsed = yaml.safe_load(yaml_text) or {}
     except yaml.YAMLError as exc:
-        raise HTTPException(
-            status_code=422, detail=f"config_yaml_parse_error: {exc}"
+        raise ConfigInvalidError(
+            detail=f"config_yaml_parse_error: {exc}",
+            cause=exc,
         ) from exc
 
     if not isinstance(parsed, dict):
-        raise HTTPException(status_code=422, detail="config_yaml_not_object")
+        raise ConfigInvalidError(detail="config_yaml_not_object")
 
     datasets_block = parsed.get("datasets") or {}
     if not isinstance(datasets_block, dict) or dataset_key not in datasets_block:
-        raise HTTPException(
-            status_code=404, detail=f"dataset_not_found: {dataset_key}"
+        raise DatasetNotFoundError(
+            detail=f"dataset_not_found: {dataset_key}",
+            context={"dataset_key": dataset_key},
         )
 
     raw = datasets_block[dataset_key]
     if not isinstance(raw, dict):
-        raise HTTPException(
-            status_code=422, detail=f"dataset_entry_not_object: {dataset_key}"
+        raise ConfigInvalidError(
+            detail=f"dataset_entry_not_object: {dataset_key}",
+            context={"dataset_key": dataset_key},
         )
 
     # Local import — config schema imports validators which transitively
@@ -150,8 +183,9 @@ def resolve_dataset_key(
     try:
         dataset_config = DatasetConfig.model_validate(raw)
     except Exception as exc:  # ValidationError or any pydantic-raised
-        raise HTTPException(
-            status_code=422, detail=f"dataset_config_invalid: {exc}"
+        raise ConfigInvalidError(
+            detail=f"dataset_config_invalid: {exc}",
+            cause=exc,
         ) from exc
 
     return DatasetRequestContext(

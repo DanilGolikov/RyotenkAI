@@ -1,13 +1,19 @@
-"""Tests for the ``resolve_run_dir`` path-traversal guard."""
+"""Tests for the ``resolve_run_dir`` path-traversal guard.
+
+Post-Phase G fix-up: ``HTTPException`` raises were migrated to typed
+:class:`RyotenkAIError` subclasses (``AttemptInvalidError`` for 400,
+``RunNotFoundError`` for 404). Tests updated to assert on the typed
+exception classes and their ``code``/``status`` ClassVars.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 
 from ryotenkai_control.api.dependencies import resolve_run_dir
+from ryotenkai_shared.errors import AttemptInvalidError, RunNotFoundError
 
 
 def _make_run(runs_dir: Path, name: str) -> Path:
@@ -28,9 +34,9 @@ def test_dotdot_segment_is_rejected(tmp_path: Path) -> None:
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir(parents=True)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(AttemptInvalidError) as exc_info:
         resolve_run_dir("../etc", runs_dir=runs_dir)
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status == 400
     assert exc_info.value.detail == "invalid_run_id"
 
 
@@ -38,9 +44,9 @@ def test_empty_run_id_is_rejected(tmp_path: Path) -> None:
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir(parents=True)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(AttemptInvalidError) as exc_info:
         resolve_run_dir("", runs_dir=runs_dir)
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status == 400
 
 
 def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
@@ -58,9 +64,9 @@ def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
     # runs_dir/escape → ../outside_secret
     (runs_dir / "escape").symlink_to(outside)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(AttemptInvalidError) as exc_info:
         resolve_run_dir("escape", runs_dir=runs_dir)
-    assert exc_info.value.status_code == 400
+    assert exc_info.value.status == 400
     assert exc_info.value.detail == "run_id_outside_runs_dir"
 
 
@@ -85,7 +91,7 @@ def test_unresolved_runs_dir_still_safe(tmp_path: Path) -> None:
     outside.mkdir()
     (real_runs / "escape").symlink_to(outside)
 
-    with pytest.raises(HTTPException):
+    with pytest.raises(AttemptInvalidError):
         resolve_run_dir("escape", runs_dir=link)
 
 
@@ -93,6 +99,6 @@ def test_nonexistent_returns_404(tmp_path: Path) -> None:
     runs_dir = tmp_path / "runs"
     runs_dir.mkdir(parents=True)
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RunNotFoundError) as exc_info:
         resolve_run_dir("missing", runs_dir=runs_dir)
-    assert exc_info.value.status_code == 404
+    assert exc_info.value.status == 404

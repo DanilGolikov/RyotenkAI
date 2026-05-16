@@ -267,8 +267,13 @@ def wrap_command(fn: F) -> F:
 
     :class:`typer.Exit` and :class:`typer.Abort` are deliberately NOT
     caught -- they're the controlled-exit primitives the rest of the
-    CLI uses, including :func:`die`. Same for :class:`KeyboardInterrupt`
-    so Ctrl-C still terminates cleanly.
+    CLI uses, including :func:`die`.
+
+    :class:`KeyboardInterrupt` IS caught and rendered as a one-line
+    ``aborted`` message with exit code 130 (POSIX SIGINT convention --
+    128 + signal number). Without this, Python prints a 5-line
+    traceback that looks like a crash, masking the fact that the user
+    deliberately Ctrl-C'd.
 
     The decorator is non-introspecting (uses ``functools.wraps``) so
     Typer's option/argument extraction keeps working unchanged.
@@ -285,6 +290,11 @@ def wrap_command(fn: F) -> F:
             token = REQUEST_ID.set(generate_request_id())
         try:
             return fn(*args, **kwargs)
+        except KeyboardInterrupt:
+            # POSIX convention: SIGINT -> 128 + 2 = 130. Mimic
+            # kubectl/Terraform: short "aborted" line on stderr.
+            err_console.print(f"[{COLOR_DIM}]aborted[/{COLOR_DIM}]")
+            raise typer.Exit(code=130)
         except RyotenkAIError as exc:
             raise die_from_ryotenkai(
                 exc,

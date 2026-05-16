@@ -25,8 +25,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from ryotenkai_shared.api.error_handlers import APIError
-from ryotenkai_shared.contracts.problem_details import ErrorCode
+from ryotenkai_shared.errors import (
+    LogNameInvalidError,
+    LogNotAvailableError,
+    LogOffsetOutOfRangeError,
+    RunnerNotReadyError,
+)
 from ryotenkai_shared.contracts.runner_api.logs import (
     LogChunkResponse,
     LogName,
@@ -49,8 +53,7 @@ def _get_pod_layout(request: Request) -> PodLayout:
     :attr:`app.state.pod_layout` by the lifespan."""
     layout = getattr(request.app.state, "pod_layout", None)
     if layout is None:
-        raise APIError(
-            ErrorCode.RUNNER_NOT_READY, status=503,
+        raise RunnerNotReadyError(
             detail="pod layout not initialised on app.state",
         )
     return layout
@@ -67,9 +70,9 @@ def _resolve_log_path(layout: PodLayout, name: LogName) -> Path:
         return Path(str(layout.trainer_stdio_log))
     if name is LogName.RUNNER:
         return Path(str(layout.runner_log))
-    raise APIError(
-        ErrorCode.LOG_NAME_INVALID, status=422,
+    raise LogNameInvalidError(
         detail=f"unhandled LogName={name!r} (programming bug)",
+        context={"log_name": str(name)},
     )
 
 
@@ -91,24 +94,23 @@ def read_log(
     try:
         total_size = path.stat().st_size
     except FileNotFoundError:
-        raise APIError(
-            ErrorCode.LOG_NOT_AVAILABLE, status=404,
+        raise LogNotAvailableError(
             detail=f"log {name.value!r} does not exist on disk yet",
         ) from None
     except OSError as exc:
-        raise APIError(
-            ErrorCode.LOG_NOT_AVAILABLE, status=404,
+        raise LogNotAvailableError(
             detail=f"log {name.value!r} stat failed: {exc}",
+            cause=exc,
         ) from exc
 
     if offset > total_size:
-        raise APIError(
-            ErrorCode.LOG_OFFSET_OUT_OF_RANGE, status=416,
+        raise LogOffsetOutOfRangeError(
             detail=(
                 f"offset={offset} > total_size={total_size}; "
                 "client must reset its cursor to 0 (likely the file "
                 "was rotated/truncated mid-poll)."
             ),
+            context={"offset": offset, "total_size": total_size},
         )
 
     if offset == total_size:
@@ -128,9 +130,9 @@ def read_log(
             fh.seek(offset)
             raw = fh.read(capped)
     except OSError as exc:
-        raise APIError(
-            ErrorCode.LOG_NOT_AVAILABLE, status=404,
+        raise LogNotAvailableError(
             detail=f"log {name.value!r} read failed: {exc}",
+            cause=exc,
         ) from exc
 
     # ``errors='replace'`` so a torn multi-byte UTF-8 sequence at the
@@ -163,9 +165,9 @@ def get_log_size(
         # simple: client polls size, sees 0, sleeps and tries again.
         return LogSizeResponse(size_bytes=0)
     except OSError as exc:
-        raise APIError(
-            ErrorCode.LOG_NOT_AVAILABLE, status=404,
+        raise LogNotAvailableError(
             detail=f"log {name.value!r} stat failed: {exc}",
+            cause=exc,
         ) from exc
     return LogSizeResponse(size_bytes=size)
 

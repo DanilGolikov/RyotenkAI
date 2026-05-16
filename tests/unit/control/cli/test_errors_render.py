@@ -463,15 +463,19 @@ class TestWrapCommand:
             cmd()
         assert excinfo.value.exit_code == 0
 
-    def test_keyboard_interrupt_passthrough(
+    def test_keyboard_interrupt_renders_aborted_exit_130(
         self, captured_stderr: io.StringIO,
     ) -> None:
+        # Ctrl-C now yields a one-line "aborted" + exit 130 (POSIX
+        # SIGINT convention) instead of an uncaught traceback.
         @cli_errors.wrap_command
         def cmd() -> None:
             raise KeyboardInterrupt
 
-        with pytest.raises(KeyboardInterrupt):
+        with pytest.raises(typer.Exit) as excinfo:
             cmd()
+        assert excinfo.value.exit_code == 130
+        assert "aborted" in captured_stderr.getvalue()
 
     def test_validation_error_routed_to_die(
         self, captured_stderr: io.StringIO,
@@ -529,3 +533,201 @@ class TestWrapCommand:
         # is critical for Typer's introspection.
         assert cmd.__name__ == "cmd"
         assert cmd(1, b=2) == 3
+
+
+# ===========================================================================
+# TestKeyboardInterrupt -- Ctrl-C cleanly surfaces as exit 130 (POSIX)
+# ===========================================================================
+#
+# 7-class coverage per CLAUDE.md. Each method maps to one of the seven
+# canonical categories (Positive / Negative / Boundary / Invariants /
+# DependencyErrors / Regressions / LogicSpecific).
+
+
+class TestKeyboardInterruptPositive:
+    """Positive path: Ctrl-C inside command -> rendered abort + exit 130."""
+
+    def test_keyboard_interrupt_yields_exit_130(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        assert excinfo.value.exit_code == 130
+
+    def test_keyboard_interrupt_prints_aborted_to_stderr(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit):
+            cmd()
+        assert "aborted" in captured_stderr.getvalue()
+
+
+class TestKeyboardInterruptNegative:
+    """Other exception families are NOT mis-routed to the abort path."""
+
+    def test_ryotenkai_error_does_not_print_aborted(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise JobStateInvalidError(detail="x")
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        # JobStateInvalidError is 409 -> exit 2, not 130.
+        assert excinfo.value.exit_code == 2
+        assert "aborted" not in captured_stderr.getvalue()
+
+    def test_generic_exception_not_caught_as_keyboard_interrupt(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # A plain ValueError is NOT a KeyboardInterrupt subclass; the
+        # wrapper must not swallow it via the SIGINT branch.
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise ValueError("boom")
+
+        with pytest.raises(ValueError):
+            cmd()
+        assert "aborted" not in captured_stderr.getvalue()
+
+
+class TestKeyboardInterruptBoundary:
+    """Edge cases around when the interrupt is raised."""
+
+    def test_interrupt_raised_immediately_on_entry(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # Some long-running commands begin with an immediate I/O call.
+        # Ctrl-C on the very first statement still renders correctly.
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        assert excinfo.value.exit_code == 130
+
+    def test_interrupt_with_message_payload_renders_aborted(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # KeyboardInterrupt can carry a payload (rare but allowed by
+        # CPython). The handler ignores it and still prints "aborted".
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt("user pressed ctrl-c")
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        assert excinfo.value.exit_code == 130
+        # The free-form payload must not leak into the rendered output.
+        assert "user pressed ctrl-c" not in captured_stderr.getvalue()
+
+
+class TestKeyboardInterruptInvariants:
+    """POSIX/UNIX convention: SIGINT -> exit 128 + 2 = 130."""
+
+    def test_exit_code_is_posix_sigint_convention(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # 130 = 128 (signal-base) + 2 (SIGINT). This is the value the
+        # shell expects so $? after Ctrl-C matches what the user gets
+        # from any well-behaved POSIX tool (e.g., curl, git).
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        assert excinfo.value.exit_code == 130
+        assert excinfo.value.exit_code != 1
+        assert excinfo.value.exit_code != 2
+
+
+class TestKeyboardInterruptDependencyErrors:
+    """request_id contextvar lifecycle when Ctrl-C interrupts."""
+
+    def test_request_id_reset_after_keyboard_interrupt(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        REQUEST_ID.set(None)
+
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit):
+            cmd()
+        # The `finally` block in wrap_command must reset the context
+        # var regardless of the exit path taken.
+        assert current_request_id() is None
+
+
+class TestKeyboardInterruptRegressions:
+    """Guards against subtle regressions in the abort path."""
+
+    def test_keyboard_interrupt_does_not_emit_typer_exception_chain(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # The handler must convert KeyboardInterrupt -> typer.Exit
+        # without preserving the cause chain on the raised Exit
+        # (otherwise click's exception renderer may print a traceback
+        # for the underlying KeyboardInterrupt).
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        # typer.Exit is the only thing in flight; no implicit __cause__
+        # leaks the KeyboardInterrupt to upstream error handlers.
+        assert excinfo.value.__cause__ is None
+
+    def test_keyboard_interrupt_renders_only_aborted_no_traceback_text(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # Sanity guard against accidentally re-introducing a traceback
+        # dump in the abort path.
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(typer.Exit):
+            cmd()
+        out = captured_stderr.getvalue()
+        assert "aborted" in out
+        assert "Traceback" not in out
+        assert "raise KeyboardInterrupt" not in out
+
+
+class TestKeyboardInterruptLogicSpecific:
+    """Ordering and ordering-only invariants of the abort handler."""
+
+    def test_keyboard_interrupt_handler_runs_before_ryotenkai_handler(
+        self, captured_stderr: io.StringIO,
+    ) -> None:
+        # If both a KeyboardInterrupt and a RyotenkAIError could be in
+        # flight, the SIGINT branch wins (it is declared first in the
+        # try/except chain). We approximate by chaining: an inner
+        # raise that the user interrupts.
+        @cli_errors.wrap_command
+        def cmd() -> None:
+            try:
+                raise KeyboardInterrupt
+            except KeyboardInterrupt:
+                # Re-raise via a bare ``raise`` -- the wrapper still
+                # catches it on the SIGINT branch, not RyotenkAIError.
+                raise
+
+        with pytest.raises(typer.Exit) as excinfo:
+            cmd()
+        assert excinfo.value.exit_code == 130
+        assert "aborted" in captured_stderr.getvalue()

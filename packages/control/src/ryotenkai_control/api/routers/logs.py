@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from ryotenkai_control.api.config import ApiSettings
 from ryotenkai_control.api.dependencies import get_settings, resolve_run_dir
 from ryotenkai_control.api.schemas.log import LogChunk, LogFileInfo
 from ryotenkai_control.api.services import log_service
+from ryotenkai_shared.errors import LogFileRangeInvalidError
 
 router = APIRouter(prefix="/runs/{run_id:path}/attempts/{attempt_no}/logs", tags=["logs"])
 
@@ -26,7 +27,7 @@ def get_log_chunk(
     try:
         return log_service.read_chunk(run_dir, attempt_no, file, offset=offset, max_bytes=effective_max)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise LogFileRangeInvalidError(detail=str(exc), cause=exc) from exc
 
 
 @router.get("/files", response_model=list[LogFileInfo])

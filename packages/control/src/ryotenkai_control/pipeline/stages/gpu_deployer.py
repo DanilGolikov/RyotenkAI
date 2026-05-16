@@ -267,11 +267,11 @@ class GPUDeployer(PipelineStage):
         # happens here because uvicorn cannot start without the
         # synced ``ryotenkai_*`` packages on disk.
         #
-        # Phase A2 Batch 9 (2026-05-15): the deployment manager's
-        # public surface raises typed exceptions; this caller still
-        # exposes ``Result[dict, AppError]`` upward (Batch 10 will
-        # finish the migration), so each call is wrapped in a typed
-        # → AppError translator at the boundary.
+        # Phase A2 finale (2026-05-15, commit ``e27619b``): the
+        # deployment manager raises typed :class:`RyotenkAIError`
+        # subclasses and this caller now lets them propagate
+        # directly; the legacy ``Result``/``AppError`` translator is
+        # gone.
         logger.info("Syncing source code (rsync)...")
         upload_start = time.time()
         try:

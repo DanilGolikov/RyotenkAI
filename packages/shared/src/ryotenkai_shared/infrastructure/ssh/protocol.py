@@ -22,6 +22,19 @@ plus arbitrary command exec. Each method returns a small typed result
 shape; transport failures raise :class:`SSHError` subclasses so
 callers can react to "host unreachable" vs "command failed" without
 parsing stderr strings.
+
+Vendor-exception isolation
+--------------------------
+:class:`SSHError` and its subclasses (:class:`SSHConnectionError`,
+:class:`SSHExecError`, :class:`SSHTransferError`) are transport-layer
+types. They MUST be caught and translated into typed
+:class:`ryotenkai_shared.errors.RyotenkAIError` subclasses
+(``SSHConnectionFailedError`` / ``SSHExecFailedError`` / ``SSHTransferFailedError``)
+inside the adapter modules; downstream code (control, pod,
+providers.training, providers.inference, providers.single_node) is
+forbidden from importing this module directly. The boundary is enforced
+by the importlinter contract *"Vendor SDK exception types stay inside
+infrastructure adapters"* in ``pyproject.toml``.
 """
 
 from __future__ import annotations

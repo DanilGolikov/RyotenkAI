@@ -22,6 +22,19 @@ The five typed errors mirror the practical failure modes that the
 * :class:`HFRateLimitedError` — 429
 * :class:`HFTransientError` — 5xx / connection drop (retryable)
 * :class:`HFHubError` — base / catch-all
+
+Vendor-exception isolation
+--------------------------
+:class:`HFHubError` and its subclasses are transport-layer types. They
+MUST be caught and translated into typed
+:class:`ryotenkai_shared.errors.RyotenkAIError` subclasses
+(``HFAuthFailedError`` / ``HFNotFoundError`` from
+``ryotenkai_shared.errors.domain`` — note: same name, different class)
+inside the adapter modules; downstream code (control, pod,
+providers.training, providers.inference, providers.single_node) is
+forbidden from importing this module directly. The boundary is enforced
+by the importlinter contract *"Vendor SDK exception types stay inside
+infrastructure adapters"* in ``pyproject.toml``.
 """
 
 from __future__ import annotations

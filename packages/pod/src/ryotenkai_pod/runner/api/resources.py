@@ -18,9 +18,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ryotenkai_shared.api.error_handlers import APIError
+from ryotenkai_shared.errors import ResourcesUnavailableError
 from ryotenkai_pod.runner.health_reporter import default_health_snapshot
-from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api.resources import ResourceSnapshot
 
 router = APIRouter(prefix="/resources", tags=["resources"])
@@ -45,10 +44,9 @@ async def get_resources() -> ResourceSnapshot:
     try:
         raw = await default_health_snapshot()
     except Exception as exc:  # noqa: BLE001 — defensive
-        raise APIError(
-            ErrorCode.RESOURCES_UNAVAILABLE,
-            status=502,
+        raise ResourcesUnavailableError(
             detail=f"snapshot provider failed: {type(exc).__name__}: {exc}",
+            cause=exc,
         ) from exc
     return ResourceSnapshot.model_validate(raw)
 

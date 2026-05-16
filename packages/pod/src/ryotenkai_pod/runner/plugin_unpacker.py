@@ -110,7 +110,8 @@ _MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
-# Result / errors
+# Result dataclass (carries ``installed``/``ledger``; failures raise
+# :class:`PluginUnpackFailedError` instead).
 # ---------------------------------------------------------------------------
 
 
