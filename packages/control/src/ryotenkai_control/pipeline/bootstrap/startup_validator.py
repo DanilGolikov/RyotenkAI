@@ -19,8 +19,13 @@ Validation covers:
 4. Evaluation plugin secrets — delegated to :func:`validate_eval_plugin_secrets`.
 5. Training strategy chain — delegated to :func:`validate_strategy_chain`.
 
-All failures raise :class:`StartupValidationError` so callers can
-distinguish "bad input" from unexpected runtime errors.
+All failures raise typed :class:`RyotenkAIError` subclasses:
+``ProviderAuthFailedError`` for missing credentials, ``ConfigInvalidError``
+for plugin misconfiguration, and ``StrategyChainInvalidError`` for chain
+violations (the latter propagated unchanged from the strategy validator).
+This lands them on the unified CLI/HTTP rendering pipeline; the legacy
+``StartupValidationError(ValueError)`` wrapper was removed in the
+worker-rendering bug fix (2026-05-16).
 """
 
 from __future__ import annotations
@@ -29,8 +34,8 @@ import os
 from typing import TYPE_CHECKING
 
 from ryotenkai_control.pipeline.validators.runtime import validate_eval_plugin_secrets
-from ryotenkai_shared.constants import PROVIDER_RUNPOD, PROVIDER_SINGLE_NODE
 from ryotenkai_shared.config import validate_strategy_chain
+from ryotenkai_shared.errors import ProviderAuthFailedError
 from ryotenkai_shared.utils.logger import logger
 
 
@@ -59,14 +64,6 @@ def _resolve_required_secrets_for_provider(
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets
-
-
-class StartupValidationError(ValueError):
-    """Raised when startup validation detects a fatal misconfiguration.
-
-    Subclasses :class:`ValueError` for backward compatibility with the
-    previous orchestrator code that used bare ``ValueError``.
-    """
 
 
 class StartupValidator:
@@ -131,10 +128,17 @@ class StartupValidator:
         for secret_name in required_secrets:
             attr_name = secret_name.lower()
             if not getattr(secrets, attr_name, None):
-                raise StartupValidationError(
-                    f"{secret_name} is required when using provider "
-                    f"{active_provider!r}. Set it via environment "
-                    f"variable {secret_name} or in config/secrets.env.",
+                raise ProviderAuthFailedError(
+                    detail=(
+                        f"{secret_name} is required when using provider "
+                        f"{active_provider!r}. Set it via environment "
+                        f"variable {secret_name} or in config/secrets.env."
+                    ),
+                    context={
+                        "provider": active_provider,
+                        "secret_name": secret_name,
+                        "role": "training",
+                    },
                 )
 
     @staticmethod
@@ -162,11 +166,18 @@ class StartupValidator:
         for secret_name in required_secrets:
             attr_name = secret_name.lower()
             if not getattr(secrets, attr_name, None):
-                raise StartupValidationError(
-                    f"{secret_name} is required when using "
-                    f"inference.provider={inference_provider!r}. "
-                    f"Set it via environment variable {secret_name} "
-                    f"or in config/secrets.env.",
+                raise ProviderAuthFailedError(
+                    detail=(
+                        f"{secret_name} is required when using "
+                        f"inference.provider={inference_provider!r}. "
+                        f"Set it via environment variable {secret_name} "
+                        f"or in config/secrets.env."
+                    ),
+                    context={
+                        "provider": inference_provider,
+                        "secret_name": secret_name,
+                        "role": "inference",
+                    },
                 )
 
     @staticmethod
@@ -180,20 +191,22 @@ class StartupValidator:
 
     @staticmethod
     def check_strategy_chain(*, config: PipelineConfig) -> None:
-        """Fail when the configured training strategy chain is invalid."""
-        from ryotenkai_shared.errors import StrategyChainInvalidError
+        """Fail when the configured training strategy chain is invalid.
 
+        Propagates :class:`StrategyChainInvalidError` from
+        :func:`validate_strategy_chain` unchanged — it is already a typed
+        :class:`RyotenkAIError` subclass (code=STRATEGY_CHAIN_INVALID,
+        status=422). The previous double-wrap into ``StartupValidationError``
+        was removed because it stripped the typed semantics; the wrapped
+        version landed in raw Python tracebacks instead of the unified
+        kubectl-style CLI rendering.
+        """
         strategies = config.training.strategies
         if not strategies:
             return
         chain_str = " -> ".join(s.strategy_type.upper() for s in strategies)
-        try:
-            validate_strategy_chain(strategies)
-        except StrategyChainInvalidError as exc:
-            logger.error(f"Invalid strategy chain: {chain_str}")
-            logger.error(f"   Error: {exc}")
-            raise StartupValidationError(f"Invalid strategy chain: {exc}") from exc
+        validate_strategy_chain(strategies)  # raises StrategyChainInvalidError
         logger.info(f"Strategy chain checked: {chain_str}")
 
 
-__all__ = ["StartupValidationError", "StartupValidator"]
+__all__ = ["StartupValidator"]

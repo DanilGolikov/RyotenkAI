@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.bootstrap import StartupValidationError, StartupValidator
+from ryotenkai_control.pipeline.bootstrap import StartupValidator
+from ryotenkai_shared.errors import ProviderAuthFailedError, StrategyChainInvalidError
 from ryotenkai_shared.errors import StrategyChainInvalidError
 
 
@@ -95,22 +96,30 @@ class TestNegative:
     def test_training_provider_runpod_without_api_key_raises(self) -> None:
         cfg = _mk_config(active_provider="runpod")
         secrets = _mk_secrets(runpod_api_key=None)
-        with pytest.raises(StartupValidationError, match="RUNPOD_API_KEY"):
+        with pytest.raises(ProviderAuthFailedError, match="RUNPOD_API_KEY") as ei:
             StartupValidator.check_training_provider_secrets(config=cfg, secrets=secrets)
+        # Pin the structured context — clients dispatch on these keys.
+        assert ei.value.context["provider"] == "runpod"
+        assert ei.value.context["secret_name"] == "RUNPOD_API_KEY"
+        assert ei.value.context["role"] == "training"
 
     def test_inference_provider_runpod_without_api_key_raises(self) -> None:
         cfg = _mk_config(inference_enabled=True, inference_provider="runpod")
         secrets = _mk_secrets(runpod_api_key=None)
-        with pytest.raises(StartupValidationError, match="RUNPOD_API_KEY"):
+        with pytest.raises(ProviderAuthFailedError, match="RUNPOD_API_KEY") as ei:
             StartupValidator.check_inference_provider_secrets(config=cfg, secrets=secrets)
+        assert ei.value.context["role"] == "inference"
 
     def test_invalid_strategy_chain_raises(self) -> None:
         strategies = [_mk_strategy("sft"), _mk_strategy("grpo")]
         cfg = _mk_config(strategies=strategies)
+        # check_strategy_chain now propagates StrategyChainInvalidError
+        # unchanged — the legacy StartupValidationError wrapper was
+        # removed so typed semantics survive to the CLI rendering layer.
         with patch(
             "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain",
             side_effect=StrategyChainInvalidError(detail="incompatible chain"),
-        ), pytest.raises(StartupValidationError, match="Invalid strategy chain"):
+        ), pytest.raises(StrategyChainInvalidError, match="incompatible chain"):
             StartupValidator.check_strategy_chain(config=cfg)
 
 
@@ -151,7 +160,7 @@ class TestInvariants:
         with patch(
             "ryotenkai_control.pipeline.bootstrap.startup_validator.validate_eval_plugin_secrets"
         ) as mock_eval:
-            with pytest.raises(StartupValidationError):
+            with pytest.raises(ProviderAuthFailedError):
                 StartupValidator.validate(config=cfg, secrets=secrets)
             # Training-provider check failed before we reached eval plugin.
             mock_eval.assert_not_called()
@@ -185,10 +194,18 @@ class TestDependencyErrors:
 
 
 class TestRegressions:
-    def test_startup_validation_error_is_value_error_subclass(self) -> None:
-        """Regression: StartupValidationError subclasses ValueError to keep
-        pre-refactor ``except ValueError`` handlers working."""
-        assert issubclass(StartupValidationError, ValueError)
+    def test_provider_auth_failed_is_ryotenkai_error(self) -> None:
+        """Regression (2026-05-16): legacy StartupValidationError(ValueError)
+        wrapper was removed because it stripped typed semantics — the
+        worker subprocess printed raw Python tracebacks instead of the
+        unified kubectl-style CLI render. Validator now raises typed
+        ProviderAuthFailedError (HTTP 401) directly so RyotenkAIError
+        catch-points (CLI wrap_command, worker top-level handler,
+        FastAPI EXCEPTION_HANDLERS) all converge."""
+        from ryotenkai_shared.errors import RyotenkAIError
+
+        assert issubclass(ProviderAuthFailedError, RyotenkAIError)
+        assert ProviderAuthFailedError(detail="x").status == 401
 
     def test_runpod_inference_with_runpod_training_and_key_ok(self) -> None:
         """Regression: both provider checks should tolerate the same key."""
@@ -211,7 +228,7 @@ def test_training_provider_matrix(provider: str, has_key: bool) -> None:
     cfg = _mk_config(active_provider=provider)
     secrets = _mk_secrets(runpod_api_key="rp" if has_key else None)
     if provider == "runpod" and not has_key:
-        with pytest.raises(StartupValidationError):
+        with pytest.raises(ProviderAuthFailedError):
             StartupValidator.check_training_provider_secrets(config=cfg, secrets=secrets)
     else:
         StartupValidator.check_training_provider_secrets(config=cfg, secrets=secrets)
@@ -226,7 +243,7 @@ def test_inference_provider_matrix(
     cfg = _mk_config(inference_enabled=enabled, inference_provider=provider)
     secrets = _mk_secrets(runpod_api_key="rp" if has_key else None)
     if enabled and provider == "runpod" and not has_key:
-        with pytest.raises(StartupValidationError):
+        with pytest.raises(ProviderAuthFailedError):
             StartupValidator.check_inference_provider_secrets(config=cfg, secrets=secrets)
     else:
         StartupValidator.check_inference_provider_secrets(config=cfg, secrets=secrets)

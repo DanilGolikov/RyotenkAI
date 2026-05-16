@@ -182,13 +182,23 @@ class TestPipelineOrchestratorInitialization:
             mock_validate.assert_called_once_with([mock_strategy1, mock_strategy2])
             assert orchestrator.config is mock_config
 
-    def test_init_critical_strategy_chain_error_raises_valueerror(
+    def test_init_critical_strategy_chain_error_raises_typed(
         self,
         mock_config_path: Path,
         mock_config: MagicMock,
         mock_secrets: MagicMock,
     ):
-        """Critical strategy-chain errors should still raise ValueError."""
+        """Critical strategy-chain errors propagate typed.
+
+        Regression (2026-05-16): pre-fix orchestrator wrapped
+        StrategyChainInvalidError in StartupValidationError(ValueError);
+        the wrapper stripped typed semantics so the worker subprocess
+        printed raw Python tracebacks instead of the unified kubectl-style
+        CLI render. Now StrategyChainInvalidError (RyotenkAIError, HTTP 422)
+        propagates unchanged to the CLI/worker boundary.
+        """
+        from ryotenkai_shared.errors import RyotenkAIError, StrategyChainInvalidError
+
         mock_strategy = MagicMock()
         mock_strategy.strategy_type = "sft"
         mock_config.training.strategies = [mock_strategy]
@@ -198,14 +208,15 @@ class TestPipelineOrchestratorInitialization:
             patch("ryotenkai_control.pipeline.bootstrap.startup_validator.validate_strategy_chain") as mock_validate,
         ):
             mock_load_secrets.return_value = mock_secrets
-            from ryotenkai_shared.errors import StrategyChainInvalidError
             mock_validate.side_effect = StrategyChainInvalidError(
                 detail="Duplicate dataset 'shared'",
                 context={"reason": "duplicate_dataset"},
             )
 
-            with pytest.raises(ValueError, match="Invalid strategy chain"):
+            with pytest.raises(StrategyChainInvalidError, match="Duplicate dataset") as ei:
                 PipelineOrchestrator(config=mock_config)
+            assert isinstance(ei.value, RyotenkAIError)
+            assert ei.value.status == 422
 
     def test_init_creates_all_stages_in_correct_order(
         self,

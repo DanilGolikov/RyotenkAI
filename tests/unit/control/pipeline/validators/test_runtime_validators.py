@@ -83,22 +83,33 @@ class TestValidateEvalPluginSecrets:
         validate_eval_plugin_secrets(cfg, secrets)  # must not raise
 
     def test_raises_when_secret_missing(self):
-        """Enabled plugin with missing EVAL_* secret → ValueError at init time."""
+        """Enabled plugin with missing EVAL_* secret → ProviderAuthFailedError at init time."""
+        from ryotenkai_shared.errors import ProviderAuthFailedError
+
         cfg = _make_config(eval_enabled=True, plugin_enabled=True)
         secrets = _make_secrets({})  # EVAL_CEREBRAS_API_KEY absent
 
-        with pytest.raises(ValueError, match="cerebras_judge"):
+        with pytest.raises(ProviderAuthFailedError, match="cerebras_judge"):
             validate_eval_plugin_secrets(cfg, secrets)
 
     def test_error_message_contains_plugin_name_and_id(self):
-        """ValueError message includes plugin id/name and a hint about secrets.env."""
+        """Typed error carries plugin id/name in detail + structured context."""
+        from ryotenkai_shared.errors import ProviderAuthFailedError
+
         cfg = _make_config(eval_enabled=True, plugin_enabled=True)
         secrets = _make_secrets({})
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ProviderAuthFailedError) as exc_info:
             validate_eval_plugin_secrets(cfg, secrets)
 
+        # User-facing detail still carries the hint for stdout/log.
         msg = str(exc_info.value)
         assert "cerebras_judge" in msg
         assert "judge_main" in msg
         assert "secrets.env" in msg
+        # Structured context — clients dispatch on these keys, not on regex.
+        ctx = exc_info.value.context
+        assert ctx["plugin_name"] == "cerebras_judge"
+        assert ctx["plugin_id"] == "judge_main"
+        assert ctx["role"] == "evaluation"
+        assert "missing_secrets" in ctx

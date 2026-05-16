@@ -168,32 +168,24 @@ def _render_context(context: dict[str, Any]) -> str:
     return json.dumps(context, sort_keys=True, indent=2, default=str)
 
 
-def die_from_ryotenkai(
+def print_ryotenkai_error(
     exc: RyotenkAIError,
     *,
     request_id: str | None = None,
     verbose: bool = False,
-) -> typer.Exit:
-    """Render a :class:`RyotenkAIError` in kubectl/Terraform style and exit.
+) -> int:
+    """Render a :class:`RyotenkAIError` in kubectl/Terraform style. Return exit code.
 
-    Multi-line output (all to stderr via ``err_console``)::
-
-        error: Job not found
-          hint: job_id="abc123" is not active
-          code: JOB_NOT_FOUND  trace=a3b1c2d4  request=8e7f6c5b4a3d2e1f
-
-    The ``code:`` line aggregates the machine-readable identifier plus
-    optional ``trace=`` / ``request=`` / (TransportError only) ``status=``
-    parts. When ``verbose`` is true and ``exc.context`` is non-empty an
-    extra ``context: <pretty JSON>`` line is appended for debugging.
-
-    Always raises :class:`typer.Exit`; the return type exists so call
-    sites can write ``raise die_from_ryotenkai(exc)`` for explicit
-    control flow.
+    Pure printing helper -- never raises -- so callers outside the Typer
+    runtime (e.g. ``packages/control/.../pipeline/worker.py`` subprocess
+    main, where ``typer.Exit`` would be invisible to the parent CLI) can
+    map the typed error to a POSIX exit code without entanglement with
+    Typer/Click control flow. The Typer-side counterpart is
+    :func:`die_from_ryotenkai`, which wraps this and raises :class:`typer.Exit`.
     """
     if not isinstance(exc, RyotenkAIError):
         raise TypeError(
-            f"die_from_ryotenkai expects RyotenkAIError, got {type(exc).__name__}"
+            f"print_ryotenkai_error expects RyotenkAIError, got {type(exc).__name__}"
         )
 
     # User-supplied strings (title from server, detail from raise site)
@@ -225,7 +217,37 @@ def die_from_ryotenkai(
             f"{_rich_escape(_render_context(exc.context))}"
         )
 
-    raise typer.Exit(code=_exit_code_for(exc))
+    return _exit_code_for(exc)
+
+
+def die_from_ryotenkai(
+    exc: RyotenkAIError,
+    *,
+    request_id: str | None = None,
+    verbose: bool = False,
+) -> typer.Exit:
+    """Render a :class:`RyotenkAIError` in kubectl/Terraform style and exit.
+
+    Multi-line output (all to stderr via ``err_console``)::
+
+        error: Job not found
+          hint: job_id="abc123" is not active
+          code: JOB_NOT_FOUND  trace=a3b1c2d4  request=8e7f6c5b4a3d2e1f
+
+    The ``code:`` line aggregates the machine-readable identifier plus
+    optional ``trace=`` / ``request=`` / (TransportError only) ``status=``
+    parts. When ``verbose`` is true and ``exc.context`` is non-empty an
+    extra ``context: <pretty JSON>`` line is appended for debugging.
+
+    Always raises :class:`typer.Exit`; the return type exists so call
+    sites can write ``raise die_from_ryotenkai(exc)`` for explicit
+    control flow. Non-Typer callers (worker subprocesses) should call
+    :func:`print_ryotenkai_error` directly and ``return`` the exit code.
+    """
+    exit_code = print_ryotenkai_error(
+        exc, request_id=request_id, verbose=verbose,
+    )
+    raise typer.Exit(code=exit_code)
 
 
 def _verbose_from_ctx() -> bool:
@@ -319,6 +341,7 @@ __all__ = [
     "die_from_ryotenkai",
     "format_validation_errors",
     "load_config_or_die",
+    "print_ryotenkai_error",
     "suggest",
     "suggest_hint",
     "wrap_command",
