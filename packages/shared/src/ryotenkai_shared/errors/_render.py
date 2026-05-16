@@ -122,9 +122,11 @@ def default_title_for(code: ErrorCode) -> str:
 
 
 def new_trace_id() -> str:
-    """Short opaque correlation id (8 hex chars).
+    """Short opaque correlation id (16 hex chars, 64 bits).
 
     Mirrors the pod runner's ``_new_trace_id``. Phase B unifies both
-    sources to this single implementation.
+    sources to this single implementation. 64 bits is safe for
+    billions of events (birthday paradox at ~4 billion samples) --
+    suitable for long-running pipelines.
     """
-    return secrets.token_hex(4)
+    return secrets.token_hex(8)

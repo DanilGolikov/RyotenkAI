@@ -102,8 +102,8 @@ class TestPositive:
         assert body["title"] == "Job not found"
         assert body["detail"] == "job xyz is gone"
         assert body["instance"] == "/raise-api-error"
-        assert "trace_id" in body  # 8-hex generated each call
-        assert len(body["trace_id"]) == 8
+        assert "trace_id" in body  # 16-hex generated each call
+        assert len(body["trace_id"]) == 16
 
     def test_apierror_with_field_errors(self) -> None:
         with TestClient(_make_app()) as c:

@@ -230,14 +230,14 @@ class TestInvariants:
     def test_problem_json_media_type_pinned(self) -> None:
         assert PROBLEM_JSON_MEDIA_TYPE == "application/problem+json"
 
-    def test_new_trace_id_is_8_hex_chars(self) -> None:
+    def test_new_trace_id_is_16_hex_chars(self) -> None:
         for _ in range(50):
             tid = new_trace_id()
-            assert len(tid) == 8
+            assert len(tid) == 16
             int(tid, 16)  # raises if not hex
 
     def test_trace_id_uniqueness_across_many_generations(self) -> None:
-        """Collision risk per spec: ~32 bits -> birthday paradox at ~65k samples.
+        """Collision risk per spec: ~64 bits -> birthday paradox at ~4 billion samples.
 
         We only generate 1000 here -- expecting zero collisions in practice.
         """

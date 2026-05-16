@@ -69,15 +69,16 @@ __all__ = [
 
 
 def _new_trace_id() -> str:
-    """Short opaque correlation id (8 hex chars) emitted in both the
-    response body and the server log. 8 chars * 16 alphabet = ~32
-    bits, plenty for human-friendly grep'ing during a single run.
+    """Short opaque correlation id (16 hex chars, 64 bits) emitted in
+    both the response body and the server log. 64 bits is safe for
+    billions of events (birthday paradox at ~4 billion samples) --
+    suitable for long-running pipelines.
 
     Phase B kept this as a private helper (the same primitive is
     re-exported from :mod:`ryotenkai_shared.errors._render` as
-    ``new_trace_id``; both delegate to ``secrets.token_hex(4)``).
+    ``new_trace_id``; both delegate to ``secrets.token_hex(8)``).
     """
-    return secrets.token_hex(4)
+    return secrets.token_hex(8)
 
 
 def _build_response(problem: ProblemDetails) -> JSONResponse:
