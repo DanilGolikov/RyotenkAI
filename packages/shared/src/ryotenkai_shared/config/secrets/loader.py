@@ -52,6 +52,33 @@ _DECLARED_ALIASES: tuple[str, ...] = ("HF_TOKEN", "RUNPOD_API_KEY")
 SECRETS_FILE_ENV_VAR = "RYOTENKAI_SECRETS_FILE"
 
 
+def _walk_up_workspace_roots(start: Path) -> list[Path]:
+    """Yield uv-workspace roots from innermost to outermost.
+
+    A "workspace root" is any directory that contains BOTH a
+    ``pyproject.toml`` file AND a ``packages/`` directory (the uv
+    workspace marker). The walk is purely filesystem-based — no git, jj,
+    or any other VCS introspection.
+
+    Two-level resolution matters for nested layouts: when the loader
+    runs from inside a nested workspace (e.g. a tool-managed worktree at
+    ``<project>/.claude/worktrees/<name>/``, an embedded subproject at
+    ``<project>/vendor/<pkg>/``, or any tarball-extracted copy nested
+    under another workspace), the inner directory is itself a valid uv
+    workspace AND the outer directory is *also* a workspace. We collect
+    both. Callers can search innermost first (local override wins) then
+    fall back to the outermost (project-canonical file).
+
+    Stops at the filesystem root. Returns an empty list if no workspace
+    marker is found anywhere on the walk — caller decides what to do.
+    """
+    roots: list[Path] = []
+    for parent in start.parents:
+        if (parent / "pyproject.toml").is_file() and (parent / "packages").is_dir():
+            roots.append(parent)
+    return roots
+
+
 def load_secrets(
     env_file: str | Path | None = None,
     *,
@@ -111,32 +138,29 @@ def load_secrets(
     # didn't ask for. Adapters that DO want the repo file as a fallback
     # must opt in by passing it as ``env_file`` explicitly.
     if env is None:
-        # Walk up from this file looking for the workspace root —
-        # identified by a ``pyproject.toml`` whose parent ALSO contains a
-        # ``packages/`` directory (the uv workspace marker). Pinned
-        # ``parents[N]`` was fragile across the Phase B packagization
-        # move (loader.py is now 3 levels deeper than it used to be).
-        # Note: in nested workspaces (e.g. a workspace embedded under
-        # another tool's worktree directory), this stops at the FIRST
-        # match. Operators with non-standard layouts should set
-        # :data:`SECRETS_FILE_ENV_VAR` to point at the canonical file
-        # explicitly rather than rely on auto-discovery.
+        # Walk up from this file collecting EVERY uv-workspace root —
+        # ``pyproject.toml`` + ``packages/``. In a plain checkout there
+        # is exactly one. In nested layouts (a tool-managed sub-workspace
+        # under a project, an embedded subproject under a monorepo,
+        # tarball nested under another project, etc.) there may be two:
+        # innermost (closest workspace) and outermost (project-canonical
+        # location). We append innermost candidates first so a local
+        # ``secrets.env`` overrides the canonical one — operators can
+        # shadow team defaults per sub-workspace for testing without
+        # touching the canonical file.
         try:
             here = Path(__file__).resolve()
-            project_root: Path = Path.cwd()  # fallback
-            for parent in here.parents:
-                if (parent / "pyproject.toml").is_file() and (parent / "packages").is_dir():
-                    project_root = parent
-                    break
+            workspace_roots = _walk_up_workspace_roots(here)
         except Exception:
-            project_root = Path.cwd()
+            workspace_roots = []
 
-        candidates.extend(
-            [
-                project_root / "secrets.env",
-                project_root / "config" / "secrets.env",
-            ]
-        )
+        for root in workspace_roots:
+            candidates.extend(
+                [
+                    root / "secrets.env",
+                    root / "config" / "secrets.env",
+                ]
+            )
 
     chosen_file: Path | None = next((p for p in candidates if p.is_file()), None)
 

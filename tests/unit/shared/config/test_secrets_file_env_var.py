@@ -38,6 +38,23 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text.strip() + "\n", encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _block_real_workspace_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every test in this module hermetic.
+
+    The loader's auto-discovery walks up from ``__file__`` (i.e. the
+    actual loader.py on disk) collecting every uv-workspace root. On a
+    real dev machine that walk hits the project's main ``secrets.env``
+    and pollutes the test with real credentials. Returning an empty list
+    blocks the walk so each test sees only the candidates it explicitly
+    constructs.
+    """
+    monkeypatch.setattr(
+        "ryotenkai_shared.config.secrets.loader._walk_up_workspace_roots",
+        lambda _start: [],
+    )
+
+
 # ===========================================================================
 # 1. POSITIVE
 # ===========================================================================
