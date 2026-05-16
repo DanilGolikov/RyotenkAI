@@ -77,11 +77,22 @@ class TestProjectOverrideScenario:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """PR4 made typed fields optional. With no file AND no env the
-        loader still returns a valid ``Secrets`` (all ``None``)."""
+        loader still returns a valid ``Secrets`` (all ``None``).
+
+        2026-05-16: hermetic isolation extended — the loader now has a
+        worktree fallback that walks to the main repo's ``secrets.env``
+        when running from a git worktree. Without monkeypatching the
+        fallback, this test would pick up the developer's real
+        ``~/MyProjects/RyotenkAI/secrets.env`` and fail. Stubbing
+        ``_maybe_main_repo_root`` makes the test environment-independent.
+        """
         monkeypatch.delenv("HF_TOKEN", raising=False)
         monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
-        # Ensure auto-discovery doesn't pick up a real repo-root
-        # ``secrets.env`` on the dev machine.
+        # Disable the worktree fallback so dev-machine secrets don't leak in.
+        monkeypatch.setattr(
+            "ryotenkai_shared.config.secrets.loader._maybe_main_repo_root",
+            lambda _root: None,
+        )
         s = load_secrets(env_file=tmp_path / "nonexistent.env")
         assert s.hf_token is None
         assert s.runpod_api_key is None
