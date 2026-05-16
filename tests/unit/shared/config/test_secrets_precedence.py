@@ -91,6 +91,12 @@ class TestProjectOverrideScenario:
         # Clear the operator-override env var so the dev machine's
         # ``RYOTENKAI_SECRETS_FILE`` (if set in ~/.zshrc) doesn't leak in.
         monkeypatch.delenv("RYOTENKAI_SECRETS_FILE", raising=False)
+        # Block workspace auto-discovery so the dev machine's main repo
+        # ``secrets.env`` doesn't get loaded.
+        monkeypatch.setattr(
+            "ryotenkai_shared.config.secrets.loader._walk_up_workspace_roots",
+            lambda _start: [],
+        )
         s = load_secrets(env_file=tmp_path / "nonexistent.env")
         assert s.hf_token is None
         assert s.runpod_api_key is None
