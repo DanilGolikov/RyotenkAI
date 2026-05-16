@@ -11,13 +11,18 @@ Rules:
   loaded in-memory object (e.g. Secrets) is fine.
 - Functions here are called from the orchestrator __init__, not from Pydantic
   model validators.
-- Return convention: raise ValueError with an actionable message on failure,
-  return None on success (same style as pipeline.py).
+- Return convention: raise a typed :class:`RyotenkAIError` subclass with an
+  actionable message on failure, return None on success. Plugin-secret
+  misconfiguration lands on :class:`ProviderAuthFailedError` because the
+  semantic ("auth credentials missing") matches RFC 9457 401, and the unified
+  CLI/HTTP rendering pipeline handles it uniformly.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from ryotenkai_shared.errors import ProviderAuthFailedError
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config.pipeline.schema import PipelineConfig
@@ -36,8 +41,9 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
       missing secret after a multi-hour training run.
 
     Raises:
-        ValueError: with the plugin id/name, missing keys, and a hint to add
-            them to secrets.env.
+        ProviderAuthFailedError: with the plugin id/name, missing keys, and
+            a hint to add them to secrets.env. Context carries
+            ``{plugin_id, plugin_name, missing_secrets, role="evaluation"}``.
     """
     eval_cfg = getattr(cfg, "evaluation", None)
     if not eval_cfg or not getattr(eval_cfg, "enabled", False):
@@ -67,12 +73,21 @@ def validate_eval_plugin_secrets(cfg: PipelineConfig, secrets: Secrets) -> None:
             resolver.resolve(required_keys)
         except RuntimeError as exc:
             missing = [k for k in required_keys if not (secrets.model_extra or {}).get(k.lower())]
-            raise ValueError(
-                f"Evaluation plugin instance '{plugin_cfg.id}' ({plugin_name}) is enabled "
-                f"but required secret(s) are missing from secrets.env: {missing}. "
-                f"Add them to secrets.env and restart. "
-                f"Detail: {exc}"
-            ) from exc
+            raise ProviderAuthFailedError(
+                detail=(
+                    f"Evaluation plugin instance '{plugin_cfg.id}' "
+                    f"({plugin_name}) is enabled but required secret(s) are "
+                    f"missing from secrets.env: {missing}. "
+                    f"Add them to secrets.env and restart."
+                ),
+                context={
+                    "plugin_id": plugin_cfg.id,
+                    "plugin_name": plugin_name,
+                    "missing_secrets": missing,
+                    "role": "evaluation",
+                },
+                cause=exc,
+            )
 
 
 __all__ = [

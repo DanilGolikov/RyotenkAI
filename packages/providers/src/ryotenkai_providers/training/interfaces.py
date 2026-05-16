@@ -731,7 +731,7 @@ class IGPUProvider(Protocol):
 
             for name in provider.required_secrets():
                 if not has_secret(secrets, name):
-                    raise StartupValidationError(...)
+                    raise ProviderAuthFailedError(detail=..., context=...)
 
         RunPod returns ``("RUNPOD_API_KEY",)``; single_node returns
         ``()``. The startup validator iterates the tuple and checks
