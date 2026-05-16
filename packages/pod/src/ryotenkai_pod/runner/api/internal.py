@@ -18,11 +18,10 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
 
-from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api import EventResponse, InternalEventRequest
 
 from ryotenkai_pod.runner.api.deps import get_bus, get_fsm, get_mlflow_relay
-from ryotenkai_shared.api.error_handlers import APIError
+from ryotenkai_shared.errors import LoopbackRequiredError, NoActiveJobError
 from ryotenkai_pod.runner.mlflow_relay import MLFLOW_EVENT_KINDS
 
 if TYPE_CHECKING:
@@ -56,14 +55,13 @@ def _require_loopback(request: Request) -> None:
     set ``--host 0.0.0.0``).
     """
     if request.client is None:
-        raise APIError(
-            ErrorCode.LOOPBACK_REQUIRED, status=403,
+        raise LoopbackRequiredError(
             detail="missing client address (server bind misconfigured)",
         )
     if request.client.host not in _TRUSTED_HOSTS:
-        raise APIError(
-            ErrorCode.LOOPBACK_REQUIRED, status=403,
+        raise LoopbackRequiredError(
             detail=f"non-loopback client refused: {request.client.host}",
+            context={"client_host": request.client.host},
         )
 
 
@@ -88,8 +86,7 @@ def push_event(
         # side bug (the supervisor would not have spawned the
         # subprocess). 409 is more appropriate than 404 — the
         # endpoint exists, the precondition does not.
-        raise APIError(
-            ErrorCode.NO_ACTIVE_JOB, status=409,
+        raise NoActiveJobError(
             detail="trainer pushed event but FSM has no active job",
         )
 

@@ -29,8 +29,8 @@ allow:
     reason: "phase-A1-pending-migration: will be migrated in Phase F (concurrency helpers)"
   - path: ryotenkai_pod.runner.runtime.provider_registry.BootstrapConfigError
     reason: "phase-A1-pending-migration: will be migrated in Phase F (provider bootstrap)"
-  - path: ryotenkai_shared.api.error_handlers.APIError
-    reason: "phase-B-pending-migration: pod-runner legacy exception lifted into shared/api as part of Phase B handler move; raise sites migrate to RyotenkAIError subclasses in Phase F"
+  # APIError retired in post-Phase G fix-up; raise sites now use typed
+  # RyotenkAIError subclasses (JobNotFoundError, RunnerBusyError, etc.).
   - path: ryotenkai_pod.trainer.managers.data_buffer.fault_simulator.SimulatedFaultError
     reason: "phase-A1-pending-migration: test-only fault simulator; will be migrated in Phase D"
 

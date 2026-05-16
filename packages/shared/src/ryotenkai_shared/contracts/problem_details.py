@@ -157,6 +157,45 @@ class ErrorCode(StrEnum):
     ENGINE_NOT_REGISTERED = "ENGINE_NOT_REGISTERED"
     ENGINE_CONFIG_INVALID = "ENGINE_CONFIG_INVALID"
 
+    # ----- generic auth/permission (post-APIError migration) -----------
+    # Added when APIError raise-sites were migrated to typed
+    # RyotenkAIError subclasses (post-Phase G fix-up batch). The 403 was
+    # previously surfaced only through generic HTTPException; now there
+    # is a typed counterpart for raise-sites that need it (loopback
+    # rejection, future RBAC).
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+
+    # ----- runner-not-found resource (post-APIError migration) ---------
+    # When the supervisor / FSM rejects a request because the addressed
+    # job_id is not the active one. Pre-migration this used JOB_NOT_FOUND
+    # via APIError on the pod runner; post-migration the same code stays
+    # but is now raised via a typed exception subclass.
+    RUN_NOT_FOUND = "RUN_NOT_FOUND"
+
+    # ----- pipeline misc additions -------------------------------------
+    NO_ATTEMPTS = "NO_ATTEMPTS"
+    ATTEMPT_NOT_FOUND = "ATTEMPT_NOT_FOUND"
+    ATTEMPT_INVALID = "ATTEMPT_INVALID"
+    JOB_SUBMISSION_MISSING = "JOB_SUBMISSION_MISSING"
+    RUNNER_UNREACHABLE = "RUNNER_UNREACHABLE"
+    PROJECT_DIRECTORY_MISSING = "PROJECT_DIRECTORY_MISSING"
+    DATASET_NOT_FOUND = "DATASET_NOT_FOUND"
+    PLUGIN_NOT_FOUND = "PLUGIN_NOT_FOUND"
+    PRESET_NOT_FOUND = "PRESET_NOT_FOUND"
+    INTEGRATION_TYPE_INVALID = "INTEGRATION_TYPE_INVALID"
+    LOG_FILE_RANGE_INVALID = "LOG_FILE_RANGE_INVALID"
+    REPORT_GENERATION_FAILED = "REPORT_GENERATION_FAILED"
+    HF_LOAD_FAILED = "HF_LOAD_FAILED"
+    DATASETS_LIBRARY_MISSING = "DATASETS_LIBRARY_MISSING"
+    PROVIDER_TOKEN_INVALID = "PROVIDER_TOKEN_INVALID"
+    CLIENT_DISCONNECT = "CLIENT_DISCONNECT"
+
+    # ----- trainer watchdog (post-APIError migration) ------------------
+    # New code for the supervisor watchdog (zombie trainer timeout):
+    # distinguishes a wall-clock-exceeded trainer from a normal
+    # ``TRAINING_FAILED`` so dashboards can group on it.
+    TRAINING_TIMEOUT = "TRAINING_TIMEOUT"
+
     # ----- catch-all (server-side bug) ---------------------------------
     INTERNAL_ERROR = "INTERNAL_ERROR"
 

@@ -32,8 +32,14 @@ from typing import IO
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from starlette.requests import ClientDisconnect
 
-from ryotenkai_shared.api.error_handlers import APIError
-from ryotenkai_shared.contracts.problem_details import ErrorCode
+from ryotenkai_shared.errors import (
+    ClientDisconnectError,
+    FileTargetInvalidError,
+    FileTooLargeError,
+    FileWriteFailedError,
+    RunnerNotReadyError,
+    RyotenkAIError,
+)
 from ryotenkai_shared.contracts.runner_api.files import (
     FileUploadResponse,
     FileUploadTarget,
@@ -54,8 +60,7 @@ CHUNK_SIZE: int = 1024 * 1024  # 1 MB — verified sweet spot for
 def _get_pod_layout(request: Request) -> PodLayout:
     layout = getattr(request.app.state, "pod_layout", None)
     if layout is None:
-        raise APIError(
-            ErrorCode.RUNNER_NOT_READY, status=503,
+        raise RunnerNotReadyError(
             detail="pod layout not initialised on app.state",
         )
     return layout
@@ -79,9 +84,9 @@ def _resolve_target_path(layout: PodLayout, target: FileUploadTarget) -> Path:
         return root / "data" / "<dataset>"
     if target is FileUploadTarget.COMMUNITY_PLUGINS:
         return root / "community" / "plugins.zip"
-    raise APIError(
-        ErrorCode.FILE_TARGET_INVALID, status=422,
+    raise FileTargetInvalidError(
         detail=f"unhandled target={target!r} (programming bug)",
+        context={"target": str(target)},
     )
 
 
@@ -90,18 +95,17 @@ def _sanitise_basename(filename: str | None) -> str:
     that smells like traversal."""
     name = (filename or "").strip()
     if not name:
-        raise APIError(
-            ErrorCode.FILE_TARGET_INVALID, status=422,
+        raise FileTargetInvalidError(
             detail="multipart filename required for dataset uploads",
         )
     base = Path(name).name
     if base != name or base in {"", ".", ".."}:
-        raise APIError(
-            ErrorCode.FILE_TARGET_INVALID, status=422,
+        raise FileTargetInvalidError(
             detail=(
                 f"unsafe filename={name!r}; the runner rejects path "
                 "components — pass just a basename."
             ),
+            context={"filename": name},
         )
     return base
 
@@ -157,18 +161,18 @@ async def upload_file(
                 break
             total += len(chunk)
             if total > MAX_FILE_SIZE:
-                raise APIError(
-                    ErrorCode.FILE_TOO_LARGE, status=413,
+                raise FileTooLargeError(
                     detail=(
                         f"upload exceeded MAX_FILE_SIZE={MAX_FILE_SIZE} "
                         f"(target={target.value!r})"
                     ),
+                    context={"max_file_size": MAX_FILE_SIZE, "target": target.value},
                 )
             await asyncio.to_thread(fh.write, chunk)
             hasher.update(chunk)
-    except APIError:
-        # ``except APIError`` MUST come before ``except Exception`` —
-        # otherwise our own 413 gets remapped to FILE_WRITE_FAILED.
+    except RyotenkAIError:
+        # ``except RyotenkAIError`` MUST come before ``except Exception`` —
+        # otherwise our own typed 413 gets remapped to FILE_WRITE_FAILED.
         # ``finally`` cleanup runs in either branch (RP21).
         partial_path.unlink(missing_ok=True)
         raise
@@ -176,15 +180,14 @@ async def upload_file(
         # Mac client aborted mid-upload — clean up the partial so
         # disk doesn't fill on flapping clients (RP21).
         partial_path.unlink(missing_ok=True)
-        raise APIError(
-            ErrorCode.FILE_WRITE_FAILED, status=499,
+        raise ClientDisconnectError(
             detail="client disconnected mid-upload",
         ) from None
     except OSError as exc:
         partial_path.unlink(missing_ok=True)
-        raise APIError(
-            ErrorCode.FILE_WRITE_FAILED, status=502,
+        raise FileWriteFailedError(
             detail=f"disk write failed: {exc}",
+            cause=exc,
         ) from exc
     finally:
         if fh is not None:
@@ -195,9 +198,9 @@ async def upload_file(
         partial_path.replace(target_path)
     except OSError as exc:
         partial_path.unlink(missing_ok=True)
-        raise APIError(
-            ErrorCode.FILE_WRITE_FAILED, status=502,
+        raise FileWriteFailedError(
             detail=f"atomic rename failed: {exc}",
+            cause=exc,
         ) from exc
 
     return FileUploadResponse(

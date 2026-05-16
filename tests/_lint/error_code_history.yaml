@@ -86,5 +86,26 @@ codes:
   # ----- engines (Phase A1) ------------------------------------------
   - ENGINE_NOT_REGISTERED
   - ENGINE_CONFIG_INVALID
+  # ----- post-APIError migration (post-Phase G fix-up) ---------------
+  - PERMISSION_DENIED
+  - RUN_NOT_FOUND
+  - NO_ATTEMPTS
+  - ATTEMPT_NOT_FOUND
+  - ATTEMPT_INVALID
+  - JOB_SUBMISSION_MISSING
+  - RUNNER_UNREACHABLE
+  - PROJECT_DIRECTORY_MISSING
+  - DATASET_NOT_FOUND
+  - PLUGIN_NOT_FOUND
+  - PRESET_NOT_FOUND
+  - INTEGRATION_TYPE_INVALID
+  - LOG_FILE_RANGE_INVALID
+  - REPORT_GENERATION_FAILED
+  - HF_LOAD_FAILED
+  - DATASETS_LIBRARY_MISSING
+  - PROVIDER_TOKEN_INVALID
+  - CLIENT_DISCONNECT
+  # ----- trainer watchdog (post-APIError migration) ------------------
+  - TRAINING_TIMEOUT
   # ----- catch-all (server-side bug) ---------------------------------
   - INTERNAL_ERROR

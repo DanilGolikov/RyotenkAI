@@ -23,13 +23,12 @@ from collections.abc import Iterable
 
 from fastapi import APIRouter, Query
 
-from ryotenkai_shared.api.error_handlers import APIError
+from ryotenkai_shared.errors import DiagnosticInvalidIncludeError
 from ryotenkai_pod.runner.diagnostics import (
     collect_dmesg,
     collect_kernel_signals,
     collect_nvidia_smi,
 )
-from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api.diagnostics import (
     DiagnosticsInclude,
     DiagnosticsResponse,
@@ -58,13 +57,12 @@ def _normalise_include(raw: list[str] | None) -> set[DiagnosticsInclude]:
         try:
             chosen.add(DiagnosticsInclude(item))
         except ValueError:
-            raise APIError(
-                ErrorCode.DIAGNOSTIC_INVALID_INCLUDE,
-                status=422,
+            raise DiagnosticInvalidIncludeError(
                 detail=(
                     f"unknown include={item!r}; valid: "
                     f"{sorted(v.value for v in DiagnosticsInclude)}"
                 ),
+                context={"include": item},
             ) from None
     return chosen or set(DiagnosticsInclude)
 

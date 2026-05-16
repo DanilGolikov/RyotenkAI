@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from pydantic import ValidationError
 
-from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api import (
     JobSnapshotResponse,
     JobSpec,
@@ -47,7 +46,14 @@ from ryotenkai_pod.runner.api.deps import (
     get_plugin_unpacker,
     get_supervisor,
 )
-from ryotenkai_shared.api.error_handlers import APIError
+from ryotenkai_shared.errors import (
+    JobInProgressError,
+    JobNotFoundError,
+    JobSpecInvalidError,
+    PluginUnpackFailedError,
+    SpawnFailedError,
+    StopNotAllowedError,
+)
 from ryotenkai_pod.runner.plugin_unpacker import PluginUnpackError
 from ryotenkai_pod.runner.state import (
     JobState,
@@ -97,9 +103,9 @@ def _get_active_or_404(fsm: JobLifecycleFSM, job_id: str) -> None:
     """Raise 404 if the FSM is empty or holds a different job."""
     snap = fsm.current()
     if snap is None or snap.job_id != job_id:
-        raise APIError(
-            ErrorCode.JOB_NOT_FOUND, status=404,
+        raise JobNotFoundError(
             detail=f"job_id={job_id!r} is not the active job",
+            context={"job_id": job_id},
         )
 
 
@@ -136,9 +142,9 @@ async def submit_job(
     try:
         spec = JobSpec.model_validate(json.loads(job_spec))
     except (ValidationError, json.JSONDecodeError) as exc:
-        raise APIError(
-            ErrorCode.JOB_SPEC_INVALID, status=422,
+        raise JobSpecInvalidError(
             detail=f"job_spec failed validation: {exc}",
+            cause=exc,
         ) from exc
 
     # Read + extract the plugins payload BEFORE spawning the trainer:
@@ -151,9 +157,9 @@ async def submit_job(
     try:
         unpack_result = plugin_unpacker.unpack(payload_bytes)
     except PluginUnpackError as exc:
-        raise APIError(
-            ErrorCode.PLUGIN_UNPACK_FAILED, status=422,
+        raise PluginUnpackFailedError(
             detail=str(exc),
+            cause=exc,
         ) from exc
 
     bus.publish(
@@ -187,16 +193,17 @@ async def submit_job(
         # active non-terminal job.
         current = fsm.current()
         state_label = current.state.value if current else "unknown"
-        raise APIError(
-            ErrorCode.JOB_IN_PROGRESS, status=409,
+        raise JobInProgressError(
             detail=f"current_state={state_label}: {exc}",
+            context={"current_state": state_label},
+            cause=exc,
         ) from exc
     except (FileNotFoundError, OSError) as exc:
         # The command can't be exec()'d. ``submit_and_spawn`` already
         # rolled the FSM to ``failed`` and emitted ``spawn_failed``.
-        raise APIError(
-            ErrorCode.SPAWN_FAILED, status=422,
+        raise SpawnFailedError(
             detail=str(exc),
+            cause=exc,
         ) from exc
 
     snap = fsm.current()
@@ -267,12 +274,12 @@ async def stop_job(
     snap = fsm.current()
     if snap is None or snap.state != JobState.RUNNING:
         state_label = snap.state.value if snap is not None else "unknown"
-        raise APIError(
-            ErrorCode.STOP_NOT_ALLOWED, status=409,
+        raise StopNotAllowedError(
             detail=(
                 f"stop only valid from running state, "
                 f"current_state={state_label}"
             ),
+            context={"current_state": state_label},
         )
 
     # ``request_stop`` is split: the FSM transition + SIGTERM happen
