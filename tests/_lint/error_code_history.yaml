@@ -1,0 +1,90 @@
+# Snapshot of all ErrorCode members that have ever existed.
+# NEVER remove entries. CI sentinel test_error_code_never_shrinks.py
+# blocks PRs that delete ErrorCode members.
+#
+# When adding a new ErrorCode: add it here too in the same PR.
+#
+# Per RFC 9457 + project policy, error codes are stable identifiers
+# that clients (frontend, CLI, scripts) pin on. Removing a code
+# silently breaks them. To deprecate: keep the enum member, mark
+# it deprecated in the docstring, stop emitting it; never delete.
+codes:
+  # ----- jobs --------------------------------------------------------
+  - JOB_NOT_FOUND
+  - JOB_STATE_INVALID
+  - JOB_SPEC_INVALID
+  - JOB_IN_PROGRESS
+  - PLUGIN_UNPACK_FAILED
+  - SPAWN_FAILED
+  # ----- system / lifecycle ------------------------------------------
+  - RUNNER_NOT_READY
+  - RUNNER_BUSY
+  # ----- diagnostics (Phase 2 PR-2.1) --------------------------------
+  - DIAGNOSTIC_FAILED
+  - DIAGNOSTIC_TIMEOUT
+  - DIAGNOSTIC_INVALID_INCLUDE
+  - DIAGNOSTIC_PERMISSION_DENIED
+  # ----- resources (Phase 2 PR-2.2) ----------------------------------
+  - RESOURCES_UNAVAILABLE
+  # ----- logs (Phase 2 PR-2.3) ---------------------------------------
+  - LOG_NAME_INVALID
+  - LOG_NOT_AVAILABLE
+  - LOG_OFFSET_OUT_OF_RANGE
+  # ----- files (Phase 2 PR-2.4) --------------------------------------
+  - FILE_TARGET_INVALID
+  - FILE_TOO_LARGE
+  - FILE_WRITE_FAILED
+  - FILE_HASH_MISMATCH
+  # ----- runtime (Phase 2 PR-2.5) ------------------------------------
+  - IMPORT_CHECK_TIMEOUT
+  - IMPORT_CHECK_TOO_MANY_MODULES
+  - IMPORT_CHECK_INVALID_MODULE_NAME
+  # ----- transport (Mac-side only) -----------------------------------
+  - TRANSPORT_UNREACHABLE
+  # ----- internal trainer<->runner enforcement (loopback) ------------
+  - LOOPBACK_REQUIRED
+  - NO_ACTIVE_JOB
+  # ----- job FSM -----------------------------------------------------
+  - STOP_NOT_ALLOWED
+  # ----- config (Phase A1) -------------------------------------------
+  - CONFIG_INVALID
+  - CONFIG_DRIFT
+  - CONFIG_FILE_NOT_FOUND
+  # ----- workspace (Phase A1) ----------------------------------------
+  - PROJECT_NOT_FOUND
+  - PROJECT_ALREADY_EXISTS
+  - PROVIDER_NOT_FOUND
+  - INTEGRATION_NOT_FOUND
+  - WORKSPACE_STORE_FAILED
+  # ----- pipeline state / launch (Phase A1) --------------------------
+  - STATE_LOAD_FAILED
+  - STATE_LOCKED
+  - LAUNCH_IN_PROGRESS
+  - LAUNCH_PREPARATION_FAILED
+  - PIPELINE_STAGE_FAILED
+  - RUN_IS_ACTIVE
+  # ----- training (Phase A1) -----------------------------------------
+  - TRAINING_FAILED
+  - TRAINING_OOM
+  - STRATEGY_CHAIN_INVALID
+  # ----- dataset / model / inference (Phase A1) ----------------------
+  - DATASET_LOAD_FAILED
+  - DATASET_VALIDATION_FAILED
+  - MODEL_LOAD_FAILED
+  - INFERENCE_UNAVAILABLE
+  # ----- providers (Phase A1) ----------------------------------------
+  - PROVIDER_UNAVAILABLE
+  - PROVIDER_RATE_LIMITED
+  - PROVIDER_AUTH_FAILED
+  # ----- SSH (Phase A1) ----------------------------------------------
+  - SSH_CONNECTION_FAILED
+  - SSH_EXEC_FAILED
+  - SSH_TRANSFER_FAILED
+  # ----- HF Hub (Phase A1) -------------------------------------------
+  - HF_AUTH_FAILED
+  - HF_NOT_FOUND
+  # ----- engines (Phase A1) ------------------------------------------
+  - ENGINE_NOT_REGISTERED
+  - ENGINE_CONFIG_INVALID
+  # ----- catch-all (server-side bug) ---------------------------------
+  - INTERNAL_ERROR
