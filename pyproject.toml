@@ -504,3 +504,46 @@ source_modules = [
 forbidden_modules = [
     "ryotenkai_engines.vllm",
 ]
+
+# ----------------------------------------------------------------------
+# Vendor SDK exception types stay inside infrastructure adapters.
+#
+# Phase-G hardening (2026-05-16). The unified error hierarchy lives in
+# ``ryotenkai_shared.errors``; vendor-flavoured exception classes
+# (``RunPodAPIError``, ``SSHConnectionError``, ``HFAuthError`` …) are
+# transport-layer types defined alongside the corresponding Protocol in
+# ``ryotenkai_shared.infrastructure.<vendor>.protocol``. Anything outside
+# the dedicated adapter modules MUST translate them into the typed
+# :class:`RyotenkAIError` subclasses BEFORE returning to control/pod
+# code.
+#
+# This contract pins that invariant. Allow-list entries are the
+# legitimate translation seams (adapters + the protocol re-export
+# barrels themselves).
+#
+# Companion to the runtime sentinel
+# ``tests/_lint/test_no_traceback_in_context.py`` (which catches
+# context-leakage that importlinter cannot see).
+[[tool.importlinter.contracts]]
+name = "Vendor SDK exception types stay inside infrastructure adapters"
+type = "forbidden"
+source_modules = [
+    "ryotenkai_control",
+    "ryotenkai_pod",
+    "ryotenkai_providers.runpod.training",
+    "ryotenkai_providers.runpod.inference",
+    "ryotenkai_providers.single_node",
+]
+forbidden_modules = [
+    "ryotenkai_shared.infrastructure.runpod_api.protocol",
+    "ryotenkai_shared.infrastructure.ssh.protocol",
+    "ryotenkai_shared.infrastructure.hf_hub.protocol",
+]
+ignore_imports = [
+    # Legitimate translation seam: control's hibernation sweep catches
+    # ``RunPodAPIError`` to convert into a typed
+    # ``HibernationSweepReport`` dataclass. The vendor exception never
+    # crosses an HTTP boundary — the report dataclass is the only
+    # thing returned to callers.
+    "ryotenkai_control.cleanup.hibernation_detector -> ryotenkai_shared.infrastructure.runpod_api",
+]

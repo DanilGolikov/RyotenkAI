@@ -318,8 +318,9 @@ class LaunchResumeService:
     ) -> "Any":
         """Build a probe wired to the provider's transport + run it."""
         # Resolve the underlying API client. For RunPod the provider
-        # exposes an ``_api_client.query_pod(pod_id) -> Result``; we
-        # adapt to the (pod_id) -> dict shape the probe expects.
+        # exposes ``_api_client.query_pod(pod_id) -> dict[str, Any]``
+        # (raising :class:`ProviderUnavailableError` on transport
+        # failure); the probe consumes that dict shape directly.
         api_client = getattr(provider, "_api_client", None)
         if api_client is None or not hasattr(api_client, "query_pod"):
             # Defensive — production flows always have this; tests

@@ -2,9 +2,11 @@
 
 Public surface:
 
-* :class:`PodSshWaiter` — the single ``wait(pod_id) -> Result`` primitive.
-  Replaces three near-duplicate wait loops (training lifecycle manager,
-  inference eval session, chat-script artifacts).
+* :class:`PodSshWaiter` — the single ``wait(pod_id) -> PodSnapshot``
+  primitive (raises :class:`ProviderUnavailableError` on timeout /
+  platform failure). Replaces three near-duplicate wait loops
+  (training lifecycle manager, inference eval session, chat-script
+  artifacts).
 * :class:`PodQuery` — the Protocol both ``RunPodTrainingPodControl`` and
   ``RunPodInferencePodControl`` already satisfy (``query_pod_snapshot``).
 * :class:`WaitPolicy` — tunable thresholds. ``TRAINING_PROFILE`` and

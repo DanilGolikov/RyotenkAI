@@ -100,10 +100,10 @@ def check_dataset_format(
                 cause=exc,
             ) from exc
 
-        # Phase A2 Batch 13: ``strategy.validate_dataset`` now raises
-        # ``DatasetValidationFailedError`` instead of returning a ``Result``.
-        # Catch here because this function aggregates per-strategy outcomes
-        # rather than short-circuiting on the first failure.
+        # ``strategy.validate_dataset`` raises
+        # :class:`DatasetValidationFailedError` on failure. We catch here
+        # because this function aggregates per-strategy outcomes rather
+        # than short-circuiting on the first failure.
         try:
             strategy.validate_dataset(dataset)
         except DatasetValidationFailedError as err:

@@ -1049,8 +1049,8 @@ class TrainingMonitor(PipelineStage):
         self,
         event: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Fire callbacks; return a terminal Result or ``None`` to keep
-        listening.
+        """Fire callbacks; return a terminal outcome dict or ``None``
+        to keep listening.
 
         Recognised event kinds (everything else is logged at debug
         and ignored):
@@ -1059,7 +1059,7 @@ class TrainingMonitor(PipelineStage):
         - ``health_snapshot`` → ``on_resource_check`` + rate-limited ALIVE
         - ``trainer_exited`` → ``on_training_completed`` /
           ``on_training_failed`` / ``on_process_died`` based on
-          payload, then return terminal Result
+          payload, then return terminal outcome dict
         - other kinds → log only at debug
 
         Note: ``trainer_log`` events were removed in the data-plane

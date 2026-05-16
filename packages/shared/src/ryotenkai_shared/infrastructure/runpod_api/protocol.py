@@ -4,6 +4,18 @@ Extracted additively in 2026-05-10 as part of the greenfield testing
 architecture rollout (see
 ``docs/plans/structured-hopping-starfish.md`` Decision 1, table row 3).
 
+Vendor-exception isolation
+--------------------------
+:class:`RunPodAPIError` and its subclasses (:class:`RunPodRateLimitedError`,
+:class:`RunPodTransientError`, :class:`RunPodPartialResponseError`) are
+transport-layer types. They MUST be caught and translated into typed
+:class:`ryotenkai_shared.errors.RyotenkAIError` subclasses inside the
+adapter modules; downstream code (control, pod, providers.training,
+providers.inference, providers.single_node) is forbidden from importing
+this module directly. The boundary is enforced by the importlinter
+contract *"Vendor SDK exception types stay inside infrastructure
+adapters"* in ``pyproject.toml``.
+
 Why a new Protocol rather than reusing :class:`IPodLifecycleClient`?
    * :class:`IPodLifecycleClient` only covers the three terminal-state
      mutations (``terminate``/``pause``/``resume``). RunPod's GraphQL

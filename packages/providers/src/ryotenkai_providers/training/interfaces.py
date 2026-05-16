@@ -474,7 +474,7 @@ class IGPUProvider(Protocol):
     methods (``connect``, ``check_gpu``, etc.).
 
     Example:
-        provider = registry.create_training("runpod", ctx).unwrap()
+        provider = registry.create_training("runpod", ctx)
 
         try:
             ssh_info = provider.connect(run=run_ctx)

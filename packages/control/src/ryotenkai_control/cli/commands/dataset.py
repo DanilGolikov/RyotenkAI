@@ -64,9 +64,8 @@ def validate_cmd(
 
     orchestrator = PipelineOrchestrator(config=cfg)
     stage = orchestrator.stages[0]
-    # Phase A2 Batch 15.5: ``stage.run`` is raise-based (no more
-    # ``Result``). On success it returns the merged stage output dict;
-    # on failure it raises :class:`RyotenkAIError`.
+    # ``stage.run`` is raise-based: on success it returns the merged
+    # stage output dict; on failure it raises :class:`RyotenkAIError`.
     try:
         stage.run(orchestrator.context)
     except RyotenkAIError as err:

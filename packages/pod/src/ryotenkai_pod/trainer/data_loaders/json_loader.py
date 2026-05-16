@@ -43,9 +43,9 @@ class JsonDatasetLoader(BaseDatasetLoader):
         # 1000
 
         # Load for training phase
-        result = loader.load_for_phase(phase_config)
-        if result.is_success():
-            dataset = result.unwrap()
+        dataset = loader.load_for_phase(phase_config)
+        # raises RyotenkAIError on failure (DatasetLoadError /
+        # DatasetValidationError); returns a Dataset on success.
     """
 
     def __init__(self, config: PipelineConfig):
