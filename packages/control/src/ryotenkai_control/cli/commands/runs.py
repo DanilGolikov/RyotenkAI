@@ -19,7 +19,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import DryRunOpt, RunDirArg, YesOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 runs_app = typer.Typer(
@@ -37,6 +37,7 @@ runs_app = typer.Typer(
 
 
 @runs_app.command("ls")
+@wrap_command
 def ls_cmd(
     ctx: typer.Context,
     runs_dir: Annotated[
@@ -120,6 +121,7 @@ def ls_cmd(
 
 
 @runs_app.command("inspect")
+@wrap_command
 def inspect_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -216,6 +218,7 @@ def _stage_payload(attempt, stage_name: str) -> dict:  # type: ignore[no-untyped
 
 
 @runs_app.command("logs")
+@wrap_command
 def logs_cmd(
     run_dir: RunDirArg,
     attempt: Annotated[
@@ -277,6 +280,7 @@ def logs_cmd(
 
 
 @runs_app.command("status")
+@wrap_command
 def status_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -373,6 +377,7 @@ def status_cmd(
 
 
 @runs_app.command("diff")
+@wrap_command
 def diff_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,
@@ -445,6 +450,7 @@ def diff_cmd(
 
 
 @runs_app.command("report")
+@wrap_command
 def report_cmd(
     run_dir: RunDirArg,
     output: Annotated[
@@ -490,6 +496,7 @@ def report_cmd(
 
 
 @runs_app.command("rm")
+@wrap_command
 def rm_cmd(
     run_dir: RunDirArg,
     mode: Annotated[
@@ -524,6 +531,143 @@ def rm_cmd(
 
     result = delete_service.delete_run(run_dir, mode=mode)
     typer.echo(f"deleted: {result}")
+
+
+# ---------------------------------------------------------------------------
+# conditions  (Phase G — k8s/Operator-style condition table)
+# ---------------------------------------------------------------------------
+
+
+def _age_str(last_transition_time: Any, *, now: Any = None) -> str:
+    """Render ``last_transition_time`` as a kubectl-style relative age.
+
+    Examples: ``"2s"``, ``"45s"``, ``"3m"``, ``"2h"``, ``"5d"``.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    if last_transition_time is None:
+        return "-"
+    if isinstance(last_transition_time, str):
+        try:
+            ts = datetime.fromisoformat(last_transition_time.replace("Z", "+00:00"))
+        except ValueError:
+            return "-"
+    else:
+        ts = last_transition_time
+    current = now if now is not None else datetime.now(UTC)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    delta: timedelta = current - ts
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{max(0, seconds)}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
+@runs_app.command("conditions")
+@wrap_command
+def conditions_cmd(
+    ctx: typer.Context,
+    run_dir: RunDirArg,
+    attempt: Annotated[
+        int,
+        typer.Option(
+            "--attempt",
+            help="Attempt number (default: last attempt).",
+        ),
+    ] = 0,
+) -> None:
+    """Phase G — render a kubectl-style ``conditions[]`` table per stage.
+
+    Each row pivots one stage's conditions[] into a kubectl-style
+    ``STAGE | AVAILABLE | PROGRESSING | DEGRADED | OOMRISK | RATELIMITED | AGE``
+    summary. ``AGE`` is the age of the most-recent transition across
+    all conditions on that stage (matches ``kubectl get`` semantics).
+    """
+    from ryotenkai_control.pipeline.state import PipelineStateLoadError, PipelineStateStore
+    from ryotenkai_shared.contracts.pipeline_conditions import STANDARD_CONDITION_TYPES
+
+    state_ctx = ctx.ensure_object(CLIContext)
+    renderer = get_renderer(state_ctx)
+    run_path = run_dir.expanduser().resolve()
+    store = PipelineStateStore(run_path)
+
+    try:
+        state = store.load()
+    except (PipelineStateLoadError, Exception) as exc:
+        raise die(f"cannot load state: {exc}")
+
+    if not state.attempts:
+        if state_ctx.is_machine_readable:
+            renderer.emit({"attempts": [], "stages": []})
+        else:
+            renderer.text("No attempts found.")
+        renderer.flush()
+        return
+
+    target_no = attempt if attempt > 0 else state.attempts[-1].attempt_no
+    current = next((a for a in state.attempts if a.attempt_no == target_no), None)
+    if current is None:
+        raise die(f"attempt {target_no} not found in {run_path}")
+
+    stage_names = current.enabled_stage_names or list(current.stage_runs)
+    types = list(STANDARD_CONDITION_TYPES)
+
+    if state_ctx.is_machine_readable:
+        renderer.emit(
+            {
+                "run_id": run_path.name,
+                "attempt_no": current.attempt_no,
+                "stages": [
+                    {
+                        "name": stage_name,
+                        "conditions": [
+                            {
+                                "type": c.type,
+                                "status": c.status.value,
+                                "reason": c.reason,
+                                "message": c.message,
+                                "last_transition_time": c.last_transition_time.isoformat(),
+                            }
+                            for c in (
+                                current.stage_runs.get(stage_name).conditions
+                                if current.stage_runs.get(stage_name)
+                                else []
+                            )
+                        ],
+                    }
+                    for stage_name in stage_names
+                ],
+            }
+        )
+        renderer.flush()
+        return
+
+    headers = ["STAGE"] + [t.upper() for t in types] + ["AGE"]
+    rows: list[tuple[Any, ...]] = []
+    for stage_name in stage_names:
+        stage_run = current.stage_runs.get(stage_name)
+        conditions = list(stage_run.conditions) if stage_run else []
+        by_type = {c.type: c for c in conditions}
+        row: list[Any] = [stage_name]
+        for t in types:
+            c = by_type.get(t)
+            row.append(c.status.value if c else "-")
+        if conditions:
+            latest = max(c.last_transition_time for c in conditions)
+            row.append(_age_str(latest))
+        else:
+            row.append("-")
+        rows.append(tuple(row))
+
+    renderer.heading(f"Conditions for {run_path.name}/attempt-{current.attempt_no}")
+    renderer.text("")
+    renderer.table(headers=headers, rows=rows)
+    renderer.flush()
 
 
 __all__ = ["runs_app"]

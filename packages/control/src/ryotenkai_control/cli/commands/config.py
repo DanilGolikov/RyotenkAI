@@ -17,7 +17,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import RequiredConfigOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 config_app = typer.Typer(
@@ -30,6 +30,7 @@ config_app = typer.Typer(
 
 
 @config_app.command("validate")
+@wrap_command
 def validate_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,
@@ -72,6 +73,7 @@ def validate_cmd(
 
 
 @config_app.command("show")
+@wrap_command
 def show_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,
@@ -87,6 +89,7 @@ def show_cmd(
 
 
 @config_app.command("explain")
+@wrap_command
 def explain_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,
@@ -135,6 +138,7 @@ def explain_cmd(
 
 
 @config_app.command("schema")
+@wrap_command
 def schema_cmd(
     ctx: typer.Context,
     indent: Annotated[int, typer.Option("--indent", help="JSON indent (text mode only).")] = 2,

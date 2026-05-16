@@ -69,17 +69,23 @@ _LEGACY_ALLOWLIST: frozenset[str] = frozenset({
 
 
 def _is_format_exc_call(node: ast.AST) -> bool:
-    """Return True if ``node`` is a call to ``traceback.format_exc(...)``.
+    """Return True if ``node`` is a raw ``traceback.format_*`` call.
 
-    Accepts both ``traceback.format_exc()`` and bare ``format_exc()``
-    (works under ``from traceback import format_exc`` aliasing).
+    Accepts both attribute forms (``traceback.format_exc()``,
+    ``traceback.format_exception(...)``) and bare names (``format_exc()``
+    / ``format_exception(...)``) for ``from traceback import ...``
+    aliasing. Phase D widened this from ``format_exc`` only to all
+    raw traceback formatters because ``TrainerExitPayload.traceback_summary``
+    must route through ``sanitize_traceback`` regardless of which raw
+    function produced the string.
     """
     if not isinstance(node, ast.Call):
         return False
     func = node.func
-    if isinstance(func, ast.Attribute) and func.attr == "format_exc":
+    bad_names = {"format_exc", "format_exception", "format_exception_only", "format_tb"}
+    if isinstance(func, ast.Attribute) and func.attr in bad_names:
         return True
-    if isinstance(func, ast.Name) and func.id == "format_exc":
+    if isinstance(func, ast.Name) and func.id in bad_names:
         return True
     return False
 
@@ -201,6 +207,39 @@ def test_sentinel_catches_synthetic_attr_assignment_violation(tmp_path: Path) ->
     )
     findings = _scan_file(bad)
     assert any("context" in line for line in findings), findings
+
+
+def test_sentinel_catches_raw_format_exception_in_traceback_summary(
+    tmp_path: Path,
+) -> None:
+    """Phase D: raw ``traceback.format_exception(...)`` piped into
+    ``traceback_summary=`` is flagged. Must route through
+    ``sanitize_traceback`` instead."""
+    bad = tmp_path / "bad_phase_d.py"
+    bad.write_text(
+        "import traceback\n"
+        "def make_payload(exc):\n"
+        "    return Payload(traceback_summary=traceback.format_exception(exc))\n",
+        encoding="utf-8",
+    )
+    findings = _scan_file(bad)
+    assert any("traceback_summary" in line for line in findings), findings
+
+
+def test_sentinel_allows_sanitised_traceback_summary(tmp_path: Path) -> None:
+    """The sanitised form (Phase D contract) must NOT trigger the
+    sentinel — only the raw call does."""
+    ok = tmp_path / "ok_phase_d.py"
+    ok.write_text(
+        "import traceback\n"
+        "from ryotenkai_shared.contracts.trainer_exit import sanitize_traceback\n"
+        "def make_payload(exc):\n"
+        "    raw = traceback.format_exception(type(exc), exc, exc.__traceback__)\n"
+        "    return Payload(traceback_summary=sanitize_traceback(''.join(raw)))\n",
+        encoding="utf-8",
+    )
+    findings = _scan_file(ok)
+    assert not findings, findings
 
 
 def test_sentinel_ignores_format_exc_in_safe_position(tmp_path: Path) -> None:

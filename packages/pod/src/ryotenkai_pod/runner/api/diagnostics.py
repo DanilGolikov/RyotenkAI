@@ -23,7 +23,7 @@ from collections.abc import Iterable
 
 from fastapi import APIRouter, Query
 
-from ryotenkai_pod.runner.api.errors import APIError
+from ryotenkai_shared.api.error_handlers import APIError
 from ryotenkai_pod.runner.diagnostics import (
     collect_dmesg,
     collect_kernel_signals,

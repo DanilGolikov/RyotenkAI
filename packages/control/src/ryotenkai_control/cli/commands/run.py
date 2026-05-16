@@ -29,7 +29,7 @@ from ryotenkai_control.cli.common_options import (
     RunDirArg,
 )
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die, format_validation_errors
+from ryotenkai_control.cli.errors import die, format_validation_errors, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 run_app = typer.Typer(
@@ -263,6 +263,7 @@ def _spawn_worker(
 
 
 @run_app.command("start")
+@wrap_command
 def start_cmd(
     ctx: typer.Context,  # noqa: ARG001 — kept for parity with future remote-mode
     config: Annotated[
@@ -326,6 +327,7 @@ def start_cmd(
 
 
 @run_app.command("resume")
+@wrap_command
 def resume_cmd(
     run_dir: RunDirArg,
     config: Annotated[
@@ -470,6 +472,7 @@ def _resume_pod_if_needed(run_dir: Path) -> None:
 
 
 @run_app.command("restart")
+@wrap_command
 def restart_cmd(
     run_dir: RunDirArg,
     from_stage: Annotated[
@@ -505,6 +508,7 @@ def restart_cmd(
 
 
 @run_app.command("interrupt")
+@wrap_command
 def interrupt_cmd(
     run_dir: RunDirArg,
     dry_run: DryRunOpt = False,
@@ -521,6 +525,7 @@ def interrupt_cmd(
 
 
 @run_app.command("restart-points")
+@wrap_command
 def restart_points_cmd(
     ctx: typer.Context,
     run_dir: RunDirArg,

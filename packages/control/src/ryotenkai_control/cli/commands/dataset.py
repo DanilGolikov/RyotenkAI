@@ -17,7 +17,7 @@ import typer
 
 from ryotenkai_control.cli.common_options import RequiredConfigOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 dataset_app = typer.Typer(
@@ -30,6 +30,7 @@ dataset_app = typer.Typer(
 
 
 @dataset_app.command("validate")
+@wrap_command
 def validate_cmd(
     ctx: typer.Context,
     config: RequiredConfigOpt,

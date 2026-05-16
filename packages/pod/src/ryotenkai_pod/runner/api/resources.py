@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from ryotenkai_pod.runner.api.errors import APIError
+from ryotenkai_shared.api.error_handlers import APIError
 from ryotenkai_pod.runner.health_reporter import default_health_snapshot
 from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api.resources import ResourceSnapshot

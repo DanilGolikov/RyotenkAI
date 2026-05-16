@@ -35,7 +35,7 @@ from typing import Annotated, Any
 import typer
 
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 job_app = typer.Typer(
@@ -141,6 +141,7 @@ async def _with_runner(submission, fn):  # type: ignore[no-untyped-def]
 
 
 @job_app.command("status")
+@wrap_command
 def status_cmd(
     ctx: typer.Context,
     run_dir: Annotated[
@@ -208,6 +209,7 @@ def status_cmd(
 
 
 @job_app.command("stop")
+@wrap_command
 def stop_cmd(
     ctx: typer.Context,
     run_dir: Annotated[
@@ -261,6 +263,7 @@ def stop_cmd(
 
 
 @job_app.command("events")
+@wrap_command
 def events_cmd(
     ctx: typer.Context,
     run_dir: Annotated[
@@ -382,6 +385,7 @@ _VALID_LOG_STREAMS: frozenset[str] = frozenset({"stdout", "stderr"})
 
 
 @job_app.command("logs")
+@wrap_command
 def logs_cmd(
     ctx: typer.Context,
     run_dir: Annotated[
@@ -485,6 +489,7 @@ def logs_cmd(
 
 
 @job_app.command("metrics")
+@wrap_command
 def metrics_cmd(
     ctx: typer.Context,
     run_dir: Annotated[

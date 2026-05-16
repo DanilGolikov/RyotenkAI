@@ -169,6 +169,13 @@ class Supervisor:
         # harnesses that don't need the file artefact).
         self._stdio_log_path: Path | None = stdio_log_path
         self._stdio_log_file = None  # opened in _spawn, closed in shutdown
+        # Phase D — trainer subprocess working directory captured on
+        # spawn so :meth:`_reap` can read
+        # ``<workdir>/trainer-exit.json`` (the structured exit payload
+        # the trainer's exit_reporter writes on failure). ``None`` when
+        # no workdir was set on spawn (legacy / test paths); the
+        # supervisor then falls through to the exit-code heuristic.
+        self._workdir: Path | None = None
 
     # --- read-only accessors ------------------------------------------------
 
@@ -269,6 +276,14 @@ class Supervisor:
                     self._stdio_log_path, exc,
                 )
                 self._stdio_log_file = None
+
+        # Phase D — remember the subprocess cwd so :meth:`_reap` can
+        # locate ``<workdir>/trainer-exit.json`` written by the
+        # trainer's exit_reporter on failure paths. ``None`` workdir
+        # means the supervisor inherited uvicorn's cwd; we do NOT
+        # default to ``Path.cwd()`` because that would race with
+        # concurrent runs in the same FastAPI process (Phase 5+).
+        self._workdir = Path(workdir) if workdir is not None else None
 
         self._proc = await asyncio.create_subprocess_exec(
             *command,
@@ -556,6 +571,30 @@ class Supervisor:
         else:
             target = JobState.FAILED
 
+        # Phase D — resolve the structured exit payload BEFORE publishing
+        # ``trainer_exited``. Three branches:
+        #   1. ``<workdir>/trainer-exit.json`` exists + validates →
+        #      use its typed fields (code / message / traceback_summary).
+        #   2. File absent + rc==0 → success; no failure fields.
+        #   3. File absent + rc!=0 → synthesise payload. SIGKILL
+        #      (137 / -9) gets ``TRAINING_OOM`` (R-SIGKILL heuristic:
+        #      false-positive OOM beats noisy INTERNAL_ERROR for the
+        #      common cgroup-OOM scenario where atexit doesn't run).
+        #      Other non-zero rc gets ``INTERNAL_ERROR`` with the rc
+        #      stamped into the message.
+        exit_payload = _read_exit_payload(self._workdir)
+        synthesized_payload = exit_payload is None and not self._cancellation_requested and (
+            rc != 0
+        )
+
+        trainer_exited_event = _build_trainer_exited_event(
+            rc=rc,
+            signal_name=signal_name,
+            cancellation_requested=self._cancellation_requested,
+            payload=exit_payload,
+            synthesize_if_missing=synthesized_payload,
+        )
+
         # Publish first, transition second — ensures the WS subscriber
         # sees the final event slot before the FSM closes. Payload stays
         # minimal: trainer stdout/stderr ground truth lives in
@@ -564,14 +603,7 @@ class Supervisor:
         # (PR-B) but that duplicated the postmortem dump on Mac and was
         # reverted; the diagnostic-grace window (PR-C) gives Mac enough
         # room to SCP before pod teardown.
-        self._bus.publish(
-            "trainer_exited",
-            {
-                "exit_code": rc,
-                "signal": signal_name,
-                "cancellation_requested": self._cancellation_requested,
-            },
-        )
+        self._bus.publish("trainer_exited", trainer_exited_event)
 
         try:
             self._fsm.transition(target, message=message)
@@ -629,6 +661,123 @@ class Supervisor:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Phase D — TrainerExitPayload reader + event builder
+# ---------------------------------------------------------------------------
+
+
+# Exit codes that POSIX shells / Python report for SIGKILL. Both shapes
+# can be observed depending on whether the killing signal came from the
+# kernel (138, 137 on POSIX = 128 + 9) or asyncio's negative-rc shape.
+_SIGKILL_EXIT_CODES: frozenset[int] = frozenset({137, -9})
+
+# Schema version stamped on every ``trainer_exited`` event payload.
+# Bumped to ``2`` in Phase D — pre-D events had no ``schema_version``
+# field; consumers that need backward compatibility check ``event.get(
+# "schema_version", 1)``.
+TRAINER_EXITED_EVENT_SCHEMA_VERSION: int = 2
+
+
+def _read_exit_payload(workdir: "Path | None"):  # type: ignore[name-defined]
+    """Read + validate ``<workdir>/trainer-exit.json``; ``None`` if absent/invalid.
+
+    The trainer's :mod:`ryotenkai_pod.trainer.exit_reporter` writes
+    this file atomically on failure. Any read / parse error is logged
+    at WARN and treated as if the file were missing, so the
+    supervisor falls through to the exit-code heuristic.
+    """
+    if workdir is None:
+        return None
+    # Local imports keep the supervisor's cold-path import surface small —
+    # the contract module pulls Pydantic which we don't need on the
+    # success path.
+    from pathlib import Path as _Path
+
+    from ryotenkai_shared.contracts.trainer_exit import (
+        TRAINER_EXIT_FILENAME,
+        TrainerExitPayload,
+    )
+
+    target = _Path(workdir) / TRAINER_EXIT_FILENAME
+    try:
+        return TrainerExitPayload.read_from(target)
+    except Exception as exc:  # noqa: BLE001 — defensive
+        import logging
+        logging.getLogger(__name__).warning(
+            "[SUPERVISOR] trainer-exit.json at %s failed to parse: %s",
+            target, exc,
+        )
+        return None
+
+
+def _build_trainer_exited_event(
+    *,
+    rc: int,
+    signal_name: str | None,
+    cancellation_requested: bool,
+    payload,  # TrainerExitPayload | None
+    synthesize_if_missing: bool,
+) -> dict:
+    """Build the ``trainer_exited`` event body (Phase D, schema_version=2).
+
+    Legacy fields (``exit_code``, ``signal``, ``cancellation_requested``)
+    are preserved verbatim so older consumers keep working. New fields:
+
+    * ``schema_version`` — pinned at :data:`TRAINER_EXITED_EVENT_SCHEMA_VERSION`.
+    * ``code`` — :class:`ErrorCode` value or ``None`` on natural success.
+    * ``message`` — single-line human description; ``None`` on success.
+    * ``traceback_summary`` — sanitised tail; ``None`` when no
+      traceback was available (incl. SIGKILL paths).
+    * ``wall_seconds`` — copied from the payload if present.
+    * ``payload_source`` — one of ``"trainer_file"``, ``"sigkill_heuristic"``,
+      ``"missing"``, or ``"none"`` (rc==0 and clean exit).
+      Lets the control side distinguish trusted typed signals from
+      synthesised ones.
+    """
+    from ryotenkai_shared.contracts.problem_details import ErrorCode
+
+    body: dict = {
+        "exit_code": rc,
+        "signal": signal_name,
+        "cancellation_requested": cancellation_requested,
+        "schema_version": TRAINER_EXITED_EVENT_SCHEMA_VERSION,
+        "code": None,
+        "message": None,
+        "traceback_summary": None,
+        "wall_seconds": None,
+        "payload_source": "none",
+    }
+
+    if payload is not None:
+        body["code"] = payload.code.value
+        body["message"] = payload.message
+        body["traceback_summary"] = payload.traceback_summary
+        body["wall_seconds"] = payload.wall_seconds
+        body["payload_source"] = "trainer_file"
+        return body
+
+    if not synthesize_if_missing:
+        return body
+
+    # File absent on a failed exit — synthesise.
+    if rc in _SIGKILL_EXIT_CODES:
+        # R-SIGKILL heuristic: cgroup OOM-killer / external SIGKILL.
+        # Documented in
+        # ``docs/plans/sharded-stargazing-wigderson.md`` Layer 6.
+        body["code"] = ErrorCode.TRAINING_OOM.value
+        body["message"] = (
+            "Trainer killed by signal SIGKILL — likely OOM "
+            f"(exit_code={rc})"
+        )
+        body["payload_source"] = "sigkill_heuristic"
+        return body
+
+    body["code"] = ErrorCode.INTERNAL_ERROR.value
+    body["message"] = f"trainer exited without payload, exit_code={rc}"
+    body["payload_source"] = "missing"
+    return body
 
 
 def _signal_name_from_rc(rc: int) -> str | None:

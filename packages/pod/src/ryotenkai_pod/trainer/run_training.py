@@ -655,6 +655,14 @@ def main() -> int:
     # gets a chance to drain.
     print("[TRAINER:M1] Python interpreter started, argv parsed", file=sys.stderr, flush=True)
 
+    # Phase D — Wall-clock anchor for ``TrainerExitPayload.wall_seconds``.
+    # ``time.monotonic()`` is suspend-safe and never decreases; we read
+    # it the very first thing so any failure between argparse and the
+    # try/except wrapping ``run_training`` still produces a sensible
+    # duration if the exit_reporter runs.
+    import time
+    _trainer_started_at = time.monotonic()
+
     # Crash observability MUST be installed before argparse / any heavy import
     # that may itself segfault (bitsandbytes, flash-attn). See
     # _install_crash_observability() docstring.
@@ -732,6 +740,14 @@ Debug log tags:
     # imports.
     print(f"[TRAINER:M2] Loading config from {args.config}", file=sys.stderr, flush=True)
 
+    # Phase D — workdir resolution for ``trainer-exit.json``. The
+    # supervisor sets the subprocess cwd to ``<workspace>/runs/<run_id>``
+    # via ``submit_and_spawn(..., workdir=PATH)``, so a bare
+    # ``Path.cwd()`` agrees with the supervisor's reader. Captured up
+    # front so the except branch doesn't need to import :mod:`pathlib`.
+    from pathlib import Path as _Path
+    _exit_workdir = _Path.cwd()
+
     try:
         output_path = run_training(
             config_path=args.config,
@@ -745,6 +761,19 @@ Debug log tags:
         return EXIT_KEYBOARD_INTERRUPT
     except Exception as e:
         logger.error(f"Training failed: {e}")
+        # Phase D — write structured exit payload so the supervisor's
+        # ``trainer_exited`` event carries a typed ``code`` /
+        # ``message`` / ``traceback_summary`` instead of a bare
+        # ``exit_code``. Best-effort: any disk error is suppressed so
+        # a broken workdir cannot mask the original training failure.
+        try:
+            from ryotenkai_pod.trainer.exit_reporter import write_failure_payload
+            write_failure_payload(
+                _exit_workdir, e,
+                started_at=_trainer_started_at, exit_code=1,
+            )
+        except Exception:  # pragma: no cover — defensive
+            pass
         return 1
 
 

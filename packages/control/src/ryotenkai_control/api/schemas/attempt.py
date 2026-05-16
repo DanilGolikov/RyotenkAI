@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ryotenkai_shared.contracts.pipeline_conditions import Condition
+
 
 class StageRun(BaseModel):
     stage_name: str
@@ -20,6 +22,9 @@ class StageRun(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     duration_seconds: float | None = None
+    #: Phase G — k8s/Operator-style condition observations. Empty list
+    #: for stages that haven't emitted any conditions yet.
+    conditions: list[Condition] = Field(default_factory=list)
 
 
 class AttemptDetail(BaseModel):

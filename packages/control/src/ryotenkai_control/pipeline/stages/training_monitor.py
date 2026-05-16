@@ -51,6 +51,7 @@ from ryotenkai_shared.errors import (
     InternalError,
     RyotenkAIError,
     TrainingFailedError,
+    TrainingOOMError,
 )
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 # Phase 3 PR-3.2 (transport-unification-v2): SSHClient removed from
@@ -1175,16 +1176,50 @@ class TrainingMonitor(PipelineStage):
     ) -> dict[str, Any]:
         """Translate a ``trainer_exited`` event to a terminal dict (or raise).
 
-        Payload shape (per :class:`Supervisor._reap`):
-        ``{exit_code, signal, cancellation_requested}``. The trainer's
-        last stdout/stderr lives on disk in ``trainer.stdio.log`` and
-        is rendered by :meth:`_collect_death_diagnostics` from the
-        SCP-pulled local copy — single source, no embedded WS tail.
+        Phase D-aware payload shape (``schema_version=2``):
+        ``{exit_code, signal, cancellation_requested, schema_version,
+        code, message, traceback_summary, wall_seconds,
+        payload_source}``. Legacy producers (pre-D) omit the new fields
+        — the consumer falls back to the old exit-code reasoning.
+
+        Decoding policy (Phase D):
+
+        * ``payload_source == "trainer_file"`` → trusted typed payload.
+          ``code == TRAINING_OOM`` raises :class:`TrainingOOMError`;
+          ``code == INTERNAL_ERROR`` raises :class:`InternalError`;
+          any other code raises :class:`TrainingFailedError` (we never
+          surface arbitrary :class:`ErrorCode` values as their own
+          exception class here — the training stage's failure shape
+          is one of three categories from the pipeline's perspective).
+        * ``payload_source == "sigkill_heuristic"`` → SIGKILL/137; same
+          mapping as ``TRAINING_OOM`` above.
+        * ``payload_source == "missing"`` or no Phase D fields → fall
+          back to the legacy exit-code heuristic.
+
+        The trainer's last stdout/stderr lives on disk in
+        ``trainer.stdio.log`` and is rendered by
+        :meth:`_collect_death_diagnostics` from the SCP-pulled local
+        copy — single source, no embedded WS tail.
         """
         duration = max(0.0, time.time() - self._training_start_time)
         exit_code = payload.get("exit_code")
         signal_name = payload.get("signal")
         cancelled = bool(payload.get("cancellation_requested"))
+
+        # Phase D — schema_version=2 fields. ``payload_source`` is the
+        # discriminator: ``"none"`` means the supervisor saw a clean
+        # exit (rc==0); anything else means we have decoded data we
+        # can lean on instead of the legacy heuristic.
+        payload_source = payload.get("payload_source")
+        typed_code = payload.get("code")
+        typed_message = payload.get("message")
+        typed_wall_seconds = payload.get("wall_seconds")
+        if isinstance(typed_wall_seconds, (int, float)) and typed_wall_seconds > duration:
+            # Trust the trainer's anchor when it's strictly greater —
+            # the supervisor's ``time.time()`` may have started later
+            # than the trainer's monotonic clock (e.g. delayed
+            # spawn). Never go backwards.
+            duration = float(typed_wall_seconds)
 
         # Pull post-mortem context from the pod BEFORE returning Err.
         # Cancellation is operator-initiated (``stop`` from CLI/web UI)
@@ -1221,6 +1256,14 @@ class TrainingMonitor(PipelineStage):
                 code="TRAINING_CANCELLED",
             )
 
+        # Phase D — typed-code dispatch when the trainer wrote a payload
+        # OR the supervisor synthesised one via the SIGKILL heuristic.
+        if payload_source in {"trainer_file", "sigkill_heuristic"} and typed_code:
+            message = typed_message or (
+                f"trainer exited non-zero (exit_code={exit_code}, signal={signal_name})"
+            )
+            self._raise_typed(typed_code, message, duration)
+
         if exit_code is None and signal_name is None:
             # Process died without a parsed exit code — use
             # ``on_process_died`` per legacy contract.
@@ -1234,6 +1277,57 @@ class TrainingMonitor(PipelineStage):
         )
         # Unreachable — _fail always raises; keeps type checker happy.
         raise AssertionError("_fail must raise")
+
+    def _raise_typed(
+        self,
+        code: str,
+        message: str,
+        duration: float,
+    ) -> None:
+        """Raise the typed exception class matching Phase D ``code``.
+
+        Three categories from the pipeline stage's perspective:
+
+        * ``TRAINING_OOM`` → :class:`TrainingOOMError` (5xx, retryable
+          with smaller batch / more VRAM).
+        * ``INTERNAL_ERROR`` → :class:`InternalError` (server bug;
+          report).
+        * everything else → :class:`TrainingFailedError` (catch-all
+          for typed-but-non-OOM training failures).
+
+        Always raises — never returns. Fires ``on_training_failed``
+        callback BEFORE the raise (matches the legacy ``_fail`` shape
+        so the operator still sees the callback-driven banner).
+        """
+        if self._callbacks.on_training_failed:
+            try:
+                self._callbacks.on_training_failed(message, duration)
+            except Exception as exc:
+                logger.debug(f"[MONITOR] on_training_failed raised: {exc}")
+
+        # String comparison rather than ``ErrorCode(code)`` — the wire
+        # payload carries the enum value as a bare string, and a
+        # producer with a code we don't yet know about should NOT
+        # crash the consumer (forward-compat: future error codes
+        # degrade to ``TrainingFailedError``, never to a parse error).
+        if code == "TRAINING_OOM":
+            raise TrainingOOMError(
+                detail=message,
+                context={"duration_seconds": duration, "phase_d_typed": True},
+            )
+        if code == "INTERNAL_ERROR":
+            raise InternalError(
+                detail=message,
+                context={"duration_seconds": duration, "phase_d_typed": True},
+            )
+        raise TrainingFailedError(
+            detail=message,
+            context={
+                "duration_seconds": duration,
+                "phase_d_typed": True,
+                "legacy_code": code,
+            },
+        )
 
     def _terminal_from_state(
         self,

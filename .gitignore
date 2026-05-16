@@ -126,6 +126,13 @@ community/.cache/
 packages/runs/
 web/storybook-static/
 
+# Phase D trainer-exit payload — runtime artifact written atomically
+# by the trainer subprocess's exit_reporter to its workdir on failure.
+# Tests use tmp_path; integration runs land it under per-run workdirs.
+# Stray copy at repo root happens when a developer launches the trainer
+# directly from the repo root for ad-hoc debugging.
+trainer-exit.json
+
 # Greenfield testing artifacts (per-run)
 tests/.telemetry/
 tests/.debug_bundles/

@@ -24,7 +24,7 @@ import yaml
 
 from ryotenkai_control.cli.common_options import DryRunOpt, RequiredConfigOpt
 from ryotenkai_control.cli.context import CLIContext
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 from ryotenkai_control.cli.renderer import get_renderer
 
 preset_app = typer.Typer(
@@ -56,6 +56,7 @@ def _find_preset(preset_id: str):  # type: ignore[no-untyped-def]
 
 
 @preset_app.command("ls")
+@wrap_command
 def ls_cmd(ctx: typer.Context) -> None:
     """List installed presets."""
     state = ctx.ensure_object(CLIContext)
@@ -85,6 +86,7 @@ def ls_cmd(ctx: typer.Context) -> None:
 
 
 @preset_app.command("show")
+@wrap_command
 def show_cmd(
     ctx: typer.Context,
     preset_id: Annotated[str, typer.Argument(help="Preset id.")],
@@ -104,6 +106,7 @@ def show_cmd(
 
 
 @preset_app.command("apply")
+@wrap_command
 def apply_cmd(
     ctx: typer.Context,
     preset_id: Annotated[str, typer.Argument(help="Preset id.")],
@@ -158,6 +161,7 @@ def apply_cmd(
 
 
 @preset_app.command("diff")
+@wrap_command
 def diff_cmd(
     ctx: typer.Context,
     preset_id: Annotated[str, typer.Argument(help="Preset id.")],

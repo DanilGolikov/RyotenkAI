@@ -81,6 +81,7 @@ from ryotenkai_control.pipeline.constants import (
 )
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import PipelineStateError, StageRunState
+from ryotenkai_shared.contracts.pipeline_conditions import ConditionStatus
 from ryotenkai_shared.errors import (
     InternalError,
     PipelineStageFailedError,
@@ -237,6 +238,17 @@ class StageExecutionLoop:
                 with stage_logging_context(stage_name, log_layout):
                     self._attempt_controller.record_running(
                         stage_name=stage_name, started_at=current_stage_started_at
+                    )
+                    # Phase G — emit Progressing=True on stage entry.
+                    # ``reason="StageStarted"`` matches k8s
+                    # convention for in-progress positive states (cf.
+                    # ``"AsExpected"``).
+                    self._attempt_controller.record_condition(
+                        stage_name=stage_name,
+                        type="Progressing",
+                        status=ConditionStatus.TRUE,
+                        reason="StageStarted",
+                        message=f"Stage {stage_name} started",
                     )
                     self._record_stage_log_paths(
                         stage_name=stage_name, log_layout=log_layout
@@ -445,6 +457,26 @@ class StageExecutionLoop:
                 else None
             ),
         )
+        # Phase G — emit Degraded=True with the ErrorCode-derived reason
+        # and flip Progressing=False so dashboards see the stage stopped
+        # making progress. Reason is a stable CamelCase alias
+        # (``"StageFailed"``) rather than the raw ErrorCode UPPER_SNAKE
+        # value so the conditions side-channel stays consistent with
+        # k8s tooling that pins on CamelCase.
+        self._attempt_controller.record_condition(
+            stage_name=stage_name,
+            type="Progressing",
+            status=ConditionStatus.FALSE,
+            reason="StageFailed",
+            message=error_message,
+        )
+        self._attempt_controller.record_condition(
+            stage_name=stage_name,
+            type="Degraded",
+            status=ConditionStatus.TRUE,
+            reason="StageFailed",
+            message=f"{error_code}: {error_message}",
+        )
         self._attempt_controller.finalize(status=StageRunState.STATUS_FAILED)
 
     def _handle_stage_success(
@@ -501,6 +533,25 @@ class StageExecutionLoop:
             self._attempt_controller.record_completed(
                 stage_name=stage_name, outputs=outputs
             )
+
+        # Phase G — terminal positive emission: Progressing flips to
+        # False (no longer making progress because we're done), and
+        # Available=True signals the stage outputs are ready for
+        # downstream consumers.
+        self._attempt_controller.record_condition(
+            stage_name=stage_name,
+            type="Progressing",
+            status=ConditionStatus.FALSE,
+            reason="StageCompleted",
+            message=f"Stage {stage_name} finished",
+        )
+        self._attempt_controller.record_condition(
+            stage_name=stage_name,
+            type="Available",
+            status=ConditionStatus.TRUE,
+            reason="AsExpected",
+            message=None,
+        )
 
         logger.info(
             f"Stage {stage_idx + 1} completed successfully ({duration_seconds:.1f}s)"

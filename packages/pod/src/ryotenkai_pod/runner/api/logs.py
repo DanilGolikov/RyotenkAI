@@ -25,7 +25,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from ryotenkai_pod.runner.api.errors import APIError
+from ryotenkai_shared.api.error_handlers import APIError
 from ryotenkai_shared.contracts.problem_details import ErrorCode
 from ryotenkai_shared.contracts.runner_api.logs import (
     LogChunkResponse,

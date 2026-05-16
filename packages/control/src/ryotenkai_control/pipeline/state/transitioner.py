@@ -51,15 +51,22 @@ def mark_stage_running(
     stage_name: str,
     started_at: str,
 ) -> None:
-    """Mark a stage as running in the attempt state."""
+    """Mark a stage as running in the attempt state.
+
+    Preserves the previous slot's ``log_paths`` AND ``conditions``
+    (Phase G) by copying them onto the new ``StageRunState`` so the
+    side-channel observability survives the slot replacement.
+    """
     prev = attempt.stage_runs.get(stage_name)
     log_paths = dict(prev.log_paths) if prev else {}
+    conditions = list(prev.conditions) if prev else []
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_RUNNING,
         execution_mode=StageRunState.MODE_EXECUTED,
         started_at=started_at,
         log_paths=log_paths,
+        conditions=conditions,
     )
 
 
@@ -110,9 +117,14 @@ def mark_stage_skipped(
     reason: str,
     outputs: dict[str, Any] | None = None,
 ) -> None:
-    """Mark a stage as skipped with a reason."""
+    """Mark a stage as skipped with a reason.
+
+    Phase G — copies ``conditions`` from the previous slot so any
+    observations emitted before the skip survive.
+    """
     prev = attempt.stage_runs.get(stage_name)
     log_paths = dict(prev.log_paths) if prev else {}
+    conditions = list(prev.conditions) if prev else []
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_SKIPPED,
@@ -122,6 +134,7 @@ def mark_stage_skipped(
         started_at=utc_now_iso(),
         completed_at=utc_now_iso(),
         log_paths=log_paths,
+        conditions=conditions,
     )
 
 
@@ -131,9 +144,14 @@ def mark_stage_interrupted(
     stage_name: str,
     started_at: str,
 ) -> None:
-    """Mark a stage as interrupted (e.g. by SIGINT)."""
+    """Mark a stage as interrupted (e.g. by SIGINT).
+
+    Phase G — copies ``conditions`` from the previous slot so any
+    observations emitted before the interrupt survive.
+    """
     prev = attempt.stage_runs.get(stage_name)
     log_paths = dict(prev.log_paths) if prev else {}
+    conditions = list(prev.conditions) if prev else []
     attempt.stage_runs[stage_name] = StageRunState(
         stage_name=stage_name,
         status=StageRunState.STATUS_INTERRUPTED,
@@ -141,6 +159,7 @@ def mark_stage_interrupted(
         started_at=started_at,
         completed_at=utc_now_iso(),
         log_paths=log_paths,
+        conditions=conditions,
     )
 
 

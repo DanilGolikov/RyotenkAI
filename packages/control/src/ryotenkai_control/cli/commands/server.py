@@ -13,7 +13,7 @@ from typing import Annotated
 
 import typer
 
-from ryotenkai_control.cli.errors import die
+from ryotenkai_control.cli.errors import die, wrap_command
 
 server_app = typer.Typer(
     no_args_is_help=True,
@@ -25,6 +25,7 @@ server_app = typer.Typer(
 
 
 @server_app.command("start")
+@wrap_command
 def start_cmd(
     host: Annotated[
         str, typer.Option("--host", help="Bind host (use 0.0.0.0 for remote access)."),
@@ -65,6 +66,7 @@ def start_cmd(
 
 
 @server_app.command("status")
+@wrap_command
 def status_cmd() -> None:
     """(Reserved) — daemon mode lands in v1.2."""
     raise die(
@@ -74,6 +76,7 @@ def status_cmd() -> None:
 
 
 @server_app.command("stop")
+@wrap_command
 def stop_cmd() -> None:
     """(Reserved) — daemon mode lands in v1.2."""
     raise die(

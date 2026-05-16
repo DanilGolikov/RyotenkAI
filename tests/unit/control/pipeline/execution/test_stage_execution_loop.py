@@ -454,9 +454,13 @@ class TestInvariants:
             log_layout=prepared.log_layout,
         )
         n_stages = len(stages)
-        # Each stage: record_running + record_stage_log_paths + record_completed.
-        # Plus finalize at the end.
-        assert save_fn.call_count == 3 * n_stages + 1
+        # Each stage: record_running + record_condition(Progressing=True) +
+        # record_stage_log_paths + record_completed +
+        # record_condition(Progressing=False) + record_condition(Available=True).
+        # Plus finalize at the end. (Phase G — k8s/Operator-style
+        # conditions[] emissions on stage entry and completion.)
+        per_stage_saves = 6
+        assert save_fn.call_count == per_stage_saves * n_stages + 1
 
     def test_summary_reporter_called_exactly_once_on_success(
         self, tmp_path: Path

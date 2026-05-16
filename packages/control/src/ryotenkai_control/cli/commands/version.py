@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import typer
 
+from ryotenkai_control.cli.errors import wrap_command
+
 from ryotenkai_control.cli.context import CLIContext
 from ryotenkai_control.cli.renderer import get_renderer
 from ryotenkai_control.cli.version import collect_version_info
 
 
+@wrap_command
 def _version_cmd(ctx: typer.Context) -> None:
     """Show version info (ryotenkai / python / platform / git sha)."""
     state = ctx.ensure_object(CLIContext)
