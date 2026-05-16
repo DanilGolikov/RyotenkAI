@@ -132,7 +132,10 @@ class StartupValidator:
                     detail=(
                         f"{secret_name} is required when using provider "
                         f"{active_provider!r}. Set it via environment "
-                        f"variable {secret_name} or in config/secrets.env."
+                        f"variable {secret_name}, or write it to a "
+                        f"secrets.env file and point RYOTENKAI_SECRETS_FILE "
+                        f"at that path (e.g. "
+                        f"export RYOTENKAI_SECRETS_FILE=~/RyotenkAI/secrets.env)."
                     ),
                     context={
                         "provider": active_provider,
@@ -170,8 +173,9 @@ class StartupValidator:
                     detail=(
                         f"{secret_name} is required when using "
                         f"inference.provider={inference_provider!r}. "
-                        f"Set it via environment variable {secret_name} "
-                        f"or in config/secrets.env."
+                        f"Set it via environment variable {secret_name}, "
+                        f"or write it to a secrets.env file and point "
+                        f"RYOTENKAI_SECRETS_FILE at that path."
                     ),
                     context={
                         "provider": inference_provider,

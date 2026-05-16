@@ -44,46 +44,12 @@ if TYPE_CHECKING:
 # (``EVAL_*``, ``DTST_*``…) only enter via the dotenv file as before.
 _DECLARED_ALIASES: tuple[str, ...] = ("HF_TOKEN", "RUNPOD_API_KEY")
 
-
-def _maybe_main_repo_root(workspace_root: Path) -> Path | None:
-    """Resolve the main repo root if ``workspace_root`` is a git worktree.
-
-    Worktree marker: ``<worktree>/.git`` is a FILE (not a directory) whose
-    content is ``gitdir: /path/to/main/.git/worktrees/<name>``. Walking up
-    two parents from that gitdir lands on the main repo's ``.git`` parent
-    — the main repo root. In a normal (non-worktree) checkout ``.git`` is
-    a directory; we return ``None`` so the fallback is a no-op.
-
-    Returns:
-        Main repo root path if ``workspace_root`` is a worktree and the
-        marker parses cleanly; ``None`` otherwise. Errors swallowed (a
-        broken ``.git`` shouldn't crash secrets loading).
-    """
-    git_marker = workspace_root / ".git"
-    if not git_marker.is_file():
-        return None
-    try:
-        text = git_marker.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    prefix = "gitdir:"
-    if not text.startswith(prefix):
-        return None
-    gitdir_str = text[len(prefix):].strip()
-    if not gitdir_str:
-        return None
-    gitdir = Path(gitdir_str)
-    if not gitdir.is_absolute():
-        # The marker may use a relative path — resolve against worktree.
-        gitdir = (workspace_root / gitdir).resolve()
-    # gitdir typically: <main>/.git/worktrees/<name>
-    # parent: <main>/.git/worktrees  parent.parent: <main>/.git
-    # parent.parent.parent: <main>
-    main_git = gitdir.parent.parent
-    if main_git.name != ".git":
-        # Defensive: marker layout has changed; bail.
-        return None
-    return main_git.parent
+# Env var an operator can set once (e.g. in ``~/.zshrc``) to point the
+# loader at a canonical ``secrets.env`` regardless of where the command
+# is invoked from. Takes precedence over auto-discovery. Has the same
+# precedence as passing ``env_file=`` programmatically — file takes
+# effect when present, ignored when the path doesn't exist.
+SECRETS_FILE_ENV_VAR = "RYOTENKAI_SECRETS_FILE"
 
 
 def load_secrets(
@@ -127,6 +93,16 @@ def load_secrets(
     if env_file is not None:
         candidates.append(Path(env_file).expanduser())
 
+    # Explicit operator override via env var. Set once (e.g. in
+    # ``~/.zshrc`` as ``export RYOTENKAI_SECRETS_FILE=~/RyotenkAI/secrets.env``)
+    # so the command works from any working directory — symlinks,
+    # mounted volumes, container bind mounts, sibling checkouts — without
+    # the loader having to encode knowledge of any specific layout
+    # convention (git worktrees, monorepo nesting, etc.). VCS-agnostic.
+    env_var_path = (source.get(SECRETS_FILE_ENV_VAR) if env is not None else os.environ.get(SECRETS_FILE_ENV_VAR))
+    if env_var_path:
+        candidates.append(Path(env_var_path).expanduser())
+
     # Project-root auto-discovery is suppressed when the caller passed
     # an explicit ``env`` mapping. Variant 1 contract: an adapter that
     # supplies ``env`` is declaring "this mapping IS the env layer" —
@@ -140,6 +116,11 @@ def load_secrets(
         # ``packages/`` directory (the uv workspace marker). Pinned
         # ``parents[N]`` was fragile across the Phase B packagization
         # move (loader.py is now 3 levels deeper than it used to be).
+        # Note: in nested workspaces (e.g. a workspace embedded under
+        # another tool's worktree directory), this stops at the FIRST
+        # match. Operators with non-standard layouts should set
+        # :data:`SECRETS_FILE_ENV_VAR` to point at the canonical file
+        # explicitly rather than rely on auto-discovery.
         try:
             here = Path(__file__).resolve()
             project_root: Path = Path.cwd()  # fallback
@@ -156,25 +137,6 @@ def load_secrets(
                 project_root / "config" / "secrets.env",
             ]
         )
-
-        # Worktree fallback: if ``project_root`` is a git worktree (its
-        # ``.git`` is a FILE pointing to ``<main_repo>/.git/worktrees/<name>``,
-        # not a directory), walk up to the main repo and append its
-        # ``secrets.env`` candidates too. Without this, every fresh
-        # worktree silently lacks credentials and the user gets a
-        # "RUNPOD_API_KEY required" failure even though the main checkout
-        # has the file. Worktree-local secrets.env still wins because
-        # it appears first in ``candidates`` (worktree override > main).
-        # Worktree marker file format (man gitrepository-layout):
-        #     "gitdir: /path/to/main/.git/worktrees/<name>"
-        main_repo_root = _maybe_main_repo_root(project_root)
-        if main_repo_root is not None and main_repo_root != project_root:
-            candidates.extend(
-                [
-                    main_repo_root / "secrets.env",
-                    main_repo_root / "config" / "secrets.env",
-                ]
-            )
 
     chosen_file: Path | None = next((p for p in candidates if p.is_file()), None)
 

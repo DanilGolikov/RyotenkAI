@@ -88,11 +88,9 @@ class TestProjectOverrideScenario:
         """
         monkeypatch.delenv("HF_TOKEN", raising=False)
         monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
-        # Disable the worktree fallback so dev-machine secrets don't leak in.
-        monkeypatch.setattr(
-            "ryotenkai_shared.config.secrets.loader._maybe_main_repo_root",
-            lambda _root: None,
-        )
+        # Clear the operator-override env var so the dev machine's
+        # ``RYOTENKAI_SECRETS_FILE`` (if set in ~/.zshrc) doesn't leak in.
+        monkeypatch.delenv("RYOTENKAI_SECRETS_FILE", raising=False)
         s = load_secrets(env_file=tmp_path / "nonexistent.env")
         assert s.hf_token is None
         assert s.runpod_api_key is None
