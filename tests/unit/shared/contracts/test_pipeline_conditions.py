@@ -21,7 +21,6 @@ from ryotenkai_shared.contracts.pipeline_conditions import (
     update_condition,
 )
 
-
 # ---------------------------------------------------------------------------
 # Class 1 — Model construction + Pydantic field validation
 # ---------------------------------------------------------------------------
