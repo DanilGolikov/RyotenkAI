@@ -1,4 +1,4 @@
-"""Unit tests for src.pipeline.stages.dataset_validator.plugin_runner.
+"""Unit tests for :mod:`ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner`.
 
 Phase A2 Batch 8 — raise-based migration. ``PluginRunner.run`` returns a
 metrics ``dict`` on success and raises
@@ -6,6 +6,13 @@ metrics ``dict`` on success and raises
 (``context["critical"]`` distinguishes the legacy
 ``DATASET_VALIDATION_CRITICAL_FAILURE`` /
 ``DATASET_VALIDATION_ERROR`` codes).
+
+Phase 4 (event-system unification, 2026-05-16): the previous
+``DatasetValidatorEventCallbacks`` dataclass was replaced with a direct
+:class:`ValidationArtifactManager` collaborator. Tests now spy on
+``MagicMock(spec=ValidationArtifactManager)`` — that class is a regular
+class (not a Protocol) so this mocking pattern remains compliant with
+the no-Protocol-mocking sentinel.
 """
 
 from __future__ import annotations
@@ -17,15 +24,29 @@ from unittest.mock import MagicMock
 import pytest
 
 from ryotenkai_control.data.validation.base import ValidationResult
+from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import (
+    ValidationArtifactManager,
+)
 from ryotenkai_control.pipeline.stages.dataset_validator.constants import (
     VALIDATION_STATUS_KEY,
     VALIDATION_STATUS_PASSED,
 )
 from ryotenkai_control.pipeline.stages.dataset_validator.plugin_runner import PluginRunner
-from ryotenkai_control.pipeline.stages.dataset_validator.stage import DatasetValidatorEventCallbacks
 from ryotenkai_shared.errors import DatasetValidationFailedError
 
 pytestmark = pytest.mark.unit
+
+
+def _mock_artifact_recorder() -> MagicMock:
+    """Return a ``MagicMock(spec=ValidationArtifactManager)`` so the
+    test assertion surface mirrors the real ``on_*`` recorder method
+    set without dragging a real :class:`StageArtifactCollector` into
+    the fixture.
+
+    ``ValidationArtifactManager`` is a concrete class (not a Protocol),
+    so this stays compliant with :mod:`tests._lint.test_no_protocol_mocking`.
+    """
+    return MagicMock(spec=ValidationArtifactManager)
 
 
 # ------------------------------------------------------------------
@@ -107,15 +128,9 @@ class _CrashPlugin:
 # ------------------------------------------------------------------
 
 
-def test_run_success_fires_complete_and_validation_completed_callbacks():
-    cb = DatasetValidatorEventCallbacks(
-        on_plugin_start=MagicMock(),
-        on_plugin_complete=MagicMock(),
-        on_plugin_failed=MagicMock(),
-        on_validation_completed=MagicMock(),
-        on_validation_failed=MagicMock(),
-    )
-    runner = PluginRunner(callbacks=cb)
+def test_run_success_records_plugin_start_complete_and_validation_completed():
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
@@ -131,11 +146,11 @@ def test_run_success_fires_complete_and_validation_completed_callbacks():
     # Metrics carry split-prefixed key.
     assert res["train.p_main.m"] == 1.0
     assert res["warnings"] == ["w"]
-    cb.on_plugin_start.assert_called_once()
-    cb.on_plugin_complete.assert_called_once()
-    cb.on_validation_completed.assert_called_once()
-    cb.on_plugin_failed.assert_not_called()
-    cb.on_validation_failed.assert_not_called()
+    rec.on_plugin_start.assert_called_once()
+    rec.on_plugin_complete.assert_called_once()
+    rec.on_validation_completed.assert_called_once()
+    rec.on_plugin_failed.assert_not_called()
+    rec.on_validation_failed.assert_not_called()
 
 
 # ------------------------------------------------------------------
@@ -143,14 +158,9 @@ def test_run_success_fires_complete_and_validation_completed_callbacks():
 # ------------------------------------------------------------------
 
 
-def test_run_failure_raises_and_fires_plugin_failed_and_validation_failed_callbacks():
-    cb = DatasetValidatorEventCallbacks(
-        on_plugin_complete=MagicMock(),
-        on_plugin_failed=MagicMock(),
-        on_validation_completed=MagicMock(),
-        on_validation_failed=MagicMock(),
-    )
-    runner = PluginRunner(callbacks=cb)
+def test_run_failure_raises_and_records_plugin_failed_and_validation_failed():
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     with pytest.raises(DatasetValidationFailedError):
@@ -162,18 +172,21 @@ def test_run_failure_raises_and_fires_plugin_failed_and_validation_failed_callba
             plugins=[("p_main", "p", _FailPlugin(), {"train"})],
             split_name="train",
         )
-    cb.on_plugin_failed.assert_called()
-    failed_call = cb.on_plugin_failed.call_args
+    rec.on_plugin_failed.assert_called()
+    failed_call = rec.on_plugin_failed.call_args
     assert failed_call is not None
+    # Positional args layout: dataset_name, dataset_path, plugin_id,
+    # plugin_name, params, thresholds, metrics, duration_ms, errors,
+    # recommendations.
     assert failed_call.args[7] == pytest.approx(1.0)
-    cb.on_validation_failed.assert_called()
-    cb.on_plugin_complete.assert_not_called()
-    cb.on_validation_completed.assert_not_called()
+    rec.on_validation_failed.assert_called()
+    rec.on_plugin_complete.assert_not_called()
+    rec.on_validation_completed.assert_not_called()
 
 
 def test_run_critical_threshold_raises_with_critical_flag():
-    cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
-    runner = PluginRunner(callbacks=cb)
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     with pytest.raises(DatasetValidationFailedError) as excinfo:
@@ -191,8 +204,8 @@ def test_run_critical_threshold_raises_with_critical_flag():
 
 
 def test_run_below_critical_threshold_raises_with_critical_false():
-    cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
-    runner = PluginRunner(callbacks=cb)
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=2))
 
     with pytest.raises(DatasetValidationFailedError) as excinfo:
@@ -208,8 +221,8 @@ def test_run_below_critical_threshold_raises_with_critical_false():
 
 
 def test_run_critical_threshold_breaks_loop_early():
-    cb = DatasetValidatorEventCallbacks()
-    runner = PluginRunner(callbacks=cb)
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     second = _OkPlugin()
@@ -237,9 +250,9 @@ def test_run_critical_threshold_breaks_loop_early():
 # ------------------------------------------------------------------
 
 
-def test_run_plugin_crash_raises_and_fires_failed_callback():
-    cb = DatasetValidatorEventCallbacks(on_plugin_failed=MagicMock(), on_validation_failed=MagicMock())
-    runner = PluginRunner(callbacks=cb)
+def test_run_plugin_crash_raises_and_records_failure():
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=1))
 
     with pytest.raises(DatasetValidationFailedError):
@@ -251,8 +264,8 @@ def test_run_plugin_crash_raises_and_fires_failed_callback():
             plugins=[("p_main", "p", _CrashPlugin(), {"train"})],
             split_name="train",
         )
-    cb.on_plugin_failed.assert_called_once()
-    failed_call = cb.on_plugin_failed.call_args
+    rec.on_plugin_failed.assert_called_once()
+    failed_call = rec.on_plugin_failed.call_args
     assert failed_call is not None
     assert failed_call.args[7] >= 0.0
     # error in args[8] mentions crash
@@ -260,9 +273,11 @@ def test_run_plugin_crash_raises_and_fires_failed_callback():
     assert any("crashed" in e for e in errors_arg)
 
 
-def test_run_no_callbacks_does_not_blow_up():
-    """Default DatasetValidatorEventCallbacks() leaves all 7 callbacks None."""
-    runner = PluginRunner(callbacks=DatasetValidatorEventCallbacks())
+def test_run_no_recorder_does_not_blow_up():
+    """``artifact_recorder=None`` is the default — every recorder hook
+    is silently skipped so plugin loops work in tests that don't care
+    about the accumulator surface."""
+    runner = PluginRunner(artifact_recorder=None)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
@@ -278,8 +293,8 @@ def test_run_no_callbacks_does_not_blow_up():
 
 
 def test_run_empty_plugins_list_is_success():
-    cb = DatasetValidatorEventCallbacks(on_validation_completed=MagicMock())
-    runner = PluginRunner(callbacks=cb)
+    rec = _mock_artifact_recorder()
+    runner = PluginRunner(artifact_recorder=rec)
     dataset_config = SimpleNamespace(validations=MagicMock(critical_failures=0))
 
     res = runner.run(
@@ -292,4 +307,4 @@ def test_run_empty_plugins_list_is_success():
     )
     assert isinstance(res, dict)
     assert res[VALIDATION_STATUS_KEY] == VALIDATION_STATUS_PASSED
-    cb.on_validation_completed.assert_called_once()
+    rec.on_validation_completed.assert_called_once()

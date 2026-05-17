@@ -35,15 +35,50 @@ volume). Phase 12.A.1 plan § 3.2 wires this in
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from ryotenkai_shared.errors import SSHTransferFailedError
+from ryotenkai_shared.errors import (
+    MetricsBufferTooLargeError,
+    SSHTransferFailedError,
+)
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_model import (
+    MetricsBufferOversizedEvent,
+    MetricsBufferOversizedPayload,
+)
 from ryotenkai_shared.utils.logger import get_logger
 from ryotenkai_shared.utils.ssh_client import SSHClient
 
+if TYPE_CHECKING:
+    from ryotenkai_shared.events import IEventEmitter
+
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Env-tunable threshold
+# ---------------------------------------------------------------------------
+
+#: Env var that lets operators raise the per-retrieval buffer cap from
+#: the default 100 MiB. Value is parsed as MiB (integer). Capped at
+#: :data:`_MAX_ENV_THRESHOLD_MIB` so a fat-fingered value cannot wipe
+#: the Mac's disk.
+ENV_METRICS_BUFFER_MAX_MB = "RYOTENKAI_METRICS_BUFFER_MAX_MB"
+
+#: Default cap (matches the long-standing class-level constant). Kept
+#: in MiB so the env-driven override has a natural unit.
+DEFAULT_BUFFER_MAX_MIB = 100
+
+#: Upper bound on the env override. Above this we still consider the
+#: file ultra-large and surface it via
+#: :class:`MetricsBufferTooLargeError` (the honest-failure mode).
+_MAX_ENV_THRESHOLD_MIB = 1000
+
+#: Source URI stamped on the typed oversized event.
+_EVENT_SOURCE = "control://orchestrator/model_retriever/metrics_buffer"
 
 
 @dataclass(frozen=True)
@@ -112,6 +147,9 @@ class MetricsBufferRetriever:
         ssh_client: SSHClient,
         *,
         workspace_path: str = "/workspace",
+        emitter: IEventEmitter | None = None,
+        run_id: str = "unknown",
+        env: dict[str, str] | None = None,
     ) -> None:
         """
         Args:
@@ -119,6 +157,18 @@ class MetricsBufferRetriever:
                             (from :class:`ModelRetriever._ssh_client`).
             workspace_path: Remote workspace root (``/workspace`` on
                             both RunPod and single_node by default).
+            emitter:        Optional :class:`IEventEmitter` for the
+                            typed :class:`MetricsBufferOversizedEvent`.
+                            ``None`` falls back to log-only behaviour
+                            so tests that bypass the orchestrator stay
+                            simple (Phase 5 optional-emitter pattern).
+            run_id:         Pipeline ``run_id`` used as the envelope
+                            field. ``"unknown"`` is acceptable when
+                            the caller has no run context.
+            env:            Optional process-environment mapping for
+                            threshold resolution. Defaults to
+                            :data:`os.environ`; tests pass a tailored
+                            mapping rather than mutating the live env.
         """
         self._ssh = ssh_client
         self._workspace = workspace_path.rstrip("/")
@@ -128,6 +178,58 @@ class MetricsBufferRetriever:
         self._remote_flush_offset_path = (
             f"{self._workspace}/{self.REMOTE_FLUSH_OFFSET_RELPATH}"
         )
+        self._emitter = emitter
+        self._run_id = run_id
+        self._env: dict[str, str] = (
+            dict(env) if env is not None else dict(os.environ)
+        )
+
+        # Per-instance threshold derived from env, capped at the safe
+        # upper bound. Falls back to MAX_BUFFER_SIZE_BYTES on parse
+        # errors so a typo doesn't silently demote the cap.
+        self._threshold_bytes = self._resolve_threshold_bytes(self._env)
+
+    @staticmethod
+    def _resolve_threshold_bytes(env: dict[str, str]) -> int:
+        """Read the env-tunable threshold; clamp to the safe range.
+
+        Falls back to :data:`DEFAULT_BUFFER_MAX_MIB` when the env var
+        is absent, empty, non-numeric, or non-positive. Values above
+        :data:`_MAX_ENV_THRESHOLD_MIB` are clamped (with a log line so
+        the operator notices their override was capped).
+        """
+        raw = env.get(ENV_METRICS_BUFFER_MAX_MB, "").strip()
+        if not raw:
+            return DEFAULT_BUFFER_MAX_MIB * 1024 * 1024
+        try:
+            mib = int(raw)
+        except ValueError:
+            logger.warning(
+                "[METRICS_REPLAY] %s=%r is not an integer; "
+                "using default %d MiB",
+                ENV_METRICS_BUFFER_MAX_MB, raw, DEFAULT_BUFFER_MAX_MIB,
+            )
+            return DEFAULT_BUFFER_MAX_MIB * 1024 * 1024
+        if mib <= 0:
+            logger.warning(
+                "[METRICS_REPLAY] %s=%d is not positive; "
+                "using default %d MiB",
+                ENV_METRICS_BUFFER_MAX_MB, mib, DEFAULT_BUFFER_MAX_MIB,
+            )
+            return DEFAULT_BUFFER_MAX_MIB * 1024 * 1024
+        if mib > _MAX_ENV_THRESHOLD_MIB:
+            logger.warning(
+                "[METRICS_REPLAY] %s=%d MiB exceeds hard cap %d MiB; "
+                "clamping",
+                ENV_METRICS_BUFFER_MAX_MB, mib, _MAX_ENV_THRESHOLD_MIB,
+            )
+            mib = _MAX_ENV_THRESHOLD_MIB
+        return mib * 1024 * 1024
+
+    @property
+    def threshold_bytes(self) -> int:
+        """Active per-retrieval threshold (env-aware). For tests."""
+        return self._threshold_bytes
 
     @property
     def remote_buffer_path(self) -> str:
@@ -181,11 +283,49 @@ class MetricsBufferRetriever:
                 error="failed to stat remote buffer (SSH probe error)",
             )
 
-        if size_bytes > self.MAX_BUFFER_SIZE_BYTES:
+        if size_bytes > self._threshold_bytes:
+            # Honest-failure mode: above the ultra-large hard cap we
+            # raise typed; below it we keep the legacy skip-with-flag
+            # behaviour but additionally surface a typed warning event
+            # so the run timeline reflects the escalation.
+            hard_cap = _MAX_ENV_THRESHOLD_MIB * 1024 * 1024
+            if size_bytes > hard_cap:
+                self._emit_oversized(
+                    size_bytes=size_bytes,
+                    threshold_bytes=self._threshold_bytes,
+                    discarded=True,
+                )
+                logger.error(
+                    "[METRICS_REPLAY] remote buffer ultra-large: "
+                    "%d bytes (> %d MiB hard cap) — raising honest failure",
+                    size_bytes, _MAX_ENV_THRESHOLD_MIB,
+                )
+                raise MetricsBufferTooLargeError(
+                    detail=(
+                        f"remote metrics_buffer.jsonl is "
+                        f"{size_bytes} bytes (> {_MAX_ENV_THRESHOLD_MIB} MiB "
+                        "hard cap); refusing to download"
+                    ),
+                    context={
+                        "legacy_code": "METRICS_BUFFER_OVERSIZE",
+                        "size_bytes": size_bytes,
+                        "threshold_bytes": self._threshold_bytes,
+                        "hard_cap_bytes": hard_cap,
+                        "pod_path": self._remote_buffer_path,
+                    },
+                )
+            # Between the active threshold and the hard cap — emit a
+            # warning event but still skip the download (existing
+            # contract: ``oversized=True`` so the caller logs + moves on).
+            self._emit_oversized(
+                size_bytes=size_bytes,
+                threshold_bytes=self._threshold_bytes,
+                discarded=True,
+            )
             logger.warning(
                 "[METRICS_REPLAY] remote buffer oversized: %d bytes "
                 "(>%d cap) — skipping download to protect Mac disk",
-                size_bytes, self.MAX_BUFFER_SIZE_BYTES,
+                size_bytes, self._threshold_bytes,
             )
             return FetchResult(
                 local_path=None,
@@ -277,5 +417,41 @@ class MetricsBufferRetriever:
         except OSError:
             return 0
 
+    def _emit_oversized(
+        self,
+        *,
+        size_bytes: int,
+        threshold_bytes: int,
+        discarded: bool,
+    ) -> None:
+        """Publish a :class:`MetricsBufferOversizedEvent`. No-op when
+        :attr:`_emitter` is ``None`` (test paths bypassing the
+        orchestrator); never raises into the caller."""
+        if self._emitter is None:
+            return
+        try:
+            self._emitter.emit(
+                MetricsBufferOversizedEvent(
+                    source=_EVENT_SOURCE,
+                    run_id=self._run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=MetricsBufferOversizedPayload(
+                        size_bytes=size_bytes,
+                        threshold_bytes=threshold_bytes,
+                        pod_path=self._remote_buffer_path,
+                        discarded=discarded,
+                    ),
+                ),
+            )
+        except Exception as exc:
+            logger.debug(
+                "[METRICS_REPLAY] failed to emit oversized event: %s", exc,
+            )
 
-__all__ = ["FetchResult", "MetricsBufferRetriever"]
+
+__all__ = [
+    "DEFAULT_BUFFER_MAX_MIB",
+    "ENV_METRICS_BUFFER_MAX_MB",
+    "FetchResult",
+    "MetricsBufferRetriever",
+]

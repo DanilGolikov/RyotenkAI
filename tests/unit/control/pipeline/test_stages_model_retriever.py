@@ -426,17 +426,22 @@ class TestModelRetrieverExecute:
         assert stage_ctx["provider_name"] == "single_node"
         assert (tmp_path / "outputs/models/mock-model-checkpoint").exists()
 
-    def test_execute_hf_upload_success_skips_download_and_calls_callbacks(
+    def test_execute_hf_upload_success_skips_download_and_emits_retrieval_events(
         self, mock_config_with_hf, mock_secrets, monkeypatch
     ):
-        events: list[str] = []
+        # Phase 4 — granular ``on_hf_upload_*`` callbacks were dropped in
+        # favour of the typed ``ryotenkai.control.model.retrieval_*``
+        # envelopes. The stage emits exactly one Started + one Completed
+        # event per execute() call regardless of whether the HF upload
+        # path or the local-download fallback runs.
+        from ryotenkai_shared.events.types.control_model import (
+            ModelRetrievalCompletedEvent,
+            ModelRetrievalStartedEvent,
+        )
+        from tests._fakes.event_emitter import FakeEventEmitter
 
-        callbacks = MagicMock()
-        callbacks.on_hf_upload_started = lambda repo_id: events.append(f"start:{repo_id}")
-        callbacks.on_hf_upload_completed = lambda repo_id, dur: events.append(f"done:{repo_id}")
-        callbacks.on_retrieval_completed = lambda hf, path: events.append(f"final:{hf}:{path}")
-
-        retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = ModelRetriever(mock_config_with_hf, mock_secrets, emitter=emitter)
         retriever.hf_api = MagicMock()
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: 10.0)
@@ -462,17 +467,28 @@ class TestModelRetrieverExecute:
         assert out["hf_uploaded"] is True
         assert out["hf_repo_id"] == "org/test-model"
         assert "upload_duration_seconds" in out
-        assert events[:2] == ["start:org/test-model", "done:org/test-model"]
+
+        started = [e for e in emitter.emitted if isinstance(e, ModelRetrievalStartedEvent)]
+        completed = [e for e in emitter.emitted if isinstance(e, ModelRetrievalCompletedEvent)]
+        assert len(started) == 1
+        assert len(completed) == 1
+        # Target path points to the HF repo when upload succeeded.
+        assert started[0].payload.target_path == "org/test-model"
 
     def test_execute_hf_upload_fails_then_downloads_small_model(
         self, mock_config_with_hf, mock_secrets, monkeypatch, tmp_path
     ):
-        events: list[str] = []
-        callbacks = MagicMock()
-        callbacks.on_local_download_started = lambda size: events.append(f"dl_start:{size}")
-        callbacks.on_local_download_completed = lambda path: events.append(f"dl_done:{path}")
+        # Phase 4 — granular ``on_local_download_*`` callbacks dropped;
+        # the fallback path's observable contract is now the returned
+        # stage context (hf_uploaded=False + local_model_path set) plus
+        # the single retrieval_completed envelope on the emitter.
+        from ryotenkai_shared.events.types.control_model import (
+            ModelRetrievalCompletedEvent,
+        )
+        from tests._fakes.event_emitter import FakeEventEmitter
 
-        retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = ModelRetriever(mock_config_with_hf, mock_secrets, emitter=emitter)
         retriever.hf_api = MagicMock()
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: 100.0)
@@ -485,16 +501,18 @@ class TestModelRetrieverExecute:
         out = res["Model Retriever"]
         assert out["hf_uploaded"] is False
         assert out["local_model_path"] == str(tmp_path)
-        assert events and events[0].startswith("dl_start:")
+        # Retrieval still surfaces a single completed envelope even when
+        # the HF upload failed and the local-download fallback ran.
+        completed = [e for e in emitter.emitted if isinstance(e, ModelRetrievalCompletedEvent)]
+        assert len(completed) == 1
 
-    def test_execute_download_failure_calls_failed_callback_and_returns_err(
+    def test_execute_download_failure_raises_with_legacy_code(
         self, mock_config_with_hf, mock_secrets, monkeypatch
     ) -> None:
-        events: list[str] = []
-        callbacks = MagicMock()
-        callbacks.on_local_download_failed = lambda msg: events.append(f"dl_fail:{msg}")
-
-        retriever = ModelRetriever(mock_config_with_hf, mock_secrets, callbacks=callbacks)
+        # Phase 4 — ``on_local_download_failed`` callback dropped; the
+        # failure surface is the typed ``ModelLoadFailedError`` carrying
+        # ``legacy_code=MODEL_RETRIEVAL_FAILED``.
+        retriever = ModelRetriever(mock_config_with_hf, mock_secrets)
         retriever.hf_api = MagicMock()
 
         monkeypatch.setattr(retriever, "_get_model_size", lambda: 100.0)
@@ -506,7 +524,7 @@ class TestModelRetrieverExecute:
         with pytest.raises(ModelLoadFailedError) as exc_info:
             retriever.execute(ctx)
         assert "local download failed" in str(exc_info.value).lower()
-        assert events and events[0].startswith("dl_fail:")
+        assert exc_info.value.context.get("legacy_code") == "MODEL_RETRIEVAL_FAILED"
 
     def test_execute_hf_disabled_downloads(self, mock_config_with_hf, mock_secrets, monkeypatch, tmp_path) -> None:
         # No huggingface block at all → hf_enabled=False → the

@@ -362,9 +362,11 @@ class TestPipelineOrchestratorHappyPath:
             result = orchestrator.run()
 
             assert isinstance(result, dict)
-            # Check MLflow logging
-            mock_mlflow_manager.log_event_start.assert_called_once()
-            mock_mlflow_manager.log_event_complete.assert_called_once()
+            # Phase 7: ``log_event_start`` / ``log_event_complete`` removed
+            # — the pipeline lifecycle is captured on the typed journal.
+            # The set_tags + log_params side effects (pipeline.status +
+            # duration_seconds) remain part of the surface.
+            mock_mlflow_manager.set_tags.assert_any_call({"pipeline.status": "completed"})
 
     def test_run_generates_experiment_report_on_success(
         self,
@@ -1285,8 +1287,9 @@ class TestPipelineOrchestratorStageSpecificLogging:
             result = orchestrator.run()
 
             assert isinstance(result, dict)
-            # Should log training info
-            assert mock_mlflow_manager.log_event_info.call_count >= 1
+            # Phase 7: training info now flows entirely through
+            # ``log_metrics`` (training.duration_seconds + the
+            # final_loss / accuracy / total_steps metrics).
             assert mock_mlflow_manager.log_metrics.call_count >= 1
 
     def test_log_stage_specific_info_model_retriever(
@@ -1327,8 +1330,14 @@ class TestPipelineOrchestratorStageSpecificLogging:
             result = orchestrator.run()
 
             assert isinstance(result, dict)
-            # Should log model info
-            assert mock_mlflow_manager.log_event_info.call_count >= 2  # Model size + HF upload
+            # Phase 7: model info now flows through log_metrics (size +
+            # upload_duration) + set_tags (hf_repo_id).
+            mock_mlflow_manager.set_tags.assert_any_call({"model.hf_repo_id": "user/model"})
+            upload_metric_calls = [
+                c for c in mock_mlflow_manager.log_metrics.call_args_list
+                if "model.upload_duration_seconds" in c.args[0]
+            ]
+            assert upload_metric_calls
 
     def test_log_stage_specific_info_dataset_validator_plugin_mode(
         self,
@@ -1499,8 +1508,7 @@ class TestPipelineOrchestratorExceptionHandlers:
                 orchestrator.run()
 
             # raise asserted via pytest.raises
-            # MLflow should log interruption
-            mock_mlflow_manager.log_event_warning.assert_called_once()
+            # Phase 7: ``log_event_warning`` removed; tag set remains.
             mock_mlflow_manager.set_tags.assert_called_once_with({"pipeline.status": "interrupted"})
 
     def test_run_with_unexpected_exception_mlflow_logging(
@@ -1533,9 +1541,8 @@ class TestPipelineOrchestratorExceptionHandlers:
                 orchestrator.run()
 
             # raise asserted via pytest.raises
-            # MLflow should log error
-            mock_mlflow_manager.log_event_error.assert_called_once()
-            assert "Unexpected error" in str(mock_mlflow_manager.log_event_error.call_args)
+            # Phase 7: ``log_event_error`` removed; pipeline.status tag
+            # stays set on unexpected error.
             mock_mlflow_manager.set_tags.assert_called_once_with({"pipeline.status": "failed"})
 # ========================================================================
 # COVERAGE BOOST: PRINT SUMMARY DETAILS (3 tests)

@@ -413,3 +413,143 @@ def test_cleanup_keeps_runtime_when_keep_inference_after_eval_enabled() -> None:
     mock_provider.deactivate_after_eval.assert_not_called()
 
 
+# =============================================================================
+# Phase 5: typed event emission
+# =============================================================================
+
+
+class TestPhase5EventEmission:
+    """Pin the Phase 5 typed-event contract for InferenceDeployer.
+
+    All happy / sad paths under test use the canonical
+    :class:`FakeEventEmitter` (tests/_fakes/event_emitter.py) — no
+    Protocol mocking (CLAUDE.md sentinel
+    :mod:`tests._lint.test_no_protocol_mocking`).
+    """
+
+    def test_skip_path_emits_nothing(self) -> None:
+        """Stage skipped (inference.enabled=False, not forced) → no
+        typed envelopes (the skip path returns before the stage_scope
+        is opened).
+        """
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.inference.enabled = False
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"), emitter=emitter)
+        stage.execute({})
+        assert emitter.emitted == []
+
+    def test_failed_path_emits_deployment_failed(self) -> None:
+        """Negative: model_source unresolved (ModelLoadFailedError) →
+        ``ryotenkai.control.inference.deployment_failed`` envelope is
+        emitted before the exception propagates.
+        """
+        from ryotenkai_shared.errors import ModelLoadFailedError
+
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.inference.enabled = True
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"), emitter=emitter)
+        with pytest.raises(ModelLoadFailedError):
+            stage.execute({})
+        kinds = [ev.kind for ev in emitter.emitted]
+        assert "ryotenkai.control.inference.deployment_failed" in kinds
+        # Pin invariants on the emitted failure envelope.
+        failed = next(
+            ev for ev in emitter.emitted
+            if ev.kind == "ryotenkai.control.inference.deployment_failed"
+        )
+        assert failed.severity == "error"
+        assert failed.payload.error_type == "ModelLoadFailedError"
+
+    def test_internal_error_path_emits_deployment_failed(self) -> None:
+        """Missing RunContext is a programmer error (InternalError) —
+        the failure envelope still fires so reports surface the
+        diagnostic chain.
+        """
+        from ryotenkai_shared.errors import InternalError
+
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.inference.enabled = True
+        cfg.inference.common.model_source = "test/repo"
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"), emitter=emitter)
+        with pytest.raises(InternalError):
+            stage.execute({StageNames.MODEL_RETRIEVER: {"hf_repo_id": "test/repo"}})
+        kinds = [ev.kind for ev in emitter.emitted]
+        assert "ryotenkai.control.inference.deployment_failed" in kinds
+
+    def test_set_emitter_is_lazy_wiring(self) -> None:
+        """Stage is constructed without emitter; orchestrator wires it
+        lazily via :meth:`set_emitter`. The stage MUST use the
+        late-set emitter (regression: an early-bound copy would never
+        publish).
+        """
+        from ryotenkai_shared.errors import ModelLoadFailedError
+
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.inference.enabled = True
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"))
+        stage.set_emitter(emitter)
+        with pytest.raises(ModelLoadFailedError):
+            stage.execute({})
+        assert any(
+            ev.kind == "ryotenkai.control.inference.deployment_failed"
+            for ev in emitter.emitted
+        )
+
+    def test_cleanup_emits_deactivated_after_success(self) -> None:
+        """Happy path for :meth:`cleanup` (eval enabled +
+        deactivate_after_eval returns) → ``deactivated`` envelope.
+        """
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.evaluation.enabled = True
+
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"), emitter=emitter)
+        mock_provider = MagicMock()
+        mock_provider.deactivate_after_eval.return_value = None
+        stage._provider = mock_provider
+        stage.cleanup()
+        assert any(
+            ev.kind == "ryotenkai.control.inference.deactivated"
+            for ev in emitter.emitted
+        )
+
+    def test_cleanup_no_deactivate_emit_on_warning_path(self) -> None:
+        """If deactivate_after_eval raises (warning path) → no
+        ``deactivated`` envelope. The contract: the typed envelope
+        represents a successful deactivation; failures stay as log
+        warnings until Phase 6 fold them into a typed event.
+        """
+        from ryotenkai_shared.errors import InferenceUnavailableError
+
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        cfg = _load_test_config()
+        cfg.evaluation.enabled = True
+        stage = InferenceDeployer(cfg, Secrets(HF_TOKEN="hf_test"), emitter=emitter)
+        mock_provider = MagicMock()
+        mock_provider.deactivate_after_eval.side_effect = InferenceUnavailableError(
+            detail="deact failed", context={},
+        )
+        stage._provider = mock_provider
+        stage.cleanup()  # must not raise
+        assert not any(
+            ev.kind == "ryotenkai.control.inference.deactivated"
+            for ev in emitter.emitted
+        )
+
+

@@ -45,7 +45,6 @@ def deployer_with_ssh(tmp_path, monkeypatch):
         deployer = GPUDeployer(
             config=config,
             secrets=secrets,
-            callbacks=MagicMock(),
         )
 
     deployer._ssh_client = MagicMock()

@@ -110,23 +110,21 @@ class StageRegistry:
     ) -> list[PipelineStage]:
         """Initialise every stage in execution order.
 
-        Imported lazily so a partially-configured test orchestrator can skip
-        this path with ``patch.object(StageRegistry, "_build_stages", ...)``.
+        Phase 4 (event-system unification, 2026-05-16): the legacy
+        ``*EventCallbacks`` dataclasses are gone. Stages now take
+        ``emitter`` keyword for typed event emission; the
+        :class:`ValidationArtifactManager` is passed to
+        :class:`DatasetValidator` as a direct collaborator
+        (``artifact_recorder``). The emitter is wired in lazily by the
+        orchestrator via :meth:`PipelineStage.set_emitter` once the
+        canonical run directory is resolved.
         """
-        from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidatorEventCallbacks
-
-        vam = validation_artifact_mgr
-        validator_callbacks = DatasetValidatorEventCallbacks(
-            on_dataset_scheduled=vam.on_dataset_scheduled,
-            on_dataset_loaded=vam.on_dataset_loaded,
-            on_validation_completed=vam.on_validation_completed,
-            on_validation_failed=vam.on_validation_failed,
-            on_plugin_start=vam.on_plugin_start,
-            on_plugin_complete=vam.on_plugin_complete,
-            on_plugin_failed=vam.on_plugin_failed,
-        )
         return [
-            DatasetValidator(config, secrets=secrets, callbacks=validator_callbacks),
+            DatasetValidator(
+                config,
+                secrets=secrets,
+                artifact_recorder=validation_artifact_mgr,
+            ),
             GPUDeployer(config, secrets),
             TrainingMonitor(config, secrets=secrets),
             ModelRetriever(config, secrets),

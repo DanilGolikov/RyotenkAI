@@ -46,7 +46,7 @@ def test_no_op_when_stage_not_in_context(logger_under_test: StageInfoLogger, mgr
         stage_name=StageNames.GPU_DEPLOYER,
     )
     mgr.log_provider_info.assert_not_called()
-    mgr.log_event_info.assert_not_called()
+    mgr.log_params.assert_not_called()
 
 
 def test_unknown_stage_is_skipped(logger_under_test: StageInfoLogger, mgr: MagicMock) -> None:
@@ -96,7 +96,12 @@ def test_gpu_deployer_logs_provider_info_and_durations(
         gpu_type="A100",
         resource_id="r1",
     )
-    assert mgr.log_event_info.call_count == 2
+    # Phase 7: per-step ``log_event_info`` removed; durations now flow
+    # through ``log_params`` as ``deployment.*`` keys.
+    mgr.log_params.assert_called_once()
+    params = mgr.log_params.call_args.args[0]
+    assert params["deployment.upload_duration_seconds"] == 12.3
+    assert params["deployment.deps_duration_seconds"] == 4.5
 
 
 def test_gpu_deployer_skips_missing_durations(
@@ -113,7 +118,7 @@ def test_gpu_deployer_skips_missing_durations(
         stage_name=StageNames.GPU_DEPLOYER,
     )
     mgr.log_provider_info.assert_called_once()
-    mgr.log_event_info.assert_not_called()
+    mgr.log_params.assert_not_called()
 
 
 def test_gpu_deployer_uses_unknown_defaults(
@@ -206,8 +211,9 @@ def test_training_monitor_logs_duration_event(
         },
         stage_name=StageNames.TRAINING_MONITOR,
     )
-    mgr.log_event_info.assert_called_once()
-    assert "600.5s" in mgr.log_event_info.call_args.args[0]
+    # Phase 7: ``log_event_info`` removed; duration surfaces as an
+    # MLflow metric instead.
+    mgr.log_metrics.assert_called_once_with({"training.duration_seconds": 600.5})
 
 
 def test_training_monitor_logs_training_info_metrics(
@@ -259,8 +265,9 @@ def test_model_retriever_logs_model_size_event(
         context={StageNames.MODEL_RETRIEVER: {"model_size_mb": 1500.0}},
         stage_name=StageNames.MODEL_RETRIEVER,
     )
-    mgr.log_event_info.assert_called_once()
-    assert "1500.0 MB" in mgr.log_event_info.call_args.args[0]
+    # Phase 7: ``log_event_info`` removed; model size now flows through
+    # ``log_metrics`` as ``model.size_mb``.
+    mgr.log_metrics.assert_called_once_with({"model.size_mb": 1500.0})
 
 
 def test_model_retriever_logs_upload_when_hf_uploaded(
@@ -278,10 +285,14 @@ def test_model_retriever_logs_upload_when_hf_uploaded(
         },
         stage_name=StageNames.MODEL_RETRIEVER,
     )
-    # Two events: model size + hf upload
-    assert mgr.log_event_info.call_count == 2
-    upload_call = mgr.log_event_info.call_args_list[1]
-    assert "org/m" in upload_call.args[0]
+    # Phase 7: HF upload details surface as a tag (repo id) + metric
+    # (upload duration); the per-event logger no longer exists.
+    mgr.set_tags.assert_called_once_with({"model.hf_repo_id": "org/m"})
+    upload_metric_calls = [
+        c for c in mgr.log_metrics.call_args_list
+        if "model.upload_duration_seconds" in c.args[0]
+    ]
+    assert upload_metric_calls, "model.upload_duration_seconds metric expected"
 
 
 def test_model_retriever_skip_upload_when_not_uploaded(
@@ -298,4 +309,10 @@ def test_model_retriever_skip_upload_when_not_uploaded(
         },
         stage_name=StageNames.MODEL_RETRIEVER,
     )
-    assert mgr.log_event_info.call_count == 1  # only model_size
+    # Phase 7: only model size is reported; no hf upload tag / metric.
+    mgr.set_tags.assert_not_called()
+    upload_metric_calls = [
+        c for c in mgr.log_metrics.call_args_list
+        if "model.upload_duration_seconds" in c.args[0]
+    ]
+    assert not upload_metric_calls

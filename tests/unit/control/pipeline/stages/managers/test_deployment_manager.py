@@ -214,3 +214,87 @@ def test_start_training_wraps_unexpected_exception(manager: TrainingDeploymentMa
     ):
         manager.start_training(ssh, {})
     assert exc_info.value.context.get("reason") == "TRAINING_START_FAILED"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — typed event emission for the deployment-manager surface
+# ---------------------------------------------------------------------------
+
+
+class TestPhase5EventEmission:
+    """Pin the Phase 5 contract: a successful ``deploy_code`` emits
+    ``ryotenkai.control.gpu.code_synced``; failures do not.
+    """
+
+    def test_deploy_code_success_emits_code_synced(
+        self, manager: TrainingDeploymentManager,
+    ) -> None:
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        manager.set_emitter(emitter)
+        manager.set_run_id("run-42")
+        ssh = SimpleNamespace()
+        with patch.object(manager._code_syncer, "sync", return_value=None):
+            manager.deploy_code(ssh)
+        kinds = [ev.kind for ev in emitter.emitted]
+        assert "ryotenkai.control.gpu.code_synced" in kinds
+        ev = next(
+            e for e in emitter.emitted
+            if e.kind == "ryotenkai.control.gpu.code_synced"
+        )
+        assert ev.run_id == "run-42"
+        # Severity is the typed default — pin it as an invariant.
+        assert ev.severity == "info"
+
+    def test_deploy_code_failure_emits_no_envelope(
+        self, manager: TrainingDeploymentManager,
+    ) -> None:
+        """Negative: rsync failure → no code_synced envelope; the
+        error propagates as the typed exception."""
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        manager.set_emitter(emitter)
+        manager.set_run_id("run-42")
+        ssh = SimpleNamespace()
+        typed_err = SSHTransferFailedError(
+            detail="rsync failed", context={"reason": "TAR_FAILED"},
+        )
+        with (
+            patch.object(manager._code_syncer, "sync", side_effect=typed_err),
+            pytest.raises(SSHTransferFailedError),
+        ):
+            manager.deploy_code(ssh)
+        assert not any(
+            ev.kind == "ryotenkai.control.gpu.code_synced"
+            for ev in emitter.emitted
+        )
+
+    def test_no_emit_when_emitter_absent(
+        self, manager: TrainingDeploymentManager,
+    ) -> None:
+        """Legacy path: no emitter wired → no exception, no envelope.
+        Mirrors the contract documented on the constructor.
+        """
+        ssh = SimpleNamespace()
+        with patch.object(manager._code_syncer, "sync", return_value=None):
+            manager.deploy_code(ssh)
+        # No emitter attached → nothing to assert about, just ensure
+        # the method completed cleanly. Re-call set_emitter with None
+        # to pin the no-emit contract explicitly.
+        manager.set_emitter(None)  # type: ignore[arg-type]
+        with patch.object(manager._code_syncer, "sync", return_value=None):
+            manager.deploy_code(ssh)
+
+    def test_set_run_id_rejects_empty_value(
+        self, manager: TrainingDeploymentManager,
+    ) -> None:
+        """Pin invariant: empty / non-string values silently retain
+        the previous cached run_id. The caller can't accidentally
+        downgrade a real run_id to ``""``.
+        """
+        manager.set_run_id("run-42")
+        manager.set_run_id("")  # ignored
+        manager.set_run_id(None)  # type: ignore[arg-type]
+        assert manager._cached_run_id == "run-42"

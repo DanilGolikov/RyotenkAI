@@ -26,6 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ryotenkai_control.events import ControlEventEmitter
 from ryotenkai_control.pipeline.bootstrap.startup_validator import StartupValidator
 from ryotenkai_control.pipeline.config_drift import ConfigDriftValidator
 from ryotenkai_control.pipeline.context import ContextPropagator, PipelineContext, StageInfoLogger
@@ -118,6 +119,12 @@ class BootstrapResult:
     launch_preparator: LaunchPreparator
     restart_inspector: RestartPointsInspector
     stage_execution_loop: StageExecutionLoop
+    # Optional: control-side event emitter. ``None`` when bootstrap
+    # was called without a ``run_directory`` — the orchestrator builds
+    # it lazily inside :meth:`_prepare_stateful_attempt` once
+    # ``LaunchPreparator`` has resolved the canonical path. See
+    # :meth:`PipelineOrchestrator._ensure_event_emitter`.
+    emitter: ControlEventEmitter | None = None
 
 
 class PipelineBootstrap:
@@ -140,6 +147,7 @@ class PipelineBootstrap:
         on_stage_completed: Callable[[str], None],
         on_shutdown_signal: Callable[[str], None],
         stages_override: Sequence[PipelineStage] | None = None,
+        run_directory: Path | None = None,
     ) -> BootstrapResult:
         """Wire every collaborator from a pre-loaded config.
 
@@ -307,6 +315,19 @@ class PipelineBootstrap:
             on_shutdown_signal=on_shutdown_signal,
         )
 
+        # Optional Phase 3 event emitter — built up-front only when the
+        # caller already knows the run directory (rare; the usual flow
+        # has the orchestrator resolve it via ``LaunchPreparator`` and
+        # then lazily build the emitter). The emitter is the SSOT for
+        # the events.jsonl journal and the in-memory bus that SSE/WS
+        # adapters subscribe to in Phase 6.
+        emitter: ControlEventEmitter | None = None
+        if run_directory is not None:
+            emitter = ControlEventEmitter.for_run(
+                run_id=run_ctx.name,
+                run_directory=run_directory,
+            )
+
         return BootstrapResult(
             config_path=config_path,
             config=config,
@@ -328,6 +349,7 @@ class PipelineBootstrap:
             launch_preparator=launch_preparator,
             restart_inspector=restart_inspector,
             stage_execution_loop=stage_execution_loop,
+            emitter=emitter,
         )
 
 

@@ -22,7 +22,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ryotenkai_shared.pipeline_context import RunContext
-from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer, GPUDeployerEventCallbacks
+from ryotenkai_control.pipeline.stages.gpu_deployer import GPUDeployer
+from tests._fakes.event_emitter import FakeEventEmitter
 
 # =========================================================================
 # HELPER CLASSES
@@ -69,17 +70,9 @@ def mock_secrets():
 
 
 @pytest.fixture
-def mock_callbacks():
-    """Mock callbacks for tests."""
-    return GPUDeployerEventCallbacks(
-        on_provider_created=MagicMock(),
-        on_connected=MagicMock(),
-        on_files_uploaded=MagicMock(),
-        on_deps_installed=MagicMock(),
-        on_training_started=MagicMock(),
-        on_error=MagicMock(),
-        on_cleanup=MagicMock(),
-    )
+def mock_emitter():
+    """Canonical :class:`FakeEventEmitter` for tests."""
+    return FakeEventEmitter()
 
 
 @pytest.fixture
@@ -141,11 +134,11 @@ def test_deployer_initialization(mock_tdm_class, mock_config_with_gpu, mock_secr
 
 
 @patch("ryotenkai_control.pipeline.stages.gpu_deployer.TrainingDeploymentManager")
-def test_deployer_with_callbacks(mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_callbacks):
-    """Initialization with custom callbacks."""
-    deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets, callbacks=mock_callbacks)
+def test_deployer_with_emitter(mock_tdm_class, mock_config_with_gpu, mock_secrets, mock_emitter):
+    """Initialization with a wired event emitter."""
+    deployer = GPUDeployer(config=mock_config_with_gpu, secrets=mock_secrets, emitter=mock_emitter)
 
-    assert deployer._callbacks is mock_callbacks
+    assert deployer._emitter is mock_emitter
 
 
 # =========================================================================

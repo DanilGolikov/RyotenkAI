@@ -44,7 +44,12 @@ class TestPositive:
             stage_name=StageNames.GPU_DEPLOYER,
         )
         mgr.log_provider_info.assert_called_once()
-        assert mgr.log_event_info.call_count == 2
+        # Phase 7: log_event_info removed; durations now go through log_params
+        # under ``deployment.*`` keys.
+        mgr.log_params.assert_called_once()
+        params = mgr.log_params.call_args.args[0]
+        assert "deployment.upload_duration_seconds" in params
+        assert "deployment.deps_duration_seconds" in params
 
     def test_training_monitor_full_info(self, slog: StageInfoLogger, mgr: MagicMock) -> None:
         slog.log(
@@ -62,10 +67,9 @@ class TestPositive:
             },
             stage_name=StageNames.TRAINING_MONITOR,
         )
-        mgr.log_event_info.assert_called_once()
-        mgr.log_metrics.assert_called_once()
-        metrics = mgr.log_metrics.call_args.args[0]
-        assert len(metrics) == 4
+        # Phase 7: training duration now is logged as a metric, plus the
+        # training_info metrics. Total: 2 log_metrics calls.
+        assert mgr.log_metrics.call_count == 2
 
 
 # =============================================================================
@@ -115,8 +119,8 @@ class TestBoundary:
         )
         # Provider info still logged (with unknown defaults)
         mgr.log_provider_info.assert_called_once()
-        # No event durations
-        mgr.log_event_info.assert_not_called()
+        # Phase 7: no durations -> no log_params call
+        mgr.log_params.assert_not_called()
 
     def test_dataset_validator_metrics_dict_is_empty(self, slog: StageInfoLogger, mgr: MagicMock) -> None:
         slog.log(
@@ -132,8 +136,8 @@ class TestBoundary:
             context={StageNames.TRAINING_MONITOR: {"training_duration_seconds": 123.0}},
             stage_name=StageNames.TRAINING_MONITOR,
         )
-        mgr.log_event_info.assert_called_once()
-        mgr.log_metrics.assert_not_called()
+        # Phase 7: training duration surfaces as a metric.
+        mgr.log_metrics.assert_called_once_with({"training.duration_seconds": 123.0})
 
     def test_training_info_empty_dict(self, slog: StageInfoLogger, mgr: MagicMock) -> None:
         slog.log(
@@ -214,13 +218,17 @@ class TestRegressions:
     def test_regression_training_duration_zero_still_logged(
         self, slog: StageInfoLogger, mgr: MagicMock
     ) -> None:
-        """REGRESSION: training_duration=0.0 used to be dropped by ``if training_dur:``."""
+        """REGRESSION: training_duration=0.0 used to be dropped by ``if training_dur:``.
+
+        Phase 7: now flows through ``log_metrics`` as
+        ``training.duration_seconds=0.0``.
+        """
         slog.log(
             mlflow_manager=mgr,
             context={StageNames.TRAINING_MONITOR: {"training_duration_seconds": 0.0}},
             stage_name=StageNames.TRAINING_MONITOR,
         )
-        mgr.log_event_info.assert_called_once()
+        mgr.log_metrics.assert_called_once_with({"training.duration_seconds": 0.0})
 
     def test_regression_final_loss_zero_still_logged(
         self, slog: StageInfoLogger, mgr: MagicMock
@@ -274,18 +282,26 @@ class TestRegressions:
     def test_regression_model_size_zero_still_logged(
         self, slog: StageInfoLogger, mgr: MagicMock
     ) -> None:
-        """REGRESSION: model_size=0 (empty model, test edge case) — emits event."""
+        """REGRESSION: model_size=0 (empty model, test edge case).
+
+        Phase 7: now flows through ``log_metrics`` as
+        ``model.size_mb=0.0``.
+        """
         slog.log(
             mlflow_manager=mgr,
             context={StageNames.MODEL_RETRIEVER: {"model_size_mb": 0.0}},
             stage_name=StageNames.MODEL_RETRIEVER,
         )
-        mgr.log_event_info.assert_called_once()
+        mgr.log_metrics.assert_called_once_with({"model.size_mb": 0.0})
 
     def test_regression_upload_duration_zero_still_logged(
         self, slog: StageInfoLogger, mgr: MagicMock
     ) -> None:
-        """REGRESSION: upload_duration=0 (local-copy shortcut) — emits event."""
+        """REGRESSION: upload_duration=0 (local-copy shortcut).
+
+        Phase 7: now flows through ``log_params`` as
+        ``deployment.upload_duration_seconds=0.0``.
+        """
         slog.log(
             mlflow_manager=mgr,
             context={
@@ -296,13 +312,18 @@ class TestRegressions:
             },
             stage_name=StageNames.GPU_DEPLOYER,
         )
-        # One provider_info + one upload event (deps skipped → None)
-        assert mgr.log_event_info.call_count == 1
+        mgr.log_params.assert_called_once()
+        params = mgr.log_params.call_args.args[0]
+        assert params["deployment.upload_duration_seconds"] == 0.0
 
     def test_regression_hf_upload_event_zero_duration(
         self, slog: StageInfoLogger, mgr: MagicMock
     ) -> None:
-        """REGRESSION: HF upload with 0s duration (instant cache-hit) — emits event."""
+        """REGRESSION: HF upload with 0s duration (instant cache-hit).
+
+        Phase 7: HF repo id flows through ``set_tags``, upload duration
+        through ``log_metrics``.
+        """
         slog.log(
             mlflow_manager=mgr,
             context={
@@ -314,9 +335,12 @@ class TestRegressions:
             },
             stage_name=StageNames.MODEL_RETRIEVER,
         )
-        # model_size event NOT logged (model_size_mb is None), but HF upload IS.
-        assert mgr.log_event_info.call_count == 1
-        assert "org/m" in mgr.log_event_info.call_args.args[0]
+        mgr.set_tags.assert_called_once_with({"model.hf_repo_id": "org/m"})
+        upload_metric_calls = [
+            c for c in mgr.log_metrics.call_args_list
+            if "model.upload_duration_seconds" in c.args[0]
+        ]
+        assert upload_metric_calls
 
 
 # =============================================================================
@@ -359,13 +383,15 @@ class TestRegressions:
         (
             StageNames.GPU_DEPLOYER,
             {StageNames.GPU_DEPLOYER: {"provider_name": "x"}},
-            {"log_event_info": 0, "log_provider_info": 1},
+            {"log_params": 0, "log_provider_info": 1},
         ),
-        # Model retriever without HF upload
+        # Model retriever without HF upload — Phase 7: only log_metrics
+        # for model size; no set_tags / no extra metrics for absent HF
+        # upload.
         (
             StageNames.MODEL_RETRIEVER,
             {StageNames.MODEL_RETRIEVER: {"model_size_mb": 100.0, "hf_uploaded": False}},
-            {"log_event_info": 1},
+            {"log_metrics": 1},
         ),
     ],
 )

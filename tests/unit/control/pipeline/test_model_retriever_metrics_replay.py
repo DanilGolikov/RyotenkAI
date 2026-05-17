@@ -13,7 +13,10 @@ that already exists in the suite, then unit-test the helper as a
 black box. Side effects observed via:
 * fake :class:`SSHClient` (records calls, materialises files)
 * fake :class:`MlflowClient` (counts log_metric calls)
-* :data:`ModelRetrieverEventCallbacks.on_metrics_buffer_retrieved`
+* :class:`ModelMetricsBufferRetrievedEvent` emissions through a
+  :class:`FakeEventEmitter` — replaces the legacy
+  ``ModelRetrieverEventCallbacks.on_metrics_buffer_retrieved`` callback
+  removed in Phase 4 (event-system unification, 2026-05-16).
 """
 
 from __future__ import annotations
@@ -26,12 +29,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys
-from ryotenkai_control.pipeline.stages.model_retriever import (
-    ModelRetriever,
-    ModelRetrieverEventCallbacks,
-)
+from ryotenkai_control.pipeline.stages.model_retriever import ModelRetriever
 from ryotenkai_shared.config import HuggingFaceHubConfig
 from ryotenkai_shared.errors import SSHTransferFailedError
+from ryotenkai_shared.events.types.control_model import (
+    ModelMetricsBufferRetrievedEvent,
+)
+from tests._fakes.event_emitter import FakeEventEmitter
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +166,12 @@ def mock_config() -> MagicMock:
 
 
 def _make_retriever(
-    cfg: MagicMock, secrets: MagicMock, *, callbacks: ModelRetrieverEventCallbacks | None = None,
+    cfg: MagicMock,
+    secrets: MagicMock,
+    *,
+    emitter: FakeEventEmitter | None = None,
 ) -> ModelRetriever:
-    return ModelRetriever(cfg, secrets, callbacks=callbacks)
+    return ModelRetriever(cfg, secrets, emitter=emitter)
 
 
 def _build_context(
@@ -178,6 +185,29 @@ def _build_context(
     if run_id is not None:
         ctx[PipelineContextKeys.MLFLOW_PARENT_RUN_ID] = run_id
     return ctx
+
+
+def _retrieved_payloads(
+    emitter: FakeEventEmitter,
+) -> list[tuple[int, int, int, bool, bool]]:
+    """Collect ``(replayed, line_count, size_bytes, missing, oversized)``
+    tuples from :class:`ModelMetricsBufferRetrievedEvent` emissions, in
+    order. Mirrors the legacy ``events`` list the test built from the
+    removed callback."""
+    out: list[tuple[int, int, int, bool, bool]] = []
+    for ev in emitter.emitted:
+        if isinstance(ev, ModelMetricsBufferRetrievedEvent):
+            p = ev.payload
+            out.append(
+                (
+                    p.replayed_count,
+                    p.line_count,
+                    p.size_bytes,
+                    p.missing,
+                    p.oversized,
+                ),
+            )
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +231,9 @@ class TestPositive:
             ),
         )
         mlflow_client = _FakeMlflowClient()
-        events: list[tuple] = []
 
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized: events.append(
-                (r, lc, sb, missing, oversized)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
@@ -222,8 +247,8 @@ class TestPositive:
         assert all(c["run_id"] == "run-abc" for c in mlflow_client.calls)
         # Local copy preserved for forensics.
         assert (attempt_dir / "metrics_buffer.jsonl").exists()
-        # Callback fired with (replayed=2, line_count=2, size=200, missing=False, oversized=False).
-        assert events == [(2, 2, 200, False, False)]
+        # Event emitted with (replayed=2, line_count=2, size=200, missing=False, oversized=False).
+        assert _retrieved_payloads(emitter) == [(2, 2, 200, False, False)]
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +260,12 @@ class TestNegative:
     def test_no_ssh_client_skips_without_raising(
         self, mock_config: MagicMock, mock_secrets: MagicMock
     ) -> None:
-        retriever = _make_retriever(mock_config, mock_secrets)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = None
-        # Must not raise; must not invoke any callback.
+        # Must not raise; must not emit any metrics-buffer event.
         retriever._retrieve_and_replay_metrics_buffer({})
+        assert _retrieved_payloads(emitter) == []
 
     def test_no_mlflow_run_id_keeps_local_copy(
         self, mock_config: MagicMock, mock_secrets: MagicMock, tmp_path: Path
@@ -250,13 +277,8 @@ class TestNegative:
             buffer_size=50,
             buffer_contents='{"key":"loss","value":0.5,"step":1,"timestamp":1.0}\n',
         )
-        events: list[tuple] = []
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized: events.append(
-                (r, lc, sb, missing, oversized)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
@@ -264,39 +286,37 @@ class TestNegative:
 
         # File preserved locally; replayed=0 because no run_id.
         assert (attempt_dir / "metrics_buffer.jsonl").exists()
-        assert events == [(0, 1, 50, False, False)]
+        assert _retrieved_payloads(emitter) == [(0, 1, 50, False, False)]
 
-    def test_buffer_missing_emits_healthy_callback(
+    def test_buffer_missing_emits_healthy_event(
         self, mock_config: MagicMock, mock_secrets: MagicMock, tmp_path: Path
     ) -> None:
         attempt_dir = tmp_path / "attempts" / "1"
         ctx = _build_context(attempt_dir=attempt_dir, run_id="run-abc")
         ssh = _FakeSSHClient(buffer_present=False)
-        events: list[tuple] = []
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized: events.append(
-                (r, lc, sb, missing, oversized)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
         retriever._retrieve_and_replay_metrics_buffer(ctx)
 
         # Healthy case: missing=True, replayed=0, line_count=0.
-        assert events == [(0, 0, 0, True, False)]
+        assert _retrieved_payloads(emitter) == [(0, 0, 0, True, False)]
         # No SCP attempted.
         assert ssh.download_calls == []
 
     def test_no_attempt_directory_skips(
         self, mock_config: MagicMock, mock_secrets: MagicMock
     ) -> None:
-        retriever = _make_retriever(mock_config, mock_secrets)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = _FakeSSHClient(buffer_present=True)  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
         # Empty context — no attempt_directory key.
         retriever._retrieve_and_replay_metrics_buffer({})
+        # No emission — fully silent skip.
+        assert _retrieved_payloads(emitter) == []
 
 
 # ---------------------------------------------------------------------------
@@ -305,26 +325,21 @@ class TestNegative:
 
 
 class TestBoundary:
-    def test_oversized_buffer_skipped_with_callback(
+    def test_oversized_buffer_skipped_with_event(
         self, mock_config: MagicMock, mock_secrets: MagicMock, tmp_path: Path
     ) -> None:
         attempt_dir = tmp_path / "attempts" / "1"
         ctx = _build_context(attempt_dir=attempt_dir, run_id="run-abc")
         oversized = 200 * 1024 * 1024  # 200 MiB > 100 MiB cap
         ssh = _FakeSSHClient(buffer_present=True, buffer_size=oversized)
-        events: list[tuple] = []
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized_flag: events.append(
-                (r, lc, sb, missing, oversized_flag)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
         retriever._retrieve_and_replay_metrics_buffer(ctx)
 
-        assert events == [(0, 0, oversized, False, True)]
+        assert _retrieved_payloads(emitter) == [(0, 0, oversized, False, True)]
         assert ssh.download_calls == []  # no SCP
 
     def test_mlflow_client_unavailable_keeps_local_copy(
@@ -339,13 +354,8 @@ class TestBoundary:
             buffer_size=50,
             buffer_contents='{"key":"loss","value":0.5,"step":1,"timestamp":1.0}\n',
         )
-        events: list[tuple] = []
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized: events.append(
-                (r, lc, sb, missing, oversized)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
@@ -356,7 +366,7 @@ class TestBoundary:
 
         # Buffer downloaded but not replayed.
         assert (attempt_dir / "metrics_buffer.jsonl").exists()
-        assert events == [(0, 1, 50, False, False)]
+        assert _retrieved_payloads(emitter) == [(0, 1, 50, False, False)]
 
 
 # ---------------------------------------------------------------------------
@@ -365,10 +375,10 @@ class TestBoundary:
 
 
 class TestInvariants:
-    def test_callback_is_optional(
+    def test_emitter_is_optional(
         self, mock_config: MagicMock, mock_secrets: MagicMock, tmp_path: Path
     ) -> None:
-        # No callback attached — must not raise.
+        # No emitter attached — must not raise.
         attempt_dir = tmp_path / "attempts" / "1"
         ctx = _build_context(attempt_dir=attempt_dir, run_id="run-abc")
         ssh = _FakeSSHClient(buffer_present=False)
@@ -407,7 +417,7 @@ class TestInvariants:
 
 
 class TestDependencyErrors:
-    def test_scp_failure_logged_and_callback_emitted(
+    def test_scp_failure_logged_and_event_emitted(
         self, mock_config: MagicMock, mock_secrets: MagicMock, tmp_path: Path
     ) -> None:
         attempt_dir = tmp_path / "attempts" / "1"
@@ -415,13 +425,8 @@ class TestDependencyErrors:
         ssh = _FakeSSHClient(
             buffer_present=True, buffer_size=10, download_succeeds=False
         )
-        events: list[tuple] = []
-        callbacks = ModelRetrieverEventCallbacks(
-            on_metrics_buffer_retrieved=lambda r, lc, sb, missing, oversized: events.append(
-                (r, lc, sb, missing, oversized)
-            ),
-        )
-        retriever = _make_retriever(mock_config, mock_secrets, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        retriever = _make_retriever(mock_config, mock_secrets, emitter=emitter)
         retriever._ssh_client = ssh  # type: ignore[assignment]
         retriever._workspace_path = "/workspace"
 
@@ -429,7 +434,7 @@ class TestDependencyErrors:
 
         # SCP failed → replayed=0, missing=False, oversized=False, but
         # size_bytes from the stat probe is still surfaced.
-        assert events == [(0, 0, 10, False, False)]
+        assert _retrieved_payloads(emitter) == [(0, 0, 10, False, False)]
 
 
 # ---------------------------------------------------------------------------

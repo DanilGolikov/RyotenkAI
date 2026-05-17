@@ -1,10 +1,14 @@
 """
-Value objects and callback contracts for ModelRetriever.
+Value objects for ModelRetriever.
+
+Phase 4 (event-system unification, 2026-05-16): the legacy
+``ModelRetrieverEventCallbacks`` dataclass was removed. The stage now
+emits typed ``ryotenkai.control.model.*`` envelopes through an
+:class:`IEventEmitter` (see :mod:`ryotenkai_control.pipeline.stages.model_retriever.retriever`).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,37 +20,6 @@ _PHASE_IDX = "phase_idx"
 _STRATEGY_TYPE = "strategy_type"
 _STATUS = "status"
 _METRICS = "metrics"
-
-
-@dataclass
-class ModelRetrieverEventCallbacks:
-    """
-    Callbacks for ModelRetriever events (SOLID-compliant event collection).
-
-    Used to integrate ModelRetriever with MLflow or other logging systems.
-    """
-
-    on_hf_upload_started: Callable[[str], None] | None = None
-    on_hf_upload_completed: Callable[[str, float], None] | None = None
-    on_hf_upload_failed: Callable[[str, str], None] | None = None
-    on_local_download_started: Callable[[float], None] | None = None
-    on_local_download_completed: Callable[[str], None] | None = None
-    on_local_download_failed: Callable[[str], None] | None = None
-    on_retrieval_completed: Callable[[bool, str | None], None] | None = None
-    # Phase 12.A.1 — fired after the metrics_buffer.jsonl retrieval +
-    # MLflow replay attempt. Contract:
-    #   replayed:   number of MLflow log_metric writes that succeeded.
-    #   line_count: number of lines in the retrieved buffer (0 when
-    #               nothing was retrieved).
-    #   size_bytes: bytes of the retrieved file (0 when missing /
-    #               oversized).
-    #   missing:    True iff the trainer's drain succeeded
-    #               (buffer absent on pod). The healthy case.
-    #   oversized:  True iff the file existed but exceeded the safety
-    #               cap and was deliberately skipped.
-    on_metrics_buffer_retrieved: (
-        Callable[[int, int, int, bool, bool], None] | None
-    ) = None
 
 
 @dataclass(frozen=True)
@@ -75,7 +48,6 @@ class PhaseMetricsResult:
 
 
 __all__ = [
-    "ModelRetrieverEventCallbacks",
     "ModelCardContext",
     "PhaseMetricsResult",
     "_PIPELINE_STATE_STARTED_AT",

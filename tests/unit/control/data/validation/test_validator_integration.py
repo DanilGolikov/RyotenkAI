@@ -3,6 +3,12 @@
 Phase A2 Batch 8 — raise-based migration. ``execute()`` returns ``dict``
 on success / advisory failure, raises
 :class:`DatasetValidationFailedError` on critical failure.
+
+Phase 4 (event-system unification, 2026-05-16) — the legacy
+``DatasetValidatorEventCallbacks`` dataclass was removed. Stages now
+take an optional :class:`IEventEmitter` for typed event emission. This
+test asserts the typed ``ryotenkai.control.dataset.validation_*`` events
+fire in place of the removed callback methods.
 """
 
 from __future__ import annotations
@@ -11,9 +17,15 @@ from unittest.mock import Mock
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator
 from ryotenkai_shared.config import DatasetConfig, PipelineConfig
 from ryotenkai_shared.errors import DatasetValidationFailedError
+from ryotenkai_shared.events.types.control_dataset import (
+    DatasetValidationCompletedEvent,
+    DatasetValidationStartedEvent,
+)
+
+from tests._fakes.event_emitter import FakeEventEmitter
 
 
 def _mk_primary_only_config(ds: DatasetConfig) -> Mock:
@@ -104,7 +116,11 @@ class TestDatasetValidatorIntegration:
         # No plugin metrics — nothing was checked.
         assert not any(k.startswith("primary.train.") for k in result)
 
-    def test_callbacks_called(self, tmp_path) -> None:
+    def test_emitter_receives_started_and_completed_events(self, tmp_path) -> None:
+        """Phase 4 — assert typed events fire in place of the removed
+        ``DatasetValidatorEventCallbacks.on_*`` callbacks. A successful run
+        emits exactly one ``DatasetValidationStartedEvent`` (aggregate
+        per-stage) and one ``DatasetValidationCompletedEvent``."""
         dataset_file = tmp_path / "train.jsonl"
         dataset_file.write_text('{"text": "sample text long enough"}\n' * 10, encoding="utf-8")
 
@@ -119,18 +135,18 @@ class TestDatasetValidatorIntegration:
         from ryotenkai_community.catalog import catalog
 
         catalog.reload()
-        callbacks = DatasetValidatorEventCallbacks(
-            on_dataset_loaded=Mock(),
-            on_validation_completed=Mock(),
-            on_plugin_start=Mock(),
-            on_plugin_complete=Mock(),
-        )
 
-        validator = DatasetValidator(cfg, callbacks=callbacks)
+        emitter = FakeEventEmitter()
+        validator = DatasetValidator(cfg, emitter=emitter)
         result = validator.execute({})
         assert isinstance(result, dict)
+        assert result["validation_status"] == "passed"
 
-        assert callbacks.on_dataset_loaded.called
-        assert callbacks.on_validation_completed.called
-        assert callbacks.on_plugin_start.called
-        assert callbacks.on_plugin_complete.called
+        started = [e for e in emitter.emitted if isinstance(e, DatasetValidationStartedEvent)]
+        completed = [e for e in emitter.emitted if isinstance(e, DatasetValidationCompletedEvent)]
+        assert len(started) == 1
+        assert len(completed) == 1
+        # ``dataset_path`` payload carries the (comma-joined) scheduled paths.
+        assert str(dataset_file) in started[0].payload.dataset_path
+        # Completed event surfaces checks_passed (per-dataset keys).
+        assert completed[0].payload.checks_passed

@@ -16,13 +16,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_evaluation import (
+    EvaluationPluginCompletedEvent,
+    EvaluationPluginCompletedPayload,
+    EvaluationPluginFailedEvent,
+    EvaluationPluginFailedPayload,
+    EvaluationPluginStartedEvent,
+    EvaluationPluginStartedPayload,
+)
 from ryotenkai_shared.utils.logger import logger
+
+# Source URI for plugin envelopes emitted by the runner. Aligns with
+# the ModelEvaluator stage's outer ``evaluation_started`` /
+# ``evaluation_completed`` envelopes so consumers can group on
+# ``source``.
+_RUNNER_SOURCE = "control://orchestrator/model_evaluator"
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config.evaluation.schema import EvaluationConfig
+    from ryotenkai_shared.events import IEventEmitter
     from ryotenkai_control.evaluation.model_client.interfaces import IModelInference
     from ryotenkai_control.evaluation.plugins.base import EvalResult, EvalSample
-    from ryotenkai_control.pipeline.stages.model_evaluator import EvaluatorEventCallbacks
 
 
 @dataclass
@@ -86,19 +101,30 @@ class EvaluationRunner:
     def __init__(
         self,
         eval_config: EvaluationConfig,
-        callbacks: EvaluatorEventCallbacks | None = None,
+        *,
+        emitter: IEventEmitter | None = None,
+        run_id: str = "unknown",
         secrets_resolver: Any | None = None,
     ) -> None:
         """
         Args:
             eval_config:      Populated EvaluationConfig from pipeline config.
-            callbacks:        Optional event callbacks (MLflow, logging, etc.).
+            emitter:          Optional :class:`IEventEmitter`. When supplied the
+                              runner emits per-plugin
+                              ``ryotenkai.control.evaluation.plugin_*``
+                              envelopes. The outer
+                              ``evaluation_started`` / ``evaluation_completed``
+                              envelopes are emitted by the calling
+                              :class:`ModelEvaluator` stage.
+            run_id:           Run identifier stamped onto every emitted
+                              envelope.
             secrets_resolver: SecretsResolver instance for plugins that declare
                               ``[secrets] required = [...]`` in their manifest.toml.
                               Pass None if no plugins in the config require secrets.
         """
         self._eval_config = eval_config
-        self._callbacks = callbacks
+        self._emitter = emitter
+        self._run_id = run_id
         self._secrets_resolver = secrets_resolver
 
     def run(self, inference_client: IModelInference) -> RunSummary:
@@ -145,9 +171,6 @@ class EvaluationRunner:
         summary.sample_count = len(samples)
         logger.info(f"[EVAL] Collected model answers for {len(samples)} samples")
 
-        if self._callbacks and self._callbacks.on_eval_start:
-            self._callbacks.on_eval_start(str(dataset_path), len(samples))
-
         # Step 2a: Persist human-readable answers.md (best-effort)
         if self._eval_config.save_answers_md:
             self._save_answers_md(samples)
@@ -179,8 +202,7 @@ class EvaluationRunner:
             logger.info(f"[EVAL] Running plugin '{plugin_id}' ({plugin.name}) ...")
             plugin_start = time.time()
 
-            if self._callbacks and self._callbacks.on_plugin_start:
-                self._callbacks.on_plugin_start(plugin_id, plugin.name, plugin.get_description())
+            self._emit_plugin_started(plugin_id, plugin.name)
 
             try:
                 result = plugin.evaluate(samples)
@@ -212,28 +234,91 @@ class EvaluationRunner:
             )
 
             if result.passed:
-                if self._callbacks and self._callbacks.on_plugin_complete:
-                    self._callbacks.on_plugin_complete(plugin_id, plugin.name, result.metrics, plugin_duration_ms)
+                self._emit_plugin_completed(
+                    plugin_id, plugin.name, result.metrics, plugin_duration / 1000.0,
+                )
             else:
                 summary.overall_passed = False
                 for rec in result.recommendations:
                     logger.info(f"[EVAL]   Recommendation: {rec}")
-                if self._callbacks and self._callbacks.on_plugin_failed:
-                    self._callbacks.on_plugin_failed(
-                        plugin_id,
-                        plugin.name,
-                        result.metrics,
-                        result.errors,
-                        result.recommendations,
-                        plugin_duration_ms,
-                    )
+                self._emit_plugin_failed(
+                    plugin_id,
+                    plugin.name,
+                    error_type="EvaluationError",
+                    message="; ".join(result.errors) if result.errors else "plugin failed",
+                )
 
         summary.duration_seconds = time.time() - start
-
-        if self._callbacks and self._callbacks.on_eval_complete:
-            self._callbacks.on_eval_complete(summary.overall_passed, summary.sample_count, summary.duration_seconds)
-
         return summary
+
+    # ------------------------------------------------------------------
+    # Emitter helpers (no-op when emitter is None).
+    # ------------------------------------------------------------------
+
+    def _emit_plugin_started(self, plugin_id: str, plugin_name: str) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            EvaluationPluginStartedEvent(
+                source=_RUNNER_SOURCE,
+                run_id=self._run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=EvaluationPluginStartedPayload(
+                    plugin_name=plugin_id,
+                    plugin_version=plugin_name,
+                ),
+            ),
+        )
+
+    def _emit_plugin_completed(
+        self,
+        plugin_id: str,
+        plugin_name: str,
+        metrics: dict[str, Any],
+        duration_s: float,
+    ) -> None:
+        if self._emitter is None:
+            return
+        # Coerce to dict[str, float]; non-numeric metrics are dropped
+        # because the payload schema is strict-typed.
+        numeric_metrics: dict[str, float] = {
+            k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))
+        }
+        self._emitter.emit(
+            EvaluationPluginCompletedEvent(
+                source=_RUNNER_SOURCE,
+                run_id=self._run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=EvaluationPluginCompletedPayload(
+                    plugin_name=plugin_id,
+                    metrics=numeric_metrics,
+                    duration_s=duration_s,
+                ),
+            ),
+        )
+
+    def _emit_plugin_failed(
+        self,
+        plugin_id: str,
+        plugin_name: str,
+        *,
+        error_type: str,
+        message: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            EvaluationPluginFailedEvent(
+                source=_RUNNER_SOURCE,
+                run_id=self._run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=EvaluationPluginFailedPayload(
+                    plugin_name=plugin_id,
+                    error_type=error_type,
+                    message=message,
+                ),
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Internals

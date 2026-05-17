@@ -1,11 +1,12 @@
 """
 model_retriever — backward-compatible package facade.
 
-All names that were previously importable from
-`src.pipeline.stages.model_retriever` remain importable unchanged.
+Phase 4 (event-system unification, 2026-05-16): the legacy
+``ModelRetrieverEventCallbacks`` dataclass was removed from the public
+surface.
 
 Internal structure:
-    types.py        ← ModelRetrieverEventCallbacks, ModelCardContext, PhaseMetricsResult
+    types.py        ← ModelCardContext, PhaseMetricsResult
     model_card.py   ← ModelCardGenerator
     hf_uploader.py  ← HFModelUploader
     retriever.py    ← ModelRetriever (thin orchestrator)
@@ -30,13 +31,11 @@ from ryotenkai_control.pipeline.stages.model_retriever.model_card import ModelCa
 from ryotenkai_control.pipeline.stages.model_retriever.retriever import ModelRetriever
 from ryotenkai_control.pipeline.stages.model_retriever.types import (
     ModelCardContext,
-    ModelRetrieverEventCallbacks,
     PhaseMetricsResult,
 )
 
 __all__ = [
     "ModelRetriever",
-    "ModelRetrieverEventCallbacks",
     "ModelCardContext",
     "PhaseMetricsResult",
     "HFModelUploader",

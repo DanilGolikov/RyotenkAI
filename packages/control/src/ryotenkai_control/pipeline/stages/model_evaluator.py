@@ -22,12 +22,18 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from ryotenkai_shared.errors import InferenceUnavailableError
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_evaluation import (
+    EvaluationCompletedEvent,
+    EvaluationCompletedPayload,
+    EvaluationStartedEvent,
+    EvaluationStartedPayload,
+)
 from ryotenkai_shared.utils.cancellation import sleep_cancellable
 from ryotenkai_control.pipeline.stages.base import PipelineStage
 from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
@@ -40,38 +46,13 @@ _PREFLIGHT_TIMEOUT_S = 5.0
 _PREFLIGHT_RETRIES = 1
 _PREFLIGHT_RETRY_BACKOFF_S = 1.0
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+# Source URI for envelopes emitted from this stage.
+_STAGE_SOURCE = "control://orchestrator/model_evaluator"
 
+if TYPE_CHECKING:
     from ryotenkai_shared.config.secrets.model import Secrets
     from ryotenkai_shared.config import PipelineConfig
-
-
-@dataclass
-class EvaluatorEventCallbacks:
-    """
-    Callbacks for ModelEvaluator events (SOLID-compliant event collection).
-
-    Used to integrate ModelEvaluator / EvaluationRunner with MLflow or other
-    logging systems without coupling the runner to any specific backend.
-
-    Mirrors the pattern of DatasetValidatorEventCallbacks.
-    """
-
-    # Evaluation started: dataset_path, sample_count
-    on_eval_start: Callable[[str, int], None] | None = None
-
-    # Single plugin started: plugin_id, plugin_name, description
-    on_plugin_start: Callable[[str, str, str], None] | None = None
-
-    # Single plugin passed: plugin_id, plugin_name, metrics, duration_ms
-    on_plugin_complete: Callable[[str, str, dict, float], None] | None = None
-
-    # Single plugin failed: plugin_id, plugin_name, metrics, errors, recommendations, duration_ms
-    on_plugin_failed: Callable[[str, str, dict, list, list, float], None] | None = None
-
-    # Evaluation finished: overall_passed, sample_count, duration_seconds
-    on_eval_complete: Callable[[bool, int, float], None] | None = None
+    from ryotenkai_shared.events import IEventEmitter
 
 
 class ModelEvaluator(PipelineStage):
@@ -88,11 +69,23 @@ class ModelEvaluator(PipelineStage):
         self,
         config: PipelineConfig,
         secrets: Secrets | None = None,
-        callbacks: EvaluatorEventCallbacks | None = None,
+        *,
+        emitter: IEventEmitter | None = None,
     ) -> None:
         super().__init__(config, StageNames.MODEL_EVALUATOR)
-        self._callbacks = callbacks or EvaluatorEventCallbacks()
+        self._emitter = emitter
         self._secrets = secrets
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        self._emitter = emitter
+
+    @staticmethod
+    def _resolve_run_id(context: dict[str, Any]) -> str:
+        run_obj = context.get(PipelineContextKeys.RUN)
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
 
     def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """Run plugin-based evaluation against the configured endpoint.
@@ -182,10 +175,33 @@ class ModelEvaluator(PipelineStage):
         from ryotenkai_control.evaluation.plugins.secrets import SecretsResolver
         from ryotenkai_control.evaluation.runner import EvaluationRunner
 
+        run_id = self._resolve_run_id(context)
+        # Emit a single typed ``evaluation_started`` envelope before
+        # the runner spins up; per-plugin envelopes are emitted from
+        # within the runner via the shared emitter.
+        if self._emitter is not None:
+            plugin_names: list[str] = []
+            try:
+                plugin_names = [p.id for p in eval_cfg.evaluators.plugins]
+            except Exception:
+                plugin_names = []
+            self._emitter.emit(
+                EvaluationStartedEvent(
+                    source=_STAGE_SOURCE,
+                    run_id=run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=EvaluationStartedPayload(
+                        plugin_names=plugin_names,
+                        model_path=str(model_name or ""),
+                    ),
+                ),
+            )
+
         secrets_resolver = SecretsResolver(self._secrets) if self._secrets is not None else None
         runner = EvaluationRunner(
             cast("Any", eval_cfg),
-            callbacks=self._callbacks,
+            emitter=self._emitter,
+            run_id=run_id,
             secrets_resolver=secrets_resolver,
         )
         summary = runner.run(inference_client)
@@ -195,6 +211,27 @@ class ModelEvaluator(PipelineStage):
             f"[EVAL] Evaluation complete in {duration:.1f}s — "
             f"passed={summary.overall_passed}, plugins={list(summary.plugin_results.keys())}"
         )
+
+        # Typed evaluation_completed envelope: aggregated metrics +
+        # total wall-clock duration.
+        if self._emitter is not None:
+            aggregated: dict[str, float] = {}
+            for plugin_id, result in summary.plugin_results.items():
+                for k, v in result.metrics.items():
+                    if isinstance(v, (int, float)):
+                        aggregated[f"{plugin_id}.{k}"] = float(v)
+                aggregated[f"{plugin_id}.passed"] = 1.0 if result.passed else 0.0
+            self._emitter.emit(
+                EvaluationCompletedEvent(
+                    source=_STAGE_SOURCE,
+                    run_id=run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=EvaluationCompletedPayload(
+                        aggregated_metrics=aggregated,
+                        total_duration_s=float(duration),
+                    ),
+                ),
+            )
 
         verdict = "PASSED" if summary.overall_passed else "FAILED"
         logger.info(f"[EVAL] Overall verdict: {verdict}")

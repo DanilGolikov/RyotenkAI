@@ -1,9 +1,12 @@
 """``make_monitor_with_log_manager`` — factory for :class:`TrainingMonitor`.
 
 Post Phase-B / Phase 6.3b the :class:`TrainingMonitor` constructor only
-takes ``(config, secrets, callbacks)``; the rich state (``_provider``,
+takes ``(config, secrets, *, emitter)``; the rich state (``_provider``,
 ``_client``, ``_log_manager`` etc.) is populated inside :meth:`execute`
 from the pipeline context that :class:`TrainingLauncher` left behind.
+Phase 4 (event-system unification, 2026-05-16) — the legacy
+``callbacks`` keyword was removed in favour of an optional
+:class:`IEventEmitter`.
 
 Unit tests that exercise helper methods (``_build_log_manager_from_context``,
 ``_handle_trainer_exited``, ``_recover_pod_if_needed``, …) need a monitor
@@ -93,14 +96,14 @@ def make_monitor_with_log_manager(**overrides: Any) -> Any:
     The factory:
 
     1. Calls the production :meth:`TrainingMonitor.__init__` with a
-       stub config (no secrets, no callbacks unless overridden) so the
+       stub config (no secrets, no emitter unless overridden) so the
        attribute layout matches production exactly.
     2. Lets callers override any attribute via ``**overrides`` — typical
        overrides are ``_client`` (a fake :class:`JobClient`),
        ``_provider`` (an :class:`IRecoveryProbeProvider` impl),
        ``_log_manager`` / ``_runner_log_manager``
        (:class:`LogFetcher` fakes), ``_resource_id``, ``_secrets``,
-       and ``_callbacks``.
+       and ``_emitter``.
 
     The returned instance is a real ``TrainingMonitor`` so production
     code paths (``_dispatch_event``, ``_handle_trainer_exited``,
@@ -110,7 +113,8 @@ def make_monitor_with_log_manager(**overrides: Any) -> Any:
 
     * ``config`` — replaces the default stub :class:`PipelineConfig`.
     * ``secrets`` — passed through to ``__init__``.
-    * ``callbacks`` — passed through to ``__init__``.
+    * ``emitter`` — passed through to ``__init__`` as the optional
+      :class:`IEventEmitter` (Phase 4 replacement for ``callbacks``).
 
     Any other key is set on the instance after construction via
     ``setattr``. Unknown attribute names are accepted: production reads
@@ -122,9 +126,9 @@ def make_monitor_with_log_manager(**overrides: Any) -> Any:
 
     config = overrides.pop("config", None) or _stub_pipeline_config()
     secrets = overrides.pop("secrets", None)
-    callbacks = overrides.pop("callbacks", None)
+    emitter = overrides.pop("emitter", None)
 
-    monitor = monitor_cls(config=config, secrets=secrets, callbacks=callbacks)
+    monitor = monitor_cls(config=config, secrets=secrets, emitter=emitter)
 
     for key, value in overrides.items():
         setattr(monitor, key, value)

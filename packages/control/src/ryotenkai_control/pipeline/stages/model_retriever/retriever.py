@@ -32,12 +32,24 @@ from ryotenkai_control.pipeline.stages.model_retriever.metrics_replay import (
 from ryotenkai_control.pipeline.stages.model_retriever.model_card import ModelCardGenerator
 from ryotenkai_control.pipeline.stages.model_retriever.types import (
     ModelCardContext,
-    ModelRetrieverEventCallbacks,
     PhaseMetricsResult,
 )
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_model import (
+    ModelMetricsBufferRetrievedEvent,
+    ModelMetricsBufferRetrievedPayload,
+    ModelRetrievalCompletedEvent,
+    ModelRetrievalCompletedPayload,
+    ModelRetrievalStartedEvent,
+    ModelRetrievalStartedPayload,
+)
+
+# Source URI for envelopes emitted from this stage.
+_STAGE_SOURCE = "control://orchestrator/model_retriever"
 
 if TYPE_CHECKING:
     from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.events import IEventEmitter
 
 
 class ModelRetriever(PipelineStage):
@@ -52,11 +64,12 @@ class ModelRetriever(PipelineStage):
         self,
         config: PipelineConfig,
         secrets: Secrets,
-        callbacks: ModelRetrieverEventCallbacks | None = None,
+        *,
+        emitter: IEventEmitter | None = None,
     ):
         super().__init__(config, StageNames.MODEL_RETRIEVER)
         self.secrets = secrets
-        self._callbacks = callbacks or ModelRetrieverEventCallbacks()
+        self._emitter = emitter
 
         self._provider_name = config.get_active_provider_name()
         self._provider_config = config.get_provider_config()
@@ -239,11 +252,16 @@ class ModelRetriever(PipelineStage):
             logger.warning(f"Model size check unavailable: {size_err}. Proceeding with download.")
 
         upload_duration = 0.0
+        run_id = self._resolve_run_id(context)
+        # Emit retrieval_started exactly once for the whole stage.
+        self._emit_retrieval_started(
+            run_id,
+            source_path=str(self._workspace_path or ""),
+            target_path=str(self.hf_repo_id or "local"),
+        )
         if self.hf_enabled and self.hf_repo_id:
             hf_repo_id_str = self.hf_repo_id
             logger.info(f"Uploading to HF Hub: {hf_repo_id_str}...")
-            if self._callbacks.on_hf_upload_started:
-                self._callbacks.on_hf_upload_started(hf_repo_id_str)
             upload_start = time.time()
             try:
                 try:
@@ -253,14 +271,10 @@ class ModelRetriever(PipelineStage):
                 upload_duration = time.time() - upload_start
                 logger.info(f"Model uploaded to HF Hub: {hf_repo_id_str} ({upload_duration:.1f}s)")
                 hf_uploaded = True
-                if self._callbacks.on_hf_upload_completed:
-                    self._callbacks.on_hf_upload_completed(hf_repo_id_str, upload_duration)
             except RyotenkAIError as upload_exc:
                 upload_duration = time.time() - upload_start
                 err_msg = upload_exc.detail or str(upload_exc)
                 logger.warning(f"HF upload failed: {err_msg}")
-                if self._callbacks.on_hf_upload_failed:
-                    self._callbacks.on_hf_upload_failed(hf_repo_id_str, err_msg)
         elif not self.hf_enabled:
             logger.info("HF Hub upload disabled (integrations.huggingface.repo_id not set)")
         else:
@@ -288,18 +302,12 @@ class ModelRetriever(PipelineStage):
 
             size_info = f"{model_size_mb:.1f}MB" if model_size_mb is not None else "size unknown"
             logger.info(f"Fallback: Downloading locally ({size_info})...")
-            if self._callbacks.on_local_download_started:
-                self._callbacks.on_local_download_started(model_size_mb or 0.0)
             try:
                 local_model_path = self._download_model()
                 logger.info(f"Model saved locally: {local_model_path}")
-                if self._callbacks.on_local_download_completed:
-                    self._callbacks.on_local_download_completed(str(local_model_path))
             except RyotenkAIError as dl_exc:
                 err_msg = dl_exc.detail or str(dl_exc)
                 logger.error(f"Download failed: {err_msg}")
-                if self._callbacks.on_local_download_failed:
-                    self._callbacks.on_local_download_failed(err_msg)
                 raise ModelLoadFailedError(
                     detail="Model retrieval failed: HF upload failed, local download failed",
                     context={"legacy_code": "MODEL_RETRIEVAL_FAILED"},
@@ -327,11 +335,21 @@ class ModelRetriever(PipelineStage):
         if local_model_path:
             logger.info(f"Model available locally: {local_model_path}")
 
-        if self._callbacks.on_retrieval_completed:
-            self._callbacks.on_retrieval_completed(
-                hf_uploaded,
-                str(local_model_path) if local_model_path else None,
-            )
+        # Typed retrieval_completed envelope. ``bytes_transferred`` is
+        # approximate (MB → bytes); ``checksum`` is omitted because the
+        # current HF upload flow does not surface a single artifact
+        # hash. Phase 5 can fold a manifest-driven checksum in.
+        bytes_transferred = (
+            int(float(model_size_mb) * 1024 * 1024)
+            if model_size_mb is not None
+            else 0
+        )
+        self._emit_retrieval_completed(
+            run_id,
+            bytes_transferred=bytes_transferred,
+            duration_s=float(upload_duration) if hf_uploaded else 0.0,
+            checksum="",
+        )
 
         return self.update_context(
             context,
@@ -344,6 +362,95 @@ class ModelRetriever(PipelineStage):
                 "upload_duration_seconds": upload_duration if hf_uploaded else None,
             },
         )
+
+    # ------------------------------------------------------------------
+    # Emitter wiring
+    # ------------------------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        self._emitter = emitter
+
+    @staticmethod
+    def _resolve_run_id(context: dict[str, Any]) -> str:
+        run_obj = context.get(PipelineContextKeys.RUN)
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
+
+    def _emit_retrieval_started(
+        self,
+        run_id: str,
+        *,
+        source_path: str,
+        target_path: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        with self._emitter.stage_scope(StageNames.MODEL_RETRIEVER):
+            self._emitter.emit(
+                ModelRetrievalStartedEvent(
+                    source=_STAGE_SOURCE,
+                    run_id=run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=ModelRetrievalStartedPayload(
+                        source_path=source_path,
+                        target_path=target_path,
+                    ),
+                ),
+            )
+
+    def _emit_retrieval_completed(
+        self,
+        run_id: str,
+        *,
+        bytes_transferred: int,
+        duration_s: float,
+        checksum: str,
+    ) -> None:
+        if self._emitter is None:
+            return
+        with self._emitter.stage_scope(StageNames.MODEL_RETRIEVER):
+            self._emitter.emit(
+                ModelRetrievalCompletedEvent(
+                    source=_STAGE_SOURCE,
+                    run_id=run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=ModelRetrievalCompletedPayload(
+                        bytes_transferred=bytes_transferred,
+                        duration_s=duration_s,
+                        checksum=checksum,
+                    ),
+                ),
+            )
+
+    def _emit_metrics_buffer_retrieved(
+        self,
+        run_id: str,
+        *,
+        replayed_count: int,
+        line_count: int,
+        size_bytes: int,
+        missing: bool,
+        oversized: bool,
+    ) -> None:
+        if self._emitter is None:
+            return
+        with self._emitter.stage_scope(StageNames.MODEL_RETRIEVER):
+            self._emitter.emit(
+                ModelMetricsBufferRetrievedEvent(
+                    source=_STAGE_SOURCE,
+                    run_id=run_id,
+                    offset=UNKNOWN_OFFSET,
+                    payload=ModelMetricsBufferRetrievedPayload(
+                        replayed_count=replayed_count,
+                        line_count=line_count,
+                        size_bytes=size_bytes,
+                        missing=missing,
+                        oversized=oversized,
+                    ),
+                ),
+            )
     # ------------------------------------------------------------------
     # Phase 12.A.1 — metrics buffer retrieval + replay
     # ------------------------------------------------------------------
@@ -370,7 +477,8 @@ class ModelRetriever(PipelineStage):
             )
             return
 
-        run_id = self._resolve_mlflow_run_id(context)
+        mlflow_run_id = self._resolve_mlflow_run_id(context)
+        pipeline_run_id = self._resolve_run_id(context)
         attempt_dir = self._resolve_attempt_directory(context)
         if attempt_dir is None:
             logger.info(
@@ -378,10 +486,15 @@ class ModelRetriever(PipelineStage):
             )
             return
 
-        # 1. Retrieve the buffer file.
+        # 1. Retrieve the buffer file. Pass through the stage emitter
+        # so the retriever can emit a typed ``MetricsBufferOversizedEvent``
+        # when the on-pod buffer exceeds the env-tunable cap (B-СРЕД fix:
+        # we no longer silently drop metrics when the safety cap fires).
         retriever = MetricsBufferRetriever(
             self._ssh_client,
             workspace_path=self._workspace_path,
+            emitter=self._emitter,
+            run_id=pipeline_run_id,
         )
         fetch = retriever.fetch(local_dir=attempt_dir)
 
@@ -397,10 +510,14 @@ class ModelRetriever(PipelineStage):
                     "[METRICS_REPLAY] no buffered metrics on pod — "
                     "trainer drain already succeeded"
                 )
-            if self._callbacks.on_metrics_buffer_retrieved:
-                self._callbacks.on_metrics_buffer_retrieved(
-                    0, 0, 0, True, False,
-                )
+            self._emit_metrics_buffer_retrieved(
+                pipeline_run_id,
+                replayed_count=0,
+                line_count=fetch.line_count,
+                size_bytes=fetch.size_bytes,
+                missing=True,
+                oversized=False,
+            )
             return
 
         # Operator-visible: buffer existed but was deliberately skipped.
@@ -409,10 +526,14 @@ class ModelRetriever(PipelineStage):
                 "[METRICS_REPLAY] buffer oversized (%d bytes) — skipped",
                 fetch.size_bytes,
             )
-            if self._callbacks.on_metrics_buffer_retrieved:
-                self._callbacks.on_metrics_buffer_retrieved(
-                    0, 0, fetch.size_bytes, False, True,
-                )
+            self._emit_metrics_buffer_retrieved(
+                pipeline_run_id,
+                replayed_count=0,
+                line_count=fetch.line_count,
+                size_bytes=fetch.size_bytes,
+                missing=False,
+                oversized=True,
+            )
             return
 
         # Download failed for unexpected reason.
@@ -421,14 +542,18 @@ class ModelRetriever(PipelineStage):
                 "[METRICS_REPLAY] fetch failed: %s",
                 fetch.error or "unknown error",
             )
-            if self._callbacks.on_metrics_buffer_retrieved:
-                self._callbacks.on_metrics_buffer_retrieved(
-                    0, 0, fetch.size_bytes, False, False,
-                )
+            self._emit_metrics_buffer_retrieved(
+                pipeline_run_id,
+                replayed_count=0,
+                line_count=fetch.line_count,
+                size_bytes=fetch.size_bytes,
+                missing=False,
+                oversized=False,
+            )
             return
 
         # 2. Buffer is on Mac. Replay into MLflow.
-        if not run_id:
+        if not mlflow_run_id:
             # We have data but no run to write into. Keep the file
             # around for forensics — the operator can manually replay
             # it later via `mlflow.tracking.MlflowClient.log_metric`.
@@ -437,10 +562,14 @@ class ModelRetriever(PipelineStage):
                 "MLflow run_id available — preserved at %s",
                 fetch.line_count, fetch.local_path,
             )
-            if self._callbacks.on_metrics_buffer_retrieved:
-                self._callbacks.on_metrics_buffer_retrieved(
-                    0, fetch.line_count, fetch.size_bytes, False, False,
-                )
+            self._emit_metrics_buffer_retrieved(
+                pipeline_run_id,
+                replayed_count=0,
+                line_count=fetch.line_count,
+                size_bytes=fetch.size_bytes,
+                missing=False,
+                oversized=False,
+            )
             return
 
         client = self._build_mlflow_client()
@@ -450,30 +579,33 @@ class ModelRetriever(PipelineStage):
                 "preserved locally at %s for manual replay",
                 fetch.line_count, fetch.local_path,
             )
-            if self._callbacks.on_metrics_buffer_retrieved:
-                self._callbacks.on_metrics_buffer_retrieved(
-                    0, fetch.line_count, fetch.size_bytes, False, False,
-                )
+            self._emit_metrics_buffer_retrieved(
+                pipeline_run_id,
+                replayed_count=0,
+                line_count=fetch.line_count,
+                size_bytes=fetch.size_bytes,
+                missing=False,
+                oversized=False,
+            )
             return
 
         replayer = BufferedMetricsReplay(client)
         result = replayer.replay(
             buffer_path=fetch.local_path,
-            run_id=run_id,
+            run_id=mlflow_run_id,
         )
-
-        if self._callbacks.on_metrics_buffer_retrieved:
-            self._callbacks.on_metrics_buffer_retrieved(
-                result.replayed,
-                fetch.line_count,
-                fetch.size_bytes,
-                False,
-                False,
-            )
 
         logger.info(
             "[METRICS_REPLAY] replayed %d/%d metrics (run=%s, %dms)",
-            result.replayed, fetch.line_count, run_id, result.duration_ms,
+            result.replayed, fetch.line_count, mlflow_run_id, result.duration_ms,
+        )
+        self._emit_metrics_buffer_retrieved(
+            pipeline_run_id,
+            replayed_count=result.replayed,
+            line_count=fetch.line_count,
+            size_bytes=fetch.size_bytes,
+            missing=False,
+            oversized=False,
         )
 
     @staticmethod

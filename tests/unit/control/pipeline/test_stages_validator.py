@@ -19,7 +19,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator, DatasetValidatorEventCallbacks
+from ryotenkai_control.pipeline.stages.dataset_validator import DatasetValidator
+from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import (
+    ValidationArtifactManager,
+)
 from ryotenkai_shared.config import DatasetConfig
 from ryotenkai_shared.errors import DatasetValidationFailedError
 
@@ -169,8 +172,8 @@ class TestDatasetValidatorAdditionalCoverage:
         ds2 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))
 
         cfg = _mk_primary_only_config(_local_ds("data/train.jsonl", plugins=[], critical_failures=1))
-        callbacks = DatasetValidatorEventCallbacks(on_dataset_scheduled=MagicMock())
-        v = DatasetValidator(cfg, callbacks=callbacks)
+        recorder = MagicMock(spec=ValidationArtifactManager)
+        v = DatasetValidator(cfg, artifact_recorder=recorder)
         monkeypatch.setattr(v, "_get_datasets_to_validate", lambda: {"d1": (ds1, []), "d2": (ds2, [])})
         monkeypatch.setattr(v._split_loader, "get_train_ref", lambda c: "ref")  # noqa: ARG005
 
@@ -226,7 +229,7 @@ class TestDatasetValidatorAdditionalCoverage:
         with pytest.raises(DatasetValidationFailedError):
             v.execute({})
         assert f2.cancelled is True
-        assert callbacks.on_dataset_scheduled.call_count == 2
+        assert recorder.on_dataset_scheduled.call_count == 2
 
     def test_execute_crash_is_treated_as_critical_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         ds1 = SimpleNamespace(validations=MagicMock(mode="fast", critical_failures=1))

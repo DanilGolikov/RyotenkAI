@@ -18,10 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from ryotenkai_control.pipeline.stages.training_monitor import (
-    TrainingMonitor,
-    TrainingMonitorEventCallbacks,
-)
+from datetime import datetime, timezone
+
+from ryotenkai_control.pipeline.stages.training_monitor import TrainingMonitor
 from ryotenkai_shared.errors import (
     InternalError,
     TrainingFailedError,
@@ -32,8 +31,12 @@ from ryotenkai_shared.errors import (
 def _make_monitor() -> TrainingMonitor:
     monitor = TrainingMonitor.__new__(TrainingMonitor)
     monitor._secrets = None
-    monitor._callbacks = TrainingMonitorEventCallbacks()
+    # Phase 4 — the legacy ``_callbacks`` field was replaced with an
+    # optional ``_emitter`` reference. Tests that bypass ``__init__``
+    # set it to ``None`` so the in-stage ``_emit_*`` helpers no-op.
+    monitor._emitter = None
     monitor._training_start_time = 0.0
+    monitor._last_event_at = datetime.now(timezone.utc)
     monitor._last_offset = 0
     monitor._last_status_log_time = 0.0
     monitor._ssh_client = None
@@ -44,6 +47,7 @@ def _make_monitor() -> TrainingMonitor:
     monitor._recovery_attempts = 0
     monitor._first_event_logged = False
     monitor._trainer_started_logged = False
+    monitor._run_id_cache = None
     monitor._provider = None
     monitor._client = None
     return monitor

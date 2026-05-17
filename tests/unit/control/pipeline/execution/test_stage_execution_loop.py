@@ -266,7 +266,10 @@ class TestPositive:
         )
         assert mlflow.log_stage_start.call_count == len(stages)
         assert mlflow.log_stage_complete.call_count == len(stages)
-        mlflow.log_event_complete.assert_called_once()
+        # Phase 7: ``log_event_complete`` on pipeline finalization removed;
+        # the typed journal (``RunCompletedEvent``) is the SSOT. The
+        # MLflow tag below is still set for legacy UI filters.
+        mlflow.set_tags.assert_any_call({"pipeline.status": "completed"})
 
 
 # ===========================================================================

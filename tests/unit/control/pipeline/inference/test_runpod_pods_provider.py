@@ -168,7 +168,8 @@ def _mk_provider(
     p._network_volume_meta = None
     p._pod_id = pod_id
     p._pod_name = pod_name
-    p._event_logger = None
+    # Phase 7: ``_event_logger`` removed from the provider; the fixture
+    # no longer seeds it.
     p._eval_session = eval_session
     p._adapter_ref = adapter_ref
     return p
@@ -212,11 +213,12 @@ def test_get_endpoint_info_none_before_deploy() -> None:
     assert p.get_endpoint_info() is None
 
 
-def test_set_event_logger_stores_logger() -> None:
+def test_set_event_logger_removed_in_phase_7() -> None:
+    """Phase 7: ``set_event_logger`` + ``_event_logger`` removed
+    alongside :class:`InferenceEventLogger` Protocol."""
     p = _mk_provider()
-    fake_logger = object()
-    p.set_event_logger(fake_logger)  # type: ignore[arg-type]
-    assert p._event_logger is fake_logger
+    assert not hasattr(p, "set_event_logger")
+    assert not hasattr(p, "_event_logger")
 
 
 # ---------------------------------------------------------------------------

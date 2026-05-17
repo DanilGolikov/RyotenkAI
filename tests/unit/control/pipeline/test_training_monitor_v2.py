@@ -62,7 +62,6 @@ def _load_monitor():
 
 _monitor_mod = _load_monitor()
 TrainingMonitor = _monitor_mod.TrainingMonitor
-TrainingMonitorEventCallbacks = _monitor_mod.TrainingMonitorEventCallbacks
 
 
 # ---------------------------------------------------------------------------
@@ -82,15 +81,20 @@ def _stub_config() -> Any:
     return cfg
 
 
-def _make_monitor(callbacks=None) -> TrainingMonitor:
-    # Bypass PipelineStage.__init__ — it expects a fully-built config
-    # object that we don't need for these tests. We instantiate the
-    # subclass without calling its parent and set the bare attributes
-    # the tests touch.
+def _make_monitor(*, emitter=None) -> TrainingMonitor:
+    """Build a minimal TrainingMonitor bypassing PipelineStage init.
+
+    Phase 4 — the legacy ``callbacks`` keyword was replaced with the
+    optional ``emitter`` reference (an :class:`IEventEmitter`). When
+    callers don't supply one, the in-stage ``_emit_*`` helpers no-op.
+    """
+    from datetime import datetime, timezone
+
     monitor = TrainingMonitor.__new__(TrainingMonitor)
     monitor._secrets = None
-    monitor._callbacks = callbacks or TrainingMonitorEventCallbacks()
+    monitor._emitter = emitter
     monitor._training_start_time = 0.0
+    monitor._last_event_at = datetime.now(timezone.utc)
     monitor._last_offset = 0
     monitor._last_status_log_time = 0.0
     monitor._ssh_client = None
@@ -101,15 +105,8 @@ def _make_monitor(callbacks=None) -> TrainingMonitor:
     monitor._recovery_attempts = 0
     monitor._first_event_logged = False
     monitor._trainer_started_logged = False
-    # Post-packagization: TrainingMonitor.__init__ stores the provider on
-    # ``self._provider`` (decouples from SSHClient). Set it here so tests
-    # bypassing __init__ don't AttributeError on read paths.
+    monitor._run_id_cache = None
     monitor._provider = None
-    # Post-Phase-B: ``_build_log_manager_from_context`` (and several
-    # postmortem paths) read ``self._client`` (the JobClient stashed in
-    # ``execute()``). Tests that bypass ``execute()`` need it pre-set
-    # to ``None`` so the helper takes the "no client" branch instead
-    # of AttributeError'ing.
     monitor._client = None
     return monitor
 
@@ -157,13 +154,12 @@ class TestExecuteContract:
 
 class TestMockMode:
     def test_mock_returns_ok(self) -> None:
-        started = []
-        completed = []
-        cb = TrainingMonitorEventCallbacks(
-            on_training_started=lambda: started.append(True),
-            on_training_completed=lambda d: completed.append(d),
-        )
-        monitor = _make_monitor(cb)
+        # Phase 4 — assert via the canonical FakeEventEmitter that a
+        # ``monitor_started`` envelope is emitted on the mock fast-path.
+        from tests._fakes.event_emitter import FakeEventEmitter
+
+        emitter = FakeEventEmitter()
+        monitor = _make_monitor(emitter=emitter)
         # The mock-mode branch reads context[StageNames.GPU_DEPLOYER]
         # which is the human-readable label, not a snake-case key.
         ctx = {
@@ -171,7 +167,8 @@ class TestMockMode:
         }
         result = monitor.execute(ctx)
         assert result["mock"] is True
-        assert started and completed
+        kinds = [e.kind for e in emitter.emitted]
+        assert "ryotenkai.control.training.monitor_started" in kinds
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +178,12 @@ class TestMockMode:
 
 class TestEventDispatch:
     def test_trainer_exited_zero_returns_ok(self) -> None:
-        completions: list[float] = []
-        cb = TrainingMonitorEventCallbacks(
-            on_training_completed=lambda d: completions.append(d),
-        )
-        monitor = _make_monitor(cb)
+        # Phase 4 — operator-facing "training completed" notification is
+        # now carried by typed runner events; the monitor's success
+        # contract is just the returned dict. Assert that the FSM exit
+        # produces ``status="completed"`` and that cleanup teardown
+        # still defers to ``monitor.cleanup()`` (Phase 11.E).
+        monitor = _make_monitor()
         client = _make_client(events=[
             {"offset": 0, "kind": "trainer_spawned", "payload": {}},
             {
@@ -196,7 +194,6 @@ class TestEventDispatch:
         ])
         result = monitor.execute(_ctx_with_handles(client))
         assert result["status"] == "completed"
-        assert len(completions) == 1
         # Phase 11.E — teardown moved to cleanup() so the SSH tunnel
         # + JobClient stay alive through ModelRetriever.
         client.aclose.assert_not_awaited()
@@ -204,11 +201,10 @@ class TestEventDispatch:
         client.aclose.assert_awaited()
 
     def test_trainer_exited_nonzero_returns_err(self) -> None:
-        failures: list[tuple[str, float]] = []
-        cb = TrainingMonitorEventCallbacks(
-            on_training_failed=lambda msg, d: failures.append((msg, d)),
-        )
-        monitor = _make_monitor(cb)
+        # Phase 4 — the legacy ``on_training_failed`` banner callback
+        # was removed; we still assert the typed error raise via the
+        # ``legacy_code`` context field.
+        monitor = _make_monitor()
         client = _make_client(events=[
             {
                 "offset": 0, "kind": "trainer_exited",
@@ -219,7 +215,7 @@ class TestEventDispatch:
         with pytest.raises(TrainingFailedError) as exc_info:
             monitor.execute(_ctx_with_handles(client))
         assert exc_info.value.context.get("legacy_code") == "TRAINING_FAILED"
-        assert failures and "exit_code=137" in failures[0][0]
+        assert "exit_code=137" in (exc_info.value.detail or "")
 
     def test_trainer_exited_cancelled(self) -> None:
         monitor = _make_monitor()
@@ -234,12 +230,13 @@ class TestEventDispatch:
             monitor.execute(_ctx_with_handles(client))
         assert exc_info.value.context.get("legacy_code") == "TRAINING_CANCELLED"
 
-    def test_health_snapshot_fires_resource_check(self) -> None:
-        seen: list[dict] = []
-        cb = TrainingMonitorEventCallbacks(
-            on_resource_check=lambda d: seen.append(d),
-        )
-        monitor = _make_monitor(cb)
+    def test_health_snapshot_updates_last_event_at(self) -> None:
+        # Phase 4 — the legacy ``on_resource_check`` callback was
+        # removed. ``health_snapshot`` events now refresh the monitor's
+        # ``_last_event_at`` anchor so a follow-up timeout envelope
+        # carries an accurate "no event in N seconds" window.
+        monitor = _make_monitor()
+        before = monitor._last_event_at
         client = _make_client(events=[
             {"offset": 0, "kind": "health_snapshot",
              "payload": {"gpu_util_percent": 80.0}},
@@ -250,7 +247,11 @@ class TestEventDispatch:
             },
         ])
         result = monitor.execute(_ctx_with_handles(client))
-        assert seen == [{"gpu_util_percent": 80.0}]
+        assert result["status"] == "completed"
+        # ``_last_event_at`` must advance past the construction anchor
+        # once a health_snapshot landed (the FSM also refreshes it on
+        # the terminal trainer_exited).
+        assert monitor._last_event_at >= before
 
 
 # ---------------------------------------------------------------------------
@@ -459,16 +460,16 @@ class TestStatusReporting:
         monitor._maybe_log_status(payload)
         assert len(captured) == 2
 
-    def test_health_snapshot_calls_both_status_log_and_callback(
+    def test_health_snapshot_drives_status_log_and_refreshes_last_event_at(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Status reporting must NOT replace ``on_resource_check`` —
-        # MLflow integrations rely on the callback for system metrics.
-        seen: list[dict] = []
-        cb = TrainingMonitorEventCallbacks(
-            on_resource_check=lambda d: seen.append(d),
-        )
-        monitor = _make_monitor(cb)
+        # Phase 4 — ``on_resource_check`` callback removed; the operator
+        # surface is the rate-limited ``[MONITOR] running …`` status
+        # line. We also pin that the FSM refreshes ``_last_event_at`` on
+        # every health snapshot so a follow-up monitor_timeout envelope
+        # carries the most recent observation window.
+        monitor = _make_monitor()
+        before = monitor._last_event_at
         captured = self._capture_log(monkeypatch, monitor)
 
         monitor._dispatch_event({
@@ -476,10 +477,10 @@ class TestStatusReporting:
             "payload": {"gpu_util_percent": 50.0},
         })
 
-        assert seen == [{"gpu_util_percent": 50.0}]
         # Status line emitted at least once.
         # PR-0.4 (2026-05-02): "ALIVE" → "running" (FSM JobState alignment).
         assert any("running" in msg for msg, _ in captured)
+        assert monitor._last_event_at >= before
 
     def test_status_line_duration_renders_from_training_start(
         self, monkeypatch: pytest.MonkeyPatch,

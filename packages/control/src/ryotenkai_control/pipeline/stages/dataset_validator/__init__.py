@@ -1,21 +1,17 @@
 """DatasetValidator stage and its artifact-accumulator collaborator.
 
-Both live together because the stage owns the validation event protocol
-(``DatasetValidatorEventCallbacks``) and ``ValidationArtifactManager`` is
-the only callback consumer the orchestrator wires up. Keeping them as
-sibling modules in one package makes the contract obvious — nobody has
-to grep across ``stages/`` and a separate ``validation/`` package to
-understand the flow.
+Both live together because the stage owns the per-plugin / per-dataset
+lifecycle that :class:`ValidationArtifactManager` records. After the
+Phase 4 event-system unification (2026-05-16) the legacy
+``DatasetValidatorEventCallbacks`` dataclass is gone — typed events
+flow through :class:`IEventEmitter` and the artifact recorder is
+passed as a typed collaborator (no callback wrapping).
 """
 
 from ryotenkai_control.pipeline.stages.dataset_validator.artifact_manager import ValidationArtifactManager
-from ryotenkai_control.pipeline.stages.dataset_validator.stage import (
-    DatasetValidator,
-    DatasetValidatorEventCallbacks,
-)
+from ryotenkai_control.pipeline.stages.dataset_validator.stage import DatasetValidator
 
 __all__ = [
     "DatasetValidator",
-    "DatasetValidatorEventCallbacks",
     "ValidationArtifactManager",
 ]

@@ -370,7 +370,12 @@ class TestRunFinallyAndStageSpecificInfoMissingLines:
         }
 
         orch._stage_info_logger.log(mlflow_manager=orch._mlflow_manager, context=orch.context, stage_name="GPU Deployer")
-        assert orch._mlflow_manager.log_event_info.call_count >= 2
+        # Phase 7: ``log_event_info`` removed; durations now surface as
+        # ``deployment.*`` MLflow params.
+        orch._mlflow_manager.log_params.assert_called_once()
+        params = orch._mlflow_manager.log_params.call_args.args[0]
+        assert params["deployment.upload_duration_seconds"] == 1.2
+        assert params["deployment.deps_duration_seconds"] == 3.4
 
     def test_log_stage_specific_info_dataset_validator_plugin_metrics_handles_non_numeric(self, tmp_path: Path) -> None:
         orch = _mk_orchestrator(

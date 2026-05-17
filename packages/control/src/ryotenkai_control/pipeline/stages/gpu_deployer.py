@@ -3,12 +3,21 @@ GPU Deployer - Universal deployment stage using provider abstraction.
 
 Replaces the old RunPodDeployer with a provider-agnostic implementation.
 Uses IGPUProvider interface to work with any GPU provider.
+
+Phase 4 (event-system unification, 2026-05-16): the legacy
+``GPUDeployerEventCallbacks`` dataclass was removed. Lifecycle events
+(``deployment_started``, ``deployment_completed``, ``deployment_failed``)
+flow through :class:`IEventEmitter` as typed
+``ryotenkai.control.gpu.*`` envelopes. The per-step callbacks
+(``on_files_uploaded``, ``on_deps_installed``, …) no longer have direct
+analogs — those measurements remain in the returned context dict and
+in :data:`logger` lines for now; Phase 5 / 6 will fold them into the
+event stream if required.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from ryotenkai_control.pipeline.stages.base import PipelineStage
@@ -20,6 +29,15 @@ from ryotenkai_shared.errors import (
     RyotenkAIError,
     SSHTransferFailedError,
 )
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_gpu import (
+    GPUDeploymentCompletedEvent,
+    GPUDeploymentCompletedPayload,
+    GPUDeploymentFailedEvent,
+    GPUDeploymentFailedPayload,
+    GPUDeploymentStartedEvent,
+    GPUDeploymentStartedPayload,
+)
 from ryotenkai_shared.pipeline_context import RunContext
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
 from ryotenkai_shared.utils.ssh_client import SSHClient
@@ -27,11 +45,13 @@ from ryotenkai_shared.utils.ssh_client import SSHClient
 # Truncation length for the docker image SHA shown in pipeline logs.
 GPU_DEPLOYER_IMAGE_SHA_TRUNCATE = 20
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+# Source URI for envelopes emitted from this stage.
+_STAGE_SOURCE = "control://orchestrator/gpu_deployer"
 
+if TYPE_CHECKING:
     from ryotenkai_providers.training.interfaces import IGPUProvider, SSHConnectionInfo
     from ryotenkai_shared.config import PipelineConfig, Secrets
+    from ryotenkai_shared.events import IEventEmitter
     from ryotenkai_shared.utils.pod_layout import PodLayout
 
 
@@ -55,48 +75,6 @@ class IEarlyReleasable(Protocol):
     """
 
     def release(self) -> None: ...
-
-
-# =============================================================================
-# EVENT CALLBACKS
-# =============================================================================
-
-
-@dataclass
-class GPUDeployerEventCallbacks:
-    """
-    Callbacks for GPUDeployer events (SOLID-compliant event collection).
-
-    Used to integrate GPUDeployer with MLflow or other logging systems.
-    """
-
-    # Provider created event
-    on_provider_created: Callable[[str, str], None] | None = None
-    # Args: provider_name, provider_type
-
-    # Connected event
-    on_connected: Callable[[str, str, int], None] | None = None
-    # Args: provider_name, host, port
-
-    # Files uploaded event
-    on_files_uploaded: Callable[[float], None] | None = None
-    # Args: duration_seconds
-
-    # Dependencies installed event
-    on_deps_installed: Callable[[float], None] | None = None
-    # Args: duration_seconds
-
-    # Training started event
-    on_training_started: Callable[[str], None] | None = None
-    # Args: resource_id
-
-    # Error event
-    on_error: Callable[[str, str], None] | None = None
-    # Args: stage, error_message
-
-    # Cleanup event
-    on_cleanup: Callable[[str], None] | None = None
-    # Args: provider_name
 
 
 class GPUDeployer(PipelineStage):
@@ -124,7 +102,8 @@ class GPUDeployer(PipelineStage):
         self,
         config: PipelineConfig,
         secrets: Secrets,
-        callbacks: GPUDeployerEventCallbacks | None = None,
+        *,
+        emitter: IEventEmitter | None = None,
     ):
         """
         Initialize GPU deployer.
@@ -132,11 +111,12 @@ class GPUDeployer(PipelineStage):
         Args:
             config: Pipeline configuration
             secrets: Secrets with API keys
-            callbacks: Optional event callbacks for MLflow integration
+            emitter: Optional event emitter for typed
+                ``ryotenkai.control.gpu.*`` envelopes (Phase 4).
         """
         super().__init__(config, StageNames.GPU_DEPLOYER)
         self.secrets = secrets
-        self._callbacks = callbacks or GPUDeployerEventCallbacks()
+        self._emitter = emitter
 
         # Get provider config
         self._provider_name = config.get_active_provider_name()
@@ -155,6 +135,101 @@ class GPUDeployer(PipelineStage):
         self.deployment = TrainingDeploymentManager(config=config, secrets=secrets)
 
         logger.info(f"[DEPLOYER:INIT] GPUDeployer initialized: provider={self._provider_name}")
+
+    # ------------------------------------------------------------------
+    # Public mutator used by the orchestrator's lazy emitter wiring —
+    # stages are constructed before the canonical run directory is
+    # known.
+    # ------------------------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        self._emitter = emitter
+
+    # ------------------------------------------------------------------
+    # Run-id resolution (mirrors DatasetValidator._resolve_run_id) +
+    # tiny emit helpers — never raise on emit failure (the emitter
+    # itself swallows internal failures; this just keeps the call site
+    # readable).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_run_id(context: dict[str, Any]) -> str:
+        run_obj = context.get(PipelineContextKeys.RUN)
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
+
+    def _emit_deployment_started(
+        self,
+        run_id: str,
+        *,
+        provider: str,
+        gpu_type: str,
+        gpu_count: int,
+        region: str | None,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            GPUDeploymentStartedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUDeploymentStartedPayload(
+                    provider=provider,
+                    gpu_type=gpu_type,
+                    gpu_count=gpu_count,
+                    region=region,
+                ),
+            ),
+        )
+
+    def _emit_deployment_completed(
+        self,
+        run_id: str,
+        *,
+        instance_id: str,
+        endpoint: str,
+        provision_duration_s: float,
+        cost_per_hour_usd: float | None,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            GPUDeploymentCompletedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUDeploymentCompletedPayload(
+                    instance_id=instance_id,
+                    endpoint=endpoint,
+                    provision_duration_s=provision_duration_s,
+                    cost_per_hour_usd=cost_per_hour_usd,
+                ),
+            ),
+        )
+
+    def _emit_deployment_failed(
+        self,
+        run_id: str,
+        *,
+        reason: str,
+        provider_error_code: str | None = None,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            GPUDeploymentFailedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=GPUDeploymentFailedPayload(
+                    reason=reason,
+                    provider_error_code=provider_error_code,
+                ),
+            ),
+        )
 
     def execute(self, context: dict[str, Any]) -> dict[str, Any]:
         """
@@ -190,6 +265,75 @@ class GPUDeployer(PipelineStage):
                 context={"legacy_code": "MISSING_RUN_CONTEXT"},
             )
 
+        run_id = self._resolve_run_id(context)
+        scope_cm = (
+            self._emitter.stage_scope(StageNames.GPU_DEPLOYER)
+            if self._emitter is not None
+            else _null_context()
+        )
+
+        # Best-effort enrichment for the started event — provider /
+        # gpu_type / gpu_count typically live on the provider block as
+        # Pydantic schemas or raw dicts. Resolve loosely; the emitter
+        # only validates ``payload`` shape, so empty defaults are fine.
+        def _provider_attr(name: str) -> Any:
+            block = self._provider_config
+            if block is None:
+                return None
+            if hasattr(block, name):
+                return getattr(block, name)
+            if isinstance(block, dict):
+                return block.get(name)
+            return None
+
+        gpu_type_val = str(_provider_attr("gpu_type") or "")
+        gpu_count_val = int(_provider_attr("gpu_count") or 1)
+        region_val = _provider_attr("region")
+        if region_val is not None:
+            region_val = str(region_val)
+
+        # Open the stage scope so emitted envelopes auto-fill stage_id.
+        scope_cm.__enter__()
+        try:
+            self._emit_deployment_started(
+                run_id,
+                provider=self._provider_name,
+                gpu_type=gpu_type_val,
+                gpu_count=gpu_count_val,
+                region=region_val,
+            )
+
+            try:
+                result_ctx = self._execute_inner(context, run, run_id)
+            except RyotenkAIError as exc:
+                self._emit_deployment_failed(
+                    run_id,
+                    reason=exc.detail or str(exc),
+                    provider_error_code=(exc.context or {}).get("legacy_code"),
+                )
+                raise
+            except Exception as exc:
+                self._emit_deployment_failed(
+                    run_id,
+                    reason=str(exc),
+                    provider_error_code=type(exc).__name__,
+                )
+                raise
+
+            return result_ctx
+        finally:
+            scope_cm.__exit__(None, None, None)
+
+    def _execute_inner(
+        self,
+        context: dict[str, Any],
+        run: RunContext,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """The pre-emitter execute body — kept as a private method so
+        the outer :meth:`execute` can wrap it in the stage_scope + the
+        deployment_started/failed envelopes without duplicating the
+        provider lifecycle."""
         # Step 1: Create provider via the manifest-driven registry.
         # Replaces the legacy ``GPUProviderFactory.create(provider_name,
         # provider_config: dict, secrets)`` call — the registry resolves
@@ -204,31 +348,35 @@ class GPUDeployer(PipelineStage):
             provider_block=self._provider_config,
             secrets=self.secrets,
         )
-        try:
-            self._provider = get_registry().create_training(self._provider_name, ctx)
-        except RyotenkAIError as exc:
-            if self._callbacks.on_error:
-                self._callbacks.on_error("provider_create", exc.detail or str(exc))
-            raise
-        # Fire callback
-        if self._callbacks.on_provider_created:
-            self._callbacks.on_provider_created(self._provider_name, self._provider.provider_type)
+        self._provider = get_registry().create_training(self._provider_name, ctx)
+
+        # Phase 5: wire the emitter into the provider + deployment
+        # manager so ``ssh_provisioned`` / ``code_synced`` envelopes
+        # flow through the same emitter the stage uses. Providers
+        # constructed outside this stage (resume flow, tests) keep
+        # their emitter as ``None`` and silently no-op — this matches
+        # the contract the providers documented for legacy callers.
+        if self._emitter is not None:
+            wire = getattr(self._provider, "set_emitter", None)
+            if callable(wire):
+                try:
+                    wire(self._emitter)
+                except Exception as exc:  # noqa: BLE001 — wiring never fails the stage
+                    logger.debug(
+                        "[DEPLOYER] provider.set_emitter raised (non-fatal): %s",
+                        exc,
+                    )
+            self.deployment.set_emitter(self._emitter)
+            self.deployment.set_run_id(run_id)
 
         # Step 2: Connect to GPU server
         logger.info(f"Connecting to {self._provider_name}...")
         connect_start = time.time()
-        try:
-            ssh_info = cast("SSHConnectionInfo | None", self._provider.connect(run=run))
-        except RyotenkAIError as exc:
-            if self._callbacks.on_error:
-                self._callbacks.on_error("connect", exc.detail or str(exc))
-            raise
+        ssh_info = cast("SSHConnectionInfo | None", self._provider.connect(run=run))
         connect_duration = time.time() - connect_start
 
         if ssh_info is None:
             msg = "SSH info is None"
-            if self._callbacks.on_error:
-                self._callbacks.on_error("connect", msg)
             self._handle_error_and_disconnect(msg)
             raise ProviderUnavailableError(
                 detail=msg,
@@ -239,10 +387,6 @@ class GPUDeployer(PipelineStage):
             )
 
         logger.info(f"Connected: {ssh_info}")
-
-        # Fire callback
-        if self._callbacks.on_connected:
-            self._callbacks.on_connected(self._provider_name, ssh_info.host, ssh_info.port)
 
         # Step 3: Set workspace path for deployment manager (docker-only training)
         self.deployment.set_workspace(workspace_path=ssh_info.workspace_path)
@@ -276,36 +420,26 @@ class GPUDeployer(PipelineStage):
         upload_start = time.time()
         try:
             self.deployment.deploy_code(ssh_client)
-        except RyotenkAIError as exc:
-            upload_duration = time.time() - upload_start
+        except RyotenkAIError:
             logger.error("Code sync failed, disconnecting...")
             self._handle_error_and_disconnect("Code sync failed")
-            if self._callbacks.on_error:
-                self._callbacks.on_error("upload", exc.detail or str(exc))
             raise
         upload_duration = time.time() - upload_start
 
         logger.info(f"Code synced! ({upload_duration:.1f}s)")
-        if self._callbacks.on_files_uploaded:
-            self._callbacks.on_files_uploaded(upload_duration)
 
         # Step 6: Verify runtime (docker-only: no host pip/venv installs)
         logger.info("Verifying training runtime (docker-only)...")
         deps_start = time.time()
         try:
             self.deployment.install_dependencies(ssh_client)
-        except RyotenkAIError as exc:
-            deps_duration = time.time() - deps_start
+        except RyotenkAIError:
             logger.error("Runtime verification failed, disconnecting...")
             self._handle_error_and_disconnect("Runtime verification failed")
-            if self._callbacks.on_error:
-                self._callbacks.on_error("deps", exc.detail or str(exc))
             raise
         deps_duration = time.time() - deps_start
 
         logger.info(f"Runtime verified! ({deps_duration:.1f}s)")
-        if self._callbacks.on_deps_installed:
-            self._callbacks.on_deps_installed(deps_duration)
 
         # Step 7: Start training.
         #
@@ -324,25 +458,35 @@ class GPUDeployer(PipelineStage):
             training_metadata = self.deployment.start_training(
                 ssh_client, context, provider=self._provider,
             )
-        except RyotenkAIError as exc:
+        except RyotenkAIError:
             logger.error("Training start failed, disconnecting...")
             self._handle_error_and_disconnect("Training start failed")
-            if self._callbacks.on_error:
-                self._callbacks.on_error("training_start", exc.detail or str(exc))
             raise
         logger.info(f"Training started! Mode: {training_metadata.get('mode', 'unknown')}")
 
         # Log Docker image SHA to MLflow for reproducibility (if available)
         if training_metadata and "image_sha" in training_metadata:
             image_sha = training_metadata["image_sha"]
-            logger.info(f"📌 Docker image SHA: {image_sha[:GPU_DEPLOYER_IMAGE_SHA_TRUNCATE]}...")
+            logger.info(f"Docker image SHA: {image_sha[:GPU_DEPLOYER_IMAGE_SHA_TRUNCATE]}...")
             context["docker_image_sha"] = image_sha
-
-        if self._callbacks.on_training_started:
-            self._callbacks.on_training_started(ssh_info.resource_id or "unknown")
 
         # Fetch pod info for cost/GPU metadata (RunPod only; None for single_node)
         pod_info = self._provider.get_resource_info()
+
+        # Emit the "deployment_completed" envelope: instance + endpoint
+        # + total provision time. ``ssh_info.host`` is used as the
+        # endpoint anchor because the cloud-side endpoint URL is only
+        # available later (InferenceDeployer sets it). For now the SSH
+        # host doubles as the deployment endpoint hint.
+        self._emit_deployment_completed(
+            run_id,
+            instance_id=ssh_info.resource_id or "unknown",
+            endpoint=f"ssh://{ssh_info.host}:{ssh_info.port}",
+            provision_duration_s=float(connect_duration),
+            cost_per_hour_usd=float(pod_info.cost_per_hr)
+            if pod_info is not None and getattr(pod_info, "cost_per_hr", None) is not None
+            else None,
+        )
 
         # Return connection info for monitoring
         return self.update_context(
@@ -515,8 +659,6 @@ class GPUDeployer(PipelineStage):
             return
         if self._provider:
             logger.info(f"Cleaning up {self._provider_name}...")
-            if self._callbacks.on_cleanup:
-                self._callbacks.on_cleanup(self._provider_name)
 
             # Phase 14.D+F — capability-driven dispatch (was
             # ``self._provider_name == PROVIDER_RUNPOD`` string check).
@@ -536,3 +678,15 @@ class GPUDeployer(PipelineStage):
                 logger.debug(f"[DEPLOYER] Failed to close SSH ControlMaster: {e}")
             finally:
                 self._ssh_client = None
+
+
+# No-op context manager — used in :meth:`GPUDeployer.execute` when no
+# emitter is wired (tests / legacy paths). Mirrors the helper in
+# :mod:`dataset_validator.stage` so the two stages have the same
+# fallback shape.
+from contextlib import contextmanager
+
+
+@contextmanager
+def _null_context() -> Any:
+    yield

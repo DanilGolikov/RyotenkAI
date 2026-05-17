@@ -12,10 +12,14 @@ context. Monitor's job is now to subscribe to the in-pod runner's
 WebSocket event stream — terminal state arrives as a structured
 event, no filesystem polling, no marker IPC.
 
-Public surface preserved 1:1 so :mod:`src.pipeline.orchestrator`
-keeps working without changes:
-- :class:`TrainingMonitor` constructor signature
-- :class:`TrainingMonitorEventCallbacks` dataclass
+Phase 4 (event-system unification, 2026-05-16): the legacy
+``TrainingMonitorEventCallbacks`` dataclass was removed. The monitor
+now takes an optional :class:`IEventEmitter` and emits typed
+``ryotenkai.control.training.*`` envelopes
+(``monitor_started`` on entry, ``monitor_timeout`` on
+``ReplayTruncatedError`` / ``JobClientError``). Detailed
+per-resource-check telemetry stays in :data:`logger` for now — the
+Phase 5 coverage-gap pass will fold it back into typed events.
 
 Return shape (post Phase A2 Batch 10): ``execute(context) -> dict``;
 raises typed :class:`RyotenkAIError` (``TrainingFailedError`` /
@@ -30,30 +34,40 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from ryotenkai_shared.utils.clients.job_client import (
-    JobClientError,
-    JobNotFoundError,
-    ReplayTruncatedError,
+from ryotenkai_control.pipeline.stages.base import PipelineStage
+from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
+from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
+from ryotenkai_control.pipeline.stages.training_monitor_pod_event_forwarder import (
+    PodEventForwarder,
 )
 from ryotenkai_shared.constants import (
     CONSOLE_LINE_WIDTH,
     LOG_DOWNLOAD_INTERVAL_DEFAULT,
     SSH_PORT_DEFAULT,
 )
-from ryotenkai_control.pipeline.stages.base import PipelineStage
-from ryotenkai_control.pipeline.stages.constants import PipelineContextKeys, StageNames
-from ryotenkai_control.pipeline.stages.managers.log_fetcher import LogFetcher
 from ryotenkai_shared.errors import (
     InternalError,
     RyotenkAIError,
     TrainingFailedError,
     TrainingOOMError,
 )
+from ryotenkai_shared.events import UNKNOWN_OFFSET
+from ryotenkai_shared.events.types.control_training import (
+    TrainingMonitorStartedEvent,
+    TrainingMonitorStartedPayload,
+    TrainingMonitorTimeoutEvent,
+    TrainingMonitorTimeoutPayload,
+)
+from ryotenkai_shared.utils.clients.job_client import (
+    JobClientError,
+    JobNotFoundError,
+    ReplayTruncatedError,
+)
 from ryotenkai_shared.utils.logger import get_run_log_layout, logger
+
 # Phase 3 PR-3.2 (transport-unification-v2): SSHClient removed from
 # this module. Training monitor's runtime path is HTTP-only after
 # PR-2.3 migrated LogManager → LogFetcher; the third tuple slot of
@@ -76,47 +90,17 @@ TRAINING_MONITOR_LOG_STATUS_INTERVAL = 15
 TRAINING_MONITOR_LINE_WIDTH = CONSOLE_LINE_WIDTH
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
+    from ryotenkai_shared.config import PipelineConfig
+    from ryotenkai_shared.config.secrets.model import Secrets
+    from ryotenkai_shared.events import IEventEmitter
     from ryotenkai_shared.utils.clients.job_client import JobClient
     from ryotenkai_shared.utils.clients.ssh_tunnel import SSHTunnelManager
-    from ryotenkai_shared.config.secrets.model import Secrets
-    from ryotenkai_shared.config import PipelineConfig
 
 
-# ---------------------------------------------------------------------------
-# Public callback contract — preserved verbatim from legacy monitor
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class TrainingMonitorEventCallbacks:
-    """Hooks for external integrations (MLflow event log, dashboards).
-
-    All callbacks are optional; the monitor calls only those that are
-    set. Signatures match the legacy contract so MLflow event-logging
-    code doesn't have to change.
-    """
-
-    on_training_started: Callable[[], None] | None = None
-    on_training_completed: Callable[[float], None] | None = None
-    """Args: ``duration_seconds``."""
-
-    on_training_failed: Callable[[str, float], None] | None = None
-    """Args: ``error_message``, ``duration_seconds``."""
-
-    on_training_timeout: Callable[[int, float], None] | None = None
-    """DEPRECATED — training has no wall-clock cap any more, but the
-    field stays so MLflow callback registrations don't fail."""
-
-    on_process_died: Callable[[float], None] | None = None
-    """Args: ``duration_seconds``. Fires on FAILED with no error
-    message (e.g. SIGKILL by IdleDetector)."""
-
-    on_resource_check: Callable[[dict], None] | None = None
-    """Args: ``resources`` dict. Fires on every ``health_snapshot``
-    event from :class:`HealthReporter`."""
+# Source URI for envelopes emitted from this stage.
+_STAGE_SOURCE = "control://orchestrator/training_monitor"
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +146,19 @@ class TrainingMonitor(PipelineStage):
         self,
         config: PipelineConfig,
         secrets: Secrets | None = None,
-        callbacks: TrainingMonitorEventCallbacks | None = None,
+        *,
+        emitter: IEventEmitter | None = None,
     ) -> None:
         super().__init__(config, StageNames.TRAINING_MONITOR)
         self._secrets = secrets
-        self._callbacks = callbacks or TrainingMonitorEventCallbacks()
+        self._emitter = emitter
         self._training_start_time: float = 0.0
+        # Tracks the wall-clock instant we last saw an event from the
+        # pod. ``ReplayTruncated``/``JobClient`` errors fire a typed
+        # ``monitor_timeout`` envelope that carries this value so the
+        # consumer can render "no event in N seconds" without a side
+        # channel.
+        self._last_event_at: datetime = datetime.now(UTC)
         # Rate-limit cursor for ``[MONITOR] ALIVE`` status lines. The
         # runner publishes ``health_snapshot`` every 30 s, but the
         # 15-second cadence is preserved as a maximum-rate guard so
@@ -219,6 +210,121 @@ class TrainingMonitor(PipelineStage):
         # "trainer started", a metric, and "trainer exited" at minimum.
         self._first_event_logged: bool = False
         self._trainer_started_logged: bool = False
+        # Cached run id (resolved on execute() entry); used by the
+        # async ``_watch`` helper which cannot reach the pipeline
+        # context.
+        self._run_id_cache: str | None = None
+
+        # Pod-event forwarder — holds the dispatch / forward / status
+        # logging / replay-fallback logic that used to live inline on
+        # this class. Built lazily via :meth:`_get_forwarder` so unit
+        # tests that bypass ``__init__`` via ``TrainingMonitor.__new__``
+        # (the ``_make_monitor`` helper in
+        # ``test_training_monitor_v2.py``) still see a working forwarder
+        # the first time ``_dispatch_event`` / ``_maybe_log_status`` is
+        # exercised. See ``training_monitor_pod_event_forwarder.py`` for
+        # the extracted surface. The forwarder reads + mutates a small
+        # slice of monitor state (the milestone flags,
+        # ``_last_event_at``, ``_last_status_log_time``, ``_last_offset``,
+        # ``_training_start_time``) via the ``MonitorState`` Protocol;
+        # trainer-exit + reconciliation callbacks stay on this class.
+        self._forwarder: PodEventForwarder | None = None
+
+    def _get_forwarder(self) -> PodEventForwarder:
+        """Return the lazily-constructed pod-event forwarder.
+
+        Built on first access so test helpers that build a partially-
+        initialised monitor via ``TrainingMonitor.__new__`` still get a
+        functional forwarder when they invoke
+        :meth:`_dispatch_event` / :meth:`_maybe_log_status` directly.
+        Subsequent calls return the cached instance.
+
+        ``getattr`` fallback handles the ``__new__``-only test path
+        where the attribute is never assigned to ``None`` by ``__init__``.
+        """
+        if getattr(self, "_forwarder", None) is None:
+            self._forwarder = PodEventForwarder(
+                state=self,
+                emitter=getattr(self, "_emitter", None),
+                handle_trainer_exited=self._handle_trainer_exited,
+                terminal_from_state=self._terminal_from_state,
+                fallback_to_status=self._fallback_to_status,
+                terminal_states=_TERMINAL_STATES,
+                log_status_interval=TRAINING_MONITOR_LOG_STATUS_INTERVAL,
+            )
+        assert self._forwarder is not None  # narrows mypy / type checker
+        return self._forwarder
+
+    # --- emitter wiring -------------------------------------------------
+
+    def set_emitter(self, emitter: IEventEmitter) -> None:
+        """Inject an emitter after construction (lazy wiring)."""
+        self._emitter = emitter
+        # ``getattr`` fallback — when called on a test-fixture monitor
+        # built via ``TrainingMonitor.__new__`` the attribute may not
+        # exist yet (set lazily by :meth:`_get_forwarder`).
+        forwarder = getattr(self, "_forwarder", None)
+        if forwarder is not None:
+            forwarder.set_emitter(emitter)
+
+    @staticmethod
+    def _resolve_run_id(context: dict[str, Any]) -> str:
+        run_obj = context.get(PipelineContextKeys.RUN)
+        run_name = getattr(run_obj, "name", None)
+        if isinstance(run_name, str) and run_name:
+            return run_name
+        return "unknown"
+
+    def _emit_monitor_started(
+        self,
+        run_id: str,
+        *,
+        pod_endpoint: str,
+        poll_interval_s: float,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            TrainingMonitorStartedEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=TrainingMonitorStartedPayload(
+                    pod_endpoint=pod_endpoint,
+                    poll_interval_s=poll_interval_s,
+                ),
+            ),
+        )
+
+    def _monitor_run_id(self) -> str:
+        """Return the cached run_id (set on :meth:`execute` entry).
+
+        Falls back to ``"unknown"`` for paths that reach the async
+        watcher without an explicit context (test helpers that call
+        ``_watch`` directly).
+        """
+        return self._run_id_cache or "unknown"
+
+    def _emit_monitor_timeout(
+        self,
+        run_id: str,
+        *,
+        last_event_at: datetime,
+        timeout_s: float,
+    ) -> None:
+        if self._emitter is None:
+            return
+        self._emitter.emit(
+            TrainingMonitorTimeoutEvent(
+                source=_STAGE_SOURCE,
+                run_id=run_id,
+                offset=UNKNOWN_OFFSET,
+                payload=TrainingMonitorTimeoutPayload(
+                    last_event_at=last_event_at,
+                    timeout_s=timeout_s,
+                ),
+            ),
+        )
 
     # --- public entry point ---------------------------------------------
 
@@ -244,10 +350,14 @@ class TrainingMonitor(PipelineStage):
         provider_info = deployer_context.get("provider_info", {})
         if provider_info.get("mock"):
             logger.info("[MONITOR] MOCK MODE — simulating successful training")
-            if self._callbacks.on_training_started:
-                self._callbacks.on_training_started()
-            if self._callbacks.on_training_completed:
-                self._callbacks.on_training_completed(0.0)
+            # Emit a started event for the mock path so consumers still
+            # observe the lifecycle; the runner-facing pod_endpoint /
+            # poll_interval are degenerate values in mock mode.
+            self._emit_monitor_started(
+                self._resolve_run_id(context),
+                pod_endpoint="mock://noop",
+                poll_interval_s=0.0,
+            )
             return {"status": "completed", "duration_seconds": 0.0, "mock": True}
 
         # ---- real flow: pull the launcher-provided handles
@@ -271,8 +381,16 @@ class TrainingMonitor(PipelineStage):
 
         logger.info(f"[MONITOR] Subscribing to runner events for job {job_id!r}")
         self._training_start_time = time.time()
-        if self._callbacks.on_training_started:
-            self._callbacks.on_training_started()
+        self._last_event_at = datetime.now(UTC)
+        self._run_id_cache = self._resolve_run_id(context)
+        # Best-effort pod endpoint hint; the launcher stores
+        # ``pod_endpoint`` on the context when known, otherwise we fall
+        # back to the job id so the typed event is still readable.
+        self._emit_monitor_started(
+            self._run_id_cache,
+            pod_endpoint=str(context.get("pod_endpoint") or f"job://{job_id}"),
+            poll_interval_s=0.0,
+        )
 
         # Build pod-side log pullers. Cloud providers expose both the
         # trainer's ``trainer.stdio.log`` and the runner's ``runner.log``
@@ -768,7 +886,7 @@ class TrainingMonitor(PipelineStage):
         # --- Source 1: log file pointers (no inline content dump) ---
         try:
             log_layout = get_run_log_layout()
-        except Exception:  # noqa: BLE001 — defensive (test paths)
+        except Exception:
             log_layout = None
 
         if log_layout is not None:
@@ -814,6 +932,7 @@ class TrainingMonitor(PipelineStage):
 
         import asyncio
         import threading
+
         from ryotenkai_shared.contracts.runner_api.diagnostics import (  # noqa: F401  -- imported for downstream rendering
             DiagnosticsBlockError,
         )
@@ -824,7 +943,7 @@ class TrainingMonitor(PipelineStage):
         def _run_in_fresh_loop() -> None:
             try:
                 response_holder.append(asyncio.run(client.get_diagnostics()))
-            except Exception as exc:  # noqa: BLE001 — postmortem must survive
+            except Exception as exc:
                 error_holder.append(exc)
 
         worker = threading.Thread(target=_run_in_fresh_loop, daemon=True)
@@ -889,7 +1008,7 @@ class TrainingMonitor(PipelineStage):
         self,
         *,
         label: str,
-        path: "Path",
+        path: Path,
     ) -> None:
         """Emit a one-line pointer to a local log file (no content dump).
 
@@ -919,7 +1038,7 @@ class TrainingMonitor(PipelineStage):
             logger.info(
                 f"[MONITOR:POSTMORTEM] {label}: size={size:,} bytes — {path}"
             )
-        except OSError as exc:  # noqa: BLE001 — defensive
+        except OSError as exc:
             logger.warning(
                 f"[MONITOR:POSTMORTEM] {label}: stat failed: {exc}",
             )
@@ -1005,7 +1124,7 @@ class TrainingMonitor(PipelineStage):
                 if isinstance(offset, int):
                     self._last_offset = offset + 1
 
-                terminal = self._dispatch_event(event)
+                terminal = self._get_forwarder().dispatch_event(event)
                 if terminal is not None:
                     return terminal
             # Stream ended cleanly without a terminal kind — treat as
@@ -1025,11 +1144,14 @@ class TrainingMonitor(PipelineStage):
                 cause=exc,
             ) from exc
         except ReplayTruncatedError:
-            # Buffer rolled past the offset we asked for. Refetch the
-            # current snapshot, treat it as authoritative, and call
-            # back the appropriate callback. We don't try to replay
-            # the missed events — they're already gone.
-            return await self._fallback_to_status(client, job_id)
+            # Buffer (ring or disk-backed journal) rolled past the offset
+            # we asked for. Phase 6.a added an HTTP replay endpoint
+            # backed by the pod's on-disk journal — try that first so a
+            # long Mac sleep doesn't drop the training timeline. If
+            # replay also fails (transport, no journal, etc.) we fall
+            # back to the legacy status-snapshot path which loses event
+            # history but still terminates the run cleanly.
+            return await self._get_forwarder().replay_then_resume_or_fallback(client, job_id)
         except JobClientError as exc:
             recovery = self._recover_pod_if_needed(exc)
             if recovery is not None:
@@ -1039,136 +1161,41 @@ class TrainingMonitor(PipelineStage):
                 # (tunnel+client+job_id), which is the orchestrator's
                 # job.
                 raise recovery
+            # Emit a typed timeout event with the wall-clock window
+            # between the last observed event and now. The emitter is
+            # the only side-channel where the duration is captured;
+            # the raise below conveys the legacy error code only.
+            now = datetime.now(UTC)
+            self._emit_monitor_timeout(
+                self._monitor_run_id(),
+                last_event_at=self._last_event_at,
+                timeout_s=max(0.0, (now - self._last_event_at).total_seconds()),
+            )
             raise TrainingFailedError(
                 detail=f"runner client error: {exc}",
                 context={"legacy_code": "MONITOR_CLIENT_ERROR"},
                 cause=exc,
             ) from exc
 
+    # --- pod-event dispatch (delegated to PodEventForwarder) ------------
+    #
+    # Thin back-compat wrappers — the heavy lifting lives on
+    # :class:`PodEventForwarder` (see
+    # ``training_monitor_pod_event_forwarder.py``). Tests that
+    # exercise ``monitor._dispatch_event`` / ``monitor._maybe_log_status``
+    # directly continue to work without modification; the wrappers
+    # forward to the same logic the WS consumer loop uses.
+
     def _dispatch_event(
         self,
         event: dict[str, Any],
     ) -> dict[str, Any] | None:
-        """Fire callbacks; return a terminal outcome dict or ``None``
-        to keep listening.
-
-        Recognised event kinds (everything else is logged at debug
-        and ignored):
-        - first event (any kind) → "[MONITOR] WS stream open"
-        - ``trainer_spawned`` → "[MONITOR] Trainer process started"
-        - ``health_snapshot`` → ``on_resource_check`` + rate-limited ALIVE
-        - ``trainer_exited`` → ``on_training_completed`` /
-          ``on_training_failed`` / ``on_process_died`` based on
-          payload, then return terminal outcome dict
-        - other kinds → log only at debug
-
-        Note: ``trainer_log`` events were removed in the data-plane
-        refactor — trainer stdout/stderr now lands in
-        ``trainer.stdio.log`` on the pod (written by the Supervisor's
-        pump) and is pulled to Mac via LogManager scp. The Web UI's
-        LogDock reads ``trainer.stdio.log`` directly. The bus / WS
-        stream carries only control + telemetry events.
-        """
-        kind = event.get("kind") or ""
-        payload = event.get("payload") or {}
-
-        if not self._first_event_logged:
-            self._first_event_logged = True
-            logger.info("[MONITOR] WS event stream open — runner is reachable")
-
-        if kind == "trainer_spawned" and not self._trainer_started_logged:
-            self._trainer_started_logged = True
-            pid = payload.get("pid")
-            logger.info(
-                "[MONITOR] Trainer process started%s",
-                f" (pid={pid})" if pid else "",
-            )
-
-        if kind == "health_snapshot":
-            self._maybe_log_status(payload)
-            if self._callbacks.on_resource_check:
-                try:
-                    self._callbacks.on_resource_check(dict(payload))
-                except Exception as exc:
-                    logger.debug(f"[MONITOR] on_resource_check raised: {exc}")
-            return None
-
-        if kind == "trainer_exited":
-            return self._handle_trainer_exited(payload)
-
-        # Catch-all for FSM-state transitions emitted alongside
-        # trainer_exited. The runner publishes a structured event
-        # for the transition itself; we use it as a backstop so a
-        # missed ``trainer_exited`` (e.g. supervisor crash) still
-        # surfaces a terminal state to the orchestrator.
-        state = payload.get("state") if isinstance(payload, dict) else None
-        if isinstance(state, str) and state in _TERMINAL_STATES:
-            return self._terminal_from_state(state, payload)
-
-        logger.debug(f"[MONITOR] event kind={kind!r} (no callback)")
-        return None
+        """Back-compat wrapper — delegates to :meth:`PodEventForwarder.dispatch_event`."""
+        return self._get_forwarder().dispatch_event(event)
 
     def _maybe_log_status(self, payload: dict[str, Any]) -> None:
-        """Emit a rate-limited ``[MONITOR] ALIVE`` line for the operator.
-
-        The legacy SSH-polling monitor printed a one-line status every
-        15 s so the user could tell at a glance that training was
-        progressing without tailing trainer stdout. We restore the
-        same surface against the WS event stream — driven by the
-        runner's ``health_snapshot`` events instead of an SSH probe.
-
-        Missing fields render as ``—`` rather than ``0`` so the user
-        can distinguish "GPU is genuinely idle" from "psutil/nvidia-smi
-        couldn't read the value".
-        """
-        now = time.time()
-        if now - self._last_status_log_time < TRAINING_MONITOR_LOG_STATUS_INTERVAL:
-            return
-        self._last_status_log_time = now
-
-        elapsed = max(0.0, now - self._training_start_time)
-        elapsed_str = str(timedelta(seconds=int(elapsed)))
-
-        gpu_util = payload.get("gpu_util_percent")
-        vram_pct = payload.get("gpu_memory_percent")
-        vram_used = payload.get("vram_used_gb")
-        vram_total = payload.get("vram_total_gb")
-        gpu_temp = payload.get("gpu_temp_c")
-        cpu = payload.get("cpu_percent")
-        ram_used = payload.get("ram_used_gb")
-        ram_total = payload.get("ram_total_gb")
-
-        # VRAM: prefer absolute GB if both fields present (richer signal
-        # for operator capacity planning), fall back to percent, else "—".
-        if isinstance(vram_used, (int, float)) and isinstance(vram_total, (int, float)):
-            vram_str = (
-                f"{vram_used:.1f}/{vram_total:.0f} GB"
-                + (f" ({vram_pct:.0f}%)" if isinstance(vram_pct, (int, float)) else "")
-            )
-        elif isinstance(vram_pct, (int, float)):
-            vram_str = f"{vram_pct:.0f}%"
-        else:
-            vram_str = "—"
-
-        ram_str = (
-            f"{ram_used:.1f}/{ram_total:.0f} GB"
-            if isinstance(ram_used, (int, float)) and isinstance(ram_total, (int, float))
-            else "—"
-        )
-
-        # ``running`` matches the develop-branch convention; the legacy
-        # ``ALIVE`` token confused operators ("alive vs what?") — here
-        # we always log when the trainer is actively running so the
-        # state name matches the FSM JobState.value.
-        logger.info(
-            "[MONITOR] running | %s | GPU: %s | VRAM: %s | Temp: %s | CPU: %s | RAM: %s",
-            elapsed_str,
-            f"{gpu_util:.0f}%" if isinstance(gpu_util, (int, float)) else "—",
-            vram_str,
-            f"{gpu_temp:.0f}C" if isinstance(gpu_temp, (int, float)) else "—",
-            f"{cpu:.0f}%" if isinstance(cpu, (int, float)) else "—",
-            ram_str,
-        )
+        """Back-compat wrapper — delegates to :meth:`PodEventForwarder.maybe_log_status`."""
+        self._get_forwarder().maybe_log_status(payload)
 
     def _handle_trainer_exited(
         self,
@@ -1233,8 +1260,6 @@ class TrainingMonitor(PipelineStage):
             self._collect_death_diagnostics()
 
         if exit_code == 0 and not cancelled:
-            if self._callbacks.on_training_completed:
-                self._callbacks.on_training_completed(duration)
             return {
                 "status": "completed",
                 "duration_seconds": duration,
@@ -1265,10 +1290,9 @@ class TrainingMonitor(PipelineStage):
             self._raise_typed(typed_code, message, duration)
 
         if exit_code is None and signal_name is None:
-            # Process died without a parsed exit code — use
-            # ``on_process_died`` per legacy contract.
-            if self._callbacks.on_process_died:
-                self._callbacks.on_process_died(duration)
+            # Process died without a parsed exit code — surface as a
+            # generic training failure. Phase 5 will fold the previous
+            # ``on_process_died`` callback into a typed event.
             self._fail("trainer process died (no exit code)", duration)
 
         self._fail(
@@ -1295,16 +1319,10 @@ class TrainingMonitor(PipelineStage):
         * everything else → :class:`TrainingFailedError` (catch-all
           for typed-but-non-OOM training failures).
 
-        Always raises — never returns. Fires ``on_training_failed``
-        callback BEFORE the raise (matches the legacy ``_fail`` shape
-        so the operator still sees the callback-driven banner).
+        Always raises — never returns. Phase 4: callbacks removed;
+        Phase 5 will replace the previous ``on_training_failed`` banner
+        with a typed event.
         """
-        if self._callbacks.on_training_failed:
-            try:
-                self._callbacks.on_training_failed(message, duration)
-            except Exception as exc:
-                logger.debug(f"[MONITOR] on_training_failed raised: {exc}")
-
         # String comparison rather than ``ErrorCode(code)`` — the wire
         # payload carries the enum value as a bare string, and a
         # producer with a code we don't yet know about should NOT
@@ -1342,8 +1360,6 @@ class TrainingMonitor(PipelineStage):
         message = payload.get("message") if isinstance(payload, dict) else None
 
         if state == _TERMINAL_COMPLETED:
-            if self._callbacks.on_training_completed:
-                self._callbacks.on_training_completed(duration)
             return {"status": "completed", "duration_seconds": duration}
 
         if state == _TERMINAL_CANCELLED:
@@ -1368,13 +1384,10 @@ class TrainingMonitor(PipelineStage):
     ) -> None:
         """Common path for FAILED / CANCELLED → typed ``TrainingFailedError`` raise.
 
-        Always raises — never returns. Callbacks are fired before the raise.
+        Always raises — never returns. Phase 4: legacy callback hooks
+        removed; Phase 5 will fold the previous ``on_training_failed``
+        banner into a typed event.
         """
-        if self._callbacks.on_training_failed:
-            try:
-                self._callbacks.on_training_failed(message, duration)
-            except Exception as exc:
-                logger.debug(f"[MONITOR] on_training_failed raised: {exc}")
         raise TrainingFailedError(
             detail=message,
             context={"legacy_code": code},

@@ -12,6 +12,7 @@ Features:
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 from ryotenkai_control.pipeline.bootstrap import PipelineBootstrap
@@ -23,6 +24,9 @@ from ryotenkai_control.pipeline.constants import (
 from ryotenkai_control.pipeline.launch import LaunchPreparationError, PreparedAttempt
 from ryotenkai_control.pipeline.launch.run_lock_guard import RunLockGuard
 from ryotenkai_control.pipeline.reporting import ExecutionSummaryReporter
+from ryotenkai_control.pipeline.run_lifecycle_coordinator import (
+    RunLifecycleCoordinator,
+)
 from ryotenkai_control.pipeline.stages import StageNames
 from ryotenkai_control.pipeline.state import (
     AttemptController,
@@ -44,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from ryotenkai_control.events import ControlEventEmitter
     from ryotenkai_control.pipeline.stages.base import PipelineStage
     from ryotenkai_shared.config.pipeline.schema import PipelineConfig
     from ryotenkai_shared.infrastructure.mlflow.protocol import IMLflowManager
@@ -110,43 +115,28 @@ class PipelineOrchestrator:
         ``_source_path`` set. Run-level metadata
         (``project_id`` / ``actor`` / ``config_version_hash``) and
         per-project secrets reach the orchestrator through
-        ``os.environ`` — the launcher (CLI / Web API) merges
-        ``env.json`` and sets ``RYOTENKAI_*`` env vars before
-        forking the worker. Bootstrap reads them via
-        :func:`read_metadata_from_env` and ``load_secrets()``.
+        ``os.environ`` — the launcher (CLI / Web API) merges ``env.json``
+        and sets ``RYOTENKAI_*`` env vars before forking the worker.
 
         Args:
             config: Fully-loaded :class:`PipelineConfig` (must have
                 ``_source_path`` set — the loader handles this).
-            run_directory: Optional explicit run dir (resume / restart
-                paths). When ``None`` a fresh dir under
-                ``settings.runs_base_dir`` is created.
-            settings: Optional :class:`RuntimeSettings`. When ``None``,
-                read from env via :func:`load_runtime_settings`. The
-                launcher sets ``RYOTENKAI_RUNS_BASE_DIR`` to relocate
-                ``runs_base_dir`` inside ``<project>/runs/`` for
-                project launches.
+            run_directory: Optional explicit run dir for resume/restart;
+                a fresh dir under ``settings.runs_base_dir`` is created
+                when ``None``.
+            settings: Optional :class:`RuntimeSettings`; read from env
+                via :func:`load_runtime_settings` when ``None``.
             mlflow_manager: Optional pre-built :class:`IMLflowManager`
-                (tests / advanced callers). When supplied, replaces the
-                manager that :class:`MLflowAttemptManager` would otherwise
-                bootstrap — short-circuits :meth:`_setup_mlflow`.
-            stages_override: Optional pre-built stage list. When supplied,
-                the bootstrap installs these stages on the
-                :class:`StageRegistry` instead of constructing the
-                canonical roster — replaces the legacy
-                ``patch.object(StageRegistry, "_build_stages")`` test
-                scaffold. Production callers always omit this kwarg.
+                that short-circuits :meth:`_setup_mlflow` (tests).
+            stages_override: Optional pre-built stage list that replaces
+                :meth:`StageRegistry._build_stages` (tests only).
 
-        Construction is two-phase:
-
-        1. Declare per-run mutable state (run_ctx, _run_lock_guard, etc.)
-           and the AttemptController — its save_fn closes over
-           ``self._state_store`` so the controller must exist before
-           anything that might mutate state.
-        2. :meth:`PipelineBootstrap.build` does the heavy wiring
-           (validation, component construction). The frozen result is
-           copied onto ``self.*`` fields so callers and tests can read
-           ``orch.config`` / ``orch.stages`` / etc.
+        Construction is two-phase: declare per-run mutable state +
+        :class:`AttemptController` first (its ``save_fn`` closure reads
+        ``self._state_store`` at call time), then delegate the heavy
+        wiring to :meth:`PipelineBootstrap.build`. The frozen result is
+        copied onto ``self.*`` fields so downstream callers can read
+        ``orch.config`` / ``orch.stages`` / etc.
         """
         # ----- Phase 1: per-run mutable state + single-writer controller -----
         self.settings: RuntimeSettings = settings or load_runtime_settings()
@@ -176,6 +166,7 @@ class PipelineOrchestrator:
             on_stage_completed=self._on_stage_completed,
             on_shutdown_signal=self._on_shutdown_signal,
             stages_override=stages_override,
+            run_directory=run_directory,
         )
         # Unpack onto ``self.*`` for backward compatibility — downstream
         # callers (and tests) still read ``orch.config``, ``orch.stages``,
@@ -198,12 +189,49 @@ class PipelineOrchestrator:
         self._restart_inspector = bootstrap.restart_inspector
         self._stage_execution_loop = bootstrap.stage_execution_loop
 
+        # Phase 8: hand the event-emitter lifecycle to
+        # :class:`RunLifecycleCoordinator`. The coordinator owns lazy
+        # construction once LaunchPreparator resolves the run dir, the
+        # registry register/deregister, the four ``emit_run_*``
+        # terminal events, and the MlflowFinalizer upload in finalize.
+        self._coord = RunLifecycleCoordinator(
+            run_ctx=self.run_ctx,
+            algorithm_supplier=self._derive_algorithm,
+            dataset_id_supplier=self._derive_dataset_id,
+            model_id_supplier=self._derive_model_id,
+            mlflow_run_id_supplier=self._safe_attempt_mlflow_run_id,
+            active_stage_supplier=self._safe_active_stage_name,
+            shutdown_signal_supplier=lambda: self._shutdown_signal_name,
+            mlflow_manager_supplier=lambda: self._mlflow_manager,
+            pre_built_emitter=bootstrap.emitter,
+        )
+
         # Optional injection: tests / advanced callers can supply a pre-built
         # IMLflowManager (e.g. FakeMLflowManager). When provided, _setup_mlflow
         # returns it directly without invoking _mlflow_attempt.bootstrap() —
         # this replaces the patch.object(*, "_setup_mlflow") test scaffold.
         if mlflow_manager is not None:
             self._mlflow_manager = mlflow_manager
+
+    # ------------------------------------------------------------------
+    # Backward-compat: ``orch.emitter`` — direct attribute reads (and
+    # the rare write in ``test_orchestrator_emitter_wiring``) now route
+    # through the coordinator. Stages read the emitter through bootstrap
+    # result; the orchestrator itself never touches it directly outside
+    # the property below.
+    # ------------------------------------------------------------------
+
+    @property
+    def emitter(self) -> ControlEventEmitter | None:
+        """Active event emitter, or ``None`` until the run dir is resolved."""
+        return self._coord.emitter
+
+    @emitter.setter
+    def emitter(self, value: ControlEventEmitter | None) -> None:
+        """Allow tests to swap the emitter without reaching into the coord."""
+        self._coord._emitter = value
+        if value is not None:
+            self._coord._register_emitter()
 
     def notify_signal(self, *, signal_name: str) -> None:
         """Notify orchestrator about an external shutdown signal (SIGINT/SIGTERM)."""
@@ -275,6 +303,7 @@ class PipelineOrchestrator:
 
         pipeline_success = False
         config_hashes = self._build_config_hashes()
+        run_start_monotonic = time.monotonic()
 
         try:
             prepared = self._prepare_stateful_attempt(
@@ -284,8 +313,14 @@ class PipelineOrchestrator:
                 config_hashes=config_hashes,
             )
             assert self._log_layout is not None
-            # Loop is raise-based since Phase A2 Batch 6: returns context
-            # on success, raises ``RyotenkAIError`` on failure.
+            # Phase 3-4: build the journal under <run_directory>/events.jsonl,
+            # propagate the emitter into every stage that opts in via
+            # ``set_emitter``, then emit RunStartedEvent.
+            self._ensure_event_emitter()
+            self._wire_emitter_into_stages()
+            self._coord.emit_run_started(config_hashes=config_hashes)
+            # Loop is raise-based: returns context on success, raises
+            # ``RyotenkAIError`` on failure (Phase A2 Batch 6).
             context = self._stage_execution_loop.run_attempt(
                 prepared=prepared,
                 context=self.context,
@@ -293,12 +328,14 @@ class PipelineOrchestrator:
                 log_layout=self._log_layout,
             )
             pipeline_success = True
+            self._coord.emit_run_completed(
+                duration_s=time.monotonic() - run_start_monotonic,
+                status="success",
+            )
             return context
         except LaunchPreparationError as exc:
             logger.error(exc.detail or str(exc))
-            # Surface the run_directory+state_store that the preparator
-            # resolved before raising, so teardown callers that read them
-            # still see the right paths.
+            # Surface the preparator-resolved paths so teardown sees them.
             if self._launch_preparator.last_state_store is not None:
                 self._state_store = self._launch_preparator.last_state_store
             if self._launch_preparator.last_run_directory is not None:
@@ -321,16 +358,15 @@ class PipelineOrchestrator:
                     launch_error=exc,
                     config_hashes=config_hashes,
                 )
-            # Phase A2 Batch 15.5: re-raise the typed
-            # :class:`LaunchPreparationError` (a ``RyotenkAIError`` subclass)
-            # so the caller (``worker.py``) catches the typed boundary
-            # directly. No more Result/AppError adapter at this layer.
+            # Re-raise the typed LaunchPreparationError (a RyotenkAIError
+            # subclass) so worker.py catches the typed boundary directly.
             raise
         except (KeyboardInterrupt, SystemExit) as exc:
             # Interrupt during prepare — loop never got to own the boundary.
-            # Delegate to the loop's public helper so the record-interrupted
-            # + MLflow-warning semantics stay in one place.
-            self._stage_execution_loop.handle_interrupt_outside_loop(mlflow_manager=self._mlflow_manager)
+            self._stage_execution_loop.handle_interrupt_outside_loop(
+                mlflow_manager=self._mlflow_manager,
+            )
+            self._coord.emit_run_cancelled(reason="user_interrupt")
             if isinstance(exc, SystemExit):
                 raise
             raise PipelineStageFailedError(
@@ -339,23 +375,22 @@ class PipelineOrchestrator:
             ) from exc
         except PipelineStateError as e:
             # Corrupted state file / persistence failure during bootstrap.
-            # Distinct legacy code keeps observability clean.
             raise InternalError(
                 detail=str(e),
                 context={"legacy_code": "PIPELINE_STATE_ERROR"},
                 cause=e,
             ) from e
-        except RyotenkAIError:
-            # Stage/loop failure surfaced as typed exception — let it
-            # propagate to the caller.
+        except RyotenkAIError as ryot_exc:
+            # Stage/loop failure: emit terminal RunFailedEvent before propagating.
+            self._coord.emit_run_failed(ryot_exc)
             raise
         except Exception as e:
-            # Unexpected during prepare — convert via the loop's helper
-            # for consistent recording side effects, then raise the
-            # typed exception the helper produced.
+            # Unexpected: route through the loop helper for consistent recording,
+            # then raise the typed exception it produced.
             typed_exc = self._stage_execution_loop.handle_unexpected_error_outside_loop(
-                e, mlflow_manager=self._mlflow_manager
+                e, mlflow_manager=self._mlflow_manager,
             )
+            self._coord.emit_run_failed(typed_exc)
             raise typed_exc from e
         finally:
             # Each teardown step is wrapped independently: a failure in one must
@@ -380,6 +415,13 @@ class PipelineOrchestrator:
                     guard.__exit__(None, None, None)
                 except Exception:
                     logger.exception("[CLEANUP] run lock guard exit failed")
+            # Phase 8: hand emitter close + MLflow finalize + registry
+            # deregister to the coordinator. ``finalize`` is idempotent
+            # and never raises.
+            try:
+                self._coord.finalize(pipeline_success=pipeline_success)
+            except Exception:
+                logger.exception("[CLEANUP] run lifecycle finalize failed")
 
     def _prepare_stateful_attempt(
         self,
@@ -405,22 +447,16 @@ class PipelineOrchestrator:
             config_hashes=config_hashes,
         )
 
-        # Keep the fields used by error-recovery (``LaunchPreparationError``
-        # handler reads ``self._state_store``/``self.run_directory``) and by
-        # the stage-execution loop wiring (``self._log_layout``) in sync.
-        # ``attempt_directory``/``logical_run_id`` live on ``PreparedAttempt``
-        # and are passed through ``context.fork(...)`` — no mirror needed.
+        # Keep error-recovery readable fields in sync with the preparator.
         self.run_directory = prepared.run_directory
         self._state_store = prepared.state_store
         self._log_layout = prepared.log_layout
 
-        # Acquire the run.lock via RunLockGuard so release is impossible
-        # to forget in the finally block (Invariant #1 of the architecture).
+        # Acquire run.lock so release is impossible to forget (Invariant #1).
         self._run_lock_guard = RunLockGuard(prepared.state_store.lock_path)
         self._run_lock_guard.__enter__()
 
-        # Fork the run-scoped context into per-attempt context. fork()
-        # guarantees no state leaks back to the original.
+        # Fork the run-scoped context into per-attempt context — no leaks back.
         self.context = self.context.fork(
             attempt_id=prepared.attempt.attempt_id,
             attempt_no=prepared.attempt.attempt_no,
@@ -430,12 +466,10 @@ class PipelineOrchestrator:
             forced_stages=set(prepared.forced_stage_names),
         )
 
-        # Register the attempt — flips state.attempts + active_attempt_id +
-        # pipeline_status=RUNNING and persists atomically.
+        # Register attempt — flips state.attempts/active_attempt_id atomically.
         self._attempt_controller.register_attempt(prepared.attempt)
 
-        # Invalidate lineage from restart point first, then restore context
-        # from the (already-trimmed) remaining lineage.
+        # Invalidate lineage from restart point, then restore remaining lineage.
         stage_names = [s.stage_name for s in self.stages]
         self._attempt_controller.invalidate_lineage_from(
             stage_names=stage_names,
@@ -461,23 +495,12 @@ class PipelineOrchestrator:
     # ------------------------------------------------------------------
 
     def _on_stage_completed(self, stage_name: str) -> None:
-        """Orchestrator-level side effects after a successful stage.
-
-        Currently fires early GPU release after MODEL_RETRIEVER. Kept here
-        because the policy depends on ``self.config`` (provider config), which
-        the loop deliberately does not see.
-        """
+        """Fire early GPU release after MODEL_RETRIEVER (provider-config dependent)."""
         if stage_name == StageNames.MODEL_RETRIEVER:
             self._maybe_early_release_gpu()
 
     def _on_shutdown_signal(self, signal_name: str) -> None:
-        """Populate ``_shutdown_signal_name`` when the loop detects an interrupt.
-
-        Used by the cleanup phase's "skip GPU disconnect on SIGINT" policy —
-        without this, cleanup would always run disconnect even for user
-        cancellations. Preserves the pre-refactor behaviour of defaulting to
-        "SIGINT" when the external signal hook has not already set a name.
-        """
+        """Record interrupt name so cleanup can skip GPU disconnect on SIGINT."""
         self._shutdown_signal_name = self._shutdown_signal_name or signal_name
 
     def _build_config_hashes(self) -> dict[str, str]:
@@ -622,6 +645,115 @@ class PipelineOrchestrator:
     def list_stages(self) -> list[str]:
         """Delegate: list stage names via the registry."""
         return self._registry.list_stage_names()
+
+    # ------------------------------------------------------------------
+    # Event-emitter wiring (Phase 3-8) — thin delegates to coordinator.
+    # The methods below preserve the orchestrator's public surface used
+    # by ``test_orchestrator_emitter_wiring`` and any caller that still
+    # invokes the per-emission helpers by name. The actual lifecycle
+    # work lives in :class:`RunLifecycleCoordinator`.
+    # ------------------------------------------------------------------
+
+    def _wire_emitter_into_stages(self) -> None:
+        """Push the active emitter onto every stage that exposes ``set_emitter``.
+
+        Stages are constructed inside :class:`PipelineBootstrap` before
+        the canonical run directory is known; the coordinator only
+        builds the emitter once :class:`LaunchPreparator` resolves
+        the directory. Stages that don't expose ``set_emitter`` keep
+        their construction-time defaults (no emitter wired).
+        """
+        emitter = self._coord.emitter
+        if emitter is None:
+            return
+        for stage in self.stages:
+            setter = getattr(stage, "set_emitter", None)
+            if callable(setter):
+                try:
+                    setter(emitter)
+                except Exception as exc:
+                    logger.warning(
+                        "[Orchestrator] failed to wire emitter into %s: %s",
+                        getattr(stage, "stage_name", type(stage).__name__),
+                        exc,
+                    )
+
+    def _ensure_event_emitter(self) -> None:
+        """Build the :class:`ControlEventEmitter` once ``run_directory`` is known.
+
+        Falls back to ``settings.runs_base_dir / run_ctx.name`` when no
+        run directory was ever resolved — the directory is created on
+        demand by the coordinator.
+        """
+        run_directory = self.run_directory
+        if run_directory is None:
+            run_directory = self.settings.runs_base_dir / self.run_ctx.name
+        self._coord.bind_run_directory(run_directory)
+
+    def _emit_run_started(self, *, config_hashes: dict[str, str]) -> None:
+        self._coord.emit_run_started(config_hashes=config_hashes)
+
+    def _emit_run_completed(self, *, duration_s: float, status: str) -> None:
+        self._coord.emit_run_completed(duration_s=duration_s, status=status)
+
+    def _emit_run_failed(self, exc: BaseException) -> None:
+        self._coord.emit_run_failed(exc)
+
+    def _emit_run_cancelled(self, *, reason: str) -> None:
+        self._coord.emit_run_cancelled(reason=reason)
+
+    # ----- Suppliers consumed by RunLifecycleCoordinator -------------
+
+    def _derive_algorithm(self) -> str:
+        """Algorithm string for :class:`RunStartedPayload`; falls back to ``sft``."""
+        try:
+            strategies = getattr(self.config.training, "strategies", None) or []
+            if strategies:
+                value = getattr(strategies[0], "strategy_type", None)
+                if isinstance(value, str) and value in {"sft", "cpt", "dpo", "grpo", "sapo"}:
+                    return value
+        except Exception:  # pragma: no cover — defensive
+            pass
+        return "sft"
+
+    def _derive_dataset_id(self) -> str:
+        """Dataset identifier from the configured registry (first key)."""
+        try:
+            datasets = getattr(self.config, "datasets", None) or {}
+            if datasets:
+                return next(iter(datasets.keys()))
+        except Exception:  # pragma: no cover — defensive
+            pass
+        return "unknown"
+
+    def _derive_model_id(self) -> str:
+        """Model identifier from ``config.model.name``."""
+        try:
+            model_obj = getattr(self.config, "model", None)
+            value = getattr(model_obj, "name", None) if model_obj is not None else None
+            if isinstance(value, str) and value:
+                return value
+        except Exception:  # pragma: no cover — defensive
+            pass
+        return "unknown"
+
+    def _safe_attempt_mlflow_run_id(self) -> str | None:
+        try:
+            if self._attempt_controller.has_active_attempt:
+                return self._attempt_controller.active_attempt.pipeline_attempt_mlflow_run_id
+        except Exception:  # pragma: no cover — defensive
+            pass
+        return None
+
+    def _safe_active_stage_name(self) -> str | None:
+        """Name of the currently-executing stage from :class:`StageExecutionLoop`."""
+        loop = getattr(self, "_stage_execution_loop", None)
+        if loop is None:
+            return None
+        candidate = getattr(loop, "current_stage_name", None)
+        if isinstance(candidate, str):
+            return candidate
+        return None
 
 
 def run_pipeline(config_path: str) -> int:
