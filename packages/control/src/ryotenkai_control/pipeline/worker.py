@@ -24,14 +24,203 @@ output identical to direct CLI commands. ``KeyboardInterrupt`` produces
 exceptions render a short ``error: internal error`` line plus a
 ``trace=`` correlation id and a hint to check server logs — full
 traceback only goes to the log file, never to the user terminal.
+
+Phase H1 (Error Persistence, 2026-05-17)
+---------------------------------------
+``_log_pipeline_outcome`` writes a kubectl/Terraform-style summary
+block to ``pipeline.log`` as the LAST entry of every run (success or
+failure). ``tail pipeline.log`` shows outcome immediately without
+scrolling 1000 lines.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
+import time
+from typing import TYPE_CHECKING, Any
 from pathlib import Path
+
+if TYPE_CHECKING:
+    from ryotenkai_shared.errors import RyotenkAIError
+
+
+# ---------------------------------------------------------------------------
+# Phase H1 — Final outcome summary in pipeline.log
+# ---------------------------------------------------------------------------
+
+_SEPARATOR_WIDTH = 80
+_SEPARATOR = "=" * _SEPARATOR_WIDTH
+
+
+def _format_attempt_summary(
+    exc: Exception | None,
+    *,
+    attempt_no: int | None,
+    stage_name: str | None,
+    stage_idx: int | None,
+    stage_total: int | None,
+    trace_id: str | None,
+    request_id: str | None,
+    detail: str | None,
+    context: dict[str, Any] | None,
+    duration_seconds: float | None,
+    code: str | None,
+    title: str | None,
+    total_stages: int | None = None,
+) -> str:
+    """Build the kubectl/Terraform-style summary block.
+
+    Returns a multi-line string ready to be passed to
+    ``logger.error`` / ``logger.info``. Lines for absent fields are
+    omitted so the block stays compact for short runs.
+    """
+    lines: list[str] = [_SEPARATOR]
+    if exc is None:
+        # Success path.
+        attempt_part = (
+            f" at attempt {attempt_no}" if attempt_no is not None else ""
+        )
+        wall_part = (
+            f" (wall={duration_seconds:.1f}s"
+            if duration_seconds is not None
+            else " ("
+        )
+        stages_part = (
+            f", stages={total_stages}/{total_stages})"
+            if total_stages is not None and duration_seconds is not None
+            else (")" if duration_seconds is not None else "")
+        )
+        # Special-case for partial info.
+        if duration_seconds is None and total_stages is None:
+            header = f"Pipeline COMPLETED{attempt_part}"
+        else:
+            header = f"Pipeline COMPLETED{attempt_part}{wall_part}{stages_part}"
+        lines.append(header)
+        lines.append(_SEPARATOR)
+        return "\n".join(lines)
+
+    # Failure path.
+    attempt_part = (
+        f" at attempt {attempt_no}" if attempt_no is not None else ""
+    )
+    lines.append(f"Pipeline FAILED{attempt_part}")
+    lines.append(_SEPARATOR)
+    if title:
+        lines.append(f"  error:    {title}")
+    if code:
+        lines.append(f"  code:     {code}")
+    if stage_name:
+        if stage_idx is not None and stage_total is not None:
+            lines.append(
+                f"  stage:    {stage_name} (Stage {stage_idx + 1}/{stage_total})"
+            )
+        else:
+            lines.append(f"  stage:    {stage_name}")
+    lines.append(f"  trace:    {trace_id or '-'}")
+    if request_id:
+        lines.append(f"  request:  {request_id}")
+    if detail:
+        lines.append(f"  detail:   {detail}")
+    if context:
+        # Strip internal/private keys (leading underscore) from the
+        # rendered block to keep it user-facing; the typed dataclass
+        # (H2) preserves everything for tooling.
+        clean = {k: v for k, v in context.items() if not str(k).startswith("_")}
+        if clean:
+            try:
+                rendered = json.dumps(clean, default=str, sort_keys=True)
+            except Exception:  # noqa: BLE001 — best-effort
+                rendered = str(clean)
+            lines.append(f"  context:  {rendered}")
+    if duration_seconds is not None:
+        lines.append(f"  duration: {duration_seconds:.1f}s")
+    if attempt_no is not None:
+        lines.append(f"  attempts: {attempt_no}")
+    lines.append("  outcome:  FAILED")
+    lines.append(_SEPARATOR)
+    return "\n".join(lines)
+
+
+def _log_pipeline_outcome(
+    exc: Exception | None,
+    *,
+    attempt_no: int | None = None,
+    stage_name: str | None = None,
+    stage_idx: int | None = None,
+    stage_total: int | None = None,
+    trace_id: str | None = None,
+    request_id: str | None = None,
+    detail: str | None = None,
+    context: dict[str, Any] | None = None,
+    duration_seconds: float | None = None,
+    code: str | None = None,
+    title: str | None = None,
+    total_stages: int | None = None,
+) -> None:
+    """Phase H1 — emit a Terraform-style outcome block to ``pipeline.log``.
+
+    Uses the ryotenkai logger so the block flows through the file
+    handler attached by :func:`init_run_logging`. When no file handler
+    is attached (startup-time failure, very early in main()) the block
+    is only emitted to stderr.
+
+    Always emits at ``error`` level for failure (red in coloured TTYs)
+    and ``info`` for success. The choice survives the file handler too:
+    pipeline.log records the level prefix for grep filtering.
+    """
+    from ryotenkai_shared.utils.logger import logger
+
+    text = _format_attempt_summary(
+        exc,
+        attempt_no=attempt_no,
+        stage_name=stage_name,
+        stage_idx=stage_idx,
+        stage_total=stage_total,
+        trace_id=trace_id,
+        request_id=request_id,
+        detail=detail,
+        context=context,
+        duration_seconds=duration_seconds,
+        code=code,
+        title=title,
+        total_stages=total_stages,
+    )
+    if exc is None:
+        logger.info("\n" + text)
+    else:
+        logger.error("\n" + text)
+
+
+def _extract_attempt_fields(
+    exc: RyotenkAIError | None,
+) -> dict[str, Any]:
+    """Pull H1-stamped attempt context off a :class:`RyotenkAIError`.
+
+    The execution loop calls
+    :func:`ryotenkai_control.pipeline.execution.stage_execution_loop._stamp_attempt_context`
+    before re-raising, so the keys ``stage_name`` / ``stage_idx`` /
+    ``stage_total`` / ``attempt_no`` are populated for stage failures.
+    Pre-stage failures (launch rejection, bootstrap errors) won't have
+    them ⇒ the dict is empty and the outcome block omits those lines.
+    """
+    if exc is None:
+        return {}
+    ctx = getattr(exc, "context", None)
+    if not isinstance(ctx, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in ("stage_name", "stage_idx", "stage_total", "attempt_no"):
+        if key in ctx and ctx[key] is not None:
+            out[key] = ctx[key]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Worker body
+# ---------------------------------------------------------------------------
 
 
 def _config_from_run_dir(run_dir: Path) -> Path:
@@ -69,6 +258,8 @@ def _run_pipeline(args: argparse.Namespace) -> int:
     from ryotenkai_shared.config.runtime import RuntimeSettings, load_runtime_settings
     from ryotenkai_control.pipeline.orchestrator import PipelineOrchestrator
     from ryotenkai_shared.config.loader import load_pipeline_config
+
+    pipeline_start_time = time.time()
 
     run_dir: Path | None = args.run_dir.expanduser().resolve() if args.run_dir else None
     if args.config is not None:
@@ -117,7 +308,39 @@ def _run_pipeline(args: argparse.Namespace) -> int:
         )
     finally:
         set_active_orchestrator(None)
+
+    # Phase H1 — success outcome block to pipeline.log.
+    pipeline_duration = time.time() - pipeline_start_time
+    try:
+        total_stages = len(list(cfg.stages or []))
+    except Exception:  # noqa: BLE001 — defensive
+        total_stages = None
+    attempt_no = _try_read_attempt_no(orchestrator)
+    _log_pipeline_outcome(
+        None,
+        attempt_no=attempt_no,
+        duration_seconds=pipeline_duration,
+        total_stages=total_stages,
+    )
     return 0
+
+
+def _try_read_attempt_no(orchestrator: Any) -> int | None:
+    """Best-effort recovery of the active attempt_no for outcome logging.
+
+    Reads from the orchestrator's exposed state when available; falls
+    back to None on any failure. Never raises.
+    """
+    try:
+        state = getattr(orchestrator, "_pipeline_state", None)
+        if state is None:
+            return None
+        attempts = getattr(state, "attempts", None) or []
+        if attempts:
+            return int(attempts[-1].attempt_no)
+    except Exception:  # noqa: BLE001 — defensive
+        return None
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,6 +401,23 @@ def main(argv: list[str] | None = None) -> int:
         print("aborted", file=sys.stderr)
         return 130
     except RyotenkAIError as exc:
+        # Phase H1 — outcome summary to pipeline.log (always — when the
+        # file handler is attached this lands in the persistent log,
+        # otherwise it only reaches stderr).
+        attempt_fields = _extract_attempt_fields(exc)
+        _log_pipeline_outcome(
+            exc,
+            attempt_no=attempt_fields.get("attempt_no"),
+            stage_name=attempt_fields.get("stage_name"),
+            stage_idx=attempt_fields.get("stage_idx"),
+            stage_total=attempt_fields.get("stage_total"),
+            trace_id=getattr(exc, "trace_id", None),
+            request_id=request_id,
+            detail=exc.detail,
+            context=dict(exc.context) if exc.context else None,
+            code=exc.code.value,
+            title=exc.title,
+        )
         return print_ryotenkai_error(exc, request_id=request_id)
     except SystemExit:
         # argparse / explicit raise SystemExit — let it propagate with
@@ -189,16 +429,23 @@ def main(argv: list[str] | None = None) -> int:
         # instead of a raw traceback. Full traceback goes to logs only —
         # never to user-facing stderr (security: no path/env/local leak).
         logger.error("Unhandled exception in worker", exc_info=exc)
-        return print_ryotenkai_error(
-            InternalError(
-                detail=(
-                    "An unexpected error occurred. See server logs for "
-                    "the full traceback."
-                ),
-                context={"exception_type": type(exc).__name__},
+        internal = InternalError(
+            detail=(
+                "An unexpected error occurred. See server logs for "
+                "the full traceback."
             ),
-            request_id=request_id,
+            context={"exception_type": type(exc).__name__},
         )
+        _log_pipeline_outcome(
+            internal,
+            trace_id=getattr(internal, "trace_id", None),
+            request_id=request_id,
+            detail=internal.detail,
+            context=dict(internal.context) if internal.context else None,
+            code=internal.code.value,
+            title=internal.title,
+        )
+        return print_ryotenkai_error(internal, request_id=request_id)
 
 
 if __name__ == "__main__":
